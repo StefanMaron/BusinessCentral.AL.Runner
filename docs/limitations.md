@@ -935,6 +935,13 @@ fired, and AL that depended on it *passed*. The same applies to the tableextensi
 `OnBeforeValidate` / `OnAfterValidate` handler lists and to the types
 `BuildFieldTriggerHandler` wraps a trigger method in.
 
+Two further skips on those same rewritten lines were **not** shape gaps and are covered above
+under [runtime shape gaps](#runtime-shape-gaps): an unresolvable field number and an
+unsupported trigger return type
+([#3048](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3048)). They refuse
+with `out-of-scope:` + `not-yet-implemented` rather than `bc-shape-gap:`, because neither is a
+property of the BC build on disk.
+
 The refusal is proportional — it fires only for a table and field the runner has a handler in
 hand for. A table that declares no field trigger still wires and reports success on such a
 build, because nothing was skipped for it. The two exceptions are
@@ -964,7 +971,16 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
     hold (`RunnerTestClientSession.cs`), and modal/page dispatch handed a null test-execution
     context or request (`RunnerModalDispatch.cs`);
   - **report construction**, when the runner cannot build the report object at all to run it
-    or its request page (`NavReportSync.cs`).
+    or its request page (`NavReportSync.cs`);
+  - **AL field-trigger installation**, in two shapes that used to be skipped in silence
+    ([#3048](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3048)) — a field
+    the runner's own metatable does not carry although the runner's own emitted AL declares a
+    trigger for it, and a trigger method whose return type is neither `void` nor `ValueTask`,
+    which BC's `FieldTriggerHandler<T>` has no constructor for
+    (`AlRunner/Patches/FieldTriggerInstallGaps.cs`). Neither is a BC shape gap: both sides of
+    each disagreement are the runner's own, so "which BC version produced this?" has no answer.
+    Both used to leave `WireFieldTriggerHandlers` reporting the table as wired, so the trigger
+    never fired and AL depending on it passed anyway.
 
   Real BC does all of these, so each is the runner failing to keep up rather than a surface BC
   also lacks — which is the test for whether a refusal may cite `docs/scope.md` at all.

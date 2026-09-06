@@ -68,8 +68,13 @@
 //     own First() throws, WireFieldTriggerHandlers' catch keeps swallowing it. Runner state,
 //     not BC layout.
 //   * BuildFieldTriggerHandler declining a trigger method whose return type is neither void
-//     nor ValueTask — that is a property of the AL the runner EMITTED, not of BC's layout,
-//     and it already prints. It stays a null return.
+//     nor ValueTask — that is a property of the AL the runner EMITTED, not of BC's layout, so
+//     it is not a shape gap. It is not a quiet skip either any more: #3048 made it a
+//     RunnerOutOfScopeException with the reason anchor `not-yet-implemented`, because printing
+//     and returning null still left every call site skipping the install while
+//     WireFieldTriggerHandlers reported the table as wired. See FieldTriggerInstallGaps.cs,
+//     which also covers the `catch { continue; }` around GetFieldByNo in both install loops —
+//     the other silent skip #3026 left behind for the same "not about BC's layout" reason.
 //
 // ── THE CATCH THAT WOULD HAVE EATEN THIS ─────────────────────────────────────────────────
 // WireFieldTriggerHandlers ends in a catch-all that prints and returns false. Left alone it
@@ -80,6 +85,7 @@
 // See also:
 //   .claude/rules/loud-failures.md            — no silent out-of-scope failures
 //   docs/limitations.md#bc-shape-gaps         — the reader-facing write-up
+//   AlRunner/Patches/FieldTriggerInstallGaps.cs — the same install path's non-shape-gap refusals
 //   AlRunner/Patches/TestPageShapeGaps.cs     — the read-path sibling, and where #3026 was filed
 
 using System.Reflection;
