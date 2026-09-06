@@ -1,0 +1,13 @@
+{
+  "id": "b7e41d92-3c6a-4f18-9a05-2d8f7c1e4b30",
+  "name": "Runner Tests Fixture - Session User Row Already Present",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#2941 review: the User-row seed must classify an already-present row as ALREADY PRESENT, not as a refusal.",
+  "description": "The NEGATIVE CONTROL for the loud-refusal change. This bundle's Install codeunit puts the session user's own row in User (2000000120) before the seed runs -- install triggers run ahead of EnsureUserSystemTableRowSeeded in TestExecutor's install-seed stage order -- so the seed's ALInsert is refused by the PRIMARY KEY. That refusal is benign: the row the seed exists to guarantee is there. Nothing may be logged as a failure and the existing row must be left exactly as it was. Without this control, an implementation that reported every non-insert as a refusal would still pass the name-collision fixture next door and be wrong.",
+  "dependencies": [],
+  "idRanges": [{ "from": 70500, "to": 70519 }],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}

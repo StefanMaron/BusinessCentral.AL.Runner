@@ -2,7 +2,7 @@
   "_comment": "Schema, semantics and how to bump: README.md in this directory. Per-bump rationale: history.md, never a prose line in here (#2485).",
   "suites": {
     "al-language": {
-      "tests": { "default": 2554 },
+      "tests": { "default": 2599 },
       "appGroups": { "default": 1 }
     },
     "runner-extras": {
@@ -43,6 +43,7 @@
         "server-multibundle-main": { "tests": 4 },
         "server-reload-dep": { "tests": 0 },
         "server-reload-main": { "tests": 1 },
+        "session-user-row": { "tests": 4 },
         "standalone-suites": { "tests": 108 },
         "static-runmodal-record": { "tests": 5 },
         "table-connection-live-oos": { "tests": 2 },

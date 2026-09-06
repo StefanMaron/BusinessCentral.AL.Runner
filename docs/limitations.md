@@ -24,7 +24,15 @@ the BC runtime environment:
   not currently configurable via a CLI flag or an AL-callable API. Code that
   only branches on whether the name is empty still takes the "empty" branch by
   default. If your workflow needs a different value, open an issue describing
-  the use case.
+  the use case. Both identities are also written to the table that holds them,
+  so AL's own referential checks resolve them: one row in Company (2000000006)
+  for `CompanyName()` and one in User (2000000120) for `UserId()` /
+  `UserSecurityId()`, with the User Property (2000000121) companion row BC
+  creates alongside every user. One consequence worth knowing: Microsoft AL that
+  skips a check while the User table is entirely empty — `User Selection
+  .ValidateUserName` is the common one — now runs that check, so a made-up user
+  name is refused the way real BC refuses it. The Session virtual table
+  (2000000009) is still empty; that gap is tracked separately.
 - **Base app data** — no standard BC tables are populated. Code that reads
   `G/L Account`, `Customer`, `Vendor`, or any other base app table finds them empty
   unless your test inserts data.
