@@ -111,13 +111,18 @@
 //   Like Object Metadata and unlike every virtual table, 2000000001 is a real SQL table and a
 //   restored backup can genuinely carry rows for it. So the branch in GetDataAccessForTableCore
 //   lets the --test-data on-demand loader run FIRST on a freshly created store, and the
-//   populator below does nothing for the lifetime of a provider that already had a row on
-//   first touch AND is in a run where such a loader exists at all. Real rows always win; the
-//   projection is the fallback for the (normal) case of a run with no application database.
+//   populator below does nothing at all when that load actually produced rows for this table.
+//   Real rows always win; the projection is the fallback for the (normal) case of a run with no
+//   application database.
 //
-//   That second condition is load-bearing rather than defensive — see the latch comment in
-//   PopulateObjectSystemTable. Without it, an install-baseline restore of rows THIS projection
-//   wrote is indistinguishable from a backup's, and the residue that remains is issue #2875.
+//   "Actually produced rows" is a fact the loader RECORDS (RecordPatches.BackupRowProvenance.cs,
+//   #2875), not something read back off the store. Reading the store was the bug: an
+//   install-baseline restore replays this projection's own rows into a brand-new provider, and
+//   a provider cannot say who filled it, so the projection latched itself off for a store
+//   holding nothing but its own stale output. The companion half is in
+//   CaptureInstallBaselineSnapshot, which no longer captures this table while the projection
+//   owns it — so there is nothing to replay in the first place, and the two halves together
+//   close the ambiguity rather than narrow it.
 //
 // PRECOMPILED-DLL RESPECT
 //   Runtime-engine and Types-assembly members only (NCLMetaTable, NCLMetaField, NavValue,
@@ -144,17 +149,16 @@ public static partial class RecordPatches
 
     /// <summary>
     /// Per-in-memory-provider state for the Object (2000000001) projection.
-    /// <para><see cref="DeferToRealRows"/> is decided ONCE, on the first handout of a
-    /// provider, right after the --test-data on-demand loader has had its turn: a store that
-    /// already holds a row is serving real rows out of a restored backup, and those must never
-    /// be shadowed by a projection.</para>
     /// <para><see cref="Inserted"/> makes the top-up idempotent per (type ordinal, id) so
     /// later handouts pick up objects registered since without re-inserting — and, just as
     /// importantly, without resurrecting a row AL has deleted in between.</para>
+    /// <para>It is the only per-provider state left. "Does a --test-data backup own this
+    /// table's rows" used to be latched here too, decided from the provider on first handout;
+    /// #2875 moved it to <see cref="BackupOwnsRowsFor"/>, because a provider cannot say who
+    /// filled it and a boundary restore hands out a new one carrying replayed rows.</para>
     /// </summary>
     private sealed class ObjectSystemTableState
     {
-        internal bool DeferToRealRows;
         internal readonly ConcurrentDictionary<(int TypeOrdinal, int Id), byte> Inserted = new();
     }
 
@@ -214,47 +218,37 @@ public static partial class RecordPatches
                 "Object (system table 2000000001)",
                 "object-system-table — data access has no in-memory provider; see docs/scope.md");
 
-        // THE LATCH ASKS "DID SOMETHING OTHER THAN THIS PROJECTION PUT ROWS HERE?", and
-        // ProviderHasAnyRow alone cannot answer that. An install-baseline restore replays rows
-        // THIS projection wrote earlier in the run into a BRAND-NEW provider, which gets a
-        // fresh ConditionalWeakTable entry — so a bare ProviderHasAnyRow reads true, latches,
-        // and the top-up never runs again for that provider. Harmless for Object Metadata,
-        // whose row set is a fixed BC-declared id list identical whoever produced it; NOT
-        // harmless here, where the row set is THIS run's inventory and a disk baseline keyed by
-        // dependency key can be restored for a different app group.
+        // THE LATCH ASKS "DID SOMETHING OTHER THAN THIS PROJECTION PUT ROWS HERE?", and no
+        // property of the PROVIDER can answer that. The old test — ProviderHasAnyRow, narrowed
+        // by #2842 to runs that have a --test-data loader at all — read a store, and a store
+        // does not remember who filled it. An install-baseline restore replays rows THIS
+        // projection wrote earlier in the run into a BRAND-NEW provider, which gets a fresh
+        // ConditionalWeakTable entry, so the projection read its own stale output as somebody
+        // else's, latched, and never topped up that provider again. Harmless for Object
+        // Metadata, whose row set is a fixed BC-declared id list identical whoever produced it;
+        // NOT harmless here, where the row set is THIS run's object inventory.
         //
-        // So the latch is additionally conditioned on a --test-data loader EXISTING at all,
-        // because that is the only writer besides this projection that can legitimately own
-        // rows in this store. With no loader in the run, any rows present are ours (directly or
-        // replayed through a baseline) and the top-up must go ahead; the per-key
-        // NavRecordAlreadyExistsException catch in InsertVirtualRow absorbs the ones already
-        // there, so a replayed row survives and only genuinely-missing objects are added.
+        // So the question is asked of the WRITER instead (#2875). The --test-data on-demand
+        // load is the only other writer of this table, and it records the tables it actually
+        // loaded rows into — see RecordPatches.BackupRowProvenance.cs. That fact outlives any
+        // provider, so a restore cannot launder a projection into a backup.
         //
-        // Deliberately NOT conditioned on "this call materialised the storage". That question is
-        // GetOrCreateHydratedDataAccess's own, and it is the wrong one here: this populate runs
-        // on EVERY touch of the table, not only the materialising one, so keying the latch on it
-        // would skip the top-up for every later caller. Conditioning on the loader existing is
-        // strictly never worse than a bare ProviderHasAnyRow: identical whenever a loader
-        // exists, and correct where a bare one is wrong.
+        // The other half of the same fix removes the ambiguity at its source: a projection-owned
+        // Object table is no longer captured into an install baseline at all (the #2272
+        // treatment, applied conditionally), so there is nothing for a restore to replay. The
+        // two halves are deliberately both here — the exclusion means a restored provider can
+        // only ever hold a backup's rows, and this check means the projection knows it.
         //
-        // WHAT THIS DOES NOT CLOSE, and why it is not closed here: --test-data AND an install
-        // baseline together, with AL touching Record "Object" before CaptureInstallBaselineSnapshot
-        // runs. Issue #2875 tracks it. The obvious fix — adding 2000000001 to
-        // IsSelfPopulatingVirtualTableId so the projection is never captured — is NOT a drop-in:
-        // this is the first self-populating table that also materialises through the on-demand
-        // loader, so it
-        // would make AppendBaselineTable's deliberate InvalidOperationException reachable for the
-        // first time on any backup that carries Object rows (a real on-prem database has them).
-        // Resolving that is a change to a shared invariant, not a rider on this fix.
-        var backupLoaderExists = TestDataOnDemandLoader != null;
-        var state = _objsStateByProvider.GetValue(
-            provider, p => new ObjectSystemTableState
-            {
-                DeferToRealRows = backupLoaderExists && ProviderHasAnyRow(p),
-            });
+        // Deliberately NOT latched per provider any more. A latch was only ever a way to
+        // remember the answer to a question that had to be asked at exactly the right moment;
+        // provenance is a run-scoped fact, so it can be read on every touch and is the same
+        // answer whichever provider is in hand. `Inserted` stays per provider, because THAT is
+        // genuinely per-store state: it is what keeps the top-up idempotent without
+        // resurrecting a row AL deleted in between.
+        var state = _objsStateByProvider.GetValue(provider, static _ => new ObjectSystemTableState());
 
         // A --test-data backup's real rows are the better answer — leave them alone.
-        if (state.DeferToRealRows) return;
+        if (BackupOwnsRowsFor(ObjectSystemTableId)) return;
 
         var ordinals = EnsureObjectTypeOrdinals(metaTable);
 

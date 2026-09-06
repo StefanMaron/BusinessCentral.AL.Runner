@@ -781,11 +781,22 @@ whether this legacy table's field 20 holds the object's AL caption is a BC claim
 can adjudicate; **issue #2839** tracks it rather than guessing.
 
 A `--test-data` backup's real rows take precedence over the projection, and that precedence is
-conditioned on such a loader existing in the run at all — an install-baseline restore replays
-rows the projection itself wrote into a fresh provider, which a bare "does the store have rows"
-test cannot tell apart from a backup's. **issue #2875** records what that leaves open
-(`--test-data` and an install baseline together) and why the obvious fix — excluding 2000000001
-from install-baseline capture — is not a drop-in.
+decided from what the backup **actually loaded** rather than from what the in-memory store
+happens to hold (#2875). Reading the store was the earlier design and it could not work: an
+install-baseline restore replays rows the projection itself wrote into a brand-new provider, so
+the projection read its own stale output as somebody else's and stopped topping the table up.
+The on-demand load now records the tables it put rows into, and the projection stands down for
+this table only when that record names it. Its companion is in the capture: while the projection
+owns the rows, table 2000000001 is left out of the install baseline entirely — the same treatment
+the self-populating virtual tables get (#2272), and for the same reason, since the dispatch
+branch re-derives the projection on every access. With nothing captured there is nothing to
+replay, so the ambiguity is gone rather than narrowed.
+
+One case in the same family is **not** closed here and is reported rather than silent: a store
+published by a *nested* materialisation owes a `--test-data` load that could not run there, and
+the projection fills it before that debt is settled, so the settle writes the load off. Object
+Metadata's dispatch branch holds its populate off until the debt is settled; `Object`'s does not.
+**issue #2877** covers the deferred-load mechanism.
 
 `tests/runner-extras/object-system-table` asserts the runner-side behaviour so it cannot move
 quietly.

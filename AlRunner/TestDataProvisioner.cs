@@ -310,6 +310,10 @@ internal static class TestDataProvisioner
         RecordPatches.TestDataOnDemandLoader = null;
         RecordPatches.TestDataDeferredLoadNotifier = null;
         RecordPatches.TestDataDeferredLoadWriteOffNotifier = null;
+        // #2875: the provenance record describes the backup this loader was armed for, so it
+        // has to go with the loader. Left behind, one run's backup would keep speaking for the
+        // next — and the thing it says is "do not synthesise rows for this table".
+        RecordPatches.ResetBackupRowProvenance();
     }
 
     /// <summary>
@@ -414,6 +418,16 @@ internal static class TestDataProvisioner
             if (result.Rows > 0)
             {
                 Interlocked.Increment(ref _tablesDone);
+                // #2875: say so, rather than leaving anyone downstream to infer it from the
+                // store. A table the runner can ALSO synthesise rows for (Object 2000000001)
+                // has to know which writer owns its rows, and "the provider has rows" cannot
+                // answer that once an install-baseline restore can replay a projection into a
+                // brand-new provider. This is the only place the fact exists.
+                //
+                // BEFORE the append, deliberately: AppendBaselineTable refuses a
+                // projection-owned table, and this call is what makes this one not projection
+                // owned. See RecordPatches.BackupRowProvenance.cs.
+                RecordPatches.NoteBackupContributedRows(tableId);
                 // The rows are in the live store now, but no snapshot knows about them: a load
                 // fired mid-test is long past CaptureInstallBaselineSnapshot(). Without this
                 // the very next codeunit/test boundary would wipe them.
