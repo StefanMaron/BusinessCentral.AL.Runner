@@ -1373,6 +1373,78 @@ check("a genuine logged-out gh still FAILs as not authenticated",
       f"{_res.status}: {_res.summary}")
 
 
+# ------------------------ how current the checkout being measured is (real git)
+# The whole-tree version of the same trap: a coordinator read tools/ci-wait.py out
+# of a top-level checkout 40+ commits behind origin/main, found a constant that
+# origin/main had already renamed, concluded the tool was broken for every pull
+# request in the repository, and misdirected four agents. origin/main's copy was
+# correct throughout. Real git here, not a fixture: the question is what git says
+# about HEAD against refs/remotes/origin/main, and a mocked answer proves nothing.
+def lag_repo(behind: int, base_age_days: float = 0.0) -> str:
+    root = tempfile.mkdtemp(prefix="preflight-lag-")
+    git("init", "-q", "-b", "main", ".", cwd=root)
+    git("config", "user.email", "t@example.com", cwd=root)
+    git("config", "user.name", "T", cwd=root)
+    when = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=base_age_days)
+    stamp = when.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    open(os.path.join(root, "f"), "w").write("base\n")
+    git("add", "f", cwd=root)
+    git("commit", "-q", "-m", "base", cwd=root,
+        env=dict(os.environ, GIT_AUTHOR_DATE=stamp, GIT_COMMITTER_DATE=stamp))
+    branch_point = git("rev-parse", "HEAD", cwd=root).stdout.strip()
+    for i in range(behind):
+        open(os.path.join(root, "f"), "w").write(f"main {i}\n")
+        git("commit", "-q", "-am", f"main {i}", cwd=root)
+    tip = git("rev-parse", "HEAD", cwd=root).stdout.strip()
+    git("update-ref", "refs/remotes/origin/main", tip, cwd=root)
+    git("checkout", "-q", "-B", "work", branch_point, cwd=root)
+    return root
+
+
+_root = lag_repo(behind=3)
+_lag = pf.checkout_lag("this checkout", _root)
+check("a checkout three commits behind measures as three",
+      _lag["behind"] == 3 and _lag["ahead"] == 0, _lag)
+check("and the branch point's age is measured, not guessed",
+      _lag["base_age_hours"] is not None and _lag["base_age_hours"] < 1, _lag)
+_res = pf.classify_checkout([_lag])
+check("normal drift is a PASS -- a warning that always fires is not read",
+      _res.status == "PASS", f"{_res.status}: {_res.summary}")
+check("but the number is reported either way, which is what was missing",
+      any("3 commit(s) behind" in d for d in _res.detail), _res.detail)
+shutil.rmtree(_root, ignore_errors=True)
+
+_root = lag_repo(behind=40)
+_res = pf.classify_checkout([pf.checkout_lag("the main checkout", _root)])
+check("40 commits behind -- the measured incident -- WARNs",
+      _res.status == "WARN", f"{_res.status}: {_res.summary}")
+check("the warning says what to stop doing, not just what to run",
+      "measure" in _res.remedy.lower() or "conclude" in _res.remedy.lower(), _res.remedy)
+shutil.rmtree(_root, ignore_errors=True)
+
+_root = lag_repo(behind=1, base_age_days=3)
+_res = pf.classify_checkout([pf.checkout_lag("this checkout", _root)])
+check("a tree branched three days ago WARNs even when it is one commit behind",
+      _res.status == "WARN", f"{_res.status}: {_res.summary}")
+shutil.rmtree(_root, ignore_errors=True)
+
+_root = tempfile.mkdtemp(prefix="preflight-lag-none-")
+git("init", "-q", "-b", "main", ".", cwd=_root)
+_lag = pf.checkout_lag("this checkout", _root)
+check("a checkout with no origin/main says so rather than reporting zero",
+      _lag["error"] and _lag["behind"] is None, _lag)
+_res = pf.classify_checkout([_lag])
+check("and that is a WARN about not knowing, never a PASS",
+      _res.status == "WARN" and "could not" in _res.summary, _res.summary)
+shutil.rmtree(_root, ignore_errors=True)
+
+_res = pf.classify_checkout([{"label": "a", "error": "no origin/main"},
+                             {"label": "b", "branch": "main", "ahead": 0, "behind": 40,
+                              "base_age_hours": 30.0, "error": ""}])
+check("one unmeasurable checkout does not hide a stale one",
+      _res.status == "WARN" and "40 commit(s)" in _res.summary, _res.summary)
+
+
 # ------------------------------------- a stale copy of preflight must not answer (#3164)
 # Same exposure #3020 fixed in ci-wait.py and pr-body.py: an agent runs the copy
 # in its own worktree, and a worktree is created once and never fast-forwarded.

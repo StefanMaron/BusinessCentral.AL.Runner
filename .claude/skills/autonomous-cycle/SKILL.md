@@ -206,6 +206,12 @@ Two things about the verdicts it produces, because both change what "stop" means
   saying so (a copy predating #2936 calls a healthy box unable to push). It prints the remedy;
   run `origin/main`'s copy. Nothing about the box was probed, so it is not a verdict about the
   box.
+- **The `checkout` check reports how far the tree it is measuring is behind `origin/main`**,
+  for both the checkout preflight is running from and the main checkout, and WARNs past 25
+  commits or a branch point 12 hours old. Anything read out of a checkout is as old as that
+  checkout: a coordinator once diagnosed a repository-wide CI breakage from a tree 40+ commits
+  behind, in which a tool still carried a constant `origin/main` had already renamed, and
+  misdirected four agents before the tree was the suspect.
 - **A single network failure is not a verdict either.** The push probe retries a transport
   failure and reports `1 of 3 attempts` as a WARN rather than failing the box; a genuine
   refusal — permission, authentication, no such repository — still FAILs on the first attempt

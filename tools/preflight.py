@@ -1417,6 +1417,106 @@ def check_github(slug: Optional[str]) -> CheckResult:
                        detail=detail, data=data)
 
 
+# --------------------------------------------------------------------------
+# how current the checkout being measured actually is
+# --------------------------------------------------------------------------
+# freshness_refusal() below asks that question about ONE FILE, preflight.py
+# itself. This asks it about the whole checkout, because the same trap catches
+# anything read out of a tree: source, a rule, a workflow.
+#
+# Measured 2026-09-06 on this box, and it cost four agents an hour: a coordinator
+# read `tools/ci-wait.py` out of a top-level checkout that was 40+ commits behind
+# origin/main, found a constant naming a required check that had since been
+# renamed, concluded the tool was returning "could not determine" for every pull
+# request in the repository, and told four agents so. origin/main's copy had been
+# correct the whole time. Nothing warned that the tree was old -- and worktrees on
+# this box branch from whatever main happened to be, so any agent measuring its
+# own tree reproduces it exactly.
+#
+# THRESHOLDS, and why "behind at all" is not one: origin/main moves every ten to
+# forty minutes here, so a handful of commits behind is the normal state of a
+# checkout doing a task, and a warning that fires every time is a warning nobody
+# reads. Tens of commits, or a branch point from yesterday, means the tree was
+# never refreshed. The COUNT is reported either way, which is the part that was
+# missing.
+CHECKOUT_BEHIND_WARN_COMMITS = 25
+CHECKOUT_BEHIND_WARN_HOURS = 12
+
+
+def checkout_lag(label: str, root: str, ref: str = "refs/remotes/origin/main") -> dict:
+    """How far `root` is behind origin/main, and how old its branch point is."""
+    lag = {"label": label, "root": root, "branch": "", "ahead": None, "behind": None,
+           "base_age_hours": None, "error": ""}
+    if not root:
+        lag["error"] = "no checkout"
+        return lag
+    if not run(["git", "-C", root, "rev-parse", "--verify", "--quiet", ref]).out.strip():
+        lag["error"] = f"no {ref} (never fetched, or a shallow clone)"
+        return lag
+    lag["branch"] = run(["git", "-C", root, "rev-parse", "--abbrev-ref", "HEAD"]).out.strip()
+    counts = run(["git", "-C", root, "rev-list", "--left-right", "--count", f"HEAD...{ref}"])
+    parts = counts.out.split()
+    if not counts.ok or len(parts) != 2:
+        lag["error"] = f"could not count commits against {ref}"
+        return lag
+    lag["ahead"], lag["behind"] = int(parts[0]), int(parts[1])
+    base = run(["git", "-C", root, "merge-base", "HEAD", ref]).out.strip()
+    stamp = run(["git", "-C", root, "log", "-1", "--format=%ct", base]).out.strip() if base else ""
+    if stamp.isdigit():
+        lag["base_age_hours"] = max(0.0, (time.time() - int(stamp)) / 3600.0)
+    return lag
+
+
+def classify_checkout(lags: list) -> CheckResult:
+    """PASS/WARN on the lag readings, always reporting the number it measured."""
+    usable = [l for l in lags if not l.get("error")]
+    detail = []
+    for l in lags:
+        if l.get("error"):
+            detail.append(f"{l['label']}: could not measure - {l['error']}")
+            continue
+        age = ("" if l.get("base_age_hours") is None
+               else f", branched {human_age(l['base_age_hours'] * 3600)} ago")
+        detail.append(f"{l['label']}: on {l['branch'] or '?'}, {l['behind']} commit(s) behind "
+                      f"origin/main, {l['ahead']} ahead{age}")
+    if not usable:
+        return CheckResult(
+            name="checkout", status="WARN",
+            summary="could not establish how current this checkout is",
+            command="git rev-list --left-right --count HEAD...refs/remotes/origin/main",
+            detail=detail,
+            remedy="Run `git fetch origin main` so there is an origin/main to compare against.")
+    worst = max(usable, key=lambda l: (l["behind"] or 0, l.get("base_age_hours") or 0))
+    behind = worst["behind"] or 0
+    age_h = worst.get("base_age_hours") or 0.0
+    detail.append("Anything read out of a checkout is as old as the checkout: a tool's source, "
+                  "a rule, a workflow. A coordinator once diagnosed a repository-wide CI "
+                  "breakage from a tree 40+ commits behind, and misdirected four agents with "
+                  "it; origin/main's copy had been correct all along.")
+    stale = behind >= CHECKOUT_BEHIND_WARN_COMMITS or age_h >= CHECKOUT_BEHIND_WARN_HOURS
+    if not stale:
+        return CheckResult(
+            name="checkout", status="PASS",
+            summary=(f"{worst['label']} is current with origin/main" if behind == 0 else
+                     f"{worst['label']} is {behind} commit(s) behind origin/main - within the "
+                     f"normal drift ({CHECKOUT_BEHIND_WARN_COMMITS} commits or "
+                     f"{CHECKOUT_BEHIND_WARN_HOURS:g}h is where this warns)"),
+            command="git rev-list --left-right --count HEAD...refs/remotes/origin/main",
+            detail=detail, data={"lags": lags})
+    return CheckResult(
+        name="checkout", status="WARN",
+        summary=f"{worst['label']} is {behind} commit(s) behind origin/main and branched "
+                f"{human_age(age_h * 3600)} ago - what you read out of it may already be wrong",
+        command="git rev-list --left-right --count HEAD...refs/remotes/origin/main",
+        detail=detail,
+        remedy="Refresh before reading anything out of it as current:\n"
+               "    git fetch origin && git merge --ff-only origin/main\n"
+               "    git submodule update --init --recursive\n"
+               "A branch mid-task is legitimately behind -- the point is not to MEASURE from a "
+               "tree this old, or to conclude anything about a tool from the copy in it.",
+        data={"lags": lags})
+
+
 def check_budget(skip_fallback: bool = False) -> CheckResult:
     """Budget headroom: a resource that, exhausted, strands work mid-task.
 
@@ -2250,6 +2350,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         return 3
     # The MAIN checkout, not whichever worktree this copy of the script lives in:
     # the worktree census and the reaper both have to see every worktree.
+    running_root = repo
     common = run(["git", "-C", repo, "rev-parse", "--path-format=absolute",
                   "--git-common-dir"]).out.strip()
     if common.endswith("/.git"):
@@ -2270,6 +2371,10 @@ def main(argv: Optional[list[str]] = None) -> int:
     except OSError:
         mem = {}
 
+    lags = [checkout_lag("the checkout preflight is running from", running_root)]
+    if os.path.realpath(repo) != os.path.realpath(running_root or ""):
+        lags.append(checkout_lag("the main checkout", repo))
+
     slug = repo_slug(repo)
     prs, pr_status = pr_map(slug)
     rows = collect_worktrees(repo, prs, measure=not args.no_sizes)
@@ -2282,6 +2387,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         check_budget(skip_fallback=args.skip_budget_fallback),
         check_worktrees(rows, repo, pr_status),
         check_stale_scratch(scratch_root, rows, args.stale_hours),
+        classify_checkout(lags),
         check_push(repo, identity),
         check_commit(repo),
         check_github(slug),
