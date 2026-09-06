@@ -148,7 +148,7 @@ public sealed class ObjectRefConstCallSiteWiringTests : IDisposable
             new("Table ID", ParsedCalcFilterKind.Const, null, "Database::\"ORW Referenced Row\""),
         });
 
-        var meta = Invoke("BuildMetaCalcFormula", formula, ReferencingTable());
+        var meta = Invoke("BuildMetaCalcFormula", formula, ReferencingTable(), 2);
         Assert.NotNull(meta);
 
         var filter = Assert.Single(Enumerate(Get(meta!, "Filters")));
@@ -169,7 +169,7 @@ public sealed class ObjectRefConstCallSiteWiringTests : IDisposable
             new("Table ID", ParsedCalcFilterKind.Const, null, "42"),
         });
 
-        var meta = Invoke("BuildMetaCalcFormula", formula, ReferencingTable());
+        var meta = Invoke("BuildMetaCalcFormula", formula, ReferencingTable(), 2);
         var filter = Assert.Single(Enumerate(Get(meta!, "Filters")));
         Assert.Equal("42", (string)Get(filter, "FilterValue"));
     }
