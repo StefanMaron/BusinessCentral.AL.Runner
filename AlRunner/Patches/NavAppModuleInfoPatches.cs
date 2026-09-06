@@ -54,10 +54,19 @@ public static class NavAppModuleInfoPatches
     // answer "yes" about anything (#2961). That is not a missing surface; it is the runner
     // failing to report the closure it demonstrably holds.
     //
-    // WHAT THIS DOES: answers from BcRuntime.RegisteredModules() — the same loaded-app
+    // WHAT THIS DOES: answers from BcRuntime.TryGetModuleInfoByAppId — the SAME lookup the
+    // source-compiled polyfill in BcAssembler already used, and over the same loaded-app
     // closure RecordPatches.EnsurePublishedApplicationRowsSeeded writes into Published
-    // Application (#2963), so the two views cannot disagree. Reconstruction of state the
-    // runner holds, not a fake.
+    // Application (#2963), so no two views of "which apps are installed" can disagree.
+    // Reconstruction of state the runner holds, not a fake.
+    //
+    // The source-compiled polyfill now CALLS this method rather than carrying its own copy
+    // (BcAssembler.NavRuntimeHelpersShim.ALNavApp_GetModuleInfo). It had two divergences
+    // worth naming, because a single implementation is the only way they stay fixed:
+    // it returned false on not-found whatever the DataError was, so the STATEMENT form of
+    // NavApp.GetModuleInfo silently populated nothing instead of raising the way BC does;
+    // and it reported appId as the PackageId, which is not the value the runner stamps on
+    // that app's Published Application row or its AllObj rows.
     //
     // BC's NOT-FOUND SEMANTICS ARE PRESERVED EXACTLY. An id the runner has not loaded is
     // genuinely not installed here, so the TrapError arm still returns false with a null
@@ -90,14 +99,15 @@ public static class NavAppModuleInfoPatches
                 "not-yet-implemented",
                 "docs/scope.md");
 
-        foreach (var m in AlRunner.BcRuntime.RegisteredModules())
+        var found = AlRunner.BcRuntime.TryGetModuleInfoByAppId(moduleId);
+        if (found != null)
         {
-            if (m.AppId != moduleId) continue;
-            var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(m.Version);
+            var (appId, name, publisher, version) = found.Value;
+            var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
             var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
             info.Value = new Microsoft.Dynamics.Nav.Runtime.NavModuleInfo(
-                m.AppId, m.Name, m.Publisher, navVersion, navVersion, emptyDeps,
-                AlRunner.Infrastructure.AppPackageIdentity.PackageIdFor(m.AppId));
+                appId, name, publisher, navVersion, navVersion, emptyDeps,
+                AlRunner.Infrastructure.AppPackageIdentity.PackageIdFor(appId));
             return true;
         }
 

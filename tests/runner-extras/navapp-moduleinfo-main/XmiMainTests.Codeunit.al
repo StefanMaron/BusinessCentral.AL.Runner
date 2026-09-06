@@ -99,6 +99,68 @@ codeunit 61240 "XMI Main Tests"
     end;
 
     /// <summary>
+    /// #2961. NavApp.GetModuleInfo for an app the runner has NOT loaded must answer the way
+    /// BC's own ALGetModuleInfo does, and the two arms differ. This is the trapping arm: the
+    /// boolean form compiles to DataError.TrapError, so an unresolvable id is `false` with no
+    /// error raised.
+    ///
+    /// It is the discriminating half of the pair below. A helper that answered "installed"
+    /// for every id — the shape that would make the corpus green by lying — passes
+    /// GetModuleInfo_ByDepAppId_ResolvesRegisteredDep above and fails here.
+    /// </summary>
+    [Test]
+    procedure GetModuleInfo_ByUnknownAppId_BooleanForm_ReturnsFalse()
+    var
+        Info: ModuleInfo;
+    begin
+        if NavApp.GetModuleInfo('00000000-dead-beef-0000-000000000001', Info) then
+            Error('GetModuleInfo must not resolve an app id the runner never loaded.');
+    end;
+
+    /// <summary>
+    /// #2961, the raising arm. Statement form compiles to DataError.RaiseError, and BC's
+    /// ALGetModuleInfo throws NavAppException naming the id it could not find. Before the
+    /// fix the runner's source-compiled polyfill returned false here whatever the DataError
+    /// was, so the statement form left <c>Info</c> untouched and said nothing — the silent
+    /// wrong answer loud-failures.md is about.
+    /// </summary>
+    [Test]
+    procedure GetModuleInfo_ByUnknownAppId_StatementForm_RaisesNamingTheId()
+    var
+        Info: ModuleInfo;
+    begin
+        asserterror NavApp.GetModuleInfo('00000000-dead-beef-0000-000000000002', Info);
+        if StrPos(GetLastErrorText(), 'No installed extension was found with ID') = 0 then
+            Error('GetModuleInfo must raise BC''s own not-found message, got: %1', GetLastErrorText());
+    end;
+
+    /// <summary>
+    /// #2961. The resolved module carries the runner's DERIVED package identity, not an echo
+    /// of the app id. That matters because it is the same value the runner stamps into the
+    /// app's Published Application "Package ID" / "Runtime Package ID" columns and onto its
+    /// AllObj rows (#2963, #3066), so AL that reads ModuleInfo.PackageId and then looks the
+    /// app up by package id finds it. Echoing the app id back would break that join, and is
+    /// exactly what the source-compiled polyfill used to do.
+    /// </summary>
+    [Test]
+    procedure GetModuleInfo_ByDepAppId_CarriesADerivedPackageIdNotTheAppId()
+    var
+        Info: ModuleInfo;
+        EmptyId: Guid;
+    begin
+        if not NavApp.GetModuleInfo('f6c0e4a8-7d3b-4a1c-8e5f-9b4d8c3a6f7e', Info) then
+            Error('GetModuleInfo must resolve the loaded dependency by AppId.');
+        if Info.PackageId() = EmptyId then
+            Error('The resolved module must carry a non-empty PackageId.');
+        if Info.PackageId() = Info.Id() then
+            Error('PackageId must be the derived package identity, not an echo of the AppId (%1).', Info.Id());
+        if Info.Id() <> 'f6c0e4a8-7d3b-4a1c-8e5f-9b4d8c3a6f7e' then
+            Error('GetModuleInfo(depId) must carry the dep AppId, got %1.', Info.Id());
+        if Info.Publisher() <> 'AL Runner' then
+            Error('GetModuleInfo(depId) must carry the dep publisher, got %1.', Info.Publisher());
+    end;
+
+    /// <summary>
     /// THE FIX (#1942). Before it, the source polyfill behind NavApp.GetCurrentModuleInfo
     /// was declared `void`, so the C# Roslyn compile of the emitted assembly failed with
     /// CS0023 ("operator '!' cannot be applied to operand of type 'void'") on this exact

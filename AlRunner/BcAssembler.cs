@@ -861,14 +861,15 @@ namespace AlRunnerShim
             global::System.Guid moduleId,
             Microsoft.Dynamics.Nav.Runtime.ByRef<Microsoft.Dynamics.Nav.Runtime.NavModuleInfo> info)
         {
-            var found = global::AlRunner.BcRuntime.TryGetModuleInfoByAppId(moduleId);
-            if (found == null) return false;
-            var (appId, name, publisher, version) = found.Value;
-            var navVersion = new Microsoft.Dynamics.Nav.Runtime.NavVersion(version);
-            var emptyDeps = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavModuleDependencyInfo>.Default;
-            info.Value = new Microsoft.Dynamics.Nav.Runtime.NavModuleInfo(
-                appId, name, publisher, navVersion, navVersion, emptyDeps, appId);
-            return true;
+            // ONE implementation, shared with the Cecil patch that serves PRECOMPILED callers
+            // (NclCecilRewrite.Dispatch.cs -> NavAppModuleInfoPatches.ALNavApp_GetModuleInfo).
+            // This used to be a second copy, and it had drifted: it returned false on
+            // not-found regardless of errorLevel, so the STATEMENT form of
+            // NavApp.GetModuleInfo populated nothing instead of raising the way BC does, and
+            // it reported appId as the PackageId rather than the value the runner stamps on
+            // that app's Published Application row. See that method's header (#2961).
+            return global::AlRunner.Patches.NavAppModuleInfoPatches.ALNavApp_GetModuleInfo(
+                errorLevel, moduleId, info);
         }
 
         // NavApp.GetCallerModuleInfo — the module that CALLED into the executing app
