@@ -40,7 +40,17 @@ public sealed class DependencyLoader
     // reload cycle purely to discover "this one has no sidecars anyway").
     private readonly record struct LoadedAppEntry(
         Assembly Asm, string Name, string Publisher, string Version, string SourcePath,
-        string? Tier3CacheKey = null);
+        string? Tier3CacheKey = null,
+        // #3054: EVERY assembly this app was loaded as, not just the primary one. Microsoft
+        // ships Base Application as five R2R DLL chunks and the app is ONE module spread
+        // across all of them, so a cache hit has to hand back the whole set — re-registering
+        // only Asm would put the later app groups in a run back into the pre-fix state that
+        // LoadAll's registration loop exists to prevent.
+        IReadOnlyList<Assembly>? Assemblies = null)
+    {
+        /// <summary>Every assembly of this app, primary first; never empty.</summary>
+        internal IReadOnlyList<Assembly> AllAssemblies => Assemblies ?? new[] { Asm };
+    }
 
     private static readonly ConcurrentDictionary<Guid, LoadedAppEntry> _cache = new();
     private static readonly ConcurrentDictionary<string, Assembly> _byName =
@@ -150,7 +160,6 @@ public sealed class DependencyLoader
                         m.AppId,
                         existing.Name, existing.Publisher, existing.Version, existing.SourcePath,
                         m.Name, m.Publisher, newVersion, path);
-
                 // Same directory with a changed identity falls through to a recompile rather
                 // than into the reuse below: serving `existing.Asm` would run the PREVIOUS
                 // version's compiled module for the new one's tests — the silent wrong answer
@@ -174,7 +183,10 @@ public sealed class DependencyLoader
                     // real cost paid every cycle for a ~100MB Base Application package for no reason.
                     if (existing.Tier3CacheKey != null)
                         ReplayDependencyMetadataSidecars(m, existing.Tier3CacheKey);
-                    list.Add(existing.Asm);
+                    // #3054: every assembly, not just the primary — see
+                    // LoadedAppEntry.Assemblies. Handing back only the cached primary here
+                    // would put every app group after the first back into the pre-fix state.
+                    list.AddRange(existing.AllAssemblies);
                     continue;
                 }
             }
@@ -235,9 +247,10 @@ public sealed class DependencyLoader
 
             Assembly? asm;
             string? tier3CacheKey;
+            IReadOnlyList<Assembly> chunks;
             try
             {
-                (asm, tier3CacheKey) = LoadOne(m, path, bucketRoot);
+                (asm, tier3CacheKey, chunks) = LoadOne(m, path, bucketRoot);
             }
             // #2131: this guard USED to be bare `when (microsoftSourceOnly)` — it caught
             // and silently swallowed EVERY Microsoft-source-only Tier-3 failure, including
@@ -263,30 +276,11 @@ public sealed class DependencyLoader
             }
             if (asm != null)
             {
-                _cache[m.AppId] = new LoadedAppEntry(asm, m.Name, m.Publisher, m.Version.ToString(), path, tier3CacheKey);
-                _byName[asm.GetName().Name ?? ""] = asm;
-                // #2683: this assembly is now the CURRENT generation for its simple name.
-                // Without this, BcRuntime.IsStaleBundleAssembly answered false for every
-                // generation of a dependency module — the registry only ever held bundle
-                // assemblies — so the AL type finders (Codeunit/Record/Page…) enumerated the
-                // previous cycle's copy and, per #1901, in practice found it FIRST, because
-                // AppDomain.CurrentDomain.GetAssemblies() tends to return the oldest first.
-                // A --watch edit to a dependency then recompiled and reloaded everything
-                // correctly and still executed the previous cycle's bodies.
-                BcRuntime.RegisterAssemblyGeneration(asm);
-                // Register app metadata so AlCallStackCapture can decorate frames.
-                AlCallStackCapture.RegisterAssemblyInfo(asm, m.Name, m.Publisher, m.Version.ToString());
-                // Register the assembly's app package so NavApp.GetResource can serve
-                // this app's packaged resources (.app /resources/ part, or the sibling
-                // source dir for source deps packaged into a synthetic workspace .app).
-                AlRunner.Patches.NavAppResourcePatches.RegisterDependencyAssembly(
-                    asm, m.AppId, m.Name, m.Publisher, m.Version.ToString(), path);
-                // Per-assembly module identity: this dep's code sees ITS OWN app info
-                // from NavApp.GetCurrentModuleInfo (real BC's executing-module rule),
-                // not the bundle's.
-                BcRuntime.RegisterModuleInfoForAssembly(
-                    asm, m.AppId, m.Name, m.Publisher, m.Version.ToString());
-                list.Add(asm);
+                var appAssemblies = chunks.Count > 0 ? chunks : new List<Assembly> { asm };
+                _cache[m.AppId] = new LoadedAppEntry(
+                    asm, m.Name, m.Publisher, m.Version.ToString(), path, tier3CacheKey, appAssemblies);
+                RegisterAppAssemblies(appAssemblies, m, path);
+                list.AddRange(appAssemblies);
             }
         }
         return list;
@@ -338,7 +332,74 @@ public sealed class DependencyLoader
         return SafeEnumerateFiles(bucketRoot, fileName).FirstOrDefault();
     }
 
-    private (Assembly? Asm, string? Tier3CacheKey) LoadOne(AppManifest m, string appPath, string bucketRoot)
+    /// <summary>
+    /// Give EVERY assembly an app was loaded as the app's identity, in all four per-assembly
+    /// registries the runner keys by <see cref="Assembly"/> (#3054).
+    ///
+    /// WHY THIS IS A LOOP AND NOT ONE CALL
+    ///   Microsoft ships large apps as several R2R DLL chunks — Base Application is five —
+    ///   and <see cref="LoadOne"/> loads all of them. Until this existed only the FIRST chunk
+    ///   was registered, so every AL object that happened to be compiled into chunks 2..n had
+    ///   no module identity at all:
+    ///
+    ///     * <c>NavApp.GetCallerModuleInfo</c> walks the managed stack and skips frames whose
+    ///       assembly is unregistered, so a call OUT of an unregistered chunk was attributed
+    ///       to whichever registered frame sat below it. Measured on BC 27.3: Base
+    ///       Application's codeunit 3999 "Reten. Pol. Install - BaseApp" lives in a
+    ///       non-primary chunk, so its <c>Reten. Pol. Allowed Tables.AddAllowedTable(405)</c>
+    ///       call reported System Application as the caller, BC's own ModuleOwnsTable check
+    ///       correctly refused ("the table is not owned by module {63CA2FA4-…}"), and
+    ///       codeunit 2 "Company-Initialize" then died on "Table 405 Change Log Entry is not
+    ///       in the list of allowed tables".
+    ///     * <c>InstallTriggerRunner</c> scans the assemblies LoadAll returns, so an Install
+    ///       codeunit in a non-primary chunk never ran. Same measurement: BC 27.3 fired no
+    ///       install trigger for codeunit 3999 at all, while BC 28.1 — where the same
+    ///       codeunit happens to land in the primary chunk — did.
+    ///
+    ///   Which chunk a given object lands in is Microsoft's build layout, so the symptom
+    ///   appeared and disappeared across BC builds with no version ordering to it (27.0,
+    ///   28.0 and 28.1 unaffected; 27.3, 27.5, 28.2, 28.3 and 28.4 affected).
+    /// </summary>
+    private static void RegisterAppAssemblies(IReadOnlyList<Assembly> assemblies, AppManifest m, string appPath)
+    {
+        var version = m.Version.ToString();
+        foreach (var asm in assemblies)
+        {
+            _byName[asm.GetName().Name ?? ""] = asm;
+            // #2683: this assembly is now the CURRENT generation for its simple name.
+            // Without this, BcRuntime.IsStaleBundleAssembly answered false for every
+            // generation of a dependency module — the registry only ever held bundle
+            // assemblies — so the AL type finders (Codeunit/Record/Page…) enumerated the
+            // previous cycle's copy and, per #1901, in practice found it FIRST, because
+            // AppDomain.CurrentDomain.GetAssemblies() tends to return the oldest first.
+            // A --watch edit to a dependency then recompiled and reloaded everything
+            // correctly and still executed the previous cycle's bodies.
+            BcRuntime.RegisterAssemblyGeneration(asm);
+            // Register app metadata so AlCallStackCapture can decorate frames.
+            AlCallStackCapture.RegisterAssemblyInfo(asm, m.Name, m.Publisher, version);
+            // Register the assembly's app package so NavApp.GetResource can serve
+            // this app's packaged resources (.app /resources/ part, or the sibling
+            // source dir for source deps packaged into a synthetic workspace .app).
+            AlRunner.Patches.NavAppResourcePatches.RegisterDependencyAssembly(
+                asm, m.AppId, m.Name, m.Publisher, version, appPath);
+            // Per-assembly module identity: this dep's code sees ITS OWN app info
+            // from NavApp.GetCurrentModuleInfo (real BC's executing-module rule),
+            // not the bundle's.
+            BcRuntime.RegisterModuleInfoForAssembly(asm, m.AppId, m.Name, m.Publisher, version);
+        }
+    }
+
+    /// <summary>Shared empty list for the LoadOne return paths that load a single assembly
+    /// (or none): the caller then falls back to just <c>Asm</c>.</summary>
+    private static readonly IReadOnlyList<Assembly> EmptyAssemblies = Array.Empty<Assembly>();
+
+    /// <summary>
+    /// Load one dependency app. <c>Assemblies</c> is EVERY assembly the app was loaded as and
+    /// is non-empty only for the multi-chunk R2R tier; every other tier produces one assembly
+    /// and returns it empty, which the caller reads as "just <c>Asm</c>" (#3054).
+    /// </summary>
+    private (Assembly? Asm, string? Tier3CacheKey, IReadOnlyList<Assembly> Assemblies) LoadOne(
+        AppManifest m, string appPath, string bucketRoot)
     {
         // Tier 1: precompiled DLL.
         var precompiled = FindPrecompiledSidecar(m, bucketRoot);
@@ -353,7 +414,7 @@ public sealed class DependencyLoader
                 // asm.GetTypes() on this assembly (asm.Location is empty for a byte[]-loaded
                 // assembly, so it couldn't cheaply re-derive this later on its own).
                 AlRunner.Patches.RecordPatches.SeedCompiledReportIdsFromPEBytes(asm, bytes);
-                return (asm, null);
+                return (asm, null, EmptyAssemblies);
             }
             catch (Exception ex)
             {
@@ -395,6 +456,7 @@ public sealed class DependencyLoader
             if (dllPaths.Count > 0)
             {
                 Assembly? primary = null;
+                var chunkAssemblies = new List<Assembly>();
                 int loaded = 0;
                 foreach (var dllPath in dllPaths)
                 {
@@ -409,6 +471,7 @@ public sealed class DependencyLoader
                         var n = asm.GetName().Name ?? "";
                         _byName[n] = asm;
                         primary ??= asm;
+                        chunkAssemblies.Add(asm);
                         loaded++;
                     }
                     catch (Exception ex)
@@ -426,7 +489,10 @@ public sealed class DependencyLoader
                 }
                 if (loaded > 1)
                     Console.Error.WriteLine($"[deps] tier-2 R2R: {m.Name} loaded {loaded} DLL chunk(s)");
-                return (primary, null);
+                // #3054: EVERY chunk, not just `primary`. An app split across several R2R
+                // DLLs is one module; handing back only the first left the rest with no app
+                // identity and out of the Install-trigger scan — see RegisterAppAssemblies.
+                return (primary, null, chunkAssemblies);
             }
         }
 
@@ -448,7 +514,7 @@ public sealed class DependencyLoader
                 Console.Error.WriteLine(
                     $"[deps] DLL-first: {m.Publisher}_{m.Name} v{m.Version} — {codeunitIds.Count} codeunit(s) " +
                     $"served from extracted service-tier DLLs; skipping source compile");
-                return (null, null); // lazy dispatch via ServiceTierDllIndex
+                return (null, null, EmptyAssemblies); // lazy dispatch via ServiceTierDllIndex
             }
         }
 
@@ -459,7 +525,7 @@ public sealed class DependencyLoader
             Console.Error.WriteLine(
                 $"[deps] NOTE: {m.Publisher}_{m.Name} v{m.Version} is symbol-only " +
                 $"(no runtime code in package); relying on service-tier/already-loaded assembly");
-            return (null, null);
+            return (null, null, EmptyAssemblies);
         }
 
         var cacheKey = ComputeSourceDependencyCacheKey(m, appPath);
@@ -507,7 +573,7 @@ public sealed class DependencyLoader
                     replayedEnums = AlEnumMetadataRegistry.LoadSidecar(enumRegistrySidecar);
                 Console.Error.WriteLine(
                     $"[deps] source-cache HIT: {m.Name} v{m.Version} key={cacheKey[..12]} ({cachedBytes.Length} bytes, {replayedReports} report-metadata entries, {replayedEnums} enum-registry entries)");
-                return (Assembly.Load(cachedBytes), cacheKey);
+                return (Assembly.Load(cachedBytes), cacheKey, EmptyAssemblies);
             }
             catch (Exception ex)
             {
@@ -621,7 +687,7 @@ public sealed class DependencyLoader
         {
             Console.Error.WriteLine($"[deps] source-cache write failed for {m.Name}: {ex.Message}");
         }
-        try { return (Assembly.Load(compile.AssemblyBytes!), cacheKey); }
+        try { return (Assembly.Load(compile.AssemblyBytes!), cacheKey, EmptyAssemblies); }
         catch (Exception ex)
         {
             // LOAD-FAIL: the compiled bytes could not be loaded into the ALC.
