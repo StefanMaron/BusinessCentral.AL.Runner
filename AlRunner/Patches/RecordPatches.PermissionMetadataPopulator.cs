@@ -485,11 +485,7 @@ public static partial class RecordPatches
 
     private static void SetEmptyListBackingField(Type declaring, object target, string propertyName)
     {
-        var prop = declaring.GetProperty(propertyName,
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw PermissionMetadataBcShapeGap(
-                $"NCLMetaPermissionSet.{propertyName}",
-                "property not found — BC's permission-set metadata inventory cannot be populated");
+        var prop = RequireBcProperty(declaring, propertyName);
         var element = prop.PropertyType.IsGenericType
             ? prop.PropertyType.GetGenericArguments()[0]
             : typeof(object);
@@ -598,11 +594,7 @@ public static partial class RecordPatches
         // that property rather than from a namespace guess: it does not live where the
         // sibling metadata types do, and hardcoding a namespace turned into a run-aborting
         // "Types shape changed" on the first real run.
-        _tAccessModifier ??= _tMetaPermissionSet.GetProperty("Access",
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.PropertyType
-            ?? throw PermissionMetadataBcShapeGap(
-                "MetaPermissionSet.Access",
-                "property not found — BC's permission-set metadata inventory cannot be populated");
+        _tAccessModifier ??= RequireBcProperty(_tMetaPermissionSet, "Access").PropertyType;
 
         var mps = RequireBcInstance(_tMetaPermissionSet, "MetaPermissionSet");
         SetProperty(mps, "Id", declaration.Id);
@@ -625,11 +617,7 @@ public static partial class RecordPatches
             var mp = RequireBcInstance(_tMetaPermission!, "MetaPermission");
             SetProperty(mp, "Id", p.ObjectId);
             SetProperty(mp, "Value", p.Value);
-            var objectTypeProp = _tMetaPermission.GetProperty("Type",
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                ?? throw PermissionMetadataBcShapeGap(
-                    "MetaPermission.Type",
-                    "property not found — BC's permission-set metadata inventory cannot be populated");
+            var objectTypeProp = RequireBcProperty(_tMetaPermission!, "Type");
             objectTypeProp.SetValue(mp, Enum.ToObject(objectTypeProp.PropertyType, p.ObjectType));
             permissions.Add(mp);
         }
@@ -713,16 +701,58 @@ public static partial class RecordPatches
     // side, exactly like the 56.
 
     /// <summary>
-    /// A property of a BC type this file reads by name. Looks with NonPublic as well as Public
-    /// deliberately: <see cref="SetProperty"/> WRITES these same members with those flags, and
-    /// a read narrower than the write would miss a member the write then finds.
+    /// The single property named <paramref name="propertyName"/> on <paramref name="declaring"/>,
+    /// or null when there is not exactly one — with <paramref name="candidateCount"/> saying which
+    /// of the two ways that happened, so each surface can raise its OWN refusal (#3062).
+    ///
+    /// Enumerating rather than calling <c>Type.GetProperty(name, flags)</c> is the point.
+    /// Measured on .NET 8.0.30, that overload raises
+    /// <see cref="System.Reflection.AmbiguousMatchException"/> in two shapes, and
+    /// <c>NavMethodScope_AssertError</c> absorbs it, so an AL `asserterror` PASSES on a read real
+    /// BC performs fine:
+    ///
+    ///   * a `new`-hidden property whose TYPE changed (int P -> string P): GetProperties returns
+    ///     both, GetProperty throws. A `new`-hidden property of the SAME type does NOT throw —
+    ///     hiding-by-name-and-signature filters the base one — so the trigger is narrower than
+    ///     "a hidden property";
+    ///   * two same-name properties in one type, which is what an added indexer overload is.
+    ///
+    /// <c>Type.GetField</c> has neither shape and returns the most-derived, which is why the
+    /// field lookups in this slice are left alone.
+    ///
+    /// The flags are exactly the ones all nine call sites in the slice already used —
+    /// Instance | Public | NonPublic, no Static — so nothing but the ambiguity outcome changes.
+    /// NonPublic is deliberate: <see cref="SetProperty"/> WRITES these same members with those
+    /// flags, and a read narrower than the write would miss a member the write then finds.
     /// </summary>
+    private static PropertyInfo? FindBcProperty(Type declaring, string propertyName, out int candidateCount)
+    {
+        var candidates = declaring.GetProperties(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .Where(pr => pr.Name == propertyName)
+            .ToArray();
+        candidateCount = candidates.Length;
+        return candidates.Length == 1 ? candidates[0] : null;
+    }
+
+    /// <summary>
+    /// The leading half of a property refusal's detail — "property not found", or the named
+    /// ambiguity. Each surface appends its own "… cannot be populated" tail, so the three
+    /// surfaces keep their own messages while sharing the classification.
+    /// </summary>
+    private static string BcPropertyGapDetail(string propertyName, int candidateCount)
+        => candidateCount == 0
+            ? "property not found"
+            : $"BC declares {candidateCount} properties named {propertyName}, so the runner cannot"
+              + " tell which one it means";
+
+    /// <summary>A property of a BC type this file reads by name.</summary>
     private static PropertyInfo RequireBcProperty(Type declaring, string propertyName)
-        => declaring.GetProperty(propertyName,
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+        => FindBcProperty(declaring, propertyName, out var candidateCount)
            ?? throw PermissionMetadataBcShapeGap(
                $"{declaring.Name}.{propertyName}",
-               "property not found — BC's permission-set metadata inventory cannot be populated");
+               BcPropertyGapDetail(propertyName, candidateCount)
+               + " — BC's permission-set metadata inventory cannot be populated");
 
     /// <summary>
     /// A method of a BC-shape-derived type this file invokes by name (#3062).
@@ -840,11 +870,7 @@ public static partial class RecordPatches
 
     private static void SetProperty(object target, string name, object? value)
     {
-        var prop = target.GetType().GetProperty(name,
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw PermissionMetadataBcShapeGap(
-                $"{target.GetType().Name}.{name}",
-                "property not found — BC's permission-set metadata inventory cannot be populated");
+        var prop = RequireBcProperty(target.GetType(), name);
         prop.SetValue(target, value);
     }
 }

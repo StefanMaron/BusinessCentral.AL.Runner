@@ -193,6 +193,188 @@ public sealed class PermissionMetadataMethodOverloadGuardTests
         Assert.Equal("NavAppGroup.GroupSummaryComparer.Compare", ex.Member);
     }
 
+    // ══ 2b. RequireBcInstance — the MissingMethodException route ════════════════════════
+    //
+    // Activator.CreateInstance(Type) raises MissingMethodException when the parameterless
+    // constructor is gone. Anonymous, and absorbed by the same seam, so `asserterror` PASSES on
+    // an instantiation real BC performs fine. Both directions, like every other helper in this
+    // family.
+
+    [Fact]
+    public void RequireBcInstance_RaisesAShapeGapNamingTheType_WhenTheConstructorIsGone()
+    {
+        var ex = Assert.Throws<BcShapeGapException>(() => Invoke("RequireBcInstance",
+            typeof(NoParameterlessCtor), "MetaPermission"));
+
+        Assert.Equal("Permission metadata (NavAppGroup permission-set inventory)", ex.Surface);
+        Assert.Equal("MetaPermission", ex.Member);
+        Assert.Contains("NoParameterlessCtor has no parameterless constructor", ex.Detail,
+            StringComparison.Ordinal);
+    }
+
+    // THE INVERSION for this route: pre-fix the MissingMethodException was swallowed and the
+    // asserterror passed. The refusal must tear through instead.
+    [Fact]
+    public void AssertError_TearsThrough_InsteadOfSwallowingTheMissingConstructor()
+    {
+        var ex = Assert.Throws<BcShapeGapException>(() => BcRuntime.NavMethodScope_AssertError(
+            null!, () => Invoke("RequireBcInstance", typeof(NoParameterlessCtor), "MetaPermission")));
+
+        Assert.Equal("MetaPermission", ex.Member);
+    }
+
+    // THE INVERSION on the REAL call path, which is what the pre-fix build can be measured
+    // against: InstallFreshPermissionSetLookup over a lookup whose dictionary type lost its
+    // parameterless constructor. Pre-fix that is Activator.CreateInstance raising
+    // MissingMethodException, swallowed, asserterror green.
+    [Fact]
+    public void AssertError_TearsThrough_WhenTheLookupDictionaryLostItsConstructor()
+    {
+        var ex = Assert.Throws<BcShapeGapException>(() => BcRuntime.NavMethodScope_AssertError(
+            null!, () => WithInjectedStatics(
+                typeof(FakeAppGroup).GetField(nameof(FakeAppGroup.NoCtorLookup))!,
+                typeof(FakeSummary),
+                () => Invoke("InstallFreshPermissionSetLookup", new object(), new List<object>()))));
+
+        Assert.Equal("NavAppGroup.permissionSetLookup", ex.Member);
+        Assert.Contains("has no parameterless constructor", ex.Detail, StringComparison.Ordinal);
+    }
+
+    // CONTROL: a type that HAS one is still constructed, so the refusal is about the missing
+    // constructor and not about the helper refusing everything.
+    [Fact]
+    public void RequireBcInstance_StillConstructs_WhenTheParameterlessConstructorIsThere()
+    {
+        var made = Invoke("RequireBcInstance", typeof(PlainAddDictionary<string, object>), "x");
+
+        Assert.IsType<PlainAddDictionary<string, object>>(made);
+    }
+
+    // A NON-PUBLIC constructor is accepted. Activator.CreateInstance(Type) would refuse it, so
+    // this is deliberately wider than what it replaced: BC's own types are frequently internal,
+    // and refusing a constructor that exists would turn a working build into a shape gap.
+    [Fact]
+    public void RequireBcInstance_AcceptsANonPublicConstructor_WhichActivatorWouldHaveRefused()
+    {
+        Assert.Throws<MissingMethodException>(() => Activator.CreateInstance(typeof(NonPublicCtor)));
+
+        Assert.IsType<NonPublicCtor>(Invoke("RequireBcInstance", typeof(NonPublicCtor), "x"));
+    }
+
+    // THE VALUE-TYPE CARVE-OUT, which is load-bearing and had nothing pinning it. A struct
+    // declares NO parameterless constructor, so the reference-type path would refuse one — and
+    // BC declares MetaPermission as a struct with ctors = 0 on every shipped build measured
+    // (27.3.44313.53909, 27.5.46862.48827, 28.1.49838.53910, 28.1.49838.54308, 28.2.50931.54319).
+    // Without this branch the permission-set inventory refuses to populate on all five.
+    [Fact]
+    public void RequireBcInstance_ConstructsAStruct_ThatDeclaresNoParameterlessConstructor()
+    {
+        Assert.Empty(typeof(StructWithNoCtor).GetConstructors(
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic));
+
+        var made = Invoke("RequireBcInstance", typeof(StructWithNoCtor), "MetaPermission");
+
+        Assert.IsType<StructWithNoCtor>(made);
+        Assert.Equal(0, ((StructWithNoCtor)made!).Id);
+    }
+
+    // ══ 2c. Compare's return type — the InvalidCastException route ══════════════════════
+    //
+    // `(int)compare.Invoke(...)` is a BC-shape assumption. A Compare that stopped returning int
+    // raises InvalidCastException inside the seam, so the asserterror passes on a sort real BC
+    // performs fine. Driven through InstallPermissionSetSlot — the real call path — with the
+    // four reflection statics it reads injected for one call.
+
+    [Fact]
+    public void InstallPermissionSetSlot_RaisesAShapeGap_WhenCompareNoLongerReturnsInt()
+    {
+        var ex = Assert.Throws<BcShapeGapException>(() => InstallSlotWithComparer(typeof(StringComparer2)));
+
+        Assert.Equal("NavAppGroup.GroupSummaryComparer.Compare", ex.Member);
+        Assert.Contains("returns String, not the Int32 this sort unboxes", ex.Detail,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AssertError_TearsThrough_InsteadOfSwallowingTheCompareReturnTypeChange()
+    {
+        var ex = Assert.Throws<BcShapeGapException>(() => BcRuntime.NavMethodScope_AssertError(
+            null!, () => InstallSlotWithComparer(typeof(StringComparer2))));
+
+        Assert.Equal("NavAppGroup.GroupSummaryComparer.Compare", ex.Member);
+    }
+
+    // CONTROL: an int-returning Compare gets PAST the guard and fails at the next refusal — the
+    // FrozenSharingArray constructor the fake open generic does not provide. Without this the
+    // arms above could be satisfied by a guard that refused every comparer.
+    [Fact]
+    public void InstallPermissionSetSlot_GetsPastTheGuard_WhenCompareStillReturnsInt()
+    {
+        var ex = Assert.Throws<BcShapeGapException>(() => InstallSlotWithComparer(typeof(IntComparer2)));
+
+        Assert.Equal("FrozenSharingArray<T>(IReadOnlyList<T>, IComparer<T>)", ex.Member);
+    }
+
+    /// <summary>
+    /// TWO summaries, not zero: List.Sort does not call the comparison delegate for a shorter
+    /// list, so an empty one never reaches `(int)compare.Invoke(...)` and the pre-fix build would
+    /// sail past the very cast these arms are about. With two, the pre-fix build raises
+    /// InvalidCastException there — which is the failure the seam swallowed.
+    /// </summary>
+    private static void InstallSlotWithComparer(Type comparerType) => WithStatics(
+        new (string, object?)[]
+        {
+            ("_fSummariesByType",       typeof(FakeGroupWithSlots).GetField(nameof(FakeGroupWithSlots.Slots))),
+            ("_fComparerInstance",      comparerType.GetField("Instance")),
+            ("_tGroupSummaryComparer",  comparerType),
+            ("_tSummary",               typeof(FakeSummary)),
+            ("_tFrozenSharingArrayOpen", typeof(FakeFrozen<>)),
+        },
+        () => Invoke("InstallPermissionSetSlot", new FakeGroupWithSlots(),
+            new List<object> { new FakeSummary(), new FakeSummary() }));
+
+    // ══ 2d. The property route — GetProperty carries it too ═════════════════════════════
+    //
+    // Type.GetProperty(name, flags) throws AmbiguousMatchException for a `new`-hidden property
+    // whose TYPE changed, and for two same-name properties in one type. FindBcProperty
+    // enumerates instead, so the outcome is the property or a named refusal.
+
+    [Fact]
+    public void FindBcProperty_CountsBothDeclarations_WhenAHiddenPropertyChangedItsType()
+    {
+        // The premise, measured rather than assumed: the call this replaced DOES throw here.
+        Assert.Throws<AmbiguousMatchException>(() => typeof(HidesWithADifferentType).GetProperty(
+            "P", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic));
+
+        var ex = Assert.Throws<BcShapeGapException>(
+            () => Invoke("RequireBcProperty", typeof(HidesWithADifferentType), "P"));
+
+        Assert.Equal("HidesWithADifferentType.P", ex.Member);
+        Assert.Contains("BC declares 2 properties named P", ex.Detail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AssertError_TearsThrough_InsteadOfSwallowingTheAmbiguousProperty()
+    {
+        var ex = Assert.Throws<BcShapeGapException>(() => BcRuntime.NavMethodScope_AssertError(
+            null!, () => Invoke("RequireBcProperty", typeof(HidesWithADifferentType), "P")));
+
+        Assert.Equal("HidesWithADifferentType.P", ex.Member);
+    }
+
+    // CONTROL: a `new`-hidden property of the SAME type is NOT ambiguous — reflection's
+    // hiding-by-name-and-signature filter drops the base one — so it still resolves, to the
+    // derived declaration. This is why the guard's comment says the trigger is narrower than
+    // "a hidden property".
+    [Fact]
+    public void FindBcProperty_StillResolves_WhenTheHiddenPropertyKeptItsType()
+    {
+        var prop = (PropertyInfo)Invoke("RequireBcProperty", typeof(HidesWithTheSameType), "P")!;
+
+        Assert.Equal(typeof(HidesWithTheSameType), prop.DeclaringType);
+        Assert.Equal(2, prop.GetValue(new HidesWithTheSameType()));
+    }
+
     // ══ 3. RequireBcLookupKeyValueTypes ═════════════════════════════════════════════════
 
     [Fact]
@@ -216,13 +398,30 @@ public sealed class PermissionMetadataMethodOverloadGuardTests
 
     // ══ 4. The shape, not just the one line the issue named ═════════════════════════════
     //
-    // The two sibling files in the same slice already pin every signature they look up
-    // (NavGuid.Create(Guid), AggregatePermissionSetDataProvider.GetSystemPermissionSets(NavValue,
-    // NavCode), …) — the populator's helper was the outlier. This keeps the next edit from
-    // reintroducing a name-only GetMethod anywhere in the slice.
+    // TWO member kinds, and the guard covers BOTH — the first version covered only GetMethod,
+    // which left the file able to drift straight back into the defect through GetProperty.
+    // Measured on .NET 8.0.30 (the two shapes are NOT the same, and the difference matters):
+    //
+    //   Type.GetMethod(name, flags)    throws AmbiguousMatchException for an overload added in
+    //                                  the SAME type, and for a `new`-hidden method whose
+    //                                  signature changed.
+    //   Type.GetProperty(name, flags)  throws for a `new`-hidden property whose TYPE changed
+    //                                  (int P -> string P) and for two same-name properties in
+    //                                  one type (an added indexer). It does NOT throw for a
+    //                                  `new`-hidden property of the SAME type — reflection's
+    //                                  hiding-by-name-and-signature filter drops the base one.
+    //   Type.GetField(name, flags)     throws in NONE of those shapes; it returns the
+    //                                  most-derived field. Field lookups are therefore not
+    //                                  offenders and are deliberately not listed here.
+    //
+    // A method lookup clears the guard by pinning `types:`; a property lookup clears it by going
+    // through FindBcProperty, which enumerates and so cannot throw. The two sibling files in the
+    // slice already pinned every method signature (NavGuid.Create(Guid),
+    // GetSystemPermissionSets(NavValue, NavCode), …) — the populator's helper was the outlier —
+    // and their four property lookups were converted with it.
 
     [Fact]
-    public void NoMethodLookupInTheSlice_ResolvesByNameWithoutASignature()
+    public void NoMemberLookupInTheSlice_ResolvesByNameWithoutASignature()
     {
         var offenders = new List<string>();
 
@@ -237,14 +436,21 @@ public sealed class PermissionMetadataMethodOverloadGuardTests
             foreach (var statement in code.Split(';'))
             {
                 var flat = string.Join(" ", statement.Split('\n').Select(l => l.Trim()));
-                if (!flat.Contains(".GetMethod(", StringComparison.Ordinal)) continue;
-                if (flat.Contains("types:", StringComparison.Ordinal)) continue;
-                offenders.Add($"{file}: {flat.Trim()}");
+
+                // A method lookup is acceptable only with an explicit signature.
+                if (flat.Contains(".GetMethod(", StringComparison.Ordinal)
+                    && !flat.Contains("types:", StringComparison.Ordinal))
+                    offenders.Add($"{file}: {flat.Trim()}");
+
+                // A property lookup has no signature to pin — the plural enumeration is the
+                // only acceptable form, and it is spelled GetProperties, which does not match.
+                if (flat.Contains(".GetProperty(", StringComparison.Ordinal))
+                    offenders.Add($"{file}: {flat.Trim()}");
             }
         }
 
         Assert.True(offenders.Count == 0,
-            "these method lookups resolve by name alone, so an overload Microsoft ships raises "
+            "these member lookups resolve by name alone, so a declaration Microsoft adds raises "
             + "AmbiguousMatchException into NavMethodScope_AssertError instead of naming the gap "
             + $"(#3062):{Environment.NewLine}" + string.Join(Environment.NewLine, offenders));
     }
@@ -283,6 +489,26 @@ public sealed class PermissionMetadataMethodOverloadGuardTests
         }
     }
 
+    /// <summary>
+    /// <see cref="WithInjectedStatics"/> generalised to any set of RecordPatches statics, for the
+    /// call paths that read more than two. Same contract: overwrite for exactly one call, restore
+    /// every one of them in a finally, and make nothing in production settable for the test.
+    /// </summary>
+    private static void WithStatics((string Name, object? Value)[] statics, Action body)
+    {
+        var fields = statics.Select(x => (Field: Static(x.Name), x.Value)).ToArray();
+        var saved = fields.Select(f => f.Field.GetValue(null)).ToArray();
+        try
+        {
+            foreach (var (field, value) in fields) field.SetValue(null, value);
+            body();
+        }
+        finally
+        {
+            for (var i = 0; i < fields.Length; i++) fields[i].Field.SetValue(null, saved[i]);
+        }
+    }
+
     private static FieldInfo Static(string name)
         => typeof(RecordPatches).GetField(name, Priv)
            ?? throw new InvalidOperationException($"test setup: RecordPatches.{name} not found");
@@ -308,6 +534,14 @@ public sealed class PermissionMetadataMethodOverloadGuardTests
         public void Add(TKey key, TValue value, bool overwrite) { }
     }
 
+    /// <summary>A lookup dictionary whose parameterless constructor Microsoft removed.</summary>
+    public sealed class NoCtorDictionary<TKey, TValue> where TKey : notnull
+    {
+        public NoCtorDictionary(int required) => Required = required;
+        public int Required { get; }
+        public void Add(TKey key, TValue value) { }
+    }
+
     /// <summary>The shape BC declares today: exactly one Add.</summary>
     public sealed class PlainAddDictionary<TKey, TValue> where TKey : notnull
     {
@@ -315,10 +549,62 @@ public sealed class PermissionMetadataMethodOverloadGuardTests
         internal void Hidden() { }
     }
 
-    private sealed class FakeSummary
+    public sealed class FakeSummary
     {
         public string ObjectName => "SUPER";
     }
+
+    /// <summary>A BC type whose parameterless constructor Microsoft removed.</summary>
+    public sealed class NoParameterlessCtor
+    {
+        public NoParameterlessCtor(int required) => Required = required;
+        public int Required { get; }
+    }
+
+    /// <summary>A BC type whose only constructor is non-public — common for Ncl internals.</summary>
+    public sealed class NonPublicCtor
+    {
+        internal NonPublicCtor() { }
+    }
+
+    /// <summary>Stands in for MetaPermission, which BC declares as a struct.</summary>
+    public struct StructWithNoCtor
+    {
+        public int Id;
+    }
+
+    private sealed class FakeGroupWithSlots
+    {
+        // Longer than ObjectType.PermissionSet's ordinal (20), so the slot is in range.
+        public object?[] Slots = new object?[64];
+    }
+
+    public sealed class StringComparer2
+    {
+        public static readonly StringComparer2 Instance = new();
+        public string Compare(FakeSummary x, FakeSummary y) => "not an int";
+    }
+
+    public sealed class IntComparer2
+    {
+        public static readonly IntComparer2 Instance = new();
+        public int Compare(FakeSummary x, FakeSummary y) => 0;
+    }
+
+    /// <summary>An open generic standing in for FrozenSharingArray&lt;T&gt;, with no two-argument
+    /// constructor — the refusal the int-returning control arm is expected to reach.</summary>
+    public sealed class FakeFrozen<T>
+    {
+    }
+
+    private class BaseWithP { public int P => 1; }
+
+    /// <summary>The shape GetProperty(name, flags) cannot resolve: both declarations are
+    /// returned by GetProperties because the types differ.</summary>
+    private sealed class HidesWithADifferentType : BaseWithP { public new string P => "two"; }
+
+    /// <summary>The shape it CAN resolve: same type, so the base one is filtered out.</summary>
+    private sealed class HidesWithTheSameType : BaseWithP { public new int P => 2; }
 
     private sealed class FakeLazy<T>
     {
@@ -329,5 +615,6 @@ public sealed class PermissionMetadataMethodOverloadGuardTests
     {
         public FakeLazy<OverloadedAddDictionary<string, object>>? OverloadedLookup;
         public FakeLazy<PlainAddDictionary<string, object>>? PlainLookup;
+        public FakeLazy<NoCtorDictionary<string, object>>? NoCtorLookup;
     }
 }
