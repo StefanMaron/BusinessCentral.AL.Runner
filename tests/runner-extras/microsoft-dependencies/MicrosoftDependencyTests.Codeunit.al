@@ -529,12 +529,20 @@ codeunit 61001 "Microsoft Dependency Tests"
     //   err = "Unhandled UI: Message Journal Template Name must have a value in Payment
     //          Registration Setup: User ID=ADMIN. It cannot be zero or empty."
     //   Rec.Get(UserId()) afterwards = No
-    // So on BC the row does NOT survive: the failing close takes the insert with it. The
-    // runner keeps it, and wraps the TestField as NavTestFieldException where BC wraps it in
-    // its own "Unhandled UI: Message" envelope. Both of those are a DIFFERENT defect from the
-    // missing trigger — tracked in #3057, and deliberately not asserted here — so this test
-    // pins only the part the trigger decides: that page 982's OnQueryClosePage runs on the
-    // handler's confirming close and reports the unfilled setup.
+    //
+    // #3057 read that as TWO runner defects. Only one of them was real. The envelope was: the
+    // runner surfaced the raw NavTestFieldException where BC's client-side close handler shows
+    // an error from OnQueryClosePage as a MESSAGE, so a test with no [MessageHandler] gets BC's
+    // unhandled-UI refusal. That is fixed, and the general rule is pinned upstream in corpus
+    // codeunit "QCE Query Close Error Tests", where a real service tier adjudicates it.
+    //
+    // The rollback half was NOT a runner defect, and this test is where the wrong reading came
+    // from. The DeleteAll() below used to be uncommitted, so the asserterror rolled it back
+    // along with everything else since the last Commit() — resurrecting the row the PREVIOUS
+    // [Test] in this codeunit had left behind (TestIsolation = Codeunit does not reset table
+    // state between methods). The row that "survived" was never the one page 982 had just
+    // inserted. Committing the cleanup removes that route entirely, and the runner then agrees
+    // with the service tier: no row.
     [Test]
     [HandlerFunctions('PaymentRegistrationSetupModalHandler')]
     procedure PrecompiledPage_OnOpenPage_ModalSetupPageValidatesOnTheConfirmingClose()
@@ -542,13 +550,18 @@ codeunit 61001 "Microsoft Dependency Tests"
         PaymentRegistrationSetup: Record "Payment Registration Setup";
     begin
         PaymentRegistrationSetup.DeleteAll();
+        // Load-bearing, not tidiness — see the note above. Without it this test can pass on a
+        // row an earlier [Test] left behind.
+        Commit();
 
         asserterror OpenPaymentRegistrationPage();
 
         Assert.Contains(GetLastErrorText(), 'Journal Template Name must have a value',
             'Page 982''s OnQueryClosePage must run on the handler''s confirming close, so its ValidateMandatoryFields(true) reports the unfilled setup.');
-        Assert.IsTrue(PaymentRegistrationSetup.Get(UserId()),
-            'Page 982''s OnOpenPage must still have inserted the current user''s row before the close failed. (Real BC then rolls that insert back and the runner does not — #3057.)');
+        Assert.Contains(GetLastErrorText(), 'Unhandled UI: Message',
+            'An error raised in a precompiled page''s OnQueryClosePage must arrive in BC''s message envelope, not as the raw AL exception (#3057).');
+        Assert.IsFalse(PaymentRegistrationSetup.Get(UserId()),
+            'The row page 982''s OnOpenPage inserted was never committed, so the failed close must take it with it — nothing may be left for the next test to find.');
     end;
 
     local procedure OpenPaymentRegistrationPage()
