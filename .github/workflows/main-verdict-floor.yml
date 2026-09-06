@@ -19,40 +19,73 @@ name: Main verdict floor
 #   merge interval   median 359 s, mean 673 s -> ~130 pushes/day
 #   full matrix run  mean 22.8 min wall, max 26.4 min, 74.6 job-minutes over 12 jobs
 #
-# A 23-minute run against a 6-minute median merge interval essentially never survives.
-# Modelling arrivals as Poisson: P(no merge in 22.8 min) = exp(-1368/673) = 13%, against an
-# observed 16/100. The mechanism is `cancel-in-progress: true` on a group keyed by
-# `github.ref`, which on `main` is the constant `refs/heads/main`.
+# A 23-minute run against a 6-minute median merge interval essentially never survives. The
+# mechanism is `cancel-in-progress: true` on a group keyed by `github.ref`, which on `main` is
+# the constant `refs/heads/main`, so every merge cancels the run the previous merge started.
+#
+# Modelling arrivals as Poisson gives P(no merge in 22.8 min) = exp(-1368/673) = 13% against an
+# observed 16/100, but that is a consistency check on ONE sample rather than a second
+# measurement: the arrival rate and the survival rate come from the same 100 timestamps, and
+# the service time is measured only over the 16 that survived. Nothing was fitted after the
+# fact, so it is not circular — it just is not independent confirmation.
+#
+# WHAT A CANCELLED RUN ACTUALLY COSTS
+#
+# Less than its wall time suggests, and this is the number the rest of the reasoning rests on.
+# Job-level timings (summing completed_at - started_at per job) over a 20-run sample of the 83:
+# mean 27.7 job-minutes, median 14.3, against 74.6 for a full run. So a cancelled run costs
+# 37% of a full one and cancelling saves about 63%.
+#
+# The reason is that the matrix legs are not CREATED until `resolve-versions` finishes (~0.8
+# min plus its own queue), so a run cancelled early burns almost nothing: five of the twenty
+# had zero jobs ever started, and estimating across all 83 walls, 49% died under six minutes.
+# Note that the low job queue delay (median 3 s, p99 177 s over 179 jobs in the busiest hour)
+# does NOT contradict this — it measures job-creation-to-job-start, not run-creation-to-leg-
+# start, so it says nothing about a run's first minute.
+#
+# This means test-matrix.yml's existing header was roughly right about the cost it was
+# addressing. This workflow does not overturn that decision; it covers what that decision
+# leaves uncovered.
 #
 # WHY THE FIX IS NOT "STOP CANCELLING"
 #
-# Two measurements rule that out, and both are counter-intuitive enough to be worth stating.
-#
-# 1. `cancel-in-progress: false` on the EXISTING shared per-ref group would be much worse
-#    than the problem. Runs in one concurrency group do not run in parallel when cancellation
-#    is off — they QUEUE. Utilisation is rho = lambda * W = (130/day) * 22.8 min = 2.05 > 1,
-#    an unstable queue that grows without bound. That is precisely the state test-matrix.yml's
-#    header records from 2026-09-03: six `main` runs queued behind hours of backlog, about to
-#    report on commits already six merges stale.
-#
-# 2. Giving each push its OWN group avoids the queue, but the tail is unaffordable. Replaying
+# 1. Giving each push its OWN group avoids any queue, but the tail is unaffordable. Replaying
 #    the observed arrival times against a 22.8-minute run gives a peak of 11 concurrent `main`
 #    runs — 72 concurrent jobs from `main` alone. GitHub Actions concurrency is scoped per
 #    ACCOUNT, so those slots come out of this repo's pull-request CI and the corpus
 #    repository's, i.e. out of the gate that actually blocks merges.
 #
-# Worth recording because it is the fact that inverts the existing reasoning: cancelling
-# `main` reclaims much less than it looks like it does. The legs start within seconds of each
-# other (job queue delay median 3 s, p99 177 s, max 206 s over 179 jobs in the busiest hour),
-# so a run cancelled at the median 6.5 min has already burned ~53 of its 74.6 job-minutes.
-# Across the 83 cancelled runs, cancelling saves 40% of the cost and 100% of the answer.
+# 2. `cancel-in-progress: false` on the EXISTING shared per-ref group is the simplest
+#    alternative, and it is NOT ruled out here — it is unmeasured. The arithmetic says
+#    rho = lambda * W = (130/day) * 22.8 min = 2.05, but that only implies an unbounded queue
+#    if same-group runs actually queue without bound, and nothing here establishes that.
+#
+#    The evidence that exists points the other way. `main` ran in exactly that configuration
+#    until c93598f8 landed 2026-09-03T21:31Z. Over the 37.3 h before it: 84 runs, 56 success /
+#    3 failure / 25 cancelled = 70% completion, with wall times clearly inflated by queueing
+#    (max 77.9 min against 26.4 min today). That is queueing, but 70% sustained over 37 hours
+#    is not an unbounded queue — it is consistent with GitHub holding at most one pending run
+#    per group and cancelling the rest. It also ran at 2.25 runs/h against today's 5.40, so it
+#    cannot tell us what happens at today's rate.
+#
+#    WHAT WOULD SETTLE IT, in ten minutes and one runner: on a scratch branch, a workflow with
+#    a fixed concurrency group, `cancel-in-progress: false` and a 5-minute sleep job. Push
+#    twice about a minute apart, then a third time. Observe whether run 2 goes pending, and
+#    whether run 3 cancels run 2 or queues behind it. Until someone does that, treat the
+#    per-push-group cost above as the measured comparison and this row as open.
 #
 # THE COST OF THIS WORKFLOW, AGAINST THE ALTERNATIVE
 #
-#   never cancel `main`   time-weighted mean +2.2 jobs, p95 21, PEAK 72
-#   this floor            time-weighted mean +2.5 jobs, p95 12, PEAK 12  (bounded by design)
+# Time-weighted mean concurrent jobs attributable to `main`, over the same 18.5 h window:
 #
-# Within noise on the average, 6x apart on the tail. The floor's peak is bounded by
+#   today (cancelling)    3.14 jobs
+#   never cancel `main`   6.72 jobs   (+3.57)   PEAK 72
+#   this floor            +2.09 jobs            PEAK 12  (bounded by design)
+#
+# So the floor is not merely comparable on the average — it is about 1.7x cheaper than never
+# cancelling, as well as 6x smaller on the tail. (An earlier draft of this comment put those
+# two within noise of each other; that came from treating today's baseline as 71%-loaded when
+# it is 37%-loaded, and correcting it favours this design.) The floor's peak is bounded by
 # construction: one run at a time, and a cadence longer than the longest observed run, so a
 # floor run can never be overtaken by its own successor.
 #

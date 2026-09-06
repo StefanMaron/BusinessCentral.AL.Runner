@@ -8,32 +8,39 @@
 //   merge interval        median 359 s, mean 673 s  -> ~130 pushes/day
 //   full matrix run       mean 22.8 min wall, max 26.4 min, 74.6 job-minutes over 12 jobs
 //
-// A 23-minute run against a 6-minute median merge interval essentially never survives:
-// modelling arrivals as Poisson gives P(no merge in 22.8 min) = exp(-1368/673) = 13%, and
-// the observed completion rate is 16/100. The mechanism is `cancel-in-progress: true` on a
-// concurrency group keyed by `github.ref`, which on `main` is the constant
-// `refs/heads/main`, so every merge cancels the run the previous merge started.
+// A 23-minute run against a 6-minute median merge interval essentially never survives. The
+// mechanism is `cancel-in-progress: true` on a concurrency group keyed by `github.ref`, which
+// on `main` is the constant `refs/heads/main`, so every merge cancels the run the previous
+// merge started.
 //
-// THE TWO MEASUREMENTS THAT DECIDE THE SHAPE OF THE FIX
+// WHAT A CANCELLED RUN COSTS, AND WHY IT IS LESS THAN IT LOOKS
 //
-// 1. Cancelling `main` reclaims much less than it appears to. The eight legs start within
-//    seconds of each other (job queue delay: median 3 s, p99 177 s, max 206 s, measured over
-//    179 jobs in the busiest hour), so a run cancelled at the median 6.5 min has already
-//    burned ~53 of its 74.6 job-minutes. Averaged over the 83 cancelled runs, cancelling
-//    saves 40% of the cost and 100% of the answer.
+// Job-level timings over a 20-run sample of the 83 cancelled runs: mean 27.7 job-minutes,
+// median 14.3, against 74.6 for a full run — so a cancelled run costs 37% of a full one and
+// cancelling saves about 63%. The matrix legs are not CREATED until `resolve-versions`
+// finishes, so a run cancelled early burns almost nothing; five of the twenty had zero jobs
+// ever started, and across all 83 walls 49% died under six minutes. (The low job queue delay
+// — median 3 s over 179 jobs in the busiest hour — does not bear on this: it measures
+// job-creation-to-job-start, not run-creation-to-leg-start.)
 //
-// 2. `cancel-in-progress: false` on the existing shared per-ref group would be far worse
-//    than the problem. Runs in one group do not run concurrently when cancellation is off —
-//    they QUEUE. Utilisation is rho = lambda * W = (130/day) * 22.8 min = 2.05 > 1, an
-//    unstable queue that grows without bound. That is exactly the state test-matrix.yml's
-//    header records from 2026-09-03: six `main` runs queued behind hours of backlog,
-//    reporting on commits already six merges stale.
+// So test-matrix.yml's existing header was roughly right about the cost it was addressing.
+// This workflow does not overturn that decision; it covers what that decision leaves
+// uncovered.
 //
-// So the fix cannot be "stop cancelling". Giving each push its own group would avoid the
-// queue, but the tail is unaffordable: replaying the observed arrival times against a
-// 22.8-minute run gives a peak of 11 concurrent `main` runs — 72 concurrent jobs from
-// `main` alone, on an Actions concurrency pool that is scoped per ACCOUNT and shared with
-// this repo's pull-request CI and with the corpus repository's.
+// WHY THE FIX IS NOT "STOP CANCELLING"
+//
+// Giving each push its own group avoids any queue, but the tail is unaffordable: replaying
+// the observed arrival times against a 22.8-minute run gives a peak of 11 concurrent `main`
+// runs — 72 concurrent jobs from `main` alone, on an Actions concurrency pool scoped per
+// ACCOUNT and shared with this repo's pull-request CI and the corpus repository's.
+//
+// `cancel-in-progress: false` on the existing shared group is the simplest alternative and is
+// NOT ruled out — it is unmeasured. rho = lambda * W = (130/day) * 22.8 min = 2.05, but that
+// implies an unbounded queue only if same-group runs queue without bound, which nothing here
+// establishes. `main` ran in that configuration until c93598f8 (2026-09-03T21:31Z): over the
+// 37.3 h before, 84 runs at 70% completion with wall times inflated by queueing (max 77.9 min
+// against 26.4 today) — queueing, but not unbounded, and at 2.25 runs/h against today's 5.40.
+// The workflow header names the ten-minute experiment that would settle it.
 //
 // WHAT THIS WORKFLOW DOES INSTEAD
 //
@@ -41,15 +48,16 @@
 // push-triggered matrix keeps cancelling — that is correct and stays — and a scheduled run
 // re-establishes the verdict on `main` HEAD whenever cancellation destroyed it.
 //
-// The cost comparison is the argument for it, and the two options are within noise of each
-// other on the average while differing by 6x on the tail:
+// Time-weighted mean concurrent jobs attributable to `main`, over the same 18.5 h window:
 //
-//   never cancel `main`   time-weighted mean +2.2 jobs, p95 21, PEAK 72
-//   scheduled floor       time-weighted mean +2.5 jobs, p95 12, PEAK 12   (bounded by design)
+//   today (cancelling)    3.14 jobs
+//   never cancel `main`   6.72 jobs   (+3.57)   PEAK 72
+//   scheduled floor       +2.09 jobs            PEAK 12   (bounded by design)
 //
-// The floor's peak is bounded by construction: one run at a time (its own concurrency group
-// with cancellation off) and a cadence longer than the longest observed run, so a floor run
-// can never overlap its own successor.
+// The floor is about 1.7x cheaper than never cancelling as well as 6x smaller on the tail.
+// Its peak is bounded by construction: one run at a time (its own concurrency group with
+// cancellation off) and a cadence longer than the longest observed run, so a floor run can
+// never overlap its own successor.
 using System.Text.RegularExpressions;
 using Xunit;
 
@@ -173,9 +181,17 @@ public sealed class MainVerdictFloorWorkflowTests
         // gating path's (`bc-tests / BC <ver> (required)`) on the same head SHA — and unlike
         // bc-leg-rerun.yml, the floor runs on `main`, which is exactly where the gating path
         // also reports. `gh pr checks` could then not tell which run a verdict came from.
-        var jobs = WorkflowParity.SplitJobs(CodeOnly(Read(Floor)));
+        var code = CodeOnly(Read(Floor));
+        var jobs = WorkflowParity.SplitJobs(code);
 
         Assert.DoesNotContain("bc-tests", jobs.Keys);
+
+        // The id is only half of it. A `name:` overrides the id in the context, so keeping the
+        // id `floor-matrix` while adding `name: bc-tests` would collide exactly as before and
+        // pass an id-only check. There is no `name:` on the calling job today, which is what
+        // makes the id load-bearing — so assert both, or the guard has a hole the size of the
+        // thing it guards.
+        Assert.DoesNotMatch(new Regex(@"name:\s*[""']?bc-tests[""']?\s*$", RegexOptions.Multiline), code);
     }
 
     [Fact]
