@@ -43,13 +43,35 @@
 //   The real table spans years 1 through 9999 — 3.6 million Date rows alone — so it cannot be
 //   materialised whole. We materialise a window of whole years (default 1900-01-01 ..
 //   2099-12-31, about 87,000 rows across all five period types) and EXTEND that window on
-//   demand whenever an AL filter names a closed bound outside it. EnsureDateWindowCoversRequest
-//   does that, from both request paths a Record Date read can take: the InnerFindAsync guard in
-//   RecordPatches.FieldFindIntercept.cs (FindFirst / FindSet / FindLast / Get) and a prepend on
-//   DataAccess.CountAsync (Count / IsEmpty), which carry different request types. Past
-//   AL_RUNNER_DATE_WINDOW_MAX_ROWS the extension throws RunnerOutOfScopeException naming the
-//   requested bound, the window and the cap, rather than answering a larger request with fewer
-//   rows.
+//   demand whenever an AL filter names a closed bound outside it, on all FOUR request paths a
+//   Record Date read can take. They carry four different request types, all deriving from
+//   DataCacheRequest, and each needs its own guard:
+//
+//     AL                                  DataAccess method                  request type
+//     ---------------------------------------------------------------------------------------
+//     Find / FindSet / FindFirst / FindLast  InnerFindAsync                  FindCacheRequest
+//     Count                                  CountAsync                      CountCacheRequest
+//     IsEmpty                                ExistsAsync                     ExistsCacheRequest
+//     Get("Period Type", "Period Start")     InternalTryGetByPrimaryKeyAsync PrimaryKeyCacheRequest
+//
+//   This header said "both request paths ... DataAccess.CountAsync (Count / IsEmpty)" until
+//   #3006. IsEmpty() has never reached CountAsync: RecordImplementation.IsEmptyAsync calls its
+//   own ExistsAsync, which builds an ExistsCacheRequest (decompiled from Ncl.dll 28.1). Because
+//   the comment asserted otherwise, nobody looked, and a closed range outside the window
+//   answered IsEmpty() = true with Count() = 7 on the very next line -- a wrong answer, since a
+//   service tier computes this table across years 1..9999 and answers 7 both ways.
+//
+//   The exists path is shared with more than IsEmpty(): DataAccess.ExistsAsync is also what an
+//   `Exist` FlowField (FlowFieldsHelper), a NavQuery and RecordImplementation.ValidateRelation
+//   reach, so all three now get the widened window too.
+//
+//   The find guard lives in RecordPatches.FieldFindIntercept.cs; the other three are prepends
+//   registered in NclCecilRewrite.Runtime.cs. All four funnel into
+//   EnsureDateWindowCoversRequest (or, for the keyed Get, into PopulateDateSpan from the record
+//   id), so one invariant is maintained in one place rather than four copies drifting apart.
+//   Past AL_RUNNER_DATE_WINDOW_MAX_ROWS the extension throws RunnerOutOfScopeException naming
+//   the requested bound, the window and the cap, rather than answering a larger request with
+//   fewer rows.
 //
 //   The one thing the window does NOT cover is an OPEN bound: `SetFilter("Period Start",
 //   '%1..', D)` asks BC for everything up to 9999-12-31, and we answer it from the window.
