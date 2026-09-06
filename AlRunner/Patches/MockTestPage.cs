@@ -2023,6 +2023,12 @@ internal static class TestPageOptionValue
 /// nothing at all — this is a client/page-layer check, not a table-trigger one, so it must
 /// stay out of NavRecord.ALValidateAsync (which Rec.Validate also calls).
 ///
+/// <para>Since #2900 this raises only the INNER half of that message. The
+/// <c>Validation error for Field: &lt;name&gt;,  Message = '…'</c> wrapper is added by BC's own
+/// <c>NavTestField.CheckError</c> from the refusal <see cref="TestFieldValidationErrors"/>
+/// records, so the AL-visible string is the same one #2490 measured — composed by BC rather
+/// than assembled here.</para>
+///
 /// <para>Only numeric field types are checked — MinValue/MaxValue is meaningless on Text/Code/
 /// Boolean/etc., and AL does not let those types declare it.</para>
 ///
@@ -2056,11 +2062,11 @@ internal static class TestPageMinMaxValue
 
         if (!string.IsNullOrEmpty(minText) && decimal.TryParse(minText, NumberStyles.Any, CultureInfo.InvariantCulture, out var min)
             && value < min)
-            throw MakeError(caption, isInteger, "greater than or equal to", minText!, value);
+            throw MakeError(isInteger, "greater than or equal to", minText!, value);
 
         if (!string.IsNullOrEmpty(maxText) && decimal.TryParse(maxText, NumberStyles.Any, CultureInfo.InvariantCulture, out var max)
             && value > max)
-            throw MakeError(caption, isInteger, "less than or equal to", maxText!, value);
+            throw MakeError(isInteger, "less than or equal to", maxText!, value);
     }
 
     // The offending VALUE renders with the field's decimal places (2 by default for a Decimal,
@@ -2072,11 +2078,15 @@ internal static class TestPageMinMaxValue
         => isInteger ? d.ToString("0", CultureInfo.InvariantCulture)
                      : d.ToString("0.00", CultureInfo.InvariantCulture);
 
-    private static System.Exception MakeError(string caption, bool isInteger, string comparison, string boundText, decimal value)
+    private static System.Exception MakeError(bool isInteger, string comparison, string boundText, decimal value)
     {
-        var msg = $"Validation error for Field: {caption},  Message = 'The value must be {comparison} "
+        // The BARE message only. BC's own NavTestField.CheckError wraps whatever an ITestField
+        // records into "Validation error for Field: {Name},  Message = '{recorded}'" using
+        // Lang.TestValidationException, so building that wrapper here too would double it
+        // (#2900). The AL-visible string is unchanged; it is composed one layer out now.
+        var msg = $"The value must be {comparison} "
             + $"{boundText}. Value: {FormatValue(value, isInteger)}. "
-            + "(Select Refresh to discard errors)'";
+            + "(Select Refresh to discard errors)";
 
         var t = System.Type.GetType(
             "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException, Microsoft.Dynamics.Nav.Types");
@@ -2195,15 +2205,20 @@ internal static class TestPageBooleanValue
     }
 
     /// <summary>
-    /// BC's own refusal for a value a control will not take, verbatim in shape:
-    /// <c>Validation error for Field: {caption},  Message = 'Your entry of '{value}' is not an
-    /// acceptable value for '{caption}'. (Select Refresh to discard errors)'</c> — including
-    /// the double space after the comma, which is BC's, not a typo.
+    /// BC's own refusal for a value a control will not take:
+    /// <c>Your entry of '{value}' is not an acceptable value for '{caption}'. (Select Refresh
+    /// to discard errors)</c>.
+    /// <para>The <c>Validation error for Field: {name},  Message = '…'</c> wrapper around it —
+    /// including the double space after the comma, which is BC's and not a typo — is added by
+    /// BC's own <c>NavTestField.CheckError</c> once <see cref="TestFieldValidationErrors"/> has
+    /// recorded this message, so it is deliberately absent here (#2900).</para>
     /// </summary>
     private static System.Exception MakeNotAcceptableError(string value, string caption)
     {
-        var msg = $"Validation error for Field: {caption},  Message = 'Your entry of '{value}' "
-            + $"is not an acceptable value for '{caption}'. (Select Refresh to discard errors)'";
+        // The BARE message only — see TestPageMinMaxValue.MakeError for why the
+        // "Validation error for Field: ..." wrapper is BC's to add and no longer ours (#2900).
+        var msg = $"Your entry of '{value}' "
+            + $"is not an acceptable value for '{caption}'. (Select Refresh to discard errors)";
 
         var t = System.Type.GetType(
             "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException, Microsoft.Dynamics.Nav.Types");
@@ -2277,6 +2292,13 @@ internal sealed class LiveNavTestField : ITestField
         _onEdited = onEdited;
     }
 
+    // The refusals this control has recorded, read back by ValidationErrorCount /
+    // GetValidationError below. See TestFieldValidationErrors for BC's own contract: the
+    // ITestField setter RECORDS a refusal, it does not throw it — NavTestField.CheckError
+    // (BC's own precompiled code, wrapping every SetValue) is what raises it afterwards, and
+    // it can only do that if the ledger survives the write (#2900).
+    private readonly TestFieldValidationErrors _validationErrors = new();
+
     public string Value
     {
         // An option field answers with its MEMBER NAME, not the ordinal it stores. Returning the
@@ -2290,65 +2312,67 @@ internal sealed class LiveNavTestField : ITestField
                ?? TestPageBooleanValue.Format(_record.GetFieldValue(_fieldNo) as NavValue)
                ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
                ?? string.Empty;
-        set
+        set => _validationErrors.RunRecordingRefusal(() => Write(value));
+    }
+
+    private void Write(string value)
+    {
+        // Issue #1870 — the Rec-bound half of #1837 that #1869 (the page-variable half)
+        // left open. FieldType (sourced from the source table field's own declared type,
+        // see TryGetMetaFieldType) answers Boolean for a `field(Flag; Rec.Flag)` control
+        // over a `Boolean` table field; falling through to ALCompiler.ToNavValue(value)
+        // there always produced a NavText, which NavTestField.ALSetValue's own Boolean
+        // ALValidateAsync then rejected with "The value 'True' can't be evaluated into
+        // type Boolean" — the same shape of bug TestPageBooleanValue already fixed for
+        // PageVariableTestField.
+        var navValue = CurrentOption() is { } option
+            ? TestPageOptionValue.Resolve(option, value, OptionCaptions(),
+                $"TestPage SetValue (field {_fieldNo})")
+            : FieldType == NavType.Boolean
+                ? TestPageBooleanValue.Resolve(value, Caption)
+                : ALCompiler.ToNavValue(value);
+
+        // MinValue/MaxValue (#2495): measured against real BC (28.1/28.4), a bounded field's
+        // MinValue/MaxValue is enforced on a TestPage control WRITE, but NOT on Rec.Validate
+        // or a plain field assignment — so this check belongs here, at the page-write layer,
+        // and must not move into ALValidateAsync below (that is also what Rec.Validate calls,
+        // and pulling the check in there would enforce it on Validate too, which real BC does
+        // not). See TestPageMinMaxValue.Check's own doc comment for the exact message shape.
+        TestPageMinMaxValue.Check(_record.MetaTable, _fieldNo, FieldType, value, Caption);
+
+        // Setting a field on a page is a VALIDATE, not an assignment. That is what fills in
+        // the caption when a user picks an id, and what lets a field refuse a value outright.
+        // A raw SetFieldValue stored what the test wrote — so the field itself read back
+        // correctly and every field DERIVED from it stayed empty, which made the test fail
+        // pointing at the derived field, the one place the defect was not.
+        //
+        // Issue #2705 — real BC (measured on a 28.4 container) runs the bound field's
+        // OnValidate with CurrFieldNo equal to that field's number for the duration of a
+        // page-driven write (own-table AND tableextension fields alike), while a
+        // Rec.Validate from AL code leaves it at 0. NavRecord.CurrFieldNo
+        // (Microsoft.Dynamics.Nav.Ncl.dll, decompiled) is a plain public get/set property
+        // that nothing in Ncl itself ever assigns — real BC's compiled client/page glue must
+        // set it around a UI-originated validate, which is exactly what a TestPage SetValue
+        // is standing in for here. Restoring the PREVIOUS value (not unconditionally 0)
+        // keeps a nested SetValue-from-OnValidate honest, and the try/finally matches what
+        // arm E of the corpus test measures: OnModify after Close() sees CurrFieldNo = 0
+        // again, so the assignment must not outlive this one validate call.
+        var previousCurrFieldNo = _record.CurrFieldNo;
+        _record.CurrFieldNo = _fieldNo;
+        try
         {
-            // Issue #1870 — the Rec-bound half of #1837 that #1869 (the page-variable half)
-            // left open. FieldType (sourced from the source table field's own declared type,
-            // see TryGetMetaFieldType) answers Boolean for a `field(Flag; Rec.Flag)` control
-            // over a `Boolean` table field; falling through to ALCompiler.ToNavValue(value)
-            // there always produced a NavText, which NavTestField.ALSetValue's own Boolean
-            // ALValidateAsync then rejected with "The value 'True' can't be evaluated into
-            // type Boolean" — the same shape of bug TestPageBooleanValue already fixed for
-            // PageVariableTestField.
-            var navValue = CurrentOption() is { } option
-                ? TestPageOptionValue.Resolve(option, value, OptionCaptions(),
-                    $"TestPage SetValue (field {_fieldNo})")
-                : FieldType == NavType.Boolean
-                    ? TestPageBooleanValue.Resolve(value, Caption)
-                    : ALCompiler.ToNavValue(value);
-
-            // MinValue/MaxValue (#2495): measured against real BC (28.1/28.4), a bounded field's
-            // MinValue/MaxValue is enforced on a TestPage control WRITE, but NOT on Rec.Validate
-            // or a plain field assignment — so this check belongs here, at the page-write layer,
-            // and must not move into ALValidateAsync below (that is also what Rec.Validate calls,
-            // and pulling the check in there would enforce it on Validate too, which real BC does
-            // not). See TestPageMinMaxValue.Check's own doc comment for the exact message shape.
-            TestPageMinMaxValue.Check(_record.MetaTable, _fieldNo, FieldType, value, Caption);
-
-            // Setting a field on a page is a VALIDATE, not an assignment. That is what fills in
-            // the caption when a user picks an id, and what lets a field refuse a value outright.
-            // A raw SetFieldValue stored what the test wrote — so the field itself read back
-            // correctly and every field DERIVED from it stayed empty, which made the test fail
-            // pointing at the derived field, the one place the defect was not.
-            //
-            // Issue #2705 — real BC (measured on a 28.4 container) runs the bound field's
-            // OnValidate with CurrFieldNo equal to that field's number for the duration of a
-            // page-driven write (own-table AND tableextension fields alike), while a
-            // Rec.Validate from AL code leaves it at 0. NavRecord.CurrFieldNo
-            // (Microsoft.Dynamics.Nav.Ncl.dll, decompiled) is a plain public get/set property
-            // that nothing in Ncl itself ever assigns — real BC's compiled client/page glue must
-            // set it around a UI-originated validate, which is exactly what a TestPage SetValue
-            // is standing in for here. Restoring the PREVIOUS value (not unconditionally 0)
-            // keeps a nested SetValue-from-OnValidate honest, and the try/finally matches what
-            // arm E of the corpus test measures: OnModify after Close() sees CurrFieldNo = 0
-            // again, so the assignment must not outlive this one validate call.
-            var previousCurrFieldNo = _record.CurrFieldNo;
-            _record.CurrFieldNo = _fieldNo;
-            try
-            {
-                _record.ALValidateAsync(_fieldNo, navValue, null).GetAwaiter().GetResult();
-            }
-            finally
-            {
-                _record.CurrFieldNo = previousCurrFieldNo;
-            }
-
-            // Then the control's own OnValidate, which is a second and independent trigger: the
-            // table field's runs first, the page's after it.
-            if (_page != null && _controlId != 0) _page.RaiseOnValidate(_controlId);
-
-            _onEdited?.Invoke();
+            _record.ALValidateAsync(_fieldNo, navValue, null).GetAwaiter().GetResult();
         }
+        finally
+        {
+            _record.CurrFieldNo = previousCurrFieldNo;
+        }
+
+        // Then the control's own OnValidate, which is a second and independent trigger: the
+        // table field's runs first, the page's after it.
+        if (_page != null && _controlId != 0) _page.RaiseOnValidate(_controlId);
+
+        _onEdited?.Invoke();
     }
 
     // The stored NavValue, not the unwrapped ClientObject — the option metadata rides on the
@@ -2377,9 +2401,14 @@ internal sealed class LiveNavTestField : ITestField
            ?? TryGetMetaFieldName()
            ?? $"Field {_fieldNo}";
     public NavType FieldType => TryGetMetaFieldType() ?? NavType.Text;
-    public int ValidationErrorCount => 0;
-    public long LastUsedValidationErrorId => 0;
-    public long MaxValidationErrorId => 0;
+    // BC's own NavTestField.CheckError reads all three around every control write, and
+    // NavTestField.ALValidationErrorCount / ALGetValidationError hand the first and fourth
+    // straight to AL. Hardcoded 0/"" made `ValidationErrorCount()` answer 0 after a refusal
+    // real BC counts as 1, and made a refusal escape the setter raw instead of being wrapped
+    // by BC in "Validation error for Field: ..." (#2900). See TestFieldValidationErrors.
+    public int ValidationErrorCount => _validationErrors.Count;
+    public long LastUsedValidationErrorId => _validationErrors.LastUsedId;
+    public long MaxValidationErrorId => _validationErrors.MaxId;
     public object? ObjectValue => LiveNavTestPage.Unwrap(_record.GetFieldValue(_fieldNo));
     public int OptionCount => CurrentOption() is { } option ? TestPageOptionValue.Count(option) : 0;
 
@@ -2394,7 +2423,7 @@ internal sealed class LiveNavTestField : ITestField
     public bool HideValue => false;
     public bool ShowMandatory => false;
 
-    public string GetValidationError(int index) => string.Empty;
+    public string GetValidationError(int index) => _validationErrors.Get(index);
     public void Activate() { }
 
     /// <summary>
@@ -2509,6 +2538,13 @@ internal sealed class PageVariableTestField : ITestField
         _controlId = controlId;
     }
 
+    // The Rec-bound sibling's ledger, for the same reason and read the same way — see
+    // LiveNavTestField._validationErrors and TestFieldValidationErrors. A page-global control
+    // refuses a write through its OnValidate exactly as a Rec-bound one does, so leaving this
+    // half hardcoded would have made the same AL assertion answer differently depending only
+    // on how the control happens to be bound.
+    private readonly TestFieldValidationErrors _validationErrors = new();
+
     public string Value
     {
         // An Option/Enum-bound control answers with its CAPTION, not the ordinal it stores —
@@ -2524,11 +2560,11 @@ internal sealed class PageVariableTestField : ITestField
                ?? TestPageBooleanValue.Format(RunnerPageInstance.GetValue(_expression))
                ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
                ?? string.Empty;
-        set
+        set => _validationErrors.RunRecordingRefusal(() =>
         {
             RunnerPageInstance.SetValue(_expression, ToBoundValue(value));
             _page.RaiseOnValidate(_controlId);
-        }
+        });
     }
 
     public object? ObjectValue => LiveNavTestPage.Unwrap(RunnerPageInstance.GetValue(_expression));
@@ -2605,9 +2641,14 @@ internal sealed class PageVariableTestField : ITestField
         NavDecimal => NavType.Decimal,
         _ => NavType.Text,
     };
-    public int ValidationErrorCount => 0;
-    public long LastUsedValidationErrorId => 0;
-    public long MaxValidationErrorId => 0;
+    // BC's own NavTestField.CheckError reads all three around every control write, and
+    // NavTestField.ALValidationErrorCount / ALGetValidationError hand the first and fourth
+    // straight to AL. Hardcoded 0/"" made `ValidationErrorCount()` answer 0 after a refusal
+    // real BC counts as 1, and made a refusal escape the setter raw instead of being wrapped
+    // by BC in "Validation error for Field: ..." (#2900). See TestFieldValidationErrors.
+    public int ValidationErrorCount => _validationErrors.Count;
+    public long LastUsedValidationErrorId => _validationErrors.LastUsedId;
+    public long MaxValidationErrorId => _validationErrors.MaxId;
     public int OptionCount => CurrentOption() is { } option ? TestPageOptionValue.Count(option) : 0;
 
     // See LiveNavTestField — a control bound to a page variable declares the same properties
@@ -2618,7 +2659,7 @@ internal sealed class PageVariableTestField : ITestField
     public bool HideValue => false;
     public bool ShowMandatory => false;
 
-    public string GetValidationError(int index) => string.Empty;
+    public string GetValidationError(int index) => _validationErrors.Get(index);
     public void Activate() { }
     /// <summary>Run the control's OnLookup trigger — see LiveNavTestField.Lookup.</summary>
     public void Lookup()

@@ -28,6 +28,12 @@
 // So BC has a defined answer here and it is "no". That makes it a validation error to reproduce,
 // not an unsupported surface to refuse as out of scope — which is why the negative assertions
 // below check for that message rather than for a RunnerOutOfScopeException.
+//
+// NOTE ON WHAT CHANGED IN #2900. Resolve now raises only the INNER half of that message. The
+// "Validation error for Field: <name>,  Message = '…'" wrapper is composed one layer out, by
+// BC's own NavTestField.CheckError, from the refusal TestFieldValidationErrors records — so the
+// AL-visible string all eight legs measured is unchanged, and the assertions below moved down to
+// the layer this helper actually owns. TestFieldValidationErrorsTests pins the other half.
 using AlRunner;
 using Microsoft.Dynamics.Nav.Types.Exceptions;
 using Microsoft.Dynamics.Nav.Runtime;
@@ -130,8 +136,12 @@ public sealed class TestPageBooleanValueTests
         var ex = Assert.Throws<NavNCLDialogException>(
             () => TestPageBooleanValue.Resolve(input, "Rec True"));
 
-        Assert.Contains("Validation error for Field: Rec True", ex.Message);
-        Assert.Contains("is not an acceptable value", ex.Message);
-        Assert.Contains("(Select Refresh to discard errors)", ex.Message);
+        // The bare inner message, exactly — the wrapper is BC's (#2900), so asserting it here
+        // would pin a string this helper no longer produces.
+        Assert.Equal(
+            $"Your entry of '{input}' is not an acceptable value for 'Rec True'. "
+            + "(Select Refresh to discard errors)",
+            ex.Message);
+        Assert.DoesNotContain("Validation error for Field", ex.Message);
     }
 }
