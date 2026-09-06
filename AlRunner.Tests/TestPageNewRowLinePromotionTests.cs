@@ -85,26 +85,30 @@ public sealed class TestPageNewRowLinePromotionTests
     // so they are indistinguishable by call name in IL — the field loads that feed them are
     // what tells them apart, and their positions relative to ALValidateAsync are the defect.
     [Fact]
-    public void FieldSetter_PromotesTheNewRowLineBeforeValidatingAndFlagsTheEditAfter()
+    public void FieldWrite_PromotesTheNewRowLineBeforeValidatingAndFlagsTheEditAfter()
     {
         var type = LoadType(typeof(AlRunner.LiveNavTestPage));
         var live = type.Module.GetType("AlRunner.LiveNavTestField");
         Assert.NotNull(live);
 
-        var setter = Method(live!, "set_Value");
+        // NOT set_Value. Since #2900/#3007 the setter is one line —
+        // `_validationErrors.RunRecordingRefusal(() => Write(value))` — and the whole write,
+        // including the ordering this test is about, lives in Write. Reading set_Value here
+        // would find none of the three markers and the test would fail for the wrong reason.
+        var setter = Method(live!, "Write");
 
         var beforeEdit = IndexOfFieldLoad(setter, "_onBeforeEdit");
         var validate = IndexOfCall(setter, "ALValidateAsync");
         var afterEdit = IndexOfFieldLoad(setter, "_onEdited");
 
         Assert.True(beforeEdit >= 0,
-            "LiveNavTestField's Value setter must read _onBeforeEdit — the callback that turns "
+            "LiveNavTestField.Write must read _onBeforeEdit — the callback that turns "
             + "the page's implicit new-row line into a started row before this write is validated.");
         Assert.True(validate >= 0,
-            "LiveNavTestField's Value setter must call ALValidateAsync — setting a field on a "
+            "LiveNavTestField.Write must call ALValidateAsync — setting a field on a "
             + "page is a validate, not an assignment.");
         Assert.True(afterEdit >= 0,
-            "LiveNavTestField's Value setter must read _onEdited — the callback that marks the "
+            "LiveNavTestField.Write must read _onEdited — the callback that marks the "
             + "row for persistence once the write has happened.");
 
         Assert.True(beforeEdit < validate,
