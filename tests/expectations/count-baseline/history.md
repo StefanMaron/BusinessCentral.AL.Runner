@@ -970,14 +970,17 @@ other 76 al-language tests and all six al-language-onprem tests come from, not f
 this PR wrote. The corpus test this PR itself adds (#217, seven tests on Customer) is NOT in
 this count — its pin bump follows when that PR merges.
 
-Twelve of the newly-arrived tests fail on the runner for reasons unrelated to this fix and are
+Four of the newly-arrived tests fail on the runner for reasons unrelated to this fix and are
 declared in tests/expectations/ as `expect-fail-known-gap`, each against an issue that stays
-open after this PR merges: the Session virtual table (#2940, PR #3234), an error raised in
-OnQueryClosePage (#3057, PR #3181), a source-parsed tableextension's TableRelation not being
-enforced by Validate (#3286, filed with this PR), Access Control not backing the session
-user's SUPER status (#3176), and the legacy Object registry answering rows (#3071, PR #3265).
-Whichever of those PRs merges first turns its tests green and its entry stale, and the
-manifest is loud in that direction too — the entry goes out in that PR.
+open after this PR merges: an error raised in OnQueryClosePage (#3057, PR #3181), a
+source-parsed tableextension's TableRelation not being enforced by Validate (#3286, filed with
+this PR), and Access Control not backing the session user's SUPER status (#3176).
+
+Two more families arrived failing and were declared here first, then went green while this PR
+was in review, as #3234 (the Session virtual table, #2940) and #3265 (the legacy Object
+registry, #3071) merged: their entries are gone again. That is the manifest being loud in the
+other direction — a test that passes under an `expect-fail-known-gap` entry fails the run with
+"remove the entry", which is how the staleness was caught rather than shipped.
 
 `runner-extras` is untouched: 316 tests before and after.
 
