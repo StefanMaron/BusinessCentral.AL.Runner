@@ -4,19 +4,27 @@ codeunit 70521 "SURC Tests"
     TestPermissions = Disabled;
 
     var
-        CollidingSidTok: Label '{A17E9C42-5B08-4D6F-9E31-0C7A2F84B155}', Locked = true;
+        // The security id the Install trigger put on the stand-in row. Everything below turns
+        // on this CONCRETE value: after adoption it is what UserSecurityId() returns, and it is
+        // a value that came out of the data rather than out of the runner.
+        AdoptedSidTok: Label '{A17E9C42-5B08-4D6F-9E31-0C7A2F84B155}', Locked = true;
+        // What BcRuntime generates for the skeleton session when nothing is adopted. Asserted
+        // NOT to be the answer here, and asserted TO be the answer in the sibling fixture
+        // SessionUserRowAlreadyPresent -- which is what stops a constant-returning
+        // implementation satisfying both.
+        GeneratedSidTok: Label '{C0A1BDFA-0000-0000-0000-545553545553}', Locked = true;
         BackupUserTok: Label 'STANDS-IN-FOR-A-BACKUP-USER', Locked = true;
 
     [Test]
     procedure SurcTheSameNamedForeignUserIsInTheTable()
     var
         UserRec: Record User;
-        CollidingSid: Guid;
+        AdoptedSid: Guid;
     begin
-        // Pins the PRECONDITION. Without it, the test below would also pass if the Install
+        // Pins the PRECONDITION. Without it, the tests below would also pass if the Install
         // trigger had quietly written nothing, and would then prove nothing about a collision.
-        Evaluate(CollidingSid, CollidingSidTok);
-        if not UserRec.Get(CollidingSid) then
+        Evaluate(AdoptedSid, AdoptedSidTok);
+        if not UserRec.Get(AdoptedSid) then
             Error('the Install trigger''s stand-in backup user must be a row in User');
         if UserRec."User Name" <> UserId() then
             Error(
@@ -27,46 +35,105 @@ codeunit 70521 "SURC Tests"
     end;
 
     [Test]
-    procedure SurcTheSessionUserStillGetsItsOwnRow()
+    procedure SurcTheSessionAdoptedTheExistingRowsSecurityId()
+    var
+        AdoptedSid: Guid;
+        GeneratedSid: Guid;
+    begin
+        // THE #2983 DISCRIMINATOR, and the one the maintainer's decision turns on.
+        //
+        // A different user already carries this session's user name. Real BC will not hold two
+        // users of one name -- SystemTableTriggers.OnBeforeInsertAsync's `case 2000000120:` arm
+        // calls IsUserFieldUniqueAsync(recordBuffer, 2, insert: true) and raises before writing,
+        // and AlRunner/Patches/UserTableTriggerPatches.cs reproduces that -- so the runner's
+        // session-user seed cannot write its own row here.
+        //
+        // What it does instead is ADOPT: the session takes the existing row's security id as its
+        // own, so UserSecurityId() answers with a value that came from the data. The first
+        // implementation of #2983 refused instead, leaving the session as a user present in no
+        // row at all, which is the state #2296 exists to remove. Against that implementation
+        // this test fails, because UserSecurityId() is still the generated id below.
+        Evaluate(AdoptedSid, AdoptedSidTok);
+        Evaluate(GeneratedSid, GeneratedSidTok);
+
+        if UserSecurityId() <> AdoptedSid then
+            Error(
+              'UserSecurityId() must be the ADOPTED id %1 (the one the data already held for this '
+              + 'user name), but it is %2', AdoptedSidTok, Format(UserSecurityId()));
+
+        // Named separately so a failure says WHICH way it went wrong: still generated (nothing
+        // adopted) reads differently from adopted-something-else.
+        if UserSecurityId() = GeneratedSid then
+            Error(
+              'UserSecurityId() is still the runner-generated id %1, so no adoption happened',
+              GeneratedSidTok);
+    end;
+
+    [Test]
+    procedure SurcTheSessionUserResolvesToTheRowTheDataProvided()
     var
         UserRec: Record User;
+        AdoptedSid: Guid;
     begin
-        // MEASURED, and it is not what the #2941 review predicted. The review expected a unique
-        // key on User."User Name" to refuse this seed and silently defeat #2296. The seed lands
-        // anyway, and the mechanism is not an index on either side:
-        //
-        //   * the runner's store here is BC's own CreateTempDataAccess, which enforces the
-        //     PRIMARY key on "User Security ID" and nothing else;
-        //   * real BC refuses the duplicate name from a TRIGGER --
-        //     SystemTableTriggers.OnBeforeInsertAsync's `case 2000000120:` arm validates a unique
-        //     user name before writing -- and AlRunner/Patches/UserTableTriggerPatches.cs's own
-        //     header records that the runner reproduces only that arm's User Property companion
-        //     insert and that "None of that [validation] is reproduced here".
-        //
-        // So the session user is reachable by its own id even with a same-named foreign user
-        // present.
-        //
-        // The count is deliberately NOT asserted here. Two rows sharing a user name is a real
-        // divergence from BC, which would refuse the second one -- but this suite should not
-        // bless it by writing the wrong number into an assertion. Tracked as AlRunner#2983.
-        //
-        // WHEN THAT GAP IS FIXED, THIS TEST WILL START FAILING -- and that is the point. At that
-        // moment the seed genuinely is refused, RecordPatches' Refused branch becomes reachable
-        // for the first time, and whoever lands the fix has to decide what the seed should do
-        // about it. A silent pass here would hide that decision.
+        // The point of adopting rather than refusing: the session user is a real row again, so
+        // every TableRelation to User."User Security ID" resolves the id UserSecurityId()
+        // reports. That is #2296's whole subject.
         if not UserRec.Get(UserSecurityId()) then
             Error(
-              'the session user has no row of its own. If AlRunner#2983 has just been fixed -- by '
-              + 'reproducing BC''s OnBeforeInsertAsync validation for table 2000000120, or by '
-              + 'enforcing uniqueness in the store -- this is expected: the seed is now refused '
-              + 'over the duplicate user name, and '
-              + 'RecordPatches.EnsureUserSystemTableRowSeeded''s Refused branch is what handles '
-              + 'it. See AlRunner#2296 and #2941.');
+              'after adoption the session user must be a row in User -- a session whose user is '
+              + 'in no row is the state AlRunner#2296 exists to remove');
 
-        if UserRec."User Name" <> UserId() then
-            Error('User."User Name" is "%1" but UserId() is "%2"', UserRec."User Name", UserId());
-        // The seed's row, not the fixture's: the two are told apart by Full Name.
-        if UserRec."Full Name" = BackupUserTok then
-            Error('the row reached by UserSecurityId() is the fixture''s stand-in, not the seed''s');
+        // ...and it is the DATA's row, not one the seed wrote anyway. Full Name is the marker:
+        // the runner's seed writes the skeleton NavUser's full name ("TESTUSER"), never this.
+        if UserRec."Full Name" <> BackupUserTok then
+            Error(
+              'the session user must resolve to the stand-in row (Full Name "%1"), but Full Name '
+              + 'is "%2" -- the seed wrote a row instead of adopting one',
+              BackupUserTok, UserRec."Full Name");
+
+        Evaluate(AdoptedSid, AdoptedSidTok);
+        if UserRec."User Security ID" <> AdoptedSid then
+            Error('the resolved row must be the stand-in %1', AdoptedSidTok);
+    end;
+
+    [Test]
+    procedure SurcAdoptionAddedNoSecondRowAndLeftUserIdAlone()
+    var
+        Probe: Record User;
+    begin
+        // Adoption writes NOTHING to the User table. Two rows under one name is the state real
+        // BC refuses to hold, and it is what the pre-#2983 runner was left with.
+        Probe.SetRange("User Name", UserId());
+        if Probe.Count() <> 1 then
+            Error('exactly one row may carry the user name "%1", found %2', UserId(), Probe.Count());
+
+        // Only the security id is adopted. The NAME is the key the adoption matched ON, so it
+        // must be unchanged -- an implementation that took the whole identity off the row would
+        // pass the sid assertions above and be wrong here.
+        if Probe.FindFirst() then
+            if Probe."User Name" <> UserId() then
+                Error('UserId() must still be "%1"', Probe."User Name");
+    end;
+
+    [Test]
+    procedure SurcTheAdoptedUserHasItsUserPropertyRow()
+    var
+        UserProperty: Record "User Property";
+    begin
+        // BC creates a User Property (2000000121) row with every User, and
+        // UserManagement.DirectSetUserFieldValue does a RAISING Get on it for the session user
+        // (#2355). An adopted row reached the table without passing through the runner's insert
+        // prepend, so the seed re-establishes that invariant for the id it adopted.
+        //
+        // AND IT IS CREATED HERE, not merely kept. The Install trigger DELETES the companion
+        // row after inserting the stand-in User -- the state a backup restored without table
+        // 2000000121 leaves behind -- so at the moment the seed runs there is no row, and the
+        // adoption path's EnsureUserPropertyRow call is the only thing that can produce one.
+        // Remove that call and this test fails.
+        if not UserProperty.Get(UserSecurityId()) then
+            Error(
+              'the adopted session user (%1) must have a User Property row, or Microsoft AL '
+              + 'reaching NavUserAccountHelper.SetAuthenticationObjectId fails the AlRunner#2355 way',
+              Format(UserSecurityId()));
     end;
 }
