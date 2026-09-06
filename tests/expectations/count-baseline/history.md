@@ -705,20 +705,27 @@ source. appGroups is unchanged at 1, and neither al-language-onprem (19) nor
 al-language-internals-fixture (0) moved.
 
 The other thirteen arrived because main's pin sat at `83b54a91` while three further corpus PRs
-merged on top of it, and a pin only moves forward as a whole. They are NOT declared here, on
-purpose: eight of them fail on this developer box and both families are somebody else's work in
-flight --
+merged on top of it, and a pin only moves forward as a whole. Five pass. Eight do not, in two
+families that are both somebody else's work in flight, and each gets an `expect-fail-known-gap`
+entry linking an issue that stays open after this PR merges:
 
-- codeunit 60444 "CalcFields Field Class Tests", six tests whose `asserterror` sees no error.
-  That refusal is what open PR #3079 implements; these are its upstream half, and they go green
-  when it lands.
-- codeunit 60285 "TPARONH Tests", two tests refused with `Unhandled UI: Page 6028x`. Same family
-  as #2931, in progress.
+- codeunit 60444 "CalcFields Field Class Tests", six tests whose `asserterror` sees no error
+  because the runner does not refuse a CalcFields field that is neither a FlowField nor a BLOB
+  -> **#3012**, whose fix is open PR #3079; these six are its upstream half. Two tests in that
+  codeunit pass, so the refusal is missing rather than CalcFields being broken.
+- codeunit 60285 "TPARONH Tests", two tests refused with `Unhandled UI: Page 6028x` where real
+  BC opens the target unattended -> **#3090**. Four other tests in that codeunit pass.
 
-Declaring either would be a guess. The last bump taught the cost directly: three entries were
-added here on the strength of a local run, and the drift guard reported "Test passed cleanly but
-manifest declares expect-fail-known-gap" for five of them on three legs, because this box's BC
-artifact is not the matrix's. So the entries wait for CI to say which tests actually fail, and
-this paragraph is updated with whatever it reports rather than with what was predicted.
+Those entries were written only AFTER CI reported, deliberately, and the ordering is the point.
+The previous bump added three entries on the strength of a local run; the drift guard rejected
+five of them with "Test passed cleanly but manifest declares expect-fail-known-gap" on three
+legs, because this box's BC artifact is not the matrix's. So this bump was pushed with **no**
+entries first, and the BC 27.0 leg of run 34032742416 came back naming exactly these eight —
+2657P/8F, the same eight the local run had shown. The local run agreed this time; the point is
+that it was not what decided the entries.
+
+Also checked rather than assumed: #2931 would have been the obvious issue to link for the
+TPARONH pair, and it is CLOSED. An entry may not link an issue that is already closed any more
+than one a merging PR closes — either way the gap stops being tracked.
 
 Written by agent fbk-1 (automated implementation agent).
