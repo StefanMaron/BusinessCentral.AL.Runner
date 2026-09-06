@@ -374,6 +374,55 @@ public static partial class BcRuntime
         return new System.InvalidOperationException(msg);
     }
 
+    /// <summary>
+    /// Cecil patch target: <c>ALSession.ALStartSessionAsyncImpl</c> — the ONE seam every
+    /// <c>ALStartSession</c> / <c>ALStartSessionAsync</c> overload in Ncl funnels into
+    /// (each public overload's whole body is a forwarding call to it).
+    ///
+    /// <para><see cref="AlRunnerStartSession"/> above says it is "the replacement entry point
+    /// for every ALSession.ALStartSession overload", and for SOURCE-COMPILED AL it is:
+    /// BcAssembler's polyfill rewrites those call sites textually. PRECOMPILED AL —
+    /// Base Application, System Application, any ISV DLL — calls Ncl directly, so it reached
+    /// BC's real body instead, which opens a second NavSession and asks SQL for the database
+    /// version:</para>
+    ///
+    /// <code>
+    ///   ArgumentNullException: Value cannot be null. (Parameter 'database')
+    ///      at NavSqlConnectionScope.Create(NavSession, NavDatabase, ...)
+    ///      at NavSqlDatabaseProperties.ReadDatabaseVersionNo()
+    ///      at NavSession.Open()
+    ///      at ALSession.ALStartSessionAsyncImpl(...)
+    ///      at Codeunit8705.UpdateFeatureUptakeStatus(..., performWriteTransactionsInASeparateSession, ...)
+    /// </code>
+    ///
+    /// <para>That is BC's own feature-telemetry uptake logging, reached from an ordinary
+    /// Base App install trigger — nothing the test author wrote. Found by letting install
+    /// triggers run past their first await (#2960).</para>
+    ///
+    /// <para>Routing it to the same helper the source-compiled path already uses means one
+    /// model of StartSession, not two: the #2805 TestIsolation guard, the session-id
+    /// allocation and the TrapError semantics are all decided in exactly one place, so a
+    /// precompiled caller and a source-compiled caller cannot observe different behaviour.
+    /// The <c>invokeRunAsync</c> delegate BC threads through is not needed — the helper
+    /// dispatches the target codeunit inline itself — and <c>session</c> is not either: the
+    /// helper works from the skeleton session, which is the only session there is here.</para>
+    ///
+    /// <para>Returns an already-completed <see cref="System.Threading.Tasks.ValueTask{T}"/>,
+    /// which is faithful for this runtime: the runner drives AL synchronously, and BC's own
+    /// callers await the result before reading <c>sessionId</c>.</para>
+    /// </summary>
+    public static System.Threading.Tasks.ValueTask<bool> ALSession_ALStartSessionAsyncImpl(
+        Microsoft.Dynamics.Nav.Runtime.NavSession session,
+        Microsoft.Dynamics.Nav.Types.DataError errorLevel,
+        Microsoft.Dynamics.Nav.Runtime.ByRef<int> sessionId,
+        int objectId,
+        string companyName,
+        Microsoft.Dynamics.Nav.Runtime.NavRecord record,
+        Microsoft.Dynamics.Nav.Runtime.NavDuration timeout,
+        object invokeRunAsync)
+        => new System.Threading.Tasks.ValueTask<bool>(
+            AlRunnerStartSession(errorLevel, sessionId, objectId, companyName, record));
+
     public static bool AlRunnerStartSession(
         Microsoft.Dynamics.Nav.Types.DataError errorLevel,
         Microsoft.Dynamics.Nav.Runtime.ByRef<int> sessionId,
@@ -473,7 +522,7 @@ public static partial class BcRuntime
                 // its own worker fixture that reads Rec — tracked separately, not widened into
                 // this fix.
                 var result = trigger.GetParameters().Length == 1
-                    ? trigger.Invoke(instance, new object?[] { null })
+                    ? trigger.Invoke(instance, new object?[] { record })
                     : trigger.Invoke(instance, null);
                 AwaitIfTask(result);
             }

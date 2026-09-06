@@ -32,7 +32,7 @@ namespace AlRunner;
 
 public static class InstallTriggerRunner
 {
-    private sealed record InstallCodeunit(
+    internal sealed record InstallCodeunit(
         Type Type, ConstructorInfo Ctor, MethodInfo? PerCompany, MethodInfo? PerDatabase);
 
     // Dependency-app assemblies in dependency order (a dep's Install fires
@@ -164,30 +164,53 @@ public static class InstallTriggerRunner
             }
     }
 
-    private static void InvokeTrigger(InstallCodeunit cu, object instance, MethodInfo? trigger, string name)
+    internal static void InvokeTrigger(InstallCodeunit cu, object instance, MethodInfo? trigger, string name)
     {
         if (trigger == null) return;
         try
         {
-            trigger.Invoke(instance, null);
+            // OBSERVE the result — do not discard it (#2960). The AL compiler emits an
+            // install trigger as an async ValueTask state machine whenever the body needs
+            // one, and measured across the BC 28.1 platform closure that is every
+            // precompiled install trigger there is (Codeunit1809, 1933, 3999, 3907, 1596,
+            // 290, 2014, 4331, 7760, 7782, 8352, 9056, 9993 …). Only the runner's own
+            // source-compiled output is synchronous.
+            //
+            // Discarding that ValueTask abandoned the body at its FIRST suspension: the
+            // rest of the per-company seeding never ran, and an Error() raised past that
+            // point was captured onto the state machine instead of propagating out of
+            // MethodInfo.Invoke — so it never reached the catch arm below, which is where
+            // the loud diagnostic and the AL-stack rethrow live. A failing install trigger
+            // was therefore silent, and the runner captured an install baseline it believed
+            // was complete (.claude/rules/loud-failures.md).
+            //
+            // Same defect, same fix, as #2932's table-event subscriber half — one seam
+            // (BcRuntime.ObserveAsyncResult), not a second mechanism.
+            BcRuntime.ObserveAsyncResult(trigger.Invoke(instance, null), trigger);
         }
-        catch (TargetInvocationException tex) when (tex.InnerException != null)
+        catch (Exception ex)
         {
+            // ObserveAsyncResult rethrows the ORIGINAL exception off the awaiter rather
+            // than a TargetInvocationException, so the async case does not arrive wrapped
+            // the way the synchronous MethodInfo.Invoke case does. Unwrap when it is
+            // wrapped, and report both shapes identically.
+            var inner = (ex as TargetInvocationException)?.InnerException ?? ex;
+
             // Loud, type-preserving: name the failing surface, then rethrow the
             // ORIGINAL exception (RunnerOutOfScopeException stays itself).
             Console.Error.WriteLine(
                 $"[install-trigger] {cu.Type.Name}.{name} ({cu.Type.Assembly.GetName().Name}) threw: " +
-                $"{tex.InnerException.GetType().Name}: {tex.InnerException.Message}");
+                $"{inner.GetType().Name}: {inner.Message}");
             // Install triggers run outside a test, so GetCaptured's "fall back to the most
             // recent capture" is wrong here — under --watch that capture can belong to an
             // unrelated test from a previous cycle (#1958). GetCapturedFor has no such
             // fallback: it answers only for THIS exception instance, or not at all.
-            var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCapturedFor(tex.InnerException);
+            var alStack = AlRunner.Infrastructure.AlCallStackCapture.GetCapturedFor(inner);
             if (!string.IsNullOrEmpty(alStack))
                 Console.Error.WriteLine($"[install-trigger] AL stack:\n{alStack}");
             else
-                Console.Error.WriteLine($"[install-trigger] {tex.InnerException}");
-            ExceptionDispatchInfo.Capture(tex.InnerException).Throw();
+                Console.Error.WriteLine($"[install-trigger] {inner}");
+            ExceptionDispatchInfo.Capture(inner).Throw();
         }
     }
 
