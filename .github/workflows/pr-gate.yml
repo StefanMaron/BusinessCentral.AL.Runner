@@ -474,19 +474,22 @@ jobs:
       # commit message closes the issue even though it never appears in the PR
       # body. Asked of the API rather than reconstructed from git, and an empty
       # answer is a failed fetch rather than an empty branch.
+      #
+      # Through the same pr_commit_messages.sh those two use, not a third inline
+      # copy of the fetch. #3198 extracted it for a reason this job shares
+      # exactly: a job in THIS file produces a required (here, pending-required)
+      # context, so an unretried transient API error blocks a merge for something
+      # the author did not do. The helper retries, and its empty-output-is-a-
+      # failed-fetch refusal is unit-tested in test_pr_commit_messages.sh instead
+      # of living in a `run:` block nothing can exercise.
       - name: Collect the branch's commit messages
         id: commits
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          msgs=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
-                   --json commits --jq '.commits[] | .messageHeadline, .messageBody')
-          if [ -z "${msgs//[[:space:]]/}" ]; then
-            echo "::error::Could not read any commit message for PR #$PR_NUMBER. Every PR has at least one commit, so this is a failure to fetch, not an empty branch -- refusing to report a pass without having read the text that becomes the merge commit." >&2
-            exit 1
-          fi
+          msgs=$(bash .github/scripts/pr_commit_messages.sh \
+                   "${{ github.event.pull_request.number }}")
           {
             echo "messages<<PR_COMMITS_EOF"
             printf '%s\n' "$msgs"
