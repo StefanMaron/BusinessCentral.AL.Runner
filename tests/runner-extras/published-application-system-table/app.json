@@ -1,0 +1,18 @@
+{
+  "id": "8e41c07a-5b93-4d62-a1f7-2c9e6b0f4d3a",
+  "name": "Runner Extras - Published Application System Table",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2963: Published Application (2000000206) is the platform's record of which apps are published. The runner has no publish step, so it seeds one row per loaded app from the manifests it already parses, and stamps the same per-app package ids onto that app's AllObj rows. This suite pins the rows, the stamp, and the property that makes the pair mean anything: the package ids discriminate between apps.",
+  "description": "What Published Application CONTAINS is plain BC behaviour and BELONGS upstream, but cannot go there. The corpus app targets Cloud and Microsoft declares this table Scope = OnPrem, so `Record \"Published Application\"` does not compile there. That was MEASURED on this table, not inferred from a sibling: compiling the reference in a Cloud-target bundle reports `error AL0296: The application object or method 'Published Application' has scope 'OnPrem' and cannot be used for 'Cloud' development`. The AL-observable CONSEQUENCE of these rows - that an app may register its own table on the retention-policy allowed list, and only its own - does go upstream, as BusinessCentral.AL.Language.Tests#181. What stays here is what the runner does: that rows exist at all with nothing published, that the bundle's own app is among them, and that the two package-id columns DISCRIMINATE. That last one is the whole point. Seeding both sides of `Reten. Pol. Allowed Tbl. Impl.ModuleOwnsTable`'s comparison with the type default would make every app own every table, and every ownership check would pass - for the wrong reason, indistinguishably from a fix. Target is OnPrem, not Cloud, for the AL0296 reason above.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65570,
+      "to": 65579
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}
