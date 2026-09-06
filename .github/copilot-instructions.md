@@ -55,7 +55,7 @@ tools/                         — DownloadArtifacts (used by AlRunner.csproj), 
 scripts/                       — al-inventory.py, coverage-gen.js
 ```
 
-The v1 layout (`tests/bucket-1/`, `tests/bucket-2/`, stubs/, Runtime/MockX.cs, RoslynRewriter, DepCompiler, `extract-deps`) has been removed. Do not reference it. `AlRunner.Tests/` is current, not v1 — it is the C# unit-test project both `bc-tests.yml` and `pr-check.yml` depend on.
+The v1 layout (`tests/bucket-1/`, `tests/bucket-2/`, stubs/, Runtime/MockX.cs, RoslynRewriter, DepCompiler, `extract-deps`) has been removed. Do not reference it. `AlRunner.Tests/` is current, not v1 — it is the C# unit-test project `bc-tests.yml` depends on.
 
 ---
 

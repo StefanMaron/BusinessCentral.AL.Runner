@@ -4,8 +4,9 @@ name: Require Tests
 # is the whole fix -- the job body below is unchanged.
 #
 # "Tests updated" is one of the two contexts the `main` branch ruleset requires
-# (the other is "All BC versions passed", from test-matrix.yml). pr-check.yml
-# triggers on 'edited', 'labeled' and 'unlabeled' -- event types that fire
+# (the others are "All BC versions passed" from test-matrix.yml, and one per job
+# in pr-gate.yml since #3165). pr-check.yml used to trigger on 'edited',
+# 'labeled' and 'unlabeled' -- event types that fire
 # WITHOUT changing the head SHA -- while also declaring cancel-in-progress: true.
 # Editing a PR body, or labelling a PR right after opening it (both routine, both
 # things agents do on nearly every PR), therefore started a second PR Check run
@@ -32,15 +33,16 @@ name: Require Tests
 #     cancelled, and it still works with the older run allowed to finish.
 #
 # pr-check.yml keeps its own concurrency group and its cancel-in-progress: true,
-# which is correct and well argued in the comment block at the top of that file:
-# for a new PUSH the superseded run is testing a commit nobody has any more, and
-# its check runs hang off that older SHA where no ruleset will ever read them.
-# Now that no required context is produced there, a same-SHA cancellation in
-# pr-check.yml is cosmetic rather than merge-blocking.
+# which is correct: no required context is produced there, so a same-SHA
+# cancellation in that file is cosmetic rather than merge-blocking. Since #3165 it
+# also no longer triggers on the same-SHA event types at all, because the jobs
+# that needed them are the ones that now gate, and they moved to pr-gate.yml --
+# which carries no concurrency block for exactly the reason this file does not.
 #
-# check_required_contexts.py (run by pr-check.yml) fails CI if any required
-# context ever ends up in a workflow that can cancel it on the same commit again,
-# including this one.
+# check_required_contexts.py fails CI if any required context ever ends up in a
+# workflow that can cancel it on the same commit again, including this one. Its
+# offline half runs from pr-gate.yml and gates; its live-ruleset half runs from
+# pr-check.yml and reports.
 on:
   pull_request:
     branches: [main]

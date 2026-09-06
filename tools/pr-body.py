@@ -61,7 +61,7 @@ The guards
                       damage, stated directly). --closes N additionally requires a
                       target the original may not have had yet.
   no-stray-closing    no closing keyword next to any OTHER issue number, matching
-                      `pr-check.yml`'s reject-bad-closing-references job. Failing
+                      `pr-gate.yml`'s reject-bad-closing-references job. Failing
                       here is cheaper than failing there.
   no-large-shrink     a shrink beyond the threshold is refused; the message names
                       the threshold and how to override it.
@@ -80,7 +80,7 @@ the branch's commit messages become the merge commit's body and GitHub's parser
 fires on them as well as on the PR body. It does not understand negation: PR #2486's
 commit message said "It does not close #2479" and the merge closed #2479 anyway.
 Editing commit messages is out of scope here (that needs a reword and a force-push);
-this tool only guards the body, and `pr-check.yml` guards both.
+this tool only guards the body, and `pr-gate.yml` guards both.
 
 Usage
 -----
@@ -147,7 +147,7 @@ EXIT_FETCH_FAILED = 5
 
 # --------------------------------------------------------------------------
 # Closing references. Ported from .github/scripts/check_closing_reference.sh so
-# this fails locally with the same verdict pr-check.yml reaches server-side.
+# this fails locally with the same verdict pr-gate.yml reaches server-side.
 # tools/test_pr_body.py runs a parity check against that script when bash and a
 # PCRE-capable grep are available.
 # --------------------------------------------------------------------------
@@ -431,7 +431,7 @@ def check_body(orig: str, new: str, *, require_closes: list[int],
             f"GitHub's parser fires on that pattern anywhere in the merge message and does "
             f"not understand negation -- PR #2127's body said a sentence did NOT close an "
             f"issue and the merge closed it anyway. Refer to it without the keyword (e.g. "
-            f"'see #{n}'), or declare it on its own line. pr-check.yml's "
+            f"'see #{n}'), or declare it on its own line. pr-gate.yml's "
             f"reject-bad-closing-references job rejects this server-side too.\n"
             f"    offending line: {line[:200]}")
     else:

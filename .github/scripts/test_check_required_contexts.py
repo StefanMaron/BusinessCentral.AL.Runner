@@ -32,28 +32,58 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         FAILURES.append(name)
 
 
-def run(files: dict[str, str], required: str) -> tuple[int, str]:
-    """Write fixture workflows to a temp dir, run the guard, return (rc, stderr)."""
-    import contextlib
-    import io
+import contextlib  # noqa: E402
+import io  # noqa: E402
 
+
+@contextlib.contextmanager
+def env(**kv):
+    """Set/unset environment variables for the duration of the block.
+
+    A value of None removes the variable. Restoring by hand around every guard
+    invocation is what made the older helpers here diverge -- run() managed
+    REQUIRED_CONTEXTS and run_live() managed two variables, and PENDING_CONTEXTS
+    (#3165) needs to be managed by BOTH or every pre-existing fixture inherits
+    the real pending list and fails for the wrong reason.
+    """
+    old = {k: os.environ.get(k) for k in kv}
+    try:
+        for k, v in kv.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        yield
+    finally:
+        for k, v in old.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def run_dir(wf_dir: str, required: str, pending: str = "") -> tuple[int, str]:
+    """Run the guard against an existing workflows dir, offline, return (rc, output)."""
+    err, out = io.StringIO(), io.StringIO()
+    with env(REQUIRED_CONTEXTS=required, PENDING_CONTEXTS=pending,
+             SKIP_RULESET_DRIFT_CHECK=None):
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
+            rc = crc.main(["check_required_contexts.py", wf_dir])
+    return rc, err.getvalue() + out.getvalue()
+
+
+def run(files: dict[str, str], required: str, pending: str = "") -> tuple[int, str]:
+    """Write fixture workflows to a temp dir, run the guard, return (rc, stderr).
+
+    `pending` defaults to EMPTY, not to the shipped PENDING_REQUIRED_CONTEXTS:
+    a fixture directory contains none of the real workflows, so inheriting the
+    real pending list would fail every fixture with "produced by NO workflow".
+    """
     with tempfile.TemporaryDirectory() as d:
         for fname, body in files.items():
             with open(os.path.join(d, fname), "w", encoding="utf-8") as fh:
                 fh.write(body)
-        old = os.environ.get("REQUIRED_CONTEXTS")
-        os.environ["REQUIRED_CONTEXTS"] = required
-        err = io.StringIO()
-        out = io.StringIO()
-        try:
-            with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
-                rc = crc.main(["check_required_contexts.py", d])
-        finally:
-            if old is None:
-                os.environ.pop("REQUIRED_CONTEXTS", None)
-            else:
-                os.environ["REQUIRED_CONTEXTS"] = old
-        return rc, err.getvalue() + out.getvalue()
+        return run_dir(d, required, pending)
 
 
 CANCELLABLE_EDITED = """
@@ -303,27 +333,18 @@ def rules_payload(contexts):
     ]
 
 
-def run_live(fetch, files=None):
+def run_live(fetch, files=None, pending=""):
     """Run the guard with NO REQUIRED_CONTEXTS override, so the live check applies."""
-    import contextlib
-    import io
-
     files = SAFE_WORKFLOWS if files is None else files
     with tempfile.TemporaryDirectory() as d:
         for fname, body in files.items():
             with open(os.path.join(d, fname), "w", encoding="utf-8") as fh:
                 fh.write(body)
-        old = os.environ.pop("REQUIRED_CONTEXTS", None)
-        old_skip = os.environ.pop("SKIP_RULESET_DRIFT_CHECK", None)
         err, out = io.StringIO(), io.StringIO()
-        try:
+        with env(REQUIRED_CONTEXTS=None, SKIP_RULESET_DRIFT_CHECK=None,
+                 PENDING_CONTEXTS=pending):
             with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
                 rc = crc.main(["check_required_contexts.py", d], fetch=fetch)
-        finally:
-            if old is not None:
-                os.environ["REQUIRED_CONTEXTS"] = old
-            if old_skip is not None:
-                os.environ["SKIP_RULESET_DRIFT_CHECK"] = old_skip
         return rc, err.getvalue() + out.getvalue()
 
 
@@ -394,29 +415,209 @@ check("a drifted tools/ci-wait.py list is reported as a problem",
 
 
 # ===========================================================================
-# Neither bypass may be switched on in pr-check.yml itself
+# #3165 -- contexts the ruleset is ABOUT to require: PENDING_REQUIRED_CONTEXTS
 # ===========================================================================
-# SKIP_RULESET_DRIFT_CHECK=1 at least prints when it stands the live comparison
-# down. REQUIRED_CONTEXTS is worse: main() branches on it, never calls
-# resolve_contexts() at all, and so skips BOTH the live comparison and the
-# ci-wait.py cross-check -- silently, until the ::warning:: added alongside this
-# test. Either one set in the workflow turns the guard into a green no-op, which
-# is exactly what an agent unbreaking CI during a GitHub API outage would reach
-# for. The `check_required_contexts.py` job would still report success and
-# nothing would say the guard was off.
+# The ruleset edit and the code change cannot land in the same instant. A
+# maintainer edits the ruleset by hand; a PR merges through CI. So there is a
+# window, and both halves of the guard have to be green on BOTH sides of it.
 #
-# So: assert the real workflow does not set them, at the workflow, job or step
-# level. This reads pr-check.yml on disk -- it is a claim about the shipped
-# workflow, not about a fixture.
-import re  # noqa: E402
-import yaml as _yaml  # noqa: E402  (same dependency the guard itself uses)
+# Putting the new names straight into DEFAULT_REQUIRED_CONTEXTS (and into
+# tools/ci-wait.py's RULESET_CONTEXTS) before the ruleset carries them is not
+# just untidy, it is actively breaking: ci-wait.py treats RULESET_CONTEXTS as a
+# FLOOR and returns exit 3 UNDETERMINED whenever the live ruleset is a subset of
+# it (#3002), so every agent's CI wait in the repository would stop returning a
+# verdict until the ruleset moved. That is asserted below, against the real
+# tools/ci-wait.py.
+#
+# PENDING_REQUIRED_CONTEXTS is the seam. A name listed there is analysed exactly
+# like a required one -- it must be produced by a pull_request workflow and must
+# not be cancellable -- but the live-ruleset drift comparison tolerates it in
+# EITHER state, present or absent. So the guard proves the new gating workflow is
+# safe before the ruleset moves, and stays green the moment it does.
+
+PENDING = getattr(crc, "PENDING_REQUIRED_CONTEXTS", None)
+
+check("check_required_contexts.py declares PENDING_REQUIRED_CONTEXTS",
+      isinstance(PENDING, list), repr(PENDING))
+check("...as plain strings", isinstance(PENDING, list)
+      and all(isinstance(p, str) and p for p in PENDING), repr(PENDING))
+check("...disjoint from DEFAULT_REQUIRED_CONTEXTS (a name is one or the other)",
+      isinstance(PENDING, list)
+      and not (set(PENDING) & set(crc.DEFAULT_REQUIRED_CONTEXTS)),
+      repr(PENDING))
+
+# A check-run name may contain a comma -- one of the real ones does. Splitting on
+# commas unconditionally turned it into two contexts, and the guard then reported
+# both halves as "produced by NO workflow": a failure with a plausible-looking
+# message and a cause nowhere near it.
+_COMMA_NAME = "PR body closing references must be correct, both directions"
+check("a context name containing a comma survives the newline-separated override",
+      crc._split(f"All BC versions passed\n{_COMMA_NAME}")
+      == ["All BC versions passed", _COMMA_NAME],
+      str(crc._split(f"All BC versions passed\n{_COMMA_NAME}")))
+check("...while a single-line value still splits on commas",
+      crc._split("All BC versions passed, Tests updated")
+      == ["All BC versions passed", "Tests updated"],
+      str(crc._split("All BC versions passed, Tests updated")))
+
+PENDING_CANCELLABLE = """
+name: PR Check
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  guard:
+    name: Soon To Gate
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'true'
+"""
+
+PENDING_SAFE = """
+name: PR Gate
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+jobs:
+  guard:
+    name: Soon To Gate
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'true'
+"""
+
+# A pending context is analysed, not merely declared. Without this the seam would
+# be a way to add a name that nothing checks -- the opposite of the point.
+rc, msg = run({"pr-check.yml": PENDING_CANCELLABLE, "require-tests.yml": SAFE_NO_CONCURRENCY},
+              "Tests updated", pending="Soon To Gate")
+check("a PENDING context that is cancellable fails the guard", rc == 1, f"(rc={rc}) {msg}")
+check("...and names it", "Soon To Gate" in msg, msg)
+
+rc, msg = run({"require-tests.yml": SAFE_NO_CONCURRENCY},
+              "Tests updated", pending="Soon To Gate")
+check("a PENDING context no workflow produces fails the guard", rc == 1, f"(rc={rc}) {msg}")
+check("...and says so distinctly", "produced by NO workflow" in msg, msg)
+
+rc, msg = run({"pr-gate.yml": PENDING_SAFE, "require-tests.yml": SAFE_NO_CONCURRENCY},
+              "Tests updated", pending="Soon To Gate")
+check("a PENDING context in a workflow that cannot cancel it passes",
+      rc == 0, f"(rc={rc}) {msg}")
+
+# The drift comparison, both sides of the window. This is the pair that decides
+# whether the PR is mergeable before the ruleset edit AND after it.
+_PENDING_WF = dict(SAFE_WORKFLOWS)
+_PENDING_WF["pr-gate.yml"] = PENDING_SAFE
+
+rc, msg = run_live(lambda: rules_payload(crc.DEFAULT_REQUIRED_CONTEXTS),
+                   files=_PENDING_WF, pending="Soon To Gate")
+check("a live ruleset that does NOT yet require a PENDING context passes",
+      rc == 0, f"(rc={rc}) {msg}")
+
+rc, msg = run_live(lambda: rules_payload(
+                       list(crc.DEFAULT_REQUIRED_CONTEXTS) + ["Soon To Gate"]),
+                   files=_PENDING_WF, pending="Soon To Gate")
+check("a live ruleset that HAS started requiring a PENDING context also passes",
+      rc == 0, f"(rc={rc}) {msg}")
+check("...and says the name can now be promoted out of the pending list",
+      "Soon To Gate" in msg and "PENDING_REQUIRED_CONTEXTS" in msg, msg)
+
+# The tolerance is scoped to names actually listed as pending. An unrecognised
+# context appearing in the ruleset is still drift, or the seam would swallow
+# exactly the #2785 case it sits next to.
+rc, msg = run_live(lambda: rules_payload(
+                       list(crc.DEFAULT_REQUIRED_CONTEXTS) + ["Provenance attested"]),
+                   files=_PENDING_WF, pending="Soon To Gate")
+check("an added context that is NOT pending still fails the guard",
+      rc == 1, f"(rc={rc}) {msg}")
+
+# tools/ci-wait.py must NOT have been "helpfully" updated ahead of the ruleset.
+_cw = crc.load_ci_wait()
+check("tools/ci-wait.py's RULESET_CONTEXTS carries no PENDING name yet",
+      isinstance(PENDING, list) and not (set(_cw.RULESET_CONTEXTS) & set(PENDING)),
+      f"{_cw.RULESET_CONTEXTS} vs pending {PENDING}")
+
+# ...and the reason, measured rather than asserted: a floor wider than the live
+# ruleset is what makes ci-wait.py stop answering.
+if isinstance(PENDING, list) and PENDING:
+    _live_now = list(crc.DEFAULT_REQUIRED_CONTEXTS)
+    _verdict = _cw.classify(
+        [{"name": c, "status": "completed", "conclusion": "success"} for c in _live_now],
+        contexts=tuple(_live_now) + (PENDING[0],))
+    check("a ci-wait floor NARROWER than the judged set is fine (control)",
+          _verdict.code != 3, f"code={_verdict.code} {_verdict.lines}")
+    _verdict2 = _cw.classify(
+        [{"name": c, "status": "completed", "conclusion": "success"} for c in _live_now],
+        contexts=tuple(_live_now[:1]))
+    check("...while a judged set narrower than the floor is exit 3 UNDETERMINED "
+          "-- which is what adding a pending name to RULESET_CONTEXTS early would do",
+          _verdict2.code == 3, f"code={_verdict2.code} {_verdict2.lines}")
+
+
+# ===========================================================================
+# The SHIPPED workflows must satisfy the guard for DEFAULT + PENDING
+# ===========================================================================
+# Every check above drives synthetic fixtures. This one drives the real
+# .github/workflows directory, so "the gating workflow cannot leave a required
+# context cancelled" is a claim about what actually ships, not about a fixture
+# that resembles it. Offline: the context list is supplied, so no network call.
 
 _REPO = os.path.dirname(os.path.dirname(HERE))
-_PR_CHECK = os.path.join(_REPO, ".github", "workflows", "pr-check.yml")
-BYPASSES = ("REQUIRED_CONTEXTS", "SKIP_RULESET_DRIFT_CHECK")
+_WF_DIR = os.path.join(_REPO, ".github", "workflows")
 
-with open(_PR_CHECK, encoding="utf-8") as fh:
-    _wf = _yaml.safe_load(fh)
+_rc, _msg = run_dir(_WF_DIR,
+                    "\n".join(crc.DEFAULT_REQUIRED_CONTEXTS),
+                    "\n".join(PENDING if isinstance(PENDING, list) else []))
+check("the shipped workflows produce every required and pending context, "
+      "and none of them can be left cancelled", _rc == 0, f"(rc={_rc}) {_msg}")
+
+# Two workflows producing the SAME check name is not a syntax error and nothing
+# else catches it: the ruleset reads the newest check run with that name, so
+# which of the two decides the merge depends on which finished last. Moving a job
+# between workflow files by copying rather than moving produces exactly this.
+_produced: dict[str, list[str]] = {}
+for _f in sorted(os.listdir(_WF_DIR)):
+    if not _f.endswith((".yml", ".yaml")):
+        continue
+    _doc = crc.load(os.path.join(_WF_DIR, _f))
+    if not crc.pull_request_types(_doc):
+        continue
+    for _ctx in crc.contexts_of(_doc, _WF_DIR):
+        _produced.setdefault(_ctx, []).append(_f)
+_dupes = {c: fs for c, fs in _produced.items() if len(fs) > 1}
+check("no check-run name is produced by two pull_request workflows at once",
+      not _dupes, str(_dupes))
+
+
+# ===========================================================================
+# Neither bypass may be switched on where it would silently disarm the guard
+# ===========================================================================
+# SKIP_RULESET_DRIFT_CHECK=1 at least prints when it stands the live comparison
+# down, and it is now used ON PURPOSE: the gating invocation runs offline so a
+# required context can never go red because api.github.com was unreachable, while
+# a separate advisory invocation does the live comparison with no bypass at all.
+#
+# REQUIRED_CONTEXTS (and, since #3165, PENDING_CONTEXTS) are different: main()
+# branches on REQUIRED_CONTEXTS, never calls resolve_contexts(), and so skips
+# BOTH the live comparison and the tools/ci-wait.py cross-check. Either one set
+# in a workflow turns the guard into a green no-op, which is exactly what an
+# agent unbreaking CI during a GitHub API outage would reach for.
+#
+# So, across EVERY shipped workflow rather than one named file -- the earlier
+# version of this block read pr-check.yml only, and moving the job to another
+# file would have made it assert nothing:
+#
+#   * no invocation anywhere may set REQUIRED_CONTEXTS or PENDING_CONTEXTS;
+#   * at least one invocation must set NO bypass at all, or nothing performs the
+#     live drift comparison and #2785 is back.
+import re  # noqa: E402
+
+HARD_BYPASSES = ("REQUIRED_CONTEXTS", "PENDING_CONTEXTS")
+SOFT_BYPASS = "SKIP_RULESET_DRIFT_CHECK"
 
 # Matches the GUARD invocation only. A bare "check_required_contexts.py" substring
 # also matches the step that runs test_check_required_contexts.py, which would
@@ -425,30 +626,37 @@ with open(_PR_CHECK, encoding="utf-8") as fh:
 _GUARD_RUN = re.compile(r"(?<!test_)check_required_contexts\.py")
 
 _offenders: list[str] = []
-_seen_step = False
-for _var in BYPASSES:
-    if _var in (_wf.get("env") or {}):
-        _offenders.append(f"workflow env sets {_var}")
-for _job_name, _job in (_wf.get("jobs") or {}).items():
-    _job_env = _job.get("env") or {}
-    _runs_guard = False
-    for _step in _job.get("steps") or []:
-        if not _GUARD_RUN.search(_step.get("run") or ""):
+_invocations = 0
+_unbypassed = 0
+for _f in sorted(os.listdir(_WF_DIR)):
+    if not _f.endswith((".yml", ".yaml")):
+        continue
+    _wf = crc.load(os.path.join(_WF_DIR, _f))
+    _wf_env = _wf.get("env") or {}
+    for _job_name, _job in (_wf.get("jobs") or {}).items():
+        if not isinstance(_job, dict):
             continue
-        _seen_step = _runs_guard = True
-        for _var in BYPASSES:
-            if _var in (_step.get("env") or {}):
-                _offenders.append(f"{_job_name} step env sets {_var}")
-    if _runs_guard:
-        for _var in BYPASSES:
-            if _var in _job_env:
-                _offenders.append(f"{_job_name} job env sets {_var}")
+        _job_env = _job.get("env") or {}
+        for _step in _job.get("steps") or []:
+            if not _GUARD_RUN.search(_step.get("run") or ""):
+                continue
+            _invocations += 1
+            _seen = dict(_wf_env)
+            _seen.update(_job_env)
+            _seen.update(_step.get("env") or {})
+            for _var in HARD_BYPASSES:
+                if _var in _seen:
+                    _offenders.append(f"{_f}:{_job_name} sets {_var}")
+            if SOFT_BYPASS not in _seen:
+                _unbypassed += 1
 
-check("pr-check.yml actually runs check_required_contexts.py "
-      "(or the assertion below is vacuous)", _seen_step)
-check("...and neither REQUIRED_CONTEXTS nor SKIP_RULESET_DRIFT_CHECK is set for it",
+check("a shipped workflow actually runs check_required_contexts.py "
+      "(or the assertions below are vacuous)", _invocations > 0,
+      f"{_invocations} invocation(s)")
+check("...and none of them sets REQUIRED_CONTEXTS or PENDING_CONTEXTS",
       not _offenders, "; ".join(_offenders))
-
+check("...and at least one runs the LIVE drift comparison with no bypass",
+      _unbypassed > 0, f"{_unbypassed} of {_invocations} invocation(s) unbypassed")
 
 print()
 if FAILURES:
