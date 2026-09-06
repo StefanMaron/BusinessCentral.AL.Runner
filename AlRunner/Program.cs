@@ -523,8 +523,10 @@ for (int i = 0; i < args.Length; i++)
         try { alCacheDir = Path.GetFullPath(rawCacheDir); }
         catch (Exception ex)
         {
-            Console.Error.WriteLine(
-                $"--cache '{rawCacheDir}' is not a usable directory path: {ex.Message}");
+            // #3111: one wording, shared with the two other startup writers of a cache
+            // root below, so they cannot drift apart again.
+            Console.Error.WriteLine(AlRunner.Infrastructure.CacheRoots.BuildUnusableCacheRootMessage(
+                "--cache", rawCacheDir, ex.Message));
             return 2;
         }
         cacheRootOverride = alCacheDir; noCacheRequested = false; continue;
@@ -1349,7 +1351,31 @@ string? variantSwapDir = null;
     }
 }
 
-if (alCacheDir != null) Directory.CreateDirectory(alCacheDir);
+if (alCacheDir != null)
+{
+    // #3111: alCacheDir is the ONE cache root that deliberately never goes through
+    // CacheRoots.Resolve (exact-directory semantics — see that class's "Deliberately NOT
+    // wired into alCacheDir" note), so #3084's rootedness guard did not cover it: the
+    // caches derived from a --cache value were guarded and the al-out half of the SAME
+    // value was not. Same invariant, same wording, asserted here instead.
+    //
+    // Wrapped, like the --cache parse above, so a root this process cannot use returns the
+    // documented exit 2 rather than aborting out of top-level statements with an unhandled
+    // exception — which is what CreateDirectory alone did for a permission/ENOTDIR failure
+    // too, not just for the new guard.
+    try
+    {
+        AlRunner.Infrastructure.CacheRoots.RequireRooted(alCacheDir, "al-out");
+        Directory.CreateDirectory(alCacheDir);
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine(AlRunner.Infrastructure.CacheRoots.BuildUnusableCacheRootMessage(
+            cacheRootOverride != null ? "--cache" : "the default AL-output cache directory",
+            alCacheDir, ex.Message));
+        return 2;
+    }
+}
 // #1821/#2555: must run before the Cecil rewrite below (first ncl-cecil consumer), the
 // shadow-hop re-exec decision right after it (first ncl-shadow consumer), and well
 // before any DependencyLoader/BcAppSymbolCache/workspace-deps/AppLoader call — every one
@@ -1359,15 +1385,40 @@ if (alCacheDir != null) Directory.CreateDirectory(alCacheDir);
 // directory is minted (or, on a re-exec'd child, adopted from CacheRoots.NoCacheRootEnvVar
 // — see that constant's doc) before either re-exec decision point can hand off to a child
 // that would otherwise mint its own.
-if (noCacheRequested)
+//
+// #3111: wrapped. Both calls below root what they store (#3084), and Path.GetFullPath can
+// throw — DisableForRun adopts a RAW AL_RUNNER_NO_CACHE_ROOT value that nothing validates,
+// so the throw is reachable from outside the process (measured on Linux: a relative value
+// plus an unlinked working directory makes getcwd fail, and GetFullPath surfaces that as
+// FileNotFoundException). Unwrapped, that aborted out of top-level statements with an
+// unhandled exception and exit 134, while the --cache flag three hundred lines up returned
+// the documented exit 2 for the identical failure — the two writers of one field
+// disagreeing about their own error contract, which is the shape #2114 is about.
+try
 {
-    AlRunner.Infrastructure.CacheRoots.DisableForRun();
-    AppDomain.CurrentDomain.ProcessExit += (_, _) =>
-        AlRunner.Infrastructure.CacheRoots.CleanupThrowawayRoot();
+    if (noCacheRequested)
+    {
+        AlRunner.Infrastructure.CacheRoots.DisableForRun();
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+            AlRunner.Infrastructure.CacheRoots.CleanupThrowawayRoot();
+    }
+    else
+    {
+        AlRunner.Infrastructure.CacheRoots.SetOverride(cacheRootOverride);
+    }
 }
-else
+catch (Exception ex)
 {
-    AlRunner.Infrastructure.CacheRoots.SetOverride(cacheRootOverride);
+    // Read back rather than remembered: DisableForRun republishes the ROOTED form on
+    // success, but it throws before that, so the variable still holds exactly the value
+    // the user (or their shell) exported and the message names it verbatim.
+    var badRoot = noCacheRequested
+        ? Environment.GetEnvironmentVariable(AlRunner.Infrastructure.CacheRoots.NoCacheRootEnvVar)
+        : cacheRootOverride;
+    Console.Error.WriteLine(AlRunner.Infrastructure.CacheRoots.BuildUnusableCacheRootMessage(
+        noCacheRequested ? AlRunner.Infrastructure.CacheRoots.NoCacheRootEnvVar : "--cache",
+        badRoot ?? "", ex.Message));
+    return 2;
 }
 // #2041/#2066: deferred — see `deferredStartupLines`' declaration above. This generation
 // may still hand off via either re-exec decision below, and touches no bundle work at all
