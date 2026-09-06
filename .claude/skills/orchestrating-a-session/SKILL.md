@@ -97,6 +97,75 @@ one dispatch this turned a single issue into four sharing one root cause (#2723 
 agent which of the related issues its change closes for free rather than assigning all of
 them; "these three are one fix, that one is not, here is why" is a complete answer.
 
+## Keep a reviewer running, and size the batch
+
+Review is the step that stalls, and it stalls by arithmetic rather than by anyone deciding
+badly. Measured on 2026-09-06: a reviewer clears **6 PRs in 93 minutes (~15.6 min/PR)** and
+**3 corpus PRs in 64 minutes (~21 min/PR)**, so one reviewer sustains about **4 PRs/hour**.
+Implementation agents take 35-85 minutes and produce one PR each, so six of them produce
+**5-6 PRs/hour**. One reviewer cannot keep up with six implementation agents. Budget roughly
+**one reviewer per four implementation agents**.
+
+**Treat an open unreviewed PR as unfinished work that counts against your concurrency budget.**
+Six implementation agents plus six unreviewed PRs is twelve, not six. Without that accounting
+you will keep starting implementation agents whenever a slot frees, because starting one feels
+like progress and starting a reviewer feels like overhead - and the queue grows every hour.
+
+**Batch three or four PRs per reviewer.** Larger batches go stale: a batch of six ran 93
+minutes, during which three PRs from the brief merged and two heads moved, so a third of the
+verdicts came back "no verdict on current head". Smaller batches lose the cross-PR findings that
+are the reason to batch at all - the most valuable result that day was spotting that two PRs
+bumped the same submodule pin to different revisions and working out which had to merge first.
+A per-PR reviewer cannot see that, and neither can you.
+
+**A reviewer that approves a PR arms auto-merge on it immediately, in the same pass.** Do not
+hand an approval back to the coordinator and wait for it to act — that round trip is where the
+verdict goes stale, and staleness is the main cost of reviewing in batches. The reviewer has
+just read the head SHA; it is the only actor that knows the verdict and the SHA are consistent
+at that instant.
+
+```bash
+gh pr merge <N> --repo <owner>/<repo> --squash --auto
+```
+
+Arm **only** when all of these hold. Any one missing means report it to the coordinator instead:
+
+- **The PR is on a branch this loop owns.** Check the **branch prefix**, never the author field
+  — every loop running under one account reports that account as the author, and an outside
+  contributor's PR is never merged by us.
+- No release run is in progress (`publish.yml` pushes a fast-forward; a merge during its
+  ~40-minute run kills it).
+- `git merge-tree --write-tree --messages origin/<base> origin/<branch>` is clean.
+- If the PR asserts anything about BC's behaviour, its corpus PR has **merged**, and the pin bump
+  and count-baseline update are folded in.
+- No *other* PR in the same batch conflicts with it. Where two do — two submodule pin bumps to
+  different revisions, say — arm only the one that must merge first and report the ordering.
+
+**Record the SHA you armed against** in the verdict. If the head moves afterwards, GitHub keeps
+auto-merge armed against the new head, which nobody has reviewed; the coordinator needs the SHA
+to notice.
+
+**Arming is refused on a PR that is already mergeable** — GitHub answers `Pull request is in
+clean status`, because there is nothing left to wait for. That is not an error to retry or
+report as a failure: it means the PR can merge now, so say so and let the coordinator merge it
+directly. Check the exit code; a loop that printed "armed" regardless of it once left four green
+PRs sitting unarmed.
+
+Arming is not merging, and it does not replace the merge bar — it is the bar expressed as a
+standing instruction to GitHub, so a PR lands the moment its checks go green instead of at the
+coordinator's next sweep.
+
+**Start the next reviewer when one returns**, not when a queue becomes visible. By the time a
+pile-up is obvious it is already too deep to clear in one fresh batch.
+
+**Require the head SHA in every verdict**, and re-read it immediately before merging. Heads move
+within minutes when other loops and outside contributors push. Pass `--match-head-commit` so a
+merge refuses rather than quietly taking a commit nobody reviewed - a SHA in one brief had a red
+verdict attached by the time the review finished.
+
+One session's sample, and review time scales with PR size. Re-measure with `tools/agent-cost.py`
+rather than treating the ratio as settled.
+
 ## Triage
 
 Run the `triager` subagent at the **start** of a cycle, and again whenever the open-issue

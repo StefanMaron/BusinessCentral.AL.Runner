@@ -59,6 +59,97 @@ Serial work with a review step does not.
 
 Exactly one agent runs. When it returns, you review, act, and start the next.
 
+## Reviewing is not overhead, and it is where queues actually stall
+
+When a coordinator does run several agents at once — the attended mode this skill's serial rule
+does not cover — the thing that breaks first is review, not implementation. Measured across one
+attended session on 2026-09-06:
+
+| agent | work | wall | rate |
+|---|---|---|---|
+| reviewer (runner PRs) | 6 PRs in one pass | 93 min | ~15.6 min/PR |
+| reviewer (corpus PRs) | 3 PRs in one pass | 64 min | ~21 min/PR |
+| implementation agent | 1 PR each | 35-85 min | ~1 PR/hour |
+
+So **one reviewer sustains roughly 4 PRs/hour, and six implementation agents produce 5-6.**
+The queue grows by arithmetic, not by anyone choosing badly. The balancing ratio is about
+**one reviewer per four implementation agents**, and a coordinator that spawns implementation
+agents whenever a slot frees will fall behind indefinitely without ever making an obvious
+mistake.
+
+**Count an open unreviewed PR against the concurrency budget, exactly like an unfinished
+implementation.** A coordinator running 6 implementation agents with 6 unreviewed PRs is
+running at 12, not 6, and should stop starting new work. This is the accounting that makes
+priority 3 below fire on its own instead of needing to be remembered — the priority order
+already puts "a PR is waiting on review" *above* "an issue is ready to work", and it still got
+skipped, because starting an implementation agent feels like progress and starting a reviewer
+feels like overhead.
+
+**Review in batches of three or four, not one at a time and not six or more.** Both extremes
+were measured:
+
+- **Batches that are too large go stale.** A batch of six took 93 minutes; during it, three PRs
+  from the original brief merged and two of the remaining six had their head SHA move. Two of
+  six verdicts came back "no verdict on current head" — a third of the batch wasted. Review
+  takes ~15 min/PR and heads move every 30-60 min under load, so the batch has to finish inside
+  the window in which its subjects hold still.
+- **Batches of one lose the findings that matter most.** The single most valuable result in that
+  session was cross-PR: two PRs bumped the same submodule pin to different revisions, conflicting
+  three ways, and the reviewer worked out which had to merge first because its revision was an
+  ancestor of the other. **A one-PR-at-a-time reviewer cannot see that**, and neither can the
+  coordinator, who is not reading the diffs.
+
+**A reviewer that approves a PR arms auto-merge on it immediately, in the same pass.** Do not
+hand an approval back to the coordinator and wait for it to act — that round trip is where the
+verdict goes stale, and staleness is the main cost of reviewing in batches. The reviewer has
+just read the head SHA; it is the only actor that knows the verdict and the SHA are consistent
+at that instant.
+
+```bash
+gh pr merge <N> --repo <owner>/<repo> --squash --auto
+```
+
+Arm **only** when all of these hold. Any one missing means report it to the coordinator instead:
+
+- **The PR is on a branch this loop owns.** Check the **branch prefix**, never the author field
+  — every loop running under one account reports that account as the author, and an outside
+  contributor's PR is never merged by us.
+- No release run is in progress (`publish.yml` pushes a fast-forward; a merge during its
+  ~40-minute run kills it).
+- `git merge-tree --write-tree --messages origin/<base> origin/<branch>` is clean.
+- If the PR asserts anything about BC's behaviour, its corpus PR has **merged**, and the pin bump
+  and count-baseline update are folded in.
+- No *other* PR in the same batch conflicts with it. Where two do — two submodule pin bumps to
+  different revisions, say — arm only the one that must merge first and report the ordering.
+
+**Record the SHA you armed against** in the verdict. If the head moves afterwards, GitHub keeps
+auto-merge armed against the new head, which nobody has reviewed; the coordinator needs the SHA
+to notice.
+
+**Arming is refused on a PR that is already mergeable** — GitHub answers `Pull request is in
+clean status`, because there is nothing left to wait for. That is not an error to retry or
+report as a failure: it means the PR can merge now, so say so and let the coordinator merge it
+directly. Check the exit code; a loop that printed "armed" regardless of it once left four green
+PRs sitting unarmed.
+
+Arming is not merging, and it does not replace the merge bar — it is the bar expressed as a
+standing instruction to GitHub, so a PR lands the moment its checks go green instead of at the
+coordinator's next sweep.
+
+**Keep one reviewer continuously alive rather than spawning one when a queue becomes visible.**
+Reactive spawning is what produces the pile-up: by the time the queue is obvious it is already
+several PRs deep, and the batch needed to clear it is large enough to go stale. Start the
+replacement when a reviewer returns.
+
+**A review verdict must name the head SHA it was made against.** Heads move under a review in
+minutes when other loops and outside contributors are pushing. A verdict without a SHA cannot be
+checked for staleness, and merging on a stale one has already nearly merged a commit whose CI was
+red. Re-read the head immediately before merging and pass `--match-head-commit`, so the merge
+refuses rather than silently taking something else.
+
+These numbers come from a single session and review time varies with PR size. Re-measure with
+`tools/agent-cost.py` before treating the ratio as fixed.
+
 ## Preflight — run this first, every time, and stop if it fails
 
 A fresh or drifted box does not announce that it is broken; it produces numbers that look fine.
@@ -219,8 +310,32 @@ a merge can turn `main` red, which outranks everything you were about to do.
    consecutive cycles on the same red, notify a human and demote it so other work continues.
    Never ship a speculative fix to get past it: unattended and self-reviewed, that is how a wrong
    change reaches `main`.
-2. **One of our PRs is red.** Drive it green, or close it with the reason. A red PR left open is
-   worse than no PR: it looks like progress.
+2. **One of our PRs is red, or conflicted.** Drive it green, or close it with the reason. A red
+   PR left open is worse than no PR: it looks like progress.
+
+   **Check `mergeStateStatus` for `DIRTY` on every sweep, not just the check conclusions.** A
+   conflicted PR is *not* red — **CI does not run at all on a PR with conflicts**, so it keeps
+   whatever green checks it last earned and reads as healthy in `gh pr list` and in any
+   conclusions-based summary. Nothing about it looks wrong, and it can sit indefinitely. This
+   happened on 2026-09-06: a PR sat `DIRTY` for hours behind a green-looking check set and was
+   found only by a manual sweep, because the priority order below asks about *red* and a
+   conflicted PR never becomes red.
+
+   ```bash
+   gh pr list --repo <owner>/<repo> --state open \
+     --json number,mergeStateStatus,statusCheckRollup
+   ```
+
+   `DIRTY`/`CONFLICTING` → rebase on the base branch, resolve, force-push with
+   `--force-with-lease`, re-check until it reads `BLOCKED` or `CLEAN`. **Resolve on the merits,
+   not mechanically:** a conflict means someone else changed the same code, so read what landed
+   and decide whether this PR's change is still the right one. If `main`'s newer version already
+   does what the PR intended, closing it as superseded is the correct outcome.
+
+   **Never force-push a branch you do not own.** Where several loops or outside contributors
+   share a repository, check the *branch prefix*, not the author field — loops running under the
+   same account all report that account as the author. Getting this wrong means force-pushing
+   another loop's work.
 3. **A PR is waiting on review.** Dispatch the `reviewer` agent. A PR authored by the account
    the loop runs as may be merged unattended **only when every one of these aligns** — any one
    missing sends it to the human queue instead:
