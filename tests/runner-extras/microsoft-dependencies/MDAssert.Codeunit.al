@@ -18,6 +18,12 @@ codeunit 61000 "MD Assert"
             Error('Assert.AreEqual failed. Expected:<%1>. Actual:<%2>. %3', Expected, Actual, Msg);
     end;
 
+    procedure AreEqualText(Expected: Text; Actual: Text; Msg: Text)
+    begin
+        if Expected <> Actual then
+            Error('Assert.AreEqualText failed. Expected:<%1>. Actual:<%2>. %3', Expected, Actual, Msg);
+    end;
+
     procedure Contains(Haystack: Text; Needle: Text; Msg: Text)
     begin
         if not (StrPos(Haystack, Needle) > 0) then

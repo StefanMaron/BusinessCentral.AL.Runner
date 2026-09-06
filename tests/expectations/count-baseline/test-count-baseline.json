@@ -28,7 +28,7 @@
         "install-trigger-seed": { "tests": 3 },
         "install-trigger-text-constant": { "tests": 2 },
         "manual-binding-dep": { "tests": 3, "absentOn": ["27.0", "27.3", "27.5"] },
-        "microsoft-dependencies": { "tests": 24 },
+        "microsoft-dependencies": { "tests": 26 },
         "microsoft-test-library": { "tests": 3, "absentOn": ["27.0", "27.3", "27.5"] },
         "navapp-callermodule-dispatch-dep": { "tests": 0 },
         "navapp-callermodule-dispatch-main": { "tests": 4 },
