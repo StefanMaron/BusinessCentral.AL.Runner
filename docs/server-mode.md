@@ -165,12 +165,23 @@ signal can reach the runner mid-run rather than being queued behind it.
 
 ### `execute`
 
-Runs each bundle's first `OnRun`-bearing codeunit (run-mode). Unlike `runTests`
+Runs one `OnRun`-bearing codeunit per bundle (run-mode). Unlike `runTests`
 this is **not** streamed — one v1-shaped response line, no `type` discriminator:
 
 ```json
 {"exitCode":0,"tests":[{"name":"Codeunit60110.OnRun","status":"pass","durationMs":7}]}
 ```
+
+**Which codeunit**, when a bundle holds more than one with an `OnRun` trigger: the
+one with the **lowest AL object id**, preferring a codeunit that declares no `[Test]`
+procedure. A `Subtype = Test` codeunit is only ever selected when the bundle has
+nothing else with an `OnRun`.
+
+This used to read "the first `OnRun`-bearing codeunit", and "first" meant first in
+`Assembly.GetTypes()` — an array the CLR gives no defined order for, so two `execute`
+requests holding the same codeunits could run different code (#3086). It is the same
+rule test codeunits run under (#2801). Single-codeunit requests, which is nearly all
+of them, are unaffected either way.
 
 v1's `execute` also accepted an inline `code` string and a `captureValues` flag.
 v2 now supports `code` too (#1917): a temp single-file bundle is synthesised

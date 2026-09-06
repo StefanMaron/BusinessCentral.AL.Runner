@@ -6289,7 +6289,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         }
     }
 
-    // ── execute: run every requested bundle's first OnRun-bearing codeunit
+    // ── execute: run every requested bundle's lowest-object-id OnRun-bearing codeunit
     // (run-mode), aggregating the results. #1917: v1 also accepted an inline
     // `code` string — a temp single-file bundle is synthesised from it (see
     // SynthesizeInlineCodeBundle) and run through the SAME compile pipeline a
@@ -6401,7 +6401,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     0,
                     Array.Empty<string>(),
                     true,
-                    "affectedOnly selection is applied to runTests; execute always runs the first OnRun codeunit");
+                    "affectedOnly selection is applied to runTests; execute always runs the lowest-object-id OnRun codeunit");
             }
 
             return AlRunner.ServerProtocol.Execute(allTests, exitCode,
@@ -6534,14 +6534,31 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
     }
 
 
-    // Run the bundle's OnRun-bearing codeunit (run-mode), mirroring CodeunitPatches'
-    // OnRun dispatch. Prefers a non-[Test] codeunit; returns one TestResult named
-    // "<Codeunit>.OnRun". An AL Error inside OnRun surfaces as a Fail (exitCode 1).
+    // Run the bundle's lowest-object-id OnRun-bearing codeunit (run-mode), mirroring
+    // CodeunitPatches' OnRun dispatch. Prefers a non-[Test] codeunit; returns one TestResult
+    // named "<Codeunit>.OnRun". An AL Error inside OnRun surfaces as a Fail (exitCode 1).
+    //
+    // #3086: "the FIRST OnRun-bearing codeunit" used to mean "first in Assembly.GetTypes()",
+    // and the CLR does not define that array's order — the same undefined order that made
+    // TestExecutor.Run execute test codeunits in a shifting order (#2801). Here it is worse
+    // than an ordering problem: it decides WHICH CODE RUNS AT ALL. Measured on this build, one
+    // `execute` request holding two OnRun-bearing codeunits:
+    //
+    //   declared 60191 then 60190  ->  ran Codeunit60191.OnRun
+    //   declared 60190 then 60191  ->  ran Codeunit60190.OnRun
+    //
+    // Same two codeunits, different answer, and nothing in the response says a choice was
+    // made. Ordering the candidates by ascending AL object id first makes the choice defined
+    // and identical to the rule test codeunits already run under — one rule, one helper
+    // (TestExecutor.OrderTestCodeunitsByObjectId), rather than a second arbitrary one here.
+    // Both `execute` shapes below stay exactly as they were for the overwhelmingly common
+    // single-codeunit request; only a multi-codeunit bundle changes, from a coin flip to the
+    // lowest id.
     IReadOnlyList<TestResult> RunFirstCodeunitOnRun(Assembly asm)
     {
         var navCodeunit = typeof(Microsoft.Dynamics.Nav.Runtime.NavCodeunit);
         Type? target = null;
-        foreach (var t in asm.GetTypes())
+        foreach (var t in TestExecutor.OrderTestCodeunitsByObjectId(asm.GetTypes()))
         {
             if (!t.Name.StartsWith("Codeunit", StringComparison.Ordinal)) continue;
             if (!navCodeunit.IsAssignableFrom(t)) continue;
