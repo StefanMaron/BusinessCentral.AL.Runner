@@ -16,6 +16,46 @@ Newest last, within each section.
 
 ## al-language
 
+### 2554 -> 2599 (pin aa49fb4f -> ab6fbefa, PR #2941)
+
+The pin advanced to consume StefanMaron/BusinessCentral.AL.Language.Tests#174, the upstream
+half of #2296 (the session user must be a row in the User table). Corpus history is linear, so
+five other merged corpus PRs came with it and all of them contribute tests:
+
+| corpus PR | what it pins |
+|---|---|
+| #168 | opening a TestPage is not a Commit |
+| #169 | running a page modally inside a test is not a Commit |
+| #170 | how `TestPage.Previous()` walks a page's rowset backwards |
+| #171 | `min()`, `max()` and `average()` CalcFormula aggregates |
+| #173 | the Table Metadata, AllObj and AllObjWithCaption virtual tables |
+| #174 | the session user is a row in the User table (this PR's own upstream test) |
+
+**2599 is the number the guard itself reported**, not one computed from the old total plus a
+count of added tests (#2803). Measured on BC 28.1.49838.53910 by running the corpus with
+`--strict --count-baseline`; the run failed with
+`GROWTH: suite 'al-language' tests count: expected 2554, actual 2599 (BC 28.1)` and 2599 is that
+`actual`. Re-run after the bump: 2599/2599, exit 0.
+
+The guard was also confirmed ARMED rather than silently skipping, since it prints nothing on a
+match: re-running against a copy of this file carrying 2600 exits 4 with
+`DROP: ... expected 2600, actual 2599`.
+
+Of the 2599, 5 are new `expect-fail-known-gap` entries covering pre-existing runner gaps the
+bump made visible — 4 under #2938 (Table Metadata constants) and 1 under #2970 (FlowField
+CalcFormula type validation). Both issues stay open after this PR merges. The 4 tests from #174
+pass, because this PR is the fix for them; no entry was written for those.
+
+Ten gaps were measured at the first pass, not five. The other five were the
+`Codeunit60756.TestPage_Previous_*` family, entered under #2901 (SourceTableView not applied,
+reaching those tests through `Previous()`). Between that measurement and this branch's final
+merge, #2861 landed on `main` and FIXED SourceTableView, which also deleted
+`known-gaps-testpage-sourcetableview.json` and its four codeunit 60822 entries. Re-measuring
+after the merge rather than reusing the earlier number is what caught it: all nine now pass, so
+`pass-known-gap` reads 17 rather than 26, and leaving the five entries in would have failed the
+run with "Test passed cleanly but manifest declares expect-fail-known-gap". The total stays 2599
+either way — a reclassification, not a count change.
+
 ## runner-extras
 
 ## Migrated log (everything above 2026-09-05, verbatim)
@@ -518,3 +558,21 @@ group, so it adds a line rather than moving a number: expected tests on every le
 expected app groups by 1, both derived from the line and neither written out anywhere. No
 `absentOn` -- the bundle declares `platform`/`application` 27.0.0.0, so it runs on all eight
 legs. The 3 is measured from an actual run of that bundle, not counted off the source.
+
+The runner-extras `session-user-row` group (4 tests, issue #2296) is a new bundle: the runner
+seeds its own session user into the User system table (2000000120), and the suite pins that the
+row exists with the identity BcRuntime put on the skeleton NavSession, that it carries the User
+Property (2000000121) companion row BC creates alongside every user, that a TableRelation to
+User."User Security ID" accepts UserSecurityId(), and -- the negative control -- that a security
+id belonging to no user is still refused. No `absentOn`: the bundle declares
+`"platform": "27.0.0.0"`, names only System-application tables that exist on 27.0 and carries no
+preprocessor gating, so it contributes the same 4 tests on every leg.
+
+The group's own line carries the only number that gates -- `"session-user-row": { "tests": 4 }`
+-- and the suite total is derived from the lines rather than written down, so no aggregate here
+is load-bearing. An earlier draft of this paragraph recorded "268 tests across 51 app groups, up
+from 264/50" as the suite total; that was true when it was measured and had already gone stale
+by the time this branch merged, because several other groups landed on `main` in between. The
+final run on this branch reports **282**. The lesson, not the number, is the point: a suite-wide
+total written into this file dates the moment it was measured, while the per-group line does
+not.

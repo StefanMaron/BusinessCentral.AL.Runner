@@ -216,11 +216,20 @@ public class TestArtifactsGateTests
 
     // ---- 3. drift guards over the suite's own source ----------------------------
 
-    private static IEnumerable<(string File, string Text)> TestSources() =>
+    /// <summary>
+    /// Every <c>.cs</c> source in the suite, at ANY depth, minus build output. One place, so
+    /// the two facts below cannot disagree about what "the suite's own source" means — #3000:
+    /// <see cref="EveryTestThatCanSkipIsDeclaredSkippable"/> enumerated
+    /// <c>SearchOption.TopDirectoryOnly</c> of its own while this helper already walked the
+    /// whole tree, so the same file was in scope for one drift guard and invisible to the other.
+    /// </summary>
+    private static IEnumerable<string> TestSourcePaths() =>
         Directory.EnumerateFiles(TestsSourceDir, "*.cs", SearchOption.AllDirectories)
             .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
-                     && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
-            .Select(f => (Path.GetFileName(f), File.ReadAllText(f)));
+                     && !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal));
+
+    private static IEnumerable<(string File, string Text)> TestSources() =>
+        TestSourcePaths().Select(f => (Path.GetFileName(f), File.ReadAllText(f)));
 
     /// <summary>
     /// One gate, one place. Twenty-three classes each declared their own
@@ -346,7 +355,7 @@ public class TestArtifactsGateTests
         var skipCall = new Regex(@"\bTestArtifacts\.(SkipIfMissing|SkipIf|SkipIfDirectoryMissing)\b|\bSkip\.(If|IfNot|Always)\b");
 
         var offenders = new List<string>();
-        foreach (var file in Directory.EnumerateFiles(TestsSourceDir, "*.cs", SearchOption.TopDirectoryOnly))
+        foreach (var file in TestSourcePaths())
         {
             if (Path.GetFileName(file) is "TestArtifacts.cs" or "TestArtifactsGateTests.cs") continue;
             string? attr = null, method = null;

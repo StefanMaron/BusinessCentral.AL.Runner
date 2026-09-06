@@ -409,11 +409,12 @@ public static partial class RecordPatches
             if (_pDataItemSubQueryDefinitionQ?.GetValue(diCheck) == null) continue;
             if (_pDataItemSourceFlowFieldQ?.GetValue(diCheck) != null) continue; // FlowField calc — gets a slot below.
             var subDataItemName = _pDataItemNameQ?.GetValue(diCheck) as string ?? "<unknown>";
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            throw RunnerShapeGap.Query(
                 "NavQuery (multi-dataitem join with a synthesized sub-dataitem)",
-                $"query-join-synthesized-subquery-not-implemented -- dataitem '{subDataItemName}' is a " +
-                "synthesized sub-dataitem (SubQueryDefinition != null) that is not a FlowField-calculation " +
-                "sub-query; this runner does not support this join sub-shape in-memory; see docs/scope.md");
+                "query-join-synthesized-subquery",
+                $"dataitem '{subDataItemName}' is a synthesized sub-dataitem (SubQueryDefinition != null) " +
+                "that is not a FlowField-calculation sub-query; the in-memory join executor does not take " +
+                "this sub-shape yet");
         }
 
         int maxSlot = -1;
@@ -868,10 +869,11 @@ public static partial class RecordPatches
             foreach (var (slot, expr) in conds)
             {
                 if (slot < 0 || slot >= row.FieldCount)
-                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    throw RunnerShapeGap.Query(
                         "NavQuery.SetRange/SetFilter on an aggregated column",
-                        $"query-having-filter-on-nonprojected-column — filtered slot {slot} is outside the " +
-                        $"projected row (FieldCount {row.FieldCount}); cannot evaluate HAVING; see docs/scope.md");
+                        "query-having-filter-on-nonprojected-column",
+                        $"filtered slot {slot} is outside the projected row (FieldCount {row.FieldCount}), " +
+                        "so the HAVING equivalent cannot be evaluated");
                 if (!EvaluateFilterExpression(expr, row[slot], session))
                     return false;
             }
@@ -933,10 +935,11 @@ public static partial class RecordPatches
                 if (expr == null) continue;
                 if (key == null || _tNCLMetaQueryColumn == null || !_tNCLMetaQueryColumn.IsInstanceOfType(key))
                     // A non-query-column key on a query request should not occur; refuse to guess.
-                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    throw RunnerShapeGap.Query(
                         "NavQuery (multi-dataitem join)",
-                        "query-join-runtime-filter-on-nonprojected-column — a runtime filter is keyed by a " +
-                        $"non-query-column ({key?.GetType().Name ?? "null"}); cannot evaluate post-projection; see docs/scope.md");
+                        "query-join-runtime-filter-on-nonprojected-column",
+                        $"a runtime filter is keyed by a non-query-column ({key?.GetType().Name ?? "null"}), " +
+                        "so it cannot be evaluated post-projection");
                 runtimeFilteredColumnIds.Add(((NCLMetaQueryColumn)key).Id);
                 // #2925: a FlowFilter-class column carries no projected value to compare against
                 // — TranslateQueryFilters has already routed it to the FlowField calculation as
@@ -948,10 +951,11 @@ public static partial class RecordPatches
                     // The filtered column isn't in ANY dataitem's QueryColumns of this query
                     // definition — should not occur (the filter dictionary is keyed by columns that
                     // came from this same query), but refuse to guess rather than silently drop it.
-                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    throw RunnerShapeGap.Query(
                         "NavQuery (multi-dataitem join)",
-                        "query-join-runtime-filter-unresolved-column — a runtime filter's column could not be " +
-                        "located in the query's own DataItems/QueryColumns; see docs/scope.md");
+                        "query-join-runtime-filter-unresolved-column",
+                        "a runtime filter's column could not be located in the query's own " +
+                        "DataItems/QueryColumns");
                 conds.Add((slot, expr));
             }
 
@@ -967,10 +971,11 @@ public static partial class RecordPatches
             if (runtimeFilteredColumnIds.Contains(col.Id)) continue;
             if (IsFlowFilterColumn(col)) continue; // #2925, as above
             if (!slotMap.TryGetValue(col, out var slot))
-                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                throw RunnerShapeGap.Query(
                     "NavQuery (multi-dataitem join)",
-                    "query-join-static-columnfilter-unresolved-column — a static ColumnFilter's column " +
-                    "could not be located in the query's own DataItems/QueryColumns; see docs/scope.md");
+                    "query-join-static-columnfilter-unresolved-column",
+                    "a static ColumnFilter's column could not be located in the query's own " +
+                    "DataItems/QueryColumns");
             conds.Add((slot, expr));
         }
         if (conds.Count == 0) return rows;
@@ -981,10 +986,11 @@ public static partial class RecordPatches
             foreach (var (slot, expr) in conds)
             {
                 if (slot >= row.FieldCount)
-                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    throw RunnerShapeGap.Query(
                         "NavQuery (multi-dataitem join)",
-                        $"query-join-runtime-filter-on-nonprojected-column — filtered slot {slot} is outside the " +
-                        $"projected row (FieldCount {row.FieldCount}); cannot evaluate post-projection; see docs/scope.md");
+                        "query-join-runtime-filter-on-nonprojected-column",
+                        $"filtered slot {slot} is outside the projected row (FieldCount {row.FieldCount}), " +
+                        "so it cannot be evaluated post-projection");
                 var navValue = row[slot];
                 if (!EvaluateFilterExpression(expr, navValue, session))
                     return false;
@@ -1171,10 +1177,11 @@ public static partial class RecordPatches
                 .FirstOrDefault(m => m.Name == "NegateValue" && m.GetParameters().Length == 2);
         }
         if (_mFlowFieldsHelperNegateValue == null)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            throw RunnerShapeGap.Query(
                 "Query column ReverseSign",
-                "query-reversesign-negatevalue-missing — Microsoft.Dynamics.Nav.Runtime." +
-                "FlowFieldsHelper.NegateValue(NavValue,NavType) not found on this BC build; see docs/scope.md");
+                "query-reversesign-negatevalue-missing",
+                "Microsoft.Dynamics.Nav.Runtime.FlowFieldsHelper.NegateValue(NavValue,NavType) " +
+                "not found on this BC build");
         return (NavValue?)_mFlowFieldsHelperNegateValue.Invoke(null, new object?[] { value, column.NavType });
     }
 

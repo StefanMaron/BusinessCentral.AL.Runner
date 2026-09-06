@@ -203,8 +203,8 @@ public class NamespaceQualifiedRelationTargetTests
         // owner sidecar so a KILLED test host's directory is reclaimed by the next runner
         // instead of leaking forever. This file and that guard landed within minutes of each
         // other from two different PRs, so neither saw the other and main went red on a
-        // combination that was green in both — nothing to do with either change itself.
-        var dir = TestScratch.Dir("al-runner-nqr-tests");
+        // combination that was green in both -- nothing wrong with either change itself (#2991).
+        var dir = TestScratch.Dir("al-runner-namespace-qualified-relation-tests");
         Directory.CreateDirectory(dir);
         return dir;
     }

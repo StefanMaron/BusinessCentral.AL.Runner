@@ -764,6 +764,23 @@ public static class Reporter
                 : $"out-of-scope/{oosSignal.Api}";
         }
 
+        // A BC shape gap gets its own bucket (#2946). Without it the classifier below would
+        // key it on whatever incidental BC frame happens to be innermost on the stack, which
+        // names the code the runner was SERVING rather than the read that failed — and every
+        // shape gap in a run would scatter across unrelated runtime/* buckets.
+        int gapIdx = message.IndexOf(Infrastructure.BcShapeGapException.Prefix, StringComparison.Ordinal);
+        var gapText = gapIdx >= 0 ? message : full;
+        if (gapIdx < 0) gapIdx = full.IndexOf(Infrastructure.BcShapeGapException.Prefix, StringComparison.Ordinal);
+        if (gapIdx >= 0)
+        {
+            var tail = gapText[(gapIdx + Infrastructure.BcShapeGapException.Prefix.Length)..];
+            int nl = tail.IndexOfAny(new[] { '\r', '\n' });
+            if (nl >= 0) tail = tail[..nl];
+            int sep = tail.IndexOf(" — ", StringComparison.Ordinal);
+            var surface = (sep >= 0 ? tail[..sep] : tail).Trim();
+            return surface.Length == 0 ? "bc-shape-gap/unknown" : $"bc-shape-gap/{surface}";
+        }
+
         // Classify by the FIRST (innermost) BC stack frame — that's where the actual NRE
         // originates. Looking anywhere in the stack mis-buckets every AL test as
         // NavMethodScope because every AL method body wraps in a NavMethodScope.

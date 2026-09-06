@@ -166,9 +166,23 @@
 //          0 is BC's own answer and is kept (see the columns section). A null Instance has no
 //          answer at all, and this is the third primary-key field.
 //      10. EmitVersion property not found       -> (2) unsupported BC assembly shape
-//     ProviderHasAnyRow (both added by #2837, same classification)
-//      11. primaryTree field not found          -> (2) BC's private provider layout moved
-//      12. primaryTree is not enumerable        -> (2) same
+//     ProviderHasAnyRow (both added by #2837)
+//      11. primaryTree field not found          -> (4) BC's private provider layout moved
+//      12. primaryTree is not enumerable        -> (4) same
+//
+//   BUCKET (4), ADDED BY #2946: the runner could not READ BC's internals. These two are the
+//   only sites in this file in it, and they raise BcShapeGapException rather than
+//   RunnerOutOfScopeException — see AlRunner/Infrastructure/BcShapeGapException.cs. The line
+//   is whether the runner obtained the information at all. Sites 2, 3, 8 and 10 are the same
+//   family (a BC type or member that is not there) and are NOT converted here, because
+//   reclassifying them one at a time across this file and the 48 sites in
+//   RecordPatches.VirtualTableShapeGap.cs is a per-site sweep with its own issue; #2946 is the
+//   type convention, and this file's two primaryTree readers are the defect it names.
+//   Sites 1, 4, 5, 6, 7 and 9 stay in bucket (2) on purpose and would be WRONG in (4): each of
+//   those reads SUCCEEDED and the answer was merely unwelcome — BC's list came back empty, the
+//   artifact genuinely has no field 3, a skeleton singleton the RUNNER populates is null, the
+//   runner's own store wiring handed no provider over. An unwelcome answer is not an
+//   unreadable one.
 //
 //   The same "; see docs/scope.md" wording sits on the equivalent provider-null guard in
 //   roughly fifteen sibling virtual-table populators in this directory (AllObj, Integer,
@@ -475,47 +489,47 @@ public static partial class RecordPatches
     /// restructured it and the runner has no idea what the store holds; answering FALSE there
     /// would silently shadow whatever --test-data restored into this table, disabling the
     /// precedence rule in this file's header with no diagnostic anywhere. It used to do
-    /// exactly that. Now it refuses, naming the member, the way every sibling reader of this
-    /// same private field already does: RecordPatches.StoredTableCensus.cs (twice),
-    /// RecordPatches.TransactionSnapshot.cs and RecordPatches.InstallBaseline.cs all go
-    /// through <c>RequiredField</c>, which throws <see cref="MissingFieldException"/>, and
-    /// RowVersionPatches.SystemIdIntegrity.cs throws naming the member. See
-    /// .claude/rules/loud-failures.md.</para>
+    /// exactly that. Now it refuses, naming the member. See .claude/rules/loud-failures.md.</para>
     ///
-    /// <para>A refusal here is a BUG REPORT ABOUT THE RUNNER, not a permanent scope
-    /// boundary — but <see cref="RunnerOutOfScopeException"/> is what this whole file already
-    /// raises when a BC surface it reflects on is not where it expects (SystemTables,
-    /// NavEnvironment, the "Object Type" option string), and it carries the typed
-    /// <c>Api</c>/<c>Reason</c> pair the expectations manifest matches on. Same choice here.
-    /// It is NOT proof against AL swallowing it — <c>asserterror</c> is
-    /// MethodScopePatches.NavMethodScope_AssertError, an unfiltered <c>catch (Exception ex)</c>
-    /// — which is exactly why <see cref="RunObjectMetadataPopulateOnce"/> has to remember a
-    /// refusal instead of leaving the table marked populated and empty.</para>
+    /// <para>THE TYPE IS <see cref="BcShapeGapException"/>, NOT
+    /// <see cref="RunnerOutOfScopeException"/> (#2946). Both of these two refusals are BUG
+    /// REPORTS ABOUT THE RUNNER rather than scope boundaries, and this file used to say so in a
+    /// comment and then raise the scope exception anyway — which is the disagreement #2946 was
+    /// filed about: four readers of this same private structure raised three different types
+    /// between them. Two consequences follow the type rather than the wording. A shape gap can
+    /// never be absorbed by an <c>expect-oos</c> manifest entry, so a BC-layout regression
+    /// cannot be declared expected — it is a property of which BC build is on disk, not of the
+    /// runner, so it can be true on one BC leg and false on another in the same run. And it
+    /// tears through AL's <c>asserterror</c> as well as through a <c>[TryFunction]</c>, which a
+    /// <see cref="RunnerOutOfScopeException"/> does not: <c>asserterror</c> is
+    /// MethodScopePatches.NavMethodScope_AssertError, and on real BC this record-open SUCCEEDS,
+    /// so catching the gap would make an <c>asserterror</c> around it pass where BC fails it.
+    /// <see cref="RunObjectMetadataPopulateOnce"/> still remembers a refusal, because the other
+    /// ten throw sites in this file remain catchable.</para>
     ///
-    /// <para>Resolution goes through <see cref="PrivateMemberLookup"/> rather than a plain
-    /// <c>GetField</c>, because <c>primaryTree</c> is PRIVATE on <c>TempTableDataProvider</c>
-    /// and <c>GetField(NonPublic)</c> on a DERIVED type does not return a base class's private
+    /// <para>Resolution goes through <see cref="BcShape"/>, which uses
+    /// <see cref="PrivateMemberLookup"/> rather than a plain <c>GetField</c>, because
+    /// <c>primaryTree</c> is PRIVATE on <c>TempTableDataProvider</c> and
+    /// <c>GetField(NonPublic)</c> on a DERIVED type does not return a base class's private
     /// fields — BC's own <c>CrmTableConnection.CrmTestDataProvider</c> derives from it (#2725).
     /// Reading a derived provider's inherited field as "absent" would turn a perfectly readable
     /// store into a hard failure now that absence refuses.</para>
     /// </summary>
     private static bool ProviderHasAnyRow(object provider)
     {
-        var field = PrivateMemberLookup.Field(provider.GetType(), "primaryTree")
-            ?? throw ObjectMetadataShapeGap(
-                $"{provider.GetType().Name}.primaryTree not found, so the runner cannot tell a store BC "
-                + "never inserted into from one --test-data already filled; synthesising rows would "
-                + "silently shadow the restored ones. BC's private provider layout moved");
+        const string detail =
+            "the runner cannot tell a store BC never inserted into from one --test-data already "
+            + "filled, and synthesising rows would silently shadow the restored ones";
+
+        var field = BcShape.RequiredField(
+            provider.GetType(), "primaryTree", ObjectMetadataApi, detail);
 
         // A null tree is BC's own "no row was ever inserted": nothing to shadow, synthesise.
         var tree = field.GetValue(provider);
         if (tree == null) return false;
 
-        if (tree is not IEnumerable rows)
-            throw ObjectMetadataShapeGap(
-                $"{provider.GetType().Name}.primaryTree is a {tree.GetType().Name}, which cannot be "
-                + "enumerated, so the runner cannot tell whether --test-data already filled this table. "
-                + "BC's private provider layout moved");
+        var rows = BcShape.RequiredEnumerable(
+            tree, $"{provider.GetType().Name}.primaryTree", ObjectMetadataApi, detail);
 
         // Short-circuit: one row is the whole answer, and a restored backup can be large.
         foreach (var _ in rows) return true;

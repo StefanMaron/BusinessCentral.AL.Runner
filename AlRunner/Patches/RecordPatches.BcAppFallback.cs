@@ -97,8 +97,10 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// Drop every lazily-built BC .app index so the next lookup rebuilds them from
-    /// <see cref="_bcAppPaths"/> from scratch — including <see cref="_bcSymbolExtensionIndexBuilt"/>,
+    /// Drop every lazily-built piece of state derived from the registered BC .app set — the
+    /// symbol/table/query indexes AND the per-id synthesized-metadata memos (#2889) — so the
+    /// next lookup rebuilds it from <see cref="_bcAppPaths"/> from scratch. Including
+    /// <see cref="_bcSymbolExtensionIndexBuilt"/>,
     /// which is what actually re-triggers <see cref="EnsureBcSymbolExtensionIndex"/> (its only
     /// call site is inside <see cref="EnsureBcSymbolTableIndex"/>, gated by
     /// <c>_bcSymbolTableIndex != null</c> — so nulling the table index without ALSO resetting
@@ -124,6 +126,36 @@ public static partial class RecordPatches
         _bcSymbolTableCaptions = null;
         _bcSymbolQueryIndex = null;
         _bcSymbolExtensionIndexBuilt = false;
+        // #2889: the synthesized-metadata memos are derived from _bcAppPaths exactly like the
+        // indexes above — TryBuildDependencyPageMetadata / TryBuildDependencyReportMetadata
+        // GetOrAdd a document built by walking the registered .apps' SymbolReference.json —
+        // and they were the only such state this method did not drop. Both memo the NEGATIVE
+        // answer too, which is the half that bites without a fix landing anywhere else:
+        // AddBcAppPath calls this method precisely so a "newly-added .app gets picked up on
+        // next miss", so an id asked about BEFORE the .app that declares it was registered
+        // kept its memoized null for the rest of the process. RunnerXmlMetadataLoader then
+        // fell past its page branch and raised the not-yet-implemented out-of-scope throw for
+        // a page whose metadata was sitting readable in a registered symbol file — which
+        // EnsureRealPageMetadata catches, logging "falling back to the control-less skeleton"
+        // and recording the page as permanently failed. That loader's dependency-REPORT branch
+        // reached the identical throw the same way. (The report memo has a SECOND consumer the
+        // page memo does not: NavReportSync.GetRealMetaReport, which layers its own
+        // _realMetaCache on top and falls back to the legacy ProcessingOnly stub when this
+        // memo answers null — so a cached null there costs a SaveAs, not a throw. Naming one
+        // consumer as "the only" one is the same unchecked-uniqueness reasoning that let this
+        // memo's premise go unexamined in the first place, so both are named.)
+        //
+        // The positive direction needs the registered set to be able to SHRINK, and since
+        // #2755 / PR #2873 merged it can: ClearPerBundleBcAppPaths drops the previous bundle's
+        // registrations and routes through this same method. So this direction is live on main
+        // today, not latent — a document synthesized from bundle 1's symbols is not
+        // stale-but-consistent for bundle 2, it is simply wrong, and without the clears below
+        // the memo would serve it for an .app that is no longer registered at all. Clearing
+        // here covers both directions and cannot drift from the registration set, for the same
+        // reason #2478 gave for funnelling the index resets through one method rather than
+        // duplicating them at each call site.
+        _depPageMetadataXml.Clear();
+        _depReportMetadataXml.Clear();
     }
 
     /// <summary>
