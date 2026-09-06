@@ -102,13 +102,22 @@ public sealed class PkgDedupStaleStageReuseTests : IDisposable
         // A marker no rebuild would reproduce: if the directory is rebuilt, it is gone.
         var marker = Path.Combine(first, "reuse-marker.txt");
         File.WriteAllText(marker, "published-once");
-        var createdAt = Directory.GetCreationTimeUtc(first);
+        // #2990: this used to compare Directory.GetCreationTimeUtc across the two calls. That
+        // is not a reliable "was it rebuilt" proxy here — on a filesystem that does not expose
+        // a birth time, .NET derives the creation time from the mtime, so ANY legitimate write
+        // to the directory moves it. The reuse path now stamps the stage's last-USE time (a
+        // stage is written once and read forever, so its own mtime would otherwise record only
+        // its creation date and the prune would eventually delete a stage in daily use). The
+        // marker FILE inside the stage carries the same claim without that coupling: a rebuild
+        // replaces the whole directory, so neither the file nor its timestamps survive one.
+        var markerCreatedAt = File.GetCreationTimeUtc(marker);
 
         var second = Assert.Single(InvokeDeduplicateAppPackageDirs(packageDirs, excludeAppId: null));
 
         Assert.Equal(first, second);
         Assert.True(File.Exists(marker), "an intact stage must be adopted, not rebuilt");
-        Assert.Equal(createdAt, Directory.GetCreationTimeUtc(second));
+        Assert.Equal("published-once", File.ReadAllText(marker));
+        Assert.Equal(markerCreatedAt, File.GetCreationTimeUtc(marker));
     }
 
     // ── PkgDedupStaging.Publish: the concurrent-runner half of the same defect ──────────

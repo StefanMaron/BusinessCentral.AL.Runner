@@ -84,12 +84,18 @@
 //   merely bypassing matters: bypassing leaves the poison in place for the next runner, and
 //   the next, forever.
 //
-// WHAT THIS DOES NOT FIX
-//   Stages whose picked path set never recurs are still never reclaimed — they are dead disk
-//   until someone clears the temp root. Self-healing on reuse is the part that affects
-//   correctness; an age- or ownership-based prune of a deliberately shared, owner-less cache
-//   is a separate decision, and ScratchDirs' header explains why an age rule on a directory a
-//   live process may be reading is the one rule that can do harm.
+// WHAT THIS DOES NOT FIX — AND WHERE THAT IS NOW FIXED (#2990)
+//   Self-healing on reuse is the part that affects correctness, and it only reaches a stage
+//   that is looked up again; a stage whose picked path set never recurs was never reclaimed at
+//   all. That prune landed separately, in PkgDedupCache, and the hazard flagged here is the one
+//   its design turns on: an age rule alone is the one rule that can delete a directory a live
+//   process is reading, so a stage also has to be unclaimed by any live process before it goes.
+//
+//   One thing here feeds that prune. TryMoveAside's `.stale-<rand>` tree is removed by a
+//   TryDelete that swallows every failure, so a tree it cannot remove stays under that name
+//   with nothing else to reclaim it. PkgDedupCache recognises the name and finishes the job on
+//   a later pass; it needs no liveness or age test, because the rename has already put the tree
+//   beyond the reach of any lookup.
 using System.Diagnostics;
 
 namespace AlRunner.Infrastructure;
