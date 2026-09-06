@@ -39,10 +39,39 @@
 // ({0} = ITestField.Name, {1} = the recorded error text — the double space is BC's.) That is
 // the same string TestPageMinMaxValue and TestPageBooleanValue used to hand-build themselves;
 // now that a refusal is recorded rather than thrown, BC composes it and those helpers carry
-// only the inner message. Microsoft's own Tests-SINGLESERVER asserts both halves —
-// `Assert.ExpectedError('Validation error for Field')` in UserRoleTest, and
-// `GetValidationError(1)` equal to the BARE inner text in TestAppPermissions — which is the
-// evidence that the wrapper belongs to the outer layer and the recorded text does not carry it.
+// only the inner message.
+//
+// WHAT THE RECORDED TEXT IS, MEASURED — AND WHY IT DIFFERS BY BINDING
+//
+// Corpus run 34002487601 (StefanMaron/BusinessCentral.AL.Language.Tests PR #182, identical on
+// every leg that reported) measured what a REC-BOUND control records when its OnValidate
+// raises `Error('Deliberate OnValidate failure for VAL-1')`:
+//
+//     Deliberate OnValidate failure for VAL-1 (Select Refresh to discard errors)
+//
+// So real BC appends " (Select Refresh to discard errors)" — the client's offer to discard the
+// staged row edit — to the AL message before storing it. An earlier version of this file
+// recorded the bare message and was wrong; that suffix is exactly why TestPageMinMaxValue and
+// TestPageBooleanValue already carried it inside their own hand-built strings.
+//
+// Microsoft's Tests-SINGLESERVER Codeunit134614 asserts the opposite for its own control, with
+// exact equality and no suffix:
+//
+//     Assert.AreEqual('There should be at least one enabled ''SUPER'' user.',
+//         PermissionSetByUser.AllUsersHavePermission.GetValidationError(1), ...)
+//
+// These are not the same shape, and the difference is mechanical rather than guessed: probing
+// the runner's own control-binding map (AL_RUNNER_BINDING_PROBE over that test) shows page 9807
+// resolves AllUsersHavePermission as a PAGE VARIABLE, while page 60797's NameCtl in the corpus
+// test is REC-BOUND. A page-global control stages no row edit, so there is nothing for
+// "Refresh to discard" to discard.
+//
+// Hence the suffix lives on LiveNavTestField (Rec-bound) and NOT on PageVariableTestField.
+// That split rests on ONE measurement per side, and only the Rec-bound side's is a service-tier
+// measurement — the page-global side rests on Microsoft's assertion, which no tier run in this
+// repository has confirmed. Corpus PR #184 asks it directly; until that answers, this is the
+// most defensible reading of the evidence available and is flagged as such rather than
+// presented as settled.
 //
 // IDS
 //
@@ -55,6 +84,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace AlRunner;
 
@@ -83,27 +113,48 @@ internal sealed class TestFieldValidationErrors
     /// <summary>The highest id already handed out by <see cref="Get"/>. BC's <c>LastUsedValidationErrorId</c>.</summary>
     internal long LastUsedId => _lastUsedId;
 
-    /// <summary>Record a refusal. The text is the bare error message, without BC's wrapper.</summary>
-    internal void Record(string message) => _errors.Add(message ?? string.Empty);
+    /// <summary>
+    /// The suffix real BC's client appends to a REC-BOUND control's recorded validation error —
+    /// its offer to discard the staged row edit. Measured, see this file's header; not added for
+    /// a page-global control, which stages no edit.
+    /// </summary>
+    internal const string RefreshSuffix = " (Select Refresh to discard errors)";
+
+    /// <summary>
+    /// Record a refusal, exactly as BC's client stores it. <paramref name="message"/> is the
+    /// bare AL error text; <paramref name="appendRefreshSuffix"/> adds
+    /// <see cref="RefreshSuffix"/> for the binding shape BC adds it to. Neither carries BC's
+    /// "Validation error for Field: …" wrapper — that is composed one layer out.
+    /// </summary>
+    internal void Record(string message, bool appendRefreshSuffix)
+        => _errors.Add((message ?? string.Empty) + (appendRefreshSuffix ? RefreshSuffix : string.Empty));
 
     /// <summary>
     /// The recorded error at a ZERO-based index, marking its id used.
-    /// <para>Out of range throws <see cref="IndexOutOfRangeException"/> rather than answering
-    /// an empty string, because that is the exception BC's own
-    /// <c>NavTestField.ALGetValidationError(int)</c> is written to catch — it converts it into
-    /// <c>NavNCLIndexOutOfBoundsException</c>, the AL-visible error for
-    /// <c>GetValidationError(0)</c> or an index past the end. Answering "" here would swallow
-    /// BC's own bounds check and let an AL test compare two empty strings successfully.</para>
+    /// <para>Out of range goes through <see cref="Enumerable.ElementAt{TSource}(IEnumerable{TSource}, int)"/>
+    /// because that is literally what BC's own client does — corpus run 34002487601's stack is
+    /// <c>System.Linq.Enumerable.ElementAt → TestPageClient.TestFieldProxy.GetValidationError →
+    /// NavTestField.ALGetValidationError</c> — so an out-of-range read raises
+    /// <see cref="ArgumentOutOfRangeException"/> with parameter name <c>index</c>, exactly as
+    /// the tier does.</para>
+    /// <para>An earlier version threw <see cref="IndexOutOfRangeException"/>, reasoning that
+    /// <c>ALGetValidationError</c> catches that type and would not carry a catch for something
+    /// unreachable. Measured, the catch IS unreachable: LINQ raises the Argument flavour, it
+    /// does not match, and the exception escapes to the test framework as
+    /// <c>"Unexpected CLR exception thrown."</c> — which AL <c>asserterror</c> does NOT trap.
+    /// Throwing the Argument flavour reproduces that whole chain; throwing the Index flavour
+    /// would have made the runner convert it into a trappable AL error the tier never produces.</para>
     /// </summary>
     internal string Get(int index)
     {
-        if (index < 0 || index >= _errors.Count)
-            throw new IndexOutOfRangeException(
-                $"validation error index {index} is outside 0..{_errors.Count - 1}");
+        // Deliberately Enumerable.ElementAt and not _errors[index]: the indexer raises
+        // ArgumentOutOfRangeException too, but ElementAt is the call BC makes, and matching the
+        // call rather than the outcome is what keeps this faithful if either side changes.
+        var message = _errors.ElementAt(index);
 
         var id = index + 1;
         if (id > _lastUsedId) _lastUsedId = id;
-        return _errors[index];
+        return message;
     }
 
     /// <summary>
@@ -127,7 +178,7 @@ internal sealed class TestFieldValidationErrors
     /// throw sites use (<see cref="AlRunner.Infrastructure.OutOfScopeMessage"/>), which
     /// tests/expectations/ matches on.</para>
     /// </summary>
-    internal void RunRecordingRefusal(Action write)
+    internal void RunRecordingRefusal(Action write, bool appendRefreshSuffix)
     {
         try
         {
@@ -137,7 +188,7 @@ internal sealed class TestFieldValidationErrors
             when (ex is not Microsoft.Dynamics.Nav.Types.Exceptions.NavTestValidationException
                   && AlRunner.Infrastructure.OutOfScopeMessage.FromException(ex) is null)
         {
-            Record(ex.Message);
+            Record(ex.Message, appendRefreshSuffix);
         }
     }
 }

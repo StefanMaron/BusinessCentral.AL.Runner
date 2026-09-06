@@ -24,6 +24,11 @@
 // below that asserts a non-zero count or a recovered message fails against that implementation,
 // and Microsoft's own Codeunit134614.TestRemoveSUPERPermissionsByUserAll failed on
 // `Assert.AreEqual(1, …ValidationErrorCount())` reading 0.
+//
+// TWO VALUES HERE WERE CORRECTED BY A SERVICE TIER, NOT DERIVED. Corpus run 34002487601
+// measured what BC really stores and what it really does past the end of the ledger; the first
+// draft of this file asserted a bare message and an IndexOutOfRangeException, and both were
+// wrong. See TestFieldValidationErrors' header for the measurement and the binding split.
 using System;
 using AlRunner;
 using AlRunner.Infrastructure;
@@ -66,7 +71,7 @@ public sealed class TestFieldValidationErrorsTests
         // ledger that recorded without moving MaxId would swallow the refusal entirely.
         var errors = new TestFieldValidationErrors();
 
-        errors.Record("There should be at least one enabled 'SUPER' user.");
+        errors.Record("There should be at least one enabled 'SUPER' user.", appendRefreshSuffix: false);
 
         Assert.Equal(1, errors.Count);
         Assert.Equal(1L, errors.MaxId);
@@ -78,7 +83,7 @@ public sealed class TestFieldValidationErrorsTests
     public void ReadingAnError_ReturnsItVerbatimAndConsumesItsId()
     {
         var errors = new TestFieldValidationErrors();
-        errors.Record("There should be at least one enabled 'SUPER' user.");
+        errors.Record("There should be at least one enabled 'SUPER' user.", appendRefreshSuffix: false);
 
         Assert.Equal("There should be at least one enabled 'SUPER' user.", errors.Get(0));
 
@@ -92,9 +97,9 @@ public sealed class TestFieldValidationErrorsTests
     public void SeveralErrors_KeepTheirOrderAndConsumeUpToTheOneRead()
     {
         var errors = new TestFieldValidationErrors();
-        errors.Record("first");
-        errors.Record("second");
-        errors.Record("third");
+        errors.Record("first", appendRefreshSuffix: false);
+        errors.Record("second", appendRefreshSuffix: false);
+        errors.Record("third", appendRefreshSuffix: false);
 
         Assert.Equal(3, errors.Count);
         Assert.Equal(3L, errors.MaxId);
@@ -112,20 +117,26 @@ public sealed class TestFieldValidationErrorsTests
     [InlineData(-1)]
     [InlineData(1)]
     [InlineData(5)]
-    public void ReadingOutOfRange_ThrowsTheExceptionBcConvertsToItsOwn(int index)
+    public void ReadingOutOfRange_RaisesTheSameExceptionTheTierRaises(int index)
     {
-        // BC's NavTestField.ALGetValidationError(int) catches IndexOutOfRangeException and
-        // rethrows NavNCLIndexOutOfBoundsException — the AL-visible error for
-        // GetValidationError(0) (it subtracts 1, so AL index 0 reaches -1 here) or an index
-        // past the end. Answering "" instead would swallow BC's own bounds check and let an AL
-        // test compare two empty strings successfully.
+        // MEASURED, corpus run 34002487601, not derived. BC's client does
+        // System.Linq.Enumerable.ElementAt, so an out-of-range read raises
+        // ArgumentOutOfRangeException(index) — which NavTestField.ALGetValidationError's
+        // `catch (IndexOutOfRangeException)` does NOT match, so it escapes to the test framework
+        // as "Unexpected CLR exception thrown." and AL `asserterror` does not trap it.
+        //
+        // The first draft of this test asserted IndexOutOfRangeException, reasoning that BC
+        // would not carry a catch for something unreachable. The tier says the catch IS
+        // unreachable. Asserting the Argument flavour is what keeps the runner from inventing a
+        // trappable AL error the tier never produces.
         //
         // One error is recorded, so index 0 is the ONLY valid one; -1, 1 and 5 are all out.
         var errors = new TestFieldValidationErrors();
-        errors.Record("only");
+        errors.Record("only", appendRefreshSuffix: false);
         Assert.Equal("only", errors.Get(0));
 
-        Assert.Throws<IndexOutOfRangeException>(() => errors.Get(index));
+        var ex = Assert.Throws<ArgumentOutOfRangeException>(() => errors.Get(index));
+        Assert.Equal("index", ex.ParamName);
     }
 
     // ── which exceptions become a validation error ───────────────────────────
@@ -136,7 +147,7 @@ public sealed class TestFieldValidationErrorsTests
         var errors = new TestFieldValidationErrors();
         var ran = false;
 
-        errors.RunRecordingRefusal(() => ran = true);
+        errors.RunRecordingRefusal(() => ran = true, appendRefreshSuffix: true);
 
         Assert.True(ran);
         Assert.Equal(0, errors.Count);
@@ -144,17 +155,45 @@ public sealed class TestFieldValidationErrorsTests
     }
 
     [Fact]
-    public void AnAlError_IsRecordedAndDoesNotEscape()
+    public void AnAlError_OnARecBoundControl_IsRecordedWithBcsRefreshSuffix()
     {
         // The whole point: BC's ITestField contract is "the setter records, BC raises". A setter
         // that throws leaves ValidationErrorCount at 0 and BC with nothing to wrap.
+        //
+        // The suffix is MEASURED (corpus run 34002487601): a Rec-bound control's OnValidate
+        // raising `Error('Deliberate OnValidate failure for VAL-1')` is stored by real BC as
+        // that text plus " (Select Refresh to discard errors)". The first draft recorded the
+        // bare message and the tier disagreed on all reporting legs.
         var errors = new TestFieldValidationErrors();
 
         errors.RunRecordingRefusal(
-            () => throw AlError("There should be at least one enabled 'SUPER' user."));
+            () => throw AlError("Deliberate OnValidate failure for VAL-1"),
+            appendRefreshSuffix: true);
+
+        Assert.Equal(1, errors.Count);
+        Assert.Equal("Deliberate OnValidate failure for VAL-1 (Select Refresh to discard errors)",
+            errors.Get(0));
+    }
+
+    [Fact]
+    public void AnAlError_OnAPageVariableControl_IsRecordedBare()
+    {
+        // A page-global control stages no row edit, so there is nothing for "Refresh to discard"
+        // to discard. Microsoft's Tests-SINGLESERVER Codeunit134614 asserts exactly this, with
+        // exact equality, for a control verified to be page-variable-bound on page 9807.
+        //
+        // This half rests on Microsoft's assertion, NOT on a service-tier run in this
+        // repository — corpus PR #184 asks it directly. Pinning it here means a change of mind
+        // has to be deliberate.
+        var errors = new TestFieldValidationErrors();
+
+        errors.RunRecordingRefusal(
+            () => throw AlError("There should be at least one enabled 'SUPER' user."),
+            appendRefreshSuffix: false);
 
         Assert.Equal(1, errors.Count);
         Assert.Equal("There should be at least one enabled 'SUPER' user.", errors.Get(0));
+        Assert.DoesNotContain("Select Refresh", errors.Get(0));
     }
 
     [Fact]
@@ -164,7 +203,8 @@ public sealed class TestFieldValidationErrorsTests
 
         var ex = Assert.Throws<RunnerOutOfScopeException>(
             () => errors.RunRecordingRefusal(
-                () => throw new RunnerOutOfScopeException("TestPage control 42", "testpage-x")));
+                () => throw new RunnerOutOfScopeException("TestPage control 42", "testpage-x"),
+                appendRefreshSuffix: true));
 
         Assert.Equal("TestPage control 42", ex.Api);
         Assert.Equal(0, errors.Count);
@@ -181,7 +221,8 @@ public sealed class TestFieldValidationErrorsTests
         var ex = Assert.Throws<NavNCLDialogException>(
             () => errors.RunRecordingRefusal(
                 () => throw AlError(
-                    "out-of-scope: NavReport.SaveAs — report-rendering — see docs/scope.md#report-rendering")));
+                    "out-of-scope: NavReport.SaveAs — report-rendering — see docs/scope.md#report-rendering"),
+                appendRefreshSuffix: true));
 
         Assert.Contains("out-of-scope: NavReport.SaveAs", ex.Message);
         Assert.Equal(0, errors.Count);
@@ -195,7 +236,8 @@ public sealed class TestFieldValidationErrorsTests
         var errors = new TestFieldValidationErrors();
 
         Assert.Throws<NullReferenceException>(
-            () => errors.RunRecordingRefusal(() => throw new NullReferenceException("runner bug")));
+            () => errors.RunRecordingRefusal(() => throw new NullReferenceException("runner bug"),
+                appendRefreshSuffix: true));
 
         Assert.Equal(0, errors.Count);
     }
@@ -221,7 +263,10 @@ public sealed class TestFieldValidationErrorsTests
         {
             System.Globalization.CultureInfo.InvariantCulture,
             "Rec True",
-            "Your entry of 'False' is not an acceptable value for 'Rec True'. (Select Refresh to discard errors)",
+            // The inner text as the ledger now stores it: the helper's core plus the suffix
+            // TestFieldValidationErrors appends for a Rec-bound control.
+            "Your entry of 'False' is not an acceptable value for 'Rec True'."
+                + TestFieldValidationErrors.RefreshSuffix,
         })!;
 
         Assert.Equal(
