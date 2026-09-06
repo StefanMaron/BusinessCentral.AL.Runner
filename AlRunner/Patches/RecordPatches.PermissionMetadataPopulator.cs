@@ -406,6 +406,33 @@ public static partial class RecordPatches
     private static MethodInfo? _mCreateEmptyMetaPermissionSet;
 
     /// <summary>
+    /// Drop the built-<c>NCLMetaPermissionSet</c> cache on a bundle reload, called from
+    /// <see cref="RecordPatches.ResetForReload"/> next to the other built-metadata caches.
+    /// <para>
+    /// Every entry is derived from <see cref="EnumerateKnownPermissionSets"/>, i.e. from
+    /// <c>_parsedPermissionSets</c>, which that same method clears — so without this the
+    /// cache outlived the only input its answers came from. Both directions matter: a
+    /// permission set redeclared by the incoming bundle kept answering with the previous
+    /// bundle's metadata, and the NULL answer is cached too, so an id that was genuinely
+    /// unknown to bundle 1 kept producing BC's <c>NavMetadataNotFoundException</c> for the
+    /// rest of a <c>--server</c>/<c>--watch</c> process even after a later bundle declared it.
+    /// </para>
+    /// </summary>
+    internal static void ResetPermissionSetMetadataForReload()
+    {
+        lock (_permMetaGate) _metaPermissionSetCache.Clear();
+    }
+
+    /// <summary>The number of permission-set ids currently memoized (including the ids
+    /// memoized as "not declared"). Test-visible because "the reload emptied it" cannot be
+    /// inferred from a later lookup: a cleared cache and one that happens to agree with the
+    /// current bundle answer identically.</summary>
+    internal static int PermissionSetMetadataCacheCountForTests()
+    {
+        lock (_permMetaGate) return _metaPermissionSetCache.Count;
+    }
+
+    /// <summary>
     /// The <c>NCLMetaPermissionSet</c> for one permission set id, built from the runner's own
     /// inventory and cached. Null when the runner has no declaration for that id — the caller
     /// then falls through to BC's own <c>NavMetadataNotFoundException</c>, which is what

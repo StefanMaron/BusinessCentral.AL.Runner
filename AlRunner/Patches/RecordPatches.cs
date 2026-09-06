@@ -231,6 +231,18 @@ public static partial class RecordPatches
     {
         _metaTableCache.Clear();
         _recordTypeCache.Clear();
+        // Sibling of the line above, and it said so in its own comment ("Cached HITS only,
+        // mirroring _recordTypeCache") while not being mirrored HERE — nothing cleared it on
+        // any path. Both map an AL object id to a CLR type resolved out of the emitted test
+        // assembly, so both name a generation of types that this reload is replacing: from
+        // the second --server request / --watch cycle onward, FindTableExtensionType(extId)
+        // handed back the PREVIOUS bundle's TableExtension{id} while every record type around
+        // it came from the new one. That is #1683's two-live-modules-for-one-AL-identity
+        // shape arriving through a cache instead of through a loader, and it is silent: the
+        // stale extension binds to the new record and its fields read the wrong storage.
+        // Safe, for the same reason _recordTypeCache's clear is: hits only, and a miss falls
+        // through to the assembly scan that repopulates it.
+        _tableExtensionTypeCache.Clear();
         _parsedTables.Clear();
         _parsedExtensionFields.Clear();
         _extensionIdsByBaseTable.Clear();
@@ -311,7 +323,31 @@ public static partial class RecordPatches
         ResetPageMetadataForReload();
         _metaReportCache.Clear();
         _metaQueryCache.Clear();
+        // #3210: the two id-keyed caches of BUILT NCLMetaQuery objects that sit on top of
+        // _metaQueryCache and were the only pieces of this chain nothing dropped.
+        // BuildRealNCLMetaQuery keys on the query id ALONE while taking the emitted CLR type
+        // as an argument, so bundle 2's query 50100 was answered with bundle 1's NCLMetaQuery
+        // built against bundle 1's CLR type; EnsureQueryInMetadataCache sits on top of it and
+        // additionally memoizes BcRuntime.FindQueryType(id), a per-bundle answer that
+        // ResetForNewBundleReload clears (_queryTypeCache) immediately before calling this.
+        // Both memoize the NEGATIVE answer too, which is the half that bites without a second
+        // bundle even declaring the query differently: an id asked about while it was
+        // unresolvable stayed null for the rest of the process.
+        _realMetaQueryCache.Clear();
+        _lazyMetaQueryByGetById.Clear();
+        // Same shape again, one object type over: id -> built NCLMetaPermissionSet, derived
+        // from EnumerateKnownPermissionSets() -> _parsedPermissionSets, which this method
+        // clears a few lines above. Nothing cleared it, so a permission set an edited bundle
+        // renames or redeclares kept answering with the previous bundle's metadata, and one
+        // that bundle 1 did not declare kept answering "no such permission set" (the null is
+        // cached) even after bundle 2 declared it.
+        ResetPermissionSetMetadataForReload();
         _metaXmlPortCache.Clear();
+        // #3172: the xmlport side of #1957, never mirrored. Both sets are statements about
+        // the specific NCLMetaXmlPort instances _metaXmlPortCache.Clear() has just discarded
+        // — see ResetXmlPortMetadataForReload's doc comment, and ResetPageMetadataForReload's
+        // for the page-side failure this prevents.
+        ResetXmlPortMetadataForReload();
         _sourceDirs.Clear();
         _installBaseline = null;
         SetActiveDepCompanyBaseline(null);
