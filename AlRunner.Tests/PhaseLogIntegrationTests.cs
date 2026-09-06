@@ -471,7 +471,14 @@ public sealed class PhaseLogIntegrationTests : IDisposable
                          // (always fresh, never cached) Install triggers.
                          "install-seed-reset-per-test", "install-seed-reset-for-new-bundle",
                          "install-seed-set-test-assembly", "install-seed-dep-company-baseline",
-                         "install-seed-run-own-install-triggers", "install-seed-capture-baseline",
+                         "install-seed-run-own-install-triggers",
+                         // #3176 — the Access Control SUPER row that backs the session user's
+                         // IsSuper answer. Named here so deleting the mark fails, and because
+                         // its position between the User row and the baseline capture is the
+                         // load-bearing part: seeded after the capture it would survive only
+                         // until the first codeunit boundary restored the store.
+                         "install-seed-access-control-row",
+                         "install-seed-capture-baseline",
                          "codeunit-scan",
                          "event-subscriber-inject", "codeunit-reset", "codeunit-instantiate",
                          "resolve-display-name", "run-test-methods", "codeunit-dispose",

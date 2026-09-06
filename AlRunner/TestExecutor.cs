@@ -443,6 +443,7 @@ public sealed class TestExecutor
             CompanyInitializer.ResetForNewBundle();
             AlRunner.Patches.RecordPatches.ResetCompanySystemTableForNewBundle();
             AlRunner.Patches.RecordPatches.ResetUserSystemTableForNewBundle();
+            AlRunner.Patches.RecordPatches.ResetAccessControlSeedForNewBundle();
             AlRunner.Patches.RecordPatches.ResetPublishedApplicationSystemTableForNewBundle();
         }
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-set-test-assembly"))
@@ -643,6 +644,12 @@ public sealed class TestExecutor
         // User."User Security ID" refuses the id UserSecurityId() itself returns.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-user-row"))
             AlRunner.Patches.RecordPatches.EnsureUserSystemTableRowSeeded();
+        // #3176: the Access Control row that BACKS that user's SUPER status. Ordered after the
+        // User row (its "User Security ID" relates to User's) and before the baseline capture,
+        // for the same reason the User row is: a row added after the capture survives only until
+        // the first codeunit boundary restores the store.
+        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-access-control-row"))
+            AlRunner.Patches.RecordPatches.EnsureAccessControlSuperRowSeeded();
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-capture-baseline"))
             AlRunner.Patches.RecordPatches.CaptureInstallBaseline();
         seedSw.Stop();

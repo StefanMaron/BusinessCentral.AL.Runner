@@ -95,6 +95,41 @@ number, reported `expected 2665, actual 2681`; the run after merging `main` repo
 count-baseline line at all with 2681 in place, 2700 tests over the three roots, exit 0. CI
 agreed on every leg of run 34046877973 — no leg printed a count-baseline message.
 
+### 2681 -> 2757, and onprem 19 -> 25 (pin b0c6248 -> c3531ec)
+
+The pin advanced to consume StefanMaron/BusinessCentral.AL.Language.Tests#215, which pins the
+`SecretText` runtime surface — the immediate reason for the bump. Corpus history in this range
+is linear, so thirteen other merged corpus PRs came with it:
+
+| corpus PR | what it pins |
+|---|---|
+| #196 | the ordinal Page Metadata reports for a PageType its column does not name |
+| #197 | what the legacy Object (2000000001) table holds on a real tier (OnPrem app) |
+| #199 | CalcFields on FlowFields a tableextension contributes |
+| #200 | a refusal raised in a table subscriber below a control write |
+| #202 | what an error raised in OnQueryClosePage does |
+| #203 | what a list page's built-in View and Edit actions do |
+| #204 | a user's SUPER status is backed by an Access Control row |
+| #206 | what a `Database::<Object>` const in a `where()` clause resolves to |
+| #207 | a tableextension-contributed TableRelation is enforced by Validate |
+| #208 | a tableextension adds keys and field properties, not just columns |
+| #209 | a second control over one page binding resolves |
+| #210 | what the Session virtual table (2000000009) holds for the reading session |
+| #211 | what an action's RunPageLink does to its RunObject target |
+| #215 | the SecretText runtime surface (this PR's own reason for bumping) |
+
+Both numbers are measured, not computed, on BC 28.1 against this PR's own build: the cloud app
+root reported `Tests: 2757 total` and the OnPrem root `Tests: 25 total`, and with the two
+numbers written in, `--count-baseline` printed no message on either root. The
+`al-language-internals-fixture` root stays at 0.
+
+The OnPrem suite moves for the first time in a while because #197 added
+`record/TestObjectSystemTable.al` (6 tests) to the OnPrem app — the legacy Object table is
+`Scope = OnPrem`, so the test could not live in the cloud app.
+
+No per-version override is needed: the range adds no preprocessor version guards, so
+`default` is correct for every leg. Measured on one BC version; the other seven are CI's word.
+
 ## runner-extras
 
 ### object-metadata-system-table 4 -> 6 (PR for #2771)
