@@ -49,13 +49,37 @@
 //   `Page.Run` / `Page.RunModal` reaches them, so a RunObject action and the equivalent AL call
 //   cannot drift apart.
 //
+// RUNPAGELINK (issue #2942)
+//   A third of the Base Application's RunObject actions carry one: measured over all 5,668
+//   action `RunObject` declarations in Base Application 28.1's SymbolReference.json, 1,819 also
+//   declare `RunPageLink` — and ZERO of them declare `RunPageOnRec` alongside it.
+//
+//   BC applies the link as ordinary table filters on the TARGET's rowset, not as anything
+//   action-specific. `ActionBuilder.GetApplicationFilters` copies every
+//   `ActionDefinition.RunFormLink.TableFilters` entry into the action's
+//   `ApplicationActionFilterContext`, and `NavOpenTaskPageAction.CreateForm` calls
+//   `FilterContext.SetFilterContext(formState, parentBindingManager)` — which turns each
+//   `FilterDefinition` into a `NavFilter` through `NavFilterHelper.AddFilter`, resolving a FIELD
+//   entry against the HOST's current row — and only THEN, separately and unconditionally, stamps
+//   `RunFormOnRecordField`'s bookmark. So the two are independent steps that both run, which is
+//   why this file applies the link and the record together rather than treating them as
+//   alternatives.
+//
+//   Here the same thing is expressed as AL would: the target's own record cursor, filtered, handed
+//   to `NavForm.RunAsync` / `RunModalAsync` exactly as `Rec.SetRange(...); Page.Run(id, Rec)`
+//   does. FIELD reads the host's field value, CONST filters to a literal, FILTER hands BC's own
+//   filter parser the compiled expression — the same three kinds, applied the same way, as
+//   `LiveNavTestPart.ApplyLink` already applies a part's SubPageLink, and the CONST quoting rule
+//   is literally shared with it (`LiveNavTestPart.ConstFilterExpression`).
+//
 // WHAT IS STILL REFUSED, LOUDLY
-//   RunObject targeting a Report / Codeunit / XmlPort / Query, and `RunPageLink` (a page target
-//   whose rowset the platform filters from the host's fields). Both raise with a
+//   RunObject targeting a Report / Codeunit / XmlPort / Query. It raises with a
 //   `not-yet-implemented` reason anchor, which `docs/expectations.md` lets a manifest track as
 //   `expect-fail-known-gap` against an OPEN issue — the classification the old `testpage-action`
-//   anchor made impossible. Answering either by opening the page unfiltered would be a silent
-//   wrong answer, which is what `loud-failures.md` exists to prevent.
+//   anchor made impossible. Answering it by opening something else would be a silent wrong
+//   answer, which is what `loud-failures.md` exists to prevent. The same applies to a link whose
+//   fields this run cannot resolve to numbers: a link that cannot be applied is refused by name,
+//   never dropped, because a dropped link shows the target's WHOLE table.
 using Microsoft.Dynamics.Nav.Runtime;
 using MetaTypes = Microsoft.Dynamics.Nav.Types.Metadata;
 
@@ -74,7 +98,25 @@ internal sealed partial class RunnerPageInstance
         int ObjectId,
         string? ObjectName,
         bool RunPageOnRec,
-        bool HasRunPageLink);
+        IReadOnlyList<ActionRunLink> Links);
+
+    /// <summary>
+    /// One entry of an action's <c>RunPageLink</c>, resolved to the three things applying it
+    /// needs. Deliberately the same triple <c>MockTestPage.SubPageLinkEntry</c> carries for a
+    /// part's <c>SubPageLink</c>, because BC represents both as a <c>FilterDefinition</c> list
+    /// and the runner applies both the same way.
+    ///
+    /// <para><paramref name="HostFieldNo"/> is meaningful only for <c>FIELD</c> (it names a
+    /// field on the HOST's source table, whose current value becomes the filter);
+    /// <paramref name="Value"/> only for <c>CONST</c> and <c>FILTER</c>.</para>
+    /// </summary>
+    private readonly record struct ActionRunLink(
+        int TargetFieldNo,
+        MetaTypes.FilterType Kind,
+        int HostFieldNo,
+        string Value);
+
+    private static readonly IReadOnlyList<ActionRunLink> NoLinks = Array.Empty<ActionRunLink>();
 
     /// <summary>
     /// Perform <paramref name="actionId"/>'s RunObject, if it declares one.
@@ -96,14 +138,6 @@ internal sealed partial class RunnerPageInstance
                 + "PAGE so far. Opening a report, codeunit, xmlport or query from an action is "
                 + "tracked by issue #2943");
 
-        if (target.HasRunPageLink)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage action {actionId} on page {_pageId}",
-                $"not-yet-implemented — the action declares RunObject = Page {Describe(target)} "
-                + "together with RunPageLink, and the runner does not yet apply an action's "
-                + "RunPageLink filters. Opening the page WITHOUT them would show a different "
-                + "rowset than real BC, so it is refused instead; tracked by issue #2942");
-
         if (target.ObjectId <= 0)
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage action {actionId} on page {_pageId}",
@@ -113,7 +147,7 @@ internal sealed partial class RunnerPageInstance
                 + "only, with no object type) or a page that is not loaded, and the runner will "
                 + "not guess which; tracked by issue #2943");
 
-        RunTargetPage(target.ObjectId, target.RunPageOnRec);
+        RunTargetPage(actionId, target);
         return true;
     }
 
@@ -127,13 +161,20 @@ internal sealed partial class RunnerPageInstance
     /// lookup, <c>TestPage.Trap()</c> and the "Unhandled UI" refusal are BC's and not a second
     /// implementation of them.
     ///
-    /// <para><paramref name="runPageOnRec"/> is AL's <c>RunPageOnRec</c>: true hands the target
-    /// the host page's CURRENT record — the runner's equivalent of the bookmark BC stamps onto
-    /// the target's form state — false opens the page on its own rowset.</para>
+    /// <para><c>RunPageOnRec</c> is AL's: true hands the target the host page's CURRENT record —
+    /// the runner's equivalent of the bookmark BC stamps onto the target's form state — false
+    /// opens the page on its own rowset. A <c>RunPageLink</c> is applied on top of either, as
+    /// filters on the TARGET's own cursor, which is what BC's <c>CreateForm</c> does with the
+    /// two in that order (see this file's header).</para>
     /// </summary>
-    private void RunTargetPage(int pageId, bool runPageOnRec)
+    private void RunTargetPage(int actionId, ActionRunTarget target)
     {
-        var record = runPageOnRec ? _record : null;
+        var pageId = target.ObjectId;
+        var runPageOnRec = target.RunPageOnRec;
+
+        var record = target.Links.Count > 0
+            ? BuildLinkedTargetRecord(actionId, target)
+            : (runPageOnRec ? _record : null);
 
         if (TargetPageOpensModally(pageId))
         {
@@ -150,6 +191,125 @@ internal sealed partial class RunnerPageInstance
             NavForm.RunAsync(pageId, record).AsTask().GetAwaiter().GetResult();
         else
             NavForm.RunAsync(pageId).AsTask().GetAwaiter().GetResult();
+    }
+
+    /// <summary>
+    /// The TARGET page's own record cursor with the action's <c>RunPageLink</c> applied to it,
+    /// which is what makes the target open on the linked rowset instead of its whole table.
+    ///
+    /// <para>A fresh cursor, never the host's own: the host's <c>_record</c> is the live cursor
+    /// the TestPage under test is sitting on, and calling <c>SetRange</c> on it would move the
+    /// host's rowset out from under the test — the same reason
+    /// <c>LiveNavTestPart</c> keeps the part's cursor and the parent's separate.</para>
+    ///
+    /// <para>With <c>RunPageOnRec = true</c> the host's current POSITION is carried onto that
+    /// fresh cursor before the filters go on, mirroring the order BC's
+    /// <c>NavOpenTaskPageAction.CreateForm</c> uses (<c>SetFilterContext</c>, then
+    /// <c>SetBookmark</c> from the parent binding manager's current row). That combination is
+    /// only expressible when the two pages share a source table — <c>RunPageOnRec</c> hands the
+    /// target the host's record — so a target on a different table is refused by name rather
+    /// than opened on a position that means nothing there.</para>
+    /// </summary>
+    private NavRecord BuildLinkedTargetRecord(int actionId, ActionRunTarget target)
+    {
+        var pageId = target.ObjectId;
+        var tableId = RecordPatches.ResolveSourceTableIdForAnyPage(pageId);
+        if (tableId == 0)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage action {actionId} on page {_pageId}",
+                $"not-yet-implemented — the action declares RunObject = Page {Describe(target)} "
+                + "with a RunPageLink, but the target page has no SourceTable this run can "
+                + "resolve, so there is no rowset for the link to filter. Opening it without the "
+                + "link would show a different rowset than real BC");
+
+        var isTemporary = RecordPatches.ResolveSourceTableTemporaryForAnyPage(pageId);
+        var record = TestPageFactory.TryBuildBlankRecord(_owner, tableId, isTemporary, out var why);
+        if (record == null)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage action {actionId} on page {_pageId}",
+                $"not-yet-implemented — the action declares RunObject = Page {Describe(target)} "
+                + $"with a RunPageLink, and the runner could not build a cursor for its "
+                + $"SourceTable {tableId} to apply the link to ({why})");
+
+        if (target.RunPageOnRec)
+        {
+            if (_record == null || _record.TableID != tableId)
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    $"TestPage action {actionId} on page {_pageId}",
+                    $"not-yet-implemented — the action declares RunObject = Page {Describe(target)} "
+                    + "with both RunPageOnRec and a RunPageLink, but the target's SourceTable "
+                    + $"({tableId}) is not the host's ({_record?.TableID.ToString() ?? "none"}), "
+                    + "so there is no host row to open the target on");
+
+            // useCaptions: false for the same reason LiveNavTestPage.GetBookmark uses it — the
+            // captioned encoding round-trips through field captions, which is a display concern
+            // and not the identity of a row.
+            var position = _record.ALGetPosition(useCaptions: false);
+            if (!string.IsNullOrEmpty(position)) record.ALSetPosition(position);
+        }
+
+        foreach (var link in target.Links)
+            ApplyActionRunLink(actionId, target, record, link);
+
+        return record;
+    }
+
+    /// <summary>
+    /// Apply one resolved <c>RunPageLink</c> entry to the target's cursor. The three kinds are
+    /// AL's three, applied exactly as <c>LiveNavTestPart.ApplyLink</c> applies a part's
+    /// <c>SubPageLink</c> — a FIELD entry to the host's current value, a CONST entry to its
+    /// literal through the shared quoting rule, a FILTER entry to its expression in BC's own
+    /// filter grammar.
+    ///
+    /// <para>Every unresolvable case throws rather than skipping the entry. A skipped link is
+    /// not "a bit less filtering": it opens the target on its WHOLE table, which is the silent
+    /// wrong answer <c>loud-failures.md</c> exists to prevent.</para>
+    /// </summary>
+    private void ApplyActionRunLink(int actionId, ActionRunTarget target, NavRecord record, ActionRunLink link)
+    {
+        if (link.TargetFieldNo <= 0)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage action {actionId} on page {_pageId}",
+                $"not-yet-implemented — the action declares RunObject = Page {Describe(target)} "
+                + "with a RunPageLink naming a field of the target's table that this run cannot "
+                + "resolve to a field number, so the link cannot be applied and the target would "
+                + "otherwise open on its whole table");
+
+        switch (link.Kind)
+        {
+            case MetaTypes.FilterType.FIELD:
+                if (_record == null || link.HostFieldNo <= 0)
+                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                        $"TestPage action {actionId} on page {_pageId}",
+                        $"not-yet-implemented — the action declares RunObject = Page {Describe(target)} "
+                        + $"with RunPageLink field {link.TargetFieldNo} = field(...), which reads a "
+                        + "field of the HOST page's row, and this run has "
+                        + (_record == null
+                            ? "no host record to read it from"
+                            : $"no field number for it (got {link.HostFieldNo})"));
+                record.ALSetRange(link.TargetFieldNo, _record.GetFieldValue(link.HostFieldNo));
+                break;
+
+            case MetaTypes.FilterType.CONST:
+                record.ALSetFilter(link.TargetFieldNo,
+                    LiveNavTestPart.ConstFilterExpression(record, link.TargetFieldNo, link.Value));
+                break;
+
+            case MetaTypes.FilterType.FILTER:
+                // Already in BC's filter grammar — the compiler wrote option members as ordinals,
+                // and the symbols route re-quoted AL identifiers through FilterValueText. BC's own
+                // parser reads it, and a malformed expression raises BC's own
+                // NavInvalidFilterExpressionException naming the text.
+                record.ALSetFilter(link.TargetFieldNo, link.Value);
+                break;
+
+            default:
+                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    $"TestPage action {actionId} on page {_pageId}",
+                    $"not-yet-implemented — the action declares RunObject = Page {Describe(target)} "
+                    + $"with a RunPageLink entry of kind {link.Kind}, which is not one of AL's "
+                    + "three link kinds (field / const / filter)");
+        }
     }
 
     /// <summary>
@@ -231,7 +391,36 @@ internal sealed partial class RunnerPageInstance
             action.TargetID,
             RecordPatches.TryGetAnyPageName(action.TargetID),
             action.RunPageOnRec,
-            action.RunFormLink?.TableFilters is { Count: > 0 });
+            LinksFromMetadata(action));
+    }
+
+    /// <summary>
+    /// The action's <c>RunPageLink</c> as BC's own compiled metadata already carries it: a
+    /// <c>FilterDefinition</c> per entry, with the target's field NUMBER in <c>FieldID</c>, the
+    /// kind in <c>FilterType</c>, and in <c>FilterValue</c> either the HOST's field number (for
+    /// <c>FIELD</c>) or the compiled literal / expression. Nothing is re-derived from AL text on
+    /// this route — the compiler resolved all of it.
+    ///
+    /// <para>A <c>FIELD</c> entry whose <c>FilterValue</c> is not a number is passed through with
+    /// <c>HostFieldNo</c> 0, which <see cref="ApplyActionRunLink"/> refuses by name. Same
+    /// convention as <c>MockTestPage.SubPageLinks</c>, and for the same reason: an entry that
+    /// cannot be applied must be loud, not dropped.</para>
+    /// </summary>
+    private static IReadOnlyList<ActionRunLink> LinksFromMetadata(MetaTypes.ActionDefinition action)
+    {
+        var filters = action.RunFormLink?.TableFilters;
+        if (filters is not { Count: > 0 }) return NoLinks;
+
+        var links = new List<ActionRunLink>(filters.Count);
+        foreach (var f in filters)
+        {
+            var hostFieldNo = 0;
+            if (f.FilterType == MetaTypes.FilterType.FIELD)
+                int.TryParse(f.FilterValue, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out hostFieldNo);
+            links.Add(new ActionRunLink(f.FieldID, f.FilterType, hostFieldNo, f.FilterValue ?? string.Empty));
+        }
+        return links;
     }
 
     /// <summary>
@@ -281,6 +470,64 @@ internal sealed partial class RunnerPageInstance
             pageId,
             spec.ObjectName,
             spec.RunPageOnRec,
-            spec.HasRunPageLink);
+            LinksFromSymbols(actionId, spec, pageId));
+    }
+
+    /// <summary>
+    /// The action's <c>RunPageLink</c> for a PRECOMPILED page, resolved from the AL property
+    /// text SymbolReference.json states to the field NUMBERS applying it needs.
+    ///
+    /// <para>The left-hand side of every entry names a field of the TARGET's source table, and a
+    /// <c>field(...)</c> right-hand side names one of the HOST's — the same two-table resolution
+    /// <c>DependencyPageMetadataXml.EmitSubFormLinkXml</c> already does for a part's
+    /// <c>SubPageLink</c>, through the same
+    /// <c>RecordPatches.TryResolveDependencyFieldId</c>. <c>const(...)</c> and
+    /// <c>filter(...)</c> values go through the same two normalisers as well, so a link means
+    /// the same thing whichever route recovered it.</para>
+    ///
+    /// <para>Refuses rather than returning a partial link, in both directions: a target page
+    /// with no resolvable source table has no rowset to filter, and an entry the parser dropped
+    /// would leave the target showing MORE rows than BC does.</para>
+    /// </summary>
+    private IReadOnlyList<ActionRunLink> LinksFromSymbols(
+        int actionId, BcAppSymbolCache.ActionRunObjectSymbol spec, int targetPageId)
+    {
+        if (!spec.HasRunPageLink) return NoLinks;
+
+        var parsed = spec.RunPageLink;
+        if (parsed == null || parsed.Count != spec.DeclaredRunPageLinkEntries)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage action {actionId} on page {_pageId}",
+                $"not-yet-implemented — the action declares RunObject = '{spec.ObjectName}' with a "
+                + $"RunPageLink of {spec.DeclaredRunPageLinkEntries} entr(ies), and this run "
+                + $"could read {parsed?.Count ?? 0} of them out of the symbol file. Applying the "
+                + "rest alone would show MORE rows than real BC, so it is refused instead");
+
+        var targetTableId = RecordPatches.ResolveSourceTableIdForAnyPage(targetPageId);
+        var hostTableId = RecordPatches.ResolveSourceTableIdForAnyPage(_pageId);
+
+        var links = new List<ActionRunLink>(parsed.Count);
+        foreach (var entry in parsed)
+        {
+            var targetFieldNo = RecordPatches.TryResolveDependencyFieldId(targetTableId, entry.PartFieldName) ?? 0;
+
+            if (string.Equals(entry.Kind, "field", StringComparison.OrdinalIgnoreCase))
+            {
+                var hostFieldName = entry.Value.Trim().Trim('"');
+                var hostFieldNo = RecordPatches.TryResolveDependencyFieldId(hostTableId, hostFieldName) ?? 0;
+                links.Add(new ActionRunLink(targetFieldNo, MetaTypes.FilterType.FIELD, hostFieldNo, hostFieldName));
+            }
+            else if (string.Equals(entry.Kind, "const", StringComparison.OrdinalIgnoreCase))
+            {
+                links.Add(new ActionRunLink(targetFieldNo, MetaTypes.FilterType.CONST, 0,
+                    RecordPatches.NormalizeConstLinkValue(entry.Value)));
+            }
+            else
+            {
+                links.Add(new ActionRunLink(targetFieldNo, MetaTypes.FilterType.FILTER, 0,
+                    RecordPatches.FilterValueText(entry.Value)));
+            }
+        }
+        return links;
     }
 }

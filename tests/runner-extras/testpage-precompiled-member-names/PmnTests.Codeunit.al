@@ -16,8 +16,9 @@
 //   - 9875 "Permission Set Assignments", control "Company Name" (space, OnValidate) Error(EmptyUserNameErr) on a new row
 //   - 710  "Activity Log" + precompiled pageextension 711 "Activity Log Extension", action OpenRelatedRecord
 //                                                            (precompiled pageextension) Message(NoRelatedRecordMsg) on a blank Record ID
-//   - 5098 "Task Card", action "Co&mment"                    (RunObject only) target resolved from
-//                                                            the symbol file; only its RunPageLink refused
+//   - 5098 "Task Card", action "Co&mment"                    (RunObject only) target AND its
+//                                                            three-entry RunPageLink resolved from
+//                                                            the symbol file, then applied
 //   - 31   "Item List", action "Item Substitutions"          (RunObject naming an AMBIGUOUS name)
 codeunit 64571 "PMN Precompiled Member Tests"
 {
@@ -26,6 +27,7 @@ codeunit 64571 "PMN Precompiled Member Tests"
     var
         Assert: Codeunit "PMN Assert";
         CapturedMessage: Text;
+        CapturedComments: Text;
 
     [Test]
     procedure SpacedActionName_OnPrecompiledBasePage_RunsItsOnAction()
@@ -153,39 +155,81 @@ codeunit 64571 "PMN Precompiled Member Tests"
             'the pageextension''s OnAction must run and show NoRelatedRecordMsg');
     end;
 
-    // #2931 changed what this arm proves. The runner now RESOLVES a precompiled page action's
-    // RunObject out of the dependency .app's SymbolReference.json — which states it as a bare
-    // NAME, with no object type — so the refusal is no longer "this page declares no OnAction
-    // trigger" but a precise statement about the ONE property still missing. That the runner
-    // gets as far as naming the target page and its numeric id IS the fix working on a page it
-    // never compiled.
+    // #2931 resolved a precompiled page action's RunObject target out of the dependency .app's
+    // SymbolReference.json, and refused the action anyway because it also carries a RunPageLink
+    // the runner could not apply. #2942 applies it, and this arm is what proves the SYMBOLS
+    // route of that work — the corpus cannot, because a corpus page is source-compiled and
+    // therefore takes the compiled-metadata route instead.
+    //
+    // Page 5098 "Task Card" action "Co&mment" is a genuinely three-entry link, and each entry
+    // is a different kind:
+    //
+    //     RunObject   = Page "Rlshp. Mgt. Comment Sheet"     (5072, over table 5061)
+    //     RunPageLink = "Table Name" = const("To-do"),       an ENUM const, quoted in the AL
+    //                   "No."        = field("Organizer To-do No."),   the HOST's field
+    //                   "Sub No."    = const(0)              an integer const
+    //
+    // The symbol file states all of that as raw AL TEXT with no field numbers, so every name
+    // here has to be resolved against two different tables — the target's (5061) for the
+    // left-hand sides, the host's (5080) for the field(...) right-hand side. Four rows below
+    // are seeded to fail exactly one entry each, so no single entry can be dropped without the
+    // assertion changing.
     [Test]
-    procedure RunObjectOnlyAction_OnPrecompiledBasePage_ResolvesItsTargetAndRefusesOnlyTheLink()
+    [HandlerFunctions('CommentSheetPageHandler')]
+    procedure RunObjectActionWithRunPageLink_OnPrecompiledBasePage_OpensTheTargetFiltered()
     var
+        Task: Record "To-do";
         TaskCard: TestPage "Task Card";
     begin
-        // [GIVEN] "Co&mment" on the Task Card has RunObject and no OnAction at all. Its name
-        // needs mangling too, so it exercises the SAME lookup the arms above fixed. It also
-        // carries RunPageLink, which the runner does not apply yet.
+        // [GIVEN] Two comment lines the link selects, and three that fail one entry each.
+        InsertComment("Rlshp. Mgt. Comment Line Table Name"::"To-do", 'PMN-TASK', 0, 10000, 'MATCH-A');
+        InsertComment("Rlshp. Mgt. Comment Line Table Name"::"To-do", 'PMN-TASK', 0, 20000, 'MATCH-B');
+        // Fails "No." = field("Organizer To-do No.") only.
+        InsertComment("Rlshp. Mgt. Comment Line Table Name"::"To-do", 'PMN-OTHER', 0, 10000, 'WRONG-NO');
+        // Fails "Sub No." = const(0) only.
+        InsertComment("Rlshp. Mgt. Comment Line Table Name"::"To-do", 'PMN-TASK', 1, 10000, 'WRONG-SUBNO');
+        // Fails "Table Name" = const("To-do") only.
+        InsertComment("Rlshp. Mgt. Comment Line Table Name"::Contact, 'PMN-TASK', 0, 10000, 'WRONG-TABLE');
+
+        // [GIVEN] A task whose "Organizer To-do No." is what the field(...) entry reads.
+        Task.Init();
+        Task."No." := 'PMN-TASK';
+        Task."Organizer To-do No." := 'PMN-TASK';
+        // The card's OnAfterGetRecord calls EnableFields -> GetEndDateTime, which builds a
+        // DateTime out of these four and raises "The date is not valid." on a blank Date.
+        Task.Date := Today();
+        Task."Ending Date" := Today();
+        Task."Start Time" := 080000T;
+        Task."Ending Time" := 090000T;
+        Task.Insert(false);
+
         TaskCard.OpenEdit();
+        TaskCard.GotoRecord(Task);
 
-        // [WHEN] It is invoked.
-        asserterror TaskCard."Co&mment".Invoke();
+        // [WHEN] The RunObject action is invoked. It has no OnAction trigger at all, so every
+        // observable effect below is the platform's, not AL's.
+        TaskCard."Co&mment".Invoke();
+        TaskCard.Close();
 
-        // [THEN] The refusal is loud (loud-failures.md — the fix must not turn an unperformable
-        // action into a silent no-op) and it is a GAP, not a boundary: the anchor is
-        // "not-yet-implemented", which docs/expectations.md lets a manifest track against an
-        // open issue, unlike the old "testpage-action" anchor.
-        Assert.ExpectedError('out-of-scope: TestPage action');
-        Assert.ExpectedError('not-yet-implemented');
-        Assert.ExpectedError('RunPageLink');
+        // [THEN] The target opened — and it opened on the LINKED rowset. The three near-miss
+        // rows are the whole point: an implementation that opened page 5072 unfiltered would
+        // report all five, one that dropped the field(...) entry would include WRONG-NO, one
+        // that dropped either const(...) entry would include its row.
+        Assert.AreEqual('MATCH-A,MATCH-B', CapturedComments,
+            'the action''s RunPageLink must filter the target page to the rows it selects');
+    end;
 
-        // [AND] The target itself WAS resolved, by name, out of the precompiled page's symbol
-        // file — which is the half of the work that had no source to read. Asserting the
-        // resolved name and id is what separates "the runner read the declaration" from "the
-        // runner gave up earlier and happened to refuse".
-        Assert.ExpectedError('Rlshp. Mgt. Comment Sheet');
-        Assert.ExpectedError('5072');
+    local procedure InsertComment(TableName: Enum "Rlshp. Mgt. Comment Line Table Name"; No: Code[20]; SubNo: Integer; LineNo: Integer; CommentText: Text[80])
+    var
+        Comment: Record "Rlshp. Mgt. Comment Line";
+    begin
+        Comment.Init();
+        Comment."Table Name" := TableName;
+        Comment."No." := No;
+        Comment."Sub No." := SubNo;
+        Comment."Line No." := LineNo;
+        Comment.Comment := CommentText;
+        Comment.Insert(false);
     end;
 
     // #2931, and the reason the resolution above cannot simply trust a name. A precompiled
@@ -222,5 +266,26 @@ codeunit 64571 "PMN Precompiled Member Tests"
     procedure CaptureMessage(Msg: Text[1024])
     begin
         CapturedMessage := Msg;
+    end;
+
+    // Records every non-blank Comment the target showed, in order. Blank rows are skipped
+    // rather than counted: page 5072 is an editable List, so its TestPage carries the implicit
+    // new-row line, which is not part of the rowset the link selected and would otherwise put
+    // a trailing empty entry into every expected value.
+    [PageHandler]
+    procedure CommentSheetPageHandler(var CommentSheet: TestPage "Rlshp. Mgt. Comment Sheet")
+    var
+        Value: Text;
+    begin
+        CapturedComments := '';
+        if CommentSheet.First() then
+            repeat
+                Value := CommentSheet.Comment.Value();
+                if Value <> '' then begin
+                    if CapturedComments <> '' then
+                        CapturedComments += ',';
+                    CapturedComments += Value;
+                end;
+            until not CommentSheet.Next();
     end;
 }

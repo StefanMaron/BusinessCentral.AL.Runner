@@ -3284,7 +3284,7 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     /// SetFilter call would pass. A field the part's table does not declare is left to
     /// SetFilter, which refuses it with BC's own error naming the field number.
     /// </summary>
-    private static string ConstFilterExpression(NavRecord record, int fieldNo, string value)
+    internal static string ConstFilterExpression(NavRecord record, int fieldNo, string value)
     {
         var navType = record.MetaTable.TryGetFieldByNo(fieldNo, out var field) ? field.FieldNavType : (NavType?)null;
         var quote = value.Length == 0 || navType is NavType.Text or NavType.Code;
