@@ -34,10 +34,19 @@ public sealed class DependencyLoader
     // ISV .apps) — and is set ONLY when LoadOne actually took the Tier-3 source-compile
     // path (see its own return points). #2593/#2579: this is what lets the LoadAll
     // cache-hit fast path replay a Tier-3 dependency's metadata sidecars on every reuse
-    // WITHOUT re-hashing the .app file (ComputeSourceDependencyCacheKey reads and
-    // SHA256's the whole file — cheap for a small test-library .app, NOT cheap for a
-    // ~100MB Base Application .app, which would otherwise pay that cost on every single
-    // reload cycle purely to discover "this one has no sidecars anyway").
+    // without recomputing its cache key on every reload cycle purely to discover "this
+    // one has no sidecars anyway".
+    //
+    // #3043 changed what that costs, and the comment here used to state the old one: the
+    // key computation no longer reads the .app itself, it asks the shared content-hash
+    // memo (RunnerFingerprint.ComputeFileContentHashMemoized), so for a package any other
+    // layer has already identified — which is every package the resolver indexed — it is a
+    // dictionary lookup rather than a SHA-256 pass over ~100MB of Base Application.
+    //
+    // The gate stays, for the reason that did NOT change: a Tier-1/Tier-2 entry never went
+    // through Tier 3, so it has no sidecars to replay and the call does nothing for it.
+    // That was always the load-bearing half; the read it also used to avoid is simply no
+    // longer part of the argument.
     private readonly record struct LoadedAppEntry(
         Assembly Asm, string Name, string Publisher, string Version, string SourcePath,
         string? Tier3CacheKey = null);
@@ -169,9 +178,11 @@ public sealed class DependencyLoader
                     // resolved as R3Driver's dependency). Gated on the stored Tier3CacheKey, not a
                     // File.Exists probe recomputed from scratch — a Tier-1/Tier-2 entry (the
                     // overwhelming majority: Base Application, System Application, most real ISV
-                    // .apps) never went through Tier 3 and has no sidecars to replay, and
-                    // ComputeSourceDependencyCacheKey hashes the WHOLE .app file, which would be a
-                    // real cost paid every cycle for a ~100MB Base Application package for no reason.
+                    // .apps) never went through Tier 3 and has no sidecars to replay, so the call
+                    // would do nothing at all for it, every cycle. (This comment also used to cite
+                    // the whole-.app SHA-256 the key computation performed; since #3043 that goes
+                    // through the shared content-hash memo, so that half of the rationale is gone
+                    // and "nothing to replay" is the whole of it.)
                     if (existing.Tier3CacheKey != null)
                         ReplayDependencyMetadataSidecars(m, existing.Tier3CacheKey);
                     list.Add(existing.Asm);
