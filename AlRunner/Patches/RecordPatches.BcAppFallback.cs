@@ -116,7 +116,37 @@ public static partial class RecordPatches
         // immediately after the reset, so it goes.
         _bcAppPaths.RemoveAll(p =>
             !string.Equals(p, _systemAppTempPath, StringComparison.OrdinalIgnoreCase));
+        // #2939: the sibling registered list goes too. #2755 fixed _bcAppPaths and named this
+        // one as "same shape, deliberately not changed here"; it is the second input to
+        // EnsureBcSymbolQueryIndex, which InvalidateBcAppIndexes below invalidates precisely so
+        // the next lookup rebuilds FROM these two lists — the identical registered/derived
+        // split. There is no SystemApp-style exemption to make: every entry is a LOOSE
+        // SymbolReference.json written for one bundle's own freshly-compiled queries
+        // (BcCompiler.EmitAndRegisterBundleQuerySymbols), and a bundle that declares a query
+        // re-registers on BOTH paths that can reach a query lookup — the compile path and the
+        // AL-output cache HIT path (Program.cs, guarded by bundleDeclaresQuery) — so a clear
+        // removes nothing the current bundle does not immediately put back.
+        //
+        // The merge this feeds is FIRST-WINS (`if (!idx.ContainsKey(q.Id))`), and the earlier
+        // bundle's file is earlier in the list, so the effect was not the superset #2939
+        // describes: bundle 2 declaring the same query id got bundle 1's column ids INSTEAD of
+        // its own, and those ids go verbatim to NavQuery.GetColumnValueSafe. A wrong value read
+        // out of a real row, not a crash — see BundleQuerySymbolsResetTests.
+        _bcQuerySymbolJsonPaths.Clear();
         InvalidateBcAppIndexes();
+    }
+
+    /// <summary>
+    /// The loose <c>SymbolReference.json</c> files currently registered as query-symbol sources
+    /// (<see cref="_bcQuerySymbolJsonPaths"/>). Test-visible for the same reason
+    /// <see cref="RegisteredBcAppPathsForTests"/> is: "the reload emptied it" cannot be inferred
+    /// from a later query lookup, because the DERIVED index
+    /// (<see cref="_bcSymbolQueryIndex"/>) is dropped on every reload whether or not the
+    /// registered list is — so a lookup-only assertion passes on the broken build (#2939).
+    /// </summary>
+    internal static string[] RegisteredBundleQuerySymbolJsonPathsForTests()
+    {
+        lock (_bcTableIndexLock) return _bcQuerySymbolJsonPaths.ToArray();
     }
 
     /// <summary>The process-lifetime SystemApp .app <see cref="ClearPerBundleBcAppPaths"/> keeps,

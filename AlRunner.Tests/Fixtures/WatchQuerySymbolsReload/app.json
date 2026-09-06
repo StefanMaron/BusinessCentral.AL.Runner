@@ -1,0 +1,10 @@
+{
+  "id": "5a3d8f21-64b7-4c09-91e2-7d6b0a4f3c88",
+  "name": "WatchQuerySymbolsReload",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "dependencies": [],
+  "idRanges": [ { "from": 70620, "to": 70639 } ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0"
+}
