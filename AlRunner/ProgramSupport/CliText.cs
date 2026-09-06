@@ -37,6 +37,13 @@ internal static partial class ProgramSupport
         w.WriteLine("  dependency set is runnable (see DEPENDENCIES below); it proves only that");
         w.WriteLine("  symbols resolved.");
         w.WriteLine();
+        w.WriteLine("  \"The TestPage is not open.\" IS NEVER THE WHOLE STORY. That is BC's own message");
+        w.WriteLine("  for a page whose row-load trigger raised an AL error: the page is torn down and");
+        w.WriteLine("  the raised error's own text never reaches AL, on a real service tier as well as");
+        w.WriteLine("  here. So do NOT read it as a page-lifecycle problem. The runner prints the error");
+        w.WriteLine("  it was reported in place of on a one-line [testpage] note under the failure —");
+        w.WriteLine("  that named error is the one to fix.");
+        w.WriteLine();
 
         w.WriteLine("INVOCATION — the shortest correct command lines");
         w.WriteLine("  Run one bundle (a dir containing app.json, or any dir below one):");
