@@ -526,12 +526,22 @@ in-memory store, so it has to materialise rows, and it cannot materialise all of
 
 What it does instead:
 
-- It materialises a window of whole years, **1900-01-01 to 2099-12-31** by default
-  (about 87,000 rows across all five period types).
-- Whenever an AL `"Period Start"` filter names a **closed** bound outside that window,
-  the window widens to cover it before the read runs. This happens on all **four**
-  request paths a `Record Date` read can take, so a filter naming 1850 or 2300 gets
-  real rows whichever one AL uses:
+- **Nothing is materialised until a read asks for it.** Declaring a `Record Date`
+  variable costs no rows at all.
+- A read whose `"Period Start"` filter is **closed at both ends** materialises exactly
+  the periods inside those bounds, and nothing else. A filter naming one week gets
+  about 25 rows, whether that week is in 1850 or 2300. This is safe rather than a
+  shortcut: BC's own filter engine excludes every row outside the filter anyway, so a
+  narrower store cannot change an answer. A keyed `Get` likewise materialises only the
+  day its key names.
+- A read that does **not** close both ends — no `"Period Start"` filter at all, an open
+  bound, or a filter shape the runner cannot read — is answered from a window of whole
+  years, **1900-01-01 to 2099-12-31** by default (86,885 rows across all five period
+  types), widened by whichever bound the filter did close. A FlowField whose
+  `CalcFormula` source is `Date`, and a `TableRelation` to `Date`, also get the whole
+  window: they reach the store without a filter the runner can see.
+- The narrowing happens on all **four** request paths a `Record Date` read can take, so
+  a filter naming 1850 or 2300 gets real rows whichever one AL uses:
 
   | AL | `DataAccess` method | request type |
   |---|---|---|
@@ -544,14 +554,16 @@ What it does instead:
   `IsEmpty()` has never taken the count path: `RecordImplementation.IsEmptyAsync` calls
   its own `ExistsAsync`, which builds an `ExistsCacheRequest`. Until that fourth guard
   existed, `IsEmpty()` answered `true` for a 1850 range that `Count()` answered `7` for
-  on the very next line.
-- Widening past **500,000 rows** raises `RunnerOutOfScopeException`, naming the
-  requested bounds, the current window and the cap. It never answers a wider request
+  on the very next line. The FlowField and `TableRelation` net described above does not
+  cover this case, because it materialises the default window and 1850 is outside it.
+- Materialising past **500,000 rows** raises `RunnerOutOfScopeException`, naming the
+  requested bounds, what is materialised and the cap. It never answers a wider request
   with fewer rows.
 
 The one case the window does not cover is an **open** bound. `SetFilter("Period Start",
 '%1..', D)` asks real BC for every period from `D` to 9999-12-31; the runner answers it
-from the window. `FindFirst` on such a filter is unaffected, because its answer sits at
+from the window — which is why an open bound is one of the shapes that materialises the
+whole window rather than something narrower. `FindFirst` on such a filter is unaffected, because its answer sits at
 the closed end — and that is the shape production AL uses. Iterating an open-ended range
 to the end stops at the window edge instead of year 9999.
 

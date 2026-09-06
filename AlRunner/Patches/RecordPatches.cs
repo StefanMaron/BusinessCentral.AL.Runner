@@ -863,6 +863,13 @@ public static partial class RecordPatches
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static object TempTableDataProvider_CalcNumeric(object self, object request)
     {
+        // #2648: a FlowField whose CalcFormula source is the Date virtual table reaches the
+        // provider without ever going through DataAccess, so none of the Date window guards has
+        // seen it. This call materialises the whole window on first such read (and is a
+        // ConditionalWeakTable miss for every other table). It lives inside the replacement body
+        // rather than as a Cecil prepend because Cecil REPLACES this method's body outright.
+        EnsureDateStoreFullyMaterialised(self);
+
         var rt = request.GetType();
         var companyToken   = (int)rt.GetProperty("CompanyToken")!.GetValue(request)!;
         var filtersAndMarks = rt.GetProperty("FiltersAndMarks")!.GetValue(request);
@@ -1931,12 +1938,20 @@ public static partial class RecordPatches
 
             // ── Date system virtual table (2000000007) ───────────────────────────────────
             // Virtual on the service tier (DateDataProvider computes one row per period, for
-            // each of the five period types, on demand). Routed to the same in-memory store as
-            // every other table and populated over a bounded window that the find-time guard
-            // extends when an AL filter names a closed bound outside it, so `Record Date`
-            // iteration answers with real periods instead of "There is no Date within the
-            // filter." Every piece of the period arithmetic is BC's own code, called by
-            // reflection. See RecordPatches.DateVirtualTable.cs.
+            // each of the five period types, ON DEMAND, per request). Routed to the same
+            // in-memory store as every other table, so `Record Date` iteration answers with
+            // real periods instead of "There is no Date within the filter." Every piece of the
+            // period arithmetic is BC's own code, called by reflection.
+            //
+            // NOTHING IS MATERIALISED HERE (#2648). This runs from
+            // RecordImplementation.InitializeImpl — i.e. when the `Record Date` VARIABLE is
+            // constructed, before any filter exists — so populating here meant inserting the
+            // whole default window (1900-01-01..2099-12-31, 86,885 rows) whatever the caller
+            // went on to ask for. A filter naming one week in 1850 cost ~109,000 row inserts to
+            // return 7 rows. The three read paths (find, count, keyed Get) each carry the
+            // request, so each populates exactly what its request can select; a request that
+            // names no closed "Period Start" bound still gets the whole documented window,
+            // because that is what answers it. See RecordPatches.DateVirtualTable.cs.
             if (IsDateVirtualTable(table))
             {
                 if (!perTable.TryGetValue(tableId, out var dateDa))
@@ -1949,11 +1964,16 @@ public static partial class RecordPatches
                 // rather than spelling the anchor itself, so the table cannot claim one thing
                 // from the populator and another from this dispatch chain — the sibling defect
                 // #2945 found for Field, Aggregate Permission Set and All Profile (#2965).
+                //
+                // The CHECK stays at handout even though the rows no longer are (#2648): the
+                // skeleton session is what BC's own GetPeriodName needs to name a period, and a
+                // DataAccessSource without one is a runner defect that must stay loud at exactly
+                // the point it was loud before.
                 var dateSession = _fDasSession?.GetValue(self)
                     ?? throw DateShapeGap(
                         "the DataAccessSource has no skeleton session, so BC's own "
                         + "DateDataProvider.GetPeriodName cannot name a period");
-                PopulateDateVirtualTable(dateDa, table, dateSession);
+                PrepareDateVirtualTable(dateDa, table, dateSession);
                 return dateDa;
             }
 

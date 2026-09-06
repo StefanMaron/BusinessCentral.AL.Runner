@@ -769,6 +769,34 @@ public static partial class NclCecilRewrite
                 ByParams(Rt + "TempTableDataProvider", "CalcNumeric", "CalcNumericProviderRequest"),
                 H(recordPatches, "TempTableDataProvider_CalcNumeric"));
 
+            // ── TempTableDataProvider.{Exists,CalcMinMax,CalcSums} — the Date store's safety
+            //    net under per-request materialisation (issue #2648) ────────────────────────
+            // The find, count and keyed-Get guards on DataAccess materialise exactly what their
+            // request can select. Three read paths never reach DataAccess at all — a FlowField
+            // calculation (FlowFieldsHelper) and a TableRelation check
+            // (RecordImplementation.ValidateRelation) go straight to the provider — so they carry
+            // no request the guards could read. MEASURED on this branch with a prepend on
+            // DataAccess.ExistsAsync / CalcMinMaxAsync / CalcSumsAsync instead: the prepend
+            // applied and never fired once, and `count(Date …)` went 73,049 -> 0,
+            // `exist(Date …)` Yes -> No, `min(Date."Period Start")` 1900-01-01 -> blank.
+            //
+            // The helper materialises the whole configured window on the first such read of the
+            // Date store and is a ConditionalWeakTable miss for every other table. CalcNumeric is
+            // not in this list because Cecil REPLACES its body above; the same call sits at the
+            // top of the replacement instead.
+            foreach (var providerRead in new[]
+                     {
+                         ("Exists", "ExistsProviderRequest"),
+                         ("CalcMinMax", "CalcMinMaxProviderRequest"),
+                         ("CalcSums", "CalcSumsProviderRequest"),
+                     })
+            {
+                PrependStaticCall(nclMod,
+                    ByParams(Rt + "TempTableDataProvider", providerRead.Item1, providerRead.Item2),
+                    H(recordPatches, "EnsureDateStoreFullyMaterialised"),
+                    argSlots: 1); // `this` — the provider — is all the helper needs
+            }
+
             // ── BLOB store isolation for database-backed tables (issue #1751) ──────
             // Ncl's TempTableDataProvider.Insert copies the record's NavBLOB into the
             // stored row BY REFERENCE and only CloneBlobs()es the dirty ones, so a BLOB
