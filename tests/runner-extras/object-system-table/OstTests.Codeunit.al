@@ -2,8 +2,12 @@
 // application database, and what the columns the runner cannot answer read.
 //
 // WHY THIS IS A RUNNER TEST AND NOT A CORPUS TEST — AND WHAT IS THEREFORE UNVERIFIED
-//   What Object CONTAINS on a real tier is plain BC behaviour and BELONGS upstream. It cannot
-//   go there, for exactly the reason its sibling Object Metadata (2000000071) could not:
+//   What Object CONTAINS on a real tier is plain BC behaviour and BELONGS upstream. NO SERVICE
+//   TIER HAS CONFIRMED THE ROW SET THIS SUITE OBSERVES, so the assertions below are about what
+//   the RUNNER does, which is what a runner suite is for.
+//
+//   THE REASON THIS HEADER USED TO GIVE FOR THAT IS NO LONGER TRUE, and correcting it is the
+//   point of AlRunner#3071. It said the claim "cannot go there", on two grounds:
 //
 //     * The corpus app targets Cloud (tests/al-language/tests/al-language/app.json,
 //       "target": "Cloud") and Microsoft declares this table Scope = OnPrem, so
@@ -12,16 +16,20 @@
 //       Microsoft.Dynamics.Nav.Types.SystemTables.InternalTables (read off the shipped
 //       Types assembly), and NavRecordRef.IsSystemTableAllowedForRecordRefUsage returns
 //       false for every id in that set, so NavRecordRef.CheckIsOpenAllowed throws
-//       "You cannot open record ... when you are using target Cloud".
+//       "You cannot open record ... when you are using target Cloud". Measured on the SIBLING
+//       id, not reasoned about: corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#153
+//       tried the RecordRef route for 2000000071 and was withdrawn after all 8 BC legs of run
+//       33968379281 refused it. The mechanism is set membership in that one FrozenSet, and
+//       2000000001 is in the same set.
 //
-//   That refusal was MEASURED on the sibling id, not reasoned about: corpus PR
-//   StefanMaron/BusinessCentral.AL.Language.Tests#153 tried the RecordRef route for
-//   2000000071 and was withdrawn after all 8 BC legs of run 33968379281 refused it. The
-//   mechanism is set membership in the one FrozenSet, and 2000000001 is in the same set,
-//   so the same PR against this id would be refused the same way.
-//
-//   SO NO SERVICE TIER HAS CONFIRMED THE ROW SET THIS SUITE OBSERVES, and the assertions
-//   below are about what the RUNNER does, which is what a runner suite is for.
+//   Both grounds are about a CLOUD-TARGET app. Corpus PR #179 added a second corpus app,
+//   tests/al-language-onprem (Target = OnPrem), and NavRecordRef.IsOpenAllowed returns true
+//   outright for an OnPrem target without consulting InternalTables at all — so the table is
+//   reachable from there, and corpus #179 and #187 have since adjudicated two other
+//   Scope = OnPrem system tables on all eight OnPrem legs. Nobody has written the test for
+//   THIS table yet. That is a piece of open work (#3071), not an impossibility, and saying so
+//   matters: #3066 found two runner-local assertions a real tier contradicted, and a stale
+//   "no tier can see this" is how both survived.
 //
 //   What IS runner-specific, and what these tests actually pin: on a real tier these rows
 //   exist because something wrote them into a SQL table in the application database. The

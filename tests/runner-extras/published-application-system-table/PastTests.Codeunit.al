@@ -1,28 +1,51 @@
-// Issue #2963. Published Application (2000000206) on the runner: where the rows come from when
-// nothing was ever published, and the property that makes them mean anything.
+// Issue #2963, corrected by #3066. Published Application (2000000206) on the runner: where the
+// rows come from when nothing was ever published, and the property that makes them mean
+// anything.
 //
 // WHY THIS IS A RUNNER TEST AND NOT A CORPUS TEST
-//   What this table CONTAINS on a real tier is plain BC behaviour and BELONGS upstream. It
-//   cannot go there, and unlike its neighbour Object (2000000001, suite
-//   runner-extras/object-system-table) that is established by a DIRECT measurement of THIS
-//   table rather than by membership in a set whose refusal was measured on a sibling id:
-//   compiling `Record "Published Application"` in a Cloud-target bundle reports
+//   It is now BOTH, and the split matters. What this table CONTAINS on a real tier is plain BC
+//   behaviour, and it lives upstream in the corpus's Target = OnPrem app,
+//   tests/al-language-onprem/record/TestPublishedApplicationSysTable.al
+//   (BusinessCentral.AL.Language.Tests#187) — a service tier adjudicates it there on all eight
+//   OnPrem legs, and this repository's corpus leg then runs the same file against the runner.
+//
+//   What stays HERE is only what the RUNNER does, for a bundle that is not the corpus app:
+//   that rows exist at all with nothing published, that THIS bundle's own manifest is among
+//   them, that the Tenant ID the runner chose satisfies BC's own filter, that no two of the
+//   rows the runner seeded collide, and that the Installed FlowField reads true because the
+//   runner seeded the table it is computed over rather than by writing to the FlowField.
+//
+//   The table is unnameable from the Cloud-target corpus app — compiling
+//   `Record "Published Application"` there reports
 //
 //     error AL0296: The application object or method 'Published Application' has scope
 //                   'OnPrem' and cannot be used for 'Cloud' development
 //
-//   and the corpus app is "target": "Cloud". So this suite targets OnPrem.
+//   which is why the corpus needed a second, OnPrem-target app for it at all. This suite
+//   targets OnPrem for the same reason.
 //
-//   The AL-observable CONSEQUENCE of these rows does go upstream and is service-tier
-//   adjudicated there: an app may register its own table on the retention-policy allowed list
-//   and only its own, BusinessCentral.AL.Language.Tests#181. That is the BC claim. What stays
-//   here is what the RUNNER does to make it true.
+// TWO CLAIMS THIS FILE USED TO MAKE, THAT A SERVICE TIER THEN CONTRADICTED (#3066)
+//   Both were runner-local pins of BC behaviour, and both were wrong — which is the failure
+//   .claude/rules/bc-behavior-tests-go-upstream.md exists to catch. They are gone from here,
+//   the runner was changed to match, and the corrected claims are pinned upstream where a tier
+//   measures them:
 //
-// WHAT THE RUNNER DOES, AND WHY THE LAST TEST IS THE IMPORTANT ONE
+//     * "Package ID and Runtime Package ID must not be the same GUID for one app." All eight
+//       OnPrem legs, 27.0 through 28.4, report them EQUAL for a freshly published app. What
+//       discriminates is the value differing BETWEEN apps, which is what this file still
+//       checks and what upstream pins as PublishedApplication_TwoApps_DoNotShareEitherPackageId.
+//
+//     * "Installed is a FlowField with nothing behind it here; a true would be fabricated."
+//       There was something behind it: Installed is
+//       `Exist("Installed Application" WHERE("Runtime Package ID" = FIELD("Runtime Package ID")))`,
+//       and 2000000212 is ordinary application-database storage the runner had simply never
+//       seeded. Upstream reports true; the runner now seeds the table and agrees.
+//
+// WHAT THE RUNNER DOES, AND WHY THE PACKAGE-ID TESTS ARE THE IMPORTANT ONES
 //   On a real tier these rows exist because publishing an app wrote them. The runner never
 //   publishes anything, so it seeds one row per loaded app from the manifests it already parses
-//   for NavApp.GetModuleInfo, and stamps a deterministic per-app pair of package ids onto both
-//   that row and that app's AllObj rows.
+//   for NavApp.GetModuleInfo, stamps a deterministic per-app package id onto both that row and
+//   that app's AllObj rows, and seeds the matching Installed Application row.
 //
 //   System Application code compares the two sides:
 //
@@ -76,26 +99,51 @@ codeunit 65572 "PAST Tests"
     end;
 
     [Test]
-    procedure FlowFieldColumnsReadBlankRatherThanCarryingAFabricatedValue()
+    procedure InstalledReadsTrueThroughTheTableItIsComputedOver()
     var
         PublishedApplication: Record "Published Application";
+        InstalledApplication: Record "Installed Application";
         Mi: ModuleInfo;
+        Rpid: Guid;
     begin
-        // Installed and Tenant Visible are FlowFields on this table. A runner with no
-        // application database has nothing to compute them from, and — the reason this test
-        // exists — a WRITE to either is silently discarded, so seeding them would look like an
-        // answer and be none. They must read as their computed default, not as a value the
-        // runner invented. Same shape as the blank-column pins in
-        // runner-extras/object-system-table.
+        // THE RUNNER-SIDE HALF of upstream's PublishedApplication_CalcFields_Installed_IsTrueForThisApp.
+        // Upstream asserts the observable — a published app reads as installed. This asserts HOW
+        // the runner gets there, which upstream cannot see and which is the part that can
+        // silently rot: the FlowField is
+        //
+        //   Exist("Installed Application" WHERE("Runtime Package ID" = FIELD("Runtime Package ID")))
+        //
+        // so the runner seeds a real 2000000212 row carrying this app's runtime package id, and
+        // BC's own CalcFields computes true from it. Writing to the FlowField instead would be
+        // silently discarded, and stamping a DIFFERENT id on the 2000000212 row would leave
+        // Installed false with the row present — neither is visible from the upstream test.
+        //
+        // "Tenant Visible" and "PerTenant Or Installed" are deliberately NOT asserted here.
+        // They are Lookup FlowFields over "NAV App Extra" (2000000157), which System.app ships
+        // as a VIRTUAL table, so there is no row for the runner to seed the way there is for
+        // 2000000212, and no service tier has been asked what it reports for them (#3072).
+        // An unmeasured pin is exactly what #3066 had to undo.
         NavApp.GetCurrentModuleInfo(Mi);
         PublishedApplication.SetRange(ID, Mi.Id());
         PublishedApplication.FindFirst();
-        PublishedApplication.CalcFields(Installed, "Tenant Visible");
+        Rpid := PublishedApplication."Runtime Package ID";
 
-        Assert.IsFalse(PublishedApplication.Installed,
-            'Installed is a FlowField with nothing behind it here; a true would be fabricated.');
-        Assert.IsFalse(PublishedApplication."Tenant Visible",
-            'Tenant Visible is a FlowField with nothing behind it here.');
+        Assert.IsTrue(
+            InstalledApplication.Get(Rpid, ''),
+            'The runner must seed an Installed Application row keyed on this app''s runtime package id.');
+        Assert.AreEqual(
+            PublishedApplication."Package ID", InstalledApplication."Package ID",
+            'The Installed Application row must carry the same package id as the published row.');
+
+        PublishedApplication.CalcFields(Installed);
+        Assert.IsTrue(PublishedApplication.Installed,
+            'Installed must compute true from that row, through BC''s own Exist FlowField.');
+
+        // The negative half: the FlowField selects on the runtime package id rather than
+        // answering true for anything. An id nobody published has no 2000000212 row.
+        Assert.IsFalse(
+            InstalledApplication.Get(CreateGuid(), ''),
+            'Installed Application must not answer for a runtime package id nothing was seeded under.');
     end;
 
     [Test]
@@ -123,17 +171,19 @@ codeunit 65572 "PAST Tests"
         Rpid: Guid;
         Empty: Guid;
     begin
-        // The property the whole mechanism rests on. Every row must carry a non-blank Runtime
-        // Package ID, no two rows may share one, and a row's two package columns must differ
-        // from each other — real BC assigns them independently, and making them equal would let
-        // a comparison of one column against the other silently succeed.
+        // The property the whole mechanism rests on, over EVERY row the runner seeded — not
+        // just the two apps a corpus bundle happens to carry. Every row must have a non-blank
+        // Runtime Package ID and no two rows may share one.
+        //
+        // What this deliberately no longer asserts: that a row's two package columns differ
+        // from each other. They are EQUAL on a real tier for a freshly published app (all eight
+        // OnPrem legs, 27.0-28.4, BusinessCentral.AL.Language.Tests#187), the runner matches
+        // that since #3066, and the within-a-row relation is upstream's claim to make.
         PublishedApplication.FindSet();
         repeat
             Rpid := PublishedApplication."Runtime Package ID";
             Assert.AreNotEqual(Empty, Rpid,
                 'Every listed app needs a Runtime Package ID; a blank one matches every other blank.');
-            Assert.AreNotEqual(Rpid, PublishedApplication."Package ID",
-                'Package ID and Runtime Package ID must not be the same GUID for one app.');
             Assert.IsFalse(Seen.Contains(Rpid),
                 'Two apps must not share a Runtime Package ID — then either would own the other''s tables.');
             Seen.Add(Rpid);

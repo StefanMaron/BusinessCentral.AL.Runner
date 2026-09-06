@@ -696,36 +696,74 @@ so no `byBcVersion` override; the eight CI legs are what confirm that. appGroups
 1 — all three tests joined the single existing al-language app group. `runner-extras`,
 `al-language-internals-fixture` and `al-language-onprem` are `main`'s values, untouched.
 
-The al-language number moves 2648 -> 2665 with the submodule pin bump to corpus `861a5662`.
-Four of the seventeen are codeunit 60296 "MQC Self Close Tests" (corpus PR #193), pinning the
-close lifecycle of a page that closes ITSELF -- `CurrPage.Close()` from its own action, under a
-[ModalPageHandler] -- which is the upstream half of issue #3091 and whose runner fix is folded
-into this same PR. 2665 is measured from an actual run against the new pin, not counted off the
-source. appGroups is unchanged at 1, and neither al-language-onprem (19) nor
-al-language-internals-fixture (0) moved.
+## 2648 -> 2661 — corpus pin 83b54a91 (#188) -> 3268bf1b (#191)
 
-The other thirteen arrived because main's pin sat at `83b54a91` while three further corpus PRs
-merged on top of it, and a pin only moves forward as a whole. Five pass. Eight do not, in two
-families that are both somebody else's work in flight, and each gets an `expect-fail-known-gap`
-entry linking an issue that stays open after this PR merges:
+Folded into the fix PR for #3012, which is what the bump exists to enable: corpus #189 added
+`codeunit 60444 "CalcFields Field Class Tests"` (7 tests), the RED -> GREEN for
+`fix(record): refuse a CalcFields field that is not a FlowField or a BLOB`. Three corpus
+commits come in with it, because the corpus history is linear: **#185** (360e1f0, a RunObject
+action with no handler bound), **#189** (3060794, the CalcFields refusals) and **#191**
+(3268bf1, Table Metadata for a table declaring no `DataClassification`).
 
-- codeunit 60444 "CalcFields Field Class Tests", six tests whose `asserterror` sees no error
-  because the runner does not refuse a CalcFields field that is neither a FlowField nor a BLOB
-  -> **#3012**, whose fix is open PR #3079; these six are its upstream half. Two tests in that
-  codeunit pass, so the refusal is missing rather than CalcFields being broken.
-- codeunit 60285 "TPARONH Tests", two tests refused with `Unhandled UI: Page 6028x` where real
-  BC opens the target unattended -> **#3090**. Four other tests in that codeunit pass.
++13 tests, read off the guard's own GROWTH line ("expected 2648, actual 2661") on BC 28.1, not
+counted off the source. No file in the range carries a `#if` version gate, so the count is
+uniform across the eight legs and stays a single `default`; appGroups is unchanged at 1, and
+`runner-extras`, `al-language-internals-fixture` and `al-language-onprem` are `main`'s values,
+untouched.
 
-Those entries were written only AFTER CI reported, deliberately, and the ordering is the point.
-The previous bump added three entries on the strength of a local run; the drift guard rejected
-five of them with "Test passed cleanly but manifest declares expect-fail-known-gap" on three
-legs, because this box's BC artifact is not the matrix's. So this bump was pushed with **no**
-entries first, and the BC 27.0 leg of run 34032742416 came back naming exactly these eight —
-2657P/8F, the same eight the local run had shown. The local run agreed this time; the point is
-that it was not what decided the entries.
+**Not pinned at corpus master head, deliberately.** Master moved on to 861a566 (#193, the close
+lifecycle of a page that closes itself) while this was in flight. 3268bf1b is the last commit
+this branch has actually measured, and #193 lands in the handlers/close-lifecycle area where
+#3061 has just been fixed and more is open — taking it unverified is how the previous revision
+of this branch ended up carrying #188's failures for a defect (#3054) that belonged to another
+PR. A later bump can take it after measuring it.
 
-Also checked rather than assumed: #2931 would have been the obvious issue to link for the
-TPARONH pair, and it is CLOSED. An entry may not link an issue that is already closed any more
-than one a merging PR closes — either way the gap stops being tracked.
+Two of the thirteen fail, both from #185, and both get entries in
+`known-gaps-testpage-runobject-no-handler.json` linking **#2975**, which stays open: real BC
+opens a RunObject target with no handler bound and runs its OnOpenPage, and the runner raises
+`NavNCLMissingUIHandlerException`. #2951 made an action's RunObject perform its target, so the
+sibling eight-test suite (codeunit 60455) passes; the no-handler arm was held out of that suite
+deliberately while the question was open.
+
+Those two entries are **confirmed on all eight legs**, not on one local run: at the previous
+revision of this branch (head `ac70dac1`, run 34029802786) no leg reported "Test passed cleanly
+but manifest declares expect-fail-known-gap", including the three legs that were otherwise
+green. That is the drift complaint which retired codeunit 60455's five entries two bumps ago,
+and it settles the caveat this file recorded for them.
+
+Written by agent stma-auto-1 (automated implementation agent).
+
+## 2661 -> 2665 — corpus pin 3268bf1b (#191) -> 861a5662 (#193)
+
+Folded into the fix PR for #3091, which is what the bump exists to enable: corpus #193 added
+`codeunit 60296 "MQC Self Close Tests"` (4 tests), the RED -> GREEN for a page that closes
+ITSELF -- `CurrPage.Close()` from its own action's OnAction, under a `[ModalPageHandler]`. Those
+four are the entire delta. The corpus commit is the direct child of `3268bf1b`, the pin the
+section above deliberately stopped at, so nothing else rides along and there is no collateral
+to classify.
+
++4 tests, measured from an actual run against the new pin, not counted off the source.
+appGroups is unchanged at 1; `runner-extras`, `al-language-internals-fixture` (0) and
+`al-language-onprem` (19) are `main`'s values, untouched.
+
+**No new known-gap entries, and the earlier revision of this branch was wrong to add two files
+of them.** At head `b1215021` the branch was based on a `main` whose pin was still `83b54a91`,
+so bumping to `861a5662` pulled in #185, #189 and #191 as collateral and eight of their tests
+failed. Both families were declared here. Then `main` moved: PR #3079 merged as `1aef9e75` and
+brought exactly that collateral with it, correctly classified. What was left on this branch was
+worse than redundant --
+
+- `known-gaps-runobject-no-handler.json` declared the same two `TPARONH Tests` methods as
+  `main`'s own `known-gaps-testpage-runobject-no-handler.json`, and
+  `AlRunner/Infrastructure/ExpectationManifest.cs:120-131` throws
+  `Expectation for {CodeunitName}.{Method} declared in multiple files` — a hard load failure on
+  every leg, before a single test runs. Not drift; the run would not have started.
+- `known-gaps-calcfields-field-class.json` declared six tests that #3079's fix makes pass, and
+  linked **#3012**, which that same PR closed. An entry pointing at a closed issue is precisely
+  the failure this file records having avoided with #2931 one bump earlier.
+
+Both files are deleted. `main`'s classification stands, and the only thing this bump adds to the
+manifest is nothing at all.
 
 Written by agent fbk-1 (automated implementation agent).
+

@@ -445,20 +445,27 @@ public static class FlowFieldPatches
                     BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (bufferIndexer == null) return new System.Threading.Tasks.ValueTask<bool>(false);
 
-            // BLOBs first. BC excludes them from the FlowField pipeline entirely
+            // BC's own classification of the field list, BEFORE anything is loaded or
+            // calculated (#3012). This is where `Rec.CalcFields("No.")` and
+            // `Rec.CalcFields("<a FlowFilter>")` are refused, and where a FlowField with no
+            // CalcFormula is refused — see ClassifyCalcFieldsRequest for BC's own loop. It
+            // runs first for the reason BC runs it first: a refused call must compute nothing
+            // and load nothing, not leave the acceptable part of the list applied.
+            var blobFields = new List<object>();
+            var flowFields = new List<object>();
+            ClassifyCalcFieldsRequest(fields, blobFields, flowFields);
+
+            // BLOBs. BC excludes them from the FlowField pipeline entirely
             // (`fieldsToCalc.Where(f => f.FieldNclType != NavNclType.NavBlob)`) and loads their
             // content from the record's OWN DataAccess, so this stays on the RecordImplementation
             // entry point where `self` is available — the shared core below has no `self`.
-            if (_pNclMetaFieldFieldNclType != null && _nclTypeNavBlob != null)
-                foreach (var fieldObj in fields)
-                {
-                    if (fieldObj == null) continue;
-                    if (!Equals(_pNclMetaFieldFieldNclType.GetValue(fieldObj), _nclTypeNavBlob)) continue;
-                    int blobColumn = -1;
-                    try { blobColumn = (int)_pNclMetaFieldColumnIndex!.GetValue(fieldObj)!; } catch { }
-                    if (blobColumn >= 0)
-                        LoadBlobField(self, parentBuffer, bufferIndexer, blobColumn);
-                }
+            foreach (var fieldObj in blobFields)
+            {
+                int blobColumn = -1;
+                try { blobColumn = (int)_pNclMetaFieldColumnIndex!.GetValue(fieldObj)!; } catch { }
+                if (blobColumn >= 0)
+                    LoadBlobField(self, parentBuffer, bufferIndexer, blobColumn);
+            }
 
             // Then the FlowFields, through the same core BC's own
             // FlowFieldsHelper.CalcFieldsAsync now routes to (#1757). Entering at
@@ -466,13 +473,19 @@ public static class FlowFieldPatches
             // BC's own `0 → 1, n → n+1` step before handing the level to
             // GetFilterFromMetaFilterCollection, so a formula that references another
             // FlowField re-enters here one level deeper and BC's >50 guard still bites.
+            //
+            // Only the FlowFields reach the core, exactly as BC hands `flowFields.ToArray()`
+            // to FlowFieldsHelper.CalcFieldsAsync — and BC skips the call altogether when that
+            // list is empty, so a `CalcFields(<a Blob>)` does not enter the FlowField pipeline
+            // at all.
             var calculated = new List<Tuple<INavFieldMetadata, NavValue>>();
-            CalcFlowFieldValuesCore(
-                session, companyToken, parentBuffer,
-                tableState != null ? _pTableStateFiltersAndMarks?.GetValue(tableState) : null,
-                _fRecImplSecurityFiltering?.GetValue(self),
-                tableState != null ? _pTableStateReadIsolation?.GetValue(tableState) : null,
-                fields, recursionLevel: 0, calculated);
+            if (flowFields.Count > 0)
+                CalcFlowFieldValuesCore(
+                    session, companyToken, parentBuffer,
+                    tableState != null ? _pTableStateFiltersAndMarks?.GetValue(tableState) : null,
+                    _fRecImplSecurityFiltering?.GetValue(self),
+                    tableState != null ? _pTableStateReadIsolation?.GetValue(tableState) : null,
+                    ToNclMetaFieldArray(flowFields), recursionLevel: 0, calculated);
 
             foreach (var item in calculated)
                 bufferIndexer.SetValue(parentBuffer, item.Item2,
@@ -590,6 +603,208 @@ public static class FlowFieldPatches
         return _ctorFieldDictionary.Invoke(new object[] { calculated.ToArray() });
     }
 
+    // ── BC's own CalcFields field-list classification (#3012) ────────────────────────────
+    //
+    // RecordImplementation.CalcFieldsAsync(DataError, NCLMetaField[], bool) — the method
+    // RecordImpl_CalcFieldsAsync_3 replaces — does NOT hand its field array straight on to
+    // FlowFieldsHelper. It walks it first, splits it three ways, and throws on the first
+    // field it cannot place (decompiled from Ncl 28.1.49838.53910):
+    //
+    //     foreach (NCLMetaField item in fields.Where(field => field.FieldActive))
+    //     {
+    //         if (item.FieldNclType == NavNclType.NavBlob)
+    //         { GetWriteableBlobOnFieldAndEnsureInMutablePartOfBuffer(item); blobFields.Add(item); continue; }
+    //
+    //         if (item.FieldClass != FieldClass.FlowField)
+    //             throw new NavCSideException(string.Format(CultureInfo.CurrentCulture,
+    //                 Lang.MustBeAFlowField, await parentRecord.ALFieldCaptionAsync(item.FieldNo),
+    //                 metaTable.TableCaptions.GetValueOrDefault()));
+    //
+    //         if (item.CalculationFormula == NCLMetaCalculationFormula.EmptyFormula)
+    //             throw new NavCSideException(18023430, string.Format(CultureInfo.CurrentCulture,
+    //                 Lang.MustDefineFormula, await parentRecord.ALFieldCaptionAsync(item.FieldNo),
+    //                 metaTable.TableCaptions.GetValueOrDefault()));
+    //
+    //         flowFields.Add(item);
+    //     }
+    //
+    // The runner used to have no equivalent: every entry point dropped a non-FlowField on the
+    // floor with `if (!Equals(fieldClass, _fcFlowField)) continue;`, so `Rec.CalcFields("No.")`
+    // and `Rec.CalcFields("<a FlowFilter>")` both did nothing at all and reported success —
+    // exactly the silent default `loud-failures.md` exists to prevent, and measured green on
+    // the runner while real BC refuses both.
+    //
+    // Two things deliberately NOT copied, each for a reason:
+    //
+    //   * BC's third refusal for this area, NavCSideException(18023494,
+    //     Lang.OnlyFlowFieldsAllowedInCallsToCalcFields), lives one layer down in
+    //     FlowFieldsHelper.GetDistinctSourceTablesFromFlowFields. AL never reaches it — this
+    //     loop throws first — so it is reproduced in ValidateFlowFieldFormulas below, on the
+    //     FlowFieldsHelper entry point, where BC's own other callers of that helper would.
+    //
+    //   * `.Where(field => field.FieldActive)`. NCLMetaField.FieldActive is computed from
+    //     `fieldFlags & FieldFlags.Active`, and the runner's own NclMetaTableBuilder never
+    //     populates fieldFlags at all, so it reads false for every field the runner builds.
+    //     Filtering on it here would silently turn EVERY CalcFields into a no-op. Applying it
+    //     is tracked separately rather than guessed at.
+
+    /// <summary>
+    /// Splits a <c>CalcFields</c> field list the way BC's own <c>RecordImplementation</c> does:
+    /// BLOBs into <paramref name="blobFields"/>, FlowFields carrying a CalcFormula into
+    /// <paramref name="flowFields"/>, and anything else straight into BC's own refusal.
+    /// </summary>
+    private static void ClassifyCalcFieldsRequest(
+        Array fields, List<object> blobFields, List<object> flowFields)
+    {
+        foreach (var fieldObj in fields)
+        {
+            if (fieldObj == null) continue;
+
+            if (_pNclMetaFieldFieldNclType != null && _nclTypeNavBlob != null
+                && Equals(_pNclMetaFieldFieldNclType.GetValue(fieldObj), _nclTypeNavBlob))
+            {
+                blobFields.Add(fieldObj);
+                continue;
+            }
+
+            if (!Equals(_pNclMetaFieldFieldClass!.GetValue(fieldObj), _fcFlowField))
+                throw BuildCalcFieldsRefusal(fieldObj, errorNumber: null, "MustBeAFlowField",
+                    "The {0} field in the {1} table must be a FlowField.");
+
+            // BC compares against NCLMetaCalculationFormula.EmptyFormula. A null formula is not
+            // a shape BC can produce — it means the runner failed to materialise one — but it
+            // is the same observable situation for AL (there is no formula to evaluate), and
+            // the alternative is the silent skip this whole block exists to remove.
+            var formula = _pNclMetaFieldCalculationFormula!.GetValue(fieldObj);
+            if (formula == null
+                || (_fCalcFormulaEmpty != null && ReferenceEquals(formula, _fCalcFormulaEmpty.GetValue(null))))
+                throw BuildCalcFieldsRefusal(fieldObj, errorNumber: 18023430, "MustDefineFormula",
+                    "You must define a CalcFormula for the {0} FlowField in the {1} table.");
+
+            flowFields.Add(fieldObj);
+        }
+    }
+
+    /// <summary>
+    /// Build one of BC's own <c>NavCSideException</c> refusals for a CalcFields field list.
+    /// The wording comes from BC's own <c>Lang</c> resource class (in
+    /// Microsoft.Dynamics.Nav.Language.dll, resolved by reflection — the runner does not
+    /// reference it), so a BC version that rewords or localises the message is followed
+    /// automatically instead of drifting from a copy kept here. <paramref name="fallbackFormat"/>
+    /// is BC 28.1's own en-US text and is used only if the resource cannot be read, so AL still
+    /// sees the refusal rather than a silent success.
+    /// </summary>
+    private static Exception BuildCalcFieldsRefusal(
+        object fieldObj, int? errorNumber, string langResourceName, string fallbackFormat)
+    {
+        var format = ALDatabasePatches.LangString(langResourceName) ?? fallbackFormat;
+        var message = string.Format(System.Globalization.CultureInfo.CurrentCulture, format,
+            FieldCaptionForRefusal(fieldObj), TableCaptionForRefusal(fieldObj));
+
+        try
+        {
+            var tCSide = ALDatabasePatches.ResolveNavCSideExceptionType();
+            const BindingFlags CtorFlags =
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+
+            if (tCSide != null && errorNumber is int number)
+            {
+                var ctorNumbered = tCSide.GetConstructor(
+                    CtorFlags, null, new[] { typeof(int), typeof(string) }, null);
+                if (ctorNumbered != null)
+                    return (Exception)ctorNumbered.Invoke(new object[] { number, message });
+            }
+
+            if (tCSide != null)
+            {
+                var ctorPlain = tCSide.GetConstructor(
+                    CtorFlags, null, new[] { typeof(string) }, null);
+                if (ctorPlain != null)
+                    return (Exception)ctorPlain.Invoke(new object[] { message });
+            }
+        }
+        catch
+        {
+            // fall through — the refusal itself matters more than its exact CLR type
+        }
+
+        // Never swallow the refusal: an untyped exception still stops the call and still
+        // carries BC's message, which is what AL's asserterror observes.
+        return new InvalidOperationException(message);
+    }
+
+    /// <summary>
+    /// BC formats these two messages with <c>NavRecord.ALFieldCaptionAsync(item.FieldNo)</c> and
+    /// <c>metaTable.TableCaptions.GetValueOrDefault()</c>. <c>NCLMetaField.FieldCaption</c> is
+    /// the property that async method reads, and <c>NCLMetaTable.TableCaptionSafe</c> is BC's
+    /// own "captions, else the object name" accessor; both fall back to the name here so a
+    /// table whose caption strings were never materialised still names the field and the table
+    /// rather than producing "The  field in the  table must be a FlowField."
+    /// </summary>
+    private static string FieldCaptionForRefusal(object fieldObj)
+    {
+        var field = fieldObj as NCLMetaField;
+        if (field == null) return string.Empty;
+        try
+        {
+            var caption = field.FieldCaption;
+            if (!string.IsNullOrEmpty(caption)) return caption;
+        }
+        catch { }
+        return field.FieldName ?? string.Empty;
+    }
+
+    private static string TableCaptionForRefusal(object fieldObj)
+    {
+        var parent = (fieldObj as NCLMetaField)?.Parent;
+        if (parent == null) return string.Empty;
+        try
+        {
+            var pSafe = parent.GetType().GetProperty("TableCaptionSafe",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (pSafe?.GetValue(parent) is string safe && !string.IsNullOrEmpty(safe))
+                return safe;
+        }
+        catch { }
+        return parent.TableName ?? string.Empty;
+    }
+
+    /// <summary>
+    /// BC's <c>NavCSideException(18023494, Lang.OnlyFlowFieldsAllowedInCallsToCalcFields)</c> —
+    /// "The field {0} in the {1} table is not a FlowField or a BLOB field and cannot be passed
+    /// in calls to CalcFields." Unlike the two RecordImplementation refusals this one is
+    /// formatted with the raw <c>FieldName</c> / <c>Parent.TableName</c>, not with captions,
+    /// so it is built separately rather than through BuildCalcFieldsRefusal.
+    /// </summary>
+    private static Exception BuildOnlyFlowFieldsAllowedRefusal(NCLMetaField field)
+    {
+        var format = ALDatabasePatches.LangString("OnlyFlowFieldsAllowedInCallsToCalcFields")
+            ?? "The field {0} in the {1} table is not a FlowField or a BLOB field and cannot "
+               + "be passed in calls to CalcFields.";
+        var message = string.Format(System.Globalization.CultureInfo.CurrentCulture, format,
+            field.FieldName, field.Parent?.TableName);
+
+        try
+        {
+            var tCSide = ALDatabasePatches.ResolveNavCSideExceptionType();
+            var ctor = tCSide?.GetConstructor(
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                null, new[] { typeof(int), typeof(string) }, null);
+            if (ctor != null)
+                return (Exception)ctor.Invoke(new object[] { 18023494, message });
+        }
+        catch { }
+
+        return new InvalidOperationException(message);
+    }
+
+    private static NCLMetaField[] ToNclMetaFieldArray(List<object> fields)
+    {
+        var arr = new NCLMetaField[fields.Count];
+        for (int i = 0; i < fields.Count; i++) arr[i] = (NCLMetaField)fields[i];
+        return arr;
+    }
+
     /// <summary>
     /// Runs BC's own <c>FlowFieldsHelper.CheckFlowFieldProperties</c> over every FlowField in
     /// <paramref name="fields"/>, reproducing all five of its runtime refusals (#2970).
@@ -638,7 +853,24 @@ public static class FlowFieldPatches
                 && Equals(_pNclMetaFieldFieldNclType.GetValue(fieldObj), _nclTypeNavBlob))
                 continue;
 
-            if (!Equals(_pNclMetaFieldFieldClass!.GetValue(fieldObj), _fcFlowField)) continue;
+            // #3012 — BC's GetDistinctSourceTablesFromFlowFields refuses a non-FlowField here,
+            // as the very first thing it does per field, AFTER its caller has filtered BLOBs
+            // out (`fieldsToCalc.Where(f => f.FieldNclType != NavNclType.NavBlob)`):
+            //
+            //     if (flowField.FieldClass != FieldClass.FlowField)
+            //         throw new NavCSideException(18023494, string.Format(...,
+            //             Lang.OnlyFlowFieldsAllowedInCallsToCalcFields,
+            //             flowField.FieldName, flowField.Parent.TableName));
+            //
+            // A record-level CalcFields never gets this far — ClassifyCalcFieldsRequest above
+            // has already refused with RecordImplementation's own wording, which is what AL
+            // sees. This guards the OTHER entry point, FlowFieldsHelper_CalcFieldsAsync, which
+            // BC's own code re-enters (GetFilterFromMetaFilterCollection resolving a
+            // `field(<a FlowField>)` condition, RecordIsWithinFilteredFlowFieldsAsync). Those
+            // callers pass FlowFields by construction, so this is the runner declining to be
+            // more permissive than BC on a path BC also checks — not a skip.
+            if (!Equals(_pNclMetaFieldFieldClass!.GetValue(fieldObj), _fcFlowField))
+                throw BuildOnlyFlowFieldsAllowedRefusal(field);
 
             var formula = _pNclMetaFieldCalculationFormula!.GetValue(fieldObj);
             if (formula == null) continue;

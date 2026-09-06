@@ -43,6 +43,36 @@ public class SelfClosedFormMarkTests
     }
 
     [Fact]
+    public void AMarkedForm_IsReportedClosed()
+    {
+        // The TRUE case, and the reason it is here: without it every assertion in this file is
+        // `false` and the whole class would pass against a `WasClosedFromAl => false` stub --
+        // proving nothing about the bookkeeping it claims to pin.
+        var form = new object();
+        Assert.False(RunnerPageInstance.WasClosedFromAl(form));
+
+        RunnerPageInstance.MarkClosedFromAlForTests(form);
+
+        Assert.True(RunnerPageInstance.WasClosedFromAl(form));
+    }
+
+    [Fact]
+    public void ReopeningTheSameForm_ClearsTheMark()
+    {
+        // RunnerPageInstance keeps the same form across close and reopen (#2658), so a mark
+        // that is never cleared makes a reopened page refuse its built-in actions forever with
+        // "The TestPage is not open." -- on a page BC considers open again. RaiseOnOpenPage
+        // clears it; this pins that the clear actually restores the usable state.
+        var form = new object();
+        RunnerPageInstance.MarkClosedFromAlForTests(form);
+        Assert.True(RunnerPageInstance.WasClosedFromAl(form));
+
+        RunnerPageInstance.ClearClosedFromAlForTests(form);
+
+        Assert.False(RunnerPageInstance.WasClosedFromAl(form));
+    }
+
+    [Fact]
     public void TheMarkIsKeyedOnTheFormIdentity_NotOnEquality()
     {
         // Two distinct form objects are two distinct pages, even when they compare equal by
@@ -53,7 +83,9 @@ public class SelfClosedFormMarkTests
         Assert.Equal(one, two);
         Assert.False(ReferenceEquals(one, two));
 
-        Assert.False(RunnerPageInstance.WasClosedFromAl(one));
+        RunnerPageInstance.MarkClosedFromAlForTests(one);
+
+        Assert.True(RunnerPageInstance.WasClosedFromAl(one));
         Assert.False(RunnerPageInstance.WasClosedFromAl(two));
     }
 

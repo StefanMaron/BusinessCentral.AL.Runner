@@ -127,6 +127,17 @@ internal sealed partial class RunnerPageInstance
         => form != null && ClosedForms.TryGetValue(form, out _);
 
     /// <summary>
+    /// Record a form as closed-from-AL without going through <see cref="ForceCloseForm"/>.
+    /// Exists so the bookkeeping can be tested for the TRUE case too — reaching it through
+    /// ForceCloseForm would need a live NavForm, and a set of tests that only ever assert
+    /// false would pass just as well against a <c>WasClosedFromAl =&gt; false</c> stub.
+    /// </summary>
+    internal static void MarkClosedFromAlForTests(object form) => ClosedForms.AddOrUpdate(form, Sentinel);
+
+    /// <summary>Counterpart of <see cref="MarkClosedFromAlForTests"/>, for the reopen case.</summary>
+    internal static void ClearClosedFromAlForTests(object form) => ClosedForms.Remove(form);
+
+    /// <summary>
     /// The record this instance is actually bound to — null for a record-less page. Needed
     /// by callers of <see cref="AdoptFromHost"/>: when adoption reuses an ALREADY-bound
     /// record (a SourceTableTemporary part the host already populated), that record can
@@ -1379,6 +1390,13 @@ internal sealed partial class RunnerPageInstance
         if (_hasOpenedBefore) ResetGlobalsForReopen();
         _hasOpenedBefore = true;
 
+        // A reopen un-closes the page, and the mark has to go with it. RunnerPageInstance keeps
+        // the SAME _form across close and reopen — that is what _hasOpenedBefore and
+        // ResetGlobalsForReopen exist for (#2658) — so without this a page closed once with
+        // CurrPage.Close() would have GetBuiltInAction refusing "The TestPage is not open."
+        // forever, on a page BC considers open again.
+        ClosedForms.Remove(_form);
+
         // BEFORE the trigger, exactly where BC puts it: NavForm.OpenFormAsync runs
         // ApplySourceTableViewAndSavedValuesAsync() and only then RaiseOnOpenPageAsync().
         // A page's OnOpenPage is entitled to READ the SourceTableView's filters (Base
@@ -1560,8 +1578,13 @@ internal sealed partial class RunnerPageInstance
         // OK().Invoke() flow is entirely legitimate.
         ClosedForms.AddOrUpdate(_form, Sentinel);
 
-        var forceClose = FindNavFormMethod("ForceClose", Type.EmptyTypes);
-        if (forceClose == null) return;   // nothing to reconcile on a shape without it
+        // Loud, like ApplySourceTableView and SplitKey in this file. Returning quietly would
+        // leave the form MARKED but still IsOpen, which is precisely the double-close #3091
+        // fixes — reintroduced with no signal at all.
+        var forceClose = FindNavFormMethod("ForceClose", Type.EmptyTypes)
+            ?? throw new InvalidOperationException(
+                "NavForm.ForceClose not found on " + _form.GetType().FullName
+                + " — BC page shape changed");
         try { forceClose.Invoke(_form, Array.Empty<object>()); }
         catch (TargetInvocationException tie) when (tie.InnerException != null)
         {

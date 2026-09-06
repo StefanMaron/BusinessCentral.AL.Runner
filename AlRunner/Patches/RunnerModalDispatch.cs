@@ -267,9 +267,20 @@ public static class RunnerModalDispatch
     private static bool IsFormOpen(object? form)
     {
         if (form == null) return false;
-        var isOpen = form.GetType().GetProperty("IsOpen",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-        return isOpen?.GetValue(form) is not false;
+        try
+        {
+            var isOpen = form.GetType().GetProperty("IsOpen",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            return isOpen?.GetValue(form) is not false;
+        }
+        catch (Exception)
+        {
+            // One caller is inside a finally, where an exception raised here would REPLACE
+            // whatever the handler was already failing with — the test would report a
+            // reflection error instead of its own. Answer "open", the same way an unreadable
+            // property does above, and let the original failure through.
+            return true;
+        }
     }
 
     /// <summary>

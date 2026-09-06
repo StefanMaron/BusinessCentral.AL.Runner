@@ -62,6 +62,20 @@ public class RunnerOutOfScopeMessagePointerTests
     // Colon lead-in — same TrimEnd set, also in live use.
     [InlineData("testpage-action — the page has no such action: see docs/scope.md",
                 "testpage-action — the page has no such action")]
+    // BRACKETED FORMS (#3073). No live throw site writes one today — the only two
+    // "(see docs/scope.md" occurrences in AlRunner/ are both comments — so these are the hole
+    // rather than a bug anyone is hitting. They belong here because the normaliser's whole
+    // stated rationale is that it also covers every throw site written AFTER it; a form it
+    // silently passes through weakens exactly that claim, and nothing fails when an author
+    // writes one, so it would survive review. OutOfScopePointerCallSiteGuardTests is the other
+    // half: this pins the normaliser, that one pins the call sites.
+    [InlineData("testpage-action — the page declares no OnAction trigger (see docs/scope.md)",
+                "testpage-action — the page declares no OnAction trigger")]
+    [InlineData("email-smtp — sending mail needs a real SMTP server [see docs/scope.md]",
+                "email-smtp — sending mail needs a real SMTP server")]
+    // Bracket AND a trailing sentence period.
+    [InlineData("testpage-action — the page has no such action (see docs/scope.md).",
+                "testpage-action — the page has no such action")]
     public void ReasonEndingInAScopePointerYieldsExactlyOnePointerInTheMessage(
         string reason, string expectedReason)
     {

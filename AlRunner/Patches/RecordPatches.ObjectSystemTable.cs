@@ -37,25 +37,38 @@
 //   BOTH tables can name, neither can list an object the other does not, or give it a
 //   different id or name, because there is only one place the answer comes from.
 //
-// ── WHAT IS NOT SETTLED, AND WHY IT COULD NOT BE SETTLED HERE ────────────────────────────
-//   NO SERVICE TIER HAS CONFIRMED WHAT THIS TABLE HOLDS ON A REAL TIER. The claim belongs
-//   upstream in the al-language corpus and cannot be expressed there, for the same two
-//   reasons its sibling could not:
-//     * the corpus app targets Cloud and this table is Scope = OnPrem, so `Record "Object"`
-//       fails AL0296 at compile there;
-//     * the RecordRef route is refused at RUNTIME. 2000000001 is a member of
-//       SystemTables.InternalTables (100 ids on BC 28.1), and
-//       NavRecordRef.IsSystemTableAllowedForRecordRefUsage returns false for every id in that
-//       set, so NavRecordRef.CheckIsOpenAllowed throws
-//       "You cannot open record ... when you are using target Cloud". The escape hatch
-//       SystemTables.OnPremSystemTableRecordRefAllowed is only { 2000000187, 2000000188 }.
+// ── WHAT IS NOT SETTLED — AND THE BLOCKER THAT USED TO MAKE IT UNSETTLEABLE IS GONE ──────
+//   NO SERVICE TIER HAS CONFIRMED WHAT THIS TABLE HOLDS ON A REAL TIER. That much is still
+//   true. What is NO LONGER true is the reason this comment used to give for it — that the
+//   claim "cannot be expressed" in the al-language corpus. Tracked as AlRunner#3071.
 //
-//   That refusal is MEASURED, not reasoned: corpus PR
-//   StefanMaron/BusinessCentral.AL.Language.Tests#153 tried the RecordRef route on the sibling
-//   id 2000000071 and was withdrawn after all 8 BC legs of run 33968379281 refused it before a
-//   single assertion ran. The mechanism is membership in that one FrozenSet, and 2000000001 is
-//   in it, so the same PR against this id gets the same refusal. Settling it needs an
-//   OnPrem-target app in the corpus, or Microsoft's Tests-SINGLESERVER bucket.
+//   The two blockers, and why neither applies any more:
+//     * "the corpus app targets Cloud and this table is Scope = OnPrem, so `Record "Object"`
+//       fails AL0296 at compile there". The corpus gained a SECOND app in corpus PR #179 —
+//       tests/al-language-onprem, Target = OnPrem, id range 61200-61299 — for exactly this
+//       class of table. AL0296 does not fire there.
+//     * "the RecordRef route is refused at RUNTIME". It is, for a Cloud target, and that is
+//       MEASURED: corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#153 tried it on the
+//       sibling id 2000000071 and was withdrawn after all 8 BC legs of run 33968379281 refused
+//       it before a single assertion ran (2000000001 follows by membership in the same
+//       SystemTables.InternalTables FrozenSet, not by its own measurement). But
+//       NavRecordRef.IsOpenAllowed reads, in full:
+//
+//           private bool IsOpenAllowed(CompilationTarget compilationTarget, int tableId)
+//           {
+//               if (!compilationTarget.IsOnPremTarget())
+//                   return IsSystemTableAllowedForRecordRefUsage(tableId);
+//               return true;
+//           }
+//
+//       so the InternalTables test is never reached for an OnPrem target — and an OnPrem app
+//       needs no RecordRef here anyway, it can declare `Record Object` directly.
+//
+//   Corpus #179 and #187 have since put two other Scope = OnPrem system tables in front of a
+//   real tier from that app, green on all eight OnPrem legs, and #187 contradicted two
+//   runner-local assertions in the process (AlRunner#3066). This one has not been asked yet.
+//   Leaving the old wording in place is how those two survived, so it is corrected rather than
+//   kept: the work is available, not impossible.
 //
 //   So what this file answers is deliberately the part that needs no tier verdict: the rows
 //   are the runner's OWN object inventory, and the claim "Object lists the objects this run
