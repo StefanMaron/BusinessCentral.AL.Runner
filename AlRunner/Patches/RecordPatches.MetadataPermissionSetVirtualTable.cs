@@ -327,11 +327,11 @@ public static partial class RecordPatches
     private static string RoleIdText(BcAppSymbolCache.PermissionSetSymbol permissionSet)
     {
         var code = RoleIdNavCode(permissionSet, MetadataPermissionSetRoleIdLength);
-        _mpsNavStringValueValue ??= code.GetType().GetProperty("Value",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+        _mpsNavStringValueValue ??= FindBcProperty(code.GetType(), "Value", out var nValue)
             ?? throw MetadataPermissionSetBcShapeGap(
                 $"{code.GetType().Name}.Value",
-                "property not found, so the Name fallback cannot read the Role ID back off BC's own NavCode — the Metadata Permission Set table cannot be populated");
+                BcPropertyGapDetail("Value", nValue)
+                + ", so the Name fallback cannot read the Role ID back off BC's own NavCode — the Metadata Permission Set table cannot be populated");
         return _mpsNavStringValueValue.GetValue(code) as string ?? string.Empty;
     }
 

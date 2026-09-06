@@ -781,11 +781,22 @@ whether this legacy table's field 20 holds the object's AL caption is a BC claim
 can adjudicate; **issue #2839** tracks it rather than guessing.
 
 A `--test-data` backup's real rows take precedence over the projection, and that precedence is
-conditioned on such a loader existing in the run at all — an install-baseline restore replays
-rows the projection itself wrote into a fresh provider, which a bare "does the store have rows"
-test cannot tell apart from a backup's. **issue #2875** records what that leaves open
-(`--test-data` and an install baseline together) and why the obvious fix — excluding 2000000001
-from install-baseline capture — is not a drop-in.
+decided from what the backup **actually loaded** rather than from what the in-memory store
+happens to hold (#2875). Reading the store was the earlier design and it could not work: an
+install-baseline restore replays rows the projection itself wrote into a brand-new provider, so
+the projection read its own stale output as somebody else's and stopped topping the table up.
+The on-demand load now records the tables it put rows into, and the projection stands down for
+this table only when that record names it. Its companion is in the capture: while the projection
+owns the rows, table 2000000001 is left out of the install baseline entirely — the same treatment
+the self-populating virtual tables get (#2272), and for the same reason, since the dispatch
+branch re-derives the projection on every access. With nothing captured there is nothing to
+replay, so the ambiguity is gone rather than narrowed.
+
+One case in the same family is **not** closed here and is reported rather than silent: a store
+published by a *nested* materialisation owes a `--test-data` load that could not run there, and
+the projection fills it before that debt is settled, so the settle writes the load off. Object
+Metadata's dispatch branch holds its populate off until the debt is settled; `Object`'s does not.
+**issue #2877** covers the deferred-load mechanism.
 
 `tests/runner-extras/object-system-table` asserts the runner-side behaviour so it cannot move
 quietly.
@@ -961,6 +972,17 @@ build, because nothing was skipped for it. The two exceptions are
 a build missing either, the runner cannot tell whether *any* table declares a trigger, so it
 refuses for every table rather than let the whole bundle's field triggers go quiet.
 
+**Where a field-trigger refusal surfaces depends on which member moved**
+([#3047](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3047)). A proportional
+guard fires only for the table and field it could not install, so it fails the test that touched
+that table and names both. The two scan-type guards refuse for *every* table, and
+`RecordPatches.WireFieldTriggerHandlersAll` runs once at bundle load
+(`BcRuntime.SetTestAssembly`, and `Program.cs` for a server-mode reload) — so on a build missing
+`FieldTriggerHandlerAttribute` or `FieldTriggerType` the refusal is a **run-level abort at bundle
+load**, not an attributable single-test failure. Nothing runs, and the message names the member.
+That is the intended trade: the alternative is every field trigger in the bundle going quiet
+while the suite still reports green.
+
 ## Known gaps — in scope but not yet implemented
 
 These are not architectural limits. They can be fixed; report them at
@@ -969,9 +991,15 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 <a id="runtime-shape-gaps"></a>
 
 - **Runtime shape gaps outside the virtual tables — the runner refuses rather than answering
-  a shape it cannot produce.** Nine further guards raise `RunnerOutOfScopeException` with the
+  a shape it cannot produce.** 12 further guards raise `RunnerOutOfScopeException` with the
   reason anchor `not-yet-implemented`, so an AL `[TryFunction]` cannot absorb one into `false`
-  ([#2966](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2966)):
+  ([#2966](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2966)). The number
+  counts refusal **call sites**, which is the rule the original nine were counted under; it is
+  now asserted against the code by
+  `AlRunner.Tests/FieldTriggerShapeGapCallSiteTests.cs`, because it read "Nine" for as long as
+  it took [#3048](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3048) to add
+  three more and nothing checked it
+  ([#3047](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3047)):
   - the **User Property** row BC writes alongside every `User` insert, when the record under
     insert carries no session, when table 2000000121 has no metadata in this run, or when the
     metatable states no field of the name the writer needs
@@ -984,11 +1012,14 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
     context or request (`RunnerModalDispatch.cs`);
   - **report construction**, when the runner cannot build the report object at all to run it
     or its request page (`NavReportSync.cs`);
-  - **AL field-trigger installation**, in two shapes that used to be skipped in silence
+  - **AL field-trigger installation**, in two shapes across three call sites that used to be
+    skipped in silence
     ([#3048](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3048)) — a field
     the runner's own metatable does not carry although the runner's own emitted AL declares a
-    trigger for it, and a trigger method whose return type is neither `void` nor `ValueTask`,
-    which BC's `FieldTriggerHandler<T>` has no constructor for
+    trigger for it (refused at both ways `NCLMetaTable.GetFieldByNo` can decline it: it throws,
+    or it returns null, which BC's own body cannot do on any supported build), and a trigger
+    method whose return type is neither `void` nor `ValueTask`, which BC's
+    `FieldTriggerHandler<T>` has no constructor for
     (`AlRunner/Patches/FieldTriggerInstallGaps.cs`). Neither is a BC shape gap: both sides of
     each disagreement are the runner's own, so "which BC version produced this?" has no answer.
     Both used to leave `WireFieldTriggerHandlers` reporting the table as wired, so the trigger

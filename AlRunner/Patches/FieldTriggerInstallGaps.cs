@@ -39,10 +39,12 @@
 //
 // ── WHAT A REFUSAL HERE COSTS ────────────────────────────────────────────────────────────
 // WireFieldTriggerHandlersAll runs at bundle load, so a refusal on this path aborts the run
-// rather than failing one attributable test (issue #3047 tracks that this is unpinned). That
-// is the same trade #3026 accepted for the seventeen shape gaps, and it is the right side of
-// it: an abort names the table, the field and the reason, where the skip it replaces produced
-// a green suite in which the trigger simply never fired.
+// rather than failing one attributable test. That is the same trade #3026 accepted for the
+// seventeen shape gaps, and it is the right side of it: an abort names the table, the field and
+// the reason, where the skip it replaces produced a green suite in which the trigger simply
+// never fired. #3047 pinned it — AlRunner.Tests/FieldTriggerShapeGapCallSiteTests.cs asserts the
+// abort tears out of WireFieldTriggerHandlersAll naming the member, and docs/limitations.md
+// #bc-shape-gaps now states the blast radius instead of leaving a reader to find it.
 //
 // See also:
 //   .claude/rules/loud-failures.md              — no silent out-of-scope failures

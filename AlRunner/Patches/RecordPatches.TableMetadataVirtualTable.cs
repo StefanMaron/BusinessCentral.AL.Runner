@@ -86,10 +86,12 @@ public static partial class RecordPatches
     /// resolved — which is reported, never silent).
     /// </summary>
     /// <param name="TableTypeName">The declared <c>TableType</c> as written, or null for a table
-    /// declaring none (AL's default, <c>Normal</c>). Resolved to the column's own option ordinal
-    /// at row-build time, never to a hardcoded number — see <see cref="EnsureOptionOrdinals"/>.</param>
-    /// <param name="DataClassificationName">Same, for <c>DataClassification</c>; null means AL's
-    /// default <c>CustomerContent</c>.</param>
+    /// declaring none (AL's default, <c>Normal</c> — see <see cref="AlDefaultTableType"/>).
+    /// Resolved to the column's own option ordinal at row-build time, never to a hardcoded
+    /// number — see <see cref="EnsureOptionOrdinals"/>.</param>
+    /// <param name="DataClassificationName">Same, for <c>DataClassification</c>; null means the
+    /// default a real service tier was measured to report, <c>CustomerContent</c> — see
+    /// <see cref="AlDefaultDataClassification"/>, which cites the measurement.</param>
     /// <param name="ExternalName">The declared <c>ExternalName</c>, or null for a table declaring
     /// none — which the column reports as blank.</param>
     private sealed record TableMetadataRow(
@@ -151,23 +153,30 @@ public static partial class RecordPatches
     {
         object? Text(string s) => _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, s ?? string.Empty });
 
-        // An option column answered from the DECLARED member name, resolved against this
-        // field's own option set. A table declaring nothing gets ordinal 0, which is what AL's
-        // own default is for both option columns here (TableType = Normal,
-        // DataClassification = CustomerContent) — so the fallback states the truth rather than
-        // hiding a miss. A declared name the option set does not list is a genuine shape
-        // mismatch and is refused, not defaulted: answering 0 there would say "Normal" about a
-        // table that declared something else, the exact silent-default this change removes.
-        object? Option(string? declaredName)
-        {
-            var ordinals = EnsureOptionOrdinals(field);
-            if (string.IsNullOrWhiteSpace(declaredName)) return _aovNavOptionCreate!.Invoke(null, new object?[] { field.FieldOptionMetadata, 0 });
-            if (ordinals.TryGetValue(NormalizeObjectTypeName(declaredName), out var ordinal))
-                return _aovNavOptionCreate!.Invoke(null, new object?[] { field.FieldOptionMetadata, ordinal });
-            throw TableMetadataShapeGap(
-                $"table {row.Id} declares {field.FieldName} = '{declaredName}', which is not a member of "
-                + $"that column's own option set ('{field.FieldOptionMetadata?.OptionString}')");
-        }
+        // An option column answered from a member NAME resolved against this field's own option
+        // set — the declared one when the table states the property, and AL's own default for
+        // that property when it does not. A declared name the option set does not list is a
+        // genuine shape mismatch and is refused, not defaulted: answering 0 there would say
+        // "Normal" about a table that declared something else, the exact silent-default #2938
+        // removed.
+        //
+        // THE UNDECLARED CASE USED TO HARDCODE ORDINAL 0, and that was a smaller version of the
+        // same bug (#3019). Both defaults happen to sit at 0 in every artifact measured so far,
+        // so the answer was right; the ROUTE was not. This file already refuses to write option
+        // ordinals down — see EnsureOptionOrdinals, where TableType puts Temporary at 6 and NOT
+        // the 5 a reading of AL's documented enum suggests — and the undeclared branch was the
+        // one place still asserting a position instead of asking for one. Naming the member and
+        // looking it up means a reordered option set moves the fallback with it, and an artifact
+        // whose option set does not carry the default member at all is refused rather than
+        // silently answered with whichever member happens to be first.
+        object? Option(string? declaredName, string alDefaultMemberName)
+            => _aovNavOptionCreate!.Invoke(null, new object?[]
+            {
+                field.FieldOptionMetadata,
+                ResolveOptionMemberOrdinal(
+                    EnsureOptionOrdinals(field), field.FieldName ?? string.Empty,
+                    field.FieldOptionMetadata?.OptionString, declaredName, alDefaultMemberName, row.Id)
+            });
 
         switch (NormalizeObjectTypeName(field.FieldName ?? string.Empty))
         {
@@ -196,15 +205,48 @@ public static partial class RecordPatches
                 // is the only thing the symbol path recorded before TableTypeName existed; it is
                 // consulted only when no name was captured, so a v29-era cached ParsedTable
                 // still reports Temporary rather than silently reading Normal.
-                return Option(row.TableTypeName ?? (row.IsTemporary ? "Temporary" : null));
+                return Option(row.TableTypeName ?? (row.IsTemporary ? "Temporary" : null), AlDefaultTableType);
             case "dataclassification":
-                return Option(row.DataClassificationName);
+                return Option(row.DataClassificationName, AlDefaultDataClassification);
             case "externalname":
                 return Text(row.ExternalName ?? string.Empty);
             default:
                 return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
         }
     }
+
+    /// <summary>
+    /// AL's default <c>TableType</c> for a table that declares none, as a MEMBER NAME resolved
+    /// against the column's own option set at row-build time. Pinned upstream by
+    /// <c>Record_TableMetadata_Get_DeclaredTable_ReturnsMatchingRow</c> in the al-language
+    /// corpus, which asserts <c>Normal</c> for a fixture declaring no <c>TableType</c> and is
+    /// green on a real BC service tier.
+    /// </summary>
+    private const string AlDefaultTableType = "Normal";
+
+    /// <summary>
+    /// AL's default <c>DataClassification</c> for a table that declares none, same treatment.
+    /// <para>MEASURED, not reasoned about (#3019). Microsoft's DataClassification documentation
+    /// describes the default as <c>ToBeClassified</c>, which is the SECOND member of this
+    /// column's option set, so "the default" and "the first member" were two different answers
+    /// and this code had picked one of them by reading the option string rather than by asking
+    /// anything. The corpus fixture <c>ALT Unclassified</c> (60837) declares no
+    /// <c>DataClassification</c>, and
+    /// <c>Record_TableMetadata_Get_TableDeclaringNoDataClassification_ReportsTheDefault</c> in
+    /// StefanMaron/BusinessCentral.AL.Language.Tests#191 asserts <c>CustomerContent</c> for it.
+    /// That assertion RAN, and passed, on the eight Cloud legs of run 34026600861 — BC 27.0,
+    /// 27.3, 27.5, 28.0, 28.1, 28.2, 28.3 and 28.4 — so a real service tier reports
+    /// <c>CustomerContent</c> and the documented <c>ToBeClassified</c> is not what a Table
+    /// Metadata row carries.</para>
+    /// <para>Eight, not sixteen: that run has eight further OnPrem legs and they are all green
+    /// too, but they build a DIFFERENT app (<c>tests/al-language-onprem</c>, codeunits 61200
+    /// and 61201) and never execute codeunit 60801. Their green says the fixture compiles in
+    /// that closure as well; it is not a second measurement of this answer. Eight is enough
+    /// for this particular claim on its own terms — the legs span both supported majors, and
+    /// an option member's position in its column's option set is a property of the artifact's
+    /// System package, not of the deployment target.</para>
+    /// </summary>
+    private const string AlDefaultDataClassification = "CustomerContent";
 
     // One ordinal map per option COLUMN of this metatable, keyed by the field name. Two columns
     // need one here (TableType, DataClassification), and the metatable is built once per run.
@@ -232,19 +274,70 @@ public static partial class RecordPatches
         {
             var optionMetadata = field.FieldOptionMetadata
                 ?? throw TableMetadataShapeGap($"\"{fieldName}\" carries no option metadata");
-
-            var map = new Dictionary<string, int>(StringComparer.Ordinal);
-            var parts = (optionMetadata.OptionString ?? string.Empty).Split(',');
-            for (int i = 0; i < parts.Length; i++)
-            {
-                var key = NormalizeObjectTypeName(parts[i]);
-                if (key.Length == 0) continue;
-                map.TryAdd(key, i);
-            }
-            if (map.Count == 0)
-                throw TableMetadataShapeGap($"\"{fieldName}\" option string is empty");
-            return map;
+            return ParseOptionOrdinals(fieldName, optionMetadata.OptionString);
         });
+    }
+
+    /// <summary>
+    /// The member-name-to-ordinal map of one option string, positional and normalized the same
+    /// way every lookup against it is. Separate from <see cref="EnsureOptionOrdinals"/> only so
+    /// a test can hand it an option string; the cache and the metatable read stay there.
+    /// </summary>
+    internal static Dictionary<string, int> ParseOptionOrdinals(string fieldName, string? optionString)
+    {
+        var map = new Dictionary<string, int>(StringComparer.Ordinal);
+        var parts = (optionString ?? string.Empty).Split(',');
+        for (int i = 0; i < parts.Length; i++)
+        {
+            var key = NormalizeObjectTypeName(parts[i]);
+            if (key.Length == 0) continue;
+            map.TryAdd(key, i);
+        }
+        if (map.Count == 0)
+            throw TableMetadataShapeGap($"\"{fieldName}\" option string is empty");
+        return map;
+    }
+
+    /// <summary>
+    /// Resolve one option column's value to an ordinal in that column's OWN option set, from a
+    /// member NAME in every case — the declared one when the table states the property, and
+    /// <paramref name="alDefaultMemberName"/> when it does not. Both misses are refused rather
+    /// than defaulted.
+    /// <para>Split out of <c>BuildTableMetadataValue</c>'s local <c>Option</c> so the resolution
+    /// can be exercised against an option string the caller chooses; the row-build path holds
+    /// live BC metatable objects that a unit test cannot construct. Its behaviour on a
+    /// REORDERED option set is the whole point (#3019) and is what
+    /// <c>TableMetadataOptionDefaultOrdinalTests</c> pins.</para>
+    /// </summary>
+    /// <param name="ordinals">Member name (normalized) to ordinal, from
+    /// <see cref="EnsureOptionOrdinals"/> or <see cref="ParseOptionOrdinals"/>.</param>
+    /// <param name="fieldName">The column, for the refusal message.</param>
+    /// <param name="optionString">The column's own option string, for the refusal message.</param>
+    /// <param name="declaredName">What the table declares, or null/blank when it declares nothing.</param>
+    /// <param name="alDefaultMemberName">The member a table declaring nothing reports.</param>
+    /// <param name="tableId">The table, for the refusal message.</param>
+    internal static int ResolveOptionMemberOrdinal(
+        IReadOnlyDictionary<string, int> ordinals, string fieldName, string? optionString,
+        string? declaredName, string alDefaultMemberName, int tableId)
+    {
+        if (string.IsNullOrWhiteSpace(declaredName))
+        {
+            // The undeclared branch. It used to return a literal 0 and be right by coincidence:
+            // both defaults this file needs sit first in their column's option set today. A
+            // reordered set would have moved the member without moving the answer, which is the
+            // failure EnsureOptionOrdinals exists to prevent for DECLARED values (#3019).
+            if (ordinals.TryGetValue(NormalizeObjectTypeName(alDefaultMemberName), out var defaultOrdinal))
+                return defaultOrdinal;
+            throw TableMetadataShapeGap(
+                $"table {tableId} declares no {fieldName}, and the default for it "
+                + $"('{alDefaultMemberName}') is not a member of that column's own option set "
+                + $"('{optionString}')");
+        }
+        if (ordinals.TryGetValue(NormalizeObjectTypeName(declaredName), out var ordinal))
+            return ordinal;
+        throw TableMetadataShapeGap(
+            $"table {tableId} declares {fieldName} = '{declaredName}', which is not a member of "
+            + $"that column's own option set ('{optionString}')");
     }
 
     /// <summary>
