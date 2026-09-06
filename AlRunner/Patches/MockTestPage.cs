@@ -722,13 +722,24 @@ internal class LiveNavTestPage : MockITestPage
             {
                 var ex = (System.Exception)ctor.Invoke(new object[] { msg });
                 // Not AL-visible (asserterror / GetLastErrorText only see the outer message,
-                // matching real BC) -- kept only so a runner-side stack trace can still show
-                // what actually failed inside the trigger.
-                if (original != null) ex.Data["OriginalTriggerError"] = original;
+                // matching real BC) -- carried so the runner can still NAME what actually
+                // failed inside the trigger. Issue #3189: this used to be written under a key
+                // nothing read, which made 132 Tests-SMB failures report a message with no
+                // cause anywhere in the run. Infrastructure.MaskedTriggerErrorDiagnosis reads
+                // it into the failure's diagnosis line, and MissingTestDataDiagnosis walks
+                // through it so the mask does not hide ITS evidence either.
+                if (original != null)
+                    ex.Data[Infrastructure.MaskedTriggerErrorDiagnosis.ConvertedErrorDataKey] = original;
                 return ex;
             }
         }
-        return new System.InvalidOperationException(msg, original);
+        // Same contract on the fallback path: the converted error is reachable both as the
+        // InnerException and under the key the diagnosis reads, so which construction path ran
+        // cannot change what the failure reports.
+        var fallback = new System.InvalidOperationException(msg, original);
+        if (original != null)
+            fallback.Data[Infrastructure.MaskedTriggerErrorDiagnosis.ConvertedErrorDataKey] = original;
+        return fallback;
     }
 
     /// <summary>
