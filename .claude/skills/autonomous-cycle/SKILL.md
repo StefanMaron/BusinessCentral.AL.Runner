@@ -478,8 +478,9 @@ a merge can turn `main` red, which outranks everything you were about to do.
 
    Corollary for the loop's own output: if it merges several fixes and opens no corpus PR, treat
    that as a signal to check rather than as evidence the work was all infrastructure.
-4. **A corpus PR has all legs green.** Merge it, then fold the submodule pin bump and the
-   count-baseline update into the runner PR that needs it. A pin bump is never its own PR.
+4. **A corpus PR has all legs green.** Merge it, then move the submodule pin and the
+   count-baseline update — folded into the runner PR that needs it when the fix is new, or as
+   its own catch-up PR when that fix has already merged (`al-language-submodule.md`).
 5. **An issue is ready to work.** Take the highest-value one — prefer a measured failure count
    over a guess — and implement it. One issue at a time.
 

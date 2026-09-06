@@ -145,6 +145,68 @@ jobs:
           PR_COMMITS: ${{ steps.commits.outputs.messages }}
         run: bash .github/scripts/check_closing_reference.sh
 
+  require-corpus-linkage:
+    name: AL-observable changes must declare corpus linkage
+    runs-on: ubuntu-latest
+    # #3255. .claude/rules/bc-behavior-tests-go-upstream.md requires a test
+    # asserting plain BC behaviour to live upstream in the al-language corpus,
+    # where a real service tier adjudicates it, or the PR to name a structural
+    # reason why it cannot. Nothing enforced any part of that, so whether a PR
+    # honoured the rule was visible only if a reviewer read the whole body.
+    #
+    # This job checks that a DECLARATION exists, never whether the PR really
+    # asserts BC behaviour -- that is a judgement CI gets wrong in both
+    # directions, and getting it wrong in the noisy direction trains everyone to
+    # paste past it. See the header of check_corpus_linkage.sh for the scoping
+    # and the trailer design.
+    #
+    # It gates, so by the rule of thumb at the top of this file it must not be
+    # able to fail for an environmental reason. The changed-file list is
+    # therefore computed from the local checkout with git rather than asked of
+    # api.github.com, which makes the whole job offline. The half that DOES need
+    # the network -- resolving the declared corpus PR URL -- is advisory and
+    # lives in pr-check.yml.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Both endpoints of the diff below must be present as objects. The PR
+          # head is a parent of the merge commit checked out here, so it is
+          # reachable, but only with the full history fetched.
+          fetch-depth: 0
+
+      - name: Collect the PR's changed files
+        id: changed
+        # BOTH endpoints come from the event payload; neither is the checked-out
+        # HEAD. actions/checkout leaves refs/pull/N/merge checked out -- a merge
+        # commit whose first parent is the base branch -- so base.sha is an
+        # ancestor of HEAD, `base...HEAD` collapses to `base..HEAD`, and every
+        # commit that landed on main meanwhile is attributed to this PR. That is
+        # what this job did until #3261 was reviewed; measured on #3261 itself it
+        # turned a 15-file diff into 20, two of the extras being
+        # AlRunner/Patches/ files the PR never touched, which flipped this gate's
+        # verdict from skip to fail. The logic lives in a script so the endpoints
+        # are under test: test_pr_changed_files.sh rebuilds this exact layout and
+        # asserts both that the collapse happens and that this form avoids it.
+        # require-tests.yml and the scripts-changed job below use the same
+        # BASE...HEAD form inline.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          files=$(bash .github/scripts/pr_changed_files.sh)
+          {
+            echo "files<<CHANGED_FILES_EOF"
+            printf '%s\n' "$files"
+            echo "CHANGED_FILES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check the PR body declares corpus linkage
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+        run: bash .github/scripts/check_corpus_linkage.sh
+
   verify-trigger-list:
     name: pull_request trigger lists must keep their load-bearing event types
     runs-on: ubuntu-latest

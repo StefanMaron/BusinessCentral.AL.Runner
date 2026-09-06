@@ -185,7 +185,17 @@ DEFAULT_REQUIRED_CONTEXTS = [
 # state, so a non-empty list is a hole in the #2785 check for as long as it
 # lasts. Refill it only while a new gating job is landing, and empty it in the
 # same pass that adds the name to the ruleset.
-PENDING_REQUIRED_CONTEXTS: list[str] = []
+# Refilled for #3255: pr-gate.yml's require-corpus-linkage job produces this
+# context, and the `main` ruleset does not require it yet. It is analysed here
+# exactly like a required one -- produced by a pull_request workflow, and not
+# cancellable on the head commit -- while the live drift comparison tolerates it
+# in either state, which is what lets the code half land before the by-hand
+# ruleset edit. Empty this list again in the same pass that adds the name to the
+# ruleset and promotes it into DEFAULT_REQUIRED_CONTEXTS above and into
+# RULESET_CONTEXTS in tools/ci-wait.py.
+PENDING_REQUIRED_CONTEXTS: list[str] = [
+    "AL-observable changes must declare corpus linkage",
+]
 
 REPO = "StefanMaron/BusinessCentral.AL.Runner"
 DEFAULT_BRANCH = "main"

@@ -29,10 +29,24 @@ origin/master origin/<branch>` for a conflict check in the corpus, `origin/main`
 - **`_fixtures/Assert.al`, table fixtures, helper codeunits — all off-limits.** If
   `Assert.IsNumber` excludes a type and that causes failures, the bug is that the runner
   classifies that type differently from real BC; fix the classification.
-- **Updating the corpus** = bumping the submodule pin, folded into the fix PR that makes the
-  newly-pulled-in tests pass, together with the `tests/expectations/count-baseline/` update. A
-  pin bump can never be its own PR — it goes red by construction, since the new tests fail
-  without the fix. Inspect the diff first: `git -C tests/al-language diff $OLD..$NEW`.
+- **Updating the corpus** = bumping the submodule pin, together with the
+  `tests/expectations/count-baseline/` update. Inspect the diff first:
+  `git -C tests/al-language diff $OLD..$NEW`. **The corpus PR is the proof; the pin only
+  decides when this repository's CI replays it** — a corpus PR merged with its BC legs green
+  means a real service tier has already adjudicated the claim, whether or not our pin has
+  caught up. Which PR the bump belongs in depends on what the new commits need:
+
+  - **Fold** — the corpus test and the runner fix are both new. The bump goes **in the fix
+    PR**; alone it is red by construction, because the new test fails without the fix.
+  - **Catch-up** — the fix has already merged upstream and here. A bump alone is green and
+    **is** legitimately its own PR. (Practice long before it was written down, which is how
+    agents got told the opposite.)
+  - **Blocked by an intervening commit** — you cannot pin corpus commit N without pinning its
+    predecessors, and one of *those* may need a runner fix that is still open, possibly
+    someone else's. Pin the newest commit whose predecessors are all satisfied, leave the
+    rest, and name the open issue holding the remainder. Measured 2026-09-06: the corpus tip
+    was 15 commits ahead with three predecessors gated on open PRs, and pinning the tip gave
+    11 failures.
 
 ## Out-of-scope tests use the expectations manifest
 
