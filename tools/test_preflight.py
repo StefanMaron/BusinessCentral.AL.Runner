@@ -1286,14 +1286,18 @@ check("'Token scopes: none' is unknown too -- a fine-grained token has no classi
 class GhScript:
     """pf.run replacement answering the three commands check_github issues."""
 
-    def __init__(self, auth_status=GH_AUTH_STATUS, perms=None):
+    def __init__(self, auth_status=GH_AUTH_STATUS, perms=None, auth_rc=0, auth_err=""):
         self.auth_status = auth_status
+        self.auth_rc = auth_rc
+        self.auth_err = auth_err
         self.perms = perms if perms is not None else {
             "admin": True, "maintain": True, "push": True, "pull": True, "triage": True}
 
     def __call__(self, argv, **kw):
         joined = " ".join(argv)
         if "auth" in argv and "status" in argv:
+            if self.auth_rc:
+                return pf.Ran(rc=self.auth_rc, out="", err=self.auth_err)
             return pf.Ran(rc=0, out=self.auth_status, err="")
         if "user" in joined:
             return pf.Ran(rc=0, out="StefanMaron\n", err="")
@@ -1345,6 +1349,28 @@ check("unreadable scopes are said out loud rather than assumed",
       _res.detail)
 check("and the machine-readable answer is unknown, not False",
       _res.data.get("can_merge_workflow_changes") is None, _res.data)
+
+
+# ---- the same dropped packet, one function over: `gh auth status` also uses the network
+GH_UNREACHABLE = ("error connecting to github.com\n"
+                  "Post \"https://github.com/api/v3/graphql\": dial tcp 140.82.121.4:443: "
+                  "i/o timeout\n")
+check("gh's own transport failure classifies as transient",
+      pf.classify_transport_error(GH_UNREACHABLE) == "transient",
+      pf.classify_transport_error(GH_UNREACHABLE))
+
+_res = github_result(auth_rc=1, auth_err=GH_UNREACHABLE)
+check("an unreachable github.com is not reported as a missing credential",
+      _res.status == "FAIL" and "not authenticated" not in _res.summary,
+      f"{_res.status}: {_res.summary}")
+check("it is reported as reachability instead",
+      "reach" in _res.summary, _res.summary)
+
+_res = github_result(auth_rc=1, auth_err="You are not logged into any GitHub hosts. "
+                                         "To log in, run: gh auth login\n")
+check("a genuine logged-out gh still FAILs as not authenticated",
+      _res.status == "FAIL" and "not authenticated" in _res.summary,
+      f"{_res.status}: {_res.summary}")
 
 
 # ------------------------------------- a stale copy of preflight must not answer (#3164)

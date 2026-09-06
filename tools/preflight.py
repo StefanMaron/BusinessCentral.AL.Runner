@@ -1054,7 +1054,12 @@ _TRANSPORT_TRANSIENT = re.compile(
     r"|network is unreachable|no route to host|operation timed out|timed out"
     r"|kex_exchange_identification|broken pipe|early eof|unexpected disconnect"
     r"|remote end hung up|gnutls_handshake|ssl_read|ssl connect error"
-    r"|the requested url returned error: 5|error: 429|server hung up", re.I)
+    r"|the requested url returned error: 5|error: 429|server hung up"
+    # gh's own transport failures, for the sibling call site in check_github():
+    # a dropped packet there reported "gh is installed but not authenticated",
+    # the same false verdict one function over.
+    r"|i/o timeout|dial tcp|error connecting to|context deadline exceeded"
+    r"|no such host", re.I)
 
 # Both failure shapes end with these lines, so neither classifies anything and
 # neither may be reported as the cause. This is the exact text that reached the
@@ -1322,10 +1327,28 @@ def check_github(slug: Optional[str]) -> CheckResult:
                                   "that has the GitHub MCP tools.")
     auth = run_retry(["gh", "auth", "status"], timeout=45)
     if not auth.ok:
+        # The same split the push probe makes, at the sibling call site: `gh auth
+        # status` validates the token over the network, so a dropped packet here
+        # used to be reported as "not authenticated" -- a credential verdict from
+        # a transport failure, which is exactly #3076 one function over. Both are
+        # a FAIL (a loop that cannot reach GitHub cannot work), but they send the
+        # reader to different places.
+        text = (auth.err or auth.out).strip()
+        if auth.timed_out or classify_transport_error(text) == "transient":
+            return CheckResult(
+                name="github", status="FAIL",
+                summary="could not reach github.com to check authentication: "
+                        + ("the command timed out" if auth.timed_out
+                           else transport_error_line(text)),
+                command="gh auth status", detail=[text[:400],
+                        "`gh auth status` never answered, so nothing has been established "
+                        "about the token -- this is reachability, not a credential verdict."],
+                remedy="Check the network path to github.com and re-run. Nothing here has "
+                       "disproven the credential.")
         return CheckResult(name="github", status="FAIL",
                            summary="gh is installed but not authenticated",
                            command="gh auth status",
-                           detail=[(auth.err or auth.out).strip()[:400]],
+                           detail=[text[:400]],
                            remedy="Run `gh auth login`.")
     login = run_retry(["gh", "api", "user", "--jq", ".login"], timeout=45).out.strip()
     if not slug:
