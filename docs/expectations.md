@@ -355,12 +355,12 @@ by #3141 — the retired name is deliberately not written out here, because
 forbids any document under `docs/` from carrying it: a doc that names a context
 which no longer reports sends an agent looking for a check that will never
 arrive, indistinguishable from one that has not started), `Tests updated`, and
-the eight
-`pr-gate.yml` jobs — including `reject-ci-skip-directives` and
+eight of the ten `pr-gate.yml` jobs — including `reject-ci-skip-directives` and
 `reject-bad-closing-references`, which **do** gate. So this job's non-required
-standing is not shared with its neighbours; after this lands it is the only job
-in `pr-gate.yml` that does not gate. That is a reason to promote it, not a
-precedent that excuses it. Promotion is a ruleset edit, an administrator action,
+standing is not shared with most of its neighbours; after this lands it is one
+of the two jobs in `pr-gate.yml` that do not gate, the other being #3255's
+`require-corpus-linkage`. That is a reason to promote it, not a precedent that
+excuses it. Promotion is a ruleset edit, an administrator action,
 deliberately not claimed here — the interim seam is
 `PENDING_REQUIRED_CONTEXTS` in `.github/scripts/check_required_contexts.py`,
 which lists this context so the guard analyses it like a required one while the
