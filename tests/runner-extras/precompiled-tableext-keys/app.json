@@ -1,0 +1,31 @@
+{
+  "id": "3e9c7b21-4d05-46af-8f13-a6c2b7e15d40",
+  "name": "Runner Extras - Precompiled TableExt Keys",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3216: the keys a tableextension declares must reach the extended table's key list when the tableextension arrives as a PRECOMPILED dependency .app, not just when the runner compiles it from AL source.",
+  "description": "Runner-mechanism claim, not a claim about AL. That a tableextension's keys are part of the extended table's key list is plain BC behaviour and is pinned upstream in the al-language corpus (codeunit 60331) — but every corpus bundle is source-compiled by the runner, so the corpus can only ever exercise the AL-SOURCE reader. This bundle exercises the other reader: BcAppSymbolCache's parse of a dependency package's SymbolReference.json. Without it, a renamed JSON property or a dropped argument at the MergeExtensionFields call site in RecordPatches.BcAppFallback.cs would return zero keys from the precompiled path and every corpus test would still pass. The dependency's third declared key names a field nothing declares; asserting the exact key COUNT is what makes the drop-it-whole rule observable, since that branch reports itself to stderr only.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "f7a4c2d1-3b6e-4c58-9a71-2d5e8b0c4f93",
+      "name": "RXK Precompiled Key Dep",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65700,
+      "to": 65719
+    }
+  ],
+  "runtime": "17.0",
+  "target": "Cloud",
+  "features": []
+}

@@ -25,27 +25,20 @@ namespace AlRunner.Tests;
 /// dependency-set boundaries. Both directions are asserted from the
 /// AL_RUNNER_PERF=1 "InstallBaseline.DepCompanyCache HIT/MISS" markers TestExecutor.Run
 /// logs at the exact point the cache lookup happens (see TestExecutor.cs), plus each
-/// app group's own test assertion against REAL Company-Initialize-seeded data (Company
-/// Information's Name, seeded by the actual Base App codeunit 2 body) proving the
-/// restored/cached baseline is not a stub — a no-op cache that skipped the seed
-/// entirely would fail every one of these AL assertions, not just run faster.
+/// app group's own test assertion reading the dependency's install-seeded rows back BY
+/// VALUE, proving the restored/cached baseline is not a stub — a no-op cache that skipped
+/// the seed entirely would fail every one of these AL assertions, not just run faster.
+///
+/// #2364: the two app groups used to share their closure by declaring NOTHING but the Base
+/// Application floor, and asserted on Company Information's Company-Initialize-seeded row.
+/// Neither half of that is what this suite claims. They now share a real dependency —
+/// <see cref="InstallSeedClosure"/>'s seed app, one table and one OnInstallAppPerCompany
+/// trigger — so the shared key comes from the apps genuinely sharing a dependency assembly
+/// rather than from both declaring none, and the AL assertion is about rows this fixture
+/// seeded rather than rows Base App did. See .claude/rules/no-base-app-in-csharp-tests.md.
 ///
 /// Spawns the real runner; needs the BC artifact cache. Skips (no-op) when absent.
 /// </summary>
-/// <para>
-/// <b>#2364 — the <c>"application"</c> floor in this file's fixtures is an OUTSTANDING
-/// VIOLATION of <c>.claude/rules/no-base-app-in-csharp-tests.md</c>, not an exception to
-/// it.</b> Every other fixture in <c>AlRunner.Tests</c> dropped it (#2358): it pulls in the
-/// whole Base Application closure and costs ~70s cold / ~6s warm per runner invocation.
-/// </para>
-/// <para>
-/// This class does not test Base Application — it tests #1867 install-baseline caching. It
-/// needs a dependency closure whose install triggers WRITE ROWS; without one the runner logs
-/// <c>not persisting: snapshot has 0 DataAccessSource(s)</c> and the assertions have nothing
-/// to observe, so the tests would pass vacuously. The fix is a small fixture dependency app
-/// with its own table and an <c>OnInstallAppPerCompany</c> trigger, tracked in #2364.
-/// Do not copy this floor into a new test.
-/// </para>
 public class InstallSeedDepCompanyCacheTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -60,10 +53,10 @@ public class InstallSeedDepCompanyCacheTests
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
-        // Company Information (and every other real Base App table these tests assert
-        // against) only resolves with the platform apps on the package-cache path —
-        // without it dependency resolution silently skips Microsoft/Application and
-        // Microsoft/System, and the bundle fails to compile at all (AL0185).
+        // The platform apps have to be on the package-cache path or dependency resolution
+        // silently skips Microsoft/System and the bundle fails to compile at all (AL0185).
+        // The bundles no longer declare the Base Application floor (#2364), but they still
+        // need the platform closure they compile against.
         args.Append(" --package-cache \"").Append(TestArtifacts.PlatformAppsDir()).Append('"');
         foreach (var b in bundles) args.Append(" \"").Append(b).Append('"');
         var psi = new ProcessStartInfo
@@ -86,43 +79,6 @@ public class InstallSeedDepCompanyCacheTests
         lock (sb) return (sb.ToString(), p.ExitCode);
     }
 
-    private static void WriteSameDepClosureApp(string dir, int baseId, string name)
-    {
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "app.json"), $$"""
-        {
-          "id": "{{Guid.NewGuid()}}",
-          "name": "{{name}}",
-          "publisher": "IssueTest1867",
-          "version": "1.0.0.0",
-          "dependencies": [],
-          "platform": "1.0.0.0",
-          "application": "1.0.0.0",
-          "idRanges": [ { "from": {{baseId}}, "to": {{baseId + 9}} } ],
-          "runtime": "14.0"
-        }
-        """);
-        File.WriteAllText(Path.Combine(dir, "Tests.al"), $$"""
-        codeunit {{baseId}} "IT1867 {{name}}"
-        {
-            Subtype = Test;
-
-            [Test]
-            procedure CompanyInitializeSeededRealData()
-            var
-                CompanyInformation: Record "Company Information";
-            begin
-                // [THEN] The real Base App codeunit 2 "Company-Initialize" body actually
-                // ran (whether via a fresh computation or a restored cache snapshot) —
-                // not a no-op that silently skipped the seed. Company Information is a
-                // singleton row Company-Initialize inserts; Get() failing here means the
-                // baseline this app group is running against was never seeded at all.
-                CompanyInformation.Get();
-            end;
-        }
-        """);
-    }
-
     [SkippableFact]
     public void SecondAppGroupWithSameDependencyClosure_ReusesCachedDepCompanyBaseline()
     {
@@ -131,36 +87,35 @@ public class InstallSeedDepCompanyCacheTests
         var root = TestScratch.Dir("al-runner-depcompany-cache");
         try
         {
-            var appA = Path.Combine(root, "app-a");
-            var appB = Path.Combine(root, "app-b");
-            WriteSameDepClosureApp(appA, 61900, "AppA");
-            WriteSameDepClosureApp(appB, 61910, "AppB");
+            var (appA, appB, _) = InstallSeedClosure.WriteSharedClosure(root, "hit", 61900);
 
             var (output, exitCode) = RunRunner(appA, appB);
 
-            // [THEN] Both app groups' Company-Initialize assertion actually passed — the
-            // cache did not silently skip seeding for either.
+            // [THEN] Both app groups' AL assertion actually passed — each read the seed
+            // app's two install-seeded rows back by value, so the cache did not silently skip
+            // seeding for either.
             Assert.Equal(0, exitCode);
             var passLines = CountOccurrences(output, "1P/0F/0E");
             Assert.True(passLines >= 2,
                 $"expected both app groups to report 1P/0F/0E, got:\n{output}");
 
-            // [THEN] The shared MS-platform-only dependency closure was resolved exactly ONCE
-            // in this process — and the second app group reused that result rather than
-            // re-running dependency Install triggers + Company-Initialize from scratch.
+            // [THEN] The shared dependency closure was resolved exactly ONCE in this process —
+            // and the second app group reused that result rather than re-running the
+            // dependency's Install triggers from scratch.
             //
-            // "Resolved once" is MISS + DISK-HIT, not MISS alone: since the cross-process
-            // on-disk tier landed (InstallBaselineDiskCacheTests), the first app group's
-            // lookup answers from disk whenever an earlier invocation on this machine already
-            // computed the same closure, and from a fresh computation otherwise. Which of the
-            // two it is depends on the state of ~/.cache/al-runner/install-baseline and is not
-            // what THIS test is about; that exactly one of them happened, and that the second
-            // app group took neither, is.
+            // Both halves are exact rather than ">= 1" because #2364 made the closure unique
+            // per invocation: the seed app's id and seeded marker carry a fresh GUID, so its
+            // assembly has an MVID no earlier run produced and the on-disk tier is guaranteed
+            // not to hold an entry for this key. Before that the two app groups shared only
+            // the MS platform closure, whose entry any earlier invocation on the machine may
+            // already have written, so the first lookup could legitimately answer MISS or
+            // DISK-HIT and only their SUM could be asserted.
             var missCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache MISS");
             var diskHitCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache DISK-HIT");
             var hitCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache HIT");
-            Assert.Equal(1, missCount + diskHitCount);
-            Assert.True(hitCount >= 1, $"expected at least one in-memory cache HIT, got:\n{output}");
+            Assert.Equal(1, missCount);
+            Assert.Equal(0, diskHitCount);
+            Assert.Equal(1, hitCount);
         }
         finally
         {
@@ -173,8 +128,8 @@ public class InstallSeedDepCompanyCacheTests
     /// same two-app-group, same-dependency-closure scenario, but with the permanent kill
     /// switch (AL_RUNNER_NO_DEP_COMPANY_CACHE=1) set on the spawned process. Proves the
     /// switch actually disables reuse rather than merely existing — both app groups must
-    /// independently MISS (fresh dependency Install triggers + Company-Initialize) and
-    /// neither may HIT, even though their dependency-set key is identical.
+    /// independently MISS (fresh dependency Install triggers) and neither may HIT, even
+    /// though their dependency-set key is identical.
     /// </summary>
     [SkippableFact]
     public void KillSwitchEnvVar_ForcesEveryLookupToMiss_EvenForSameDependencyClosure()
@@ -184,17 +139,14 @@ public class InstallSeedDepCompanyCacheTests
         var root = TestScratch.Dir("al-runner-depcompany-cache-killswitch");
         try
         {
-            var appA = Path.Combine(root, "app-a");
-            var appB = Path.Combine(root, "app-b");
-            WriteSameDepClosureApp(appA, 61950, "AppA");
-            WriteSameDepClosureApp(appB, 61960, "AppB");
+            var (appA, appB, _) = InstallSeedClosure.WriteSharedClosure(root, "ks", 61950);
 
             var (output, exitCode) = RunRunner(
                 new System.Collections.Generic.Dictionary<string, string> { ["AL_RUNNER_NO_DEP_COMPANY_CACHE"] = "1" },
                 appA, appB);
 
-            // [THEN] Both app groups' Company-Initialize assertion still passed — the kill
-            // switch disables the cache, not the seeding itself.
+            // [THEN] Both app groups' AL assertion still passed — the kill switch disables
+            // the cache, not the seeding itself.
             Assert.Equal(0, exitCode);
             var passLines = CountOccurrences(output, "1P/0F/0E");
             Assert.True(passLines >= 2,
@@ -227,89 +179,47 @@ public class InstallSeedDepCompanyCacheTests
         var root = TestScratch.Dir("al-runner-depcompany-cache-neg");
         try
         {
-        var appA = Path.Combine(root, "app-a");
-        WriteSameDepClosureApp(appA, 61920, "AppA");
+        // appA's closure is the shared seed app alone. The second bundle declares the SAME
+        // seed PLUS one extra dependency app, so its dependency closure differs from appA's by
+        // exactly one loaded assembly and therefore by
+        // InstallTriggerRunner.CurrentDependencySetKey(). Both still seed rows, so both are
+        // genuinely persistable — a difference in KEY, not a difference in whether there is
+        // anything to cache.
+        var (appA, _, _) = InstallSeedClosure.WriteSharedClosure(root, "neg", 61920);
+        var withExtra = InstallSeedClosure.WriteBundleWithExtraDependency(root, "x", 61930, "neg");
 
-        // A second app group whose dependency CLOSURE genuinely differs from AppA's: it
-        // depends on its own extra app, which is loaded as an additional dependency
-        // assembly and therefore changes InstallTriggerRunner.CurrentDependencySetKey().
-        var depDir = Path.Combine(root, "extra-dep");
-        var mainDir = Path.Combine(root, "app-with-extra-dep");
-        Directory.CreateDirectory(depDir);
-        var depId = Guid.NewGuid().ToString();
-        File.WriteAllText(Path.Combine(depDir, "app.json"), $$"""
-        {
-          "id": "{{depId}}",
-          "name": "IT1867 Extra Dep",
-          "publisher": "IssueTest1867",
-          "version": "1.0.0.0",
-          "dependencies": [],
-          "platform": "1.0.0.0",
-          "application": "1.0.0.0",
-          "idRanges": [ { "from": 61930, "to": 61939 } ],
-          "runtime": "14.0"
-        }
-        """);
-        File.WriteAllText(Path.Combine(depDir, "Dep.al"), """
-        table 61930 "IT1867 Extra Dep Table"
-        {
-            DataClassification = SystemMetadata;
-            fields { field(1; "Code"; Code[10]) { } }
-            keys { key(PK; "Code") { Clustered = true; } }
-        }
-        """);
-        Directory.CreateDirectory(mainDir);
-        File.WriteAllText(Path.Combine(mainDir, "app.json"), $$"""
-        {
-          "id": "{{Guid.NewGuid()}}",
-          "name": "IT1867 App With Extra Dep",
-          "publisher": "IssueTest1867",
-          "version": "1.0.0.0",
-          "dependencies": [
-            { "id": "{{depId}}", "name": "IT1867 Extra Dep", "publisher": "IssueTest1867", "version": "1.0.0.0" }
-          ],
-          "platform": "1.0.0.0",
-          "application": "1.0.0.0",
-          "idRanges": [ { "from": 61940, "to": 61949 } ],
-          "runtime": "14.0"
-        }
-        """);
-        File.WriteAllText(Path.Combine(mainDir, "Tests.al"), """
-        codeunit 61940 "IT1867 WithExtraDep"
-        {
-            Subtype = Test;
-
-            [Test]
-            procedure CompanyInitializeSeededRealData()
-            var
-                CompanyInformation: Record "Company Information";
-            begin
-                CompanyInformation.Get();
-            end;
-        }
-        """);
-
-        var (output, exitCode) = RunRunner(appA, depDir, mainDir);
+        var (output, exitCode) = RunRunner(appA, withExtra);
 
         Assert.Equal(0, exitCode);
         var passLines = CountOccurrences(output, "1P/0F/0E");
         Assert.True(passLines >= 2,
             $"expected both independently-keyed app groups to report 1P/0F/0E, got:\n{output}");
 
-        // [THEN] Two DIFFERENT dependency closures (AppA's MS-platform-only closure vs.
-        // the extra-dep app's closure, which includes one more dependency assembly) each
-        // get their OWN resolution — never a cross-key in-memory HIT. A cache keyed
-        // incorrectly (e.g. ignoring the dependency set entirely) would show one resolution
-        // and one HIT; this must show at least two resolutions.
+        // [THEN] Two DIFFERENT dependency closures (the seed app alone vs. the seed app plus
+        // one more dependency assembly) each get their OWN resolution — never a cross-key
+        // in-memory HIT. A cache keyed so that these two closures collide would show one
+        // resolution and one HIT; this shows two resolutions and no HIT.
         //
-        // As above, a resolution is MISS or DISK-HIT: the on-disk tier may answer AppA's
-        // MS-platform closure from an earlier invocation. The claim is that the two closures
-        // are resolved SEPARATELY, not which tier answered either of them.
+        // WHAT THIS DOES AND DOES NOT PIN, measured by mutation (#2364; gap tracked in #3254):
+        // TestExecutor.CurrentInstallBaselineCacheKey() concatenates three components, and the
+        // first two — InstallTriggerRunner.CurrentDependencySetKey() and
+        // RecordPatches.RegisteredBcAppSymbolStateKey() — are REDUNDANT for this scenario:
+        // flattening either one alone to a constant leaves this test (and every other test in
+        // both install-cache suites) green, because the other still separates the two closures.
+        // Flattening BOTH fails this test and
+        // InstallBaselineDiskCacheTests.DifferentDependencyClosures_*. So the claim this
+        // actually establishes is "the key separates these two closures", not "the DEPENDENCY
+        // SET component does". An earlier version of this comment asserted the latter; it was
+        // not true and no test had ever checked it.
+        //
+        // Exact, for the same reason as the positive test above: both closures are unique to
+        // this invocation, so neither can be answered by the on-disk tier.
         var missCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache MISS");
         var diskHitCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache DISK-HIT");
-        Assert.True(missCount + diskHitCount >= 2,
-            $"expected at least 2 distinct-dependency-closure resolutions, got "
-            + $"{missCount} MISS + {diskHitCount} DISK-HIT:\n{output}");
+        var hitCount = CountOccurrences(output, "InstallBaseline.DepCompanyCache HIT");
+        Assert.Equal(2, missCount);
+        Assert.Equal(0, diskHitCount);
+        Assert.Equal(0, hitCount);
         }
         finally
         {

@@ -949,6 +949,10 @@ public class DependencyPageMetadataXmlTests
     private const int ViewPlusPropsPageId = 88123605;
     private const int PartialViewPageId = 88123606;
     private const int UnbalancedViewPageId = 88123607;
+    private const int DirectiveSortViewOutPageId = 88123608;
+    private const int DirectiveSortViewInPageId = 88123609;
+    private const int DirectiveSortViewSecondInBlockPageId = 88123610;
+    private const int UnconditionalUnresolvableSortViewPageId = 88123611;
 
     private const string ViewSymbolReference = """
         {
@@ -1027,6 +1031,42 @@ public class DependencyPageMetadataXmlTests
                 { "Name": "PageType", "Value": "List" },
                 { "Name": "SourceTable", "Value": "88123620" },
                 { "Name": "SourceTableView", "Value": "sorting(Bucket) where(Bucket = const(7)" }
+              ]
+            },
+            {
+              "Id": 88123608,
+              "Name": "DPX Directive Sort Compiled Out Page",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" },
+                { "Name": "SourceTableView", "Value": "sorting(Bucket,\r\n#if not CLEAN25\r\n                             \"Zone Code\",\r\n#endif\r\n                             \"No.\")" }
+              ]
+            },
+            {
+              "Id": 88123609,
+              "Name": "DPX Directive Sort Compiled In Page",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" },
+                { "Name": "SourceTableView", "Value": "sorting(Bucket,\r\n#if not CLEAN25\r\n                             \"Price Type\",\r\n#endif\r\n                             \"No.\")" }
+              ]
+            },
+            {
+              "Id": 88123610,
+              "Name": "DPX Directive Sort Second In Block Page",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" },
+                { "Name": "SourceTableView", "Value": "sorting(Bucket,\r\n#if not CLEAN25\r\n                             \"Price Type\",\r\n                             \"Zone Code\",\r\n#endif\r\n                             \"No.\")" }
+              ]
+            },
+            {
+              "Id": 88123611,
+              "Name": "DPX Unconditional Unresolvable Sort Page",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" },
+                { "Name": "SourceTableView", "Value": "sorting(Bucket, \"Zone Code\", \"No.\") order(descending)" }
               ]
             }
           ]
@@ -1318,6 +1358,182 @@ public class DependencyPageMetadataXmlTests
                 .Cast<XmlElement>().ToList();
             Assert.Single(filters);
             Assert.Equal("0", filters[0].GetAttribute("FieldID"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #3271. <c>ParseSourceTableView</c> read its two clauses with two different splitters,
+    /// in the same <c>switch</c>, twenty lines apart: <c>where(...)</c> went through
+    /// <c>SplitPropertyEntries</c>, which strips the AL preprocessor directive LINES the
+    /// compiler records verbatim inside a property's source text (#2978), and
+    /// <c>sorting(...)</c> went through the bare <c>SplitTopLevelCommas</c>, which does not.
+    ///
+    /// <para>The symptom is NOT a miscount — it is CORRUPTED FIELD NAMES. The bare splitter
+    /// is called without <c>preserveNewlines</c>, so it flattens the property's newlines to
+    /// spaces first; <c>sorting(Bucket,\n#if not CLEAN25\n"Zone Code",\n#endif\n"No.")</c>
+    /// therefore split into <c>Bucket</c>, the literal string <c>#if not CLEAN25 "Zone
+    /// Code"</c>, and the literal string <c>#endif "No."</c>. Two of the three "field names"
+    /// were directive text glued onto a real name.</para>
+    ///
+    /// <para>It failed SAFE, which is why this was filed rather than hotfixed: a corrupted
+    /// name cannot resolve against the source table, so <c>EmitSourceTableViewXml</c> set
+    /// <c>unresolved</c> and left the key alone — the page came up on the table's DEFAULT key
+    /// rather than on a wrong one. Wrong ORDER, not a wrong ROWSET. Still wrong: BC applies
+    /// the sort and the runner did not, and the only trace was a <c>Console.Error</c> line
+    /// the content-addressed symbol cache emits on a MISS and loses on every warm run.</para>
+    ///
+    /// <para>This fixture is the compiled-OUT half: the guarded name <c>"Zone Code"</c> is not
+    /// a field of table 88123620, which is this app saying the directive compiled that entry
+    /// out. The remaining two names are real and must produce a real key — <c>Field2,Field1</c>
+    /// — where before the fix nothing resolved and <c>KeyFields</c> was never written at
+    /// all.</para>
+    ///
+    /// <para>Omitted, not refused, and that is a deliberate choice rather than an analogy to
+    /// the <c>where(...)</c> arm: a key is not a filter, so dropping one field changes the
+    /// ORDER instead of widening the rowset. It is still right, because the compiled app's
+    /// page really does declare <c>sorting(Bucket, "No.")</c> — the guarded entry is not in it
+    /// — so the two-field key is a reconstruction of what the compiler kept, not an
+    /// approximation of a three-field one.</para>
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_DirectiveGuardedSortFieldCompiledOut_KeysOnTheFieldsTheAppActuallyHas()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, ViewSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(DirectiveSortViewOutPageId);
+            var ns = MetaNs(sourceObject.OwnerDocument!);
+            var sorting = (XmlElement?)sourceObject.SelectSingleNode("m:SourceTableView/m:Sorting", ns);
+            Assert.NotNull(sorting);
+
+            // BEFORE #3271: KeyFields was "" and KeyFieldsSetByView was "" — the first entry
+            // the loop met was `#if not CLEAN25 "Zone Code"`, which resolved to nothing, so it
+            // broke out with unresolved=true and wrote neither attribute.
+            Assert.Equal("Field2,Field1", sorting!.GetAttribute("KeyFields"));
+            Assert.Equal("1", sorting.GetAttribute("KeyFieldsSetByView"));
+
+            // The view states no order(), so ApplySourceTableView must not touch ALAscending.
+            Assert.Equal("", sorting.GetAttribute("AscendingSetByView"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #3271, the direction that stops the test above from passing for an implementation that
+    /// simply throws every directive-guarded sorting entry away. Same three-entry
+    /// <c>sorting(...)</c>, same directive, only the guarded name differs: <c>"Price Type"</c>
+    /// IS a field of table 88123620, which is this app saying the directive did NOT compile
+    /// that entry out — so it belongs in the key, in the position the view declares it.
+    ///
+    /// <para>A key's field ORDER is its identity, so this also pins that the guarded entry is
+    /// reinserted in the middle rather than appended: <c>Field2,Field3,Field1</c>, not
+    /// <c>Field2,Field1,Field3</c>.</para>
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_DirectiveGuardedSortFieldCompiledIn_KeepsItInTheDeclaredPosition()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, ViewSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(DirectiveSortViewInPageId);
+            var ns = MetaNs(sourceObject.OwnerDocument!);
+            var sorting = (XmlElement?)sourceObject.SelectSingleNode("m:SourceTableView/m:Sorting", ns);
+            Assert.NotNull(sorting);
+
+            Assert.Equal("Field2,Field3,Field1", sorting!.GetAttribute("KeyFields"));
+            Assert.Equal("1", sorting.GetAttribute("KeyFieldsSetByView"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #3271, the third arm — conditional-ness is a property of the BLOCK, not of the entry
+    /// that happens to carry the directive text, exactly as
+    /// <c>TryBuildDependencyPageMetadata_SecondEntryInsideTheSameDirectiveBlock_IsConditionalToo</c>
+    /// pins for a SubPageLink. Comma-splitting puts <c>#if not CLEAN25</c> on the FIRST guarded
+    /// entry only, so a second entry inside the same block carries no <c>#</c> line of its own.
+    ///
+    /// <para>Reading that second entry as UNCONDITIONAL is the failure this arm catches: here
+    /// the block guards <c>"Price Type"</c> (in the app) followed by <c>"Zone Code"</c> (not
+    /// in the app). Treating <c>"Zone Code"</c> as unconditional makes the whole key
+    /// unresolvable and the page falls back to its default order, which is the pre-#3271
+    /// answer arrived at by a different route. Treating it as conditional — which it is, being
+    /// inside the same <c>#if</c> — omits it and keeps the rest.</para>
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_SecondSortFieldInsideTheSameDirectiveBlock_IsConditionalToo()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, ViewSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(DirectiveSortViewSecondInBlockPageId);
+            var ns = MetaNs(sourceObject.OwnerDocument!);
+            var sorting = (XmlElement?)sourceObject.SelectSingleNode("m:SourceTableView/m:Sorting", ns);
+            Assert.NotNull(sorting);
+
+            Assert.Equal("Field2,Field3,Field1", sorting!.GetAttribute("KeyFields"));
+            Assert.Equal("1", sorting.GetAttribute("KeyFieldsSetByView"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #3271's negative direction, and the one that keeps the three tests above from passing
+    /// for an implementation that simply drops every name it cannot resolve. An
+    /// UNCONDITIONAL sorting field that does not resolve is not evidence of anything having
+    /// been compiled out — it is a name this run cannot make sense of — so the key must be
+    /// left alone rather than silently narrowed to the fields that happened to resolve.
+    ///
+    /// <para>Same three names as the compiled-out fixture, with the directive lines removed,
+    /// so <c>"Zone Code"</c> is an ordinary unresolvable name rather than a guarded one — and
+    /// with an <c>order(descending)</c> beside it, so the assertion can tell "the KEY was
+    /// refused" from "the whole <c>&lt;Sorting&gt;</c> element was dropped".</para>
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_UnconditionalSortFieldThatDoesNotResolve_LeavesTheKeyAloneRatherThanNarrowingIt()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, ViewSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(UnconditionalUnresolvableSortViewPageId);
+            var ns = MetaNs(sourceObject.OwnerDocument!);
+            var sorting = (XmlElement?)sourceObject.SelectSingleNode("m:SourceTableView/m:Sorting", ns);
+            Assert.NotNull(sorting);
+
+            // NOT "Field2,Field1": narrowing the key here would sort the page on a key the AL
+            // does not declare, which is a wrong answer rather than a missing one.
+            Assert.Equal("", sorting!.GetAttribute("KeyFields"));
+            Assert.Equal("", sorting.GetAttribute("KeyFieldsSetByView"));
+
+            // …and the order() beside it is still carried, so this is a refusal of the KEY
+            // rather than of the whole <Sorting> element.
+            Assert.Equal("1", sorting.GetAttribute("AscendingSetByView"));
+            Assert.Equal("0", sorting.GetAttribute("Ascending"));
         }
         finally
         {

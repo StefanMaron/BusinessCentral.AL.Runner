@@ -66,8 +66,11 @@ internal class MockITestPage : ITestPage
     public virtual object?    GetBookmark()                                             => null;
     public virtual bool       GoToBookmark(object bookmark)                             => false;
     public virtual object[]   GetTableFieldValues(int[] fieldIds)                       => Array.Empty<object>();
-    public ITestAction        Edit()                                                    => new MockITestAction();
-    public ITestAction        View()                                                    => new MockITestAction();
+    // Virtual since #3185: LiveNavTestPage answers these with the page's real built-in
+    // page-mode actions. The base mock keeps the no-op action a page with no live instance
+    // has always had.
+    public virtual ITestAction Edit()                                                   => new MockITestAction();
+    public virtual ITestAction View()                                                   => new MockITestAction();
     public bool               Expand(bool doExpand)                                     => false;
 
     public int        ValidationErrorCount => 0;
@@ -603,6 +606,73 @@ internal class LiveNavTestPage : MockITestPage
         if (declaresSystemActionOk
             && string.Equals(pageType, "PromptDialog", StringComparison.OrdinalIgnoreCase)) return false;
         return true;
+    }
+
+    /// <summary>
+    /// AL's <c>SomePage.View()</c> — the page's built-in "open read-only" page-mode action.
+    /// Before #3185 this answered the base mock's no-op action, and could not even be reached:
+    /// NavTestPageBase.ALView() wraps it in TestClientProxy.Proxy, which NclCecilRewrite's
+    /// hard-coded method list did not strip, so every call raised "The UISessionManager was
+    /// expected to be initialized." See AlRunner/Patches/BuiltInPageModeAction.cs.
+    /// </summary>
+    public override ITestAction View() => BuiltInPageModeActionFor(viewMode: true);
+
+    /// <summary>AL's <c>SomePage.Edit()</c> — the editable twin of <see cref="View"/>.</summary>
+    public override ITestAction Edit() => BuiltInPageModeActionFor(viewMode: false);
+
+    /// <summary>
+    /// The built-in page-mode action for one of the two modes, resolved the way BC's own UI
+    /// builder resolves it (<c>ActionBuilder.ResolveCardFormId</c> /
+    /// <c>IsModifyAllowedInCard</c>, BC 28.1) — see BuiltInPageModeAction.cs for the full read.
+    ///
+    /// <para>Refuses by name rather than answering null, which is what
+    /// <c>TestPageProxy.View()/Edit()</c> do for a page that has no such action: BC's
+    /// <c>NavTestAction</c> takes that null without checking it, so AL's <c>.Invoke()</c>
+    /// would surface as a bare NullReferenceException inside Ncl with nothing naming the
+    /// page or the reason.</para>
+    /// </summary>
+    private ITestAction BuiltInPageModeActionFor(bool viewMode)
+    {
+        if (_tornDown || RunnerPageInstance.WasClosedFromAl(_page?.Form))
+            throw MakeTestPageNotOpenException();
+
+        var actionName = viewMode ? "View" : "Edit";
+        var cardPageId = RecordPatches.TryGetAnyCardPageId(_pageId);
+
+        // No resolvable CardPageId. BC's ResolveCardFormId then falls back to the HOST page's
+        // own id whenever the host is not a List, and NavOpenTaskPageAction.InvokeCore takes
+        // its UseCurrentForm branch: the action switches the OPEN page's mode in place through
+        // PageModeAggregator.ChangePageMode, opening nothing. That is a real AL shape —
+        // SubscriptionBilling's ContractRenewalTest does
+        // `if not Card.Editable then Card.Edit().Invoke();` inside a [ModalPageHandler] — and it
+        // is NOT what this class implements. Answering it by opening a second copy of the page
+        // would be a silent wrong answer (two OnOpenPage runs where BC has none), so it
+        // refuses. On a List with no CardPageId the builder creates no action at all.
+        if (cardPageId <= 0)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage.{actionName}() on page {_pageId}",
+                $"not-yet-implemented — page {_pageId} declares no CardPageId this run can "
+                + $"resolve, so its built-in {actionName} action is not a page open. On a page "
+                + "that is not a list BC switches the OPEN page's own mode in place "
+                + "(NavOpenTaskPageAction.UseCurrentForm -> PageModeAggregator.ChangePageMode), "
+                + "which the runner does not model; on a list with no CardPageId BC's builder "
+                + "creates no such action at all. Tracked by issue #3258");
+
+        // BC's IsModifyAllowedInCard: with a card page id in context, the Edit action is
+        // created only when that CARD allows modification — so a read-only card has a View
+        // action and no Edit action. Unknown (the card is not in this run's inventory) keeps
+        // the permissive answer, the same rule TryGetAnyPageType's callers use: refusing on a
+        // lookup miss would refuse pages on the strength of the runner's own inventory.
+        if (!viewMode && RecordPatches.TryGetAnyPageModifyAllowed(cardPageId) == false)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                $"TestPage.Edit() on page {_pageId}",
+                $"not-yet-implemented — the CardPageId target, page {cardPageId}, does not allow "
+                + "modification (Editable = false or ModifyAllowed = false), and BC's own UI "
+                + "builder creates no Edit action for such a card "
+                + "(ActionBuilder.IsModifyAllowedInCard), so real BC has nothing to invoke here "
+                + "either. Tracked by issue #3258");
+
+        return new BuiltInPageModeAction(this, _record, cardPageId, viewMode);
     }
 
     private sealed class RecordingBuiltInAction : ITestAction

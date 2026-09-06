@@ -3,7 +3,7 @@
 // RUNNER-MECHANISM tests. That BC's session user is a row in the User table is plain BC
 // behaviour and is adjudicated upstream by a real service tier (corpus codeunit 60991). What
 // these pin is the runner's own seed: RecordPatches.EnsureUserSystemTableRowSeeded must be able
-// to tell its three outcomes apart, and must not claim to have written a row it did not write.
+// to tell its outcomes apart, and must not claim to have written a row it did not write.
 //
 // THE DEFECT
 //   The seed inserted through ALInsert(DataError.TrapError, …) and DISCARDED the bool. TrapError
@@ -21,25 +21,39 @@
 //   SeedOnAnAlreadyPresentRow_SaysAlreadyPresent_NotSeeded asserts, and it fails against the
 //   pre-fix runner.
 //
-// WHAT THE REVIEW PREDICTED, AND WHAT WAS MEASURED
+// WHAT THE REVIEW PREDICTED, AND WHERE IT LANDED (#2983)
 //   The review named a concrete bite: a unique key on User."User Name" would make a --test-data
-//   backup containing a TESTUSER refuse the seed and silently defeat #2296. MEASURED on
-//   BC 28.1.49838.53910 (SessionUserRowNameCollision, below) the seed lands anyway, and the
-//   mechanism is an index on neither side. The runner's store for this table is BC's own
-//   CreateTempDataAccess, which enforces the PRIMARY key on "User Security ID" and nothing
-//   else; and real BC refuses a duplicate user name from a TRIGGER, not an index —
-//   SystemTableTriggers.OnBeforeInsertAsync's `case 2000000120:` arm validates a unique user
-//   name before writing, and AlRunner/Patches/UserTableTriggerPatches.cs's own header states
-//   that the runner reproduces only that arm's User Property companion insert and that "None of
-//   that [validation] is reproduced here". The run is therefore left holding two rows with the
-//   same user name, which real BC would refuse — filed as AlRunner#2983 rather than fixed here,
-//   and NOT asserted by the fixture, which would be writing a wrong number into a test.
+//   backup containing a TESTUSER refuse the seed and silently defeat #2296. When it was first
+//   measured on BC 28.1.49838.53910 the seed landed anyway, because the mechanism is an index
+//   on neither side: the runner's store for this table is BC's own CreateTempDataAccess, which
+//   enforces the PRIMARY key on "User Security ID" and nothing else, and real BC refuses a
+//   duplicate user name from a TRIGGER --
+//   SystemTableTriggers.OnBeforeInsertAsync's `case 2000000120:` arm calls
+//   IsUserFieldUniqueAsync(recordBuffer, 2, insert: true) and throws
+//   NavNCLUserTableUserNameMustBeUniqueException.Create() before writing. The runner did not
+//   reproduce that arm, so it held two rows sharing a user name where BC would hold one.
 //
-//   Consequence worth stating plainly: the Refused branch is correct and is what the review
-//   asked for, but nothing reachable from AL can trigger it today. It is exercised by the
-//   exception path only. The name-collision fixture is the canary — whichever way #2983 is
-//   closed, its "the session user still gets its own row" test fails, which is exactly when
-//   someone must decide what the seed does about a genuine refusal.
+//   AlRunner/Patches/UserTableTriggerPatches.cs reproduces it now, so the seed IS refused over a
+//   same-named foreign user.
+//
+// WHAT THE SEED DOES WITH THAT REFUSAL: ADOPT (maintainer decision, 2026-09-06)
+//   BC's refusal settles the ROW and not the SESSION. The first implementation of #2983 answered
+//   "the session is a user in no row", which is the state #2296 exists to remove; the maintainer
+//   chose ADOPTION instead. The session takes the colliding row's security id as its own, so
+//   UserSecurityId() returns a value that came out of the data.
+//
+//   The objection that survived that decision is about SILENCE, not adoption: UserSecurityId()
+//   now depends on the contents of a backup file, and AL asserting session identity sees a
+//   different value with and without --test-data. So the seed prints a [warn] line naming the
+//   user, the adopted id, the generated id it replaced and where it came from -- and
+//   SeedWithASameNamedForeignUserPresent_AdoptsThatRowsSecurityIdAndSaysSo asserts every part of
+//   it, including the "[warn] " prefix, because a "[Component]"-tagged line is suppressed at
+//   default verbosity (#3068) and would make "loud, never silent" untrue.
+//
+//   THE TWO DIRECTIONS. This fixture asserts the ADOPTED concrete id
+//   {A17E9C42-5B08-4D6F-9E31-0C7A2F84B155}; SessionUserRowAlreadyPresent asserts the
+//   runner-GENERATED {C0A1BDFA-0000-0000-0000-545553545553} for the case where there is nothing
+//   to adopt. One implementation cannot satisfy both by returning a constant.
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -61,9 +75,21 @@ public sealed class SessionUserRowRefusalTests
     /// "already present", which is why the pre-fix code could get this wrong unnoticed.
     /// </summary>
     private static (int ExitCode, string StdOut, string StdErr) Run(string fixtureName, string cacheDir)
+        => RunBundles(cacheDir, fixtureName);
+
+    /// <summary>
+    /// The same invocation over SEVERAL bundle directories in ONE process, in the order given.
+    /// That is the shape <c>--watch</c>, <c>--server</c> and a plain multi-bundle command line
+    /// all reduce to, and it is the only way to observe per-process state leaking across the
+    /// per-bundle reset — see
+    /// <see cref="AnAdoptionInOneBundleDoesNotLeakIntoTheNextBundlesSessionIdentity"/>.
+    /// </summary>
+    private static (int ExitCode, string StdOut, string StdErr) RunBundles(
+        string cacheDir, params string[] fixtureNames)
     {
         var sb = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
-        sb.Append(' ').Append($"\"{FixtureDir(fixtureName)}\"");
+        foreach (var fixtureName in fixtureNames)
+            sb.Append(' ').Append($"\"{FixtureDir(fixtureName)}\"");
         sb.Append(' ').Append($"--cache \"{cacheDir}\"");
 
         var psi = new ProcessStartInfo
@@ -88,7 +114,8 @@ public sealed class SessionUserRowRefusalTests
         if (!proc.WaitForExit(180_000))
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"al-runner did not exit within 180s for '{fixtureName}'.");
+            throw new TimeoutException(
+                $"al-runner did not exit within 180s for '{string.Join("', '", fixtureNames)}'.");
         }
         // WaitForExit(int) returns on process exit WITHOUT draining the async read callbacks;
         // only the parameterless overload waits for those. Skipping it makes assertions on the
@@ -127,6 +154,13 @@ public sealed class SessionUserRowRefusalTests
 
             // And the AL-visible state: the row the Install trigger wrote is untouched, there is
             // exactly one of it, and Get still consults the key.
+            // NEGATIVE DIRECTION for the adoption in the sibling test below: nothing here is
+            // adopted, so no adoption line may appear at all.
+            Assert.DoesNotContain("ADOPTED the security id", stderr);
+
+            Assert.Contains(
+                "PASS  Codeunit70501.SuraUserSecurityIdIsTheRunnerGeneratedOneWhenNothingIsAdopted",
+                stdout);
             Assert.Contains("PASS  Codeunit70501.SuraSeedLeftTheAlreadyPresentRowExactlyAsItWas", stdout);
             Assert.Contains("PASS  Codeunit70501.SuraSeedAddedNoSecondRowForTheSessionUser", stdout);
             Assert.Contains("PASS  Codeunit70501.SuraAUserSecurityIdBelongingToNobodyIsStillNotFound", stdout);
@@ -139,7 +173,7 @@ public sealed class SessionUserRowRefusalTests
     }
 
     [Fact]
-    public void SeedWithASameNamedForeignUserPresent_StillWritesTheSessionUsersOwnRow()
+    public void SeedWithASameNamedForeignUserPresent_AdoptsThatRowsSecurityIdAndSaysSo()
     {
         var cacheDir = TempCache("collision");
         try
@@ -149,17 +183,121 @@ public sealed class SessionUserRowRefusalTests
             Assert.True(exit == 0,
                 $"expected a clean run. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
 
-            // Measured: the insert genuinely happens, so the seed reports the outcome it
-            // actually reached. This is the assertion that flips when #2983 is closed — whether
-            // by reproducing BC's OnBeforeInsertAsync validation for table 2000000120 or by
-            // enforcing uniqueness in the store — at which point the line becomes the REFUSED
-            // one and the fixture's AL test fails too, which is the intended alarm.
-            Assert.Contains("UserSystemTable: seeded User row 'TESTUSER'", stderr);
-            Assert.DoesNotContain("was already present", stderr);
-            Assert.DoesNotContain("REFUSED", stderr);
+            // THE #2983 DISCRIMINATOR, after the maintainer's decision to ADOPT.
+            //
+            // Three implementations are distinguishable here and only one passes. The pre-#2983
+            // runner printed "UserSystemTable: seeded User row 'TESTUSER'" — it wrote a second row
+            // under a name real BC keeps unique. The first #2983 implementation printed
+            // "was REFUSED and is NOT present" — correct about the row, and it left the session as
+            // a user in no row at all. This one adopts, and the line below is the whole reason
+            // adopting is allowed to be silent about nothing.
+            Assert.Contains("ADOPTED the security id", stderr);
+            Assert.DoesNotContain("was REFUSED and is NOT present", stderr);
+            Assert.DoesNotContain("UserSystemTable: seeded User row", stderr);
+
+            // THE ADOPTION IS VISIBLE, in the terms the objection to adopting demanded: the
+            // user, the id taken, the id it replaced, and that it came from the data. A reader
+            // of the log must never have to wonder why UserSecurityId() answered what it did.
+            Assert.Contains("'TESTUSER'", stderr);
+            Assert.Contains("A17E9C42-5B08-4D6F-9E31-0C7A2F84B155", stderr);   // adopted
+            Assert.Contains("C0A1BDFA-0000-0000-0000-545553545553", stderr);   // replaced
+            Assert.Contains("came from your data", stderr);
+            Assert.Contains("See AlRunner#2983", stderr);
+
+            // AND IT SURVIVES THE DEFAULT LOG COMPONENT FILTER. #3068 / the 42-test precedent:
+            // a "[Component]"-tagged line is suppressed at default verbosity, which would make
+            // "loud, never silent" untrue. This run sets no verbosity flag, so seeing the text
+            // at all is the assertion — but pin the prefix too, so a later refactor cannot move
+            // it behind a tag without failing here.
+            Assert.Contains("[warn] UserSystemTable: the session user", stderr);
 
             Assert.Contains("PASS  Codeunit70521.SurcTheSameNamedForeignUserIsInTheTable", stdout);
-            Assert.Contains("PASS  Codeunit70521.SurcTheSessionUserStillGetsItsOwnRow", stdout);
+            Assert.Contains(
+                "PASS  Codeunit70521.SurcTheSessionAdoptedTheExistingRowsSecurityId", stdout);
+            Assert.Contains(
+                "PASS  Codeunit70521.SurcTheSessionUserResolvesToTheRowTheDataProvided", stdout);
+            Assert.Contains(
+                "PASS  Codeunit70521.SurcAdoptionAddedNoSecondRowAndLeftUserIdAlone", stdout);
+            Assert.Contains(
+                "PASS  Codeunit70521.SurcTheAdoptedUserHasItsUserPropertyRow", stdout);
+            Assert.DoesNotContain("FAIL", stdout);
+        }
+        finally
+        {
+            try { Directory.Delete(cacheDir, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    /// <summary>
+    /// THE CROSS-BUNDLE LEAK. Two bundles, one process, in that order: the first adopts a
+    /// security id out of its own data, the second must not inherit it.
+    ///
+    /// <para>WHY A SECOND BUNDLE IS THE ONLY WAY TO SEE THIS. The seed's per-bundle flag is
+    /// reset by <c>ResetUserSystemTableForNewBundle()</c>, but the skeleton <c>NavUser</c> that
+    /// adoption pokes the security id into is built ONCE PER PROCESS, in
+    /// <c>BcRuntime.ApplyAllPatches</c>. So an adoption is a process-wide write behind a
+    /// per-bundle decision, and nothing inside a single-bundle run can observe the difference —
+    /// delete the four-line restore block from that reset and every other test in this file
+    /// still passes.</para>
+    ///
+    /// <para>THE RED. <c>SuraUserSecurityIdIsTheRunnerGeneratedOneWhenNothingIsAdopted</c>
+    /// asserts the concrete generated id <c>{C0A1BDFA-…}</c>. Without the restore, bundle B
+    /// starts with bundle A's adopted <c>{A17E9C42-…}</c> still on the session — its own Install
+    /// trigger writes a row under that id (it inserts <c>UserSecurityId()</c>), the seed then
+    /// takes the benign already-present path, and that test fails naming the leaked value. Run
+    /// against the restore removed, it does.</para>
+    ///
+    /// <para>The two fixtures can share a process at all because their object id ranges do not
+    /// overlap — 70520-70539 against 70500-70519 — and neither declares a dependency.</para>
+    ///
+    /// <para>--watch and --server are the two other multi-bundle modes and reduce to the same
+    /// per-bundle reset; this asserts the mechanism through the cheapest of the three. Note that
+    /// under <c>--watch</c> the adoption's own [warn] line is NOT visible: Program.cs sets both
+    /// Console.Out and Console.Error to TextWriter.Null when the watch UI is on without
+    /// --verbose. That is pre-existing and applies equally to every other line the seed writes,
+    /// but it means "loud, never silent" is a claim about a normal run, not about the watch UI.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AnAdoptionInOneBundleDoesNotLeakIntoTheNextBundlesSessionIdentity()
+    {
+        var cacheDir = TempCache("crossbundle");
+        try
+        {
+            var (exit, stdout, stderr) = RunBundles(
+                cacheDir, "SessionUserRowNameCollision", "SessionUserRowAlreadyPresent");
+
+            Assert.True(exit == 0,
+                $"expected a clean run over both bundles. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+
+            // BUNDLE A DID ADOPT. Without this the test would pass vacuously on a run where the
+            // collision never happened, and would then say nothing about leaking.
+            Assert.Contains("ADOPTED the security id", stderr);
+            Assert.Contains("A17E9C42-5B08-4D6F-9E31-0C7A2F84B155", stderr);
+            Assert.Contains(
+                "PASS  Codeunit70521.SurcTheSessionAdoptedTheExistingRowsSecurityId", stdout);
+
+            // THE RESTORE RAN, between the two bundles. This is the line the four-line block in
+            // ResetUserSystemTableForNewBundle emits, and nothing else in the suite reaches it.
+            Assert.Contains(
+                "UserSystemTable: restored the generated session security id for the next bundle",
+                stderr);
+
+            // THE CONSEQUENCE, asserted as a concrete id by the AL itself: bundle B's session is
+            // the runner-generated {C0A1BDFA-…} again, not bundle A's {A17E9C42-…}.
+            Assert.Contains(
+                "PASS  Codeunit70501.SuraUserSecurityIdIsTheRunnerGeneratedOneWhenNothingIsAdopted",
+                stdout);
+            Assert.Contains("PASS  Codeunit70501.SuraSeedLeftTheAlreadyPresentRowExactlyAsItWas", stdout);
+            Assert.Contains("PASS  Codeunit70501.SuraSeedAddedNoSecondRowForTheSessionUser", stdout);
+
+            // EXACTLY ONE adoption in the process. Bundle B has nothing to adopt — its Install
+            // trigger writes the session user's own security id — so a second adoption line here
+            // would mean the restore had handed bundle B an identity that then collided again.
+            var adoptions = stderr.Split("ADOPTED the security id").Length - 1;
+            Assert.True(adoptions == 1,
+                $"expected exactly one adoption across both bundles, saw {adoptions}\nstderr:\n{stderr}");
+
             Assert.DoesNotContain("FAIL", stdout);
         }
         finally

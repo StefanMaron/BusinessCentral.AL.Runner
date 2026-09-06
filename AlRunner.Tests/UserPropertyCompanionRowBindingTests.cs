@@ -1,4 +1,4 @@
-// UserPropertyCompanionRowBindingTests — issue #2355.
+// UserPropertyCompanionRowBindingTests — issues #2355, #2983 and #2356.
 //
 // This is a RUNNER-MECHANISM test, not a claim about what real BC does. The BC-observable
 // claim ("a User row always has a matching User Property row, created with it, so
@@ -10,9 +10,17 @@
 // SystemTableTriggers.OnBeforeInsertAsync has a `case 2000000120:` arm that inserts the
 // companion User Property (2000000121) row, and the runner bypasses BC's trigger dispatch on
 // insert (RecordWritePatches.NavRecord_InsertAsync), so nothing created that row. The fix
-// prepends UserTableTriggerPatches.CreateUserPropertyOnUserInsert to
+// prepends UserTableTriggerPatches.OnBeforeUserInsert to
 // NavRecord.ALInsertAsync(DataError, bool, bool) — the single AL insert entry point
 // AssignAutoIncrement and StampSystemFieldsOnInsert are already prepended to.
+//
+// The same file now also carries the rest of BC's two `case 2000000120:` arms — the insert
+// arm's uniqueness refusals (#2983) and the delete arm's four table cascades (#2356) — so
+// there are TWO prepends to pin: OnBeforeUserInsert on ALInsertAsync(DataError, bool, bool)
+// and OnAfterUserDelete on ALDeleteAsync(DataError, bool, bool). The delete one is the single
+// funnel for `Delete()` AND `DeleteAll()` on this table, because DeleteAllAsync's bulk path is
+// gated on CanUseBulkDeleteAll, which ends in !TableHasSystemDeleteTrigger, whose static switch
+// lists 2000000120.
 //
 // The prepend is registration-only code: it lives in NclCecilRewrite and produces no
 // observable C# call graph, so a regression that drops it — or moves it onto the wrong entry
@@ -36,7 +44,10 @@ public sealed class UserPropertyCompanionRowBindingTests
     public UserPropertyCompanionRowBindingTests(BcEngineFixture engine) => _engine = engine;
 
     private const string HelperFullName =
-        "System.Void AlRunner.Patches.UserTableTriggerPatches::CreateUserPropertyOnUserInsert(System.Object)";
+        "System.Void AlRunner.Patches.UserTableTriggerPatches::OnBeforeUserInsert(System.Object)";
+
+    private const string DeleteHelperFullName =
+        "System.Void AlRunner.Patches.UserTableTriggerPatches::OnAfterUserDelete(System.Object)";
 
     /// <summary>
     /// The Cecil-rewritten Ncl the test host itself loaded — the very bytes the prepend was
@@ -112,7 +123,7 @@ public sealed class UserPropertyCompanionRowBindingTests
 
         Assert.True(helperIndex.HasValue,
             "NavRecord.ALInsertAsync(DataError, bool, bool) does not call "
-            + "UserTableTriggerPatches.CreateUserPropertyOnUserInsert — the User Property row BC's "
+            + "UserTableTriggerPatches.OnBeforeUserInsert — the User Property row BC's "
             + "own User insert trigger creates would never be written, and every AL path that "
             + "reaches UserManagement.DirectSetUserFieldValue would fail with "
             + "\"The User Property does not exist\" (issue #2355).");
@@ -134,7 +145,7 @@ public sealed class UserPropertyCompanionRowBindingTests
     }
 
     [SkippableFact]
-    public void ModifyAndDeleteEntryPoints_DoNotCallTheCompanionRowHelper()
+    public void ModifyAndDeleteEntryPoints_DoNotCallTheInsertArmHelper()
     {
         Skip.IfNot(File.Exists(RewrittenNclPath),
             $"the rewritten Ncl is not present at '{RewrittenNclPath}'.");
@@ -142,8 +153,11 @@ public sealed class UserPropertyCompanionRowBindingTests
         using var module = ModuleDefinition.ReadModule(RewrittenNclPath);
         SkipUnlessRewritten(NavRecordMethod(module, "ALInsertAsync", "DataError", "Boolean", "Boolean"));
 
-        // BC creates the companion row in OnBEFOREInsert only. Modify must not create a second
-        // one, and Delete must not create one for a user being removed.
+        // BC creates the companion row (and runs the uniqueness refusals) in OnBEFOREInsert
+        // only. Modify must not create a second row or re-run the refusals against the row's
+        // own name, and Delete must not create one for a user being removed. Delete DOES carry
+        // its own, different prepend now (OnAfterUserDelete, asserted below); this test is what
+        // stops the two from being wired to the same entry point by accident.
         foreach (var name in new[] { "ALModifyAsync", "ALDeleteAsync" })
         {
             var navRecord = module.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord");
@@ -161,9 +175,77 @@ public sealed class UserPropertyCompanionRowBindingTests
         // Null and a record with no metatable are the two shapes the prepend sees on every
         // insert of every other table in the run; neither may throw, and neither may reach
         // the session lookup, which would raise RunnerOutOfScopeException on a bare record.
-        UserTableTriggerPatches.CreateUserPropertyOnUserInsert(null);
-        UserTableTriggerPatches.CreateUserPropertyOnUserInsert(new object());
-        UserTableTriggerPatches.CreateUserPropertyOnUserInsert(
+        UserTableTriggerPatches.OnBeforeUserInsert(null);
+        UserTableTriggerPatches.OnBeforeUserInsert(new object());
+        UserTableTriggerPatches.OnBeforeUserInsert(
             (NavRecord)RuntimeHelpers.GetUninitializedObject(typeof(NavRecord)));
+
+        // Same three shapes for the delete-arm prepend, which sees every delete of every table.
+        UserTableTriggerPatches.OnAfterUserDelete(null);
+        UserTableTriggerPatches.OnAfterUserDelete(new object());
+        UserTableTriggerPatches.OnAfterUserDelete(
+            (NavRecord)RuntimeHelpers.GetUninitializedObject(typeof(NavRecord)));
+    }
+
+    [SkippableFact]
+    public void AlDeleteEntryPoint_CallsTheCascadeHelperAsItsFirstAct()
+    {
+        // #2356. Same reasoning as the insert binding above: NclCecilRewrite registration is
+        // invisible to the C# call graph, so a lost or misplaced delete prepend would show up
+        // only as orphaned Access Control / User Property / Isolated Storage / Tenant Report
+        // Layout Selection rows, far from the cause.
+        Skip.IfNot(File.Exists(RewrittenNclPath),
+            $"the rewritten Ncl is not present at '{RewrittenNclPath}'.");
+
+        using var module = ModuleDefinition.ReadModule(RewrittenNclPath);
+        // Gate on the INSERT entry point, which carries a prepend that predates all of this:
+        // "the file has not been rewritten yet" is a legitimate skip, "it was rewritten and the
+        // cascade is missing" is the regression.
+        SkipUnlessRewritten(NavRecordMethod(module, "ALInsertAsync", "DataError", "Boolean", "Boolean"));
+
+        var alDelete = NavRecordMethod(module, "ALDeleteAsync", "DataError", "Boolean", "Boolean");
+        var instructions = alDelete.Body.Instructions;
+
+        var helperIndex = instructions
+            .Select((instruction, index) => (instruction, index))
+            .Where(x => (x.instruction.OpCode == OpCodes.Call || x.instruction.OpCode == OpCodes.Callvirt)
+                        && (x.instruction.Operand as MethodReference)?.FullName == DeleteHelperFullName)
+            .Select(x => (int?)x.index)
+            .FirstOrDefault();
+
+        Assert.True(helperIndex.HasValue,
+            "NavRecord.ALDeleteAsync(DataError, bool, bool) does not call "
+            + "UserTableTriggerPatches.OnAfterUserDelete — deleting a User would leave its Access "
+            + "Control (2000000053), User Property (2000000121), Isolated Storage (2000000107) and "
+            + "Tenant Report Layout Selection (2000000233) rows behind, which BC's own "
+            + "SystemTableTriggers.OnAfterDeleteAsync `case 2000000120:` arm removes (issue #2356).");
+
+        // Same prefix-shape assertion as the insert side, and for the same reason: it must run
+        // ahead of the original body, and the shape survives another prepend landing here later.
+        Assert.Equal(OpCodes.Ldarg_0, instructions[helperIndex!.Value - 1].OpCode);
+        for (var i = 0; i < helperIndex.Value; i++)
+            Assert.True(
+                instructions[i].OpCode == OpCodes.Ldarg_0 || instructions[i].OpCode == OpCodes.Call,
+                $"instruction {i} of NavRecord.ALDeleteAsync is {instructions[i].OpCode}, so the "
+                + "cascade helper is no longer inside the prepended prefix.");
+    }
+
+    [SkippableFact]
+    public void InsertEntryPoint_DoesNotCallTheCascadeHelper()
+    {
+        // The mirror of ModifyAndDeleteEntryPoints_DoNotCallTheInsertArmHelper. Cascading on
+        // insert would delete the dependent rows of a user being created.
+        Skip.IfNot(File.Exists(RewrittenNclPath),
+            $"the rewritten Ncl is not present at '{RewrittenNclPath}'.");
+
+        using var module = ModuleDefinition.ReadModule(RewrittenNclPath);
+        var alInsert = NavRecordMethod(module, "ALInsertAsync", "DataError", "Boolean", "Boolean");
+        SkipUnlessRewritten(alInsert);
+
+        Assert.DoesNotContain(DeleteHelperFullName, CalledMethods(alInsert));
+
+        var navRecord = module.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord");
+        foreach (var method in navRecord!.Methods.Where(m => m.Name == "ALModifyAsync" && m.HasBody))
+            Assert.DoesNotContain(DeleteHelperFullName, CalledMethods(method));
     }
 }

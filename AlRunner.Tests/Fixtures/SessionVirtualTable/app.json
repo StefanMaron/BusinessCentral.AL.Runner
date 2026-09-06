@@ -1,0 +1,24 @@
+{
+  "id": "a1b2c3d4-e5f6-4708-9a1b-2c3d4e5f6009",
+  "name": "Runner Tests Fixture - Session Virtual Table",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Regression test: the Session virtual table (2000000009) must carry the reading session (#2940).",
+  "description": "Proves Record Session answers the runner's own session, and that the row and the session-state surfaces (SessionId, UserId) cannot disagree. The BC-behaviour claim itself is adjudicated upstream by \"Test Session Virtual Table\" in StefanMaron/BusinessCentral.AL.Language.Tests; what this fixture pins is the runner's own read-it-back-from-the-skeleton mechanism.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 70560,
+      "to": 70579
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

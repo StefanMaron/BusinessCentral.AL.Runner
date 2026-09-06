@@ -9,23 +9,28 @@
 //   On a real tier it is BC's system-table TRIGGER, not an index. Ncl's
 //   SystemTableTriggers.OnBeforeInsertAsync has a `case 2000000120:` arm that validates a unique
 //   user name -- along with the Windows SID, authentication email and application id -- before
-//   the row is written. AlRunner/Patches/UserTableTriggerPatches.cs's own header records that
-//   the runner reproduces exactly one thing from that arm, its User Property (2000000121)
-//   companion insert, and states in as many words that "None of that [validation] is reproduced
-//   here".
+//   the row is written. AlRunner/Patches/UserTableTriggerPatches.cs reproduces that arm (#2983),
+//   so the runner refuses this collision the way BC does. Until it did, the store behind the
+//   User table -- BC's own CreateTempDataAccess -- enforced the primary key and nothing else,
+//   the seed landed anyway, and the run was left holding two rows that share a user name where
+//   BC would hold one.
 //
-//   So the runner does not refuse this collision at all: the store behind the User table is
-//   BC's own CreateTempDataAccess, which enforces the primary key and nothing else. MEASURED --
-//   SurcTheSessionUserStillGetsItsOwnRow next door observes the seed landing anyway, and the run
-//   is left holding two rows that share a user name where BC would hold one. That divergence is
-//   AlRunner#2983.
+// WHAT THE SEED DOES ABOUT IT: ADOPT (maintainer decision, 2026-09-06)
+//   BC's refusal is right about the ROW, and it leaves open what the SESSION should be. The
+//   runner ADOPTS: it takes this stand-in row's security id as the session's own, so
+//   UserSecurityId() answers {A17E9C42-5B08-4D6F-9E31-0C7A2F84B155} for the rest of the run and
+//   no row is written. The alternative -- refuse, and run as a user present in no row -- is the
+//   state AlRunner#2296 exists to remove, and it was this fixture that measured it.
 //
 // WHAT THIS FIXTURE IS FOR
-//   It measures the hazard the #2941 review predicted, end to end, and shows the fix survives
-//   it. It is also the canary for #2983: whichever way that gets closed -- reproducing the
-//   trigger's validation, or enforcing uniqueness in the store -- the seed starts being refused
-//   here, SurcTheSessionUserStillGetsItsOwnRow fails, and RecordPatches' Refused branch becomes
-//   reachable from AL for the first time.
+//   It measures the hazard the #2941 review predicted, end to end, and it has now flipped twice.
+//   SurcTheSessionUserStillGetsItsOwnRow (the seed landing) became
+//   SurcTheSessionUserIsRefusedItsOwnRowOverTheDuplicateName when #2983 added the uniqueness
+//   arm, and that became SurcTheSessionAdoptedTheExistingRowsSecurityId when the maintainer
+//   chose adoption. What it pins from here on is the ADOPTION being complete and loud: the
+//   session resolves to THIS row, no second row is written, UserId() is untouched, the adopted
+//   user keeps its User Property companion row, and the seed says on stderr where the id came
+//   from.
 codeunit 70520 "SURC Installer"
 {
     Subtype = Install;
@@ -33,6 +38,7 @@ codeunit 70520 "SURC Installer"
     trigger OnInstallAppPerCompany()
     var
         UserRec: Record User;
+        UserProperty: Record "User Property";
         CollidingSid: Guid;
     begin
         Evaluate(CollidingSid, CollidingSidTok);
@@ -43,6 +49,27 @@ codeunit 70520 "SURC Installer"
         UserRec."User Name" := CopyStr(UserId(), 1, MaxStrLen(UserRec."User Name"));
         UserRec."Full Name" := BackupUserTok;
         UserRec.Insert();
+
+        // THEN TAKE THE COMPANION ROW BACK OFF, so the adoption path's own
+        // EnsureUserPropertyRow call is the ONLY thing that can put it back.
+        //
+        // Why this is needed at all: AL cannot write a User row that bypasses the runner's
+        // insert prepend, so the Insert above already created the User Property (2000000121)
+        // companion. Leaving it there made SurcTheAdoptedUserHasItsUserPropertyRow pass whether
+        // or not adoption re-establishes the invariant -- it pinned "adoption does not LOSE the
+        // row" and nothing more. Deleting it is the state a backup restored without table
+        // 2000000121 leaves behind, and it turns that test into a real RED -> GREEN: with the
+        // EnsureUserPropertyRow call removed from TryAdoptSessionUserSecurityId, it fails.
+        //
+        // The Get is asserted rather than tested, because a silent miss here would quietly
+        // restore the vacuous version of the test. It also pins the prepend running for an
+        // Install-trigger insert, which is the premise the paragraph above rests on.
+        if not UserProperty.Get(CollidingSid) then
+            Error(
+              'precondition: the User insert above must have created the User Property (2000000121) '
+              + 'companion row for %1 -- without it this fixture cannot tell whether adoption '
+              + 'CREATES that row or merely fails to lose it', CollidingSidTok);
+        UserProperty.Delete();
     end;
 
     var

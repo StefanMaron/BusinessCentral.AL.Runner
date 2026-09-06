@@ -30,6 +30,7 @@
 //   decision that matters (which handler, what it does, what OK/Cancel means) stays in BC's
 //   code and in the AL handler.
 using System.Reflection;
+using Microsoft.Dynamics.Nav.Runtime;
 
 namespace AlRunner.Patches;
 
@@ -61,6 +62,7 @@ public static class RunnerModalDispatch
         // Deliberately NOT wrapped in a catch: OnOpenPage is AL, and an Error() raised there
         // is a real test failure that must reach the test, not a runner detail to absorb.
         var form = RegisteredForm(handle);
+        ApplyPendingPageOpenMode(form);
         var opened = TryOpenForm(form);
 
         // BC's own ShowDialog: pops dialogHandlerStack and runs the pushed handler delegate,
@@ -143,6 +145,7 @@ public static class RunnerModalDispatch
         // Same reasoning as the modal path: a real client opens the form as part of this round
         // trip, and opening is what raises OnOpenPage. Not wrapped in a catch — an Error()
         // raised in OnOpenPage is a real test failure.
+        ApplyPendingPageOpenMode(form);
         var opened = TryOpenForm(form);
 
         var showForm = type.GetMethod("ShowForm", BindingFlags.NonPublic | BindingFlags.Instance)
@@ -167,6 +170,40 @@ public static class RunnerModalDispatch
     }
 
     /// <summary>
+    /// Stamp the open MODE a built-in View/Edit action asked for onto the form BC is about to
+    /// open — the runner's stand-in for the <c>FormState(ViewMode)</c> BC's client hands the
+    /// builder (issue #3185, see BuiltInPageModeAction.cs).
+    ///
+    /// <para>Only the read-only direction writes anything. <c>NavForm.Editable</c> is
+    /// initialised from the page's own declared <c>Editable</c> in InitializeFromMetadata, and
+    /// that is exactly the value an Edit-mode open should keep — BC narrows Edit by the page's
+    /// declaration too (<c>CanSwitchViewMode</c> refuses Edit on a page whose FormDescription
+    /// is not Editable), so forcing it true would open pages BC would not. It is also the same
+    /// rule LiveNavTestPage.MarkOpened applies to a page the test opens itself:
+    /// <c>viewMode != View &amp;&amp; PageEditable</c>.</para>
+    ///
+    /// <para>Applied BEFORE OpenForm so the page's own OnOpenPage sees it, and read once, so a
+    /// page opened from inside that trigger does not inherit it.</para>
+    /// </summary>
+    private static void ApplyPendingPageOpenMode(object? form)
+    {
+        if (form is not NavForm navForm) return;
+        if (!RunnerPendingPageOpenMode.TryConsume(PageIdOf(form), out var readOnly)) return;
+        if (readOnly) navForm.Editable = false;
+    }
+
+    /// <summary>The page number of <paramref name="form"/>, or 0 when it cannot be read.</summary>
+    private static int PageIdOf(object? form)
+    {
+        var objectId = form?.GetType()
+            .GetProperty("ObjectId", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+            .GetValue(form);
+        return objectId?.GetType()
+            .GetProperty("ObjectNumber", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+            .GetValue(objectId) is int pageNo ? pageNo : 0;
+    }
+
+    /// <summary>
     /// Whether the test has an outstanding TestPage.Trap() for this form's page, asked through
     /// BC's own NavTestExecution.HasTrap so the answer is the one ShowForm will act on.
     /// </summary>
@@ -174,13 +211,8 @@ public static class RunnerModalDispatch
     {
         if (form == null) return false;
 
-        var objectId = form.GetType()
-            .GetProperty("ObjectId", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
-            .GetValue(form);
-        if (objectId?.GetType()
-                .GetProperty("ObjectNumber", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
-                .GetValue(objectId) is not int pageNo)
-            return false;
+        var pageNo = PageIdOf(form);
+        if (pageNo == 0) return false;
 
         var hasTrap = testExecution.GetType().GetMethod("HasTrap",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,

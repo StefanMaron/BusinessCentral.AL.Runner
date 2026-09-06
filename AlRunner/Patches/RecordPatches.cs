@@ -134,6 +134,14 @@ public static partial class RecordPatches
     // Parsed tableextension fields: base-table-name (lowercased) → list of extra fields.
     private static readonly Dictionary<string, List<ParsedField>> _parsedExtensionFields = new();
 
+    // Parsed tableextension KEYS: base-table-name (lowercased) → the keys every tableextension
+    // on that table declares, in merge order (#3216). The sibling of the line above, and it did
+    // not exist: the fields half of a tableextension merge was written and the keys half never
+    // was, so `RecordRef.KeyCount()`/`KeyIndex()` reported only the base table's own keys while
+    // the extension's fields were already present as columns. Stored as NAMES — see
+    // ParsedExtensionKey for why ids cannot be resolved at parse time.
+    private static readonly Dictionary<string, List<ParsedExtensionKey>> _parsedExtensionKeys = new();
+
     // Parsed tableextension object ids: base-table-name (lowercased) → tableextension object
     // ids extending it, in AL declaration order (= the order BC registers them, which the
     // trigger pipeline preserves). Used to instantiate the emitted TableExtension{id} CLR
@@ -158,7 +166,8 @@ public static partial class RecordPatches
     /// before EnsureBcSymbolExtensionIndex ran stayed frozen forever without the precompiled
     /// extension's fields.
     /// </summary>
-    private static void MergeExtensionFields(string baseTableName, int extensionId, IEnumerable<ParsedField> fields)
+    private static void MergeExtensionFields(string baseTableName, int extensionId, IEnumerable<ParsedField> fields,
+        IEnumerable<ParsedExtensionKey>? keys = null)
     {
         if (string.IsNullOrEmpty(baseTableName)) return;
         var key = baseTableName.ToLowerInvariant();
@@ -177,6 +186,30 @@ public static partial class RecordPatches
             foreach (var f in fields)
                 if (existingIds.Add(f.FieldId))
                     existing.Add(f);
+        }
+
+        // #3216 — the keys half of the same merge, de-duplicated on (key name + field-name
+        // composition) for the same reason the fields above are de-duplicated on field id: one
+        // extension can legitimately be scanned twice (a dependency source dir registered by
+        // two suites, or a SymbolReference.json read again after an .app re-registration), and
+        // a key listed twice would show up twice in RecordRef.KeyIndex(). The composition is
+        // part of the identity because two DIFFERENT tableextensions on one table may each
+        // declare a key called "Key1" — AL only requires a key name to be unique within its own
+        // object — so name alone would silently drop the second one.
+        if (keys != null)
+        {
+            if (!_parsedExtensionKeys.TryGetValue(key, out var existingKeys))
+                _parsedExtensionKeys[key] = existingKeys = new List<ParsedExtensionKey>();
+            foreach (var k in keys)
+            {
+                if (k.FieldNames.Count == 0) continue;
+                if (existingKeys.Any(e => string.Equals(e.Name, k.Name, StringComparison.OrdinalIgnoreCase)
+                        && e.FieldNames.Count == k.FieldNames.Count
+                        && e.FieldNames.Zip(k.FieldNames, (a, b) =>
+                               string.Equals(a, b, StringComparison.OrdinalIgnoreCase)).All(x => x)))
+                    continue;
+                existingKeys.Add(k);
+            }
         }
 
         if (extensionId > 0)
@@ -249,6 +282,10 @@ public static partial class RecordPatches
         _tableExtensionTypeCache.Clear();
         _parsedTables.Clear();
         _parsedExtensionFields.Clear();
+        // #3216 — cleared alongside _parsedExtensionFields, never separately: the two halves
+        // describe one merge, and a keys map surviving a reload would attach the previous
+        // bundle's extension keys to the next bundle's tables.
+        _parsedExtensionKeys.Clear();
         _extensionIdsByBaseTable.Clear();
         // #2478: must invalidate _bcSymbolTableIndex too, not just _bcSymbolExtensionIndexBuilt —
         // EnsureBcSymbolExtensionIndex's only call site is inside EnsureBcSymbolTableIndex, gated
@@ -292,12 +329,15 @@ public static partial class RecordPatches
             // precompiled tableextension fields vanish from every metatable from the second
             // server request on. That failure was silent; this one was too.
             //
-            // Still accumulating, same shape, deliberately NOT changed here: the sibling list
-            // _bcQuerySymbolJsonPaths (RecordPatches.BcAppFallback.cs), tracked in #2939. It
+            // #2939: the sibling list _bcQuerySymbolJsonPaths goes with it, and now does. It
             // feeds _bcSymbolQueryIndex through the same derived/registered split and is the
-            // other input to RegisteredBcAppSymbolStateKey. Left alone because #2755 scoped
-            // itself to _bcAppPaths and called the blast radius out explicitly — and the
-            // SystemApp regression above is what that caution was warning about.
+            // other input to RegisteredBcAppSymbolStateKey. #2755 left it alone deliberately,
+            // having scoped itself to _bcAppPaths; measured, it was the worse of the two,
+            // because its merge is first-wins and the stale file sorts first — bundle 2 got
+            // bundle 1's query column ids INSTEAD of its own rather than in addition to them.
+            // Its clear is unconditional (no SystemApp-style exemption applies: every entry is
+            // a loose per-bundle SymbolReference.json), and lives in ClearPerBundleBcAppPaths
+            // beside the one above so the two cannot drift apart the way #2478's pair did.
             ClearPerBundleBcAppPaths();
         }
         // #3207: the object-reference const memo goes with them, and must be cleared HERE rather
@@ -2193,6 +2233,29 @@ public static partial class RecordPatches
                 return timeZoneDa;
             }
 
+            // ── Session (2000000009) ─────────────────────────────────────────────────────
+            // Virtual on the service tier too, and SessionDataProvider returns exactly ONE
+            // row — the reading session, My Session = true — not one per logged-on user.
+            // Routed to the same in-memory store as every other virtual table here and
+            // populated with that one row, read back from the skeleton NavSession so the
+            // table cannot disagree with SessionId() / UserId(). An empty store made every
+            // read answer "nobody is logged on", which is a wrong answer rather than a
+            // missing one. See RecordPatches.SessionVirtualTable.cs (#2940).
+            if (IsSessionVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var sessionDa))
+                {
+                    var createdSession = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    sessionDa = perTable.GetOrAdd(tableId, createdSession);
+                }
+                var sessionTableSession = _fDasSession?.GetValue(self)
+                    ?? throw SessionVirtualShapeGap(
+                        "DataAccessSource has no skeleton session, so there is no session "
+                        + "identity to read the row back from");
+                PopulateSessionVirtualTable(sessionDa, table, sessionTableSession);
+                return sessionDa;
+            }
+
             // ── Feature Key (2000000211) ─────────────────────────────────────────────────
             // Routed to BC's OWN FeatureKeyDataProvider: its feature list is a hardcoded static
             // in Microsoft.Dynamics.Nav.Types, so the rows are BC's rather than a second copy
@@ -2285,29 +2348,22 @@ public static partial class RecordPatches
             if (IsObjectMetadataSystemTable(table))
                 return MaterialiseObjectMetadataStore(self, perTable, table, tableId);
 
-            // ── Object (2000000001) ──────────────────────────────────────────────────────
-            // The other half of the table relation Object Metadata."Object ID" declares
-            // (TableRelation = Object.ID WHERE(Type = FIELD("Object Type"))). Also NOT a
-            // virtual table: the legacy object registry, a real application-database SQL
-            // table. Its store was empty, so every read answered "no such object" — silently,
-            // because Microsoft has that field's TestTableRelation commented out (#2774).
+            // ── Object (2000000001) HAS NO BRANCH HERE, ON PURPOSE (#3071) ───────────────
+            // It used to have one, projecting the runner's object inventory into the legacy
+            // registry so that Object Metadata."Object ID"'s declared
+            // TableRelation = Object.ID WHERE(Type = FIELD("Object Type")) pointed at
+            // something (#2774). A real service tier then measured the table: corpus codeunit
+            // 61202 (StefanMaron/BusinessCentral.AL.Language.Tests#197) found it present,
+            // readable and EMPTY on seven BC OnPrem legs, with a control arm reading the
+            // populated sibling in the same session so "empty" could not be an unreadable
+            // table. A declared relation is not evidence that its target is populated.
             //
-            // Its rows are an object INVENTORY, so unlike Object Metadata's fixed id list they
-            // are projected from the same EnumerateKnownAlObjects that answers AllObj — which
-            // is what stops the two tables disagreeing about which objects exist.
-            //
-            // Same --test-data precedence as Object Metadata directly above, for the same
-            // reason (a restored backup can genuinely carry rows for a real SQL table), and
-            // through the same ordered materialisation: GetOrCreateHydratedDataAccess is what
-            // stops a second thread being handed this store between "created" and "hydrated",
-            // finding it empty and synthesising over rows that are about to arrive (#2788).
-            // See RecordPatches.ObjectSystemTable.cs and RecordPatches.TableMaterialisation.cs.
-            if (IsObjectSystemTable(table))
-            {
-                var objectDa = GetOrCreateHydratedDataAccess(self, perTable, table, tableId);
-                PopulateObjectSystemTable(objectDa, table);
-                return objectDa;
-            }
+            // So this table now takes the generic fall-through at the end of this method, the
+            // one every other application-database table takes. That is deliberate rather than
+            // incidental: the fall-through is the SAME GetOrCreateHydratedDataAccess call the
+            // deleted branch made, so a --test-data backup's real rows still land, in the same
+            // order, with the same #2788 hand-out guarantee — only the synthesis is gone.
+            // See RecordPatches.ObjectSystemTable.cs for the measurement.
 
             // ── Page Control Field (2000000192) ──────────────────────────────────────────
             // Virtual on the service tier too: one row per field control declared on a

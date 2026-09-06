@@ -922,3 +922,41 @@ anything from the Base Application, and this suite already owned it. `al-languag
 are untouched; no corpus pin moves in this PR.
 
 Written by agent stma-auto-1 (automated implementation agent), cycle 147.
+
+## runner-extras 316 → 326 — `user-system-table-triggers` (#2983, #2356)
+
++10 tests in one new `tests/runner-extras/user-system-table-triggers` suite (id range
+65620-65639), proving that the runner now runs BC's `SystemTableTriggers` arms for the User
+system table (2000000120): the two uniqueness refusals its `OnBeforeInsertAsync` arm raises
+(#2983) and the four table cascades its `OnAfterDeleteAsync` arm runs (#2356).
+
+**316 is measured off `main`, not carried over.** Three earlier drafts of this entry said
+`304 -> 312`, `312 -> 320` and `314 -> 324`; every one was stale by the time it was written,
+because `runner-extras` keeps moving underneath an open PR (`task-scheduler-oos` 6 -> 8 landed
+in between, and `main` has since taken #3240, #3243 and #3248). 316 is the sum of the 56 group
+entries in `main`'s own `test-count-baseline.json` at the rebase this entry was last written
+against, and 326 is the sum of the 57 entries here. Re-measure both ends from the file rather
+than copying either number forward:
+
+```
+python3 -c "import json;g=json.load(open('tests/expectations/count-baseline/test-count-baseline.json'))['suites']['runner-extras']['groups'];print(len(g),sum(v['tests'] for v in g.values()))"
+```
+
+**Why 10 and not 8.** Review found the first draft's combined
+`…TakesItsAccessControlAndIsolatedStorageRows` test could pass against a cascade that does
+nothing: it asserted `Count() = 0` after the delete without ever asserting the row was there
+first, so an `Insert()` that silently failed to persist would read 0 both times. AL also stops a
+test at its first failing assertion, and the Access Control assertion came first — so the
+Isolated Storage half was never evaluated in the RED run at all. It is now one test per cascade
+target, each with a present-before-the-delete precondition, and Tenant Report Layout Selection
+(2000000233) — which had no test at all — is the third. That is 8 -> 10.
+
+Three of the ten are controls, so no refusal can be satisfied by refusing more: a second user
+with a *different* name inserts, two users with *empty* Windows SIDs both insert, and deleting
+one user leaves another user's rows in all three cascade tables alone. Only the first two of
+those pass in the RED baseline; the survival control also asserts the deleted user's own
+companion row is gone, which the unfixed runner does not do. `al-language` (2676), `appGroups`
+(1), `al-language-internals-fixture` (0) and `al-language-onprem` (19) are unchanged; no corpus
+pin bump is involved.
+
+Written by agent impl-24 (automated implementation agent).

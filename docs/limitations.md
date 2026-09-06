@@ -33,6 +33,36 @@ the BC runtime environment:
   .ValidateUserName` is the common one — now runs that check, so a made-up user
   name is refused the way real BC refuses it. The Session virtual table
   (2000000009) is still empty; that gap is tracked separately.
+  Writes to the User table now go through BC's own system-table trigger arms:
+  an insert is refused with BC's own
+  `NavNCLUserTableUserNameMustBeUniqueException` ("The user name must be
+  unique.") when another user already carries that name, and with
+  `NavNCLUserTableUserWindowsSidMustBeUniqueException` when a non-empty Windows
+  Security ID is already taken; a delete cascades into Access Control
+  (2000000053), User Property (2000000121), Isolated Storage (2000000107) and
+  Tenant Report Layout Selection (2000000233), through `Delete()` and
+  `DeleteAll()` alike.
+- **The session user's security id can come from your data.** With
+  `--test-data`, if the backup already holds a user whose name matches the
+  runner's session user (`TESTUSER` by default), the session **adopts that
+  row's** `User Security ID`: `UserSecurityId()` returns the backup's value for
+  the rest of the run, and the runner writes no User row of its own. This is
+  deliberate — BC will not hold two users with the same name, so the
+  alternative is a session whose user exists in no row at all, and a real tier
+  gives a session the security id of the user it authenticated as. The
+  consequence to plan for is that `UserSecurityId()` is then **data-dependent**:
+  AL that asserts a specific session identity sees one value with `--test-data`
+  and another without it. Every adoption prints a `[warn]` line on stderr naming
+  the user, the adopted id and the generated id it replaced, so the value is
+  never unexplained. Two cases still refuse loudly instead of adopting: no row
+  carries the session user's name (so the refusal was not a name collision), and
+  more than one row carries it (a state real BC cannot hold, so the data is
+  inconsistent and picking one would be arbitrary). Two edges to know about: the
+  adoption is decided **after** your bundle's install triggers run, so install
+  code that stored `UserSecurityId()` stored the pre-adoption value
+  ([#3268](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3268));
+  and under `--watch` without `--verbose` the runner silences both output streams
+  to protect the dashboard, so the `[warn]` line is not shown there.
 - **Base app data** — no standard BC tables are populated. Code that reads
   `G/L Account`, `Customer`, `Vendor`, or any other base app table finds them empty
   unless your test inserts data.
@@ -846,35 +876,43 @@ synthesises exactly as it always did.
 
 ---
 
-### `Record "Object"` — the rows are the runner's own object inventory, and most columns read blank
+### `Record "Object"` — it holds no rows, because a real service tier holds none
 
 <a id="object-system-table"></a>
 
-`Object` (2000000001) is the other half of the table relation `Object Metadata`."Object ID"
-declares (`TableRelation = Object.ID WHERE(Type = FIELD("Object Type"))`). It is not a virtual
-table either: it is the legacy object registry, one of the same 43 ids in
-`SystemTables.ApplicationDatabaseTables`, and `System.app`'s own declaration calls it the
-"legacy object metadata storage system superseded by Application Object Metadata table"
-(`Scope = OnPrem`, `ObsoleteState = Pending`, keyed on `Type` + `"Company Name"` + `ID`).
+`Object` (2000000001) is the legacy object registry: not a virtual table, but one of the 43 ids
+in `SystemTables.ApplicationDatabaseTables`, so it has a real SQL schema in the application
+database. `System.app`'s own declaration calls it the "legacy object metadata storage system
+superseded by Application Object Metadata table" (`Scope = OnPrem`, `ObsoleteState = Pending`,
+keyed on `Type` + `"Company Name"` + `ID`).
 
-Its rows are an object *inventory* rather than a fixed id list, so the runner projects the one
-inventory it already has — `EnumerateKnownAlObjects`, the source `AllObj` (2000000038) and
-`AllObjWithCaption` (2000000058) are answered from — into this table's column shape. That is
-deliberate: two registries could disagree about which objects exist, one cannot.
+**The runner synthesises no rows for it.** `Record "Object"` is declarable, openable and
+readable — `Count` answers `0`, `IsEmpty` answers `true`, `FindSet` answers `false`, and `Get`
+raises BC's own "cannot find" error — and the only rows it can ever hold are a `--test-data`
+backup's. This is a match with real BC, not a gap.
 
-| Column | Real BC | al-runner |
-|---|---|---|
-| `Type`, `ID`, `Name` | One row per application object | Projected from the runner's own object inventory |
-| `"Company Name"` | The per-company object registry's company | Always **blank** — every object the runner knows is company-independent |
-| `Modified`, `Compiled`, `"BLOB Reference"`, `"BLOB Size"`, `"DBM Table No."`, `Date`, `Time`, `"Version List"`, `Caption`, `Locked`, `"Locked By"` | What the classic registry stored | Always **`false` / `0` / empty** |
+**This used to be a divergence in the other direction, and a service tier settled it.** #2774
+filled the table by projecting the runner's own object inventory (`EnumerateKnownAlObjects`, the
+source `AllObj` is answered from) into its column shape, reasoning that `Object Metadata`."Object
+ID"'s declared `TableRelation = Object.ID WHERE(Type = FIELD("Object Type"))` otherwise pointed
+at nothing — *silently*, because Microsoft has the accompanying `TestTableRelation` line
+commented out. Corpus codeunit 61202
+([`tests/al-language-onprem/record/TestObjectSystemTable.al`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/197),
+merged as `c04b236`) refutes exactly that inference: on a real tier the relation resolves to
+nothing, because the target table is empty. A declared relation is not evidence that its target
+is populated.
 
-An object kind this table's own `Type` option string cannot name — `Enum`, `Interface`,
-`PermissionSet`, every `*extension` kind — gets **no row** rather than an invented ordinal. The
-option is `TableData,Table,,Report,,Codeunit,XMLport,MenuSuite,Page,Query,System,FieldNumber`,
-a strict subset of `AllObj`'s, so `Object` legitimately lists fewer kinds than `AllObj` does.
+That test reads 2000000001 from a `Target = OnPrem` app and asserts the table is present,
+readable and **empty**. It passed on every BC OnPrem leg that executed it — seven of the
+corpus's eight. The eighth, 27.5, never executed it: its app publish returned HTTP 401/422 and
+all three OnPrem codeunits reported no result at all, so that leg is an infrastructure failure
+and not a dissent. Its centerpiece carries a **control arm** reading the populated sibling `Object
+Metadata` in the same session, so "empty" cannot be an unreadable table misreported as an empty
+one; that arm passes here too. **issue #3071** removed the projection.
 
 **Four of its columns are `OemText`, not the `Text[n]` they are declared as, and that is BC's
-decision rather than the runner's.**
+decision rather than the runner's.** This part is unaffected by the row set and is still
+implemented.
 `Microsoft.Dynamics.Nav.CodeAnalysis.Emit.CodeGenerator.IsOemTextFieldOnObjectTable` is a
 table-id check against 2000000001 and a switch over field numbers 2, 4, 12 and 50; `GetFieldType`
 calls it and substitutes `NavTypeKind.OemText`, so the emitted IL calls
@@ -883,69 +921,58 @@ calls it and substitutes `NavTypeKind.OemText`, so the emitted IL calls
 28.1.49838.53910 — identical bodies. `RecordPatches.NclMetaTableBuilder.MapNavType` mirrors the
 carve-out; without it every AL read of `"Company Name"` / `Name` / `"Version List"` /
 `"Locked By"` throws `NavObjectDefinitionChangedException` ("old type: OemText, new type: Text")
-instead of returning anything.
+instead of returning anything — on an empty table exactly as on a projected row, because the
+exception fires on the compiled field read rather than on the row lookup.
 
-**No service tier has adjudicated the row set yet — but one now can, and is being asked.** Both
-routes a *Cloud-target* app has are closed: `Record "Object"` fails `AL0296` because the table is
-`Scope = OnPrem`, and the `RecordRef` route is refused at runtime by
-`NavRecordRef.CheckIsOpenAllowed`, because 2000000001 is in `SystemTables.InternalTables` (100
-ids on BC 28.1) and the escape hatch `SystemTables.OnPremSystemTableRecordRefAllowed` is only
-`{ 2000000187, 2000000188 }`.
-
-Both closures are decided by the **calling app's compilation target and nothing else** —
+**A Cloud-target app cannot reach this table at all**, and that is a separate question from the
+row set. `Record "Object"` fails `AL0296` because the table is `Scope = OnPrem`, and the
+`RecordRef` route is refused at runtime by `NavRecordRef.CheckIsOpenAllowed`, because 2000000001
+is in `SystemTables.InternalTables` (100 ids on BC 28.1) and the escape hatch
+`SystemTables.OnPremSystemTableRecordRefAllowed` is only `{ 2000000187, 2000000188 }`. Both
+closures are decided by the **calling app's compilation target and nothing else** —
 `NavRecordRef.IsOpenAllowed` returns `true` outright for an OnPrem target without consulting
-`InternalTables` at all — so an OnPrem-target app is refused neither, and needs no `RecordRef`
-in the first place. The corpus gained exactly such an app in corpus PR
-[#179](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/179)
-(`tests/al-language-onprem`), and corpus PRs #179 and #187 have since adjudicated two other
-`Scope = OnPrem` system tables on all eight **OnPrem** legs. Corpus PR
-[#197](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/197) asks the same
-question for this table; **issue #3071** tracks reconciling the runner with whatever comes back.
+`InternalTables` — which is why the corpus can ask the question from `tests/al-language-onprem`
+(corpus PR
+[#179](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/179)) and why
+`tests/runner-extras/object-system-table` declares `"target": "OnPrem"`.
 
-Two measurements to keep apart, because this repository conflated them for a while. The
-*refusal* of a Cloud-target `RecordRef.Open` was originally measured on the **sibling** id —
-corpus PR [#153](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/153) was
-withdrawn after all 8 BC legs of
+That refusal was originally measured on the **sibling** id — corpus PR
+[#153](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/153) was withdrawn
+after all 8 BC legs of
 [run 33968379281](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/actions/runs/33968379281)
 refused 2000000071, and 2000000001 followed by *membership in the same set*, not by its own
 measurement. `AlRunner.Tests/RecordRefCompilationTargetScopeTests` now exercises BC's own
 unreplaced `CheckIsOpenAllowed` body against 2000000001 directly, in both target directions, so
-that inference is retired. The *row set* is the separate question, and only a tier answers it.
+that inference is retired.
 
-Until it does, what the runner-extras suite asserts is the *projection* — a claim about the
-runner — not what a tier's `Object` table holds. **issue #2834** tracks the missing upstream
-coverage for this whole area.
+**Two issues closed with the projection rather than being fixed**, because both were consequences
+of rows that should not have existed:
 
-The blank columns are a **declared divergence** for the same reason Object Metadata's payload
-columns were: there is no registry behind them to reproduce. Per
-`.claude/rules/loud-failures.md` they should refuse by name rather than read blank. The
-per-(table, field) read seam that needs is no longer missing — **#2771** built it
-(`RecordPatches.NoSourceColumns.cs`) and this table is its intended second consumer — so what
-is left is registering the names and measuring the blast radius, which **issue #3096** tracks.
-`Caption` is in the blank list even though the shared inventory does carry a caption, because
-whether this legacy table's field 20 holds the object's AL caption is a BC claim no tier here
-can adjudicate; **issue #2839** tracks it rather than guessing.
+- **#3096** — eleven registry columns (`Modified`, `Compiled`, `"BLOB Reference"`, `"BLOB Size"`,
+  `"DBM Table No."`, `Date`, `Time`, `"Version List"`, `Caption`, `Locked`, `"Locked By"`)
+  answered with BC's own default instead of refusing by name, which
+  `.claude/rules/loud-failures.md` forbids. There is no synthesised row left to read them off,
+  and the only rows that can exist are a backup's — every column of which has a real source, so
+  registering the table in `RecordPatches.NoSourceColumns.cs` would make genuine data
+  unreadable.
+- **#2839** — whether this legacy table's field 20 holds the object's AL `Caption`. The question
+  existed only because the projection had to put something there.
 
-A `--test-data` backup's real rows take precedence over the projection, and that precedence is
-decided from what the backup **actually loaded** rather than from what the in-memory store
-happens to hold (#2875). Reading the store was the earlier design and it could not work: an
-install-baseline restore replays rows the projection itself wrote into a brand-new provider, so
-the projection read its own stale output as somebody else's and stopped topping the table up.
-The on-demand load now records the tables it put rows into, and the projection stands down for
-this table only when that record names it. Its companion is in the capture: while the projection
-owns the rows, table 2000000001 is left out of the install baseline entirely — the same treatment
-the self-populating virtual tables get (#2272), and for the same reason, since the dispatch
-branch re-derives the projection on every access. With nothing captured there is nothing to
-replay, so the ambiguity is gone rather than narrowed.
+A `--test-data` backup's rows still land: 2000000001 has no branch in `GetDataAccessForTableCore`
+any more and takes the generic fall-through, which is the same `GetOrCreateHydratedDataAccess`
+call the deleted branch made, minus the populate, with the same #2788 hand-out ordering. It is
+consequently captured into and restored from the install baseline like its sibling 2000000071,
+rather than being excluded from it: #2875's exclusion existed to stop a *projection* being
+replayed into a fresh provider and read back as a backup's rows, and there is no projection to
+mistake. The provenance recorder #2875 introduced stays — `TestDataProvisioner.LoadOnDemand` is
+the only place that fact exists, and **issue #3236** is its named consumer for the same
+wrong-shaped question on Object Metadata.
 
-One case in the same family is **not** closed here and is reported rather than silent: a store
-published by a *nested* materialisation owes a `--test-data` load that could not run there, and
-the projection fills it before that debt is settled, so the settle writes the load off. Object
-Metadata's dispatch branch holds its populate off until the debt is settled; `Object`'s does not.
-**issue #2877** covers the deferred-load mechanism.
-
-`tests/runner-extras/object-system-table` asserts the runner-side behaviour so it cannot move
-quietly.
+`tests/runner-extras/object-system-table` asserts the runner-side behaviour — that the emptiness
+is a per-table policy rather than a missing inventory (`AllObj` is read in the same session and
+still lists these objects), that all four DataAccess request paths still *answer*, and that the
+four `OemText` columns stay readable — so none of it can move quietly. What the table *holds* is
+asserted upstream by codeunit 61202, where a real tier adjudicates it on every corpus run.
 
 ---
 
@@ -1252,7 +1279,7 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 - **System virtual tables — the runner refuses rather than answering a shape it cannot read.**
   AllObj, AllObjWithCaption, All Profile, Integer, Field, Table/Page/CodeUnit/Report Metadata,
   Report Data Items, Report Layout List, Page Control Field, Metadata and Aggregate Permission
-  Set, Feature Key, Time Zone and Windows Language are all populated in-memory by
+  Set, Feature Key, Session, Time Zone and Windows Language are all populated in-memory by
   `AlRunner/Patches/RecordPatches.*VirtualTable.cs`. Each populator reads something it does not
   own — the runner's in-memory store, the artifact's own metatable and option strings, or
   Microsoft's own data provider — and when what it finds is not the shape it drives, it raises
@@ -1266,6 +1293,31 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   ([#2945](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2945)). Time Zone
   and Windows Language have documented *divergences* as well — see their own sections above —
   and those are answers the runner gives on purpose, not refusals.
+- **`Session` (2000000009) answers one row — the reading session — and two of its columns are
+  blank.** That single row is not a runner simplification: BC's own `SessionDataProvider`
+  returns `new ReadOnlyRecordBuffer[1]` unconditionally, with `My Session` a constant `true`,
+  so on a modern service tier this table answers "who am I" rather than "who is logged on".
+  The runner matches that, reading every identity column back from the skeleton session so the
+  table cannot disagree with `SessionId()` / `UserId()`
+  ([#2940](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2940)).
+
+  `Database Name` and `Application Name` keep BC's own per-field default. BC takes both from
+  `Active Session` (2000000110), a tenant-database table the runner does not maintain — there
+  is no database to name, and the client type BC stringifies into `Application Name` is
+  unmeasured here. Blank rather than invented, tracked in
+  [#3230](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3230). `Host Name`
+  reports the machine the runner is on, the same host-derived answer BC's `DnsHelper.HostName`
+  gives on a tier.
+
+  A third column is answered but should be read as a constant rather than as an observation:
+  **`Login Type` always reports `Windows`.** BC computes it as a direct `(int)` cast of
+  `session.Authenticator.AuthenticationMethod`, and the runner copies that cast. The skeleton
+  `NavUserAuthentication` is built with `RuntimeHelpers.GetUninitializedObject`
+  (`AlRunner/BcRuntime.cs`), so its `AuthenticationMethod` backing field stays at 0 — and
+  `NavClientCredentialType` runs `None = -1, Windows = 0, …`, so 0 is `Windows`, not `None`.
+  The populator's "cannot answer" guard (`ordinal < 0`) therefore never fires. There is no
+  authentication in the runner to observe, so this is a fixed skeleton artifact and not a
+  statement about how the session authenticated.
 - **FilterGroup** — `Rec.FilterGroup(n)` has no effect; filters always apply to group 0.
 - **Query aggregation** — a query column with `Method = Sum`/`Count`/`Average`/`Min`/`Max`
   does not aggregate or group rows; it silently returns each row's own unaggregated value.

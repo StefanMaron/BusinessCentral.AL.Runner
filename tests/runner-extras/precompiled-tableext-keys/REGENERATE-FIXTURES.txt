@@ -1,0 +1,108 @@
+How .alpackages/*.app and .deps-bin/*.dll in this folder were produced
+=====================================================================
+
+These two binary fixtures make "RXK Precompiled Key Dep" (table 65750
+"RXK Key Base Table", tableextension 65770 "RXK Key Base Ext") load as a
+genuinely Tier-1 precompiled dependency -- a compiled DLL under
+.deps-bin/<Publisher>_<Name>_<Version>.dll plus a symbol package under
+.alpackages/, with NO AL source reachable at runtime. That is the only shape
+in which BcAppSymbolCache's SymbolReference.json reader is the thing under
+test; a source dependency would go through TryParseTableExtensionFile, which
+the upstream corpus already covers.
+
+IMPORTANT: the dep's AL source must NEVER live inside this suite folder (or
+any other runner-extras suite folder) -- a flat-bundle suite's compile step
+scans *.al recursively under its own root, so source sitting next to these
+fixtures would be swept into the MAIN app's own compile and the keys would
+arrive through the AL-source parser instead. Keep the dep source external
+(a scratch dir, NOT under tests/), regenerate there, copy only the two
+binary artifacts back.
+
+THE ONE DELIBERATE DIVERGENCE BETWEEN THE DLL AND THE SYMBOL PACKAGE
+--------------------------------------------------------------------
+The dep AL source below declares the extension FIELDS and NO KEYS. The
+symbol package declares the fields AND three keys. That divergence is the
+instrument: with it, the extension keys the test observes can only have come
+from the SymbolReference.json read, so the assertions cannot be satisfied by
+metadata riding along on the compiled DLL. (Same spirit as the sibling
+testpage-precompiled-dep-control fixture's arbitrary-but-consistent control
+ids: a fixture may state what makes the mechanism observable.)
+
+The symbol package's THIRD extension key, "ExtBroken", names a field nothing
+declares. AppendExtensionKeys must drop it whole, and it reports that to
+Console.Error only -- which is not a failure mechanism here -- so the test
+asserts over the key list instead.
+
+Dep AL source (place in a scratch dir, e.g. /tmp/rxk-dep/):
+
+  app.json
+  {
+    "id": "f7a4c2d1-3b6e-4c58-9a71-2d5e8b0c4f93",
+    "name": "RXK Precompiled Key Dep",
+    "publisher": "AL Runner Fixtures",
+    "version": "1.0.0.0",
+    "dependencies": [],
+    "idRanges": [ { "from": 65750, "to": 65799 } ],
+    "runtime": "17.0",
+    "target": "Cloud",
+    "features": []
+  }
+
+  Base.Table.al
+  table 65750 "RXK Key Base Table"
+  {
+      DataClassification = ToBeClassified;
+      fields
+      {
+          field(1; "ID"; Integer) { }
+          field(2; "Name"; Text[50]) { }
+      }
+      keys
+      {
+          key(PK; "ID") { Clustered = true; }
+          key(BaseName; "Name") { }
+      }
+  }
+
+  BaseExt.TableExt.al   -- FIELDS ONLY, no keys; see above
+  tableextension 65770 "RXK Key Base Ext" extends "RXK Key Base Table"
+  {
+      fields
+      {
+          field(65770; "Ext Rank"; Integer) { }
+          field(65771; "Ext Tag"; Text[30]) { }
+      }
+  }
+
+Regenerate, from the repo root (AlRunner already built, -c Release):
+
+  # 1. The compiled DLL half. Running the dep as an ordinary bundle writes a
+  #    cache entry; copy the newest DLL out of the cache dir you passed.
+  dotnet run --project AlRunner -c Release -- --bc-version 28.1 \
+      --cache /tmp/rxk-cache /tmp/rxk-dep
+  cp "$(ls -t /tmp/rxk-cache/*.dll | head -1)" \
+     tests/runner-extras/precompiled-tableext-keys/.deps-bin/AL_Runner_Fixtures_RXK_Precompiled_Key_Dep_1.0.0.0.dll
+
+  # 2. The symbol package. build_symbol_app.py.txt in this folder is the
+  #    exact script used; it writes a NAVX-header zip of NavxManifest.xml +
+  #    SymbolReference.json + [Content_Types].xml, the shape a real BC
+  #    compile produces. NOTE it deliberately sets NO Platform/Runtime
+  #    attribute on <App> and no top-level RuntimeVersion -- #2124: a real
+  #    value there makes BC 27.0's compiler refuse EVERY OTHER dependency
+  #    .app in the same combined tests/runner-extras run with AL1153.
+  python3 tests/runner-extras/precompiled-tableext-keys/build_symbol_app.py.txt \
+     tests/runner-extras/precompiled-tableext-keys/.alpackages/AL_Runner_Fixtures_RXK_Precompiled_Key_Dep_1.0.0.0.app
+
+Verify (RED without the #3216 precompiled-read fix, GREEN with it; no
+--package-cache needed, fully hermetic):
+
+  dotnet run --project AlRunner -c Release -- --bc-version 28.1 --strict \
+      --cache /tmp/rxk-cache tests/runner-extras/precompiled-tableext-keys
+
+  RED  (AlRunner/Patches/* at origin/main): 2 pass, 4 fail
+  GREEN:                                    6 pass, 0 fail
+
+The two that pass in RED are the controls -- the base table's own keys are
+untouched, and the extension FIELDS were already merged before this fix.
+Without them, a fixture that simply failed to load would look like the same
+failure.

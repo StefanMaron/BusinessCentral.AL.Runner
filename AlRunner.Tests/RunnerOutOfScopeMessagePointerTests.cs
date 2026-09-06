@@ -49,10 +49,12 @@ public class RunnerOutOfScopeMessagePointerTests
     // Lower-case lead-in, and trailing whitespace.
     [InlineData("email-smtp — sending mail needs a real SMTP server. see docs/scope.md   ",
                 "email-smtp — sending mail needs a real SMTP server")]
-    // SEMICOLON LEAD-IN. Not a stylistic variant added for thoroughness — it is the form ten
-    // live throw sites actually use (RecordPatches.ObjectSystemTable.cs ×6,
-    // RecordPatches.UserSystemTable.cs, RecordPatches.cs, plus the twelve Object Metadata
-    // refusals #2894 rewrote away from it). TrimTrailingDocPointer strips ';' via its
+    // SEMICOLON LEAD-IN. Not a stylistic variant added for thoroughness — it is the form live
+    // throw sites actually use (RecordPatches.UserSystemTable.cs, RecordPatches.cs, plus the
+    // twelve Object Metadata refusals #2894 rewrote away from it). The six that used to be in
+    // RecordPatches.ObjectSystemTable.cs went with its row projection (#3071); the string below
+    // is kept verbatim anyway, because this Theory pins the NORMALISER, and a form it once had
+    // to handle is exactly the kind of input that must not silently start passing through. TrimTrailingDocPointer strips ';' via its
     // hand-written TrimEnd('.', ',', ';', ':') set, and nothing pinned that: only the full-stop
     // form above was covered, so the semicolon form's contract was asserted incidentally over in
     // ObjectMetadataProviderRowProbeTests — a test whose subject is the populate-once memo — and
