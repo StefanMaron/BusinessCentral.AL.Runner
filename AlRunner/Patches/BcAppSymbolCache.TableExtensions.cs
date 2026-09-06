@@ -266,13 +266,19 @@ internal static partial class BcAppSymbolCache
                 // #3177 — TableRelation, read exactly as the table loop reads it (#2528/#2518).
                 // Both properties, independently: ValidateTableRelation = 0 turns the CHECK off
                 // while leaving the relation itself readable, so reading only the first would
-                // switch validation on wholesale for fields BC does not validate. Gated on field
-                // class for the table loop's documented reason — a FlowFilter's TableRelation is
-                // a lookup hint for the filter's own UI, not a stored value's referential
-                // constraint, and RelationArms also feeds the reverse index
-                // NCLMetaTable_ComputeReferencingRelations builds for rename propagation, which
-                // filters on table id rather than field class. Ungated, the two paths would
-                // disagree again in the other direction.
+                // switch validation on wholesale for fields BC does not validate.
+                //
+                // Gated on field class to match the table loop, whose reason is that a
+                // FlowFilter's TableRelation is a lookup hint for the filter's own UI rather
+                // than a stored value's referential constraint, and that RelationArms also feeds
+                // the reverse index NCLMetaTable_ComputeReferencingRelations builds for rename
+                // propagation, which filters on table id rather than field class. Note the
+                // blast radius here is NOT the 204 fields #2528 cites on the table path: across
+                // the platform packages this gate excludes exactly ONE extension field,
+                // Customer."Ship-to Filter" (5903, FlowFilter), so 260 of the 261 gain relations.
+                // It is kept anyway because the point of the change is that the two loops read
+                // the property the same way; ungated they would disagree again, in the other
+                // direction, over that one field.
                 props.TryGetValue("TableRelation", out var tableRelation);
                 var relationArms = (!isFlowField && !isFlowFilter)
                     ? RecordPatches.TryParseRelationArmsText(tableRelation, fieldName)
