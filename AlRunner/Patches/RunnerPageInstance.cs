@@ -612,9 +612,50 @@ internal sealed partial class RunnerPageInstance
     /// The page's binding for a control id, or null when the control is not one the page
     /// publishes a source expression for (Rec-bound controls are resolved by the caller
     /// against the record instead).
+    ///
+    /// <para><b>One expression can serve several controls (issue #3211).</b> The AL compiler
+    /// registers ONE <c>&lt;Expression&gt;</c> per distinct binding TEXT, named after the
+    /// FIRST control that uses it, and every later control over the same text points at that
+    /// one through its own <c>DataColumnName</c>. Measured on the emitted PageDefinition XML
+    /// for a card page with <c>field(VarCtlA; MyVar)</c> and <c>field(VarCtlB; MyVar)</c>:</para>
+    /// <code>
+    /// &lt;Controls ID="158749901"  Name="VarCtlA" DataColumnName="Control158749901" /&gt;
+    /// &lt;Controls ID="2071839752" Name="VarCtlB" DataColumnName="Control158749901" /&gt;
+    /// &lt;Expression Name="Control158749901" SourceExpression="MyVar" … /&gt;
+    /// </code>
+    /// <para>so <c>Control2071839752</c> is never registered and the <c>"Control" + id</c>
+    /// key alone answers null for VarCtlB — the runner then refused it as unbound, blaming
+    /// the source table for a control that is bound perfectly well. Microsoft's own pages do
+    /// this constantly: page 1612 "Office Admin. Credentials" shows <c>PasswordText</c>
+    /// through both <c>O365Password</c> and <c>OnPremPassword</c>, and page 1327 "Adjust
+    /// Inventory" shows each <c>TempItemJournalLine</c> field twice, once inside the
+    /// single-location group and once inside the repeater.</para>
+    /// <para><c>DataColumnName</c> is the control's OWN statement of which registered
+    /// expression it reads, so following it can never fabricate a binding: a Rec-bound
+    /// control carries the source-table FIELD NUMBER there (<c>DataColumnName="2"</c>), which
+    /// is not a key in the expression table, and an unbound control carries none. The
+    /// <c>"Control" + id</c> lookup stays first because it is the common case and needs no
+    /// metadata read at all.</para>
+    /// <para>A page that ships PRECOMPILED in a dependency .app has no readable
+    /// <c>DataColumnName</c> — its reconstructed metadata carries no control tree at all (see
+    /// <c>DependencyPageMetadataXml</c>) — so the last step asks the dependency's
+    /// SymbolReference.json which other controls declare the same binding TEXT, and takes the
+    /// one of those the page did register. Same rule, same dedup key, read from the only
+    /// source that states it for such a page.</para>
     /// </summary>
     internal object? TryGetSourceExpression(int controlId)
-        => _sourceExpressions[SourceExpressionKey(controlId)];
+    {
+        var expression = _sourceExpressions[SourceExpressionKey(controlId)];
+        if (expression != null) return expression;
+
+        var column = ControlDefinition(controlId)?.DataColumnName;
+        if (!string.IsNullOrEmpty(column) && _sourceExpressions[column] is { } byColumn) return byColumn;
+
+        foreach (var sibling in RecordPatches.DependencyControlsSharingSourceExpression(_pageId, controlId))
+            if (_sourceExpressions[SourceExpressionKey(sibling)] is { } shared) return shared;
+
+        return null;
+    }
 
     // ── control / action state properties (Editable, Enabled, Visible) ─────────────────
     //
