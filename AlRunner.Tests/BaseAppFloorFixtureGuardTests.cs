@@ -217,21 +217,24 @@ public sealed class BaseAppFloorFixtureGuardTests
     };
 
     /// <summary>
-    /// C# test sources permitted to write the floor into a manifest they generate. Three
-    /// are debt tracked in #2364, not permission; two are legitimate. Keep the reasons —
-    /// the rule was ignored once already because it read as advice. Paths are relative to
-    /// AlRunner.Tests/ with '/' separators, exactly like <see cref="AllowedFixtures"/>; for a
-    /// top-level file that is just the file name, which is why widening the scan (#3000) left
-    /// every entry below unchanged.
+    /// C# test sources permitted to write the floor into a manifest they generate. Both
+    /// remaining entries are legitimate: the floor itself is what they assert about. Keep the
+    /// reasons — the rule was ignored once already because it read as advice. Paths are
+    /// relative to AlRunner.Tests/ with '/' separators, exactly like
+    /// <see cref="AllowedFixtures"/>; for a top-level file that is just the file name, which
+    /// is why widening the scan (#3000) left every entry below unchanged.
+    ///
+    /// #2364 removed the three debt entries this list used to carry. They were not exceptions
+    /// to the rule, they were unpaid debt, and each was discharged by giving the class what it
+    /// actually needed instead of the whole Base Application closure:
+    /// InstallBaselineDiskCacheTests and InstallSeedDepCompanyCacheTests needed a dependency
+    /// closure whose install triggers write rows (now <see cref="InstallSeedClosure"/>, one
+    /// table and one OnInstallAppPerCompany trigger), and MissingTestDataDiagnosisTests needed
+    /// a table with real metadata whose id it could assert (now three tables the fixture
+    /// declares itself). Do not add a fourth entry here in place of doing the same.
     /// </summary>
     private static readonly Dictionary<string, string> AllowedSources = new()
     {
-        ["InstallBaselineDiskCacheTests.cs"] =
-            "#2364 debt — #1867 install-baseline caching needs a closure whose install writes rows",
-        ["InstallSeedDepCompanyCacheTests.cs"] =
-            "#2364 debt — same install-baseline closure requirement",
-        ["MissingTestDataDiagnosisTests.cs"] =
-            "#2364 debt — resolves 'Source Code Setup' (table 242) against real metadata",
         ["PlaceholderFloorProvisioningTests.cs"] =
             "legitimate — the placeholder 1.0.0.0 floor IS the subject",
         ["ProvisionExplicitModesTests.cs"] =
@@ -258,7 +261,7 @@ public sealed class BaseAppFloorFixtureGuardTests
     }
 
     [Fact]
-    public void NoTestSource_WritesTheBaseApplicationFloor_ExceptTheAllowlistedFive()
+    public void NoTestSource_WritesTheBaseApplicationFloor_ExceptTheAllowlistedTwo()
     {
         var offenders = new List<string>();
         foreach (var path in TestSourcePaths())
@@ -271,8 +274,9 @@ public sealed class BaseAppFloorFixtureGuardTests
         Assert.True(offenders.Count == 0,
             "These test sources write \"application\" into a manifest without being on the " +
             "allowlist in this file:\n  " + string.Join("\n  ", offenders) +
-            "\n\nSee .claude/rules/no-base-app-in-csharp-tests.md, and #2364 for the three " +
-            "outstanding violations that are debt rather than precedent.");
+            "\n\nSee .claude/rules/no-base-app-in-csharp-tests.md. #2364 discharged the last " +
+            "three debt entries on this list; give the class the closure or the metadata it " +
+            "actually needs rather than adding a fourth.");
     }
 
     /// <summary>
