@@ -1387,17 +1387,28 @@ internal static partial class BcAppSymbolCache
     /// read. Before this, both were dropped — so those three subpages filtered on TWO of
     /// their four conditions and showed rows the host resource does not own.</para>
     ///
-    /// <para>Which of the two is actually in the compiled app is not a guess either. BC
-    /// 27.5's own symbol file states table <c>Resource</c> with 58 fields and NO "Service Zone
-    /// Filter", so <c>CLEAN25</c> was defined when Microsoft compiled it and the guarded entry
-    /// was compiled OUT; "Chargeable Filter" exists and is unconditional, and BC 28.1 — where
-    /// the directive is gone from the source entirely — carries exactly the three
-    /// unconditional entries. So: an entry after a directive that only closes or opens a
-    /// region (<c>#endif</c>, <c>#region</c>, <c>#endregion</c>, <c>#pragma</c>,
-    /// <c>#define</c>, <c>#undef</c>) is unconditionally present and must parse; an entry
-    /// inside an <c>#if</c>/<c>#ifdef</c>/<c>#ifndef</c>/<c>#else</c>/<c>#elif</c> block is
-    /// CONDITIONAL, and the caller resolves it against this app's own fields rather than
-    /// refusing the page over it — see <c>DependencyPageMetadataXml</c>.</para>
+    /// <para>An entry after a directive that only opens or closes a region (<c>#endif</c>,
+    /// <c>#region</c>, <c>#endregion</c>, <c>#pragma</c>, <c>#define</c>, <c>#undef</c>) is
+    /// unconditionally in the app and must parse — <c>"Chargeable Filter"</c> above is only
+    /// unreadable because <c>#endif</c> happens to precede it, and BC 28.1, where the
+    /// directive has been deleted from the source, carries it. An entry inside an
+    /// <c>#if</c>/<c>#ifdef</c>/<c>#ifndef</c>/<c>#else</c>/<c>#elif</c> block is CONDITIONAL:
+    /// this parse cannot evaluate the condition, so the caller resolves it against the app's
+    /// own field inventory rather than refusing the page over it — see
+    /// <c>DependencyPageMetadataXml.EmitSubFormLinkXml</c>.</para>
+    ///
+    /// <para>What the evidence says about <c>CLEAN25</c> specifically, since the runner does
+    /// NOT encode it: the guarded entry names "Service Zone Filter", which the
+    /// <c>Serv. Resource</c> tableextension adds to Resource in BOTH 27.5 and 28.1, so it
+    /// resolves and the reconstruction applies it. Everything observable says that is right —
+    /// Microsoft's shipped W1 builds do not define <c>CLEANnn</c>. 28.1 still carries
+    /// <c>#if not CLEAN27</c> even though it is BC 28, which a defined symbol would make dead
+    /// code; the two guards that read <c>CLEAN25</c>/<c>CLEAN26</c> in 27.5 read
+    /// <c>CLEAN28</c> in 28.1, i.e. the version is bumped rather than the branch resolved;
+    /// and 28.1 wraps the body of one such block in <c>#pragma warning disable AL0432</c>,
+    /// which suppresses an obsolete-USAGE warning and is only needed on code that compiles.
+    /// A defined symbol would flip that to over-filtering — narrower than BC, which fails a
+    /// test loudly, not the silent widening this whole change is about.</para>
     ///
     /// <para>Nesting is tracked across entries, not per entry: in
     /// <c>#if X  A=…, B=…, #endif  C=…</c> only A carries the directive text, and B is inside

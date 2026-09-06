@@ -449,15 +449,22 @@ public static partial class RecordPatches
             ? RecordPatches.TryResolveDependencyFieldId(hostPage.SourceTableId, parentFieldName!)
             : null;
 
-        // #2978: an entry inside an AL `#if` block MAY not be in the compiled app. BC 27.5's
-        // Base Application pages 76/77 declare `#if not CLEAN25 "Service Zone Filter" =
-        // field("Service Zone Filter")` and the same symbol file states table Resource with 58
-        // fields and no such field — CLEAN25 was defined when Microsoft compiled it, so that
-        // entry is not in the app, and BC 28.1 (directive deleted from the source) carries
-        // exactly the three unconditional entries. A field name that does not resolve is a
-        // REFUSAL for an unconditional entry and an ABSENCE for a conditional one: the app
-        // itself is the evidence for which, and refusing the page over a link it does not have
+        // #2978: an entry inside an AL `#if` block may or may not be in the compiled app, and
+        // nothing in the symbol file records which — the compiler stores the property's SOURCE
+        // text, directives and all. So a field name that does not resolve means two different
+        // things depending on the entry: for an UNCONDITIONAL one it is a broken link and the
+        // page must refuse to open (the arm below), and for a CONDITIONAL one it is the app
+        // saying that AL is not in it, where refusing the page over a link it does not have
         // would be a wrong answer in the other direction.
+        //
+        // BC 27.5's Base Application pages 76 "Resource Card" and 77 "Resource List" are the
+        // only real instance: `#if not CLEAN25 "Service Zone Filter" = field("Service Zone
+        // Filter")`. That name resolves — the Serv. Resource tableextension adds it to
+        // Resource in both 27.5 and 28.1 — so this applies it, and every observable signal
+        // agrees that is right (see BcAppSymbolCache.SplitPropertyEntries for why CLEANnn
+        // reads as undefined in Microsoft's shipped builds). If that ever turns out backwards
+        // the page over-filters, which is narrower than BC and fails loudly, rather than the
+        // silent widening this change exists to stop.
         if (link.Conditional && (partFieldId is null || (isFieldKind && parentFieldId is null)))
         {
             Console.Error.WriteLine(
@@ -588,10 +595,10 @@ public static partial class RecordPatches
             var fieldId = RecordPatches.TryResolveDependencyFieldId(page.SourceTableId, filter.FieldName);
 
             // #2978: an entry inside an AL `#if` block may not be in the compiled app at all,
-            // and this app's own field list is the evidence for which — same rule, same
-            // reasoning as EmitSubFormLinkXml's conditional arm. No SourceTableView in BC 27.5
-            // or 28.1 W1 carries a directive today; the arm exists so the two paths through
-            // the same splitter cannot answer it differently.
+            // and this app's own field inventory is the only evidence available — same rule,
+            // same reasoning as EmitSubFormLinkXml's conditional arm. No SourceTableView in BC
+            // 27.5 or 28.1 W1 carries a directive today; the arm exists so the two paths
+            // through the same splitter cannot answer it differently.
             if (filter.Conditional && fieldId is null)
             {
                 Console.Error.WriteLine(

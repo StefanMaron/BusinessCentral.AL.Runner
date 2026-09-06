@@ -698,14 +698,23 @@ public class DependencyPageMetadataXmlTests
     /// does not own. That is not the unmeasured tail this issue was filed about; it is
     /// shipping, on a BC version this runner's own CI matrix covers.</para>
     ///
-    /// <para>Which of the two entries is really in the compiled app is measured, not guessed:
-    /// BC 27.5's own symbol file states table <c>Resource</c> with 58 fields and NO "Service
-    /// Zone Filter", so <c>CLEAN25</c> WAS defined when Microsoft compiled it and the guarded
-    /// entry was compiled out — and BC 28.1, where the directive has been deleted from the
-    /// source, carries exactly the three unconditional entries and no "Service Zone Filter".
-    /// So the <c>#endif</c> entry must parse and apply, and the <c>#if</c> entry must be
-    /// omitted rather than turned into a refusal: refusing a page over a link the app does not
-    /// contain is a wrong answer in the other direction.</para>
+    /// <para>The <c>#endif</c> entry is unconditionally in the app and must parse and apply —
+    /// BC 28.1, where the directive has been deleted from the source, carries it. The
+    /// <c>#if</c> entry is CONDITIONAL, and nothing in the symbol file records whether the
+    /// compiler kept it, so the runner resolves it against the app's own field inventory
+    /// instead of guessing: applied when every name it uses resolves, omitted when one does
+    /// not. Omitted, NOT refused — refusing a page over a link the app does not contain is a
+    /// wrong answer in the other direction, and this fixture is the omitted half.</para>
+    ///
+    /// <para>On the real BC 27.5 pages the guarded name DOES resolve ("Service Zone Filter"
+    /// comes from the Serv. Resource tableextension, present in 27.5 and 28.1 alike), so the
+    /// runner applies it and those three parts go from two link conditions to four. Everything
+    /// observable says that is right: Microsoft's shipped W1 builds do not appear to define
+    /// <c>CLEANnn</c> — 28.1 still carries <c>#if not CLEAN27</c> though it is BC 28, the
+    /// 27.5 guards reading <c>CLEAN25</c>/<c>CLEAN26</c> read <c>CLEAN28</c> in 28.1 rather
+    /// than having been resolved, and 28.1 wraps one such block's body in
+    /// <c>#pragma warning disable AL0432</c>, which suppresses an obsolete-USAGE warning and
+    /// is only needed on code that compiles.</para>
     ///
     /// <para>Measured across every extension of BC 27.5 and 28.1 W1 — 7,646 pages, 3,655
     /// SubPageLink entries, 981 SourceTableView pages with 547 where-entries — those six
@@ -798,7 +807,8 @@ public class DependencyPageMetadataXmlTests
     /// directive text. Comma-splitting only puts <c>#if not CLEAN25</c> on the FIRST guarded
     /// entry, so a second entry inside the same block carries no <c>#</c> line of its own —
     /// and reading it as unconditional would turn its absent field into a refusal, i.e. a page
-    /// that will not open because of AL the compiler removed.
+    /// that will not open because of AL that is not in the app. Before this, that is exactly
+    /// what happened: the pre-fix build emitted this entry with <c>FieldID="0"</c>.
     /// </summary>
     [Fact]
     public void TryBuildDependencyPageMetadata_SecondEntryInsideTheSameDirectiveBlock_IsConditionalToo()
