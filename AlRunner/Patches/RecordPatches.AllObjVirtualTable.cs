@@ -340,7 +340,6 @@ public static partial class RecordPatches
     private static Dictionary<(string Kind, int Id), Guid> BuildObjectOwnerIndex()
     {
         var index = new Dictionary<(string Kind, int Id), Guid>();
-        var fromSymbols = new HashSet<Guid>();
         foreach (var appPath in _bcAppPaths.ToArray())
         {
             BcAppSymbolCache.AppSymbols symbols;
@@ -351,7 +350,6 @@ public static partial class RecordPatches
                 // getting an invented owner — Guid.Empty then matches no Published Application
                 // row, which is the honest answer.
                 continue;
-            fromSymbols.Add(appId);
             foreach (var o in symbols.Objects)
                 index[(NormalizeObjectTypeName(o.Kind), o.Id)] = appId;
         }
@@ -367,20 +365,55 @@ public static partial class RecordPatches
         // another app group was current. Reading the declaring assembly is exact regardless of
         // which app group is executing.
         //
-        // Assemblies whose app already came from a symbol reference are skipped: those objects
-        // are indexed and enumerating Base Application's ~132k types to re-learn it is not free.
+        // ── Why this is a UNION and not an either/or (#3049) ──────────────────────────────
+        // This loop used to skip every assembly whose app id had already been seen in some
+        // registered .app's SymbolReference.json, on the assumption that a symbol reference
+        // lists all of its app's objects, so re-deriving them from the assembly was pure cost.
+        // That assumption does not hold for the app UNDER TEST. RegisterBundleSymbolApps
+        // deliberately registers a prebuilt `.app` sitting in the bundle root — it is where a
+        // bundle's own BC-compiler-assigned query column ids come from — while the runner
+        // compiles that same app from SOURCE. A bundle-root .app that predates a source change
+        // is therefore normal, not corrupt, and every object added since is missing from it.
+        //
+        // Measured on the al-language corpus: its checked-in
+        // `AL Language_AL Language Coverage Tests_1.0.0.0.app` lists 191 objects and has not
+        // been rebuilt since corpus PR #7, so table 60404 "ALT Reten Pol Owned" — compiled from
+        // source in this process — was stamped Guid.Empty. Codeunit 60405's
+        // AppCanRegisterItsOwnTableOnTheAllowedList then failed on real System Application
+        // code: Reten. Pol. Allowed Tbl. Impl.ModuleOwnsTable compares that column against the
+        // caller's Published Application row and declined the app its own table. The sibling
+        // negative kept passing throughout, because "unowned" and "owned by someone else" are
+        // the same answer to that comparison.
+        //
+        // So both sources are read and the SYMBOL answer wins on conflict: it is exact for a
+        // precompiled .app, and the assembly pass only fills ids no symbol reference claimed.
+        // Cost is not the reason for a skip any more either — TypeNamesWithPrefix reads the
+        // TypeDef table and resolves no CLR Type at all, where EnumerateWithPrefix
+        // materialised a RuntimeType per match.
         foreach (var (asm, appId) in AlRunner.BcRuntime.RegisteredModuleAssemblies())
         {
-            if (fromSymbols.Contains(appId)) continue;
+            AlRunner.Infrastructure.AssemblyTypeIndex typeIndex;
+            try { typeIndex = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm); }
+            catch { continue; }
             foreach (var (prefix, kind) in _emittedObjectTypePrefixes)
             {
-                IEnumerable<Type> types;
-                try { types = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm).EnumerateWithPrefix(prefix); }
-                catch { continue; }
-                foreach (var t in types)
+                IEnumerable<string> names;
+                try
                 {
-                    if (!int.TryParse(t.Name.AsSpan(prefix.Length), out var id) || id <= 0) continue;
-                    index[(NormalizeObjectTypeName(kind), id)] = appId;
+                    names = typeIndex.IsMetadataBacked
+                        ? typeIndex.TypeNamesWithPrefix(prefix)
+                        // A dynamic (Reflection.Emit) assembly has no TypeDef table to read;
+                        // it has a handful of types, so resolving them is cheap.
+                        : typeIndex.EnumerateWithPrefix(prefix).Select(t => t.Name);
+                }
+                catch { continue; }
+                foreach (var name in names)
+                {
+                    if (!int.TryParse(name.AsSpan(prefix.Length), out var id) || id <= 0) continue;
+                    var key = (NormalizeObjectTypeName(kind), id);
+                    // TryAdd, not an assignment: a symbol reference that named this object
+                    // already answered, and that answer is the authoritative one.
+                    index.TryAdd(key, appId);
                 }
             }
         }
