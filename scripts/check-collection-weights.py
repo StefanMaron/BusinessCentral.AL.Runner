@@ -27,11 +27,48 @@ above threshold has no such false-positive mode: below threshold it is genuinely
 file header's own argument — the ~66 collections under it total 2.8s), and above threshold
 it is precisely the failure #1887 found.
 
-Usage:
-  scripts/check-collection-weights.py <results.trx> [--orderer PATH] [--threshold SECONDS]
+Two bands, and a clock that is not the wall clock (#3103)
+--------------------------------------------------------
+This runs in bc-tests.yml WITHOUT continue-on-error, inside the legs that roll up into the
+`All BC versions passed` required check. So every number it compares against decides
+whether somebody's pull request goes red — and until #3103 it compared summed wall-clock
+seconds measured on GitHub's shared runners against one fixed line at 2x
+UnmeasuredWeightSeconds (60s). Wall clock on a shared runner is not a property of the
+collection: SuiteAbortOnTimeoutTests, untouched by either pull request, summed 59.4s on
+PR #3082's run and 63.7s on PR #3083's and produced opposite verdicts on the same code.
+A red required check that is routinely somebody else's fault is worse than the drift it
+guards, because it teaches people to skim past red.
 
-Exit code is 1 (loud failure) when a heavy collection is missing from the table, 0
-otherwise — including when the trx file is absent/unparsable, matching
+The evidence that the old line sat exactly where the mass is: of the collections added to
+MeasuredWeightSeconds *because* they tripped this gate, most were recorded at 60-63s, and
+their own comments say they crossed only on whichever leg happened to run slow. So:
+
+1. **Calibrate to the leg, not to the wall.** Collections already in the table measure long
+   on exactly the legs where an unlisted one measures long, so the median of
+   observed/recorded over the paired entries IS this leg's clock relative to the clock the
+   table was recorded on. Both bands are scaled by it. The factor floors at 1.0 — a fast
+   leg must never make the gate STRICTER than the historical line, or this change would
+   turn PRs red that pass today — and is clamped at MAX_LOAD_FACTOR so a wrecked table
+   cannot switch the gate off. It needs MIN_CALIBRATION_SAMPLES pairs; below that it is two
+   numbers, not a measurement, and the factor stays 1.0.
+
+2. **Advisory below, failing above.** At/above 2x UnmeasuredWeightSeconds the collection is
+   worth recording, and is reported as a GitHub `::warning::` annotation so it lands in the
+   checks UI instead of 400 lines down a log — visible, per #1887's actual complaint, but
+   exit 0. Only at/above 3x does it fail: a collection weighted 30s when it really costs
+   90s+ is the tail #1887 measured, and 90s sits in a sparse part of the observed
+   distribution rather than in the middle of it.
+
+What is deliberately unchanged: a genuinely heavy unlisted collection (#1887's own
+InstallSeedDepCompanyCacheTests at ~196s) still fails the leg, on a slow leg too, because
+196s does not become cheap when the box is 60% slow.
+
+Usage:
+  scripts/check-collection-weights.py <results.trx> [--orderer PATH]
+      [--advisory-threshold SECONDS] [--fail-threshold SECONDS] [--no-load-calibration]
+
+Exit code is 1 (loud failure) when a collection above the failing band is missing from the
+table, 0 otherwise — including when the trx file is absent/unparsable, matching
 scripts/trx-occupancy.py's "nothing to report" convention for a step that should not fail
 the build over missing input data.
 """
@@ -54,8 +91,22 @@ DEFAULT_ORDERER = Path(__file__).resolve().parent.parent / "AlRunner.Tests" / "C
 
 # A collection below 2x UnmeasuredWeightSeconds cannot create a meaningful tail — the file
 # header's own argument for why the ~66 collections below that line total 2.8s and are
-# harmless. Anything at or above it is exactly the shape #1887 found.
-DEFAULT_THRESHOLD_MULTIPLE = 2
+# harmless. At or above it, the collection is worth recording: that is the ADVISORY band.
+DEFAULT_ADVISORY_MULTIPLE = 2
+
+# ...and 3x is where being weighted at UnmeasuredWeightSeconds costs a tail worth turning a
+# required check red for. #3103: keeping the failing line at 2x put it in the middle of the
+# observed distribution — most collections ever added to the table because this gate caught
+# them measured 60-63s, i.e. within noise of the line itself.
+DEFAULT_FAIL_MULTIPLE = 3
+
+# Fewer paired collections than this is not a measurement of the leg, so no calibration.
+# The real table carries ~45 entries and a real run observes nearly all of them.
+MIN_CALIBRATION_SAMPLES = 8
+
+# An upper bound on how far a slow leg may push the bands out, so a table that has drifted
+# wholesale (or a truncated trx) cannot silently disable the gate.
+MAX_LOAD_FACTOR = 3.0
 
 
 def load_trx_per_collection_seconds(path):
@@ -104,12 +155,55 @@ def find_missing_heavy(observed_seconds, table, threshold_seconds):
     )
 
 
+def leg_load_factor(observed_seconds, table,
+                    min_samples=MIN_CALIBRATION_SAMPLES, max_factor=MAX_LOAD_FACTOR):
+    """How slow THIS leg ran, relative to the clock MeasuredWeightSeconds was recorded on.
+
+    #3103. Every collection already in the table is a stopwatch that was started on the
+    same box as the unlisted one, so the median of observed/recorded across the paired
+    entries separates "this collection got heavier" from "this runner was busy". The median
+    (not the mean) because the table is hand-maintained and a couple of its entries are
+    knowingly stale — the script's header says drift-on-a-present-entry is out of scope, so
+    those entries must not be allowed to drag the calibration.
+
+    Floored at 1.0: this is allowed to widen the bands on a slow leg, never to narrow them
+    on a fast one. Narrowing would fail collections that pass today, which is a different
+    change from the one #3103 asks for. Clamped at max_factor, and refused outright below
+    min_samples pairs.
+    """
+    ratios = sorted(observed_seconds[cls] / recorded
+                    for cls, recorded in table.items()
+                    if recorded > 0 and cls in observed_seconds)
+    if len(ratios) < min_samples:
+        return 1.0
+    mid = len(ratios) // 2
+    median = ratios[mid] if len(ratios) % 2 else (ratios[mid - 1] + ratios[mid]) / 2
+    return min(max(median, 1.0), max_factor)
+
+
+def classify_missing(observed_seconds, table, advisory_seconds, fail_seconds):
+    """Split the unlisted-and-heavy collections into (failing, advisory).
+
+    Failing is at/above fail_seconds — the #1887 tail, loud and red. Advisory is the band
+    between advisory_seconds and fail_seconds: worth recording, reported by name, exit 0.
+    Both heaviest-first.
+    """
+    over = find_missing_heavy(observed_seconds, table, advisory_seconds)
+    failing = [(cls, secs) for cls, secs in over if secs >= fail_seconds]
+    advisory = [(cls, secs) for cls, secs in over if secs < fail_seconds]
+    return failing, advisory
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("path")
     ap.add_argument("--orderer", default=str(DEFAULT_ORDERER))
-    ap.add_argument("--threshold", type=float, default=None,
-                     help="override the computed 2x-unmeasured threshold directly")
+    ap.add_argument("--advisory-threshold", type=float, default=None,
+                    help="override the computed 2x-unmeasured 'worth recording' line")
+    ap.add_argument("--fail-threshold", type=float, default=None,
+                    help="override the computed 3x-unmeasured 'fail the leg' line")
+    ap.add_argument("--no-load-calibration", action="store_true",
+                    help="compare raw wall-clock seconds, without the #3103 leg calibration")
     args = ap.parse_args()
 
     try:
@@ -122,27 +216,50 @@ def main():
         return 0
 
     table, unmeasured = load_table(args.orderer)
-    threshold = args.threshold if args.threshold is not None else unmeasured * DEFAULT_THRESHOLD_MULTIPLE
 
-    missing = find_missing_heavy(observed, table, threshold)
-    if not missing:
+    load_factor = 1.0 if args.no_load_calibration else leg_load_factor(observed, table)
+    advisory = (args.advisory_threshold if args.advisory_threshold is not None
+                else unmeasured * DEFAULT_ADVISORY_MULTIPLE) * load_factor
+    fail = (args.fail_threshold if args.fail_threshold is not None
+            else unmeasured * DEFAULT_FAIL_MULTIPLE) * load_factor
+
+    failing, borderline = classify_missing(observed, table, advisory, fail)
+
+    calibration = (f"leg clock {load_factor:.2f}x the table's"
+                   if load_factor > 1.0 else "leg clock at or under the table's")
+    bands = (f"bands this run: report >= {advisory:.0f}s, fail >= {fail:.0f}s "
+             f"({calibration}; {len(table)} entries checked against "
+             f"{len(observed)} observed collections)")
+
+    # Borderline entries are reported whether or not anything failed: they are the drift
+    # #1887 cares about, and ::warning:: puts them in the checks UI rather than 400 lines
+    # down a log. Not a failure — see this file's header on why wall clock at 60s is not a
+    # property of the collection (#3103).
+    for cls, secs in borderline:
+        print(f"::warning file=AlRunner.Tests/CollectionCostOrderer.cs::"
+              f"{cls} cost {secs:.1f}s this run and is absent from "
+              f"CollectionCostOrderer.MeasuredWeightSeconds, so it is dispatched as if it "
+              f"cost {unmeasured}s. Record it (issue #1887).")
+
+    if not failing:
         print(f"CollectionCostOrderer.MeasuredWeightSeconds: no collection above "
-              f"{threshold:.0f}s is missing from the table ({len(table)} entries checked "
-              f"against {len(observed)} observed collections). OK.")
+              f"{fail:.0f}s is missing from the table; {bands}. OK.")
         return 0
 
     print("=" * 78)
     print("STALE CollectionCostOrderer.MeasuredWeightSeconds TABLE (issue #1887)")
     print("=" * 78)
-    print(f"The following collection(s) cost >= {threshold:.0f}s this run but are absent")
+    print(f"The following collection(s) cost >= {fail:.0f}s this run but are absent")
     print(f"from the table in {args.orderer}. Each falls back to")
     print(f"UnmeasuredWeightSeconds ({unmeasured}s) and can be scheduled as a")
     print("single-threaded tail late in the run — exactly the failure issue #1887 found.")
     print()
-    for cls, secs in missing:
+    for cls, secs in failing:
         print(f"  {secs:7.1f}s  {cls}")
     print()
-    noun = "it" if len(missing) == 1 else "them"
+    print(bands + ".")
+    print()
+    noun = "it" if len(failing) == 1 else "them"
     print(f"Add {noun} to MeasuredWeightSeconds in AlRunner.Tests/CollectionCostOrderer.cs")
     print("with its measured seconds (round down), per the file header's")
     print("'Why a measured table' note.")

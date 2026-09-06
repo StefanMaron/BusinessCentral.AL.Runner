@@ -91,6 +91,88 @@ class FindMissingHeavyTests(unittest.TestCase):
             [cls for cls, _ in missing], ["VeryHeavyUnlistedTests", "MediumUnlistedTests"])
 
 
+class LegLoadFactorTests(unittest.TestCase):
+    """#3103: the gate is compared against a wall clock measured on shared runners, so the
+    same collection landed at 59.4s on one PR's run and 63.7s on another's and produced
+    opposite verdicts. The leg's own clock is recoverable from the run itself — every
+    collection that IS in the table measures long on the same leg that measures an unlisted
+    one long — so calibrate against that instead of trusting raw seconds."""
+
+    def test_is_one_when_the_leg_measures_exactly_what_the_table_records(self):
+        table = {f"C{i}Tests": 100 for i in range(10)}
+        observed = dict(table)
+        self.assertAlmostEqual(ccw.leg_load_factor(observed, table), 1.0, places=3)
+
+    def test_tracks_a_uniformly_slow_leg(self):
+        # Every measured collection ran 40% long; that is the leg, not the collections.
+        table = {f"C{i}Tests": 100 for i in range(10)}
+        observed = {k: v * 1.4 for k, v in table.items()}
+        self.assertAlmostEqual(ccw.leg_load_factor(observed, table), 1.4, places=3)
+
+    def test_never_tightens_the_gate_on_a_fast_leg(self):
+        # Deliberately constructed: a leg 40% FASTER than the table. Scaling the bar down
+        # would fail collections that pass today, so the factor floors at 1.0 -- this
+        # change may only ever loosen the gate, never tighten it.
+        table = {f"C{i}Tests": 100 for i in range(10)}
+        observed = {k: v * 0.6 for k, v in table.items()}
+        self.assertAlmostEqual(ccw.leg_load_factor(observed, table), 1.0, places=3)
+
+    def test_ignores_a_few_wildly_drifted_entries(self):
+        # The table is hand-maintained and some entries are stale by design (the script's
+        # own header says drift-on-a-present-entry is out of scope). A median over the
+        # pairs must not be dragged by two of them.
+        table = {f"C{i}Tests": 100 for i in range(10)}
+        observed = {k: v * 1.2 for k, v in table.items()}
+        observed["C0Tests"] = 1000
+        observed["C1Tests"] = 5
+        self.assertAlmostEqual(ccw.leg_load_factor(observed, table), 1.2, places=3)
+
+    def test_falls_back_to_one_without_enough_paired_collections(self):
+        # Two pairs is not a leg measurement, it is two numbers. Refuse to calibrate.
+        table = {"C0Tests": 100, "C1Tests": 100}
+        observed = {"C0Tests": 500, "C1Tests": 500}
+        self.assertAlmostEqual(ccw.leg_load_factor(observed, table), 1.0, places=3)
+
+    def test_is_clamped_so_a_broken_table_cannot_disable_the_gate(self):
+        table = {f"C{i}Tests": 10 for i in range(10)}
+        observed = {k: 10_000 for k in table}
+        self.assertAlmostEqual(
+            ccw.leg_load_factor(observed, table), ccw.MAX_LOAD_FACTOR, places=3)
+
+
+class ClassifyMissingTests(unittest.TestCase):
+    """Two bands, not one: at/above the advisory line the collection is worth recording;
+    only at/above the fail line does it cost enough tail to justify a red required check."""
+
+    TABLE = {"HeavyKnownTests": 200}
+
+    def test_a_borderline_collection_is_advisory_not_failing(self):
+        failing, advisory = ccw.classify_missing(
+            {"BorderlineUnlistedTests": 63.7}, self.TABLE,
+            advisory_seconds=60, fail_seconds=90)
+        self.assertEqual(failing, [])
+        self.assertEqual([cls for cls, _ in advisory], ["BorderlineUnlistedTests"])
+
+    def test_a_genuinely_heavy_collection_still_fails(self):
+        failing, advisory = ccw.classify_missing(
+            {"NewHeavyUnlistedTests": 196}, self.TABLE,
+            advisory_seconds=60, fail_seconds=90)
+        self.assertEqual([cls for cls, _ in failing], ["NewHeavyUnlistedTests"])
+        self.assertEqual(advisory, [])
+
+    def test_a_light_collection_is_neither(self):
+        failing, advisory = ccw.classify_missing(
+            {"TinyUnlistedTests": 5}, self.TABLE,
+            advisory_seconds=60, fail_seconds=90)
+        self.assertEqual((failing, advisory), ([], []))
+
+    def test_a_present_entry_is_neither_however_heavy(self):
+        failing, advisory = ccw.classify_missing(
+            {"HeavyKnownTests": 900}, self.TABLE,
+            advisory_seconds=60, fail_seconds=90)
+        self.assertEqual((failing, advisory), ([], []))
+
+
 class MainExitCodeTests(unittest.TestCase):
     """End-to-end through main(): a missing heavy collection in a real trx must fail the
     process (exit 1), a clean one must not (exit 0) — the actual CI contract."""
@@ -147,6 +229,114 @@ class MainExitCodeTests(unittest.TestCase):
             return ccw.main()
         finally:
             sys.argv = old_argv
+
+
+class StraddleTheThresholdTests(unittest.TestCase):
+    """#3103, end to end through main(). Every fixture here is built deliberately: the
+    verdict must be a property of the collection, not of how loaded GitHub's shared runner
+    happened to be while it was measured."""
+
+    HEADER = ('<?xml version="1.0" encoding="UTF-8"?>\n'
+              '<TestRun xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">\n')
+
+    def _write_trx(self, per_class_seconds):
+        """A trx with one test per class, each running for the given number of seconds."""
+        defs, results = [], []
+        for i, (cls, secs) in enumerate(per_class_seconds.items()):
+            tid = f"{i:08d}-1111-1111-1111-111111111111"
+            defs.append(f'    <UnitTest id="{tid}">'
+                        f'<TestMethod className="AlRunner.Tests.{cls}" name="F" /></UnitTest>')
+            total_ms = int(round(secs * 1000))
+            end = ("2026-01-01T"
+                   f"{total_ms // 3_600_000:02d}:"
+                   f"{total_ms // 60_000 % 60:02d}:"
+                   f"{total_ms // 1000 % 60:02d}."
+                   f"{total_ms % 1000:03d}+00:00")
+            results.append(f'    <UnitTestResult testId="{tid}" '
+                           f'startTime="2026-01-01T00:00:00.000+00:00" endTime="{end}" />')
+        xml = (self.HEADER + "  <TestDefinitions>\n" + "\n".join(defs)
+               + "\n  </TestDefinitions>\n  <Results>\n" + "\n".join(results)
+               + "\n  </Results>\n</TestRun>\n")
+        with tempfile.NamedTemporaryFile("w", suffix=".trx", delete=False) as f:
+            f.write(xml)
+            return f.name
+
+    def _write_orderer(self, entries):
+        body = "\n".join(f'["{k}"] = {v},' for k, v in entries.items())
+        with tempfile.NamedTemporaryFile("w", suffix=".cs", delete=False) as f:
+            f.write("public const int UnmeasuredWeightSeconds = 30;\n")
+            f.write("MeasuredWeightSeconds = new Dictionary<string, int> {\n"
+                    + body + "\n};\n")
+            return f.name
+
+    @staticmethod
+    def _run(trx, orderer):
+        import contextlib, io, sys
+        old_argv = sys.argv
+        buf = io.StringIO()
+        try:
+            sys.argv = ["check-collection-weights.py", trx, "--orderer", orderer]
+            with contextlib.redirect_stdout(buf):
+                rc = ccw.main()
+        finally:
+            sys.argv = old_argv
+        return rc, buf.getvalue()
+
+    # A reference-speed leg: twelve measured collections that each land exactly on their
+    # recorded value, so leg_load_factor is 1.0 and the bars are the unscaled 60s/90s.
+    REFERENCE_TABLE = {f"Known{i}Tests": 100 for i in range(12)}
+
+    def _reference_leg(self, extra, load=1.0):
+        observed = {k: v * load for k, v in self.REFERENCE_TABLE.items()}
+        observed.update(extra)
+        return self._write_trx(observed), self._write_orderer(self.REFERENCE_TABLE)
+
+    def test_the_same_collection_gets_the_same_verdict_on_both_sides_of_60s(self):
+        # The measured instance from #3103: SuiteAbortOnTimeoutTests, untouched by either
+        # PR, summed 59.4s on one run and 63.7s on another and produced opposite verdicts.
+        verdicts = {}
+        for secs in (59.4, 63.7):
+            trx, orderer = self._reference_leg({"SuiteAbortOnTimeoutTests": secs})
+            verdicts[secs] = self._run(trx, orderer)[0]
+        self.assertEqual(verdicts[59.4], verdicts[63.7])
+        self.assertEqual(verdicts[63.7], 0)
+
+    def test_a_borderline_collection_is_still_named_in_the_output(self):
+        # Not failing is not the same as going quiet: #1887's whole complaint was drift
+        # nobody saw. It must still be reported, and as a GitHub annotation so it lands in
+        # the checks UI rather than 400 lines down a log.
+        trx, orderer = self._reference_leg({"SuiteAbortOnTimeoutTests": 63.7})
+        rc, out = self._run(trx, orderer)
+        self.assertEqual(rc, 0)
+        self.assertIn("SuiteAbortOnTimeoutTests", out)
+        self.assertIn("::warning", out)
+
+    def test_a_genuinely_heavy_unlisted_collection_still_fails_the_run(self):
+        # #1887's own case, InstallSeedDepCompanyCacheTests at ~196s. This is the property
+        # the fix may not give up.
+        trx, orderer = self._reference_leg({"InstallSeedDepCompanyCacheTests": 196})
+        rc, out = self._run(trx, orderer)
+        self.assertEqual(rc, 1)
+        self.assertIn("InstallSeedDepCompanyCacheTests", out)
+
+    def test_identical_seconds_are_read_against_the_legs_own_clock(self):
+        # The load-bearing assertion, and the one a no-op implementation cannot pass: the
+        # SAME 100s measurement fails on a leg running at the table's speed and passes on a
+        # leg where every measured collection also ran 60% long -- because on that leg 100s
+        # is ~62s of work, under the bar. Nothing about the collection changed; only the
+        # box did.
+        fast_trx, orderer = self._reference_leg({"UnlistedTests": 100}, load=1.0)
+        slow_trx, _ = self._reference_leg({"UnlistedTests": 100}, load=1.6)
+        self.assertEqual(self._run(fast_trx, orderer)[0], 1)
+        self.assertEqual(self._run(slow_trx, orderer)[0], 0)
+
+    def test_a_slow_leg_cannot_hide_a_collection_that_is_heavy_at_reference_speed(self):
+        # The negative direction of the same knob: 400s on a leg running 60% long is still
+        # 250s of real work, far above the bar, so calibration must not swallow it.
+        trx, orderer = self._reference_leg({"UnlistedTests": 400}, load=1.6)
+        rc, out = self._run(trx, orderer)
+        self.assertEqual(rc, 1)
+        self.assertIn("UnlistedTests", out)
 
 
 if __name__ == "__main__":

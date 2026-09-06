@@ -522,6 +522,13 @@ jobs:
       # produced a trx — a collection dispatched at UnmeasuredWeightSeconds because it is
       # genuinely missing from the table is loud CI failure, per
       # .claude/rules/loud-failures.md, not another quiet report.
+      #
+      # #3103: it fails only above 3x UnmeasuredWeightSeconds, and reports the 2x..3x band as
+      # a ::warning:: annotation instead. This job rolls up into the `All BC versions passed`
+      # required check, and the old single line at 2x was summed wall clock on a shared
+      # runner — the same untouched collection landed at 59.4s on one PR's run and 63.7s on
+      # another's, so an unrelated PR went red. Both bands are also scaled by how slow this
+      # leg measured against the weight table's own entries. See the script's header.
       - name: Collection weight table freshness (unit tests)
         if: ${{ matrix.target.unit-tests }}
         run: |
