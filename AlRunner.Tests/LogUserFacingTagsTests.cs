@@ -23,6 +23,9 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+// Serial: this class swaps the process-wide Console writers and Log.Verbose. See
+// ConsoleFilterSerialCollection for the parallelism bug that made a [watch] case fail.
+[Collection(ConsoleFilterSerialCollection.Name)]
 public sealed class LogUserFacingTagsTests
 {
     private static string FilterOnce(string line, bool verbose)
@@ -71,6 +74,12 @@ public sealed class LogUserFacingTagsTests
     // dependency, so being eaten here makes the fix a no-op at default verbosity — the same
     // shape as the [bc] and [expectations] swallows above.
     [InlineData("[warn] skipped 1 unreadable directory while searching for `.alpackages`:")]
+    // #2750: provisioning-gap lines survive because the HYPHEN makes them fail the tag
+    // pattern ([A-Za-z0-9._+] does not include `-`), not because `provision-gap` is on the
+    // exemption list. That is load-bearing and easy to break by "tidying" the character
+    // class, so it is pinned here rather than left to a comment. A corrupt .deps-bin sidecar
+    // is reported with this tag precisely so it cannot be eaten the way `[deps]` was.
+    [InlineData("[provision-gap] 'AL Runner Fixtures Sidecar Dep' v1.0.0.0 has a precompiled sidecar DLL that could not be loaded.")]
     public void UserFacingTags_SurviveTheDefaultFilter(string line)
     {
         Assert.Contains(line, FilterOnce(line, verbose: false));
@@ -84,6 +93,11 @@ public sealed class LogUserFacingTagsTests
     [InlineData("[BcRuntime] applying patch")]
     [InlineData("[Cecil] rewriting NavDialog")]
     [InlineData("[cache] WROTE key=abc")]
+    // #2750: `deps` is deliberately NOT exempt. It is a different category from the exempt
+    // `dep`: DependencyLoader's tier-by-tier loading internals (source-cache HIT/WROTE,
+    // compile timings, chunk counts) rather than DependencyResolver's resolution results.
+    // Exempting it to surface one corrupt-sidecar message would have surfaced all of this.
+    [InlineData("[deps] source-cache HIT: Sidecar Dep v1.0.0.0 key=0123456789ab")]
     public void InternalTags_AreStillSuppressedByDefault(string line)
     {
         Assert.DoesNotContain(line, FilterOnce(line, verbose: false));

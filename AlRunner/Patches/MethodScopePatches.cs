@@ -386,6 +386,30 @@ public static partial class BcRuntime
     public static void NavMethodScope_AssertError(object self, Action body)
     {
         try { body(); }
+        catch (AlRunner.Infrastructure.BcShapeGapException)
+        {
+            // NOT catchable, unlike every other exception this replacement traps (#2946).
+            //
+            // Derived, not copied from the out-of-scope behaviour. `asserterror Foo()` where
+            // Foo hits a BC shape gap: on real BC, Foo runs and returns, so the asserterror
+            // FAILS ("expected an error"). If the runner catches the gap the asserterror
+            // PASSES — the opposite of BC's answer, and green. Swallowing here does not merely
+            // hide a runner gap, it inverts a result.
+            //
+            // This is a NEW contract for a NEW type, not a change to an existing one. Whether
+            // AL should be able to swallow a RunnerOutOfScopeException is a separate, live
+            // question (#2871) that runner-extras suites deliberately rely on today
+            // (tests/runner-extras/table-connection-live-oos, date-virtual-table-window), and
+            // it is untouched — AssertErrorOutOfScopeCatchabilityTests still pins it.
+            throw;
+        }
+        catch (Exception ex) when (AlRunner.Infrastructure.BcShapeGapException.Find(ex) != null)
+        {
+            // Same claim, arriving wrapped: a refusal raised behind MethodBase.Invoke comes
+            // back inside a TargetInvocationException, and BC's own RemapToALExceptionAndThrow
+            // (invoked below) can rewrap it too. An `is` test would miss both.
+            throw;
+        }
         catch (Exception ex)
         {
             // Real BC's own AssertError body (decompiled) is:

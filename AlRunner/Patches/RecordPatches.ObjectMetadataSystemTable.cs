@@ -130,6 +130,65 @@
 //   at all if the store already has any row. Real rows always win over synthesised ones; the
 //   synthesis is the fallback for the (normal) case of a run with no application database.
 //
+// ── THE REFUSALS: WHAT EACH ONE CLAIMS, AND WHY NONE OF THEM IS A SCOPE BOUNDARY (#2894) ──
+//   Every refusal in this file goes through ObjectMetadataShapeGap. All twelve used to end
+//   "; see docs/scope.md", which was wrong twice over: docs/scope.md contains no
+//   object-metadata text (the write-up is docs/limitations.md#object-metadata-system-table),
+//   and citing scope.md ASSERTS that the surface is out of scope forever. It is not. Object
+//   Metadata is an AL record on a real BC table and this file implements it;
+//   .claude/rules/loud-failures.md puts AL records squarely in scope.
+//
+//   So none of the twelve is category (1) "genuinely out of scope", and none is category (3)
+//   "implementable now" — there is nothing to build, they are preconditions that hold in every
+//   supported configuration. All twelve are category (2): IN SCOPE, and the runner cannot
+//   answer for the shape it actually found. Reason anchor "not-yet-implemented". What the
+//   anchor tracks is issue #2946: the runner has no exception that says "I could not read BC's
+//   internals here", and the three conventions in this directory disagree about which to use.
+//
+//     PopulateObjectMetadataSystemTable
+//       1. data access has no in-memory provider
+//          -> (2) the runner's own store wiring did not hand one over. Nothing to populate,
+//             and inventing a store would answer with rows nobody can read back.
+//     EnumerateApplicationDatabaseTableIds
+//       2. SystemTables type not found          -> (2) unsupported BC assembly shape
+//       3. ApplicationDatabaseTables not found  -> (2) unsupported BC assembly shape
+//       4. ApplicationDatabaseTables is empty   -> (2) BC's own list is the row set; with no
+//          list there is no row set, and a hardcoded fallback would be an invented answer.
+//     EnsureObjectMetadataObjectTypeOrdinal
+//       5. metatable has no field 3             -> (2) unsupported artifact metadata shape
+//       6. "Object Type" has no option metadata -> (2) same
+//       7. option string has no "Table" member  -> (2) same. Refusing beats guessing ordinal
+//          1: the ordinal is a primary-key value, so a wrong guess silently mis-keys 43 rows.
+//     ReadNavEnvironmentEmitVersion
+//       8. NavEnvironment type not found        -> (2) unsupported BC assembly shape
+//       9. NavEnvironment.Instance is null      -> (2) skeleton state not initialised at this
+//          point. Note the difference from a skeleton Instance whose EmitVersion READS 0: that
+//          0 is BC's own answer and is kept (see the columns section). A null Instance has no
+//          answer at all, and this is the third primary-key field.
+//      10. EmitVersion property not found       -> (2) unsupported BC assembly shape
+//     ProviderHasAnyRow (both added by #2837)
+//      11. primaryTree field not found          -> (4) BC's private provider layout moved
+//      12. primaryTree is not enumerable        -> (4) same
+//
+//   BUCKET (4), ADDED BY #2946: the runner could not READ BC's internals. These two are the
+//   only sites in this file in it, and they raise BcShapeGapException rather than
+//   RunnerOutOfScopeException — see AlRunner/Infrastructure/BcShapeGapException.cs. The line
+//   is whether the runner obtained the information at all. Sites 2, 3, 8 and 10 are the same
+//   family (a BC type or member that is not there) and are NOT converted here, because
+//   reclassifying them one at a time across this file and the 48 sites in
+//   RecordPatches.VirtualTableShapeGap.cs is a per-site sweep with its own issue; #2946 is the
+//   type convention, and this file's two primaryTree readers are the defect it names.
+//   Sites 1, 4, 5, 6, 7 and 9 stay in bucket (2) on purpose and would be WRONG in (4): each of
+//   those reads SUCCEEDED and the answer was merely unwelcome — BC's list came back empty, the
+//   artifact genuinely has no field 3, a skeleton singleton the RUNNER populates is null, the
+//   runner's own store wiring handed no provider over. An unwelcome answer is not an
+//   unreadable one.
+//
+//   The same "; see docs/scope.md" wording sits on the equivalent provider-null guard in
+//   roughly fifteen sibling virtual-table populators in this directory (AllObj, Integer,
+//   Field, ...). Same defect, different files; issue #2945 tracks that sweep rather than
+//   widening this change past the file the issue named.
+//
 // PRECOMPILED-DLL RESPECT
 //   Runtime-engine and Types-assembly members only (SystemTables, NavEnvironment, NCLMetaTable,
 //   NCLMetaField, NavValue, ReadOnlyRecordBuffer, TempTableDataProvider), reached the same way
@@ -177,6 +236,34 @@ public static partial class RecordPatches
     private static bool IsObjectMetadataSystemTable(NCLMetaTable? table)
         => table != null && table.TableId == ObjectMetadataSystemTableId;
 
+    /// <summary>The API name every refusal in this file carries.</summary>
+    internal const string ObjectMetadataApi = "Object Metadata (system table 2000000071)";
+
+    /// <summary>
+    /// The doc section that actually documents this table. NOT <c>docs/scope.md</c>: that file
+    /// is the permanently-out-of-scope manifest and contains no object-metadata text at all
+    /// (#2894).
+    /// </summary>
+    private const string ObjectMetadataDocLink = "docs/limitations.md#object-metadata-system-table";
+
+    /// <summary>
+    /// The one place a refusal for this table is built — see the REFUSALS section of the file
+    /// header for the per-site classification, and .claude/rules/loud-failures.md for the rule.
+    ///
+    /// <para>Reason anchor <c>not-yet-implemented</c>, deliberately. Object Metadata is IN
+    /// SCOPE — this file implements it — so none of these twelve is a scope boundary; each one
+    /// says the runner cannot answer for the shape it found. That is not cosmetic: for an AL
+    /// <c>[TryFunction]</c>, ApplicationObjectBasePatches.IsPermanentOutOfScope traps a refusal
+    /// into <c>false</c> UNLESS the reason starts <c>not-yet-implemented</c>. Under the old
+    /// <c>object-metadata-system-table</c> anchor a runner gap here read as a clean
+    /// <c>if not TryX()</c>, which is the silent default loud-failures.md forbids. Now it tears
+    /// through.</para>
+    /// </summary>
+    internal static RunnerOutOfScopeException ObjectMetadataShapeGap(string detail)
+        => new(ObjectMetadataApi,
+            "not-yet-implemented — object-metadata-system-table: " + detail,
+            ObjectMetadataDocLink);
+
     /// <summary>
     /// Populate the in-memory store behind Object Metadata (2000000071) with one row per
     /// application-database system table, exactly the row set Microsoft's own
@@ -191,9 +278,7 @@ public static partial class RecordPatches
         EnsureDataAccessProviderReflection(dataAccess);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "Object Metadata (system table 2000000071)",
-                "object-metadata-system-table — data access has no in-memory provider; see docs/scope.md");
+            ?? throw ObjectMetadataShapeGap("data access has no in-memory provider");
 
         RunObjectMetadataPopulateOnce(provider, () =>
         {
@@ -309,16 +394,13 @@ public static partial class RecordPatches
 
         var tSystemTables = ResolveType(
             "Microsoft.Dynamics.Nav.Runtime.SystemTables", "Microsoft.Dynamics.Nav.Types.SystemTables")
-            ?? throw new RunnerOutOfScopeException(
-                "Object Metadata (system table 2000000071)",
-                "object-metadata-system-table — Microsoft.Dynamics.Nav.Types.SystemTables not found, so BC's "
-                + "own application-database table list cannot be read; see docs/scope.md");
+            ?? throw ObjectMetadataShapeGap(
+                "Microsoft.Dynamics.Nav.Types.SystemTables not found, so BC's own "
+                + "application-database table list cannot be read");
 
         var property = tSystemTables.GetProperty("ApplicationDatabaseTables",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
-            ?? throw new RunnerOutOfScopeException(
-                "Object Metadata (system table 2000000071)",
-                "object-metadata-system-table — SystemTables.ApplicationDatabaseTables not found; see docs/scope.md");
+            ?? throw ObjectMetadataShapeGap("SystemTables.ApplicationDatabaseTables not found");
 
         var ids = new List<int>();
         if (property.GetValue(null) is IEnumerable values)
@@ -326,10 +408,8 @@ public static partial class RecordPatches
                 if (v is int id) ids.Add(id);
 
         if (ids.Count == 0)
-            throw new RunnerOutOfScopeException(
-                "Object Metadata (system table 2000000071)",
-                "object-metadata-system-table — SystemTables.ApplicationDatabaseTables is empty, so there is "
-                + "no row set to answer with; see docs/scope.md");
+            throw ObjectMetadataShapeGap(
+                "SystemTables.ApplicationDatabaseTables is empty, so there is no row set to answer with");
 
         ids.Sort();
         _omsApplicationDatabaseTableIds = ids.ToArray();
@@ -348,14 +428,10 @@ public static partial class RecordPatches
 
         var field = (GetAllFields(metaTable) ?? Enumerable.Empty<NCLMetaField>())
             .FirstOrDefault(f => f.FieldNo == ObjectMetadataFieldObjectType)
-            ?? throw new RunnerOutOfScopeException(
-                "Object Metadata (system table 2000000071)",
-                "object-metadata-system-table — metatable has no field 3 (\"Object Type\"); see docs/scope.md");
+            ?? throw ObjectMetadataShapeGap("metatable has no field 3 (\"Object Type\")");
 
         var optionString = field.FieldOptionMetadata?.OptionString
-            ?? throw new RunnerOutOfScopeException(
-                "Object Metadata (system table 2000000071)",
-                "object-metadata-system-table — \"Object Type\" carries no option metadata; see docs/scope.md");
+            ?? throw ObjectMetadataShapeGap("\"Object Type\" carries no option metadata");
 
         var wanted = NormalizeObjectTypeName(ObjectMetadataRetainedObjectType);
         var parts = optionString.Split(',');
@@ -366,11 +442,10 @@ public static partial class RecordPatches
             return i;
         }
 
-        throw new RunnerOutOfScopeException(
-            "Object Metadata (system table 2000000071)",
-            $"object-metadata-system-table — \"Object Type\" option string ('{optionString}') has no "
+        throw ObjectMetadataShapeGap(
+            $"\"Object Type\" option string ('{optionString}') has no "
             + $"'{ObjectMetadataRetainedObjectType}' member, so the ordinal every retained row carries "
-            + "cannot be resolved; see docs/scope.md");
+            + "cannot be resolved");
     }
 
     /// <summary>
@@ -384,25 +459,21 @@ public static partial class RecordPatches
     {
         var tNavEnvironment = ResolveType(
             "Microsoft.Dynamics.Nav.Runtime.NavEnvironment", "Microsoft.Dynamics.Nav.Types.NavEnvironment")
-            ?? throw new RunnerOutOfScopeException(
-                "Object Metadata (system table 2000000071)",
-                "object-metadata-system-table — NavEnvironment not found, so BC's own emit version (the third "
-                + "primary-key field) cannot be read; see docs/scope.md");
+            ?? throw ObjectMetadataShapeGap(
+                "NavEnvironment not found, so BC's own emit version (the third primary-key field) "
+                + "cannot be read");
 
         var instance = tNavEnvironment
             .GetProperty("Instance", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
             ?.GetValue(null)
-            ?? throw new RunnerOutOfScopeException(
-                "Object Metadata (system table 2000000071)",
-                "object-metadata-system-table — NavEnvironment.Instance is null, so BC's own emit version (the "
-                + "third primary-key field) cannot be read; see docs/scope.md");
+            ?? throw ObjectMetadataShapeGap(
+                "NavEnvironment.Instance is null, so BC's own emit version (the third primary-key field) "
+                + "cannot be read");
 
         var emitVersion = tNavEnvironment
             .GetProperty("EmitVersion", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             ?.GetValue(instance)
-            ?? throw new RunnerOutOfScopeException(
-                "Object Metadata (system table 2000000071)",
-                "object-metadata-system-table — NavEnvironment.EmitVersion not found; see docs/scope.md");
+            ?? throw ObjectMetadataShapeGap("NavEnvironment.EmitVersion not found");
 
         return (int)emitVersion;
     }
@@ -418,51 +489,47 @@ public static partial class RecordPatches
     /// restructured it and the runner has no idea what the store holds; answering FALSE there
     /// would silently shadow whatever --test-data restored into this table, disabling the
     /// precedence rule in this file's header with no diagnostic anywhere. It used to do
-    /// exactly that. Now it refuses, naming the member, the way every sibling reader of this
-    /// same private field already does: RecordPatches.StoredTableCensus.cs (twice),
-    /// RecordPatches.TransactionSnapshot.cs and RecordPatches.InstallBaseline.cs all go
-    /// through <c>RequiredField</c>, which throws <see cref="MissingFieldException"/>, and
-    /// RowVersionPatches.SystemIdIntegrity.cs throws naming the member. See
-    /// .claude/rules/loud-failures.md.</para>
+    /// exactly that. Now it refuses, naming the member. See .claude/rules/loud-failures.md.</para>
     ///
-    /// <para>A refusal here is a BUG REPORT ABOUT THE RUNNER, not a permanent scope
-    /// boundary — but <see cref="RunnerOutOfScopeException"/> is what this whole file already
-    /// raises when a BC surface it reflects on is not where it expects (SystemTables,
-    /// NavEnvironment, the "Object Type" option string), and it carries the typed
-    /// <c>Api</c>/<c>Reason</c> pair the expectations manifest matches on. Same choice here.
-    /// It is NOT proof against AL swallowing it — <c>asserterror</c> is
-    /// MethodScopePatches.NavMethodScope_AssertError, an unfiltered <c>catch (Exception ex)</c>
-    /// — which is exactly why <see cref="RunObjectMetadataPopulateOnce"/> has to remember a
-    /// refusal instead of leaving the table marked populated and empty.</para>
+    /// <para>THE TYPE IS <see cref="BcShapeGapException"/>, NOT
+    /// <see cref="RunnerOutOfScopeException"/> (#2946). Both of these two refusals are BUG
+    /// REPORTS ABOUT THE RUNNER rather than scope boundaries, and this file used to say so in a
+    /// comment and then raise the scope exception anyway — which is the disagreement #2946 was
+    /// filed about: four readers of this same private structure raised three different types
+    /// between them. Two consequences follow the type rather than the wording. A shape gap can
+    /// never be absorbed by an <c>expect-oos</c> manifest entry, so a BC-layout regression
+    /// cannot be declared expected — it is a property of which BC build is on disk, not of the
+    /// runner, so it can be true on one BC leg and false on another in the same run. And it
+    /// tears through AL's <c>asserterror</c> as well as through a <c>[TryFunction]</c>, which a
+    /// <see cref="RunnerOutOfScopeException"/> does not: <c>asserterror</c> is
+    /// MethodScopePatches.NavMethodScope_AssertError, and on real BC this record-open SUCCEEDS,
+    /// so catching the gap would make an <c>asserterror</c> around it pass where BC fails it.
+    /// <see cref="RunObjectMetadataPopulateOnce"/> still remembers a refusal, because the other
+    /// ten throw sites in this file remain catchable.</para>
     ///
-    /// <para>Resolution goes through <see cref="PrivateMemberLookup"/> rather than a plain
-    /// <c>GetField</c>, because <c>primaryTree</c> is PRIVATE on <c>TempTableDataProvider</c>
-    /// and <c>GetField(NonPublic)</c> on a DERIVED type does not return a base class's private
+    /// <para>Resolution goes through <see cref="BcShape"/>, which uses
+    /// <see cref="PrivateMemberLookup"/> rather than a plain <c>GetField</c>, because
+    /// <c>primaryTree</c> is PRIVATE on <c>TempTableDataProvider</c> and
+    /// <c>GetField(NonPublic)</c> on a DERIVED type does not return a base class's private
     /// fields — BC's own <c>CrmTableConnection.CrmTestDataProvider</c> derives from it (#2725).
     /// Reading a derived provider's inherited field as "absent" would turn a perfectly readable
     /// store into a hard failure now that absence refuses.</para>
     /// </summary>
     private static bool ProviderHasAnyRow(object provider)
     {
-        var field = PrivateMemberLookup.Field(provider.GetType(), "primaryTree")
-            ?? throw new RunnerOutOfScopeException(
-                "Object Metadata (system table 2000000071)",
-                $"object-metadata-system-table — {provider.GetType().Name}.primaryTree not found, so the "
-                + "runner cannot tell a store BC never inserted into from one --test-data already filled; "
-                + "synthesising rows would silently shadow the restored ones. BC's private provider layout "
-                + "moved; see docs/scope.md");
+        const string detail =
+            "the runner cannot tell a store BC never inserted into from one --test-data already "
+            + "filled, and synthesising rows would silently shadow the restored ones";
+
+        var field = BcShape.RequiredField(
+            provider.GetType(), "primaryTree", ObjectMetadataApi, detail);
 
         // A null tree is BC's own "no row was ever inserted": nothing to shadow, synthesise.
         var tree = field.GetValue(provider);
         if (tree == null) return false;
 
-        if (tree is not IEnumerable rows)
-            throw new RunnerOutOfScopeException(
-                "Object Metadata (system table 2000000071)",
-                $"object-metadata-system-table — {provider.GetType().Name}.primaryTree is a "
-                + $"{tree.GetType().Name}, which cannot be enumerated, so the runner cannot tell whether "
-                + "--test-data already filled this table. BC's private provider layout moved; see "
-                + "docs/scope.md");
+        var rows = BcShape.RequiredEnumerable(
+            tree, $"{provider.GetType().Name}.primaryTree", ObjectMetadataApi, detail);
 
         // Short-circuit: one row is the whole answer, and a restored backup can be large.
         foreach (var _ in rows) return true;

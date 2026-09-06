@@ -126,6 +126,19 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2) for both. One is a store-wiring gap. The other is skeleton state not yet
+    /// populated (NavSession.NCLMetadata), which is squarely the runner's own to fill in --
+    /// .claude/rules/loud-failures.md lists skeleton session state as in scope.
+    /// </remarks>
+    internal static RunnerOutOfScopeException AggregatePermissionSetShapeGap(string detail)
+        => VirtualTableShapeGap("Aggregate Permission Set (virtual table 2000000167)", "aggregate-permission-set-virtual-table", detail);
+
     internal const int AggregatePermissionSetVirtualTableId = 2000000167;
 
     private static bool _apsReflectionReady;
@@ -153,9 +166,7 @@ public static partial class RecordPatches
         EnsureDataAccessProviderReflection(dataAccess);
 
         var store = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "Aggregate Permission Set (virtual table 2000000167)",
-                "aggregate-permission-set-virtual-table — data access has no in-memory provider; see docs/scope.md");
+            ?? throw AggregatePermissionSetShapeGap("data access has no in-memory provider");
 
         // Recompute the WHOLE union fresh on every touch — on a real service tier
         // Aggregate Permission Set has no persistent state of its own; every Get()/FindSet()
@@ -175,12 +186,18 @@ public static partial class RecordPatches
         // trees, not the "table" metadata field, so the provider stays usable afterward.
         ClearProviderInPlace(store);
 
+        // #2893: the other moment the runner knows the permission-set inventory is complete
+        // and something is asking about permission sets. Populating BC's own metadata layer
+        // from here as well as from the Metadata Permission Set table means a bundle that only
+        // ever touches Aggregate Permission Set still gets it — the population is idempotent
+        // and installs a fresh lazy, so calling it from two places is cheap and order-safe.
+        EnsurePermissionMetadataPopulated();
+
         var nclMetadata = _apsSessionNclMetadata!.GetValue(session)
-            ?? throw new RunnerOutOfScopeException(
-                "Aggregate Permission Set (virtual table 2000000167)",
-                "aggregate-permission-set-virtual-table — NavSession.NCLMetadata is null on the "
-                + "skeleton session, so BC's own AggregatePermissionSetDataProvider cannot resolve "
-                + "the System/Tenant Permission Set tables it unions; see docs/scope.md");
+            ?? throw AggregatePermissionSetShapeGap(
+                "NavSession.NCLMetadata is null on the skeleton session, so BC's own "
+                + "AggregatePermissionSetDataProvider cannot resolve the System/Tenant Permission "
+                + "Set tables it unions");
 
         object bcProvider;
         List<object> systemRecords;

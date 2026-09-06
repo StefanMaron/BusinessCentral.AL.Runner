@@ -10,8 +10,10 @@ root.
 
 Deliberately **not** passed `--count-baseline`. The baseline in
 `tests/expectations/count-baseline/test-count-baseline.json` is keyed per suite, and adding a
-third key for a handful of tests buys a number nobody reads at the cost of a file that is
-already a merge-conflict magnet. `--strict` is what makes this step a gate.
+third key for a handful of tests buys a number nobody reads. `--strict` is what makes this step
+a gate. (The other half of that reasoning — that the file was a merge-conflict magnet every
+count-changing PR had to edit the same line of — was fixed in #2485; the decision here stands on
+the first half alone.)
 
 ## Why a whole directory for this
 

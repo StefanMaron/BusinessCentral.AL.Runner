@@ -23,6 +23,9 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>Surface name a census refusal would carry, if the census ever let one out.</summary>
+    private const string CensusSurface = "stored-table census (diagnostic)";
+
     /// <summary>What the store knows about one table right now.</summary>
     /// <param name="TableId">AL table id.</param>
     /// <param name="TableName">The AL object name BC's own NCLMetaTable carries.</param>
@@ -96,10 +99,15 @@ public static partial class RecordPatches
                     provider = GetDataProvider(dataAccess);
                     if (provider == null || provider.GetType().Name != "TempTableDataProvider") continue;
                     var providerType = provider.GetType();
-                    metaTableObj = RequiredField(providerType, "table").GetValue(provider);
-                    primaryTree = RequiredField(providerType, "primaryTree").GetValue(provider);
+                    metaTableObj = RequiredField(providerType, "table", CensusSurface).GetValue(provider);
+                    primaryTree = RequiredField(providerType, "primaryTree", CensusSurface).GetValue(provider);
                 }
-                catch (MissingFieldException) { continue; }   // BC's private layout moved — unknown, not empty
+                // BC's private layout moved — unknown, NOT empty. See the file header for why
+                // this one reader is allowed to answer "I don't know" where every other reader
+                // of the same structure refuses: a diagnostic that runs at failure time may not
+                // become the reason the failure changed. #2946 moved the type it catches from
+                // MissingFieldException to BcShapeGapException; it did not move the contract.
+                catch (AlRunner.Infrastructure.BcShapeGapException) { continue; }
                 catch (TargetInvocationException) { continue; }
 
                 if (metaTableObj is not NCLMetaTable meta) continue;
@@ -163,10 +171,10 @@ public static partial class RecordPatches
                 provider = GetDataProvider(dataAccess);
                 if (provider == null || provider.GetType().Name != "TempTableDataProvider") continue;
                 var providerType = provider.GetType();
-                metaTableObj = RequiredField(providerType, "table").GetValue(provider);
-                primaryTree = RequiredField(providerType, "primaryTree").GetValue(provider);
+                metaTableObj = RequiredField(providerType, "table", CensusSurface).GetValue(provider);
+                primaryTree = RequiredField(providerType, "primaryTree", CensusSurface).GetValue(provider);
             }
-            catch (MissingFieldException) { continue; }
+            catch (AlRunner.Infrastructure.BcShapeGapException) { continue; }   // see CollectCensus
             catch (TargetInvocationException) { continue; }
 
             if (metaTableObj is not NCLMetaTable meta) continue;

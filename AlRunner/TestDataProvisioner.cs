@@ -171,6 +171,13 @@ internal static class TestDataProvisioner
     // Running tallies, accumulated across on-demand loads rather than known at Arm() time.
     private static int _tablesDone, _rowsDone, _refused, _readerRefused, _droppedColumns, _columnsNotInThisBuild;
 
+    /// <summary>Tables the backup offers that ended the run without their rows because the
+    /// deferred load (#2877) could not be run safely. Read by the proving test, so "written off"
+    /// is an assertable count rather than something inferred from log text.</summary>
+    private static int _deferredLoadsWrittenOff;
+
+    internal static int DeferredLoadsWrittenOff => _deferredLoadsWrittenOff;
+
     /// <summary>The most recent hydration's outcome — the assertable signal a test uses
     /// instead of re-deriving what happened from log text. Under the on-demand policy it is
     /// cumulative: it reflects every table loaded so far, and it stays null until the first
@@ -205,6 +212,71 @@ internal static class TestDataProvisioner
     internal static string? TableOutcome(int tableId)
         => _tableOutcome.TryGetValue(tableId, out var reason) ? reason : null;
 
+    // ─────────────────────────────── deferred loads, and their outcomes (#2877) ──
+
+    /// <summary>
+    /// A table's storage was created from inside ANOTHER table's --test-data hydration, where a
+    /// load would recurse, so nothing has been loaded into it yet.
+    ///
+    /// Recorded rather than skipped for one reason: without it <see cref="TableOutcome"/>
+    /// answers null for that table, and null under the on-demand policy means "nothing in this
+    /// run ever touched it" — the exact opposite of what happened, and indistinguishable from a
+    /// table nobody asked for. Replaced by the load's own outcome as soon as the debt is
+    /// settled, so it is only ever the answer while the debt actually stands.
+    /// </summary>
+    private static void NoteDeferredLoad(int tableId)
+    {
+        var armed = _armed;
+        if (armed == null) return;
+        // A table the plan does not offer owes nothing worth reporting as deferred: the honest
+        // answer is the one LoadOnDemand would give, and saying "not loaded yet" for a table
+        // this backup does not have would read as a problem where there is none. Every runner
+        // test table and every table the company has no rows for lands here.
+        if (!armed.ByTableId.ContainsKey(tableId))
+        {
+            _tableOutcome[tableId] = $"the plan built from '{Path.GetFileName(armed.Backup)}' "
+                + $"company '{armed.Company}' has no table with this id, so nothing was loaded";
+            return;
+        }
+        _tableOutcome[tableId] = "its storage was first created from inside another table's "
+            + "hydration, where loading it would have recursed, so nothing has been loaded into "
+            + $"it yet from '{Path.GetFileName(armed.Backup)}' company '{armed.Company}'; the "
+            + "next touch outside a hydration loads it";
+        PerfTrace.Log($"TestData.DeferredLoad {tableId}");
+    }
+
+    /// <summary>
+    /// The deferred load could not be run after all — the store had rows by the time one could,
+    /// or the runner could not read whether it did. The table ends the run WITHOUT its backup
+    /// rows, which is a fact about the run and is reported as one: recorded per table AND
+    /// printed, never dropped quietly (.claude/rules/loud-failures.md).
+    ///
+    /// Not a throw. The rows it would name are BC's own metadata construction reaching a Record
+    /// mid-hydration, and turning that into a hard failure would take out a --test-data run that
+    /// works today for the sake of one table — the same trade #2875 rejects for the same reason.
+    /// </summary>
+    private static void NoteDeferredLoadWrittenOff(int tableId, string reason)
+    {
+        var armed = _armed;
+        if (armed == null) return;
+        // Same reason as above: a table this backup does not offer loses nothing by not being
+        // loaded, so it must not be printed as though rows went missing.
+        if (!armed.ByTableId.ContainsKey(tableId))
+        {
+            _tableOutcome[tableId] = $"the plan built from '{Path.GetFileName(armed.Backup)}' "
+                + $"company '{armed.Company}' has no table with this id, so nothing was loaded";
+            return;
+        }
+        _deferredLoadsWrittenOff++;
+        _tableOutcome[tableId] = "its storage was first created from inside another table's "
+            + $"--test-data hydration and {reason}, so the rows "
+            + $"'{Path.GetFileName(armed.Backup)}' company '{armed.Company}' holds for it were "
+            + "never loaded";
+        Console.Error.WriteLine(
+            $"[test-data] NOT LOADED table {tableId}: {reason}. Its storage was first created "
+            + "from inside another table's hydration; see issue #2877.");
+    }
+
     /// <summary>True when a plan is armed — i.e. --test-data resolved a backup and a company
     /// and the on-demand loader is installed. Distinguishes "the flag is on and working" from
     /// "the flag is on but Arm() has not run for this app group yet".</summary>
@@ -219,8 +291,11 @@ internal static class TestDataProvisioner
         _lastSummary = null;
         _armed = null;
         _tablesDone = _rowsDone = _refused = _readerRefused = _droppedColumns = _columnsNotInThisBuild = 0;
+        _deferredLoadsWrittenOff = 0;
         _tableOutcome.Clear();
         RecordPatches.TestDataOnDemandLoader = null;
+        RecordPatches.TestDataDeferredLoadNotifier = null;
+        RecordPatches.TestDataDeferredLoadWriteOffNotifier = null;
     }
 
     /// <summary>
@@ -244,7 +319,7 @@ internal static class TestDataProvisioner
         if (_armed != null && _armed.SymbolKey == symbolKey && _armed.Backup == backup)
         {
             // The loader is a static field; re-install it in case something cleared it.
-            RecordPatches.TestDataOnDemandLoader = LoadOnDemand;
+            InstallLoader();
             return;
         }
 
@@ -278,7 +353,16 @@ internal static class TestDataProvisioner
                 byTableId[e.AlTableId.Value] = e;
 
         _armed = new ArmedPlan(backup, symbolKey, symbols, company, byTableId, plan.SkippedAmbiguous);
+        InstallLoader();
+    }
+
+    /// <summary>The three hooks the materialisation path calls back on, installed together so a
+    /// re-arm can never leave the loader in place with the reporting halves cleared.</summary>
+    private static void InstallLoader()
+    {
         RecordPatches.TestDataOnDemandLoader = LoadOnDemand;
+        RecordPatches.TestDataDeferredLoadNotifier = NoteDeferredLoad;
+        RecordPatches.TestDataDeferredLoadWriteOffNotifier = NoteDeferredLoadWrittenOff;
     }
 
     /// <summary>
@@ -564,12 +648,54 @@ internal static class TestDataProvisioner
             .Distinct(StringComparer.Ordinal)
             .OrderBy(p => p, StringComparer.Ordinal)
             .ToList();
-        if (apps.Count == 0)
+
+        // #2794: a source sibling (app + tests, both from source) is resolved through the
+        // runner's own workspace-deps NAVX — manifest + src/*.al, no SymbolReference.json, by
+        // design (SiblingCompile). The reader refuses its whole --symbols list on one such
+        // entry ("no SymbolReference.json and no single inner .app"), so the run EXEC-FAILed
+        // before hydrating anything. Only symbol-bearing packages go to the reader; the rest
+        // are named here, because a table that only that package declares cannot be mapped
+        // from the backup and a reader of the run should know why.
+        var (keep, skipped) = PartitionSymbolPackages(apps, IsReaderConsumable);
+        foreach (var s in skipped)
+            Console.Error.WriteLine(
+                $"[test-data] not handing '{s}' to the backup reader: source-only package (no "
+                + "SymbolReference.json), so tables it alone declares cannot be mapped from the backup");
+
+        if (keep.Count == 0)
             throw new TestDataUnavailableException(
-                "--test-data: this run resolved no Microsoft/ISV .app dependencies, so the backup reader "
-                + "has no symbols to map SQL columns onto AL fields with. Point --package-cache at the "
-                + "platform apps for the selected BC version.");
-        return apps;
+                "--test-data: this run resolved no Microsoft/ISV .app dependencies carrying a "
+                + "SymbolReference.json, so the backup reader has no symbols to map SQL columns onto "
+                + "AL fields with. Point --package-cache at the platform apps for the selected BC version.");
+        return keep;
+    }
+
+    /// <summary>
+    /// True unless the package is POSITIVELY a source-only NAVX — manifest readable, no
+    /// SymbolReference.json. A file the runner cannot read as a package at all is kept and
+    /// handed to the reader as before: the reader names what is wrong with it loudly, whereas
+    /// dropping it here would turn an unreadable dependency into a silent absence (and the
+    /// lazy-hydration tests drive this path with a placeholder .app the fake reader never opens).
+    /// </summary>
+    internal static bool IsReaderConsumable(string appPath)
+    {
+        var (manifest, hasSymbolReference) = AppLoader.ReadPackageMeta(appPath);
+        return manifest == null || hasSymbolReference;
+    }
+
+    /// <summary>
+    /// Split the resolved .app closure into the packages the reader can consume (they carry a
+    /// SymbolReference.json) and the source-only ones it refuses. Order is preserved in both
+    /// halves; the predicate is injected so the decision is testable without packages on disk.
+    /// </summary>
+    internal static (IReadOnlyList<string> Keep, IReadOnlyList<string> Skipped) PartitionSymbolPackages(
+        IEnumerable<string> apps, Func<string, bool> hasSymbolReference)
+    {
+        var keep = new List<string>();
+        var skipped = new List<string>();
+        foreach (var a in apps)
+            (hasSymbolReference(a) ? keep : skipped).Add(a);
+        return (keep, skipped);
     }
 
     private static string[] SymbolArgs(IReadOnlyList<string> head, IReadOnlyList<string> symbols)

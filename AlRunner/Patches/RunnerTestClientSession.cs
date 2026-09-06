@@ -34,11 +34,10 @@ public sealed class RunnerTestClientSession : ITestClientSession
     public ITestPage GetPage(Guid formHandle, bool forClose = false)
     {
         var form = RegisteredForm(formHandle)
-            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            ?? throw RunnerShapeGap.ModalPageHandle(
                 $"TestPage modal page (handle {formHandle})",
-                "testpage-modal — no form is registered under this handle, so the runner cannot "
-                + "hand the [ModalPageHandler] the page it is being asked to drive. "
-                + "See docs/scope.md");
+                "no form is registered under this handle in the runner's own form registry, so the "
+                + "[ModalPageHandler] cannot be handed the page it is being asked to drive");
 
         // A REQUEST page is not a page over a record — it has no source table at all, so the
         // record check below would refuse it by name for something that is simply not part of

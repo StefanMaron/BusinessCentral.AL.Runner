@@ -123,10 +123,10 @@ public static partial class RecordPatches
         object self, object request, Func<bool>? onlyCurrentKeyNeededForNextRow)
     {
         EnsureQueryProjectionReflection(self);
-        var execRequest = TranslateQueryFilters(request, out var havingFilters);
+        var execRequest = TranslateQueryFilters(request, out var havingFilters, out var flowFam);
         var raw = (IEnumerable<ReadOnlyRecordBuffer>)_mTtdpFindImpl!.Invoke(self, new[] { execRequest })!;
         raw = ApplyFirstOnly(request, raw);
-        return ProjectIfQuery(request, raw, havingFilters);
+        return ProjectIfQuery(request, raw, havingFilters, flowFam);
     }
 
     /// <summary>
@@ -136,10 +136,10 @@ public static partial class RecordPatches
         object self, object request, Func<bool>? onlyCurrentKeyNeededForNextRow)
     {
         EnsureQueryProjectionReflection(self);
-        var execRequest = TranslateQueryFilters(request, out var havingFilters);
+        var execRequest = TranslateQueryFilters(request, out var havingFilters, out var flowFam);
         var raw = (IEnumerable<ReadOnlyRecordBuffer>)_mTtdpFindByPositionImpl!.Invoke(self, new[] { execRequest })!;
         raw = ApplyFirstOnly(request, raw);
-        return ProjectIfQuery(request, raw, havingFilters);
+        return ProjectIfQuery(request, raw, havingFilters, flowFam);
     }
 
     private static MethodInfo? _mGetDataAccessForTable_Orig;
@@ -409,11 +409,12 @@ public static partial class RecordPatches
             if (_pDataItemSubQueryDefinitionQ?.GetValue(diCheck) == null) continue;
             if (_pDataItemSourceFlowFieldQ?.GetValue(diCheck) != null) continue; // FlowField calc — gets a slot below.
             var subDataItemName = _pDataItemNameQ?.GetValue(diCheck) as string ?? "<unknown>";
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            throw RunnerShapeGap.Query(
                 "NavQuery (multi-dataitem join with a synthesized sub-dataitem)",
-                $"query-join-synthesized-subquery-not-implemented -- dataitem '{subDataItemName}' is a " +
-                "synthesized sub-dataitem (SubQueryDefinition != null) that is not a FlowField-calculation " +
-                "sub-query; this runner does not support this join sub-shape in-memory; see docs/scope.md");
+                "query-join-synthesized-subquery",
+                $"dataitem '{subDataItemName}' is a synthesized sub-dataitem (SubQueryDefinition != null) " +
+                "that is not a FlowField-calculation sub-query; the in-memory join executor does not take " +
+                "this sub-shape yet");
         }
 
         int maxSlot = -1;
@@ -463,10 +464,25 @@ public static partial class RecordPatches
     /// unaggregated value instead, a different silently-wrong answer than #2137 but the same
     /// class of bug. Such filters are instead returned via <paramref name="havingFilters"/>
     /// so the caller can apply them AFTER aggregation (see ApplyHavingFilters).
+    ///
+    /// A filter whose column is backed by a <b>FlowFilter</b>-class source field (an AL
+    /// <c>filter(Name; "Date Filter")</c> element, or a static <c>ColumnFilter</c> on one) is
+    /// neither a WHERE nor a HAVING condition — it constrains the FlowField COLUMNS' own
+    /// CalcFormula the same way <c>Record.SetRange("Date Filter", ...)</c> constrains
+    /// <c>Record.CalcFields</c>. Pushing it down as a row filter would filter on a field that
+    /// has no stored value at all. Those are returned via
+    /// <paramref name="flowFiltersAndMarks"/> — a <c>FiltersAndMarks</c> keyed by the FlowFilter
+    /// <c>NCLMetaField</c>, i.e. the exact shape BC's own <c>FlowFieldsHelper.
+    /// GetFilterFromMetaFilterCollection</c> reads them out of — for the projection layer to
+    /// hand to <c>FlowFieldPatches.CalcOneFlowFieldForQueryRow</c> (#2925). Null when the query
+    /// carries no flow filter at all.
     /// </summary>
-    private static object TranslateQueryFilters(object request, out List<(object Column, object Expr)> havingFilters)
+    private static object TranslateQueryFilters(
+        object request, out List<(object Column, object Expr)> havingFilters, out object? flowFiltersAndMarks)
     {
         havingFilters = new List<(object, object)>();
+        flowFiltersAndMarks = null;
+        var flowFilterTuples = new List<object>();
         var metaAppObj = _pReqMetaAppObj!.GetValue(request);
         if (metaAppObj == null || _tNCLMetaQuery == null || !_tNCLMetaQuery.IsInstanceOfType(metaAppObj))
             return request; // ordinary table read — nothing to translate.
@@ -498,6 +514,14 @@ public static partial class RecordPatches
                 if (key != null && _tNCLMetaQueryColumn != null && _tNCLMetaQueryColumn.IsInstanceOfType(key))
                 {
                     runtimeFilteredColumnIds.Add(((NCLMetaQueryColumn)key).Id);
+                    // #2925: a filter on a FlowFilter-class field is a FLOW filter, not a row
+                    // filter — route it to the FlowField calculation and keep it out of the
+                    // WHERE push-down (the field has no stored column to filter rows on).
+                    if (expr != null && TryTakeFlowFilter((NCLMetaQueryColumn)key, expr, flowFilterTuples))
+                    {
+                        anyTranslated = true;
+                        continue;
+                    }
                     if (((NCLMetaQueryColumn)key).AggregationType != AggregationType.None)
                     {
                         // HAVING-clause filter — exclude from the WHERE-style push-down (pushing it
@@ -531,6 +555,11 @@ public static partial class RecordPatches
         foreach (var (col, expr) in staticColumnFilters)
         {
             if (runtimeFilteredColumnIds.Contains(col.Id)) continue;
+            if (TryTakeFlowFilter(col, expr, flowFilterTuples)) // #2925, as above
+            {
+                anyTranslated = true;
+                continue;
+            }
             if (col.AggregationType != AggregationType.None)
             {
                 havingFilters.Add((col, expr));
@@ -544,6 +573,14 @@ public static partial class RecordPatches
                 anyTranslated = true;
             }
         }
+
+        // #2925: hand the collected flow filters back as a real FiltersAndMarks. MarkedRecords
+        // is null — marks are a Record concept (Record.Mark/MarkedOnly) with no query
+        // equivalent, and BC's own FiltersAndMarks.Empty is itself constructed as
+        // `new FiltersAndMarks(null, null)`.
+        if (flowFilterTuples.Count > 0)
+            flowFiltersAndMarks = Activator.CreateInstance(
+                _tFiltersAndMarks!, BuildFilterFieldDictionary(flowFilterTuples), null);
 
         if (!anyTranslated) return request;
 
@@ -580,6 +617,45 @@ public static partial class RecordPatches
             if (col is NCLMetaQueryColumn c && expr != null)
                 yield return (c, expr);
         }
+    }
+
+    /// <summary>
+    /// #2925 — if <paramref name="col"/>'s source table field is a <c>FlowFilter</c>, add its
+    /// filter expression to <paramref name="flowFilterTuples"/> (retargeted to the FlowFilter
+    /// field's own expression context, exactly as a WHERE-bound filter is retargeted to its
+    /// source field's) and report true so the caller keeps it out of the row filters.
+    ///
+    /// A FlowFilter field holds no data — it is a parameter to the table's FlowField formulas —
+    /// so evaluating it as a row predicate is meaningless in either direction: pushed into the
+    /// temp provider's WHERE it filters on an unwritten slot, and evaluated post-projection
+    /// (the join path) it compares against a slot nothing ever wrote. The one place it means
+    /// something is the CalcFormula, which is where this routes it.
+    ///
+    /// <c>SourceTableField</c> throws <c>NotSupportedException</c> for a ConstValue column (no
+    /// source field at all); that is not a flow filter, so it answers false and the caller's
+    /// existing handling stands.
+    /// </summary>
+    /// <summary>#2925 — true iff this query column is backed by a FlowFilter-class table field.</summary>
+    private static bool IsFlowFilterColumn(NCLMetaQueryColumn col)
+    {
+        try
+        {
+            return col.SourceTableField?.FieldClass
+                == Microsoft.Dynamics.Nav.Types.Metadata.FieldClass.FlowFilter;
+        }
+        catch { return false; } // ConstValue column — SourceTableField throws; not a flow filter.
+    }
+
+    private static bool TryTakeFlowFilter(NCLMetaQueryColumn col, object expr, List<object> flowFilterTuples)
+    {
+        NCLMetaField? srcField;
+        try { srcField = col.SourceTableField; }
+        catch { return false; }
+        if (srcField == null
+            || srcField.FieldClass != Microsoft.Dynamics.Nav.Types.Metadata.FieldClass.FlowFilter)
+            return false;
+        flowFilterTuples.Add(MakeFieldTuple(srcField, RetargetFilterExpression(expr, srcField.ExpressionContext)));
+        return true;
     }
 
     private static object MakeFieldTuple(object field, object expr)
@@ -713,7 +789,8 @@ public static partial class RecordPatches
     }
 
     private static IEnumerable<ReadOnlyRecordBuffer> ProjectIfQuery(
-        object request, IEnumerable<ReadOnlyRecordBuffer> rows, List<(object Column, object Expr)> havingFilters)
+        object request, IEnumerable<ReadOnlyRecordBuffer> rows, List<(object Column, object Expr)> havingFilters,
+        object? flowFiltersAndMarks)
     {
         var metaAppObj = _pReqMetaAppObj!.GetValue(request);
         if (metaAppObj == null || _tNCLMetaQuery == null || !_tNCLMetaQuery.IsInstanceOfType(metaAppObj))
@@ -733,7 +810,7 @@ public static partial class RecordPatches
             // Min/Max) column, ExecuteJoinQuery performs the implicit GROUP BY over the
             // joined rows itself (mirroring ProjectQueryRows' single-dataitem GROUP BY) —
             // see AlRunner.QueryJoin.JoinExecutor.BuildGroupedRows.
-            var joined = ExecuteJoinQuery(metaAppObj).Cast<ReadOnlyRecordBuffer>();
+            var joined = ExecuteJoinQuery(metaAppObj, flowFiltersAndMarks).Cast<ReadOnlyRecordBuffer>();
             // Apply the live NavQuery's runtime filters (SetRange/SetFilter) as a POST-projection
             // pass. The single-dataitem path pushes these into the temp provider's WHERE
             // (TranslateQueryFilters); the join executor reads each dataitem's table with only its
@@ -761,7 +838,7 @@ public static partial class RecordPatches
         // a group before they're ever summed/counted/averaged.
         var top = _pReqTopNumberOfRows!.GetValue(request);
         int topN = top == null ? 0 : Convert.ToInt32(top);
-        var projected = ProjectQueryRows(metaAppObj, rows);
+        var projected = ProjectQueryRows(metaAppObj, rows, flowFiltersAndMarks);
         // #2146: HAVING-clause filters (runtime SetRange/SetFilter on an aggregated column)
         // are evaluated here, against the already-aggregated per-group result — never against
         // the raw pre-aggregation row. Applied AFTER grouping/aggregation, BEFORE Top, matching
@@ -792,10 +869,11 @@ public static partial class RecordPatches
             foreach (var (slot, expr) in conds)
             {
                 if (slot < 0 || slot >= row.FieldCount)
-                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    throw RunnerShapeGap.Query(
                         "NavQuery.SetRange/SetFilter on an aggregated column",
-                        $"query-having-filter-on-nonprojected-column — filtered slot {slot} is outside the " +
-                        $"projected row (FieldCount {row.FieldCount}); cannot evaluate HAVING; see docs/scope.md");
+                        "query-having-filter-on-nonprojected-column",
+                        $"filtered slot {slot} is outside the projected row (FieldCount {row.FieldCount}), " +
+                        "so the HAVING equivalent cannot be evaluated");
                 if (!EvaluateFilterExpression(expr, row[slot], session))
                     return false;
             }
@@ -857,19 +935,27 @@ public static partial class RecordPatches
                 if (expr == null) continue;
                 if (key == null || _tNCLMetaQueryColumn == null || !_tNCLMetaQueryColumn.IsInstanceOfType(key))
                     // A non-query-column key on a query request should not occur; refuse to guess.
-                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    throw RunnerShapeGap.Query(
                         "NavQuery (multi-dataitem join)",
-                        "query-join-runtime-filter-on-nonprojected-column — a runtime filter is keyed by a " +
-                        $"non-query-column ({key?.GetType().Name ?? "null"}); cannot evaluate post-projection; see docs/scope.md");
+                        "query-join-runtime-filter-on-nonprojected-column",
+                        $"a runtime filter is keyed by a non-query-column ({key?.GetType().Name ?? "null"}), " +
+                        "so it cannot be evaluated post-projection");
+                runtimeFilteredColumnIds.Add(((NCLMetaQueryColumn)key).Id);
+                // #2925: a FlowFilter-class column carries no projected value to compare against
+                // — TranslateQueryFilters has already routed it to the FlowField calculation as
+                // a flow filter. Evaluating it here against its (never-written) slot would drop
+                // every row. Checked BEFORE the slot lookup below, which would otherwise refuse
+                // the column outright for the same reason it has no value: it is not projected.
+                if (IsFlowFilterColumn((NCLMetaQueryColumn)key)) continue;
                 if (!slotMap.TryGetValue(key, out var slot))
                     // The filtered column isn't in ANY dataitem's QueryColumns of this query
                     // definition — should not occur (the filter dictionary is keyed by columns that
                     // came from this same query), but refuse to guess rather than silently drop it.
-                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    throw RunnerShapeGap.Query(
                         "NavQuery (multi-dataitem join)",
-                        "query-join-runtime-filter-unresolved-column — a runtime filter's column could not be " +
-                        "located in the query's own DataItems/QueryColumns; see docs/scope.md");
-                runtimeFilteredColumnIds.Add(((NCLMetaQueryColumn)key).Id);
+                        "query-join-runtime-filter-unresolved-column",
+                        "a runtime filter's column could not be located in the query's own " +
+                        "DataItems/QueryColumns");
                 conds.Add((slot, expr));
             }
 
@@ -883,11 +969,13 @@ public static partial class RecordPatches
         foreach (var (col, expr) in staticColumnFilters)
         {
             if (runtimeFilteredColumnIds.Contains(col.Id)) continue;
+            if (IsFlowFilterColumn(col)) continue; // #2925, as above
             if (!slotMap.TryGetValue(col, out var slot))
-                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                throw RunnerShapeGap.Query(
                     "NavQuery (multi-dataitem join)",
-                    "query-join-static-columnfilter-unresolved-column — a static ColumnFilter's column " +
-                    "could not be located in the query's own DataItems/QueryColumns; see docs/scope.md");
+                    "query-join-static-columnfilter-unresolved-column",
+                    "a static ColumnFilter's column could not be located in the query's own " +
+                    "DataItems/QueryColumns");
             conds.Add((slot, expr));
         }
         if (conds.Count == 0) return rows;
@@ -898,10 +986,11 @@ public static partial class RecordPatches
             foreach (var (slot, expr) in conds)
             {
                 if (slot >= row.FieldCount)
-                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                    throw RunnerShapeGap.Query(
                         "NavQuery (multi-dataitem join)",
-                        $"query-join-runtime-filter-on-nonprojected-column — filtered slot {slot} is outside the " +
-                        $"projected row (FieldCount {row.FieldCount}); cannot evaluate post-projection; see docs/scope.md");
+                        "query-join-runtime-filter-on-nonprojected-column",
+                        $"filtered slot {slot} is outside the projected row (FieldCount {row.FieldCount}), " +
+                        "so it cannot be evaluated post-projection");
                 var navValue = row[slot];
                 if (!EvaluateFilterExpression(expr, navValue, session))
                     return false;
@@ -975,7 +1064,8 @@ public static partial class RecordPatches
         public bool HasAggregate;
     }
 
-    private static IEnumerable<ReadOnlyRecordBuffer> ProjectQueryRows(object nclMetaQuery, IEnumerable<ReadOnlyRecordBuffer> rows)
+    private static IEnumerable<ReadOnlyRecordBuffer> ProjectQueryRows(
+        object nclMetaQuery, IEnumerable<ReadOnlyRecordBuffer> rows, object? flowFiltersAndMarks)
     {
         var plan = _projectionPlans.GetValue(nclMetaQuery, BuildProjectionPlan);
 
@@ -984,7 +1074,7 @@ public static partial class RecordPatches
             // No Method column anywhere in this query → every row projects independently,
             // exactly as before #2137 (this is the 99% case: a plain, non-aggregated query).
             foreach (var row in rows)
-                yield return BuildRow(nclMetaQuery, plan, new[] { row });
+                yield return BuildRow(nclMetaQuery, plan, new[] { row }, flowFiltersAndMarks);
             yield break;
         }
 
@@ -1000,7 +1090,7 @@ public static partial class RecordPatches
             // Scalar aggregate (no non-aggregated column at all) — SQL's "GROUP BY ()" always
             // produces exactly one group, even over zero source rows (SUM/COUNT/AVERAGE then
             // default to 0; MIN/MAX to the column's own typed default — see ComputeAggregate).
-            yield return BuildRow(nclMetaQuery, plan, sourceRows);
+            yield return BuildRow(nclMetaQuery, plan, sourceRows, flowFiltersAndMarks);
             yield break;
         }
 
@@ -1023,7 +1113,7 @@ public static partial class RecordPatches
         }
 
         foreach (var key in groupOrder)
-            yield return BuildRow(nclMetaQuery, plan, groups[key]);
+            yield return BuildRow(nclMetaQuery, plan, groups[key], flowFiltersAndMarks);
     }
 
     /// <summary>
@@ -1087,14 +1177,17 @@ public static partial class RecordPatches
                 .FirstOrDefault(m => m.Name == "NegateValue" && m.GetParameters().Length == 2);
         }
         if (_mFlowFieldsHelperNegateValue == null)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            throw RunnerShapeGap.Query(
                 "Query column ReverseSign",
-                "query-reversesign-negatevalue-missing — Microsoft.Dynamics.Nav.Runtime." +
-                "FlowFieldsHelper.NegateValue(NavValue,NavType) not found on this BC build; see docs/scope.md");
+                "query-reversesign-negatevalue-missing",
+                "Microsoft.Dynamics.Nav.Runtime.FlowFieldsHelper.NegateValue(NavValue,NavType) " +
+                "not found on this BC build");
         return (NavValue?)_mFlowFieldsHelperNegateValue.Invoke(null, new object?[] { value, column.NavType });
     }
 
-    private static ReadOnlyRecordBuffer BuildRow(object nclMetaQuery, ProjectionPlan plan, IReadOnlyList<ReadOnlyRecordBuffer> groupRows)
+    private static ReadOnlyRecordBuffer BuildRow(
+        object nclMetaQuery, ProjectionPlan plan, IReadOnlyList<ReadOnlyRecordBuffer> groupRows,
+        object? flowFiltersAndMarks)
     {
         var fields = new object?[plan.SlotCount];
         foreach (var c in plan.Columns)
@@ -1111,7 +1204,8 @@ public static partial class RecordPatches
             // follow-up rather than guessed at here.
             if (c.FlowFieldMeta != null && groupRows.Count > 0)
             {
-                fields[c.QuerySlot] = ApplyReverseSign(c.Column, FlowFieldPatches.CalcOneFlowFieldForQueryRow(groupRows[0], c.FlowFieldMeta));
+                fields[c.QuerySlot] = ApplyReverseSign(c.Column,
+                    FlowFieldPatches.CalcOneFlowFieldForQueryRow(groupRows[0], c.FlowFieldMeta, flowFiltersAndMarks));
                 continue;
             }
             if (c.TableSlot < 0 || groupRows.Count == 0 || c.TableSlot >= groupRows[0].FieldCount)
@@ -1237,8 +1331,8 @@ public static partial class RecordPatches
     /// same FlowFieldPatches.CalcOneFlowFieldForQueryRow the single-real-dataitem path (#2300)
     /// uses, so the aggregation/formula math is not duplicated across the assembly boundary.
     /// </summary>
-    private static object? Join_CalcFlowFieldForRow(object rowBuffer, object flowFieldMeta)
-        => FlowFieldPatches.CalcOneFlowFieldForQueryRow(rowBuffer, (NCLMetaField)flowFieldMeta);
+    private static object? Join_CalcFlowFieldForRow(object rowBuffer, object flowFieldMeta, object? flowFiltersAndMarks)
+        => FlowFieldPatches.CalcOneFlowFieldForQueryRow(rowBuffer, (NCLMetaField)flowFieldMeta, flowFiltersAndMarks);
 
     private static Type? _tNavValue;
     private static Array ToNavValueArray(object?[] values)

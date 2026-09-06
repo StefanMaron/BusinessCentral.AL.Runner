@@ -75,7 +75,7 @@ public class DependencyPageShapeResolutionTests
 
     private static void WithLoadedDependency(Action body)
     {
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-dep-pageshape-tests");
         Directory.CreateDirectory(dir);
         try
         {

@@ -26,7 +26,21 @@ codeunit 65264 "Ttit Trigger Tests"
         // one of #2412's three already-fixed sites, before Insert ever dispatches on this
         // record) -- it is a regression guard for the end-to-end contract, not a proof.
         WhseEmployeePage.OpenNew();
-        WhseEmployeePage."User ID".SetValue('TTITWHSE1');
+        // UserId(), not a made-up name. Warehouse Employee."User ID" OnValidate calls codeunit
+        // 9843 "User Selection".ValidateUserName, whose AL is
+        //
+        //     if UserName = '' then exit;
+        //     if User.IsEmpty() then exit;               // the WHOLE User table
+        //     User.SetRange("User Name", UserName);
+        //     if User.IsEmpty() then Error(UserNameDoesNotExistErr, UserName);
+        //
+        // so it only skips the check while the User table is entirely empty. It used to be,
+        // because the runner never put its own session user in it (#2296); this line said
+        // 'TTITWHSE1' and Microsoft's guard let it through. With the session user seeded the
+        // table is no longer empty and Microsoft's own code refuses an unknown name — which is
+        // what real BC does, so the name has to be a real one. Nothing about this suite's claim
+        // (that the OnBeforeInsertEvent subscriber fires) depends on which name it is.
+        WhseEmployeePage."User ID".SetValue(UserId());
 
         // A TestPage's new row is a client-side draft -- SetValue only writes the buffer, and
         // the row is not actually inserted until the cursor leaves it (or the page closes):

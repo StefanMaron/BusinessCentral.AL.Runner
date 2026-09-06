@@ -25,7 +25,7 @@ public sealed class ManifestCompilationTargetTests : IDisposable
 
     public ManifestCompilationTargetTests()
     {
-        _root = Path.Combine(Path.GetTempPath(), "al-runner-manifest-target", Guid.NewGuid().ToString("N"));
+        _root = TestScratch.Dir("al-runner-manifest-target");
         Directory.CreateDirectory(_root);
     }
 

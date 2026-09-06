@@ -547,6 +547,80 @@ public static partial class NclCecilRewrite
                     body.MaxStackSize = 0;
                     Console.Error.WriteLine($"[Cecil] Rewrote ALTaskScheduler.{m.Name} → no-op");
                 }
+
+                // ALTaskExistsAsync / ALCancelTaskAsync — the two members whose real bodies
+                // have NO CanCreateTask guard and go straight to the scheduled-task store
+                // (#2866). Measured on BC 28.1 before this rewrite: TaskExists died with
+                // NullReferenceException in NavSqlConnectionScope.TryOpenConnection (reached
+                // via NavTaskScheduler.SqlDml.RetrySqlAsync), CancelTask died with one inside
+                // ALCancelTaskAsync itself. Neither names an API or cites a doc, which is the
+                // silent-ish failure loud-failures.md exists to stop — so both refuse by name
+                // against docs/scope.md#jobs instead. See AlRunner/Patches/TaskSchedulerPatches.cs.
+                //
+                // The *Async overloads are the choke points: the sync ALTaskExists(Guid) /
+                // ALCancelTask(Guid) wrappers are `…Async(NavCurrentThread.Session, task)
+                // .AsTask().GetAwaiter().GetResult()`, so rewriting the async pair covers both
+                // AL call shapes and leaves one place to maintain.
+                //
+                // The replacements stand in for the WHOLE async body and carry its
+                // ValueTask<bool> return type, so ALCancelTaskAsync can keep BC's one
+                // pre-scheduler answer — `if (task == Guid.Empty) return false;`, the first
+                // line of its real body — instead of refusing an id BC settles without any
+                // scheduler at all. ALTaskExistsAsync has no such line and refuses every id.
+                //
+                // NOT touched here, deliberately: ALCanCreateTask / CanCreateTask (must keep
+                // answering false — the documented guard is built on them), ALCreateTaskAsync
+                // and ALSetTaskReadyAsync (their real bodies already raise BC's own
+                // NavCreateScheduledTasksNotAllowedException through that guard, which #1739
+                // decided to keep and tests/expectations/divergence-session.json classifies;
+                // ALSetTaskReadyAsync also keeps its own identical empty-id short-circuit,
+                // which is why leaving it alone and special-casing cancel agree rather than
+                // conflict).
+                foreach (var (name, helperName) in new[]
+                {
+                    ("ALTaskExistsAsync", nameof(AlRunner.Patches.TaskSchedulerPatches.ALTaskExistsAsync_Replacement)),
+                    ("ALCancelTaskAsync", nameof(AlRunner.Patches.TaskSchedulerPatches.ALCancelTaskAsync_Replacement)),
+                })
+                {
+                    var helperMi = typeof(AlRunner.Patches.TaskSchedulerPatches).GetMethod(
+                        helperName, BindingFlags.Public | BindingFlags.Static)
+                        ?? throw new InvalidOperationException(
+                            $"[Cecil] TaskSchedulerPatches.{helperName} not found");
+
+                    int rewritten = 0;
+                    foreach (var m in alTaskSchedulerType.Methods
+                        .Where(x => x.Name == name && x.HasBody))
+                    {
+                        // Return type is load-bearing: ReplaceBodyWithHelper emits
+                        // `ldarg…; call helper; ret`, so a helper whose return type stopped
+                        // matching BC's would produce IL that only fails when the method is
+                        // first JITted — long after the rewrite, with nothing pointing back
+                        // here. Check it while we still have a useful message.
+                        const string ExpectedRet = "System.Threading.Tasks.ValueTask`1<System.Boolean>";
+                        if (m.ReturnType.FullName != ExpectedRet)
+                            throw new InvalidOperationException(
+                                $"[Cecil] ALTaskScheduler.{name} returns {m.ReturnType.FullName}, expected "
+                                + $"{ExpectedRet}. BC's ALTaskScheduler shape has changed; see "
+                                + "AlRunner/Patches/TaskSchedulerPatches.cs and issue #2866.");
+
+                        ReplaceBodyWithHelper(asm.MainModule, m, helperMi);
+                        rewritten++;
+                    }
+
+                    // Loud when the shape moves. "We could not find it" must never degrade
+                    // back into the NRE this fix removed — that would read as a regression on
+                    // a new BC build with nothing in the log to explain it.
+                    if (rewritten == 1)
+                        Console.Error.WriteLine(
+                            $"[Cecil] Rewrote ALTaskScheduler.{name} → throw OOS (task-scheduler)");
+                    else
+                        throw new InvalidOperationException(
+                            $"[Cecil] Expected exactly ONE ALTaskScheduler.{name} to rewrite as the "
+                            + $"task-scheduler refusal, found {rewritten}. BC's ALTaskScheduler shape has "
+                            + "changed; AL would otherwise hit a NullReferenceException out of BC's "
+                            + "scheduler data layer again. See AlRunner/Patches/TaskSchedulerPatches.cs "
+                            + "and issue #2866.");
+                }
             }
         }
 
@@ -959,6 +1033,12 @@ public static partial class NclCecilRewrite
         set.Add("Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::ALCanCreateTask/1");
         set.Add("Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::CanCreateTask/1");
         set.Add("Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::CheckCodeUnit/2");
+        // …and the two members with no CanCreateTask guard of their own (#2866), rewritten
+        // to throw the task-scheduler out-of-scope refusal instead of NRE-ing out of BC's
+        // scheduler data layer. The sync ALTaskExists/ALCancelTask wrappers are not listed
+        // because they are not rewritten — they funnel into these.
+        set.Add("Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::ALTaskExistsAsync/2");
+        set.Add("Microsoft.Dynamics.Nav.Runtime.ALTaskScheduler::ALCancelTaskAsync/2");
     }
 
 }

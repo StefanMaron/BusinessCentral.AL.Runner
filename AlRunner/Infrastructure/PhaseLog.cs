@@ -546,44 +546,28 @@ public static class PhaseLog
 
     /// <summary>
     /// This process's resident-set high-water mark in bytes. Linux reads VmHWM from
-    /// /proc/self/status — the kernel's own high-water mark, which .NET's
-    /// PeakWorkingSet64 does not surface on Unix. macOS reads getrusage's ru_maxrss,
-    /// because .NET does not implement PeakWorkingSet64 there at all: it returns 0,
-    /// and a silent zero is worse than a missing field, since the aggregate built on
-    /// top presents it as a measurement of a run that used no memory. Falls back to
-    /// the framework property elsewhere.
+    /// /proc/self/status. NOT because PeakWorkingSet64 is missing there — that is a
+    /// claim this comment used to make and it is false: measured on net8.0/Linux after
+    /// unmapping 700 MB, PeakWorkingSet64 returns VmHWM to the byte (763,752,448 from
+    /// both). The reason is that the peak has to be read together with VmRSS out of ONE
+    /// sample, which the framework property cannot give — see TryReadLinuxRssSample.
+    /// macOS reads getrusage's ru_maxrss, because .NET does not implement
+    /// PeakWorkingSet64 there at all: it returns 0, and a silent zero is worse than a
+    /// missing field, since the aggregate built on top presents it as a measurement of
+    /// a run that used no memory. Falls back to the framework property elsewhere — and
+    /// on a Linux box whose /proc/self/status cannot be read, where it is the same
+    /// number by the measurement above.
     /// </summary>
     public static long PeakRssBytes()
     {
         try
         {
-            if (OperatingSystem.IsLinux() && File.Exists("/proc/self/status"))
-            {
-                foreach (var line in File.ReadLines("/proc/self/status"))
-                {
-                    if (!line.StartsWith("VmHWM:", StringComparison.Ordinal)) continue;
-                    var kb = line.AsSpan(6).Trim().ToString().Split(' ')[0];
-                    if (long.TryParse(kb, out var v)) return v * 1024;
-                }
-            }
+            if (OperatingSystem.IsLinux() && TryReadLinuxRssSample(out var peak, out _))
+                return peak;
 
             using var self = System.Diagnostics.Process.GetCurrentProcess();
 
-            if (OperatingSystem.IsMacOS())
-            {
-                var maxRss = DarwinPeakRssBytes();
-                // A high-water mark cannot be below the current working set. That check is
-                // what catches the live hazard, which is a units error rather than a wrong
-                // number: ru_maxrss is BYTES on Darwin and KILOBYTES on Linux, so reading
-                // the Linux convention on a Mac produces a value about 1024x too small —
-                // one that sails past any "greater than a few MB" floor while being wrong.
-                // It also catches a wrong field offset, which would read some other member
-                // of struct rusage. On either failure, fall back to the current working
-                // set: a real measurement and a valid lower bound on the peak, rather than
-                // a made-up number or a zero.
-                if (maxRss >= self.WorkingSet64) return maxRss;
-                return self.WorkingSet64;
-            }
+            if (OperatingSystem.IsMacOS()) return ChooseDarwinPeak(DarwinPeakRssBytes(), self.WorkingSet64);
 
             return self.PeakWorkingSet64;
         }
@@ -591,6 +575,102 @@ public static class PhaseLog
         {
             return 0;
         }
+    }
+
+    /// <summary>
+    /// Sanity-checks getrusage's ru_maxrss against the live working set and reports the
+    /// better of the two. The hazard being caught is a units error rather than a wrong
+    /// number: ru_maxrss is BYTES on Darwin and KILOBYTES on Linux, so reading the Linux
+    /// convention on a Mac produces a value about 1024x too small — one that sails past
+    /// any "greater than a few MB" floor while being wrong. A wrong field offset, which
+    /// would read some other member of struct rusage, fails it too. On either failure the
+    /// current working set is reported: a real measurement and a valid lower bound on the
+    /// peak, rather than a made-up number or a zero.
+    ///
+    /// The bound is order-of-magnitude ON PURPOSE. These are two sources read at two
+    /// instants — ru_maxrss from the kernel's rusage accounting, WorkingSet64 from .NET's
+    /// own sampling — and #3005 measured the equivalent pair 0.13% apart under CI load. A
+    /// strict >= here throws away a perfectly good high-water mark over that skew and
+    /// reports the smaller live number as the peak; halving it costs nothing, since a
+    /// 1024x units error still lands 512x below the bound.
+    /// </summary>
+    internal static long ChooseDarwinPeak(long maxRssBytes, long workingSetBytes)
+        => maxRssBytes > 0 && maxRssBytes * 2 >= workingSetBytes ? maxRssBytes : workingSetBytes;
+
+    /// <summary>
+    /// One consistent sample of this process's resident-set counters, in bytes, from a
+    /// SINGLE read of /proc/self/status.
+    ///
+    /// Reading VmHWM here and taking the "current" number from .NET's Process.WorkingSet64
+    /// is TWO READS OF THIS SAME FILE at two instants — measured, WorkingSet64 equalled
+    /// /proc/self/status VmRSS in 35,269 of 37,489 samples under churn and
+    /// /proc/&lt;pid&gt;/stat's rss in 0 of them — and two instants cannot promise agreement:
+    /// #3005 saw them 0.13% apart on a CI leg, with the supposed high-water mark reading
+    /// BELOW the live working set, and the same shape inverted 5 times in those 37,489
+    /// local samples against 0 for the one-read shape below. Within one read the kernel
+    /// derives both fields from the same counter read inside task_mem()
+    /// (hiwater_rss = total_rss = anon + file + shmem, then raised to mm-&gt;hiwater_rss
+    /// only if that is larger), so <paramref name="peakBytes"/> &gt;=
+    /// <paramref name="currentBytes"/> is an invariant of the sample rather than a race.
+    ///
+    /// Returns false on anything that is not Linux, and on any read or parse failure.
+    /// </summary>
+    internal static bool TryReadLinuxRssSample(out long peakBytes, out long currentBytes)
+    {
+        peakBytes = 0;
+        currentBytes = 0;
+        if (!OperatingSystem.IsLinux()) return false;
+        try
+        {
+            // ReadAllText, not ReadLines: one open and one pass, so both fields come out
+            // of the same procfs snapshot. /proc/self/status is well under a page.
+            return TryParseLinuxRssSample(File.ReadAllText("/proc/self/status"), out peakBytes, out currentBytes);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Parses VmHWM (peak) and VmRSS (current) out of one /proc/self/status body. Both
+    /// fields are reported in KILOBYTES, so both are scaled by 1024 — dropping that
+    /// understates by ~1024x, and a value 1024x too small still clears any "a live process
+    /// uses at least a few MB" floor. Split out from the read so the scaling is provable
+    /// against a fixed input instead of against live numbers that move underneath the test.
+    ///
+    /// The field match is exact up to the colon: VmPeak is virtual size, not RSS, and a
+    /// looser prefix match would report a number several times too large.
+    /// </summary>
+    internal static bool TryParseLinuxRssSample(string statusText, out long peakBytes, out long currentBytes)
+    {
+        peakBytes = 0;
+        currentBytes = 0;
+        if (string.IsNullOrEmpty(statusText)) return false;
+
+        foreach (var raw in statusText.Split('\n'))
+        {
+            var line = raw.AsSpan().Trim();
+            if (line.StartsWith("VmHWM:", StringComparison.Ordinal))
+                peakBytes = ParseKilobyteField(line[6..]);
+            else if (line.StartsWith("VmRSS:", StringComparison.Ordinal))
+                currentBytes = ParseKilobyteField(line[6..]);
+            if (peakBytes > 0 && currentBytes > 0) break;
+        }
+
+        if (peakBytes > 0 && currentBytes > 0) return true;
+        peakBytes = 0;
+        currentBytes = 0;
+        return false;
+    }
+
+    /// <summary>"  371448 kB" -&gt; 380,362,752. Returns 0 when the value does not parse.</summary>
+    private static long ParseKilobyteField(ReadOnlySpan<char> value)
+    {
+        value = value.Trim();
+        var end = value.IndexOf(' ');
+        if (end >= 0) value = value[..end];
+        return long.TryParse(value, out var kb) && kb > 0 ? kb * 1024 : 0;
     }
 
     /// <summary>

@@ -501,7 +501,7 @@ public static partial class RecordPatches
             var p = ps[i];
             if (p.Name == "id") { args[i] = f.FieldId; continue; }
             if (p.Name == "name") { args[i] = f.FieldName; continue; }
-            if (p.Name == "type") { args[i] = MapNavType(f.TypeName); continue; }
+            if (p.Name == "type") { args[i] = MapNavType(f.TypeName, parentTable?.TableId ?? 0, f.FieldId); continue; }
             if (p.Name == "length") { args[i] = f.Length; continue; }
             if (p.Name == "autoIncrement" && f.IsAutoIncrement) { args[i] = true; continue; }
             // Caption: BC answers Rec.FieldCaption(n) and the Field virtual table's
@@ -801,6 +801,30 @@ public static partial class RecordPatches
                         $"[RecordPatches] TableRelation on '{forFieldName}': where() field '{w.SourceFieldName}' not found on '{target.TableName}' — relation dropped");
                     return null;
                 }
+
+                // #2518 — `where(<target field> = field(<referencing field>))`. BC's
+                // NCLMetaFilterField.CreateFromMetaFilter reads filterValue as the field id of
+                // a field on the PARENT table it is handed, and NCLMetaField's ctor hands it
+                // `parent` — the table declaring the relation, i.e. referencingTable here, NOT
+                // the related table. Same encoding a CalcFormula's field() link already uses
+                // above, including the two mode flags for field(filter(X)) /
+                // field(upperlimit(X)).
+                if (w.Kind == ParsedCalcFilterKind.Field)
+                {
+                    var refField = referencingTable?.Fields.FirstOrDefault(x =>
+                        string.Equals(x.FieldName, w.ParentFieldName, StringComparison.OrdinalIgnoreCase));
+                    if (refField == null)
+                    {
+                        Console.Error.WriteLine(
+                            $"[RecordPatches] TableRelation on '{forFieldName}': where() field() link '{w.ParentFieldName}' not found on '{referencingTable?.TableName}' — relation dropped");
+                        return null;
+                    }
+                    filterObjects.Add(BuildMetaFilter(srcField.FieldId, "FIELD",
+                        refField.FieldId.ToString(CultureInfo.InvariantCulture),
+                        w.ValueIsFilter, w.OnlyMaxLimit));
+                    continue;
+                }
+
                 filterObjects.Add(BuildMetaFilter(srcField.FieldId,
                     w.Kind == ParsedCalcFilterKind.Const ? "CONST" : "FILTER", w.Value ?? ""));
             }
@@ -1065,8 +1089,23 @@ public static partial class RecordPatches
         return createRange.Invoke(null, new object[] { typedArray })!;
     }
 
-    private static object MapNavType(string typeName)
+    /// <param name="tableId">The id of the table the field belongs to, and 0 when unknown.
+    /// Only consulted for the Object (2000000001) OemText carve-out below.</param>
+    /// <param name="fieldNo">The field's own number, for the same carve-out.</param>
+    private static object MapNavType(string typeName, int tableId = 0, int fieldNo = 0)
     {
+        // ── Object (2000000001) fields 2 / 4 / 12 / 50 are OemText, not Text ─────────────
+        // BC's OWN AL compiler overrides the declared type for exactly these four fields, so
+        // the IL it emits calls ValidateExpectedType(fieldNo, NavType.OemText) — while
+        // SymbolReference.json and the shipped .al both say Text[n]. Take the declared type at
+        // face value and every AL read of Object."Company Name" / Name / "Version List" /
+        // "Locked By" throws NavObjectDefinitionChangedException
+        // ("old type: OemText, new type: Text") before it can return anything. See
+        // RecordPatches.ObjectSystemTable.IsOemTextFieldOnObjectTable for the compiler method
+        // this mirrors and where it was read off. (#2774)
+        if (IsOemTextFieldOnObjectTable(tableId, fieldNo) && _tNavType != null)
+            return Enum.Parse(_tNavType, "OemText", ignoreCase: true);
+
         // Map AL type name → NavType enum. Use `ignoreCase: true` because the
         // BC NavType enum uses inconsistent casing (`BLOB`, `GUID`, but
         // `Code`/`Text`/`Decimal`...) and AL field-type strings may come from

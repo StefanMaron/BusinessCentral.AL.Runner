@@ -149,12 +149,18 @@ public static partial class RecordPatches
     /// is a normal outcome that costs only the persistence.</summary>
     internal static byte[]? TrySerializeInstallBaselineSnapshot(InstallBaselineSnapshot snapshot, string cacheKey)
     {
-        if (snapshot.Sources.Count != 1)
+        // #2914: the snapshot being persisted is the one TestExecutor has just registered as
+        // the active dep+company baseline, so #2262's lazy --test-data load can append to it
+        // from another thread while this walks it. Take the stable copy once, up front, and
+        // encode THAT — a count read from the live list and an indexer read a moment later
+        // could otherwise disagree, and the per-table walk below could tear outright.
+        var stable = StableBaselineSourcesForWalk(snapshot.Sources);
+        if (stable.Count != 1)
         {
-            DiskLog($"not persisting: snapshot has {snapshot.Sources.Count} DataAccessSource(s), expected exactly 1");
+            DiskLog($"not persisting: snapshot has {stable.Count} DataAccessSource(s), expected exactly 1");
             return null;
         }
-        var source = snapshot.Sources[0];
+        var source = stable[0];
         var skeleton = ResolveSkeletonDataAccessSource();
         if (skeleton == null || !ReferenceEquals(skeleton, source.Source))
         {
@@ -569,7 +575,7 @@ public static partial class RecordPatches
     internal static string ComputeRoundTripDigest(InstallBaselineSnapshot snapshot)
     {
         var sb = new System.Text.StringBuilder();
-        foreach (var source in snapshot.Sources)
+        foreach (var source in StableBaselineSourcesForWalk(snapshot.Sources))   // #2914
             foreach (var table in source.Tables)
             {
                 if (IsSelfPopulatingVirtualTableId(table.TableId)) continue;
@@ -611,7 +617,7 @@ public static partial class RecordPatches
     /// is what the round-trip test asserts.</summary>
     internal static string ComputePersistableContentDigest(InstallBaselineSnapshot snapshot)
     {
-        var narrowed = snapshot.Sources
+        var narrowed = StableBaselineSourcesForWalk(snapshot.Sources)   // #2914
             .Select(s => new BaselineSource(s.Source,
                 s.Tables.Where(t => !IsSelfPopulatingVirtualTableId(t.TableId)).ToList()))
             .ToList();

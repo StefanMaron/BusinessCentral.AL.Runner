@@ -58,7 +58,11 @@ public sealed class JoinContext
     /// unrelated TableSlot on the FlowField's source table (which this join never reads a row
     /// buffer for at all).
     /// </summary>
-    public required Func<object /*rowBuffer*/, object /*flowFieldMeta*/, object?> CalcFlowFieldForRow;
+    /// #2925 adds the third argument: the QUERY's own flow filters (a FiltersAndMarks boxed as
+    /// object, or null when the query sets none), which BC's FlowFieldsHelper.
+    /// GetFilterFromMetaFilterCollection dereferences unguarded for any CalcFormula carrying a
+    /// FlowFilter-class where-condition.
+    public required Func<object /*rowBuffer*/, object /*flowFieldMeta*/, object? /*flowFiltersAndMarks*/, object?> CalcFlowFieldForRow;
 
     /// <summary>Diagnostic log sink (al-runner's QLog).</summary>
     public required Action<string> Log;
@@ -66,7 +70,20 @@ public sealed class JoinContext
     /// <summary>
     /// Factory for AlRunner.Infrastructure.RunnerOutOfScopeException so the executor can
     /// throw the project's typed OOS exception without referencing al-runner's types directly.
-    /// (api, reason) → Exception. Throwing it loudly is required by loud-failures.
+    /// (api, surface, detail) → Exception. Throwing it loudly is required by loud-failures.
+    ///
+    /// <para>THREE parts, not two, and the split is load-bearing (#2966). al-runner builds the
+    /// reason from them as <c>not-yet-implemented — {surface}: {detail}</c>, because
+    /// ApplicationObjectBasePatches.IsPermanentOutOfScope lets an AL [TryFunction] absorb any
+    /// refusal whose reason does NOT start with "not-yet-implemented". These nine refusals are
+    /// join sub-shapes the executor cannot take yet — real BC answers all of them — so
+    /// absorbing one turns a runner gap into a green test that lies. When the executor spelled
+    /// its own reason string it got that wrong at every site.</para>
     /// </summary>
-    public required Func<string, string, Exception> OutOfScope;
+    /// <remarks>
+    /// <paramref name="surface"/> is the site's own anchor, e.g. "query-join-no-link". It must
+    /// not contain " — ": OutOfScopeMessage.TryParse cuts the api from the reason at the first
+    /// one.
+    /// </remarks>
+    public required Func<string /*api*/, string /*surface*/, string /*detail*/, Exception> OutOfScope;
 }

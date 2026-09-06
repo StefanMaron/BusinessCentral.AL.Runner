@@ -4,9 +4,9 @@
     "CodeunitName": "Expct Fixture Tests",
     "Method": "GreenPath_OosDeclared",
     "Mode": "expect-oos",
-    "Reason": "query-join-rightouterjoin-not-implemented",
-    "Doc": "docs/scope.md#queries",
-    "Note": "Fixture entry: matching reason anchor on a TYPED RunnerOutOfScopeException, so the OOS throw reclassifies to pass-oos."
+    "Reason": "not-yet-implemented",
+    "Doc": "docs/limitations.md#query-shape-gaps",
+    "Note": "Fixture entry: matching reason anchor on a TYPED RunnerOutOfScopeException, so the OOS throw reclassifies to pass-oos. The anchor read 'query-join-rightouterjoin-not-implemented' with Doc=docs/scope.md#queries until #2966: RightOuterJoin is valid AL that real BC executes, so the refusal is a gap the runner means to close rather than a permanent boundary — and that Doc anchor never existed in scope.md."
   },
   {
     "codeunitId": 60810,
@@ -46,8 +46,8 @@
     "CodeunitName": "Expct Fixture Tests",
     "Method": "Drift_OosEntryButPasses",
     "Mode": "expect-oos",
-    "Reason": "query-join-rightouterjoin-not-implemented",
-    "Doc": "docs/scope.md#queries",
+    "Reason": "not-yet-implemented",
+    "Doc": "docs/limitations.md#query-shape-gaps",
     "Note": "Fixture entry: deliberately stale — the test passes, so the run must fail with 'Remove the entry'."
   },
   {

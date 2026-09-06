@@ -82,7 +82,7 @@ public sealed class ArtifactDownloader404Tests
     }
 
     [Fact]
-    public void TryHeadContentLength_ServerError_ReturnsFalseWithCdnReachabilityMessage_DistinctFrom404()
+    public void TryHeadContentLength_ServerError_ReturnsFalseNamingTheStatus_DistinctFrom404()
     {
         using var http = new HttpClient(new StubHandler(HttpStatusCode.InternalServerError));
         var logs = new List<string>();
@@ -95,7 +95,15 @@ public sealed class ArtifactDownloader404Tests
         Assert.Equal(0, size);
         // Must NOT claim the version is unpublished — a 500 is a CDN problem, not a bad version.
         Assert.DoesNotContain(logs, l => l.Contains("no BC artifact published"));
-        Assert.Contains(logs, l => l.Contains("could not reach the BC artifact CDN") && l.Contains("28.1.0.0"));
+        // Issue #2926: this used to assert "could not reach the BC artifact CDN", which was
+        // wrong in both directions. It was wrong here, because a 500 means we DID reach the CDN
+        // and it answered — the status code is the fact worth printing. And it was the same
+        // sentence emitted for a connect failure that never reached the CDN at all, which is
+        // how a host with no IPv6 route was told Azure was down. The status now appears, and
+        // the connect-failure cases no longer share this wording at all.
+        Assert.Contains(logs, l => l.Contains("the BC artifact CDN answered HTTP 500")
+                                   && l.Contains("28.1.0.0"));
+        Assert.Contains(logs, l => l.Contains("The server was reached"));
     }
 
     [Fact]

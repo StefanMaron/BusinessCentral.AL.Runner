@@ -49,7 +49,7 @@ public class BcAppSymbolCacheTableExtTests
     public void GetTableExtensions_RootLevelEntry_ReturnsParsedExtension()
     {
         // ── ARRANGE ──────────────────────────────────────────────────────────────────
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-bcsym-tableext-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -116,7 +116,7 @@ public class BcAppSymbolCacheTableExtTests
     public void GetTableExtensions_NestedNamespace_ReturnsParsedExtension()
     {
         // Extension nested two namespaces deep (mirrors real BC BaseApp structure)
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-bcsym-tableext-tests");
         Directory.CreateDirectory(dir);
         try
         {
@@ -174,7 +174,7 @@ public class BcAppSymbolCacheTableExtTests
     public void GetTableExtensions_PlainTargetObjectName_StripsPrefixCorrectly()
     {
         // Some apps use a plain table name without the #appId# prefix
-        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("al-runner-bcsym-tableext-tests");
         Directory.CreateDirectory(dir);
         try
         {

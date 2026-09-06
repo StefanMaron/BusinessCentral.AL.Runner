@@ -61,6 +61,20 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal in this file, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for
+    /// why the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945).
+    /// </summary>
+    /// <remarks>
+    /// Category (2), in scope and not yet answerable. This file populates the table, so the
+    /// one refusal here reports that the runner's own store wiring handed over no provider —
+    /// there is nothing to populate, and standing up a private store would answer with rows
+    /// nobody can read back.
+    /// </remarks>
+    internal static RunnerOutOfScopeException AllProfileShapeGap(string detail)
+        => VirtualTableShapeGap("All Profile (virtual table 2000000178)", "all-profile-virtual-table", detail);
+
     internal const int AllProfileVirtualTableId = 2000000178;
 
     /// <summary>
@@ -112,9 +126,7 @@ public static partial class RecordPatches
         EnsureDataAccessProviderReflection(dataAccess);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "All Profile (virtual table 2000000178)",
-                "all-profile-virtual-table — data access has no in-memory provider; see docs/scope.md");
+            ?? throw AllProfileShapeGap("data access has no in-memory provider");
 
         if (_apvPopulatedProviders.TryGetValue(provider, out _)) return;
         _apvPopulatedProviders.Add(provider, new object());

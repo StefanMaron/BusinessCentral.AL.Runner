@@ -107,19 +107,52 @@ An exception carrying *neither* is not an out-of-scope signal. A plain
 `expect-oos` entry stays a failure — widening the matcher must not turn it into
 one that says yes to everything.
 
+**A third refusal type exists and `expect-oos` may never absorb it.**
+`BcShapeGapException` — message prefix `bc-shape-gap: `, written up in
+[limitations.md](limitations.md#bc-shape-gaps) — means the runner could not READ
+one of BC's own internals: a private field, a static type or an internal property
+that is not where the reflecting code expects it on this BC build. That is a bug
+report about the runner, not a scope boundary, and it is a property of which BC
+build is on disk rather than of the runner — so it can be true on one BC leg and
+false on another in the same matrix run, and "expected" is never an honest thing
+to call it. `expect-oos` and `expect-divergence` both refuse it explicitly,
+naming the surface and the member, instead of falling through to advice about
+raising `RunnerOutOfScopeException` that would be exactly wrong here.
+`expect-fail-known-gap` still applies, with an open issue, once someone has
+written the gap down. Settled in
+[#2946](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2946).
+
 New Cecil throw sites therefore have to put the **`docs/scope.md` anchor first
 in the reason slot**, and the API name in the API slot. A message shaped
 `out-of-scope: report-rendering-external — RDLC layout processing …` puts a
 reason where the API belongs and is undeclarable; fix the throw site rather
 than writing a prose `Reason` into the entry.
 
+The trailing ` — see …` link is **not** part of the signal. `OutOfScopeMessage`
+strips it, so a throw site may point at a file other than `docs/scope.md` when
+that is where the surface is written up — a refusal whose reason anchor is
+`not-yet-implemented` describes an IN-SCOPE surface the runner cannot answer for
+yet, and those belong in `docs/limitations.md`. Pass the full
+`docs/<file>.md#anchor` as the `docAnchor` argument; a bare anchor still resolves
+against `docs/scope.md`. Nothing about the classification changes either way.
+
 `Reason` matches on the anchor: throw sites may append free-text detail after
-an ` — ` (em-dash) separator, while the entry holds only the leading
-`docs/scope.md` anchor (e.g. a throw site's
-`query-join-rightouterjoin-not-implemented — only InnerJoin and …` matches an
-entry declaring `query-join-rightouterjoin-not-implemented`). Anchors are
-compared for **equality** after that trim, not by prefix or substring:
-`external-htt` does not match `external-http`.
+an ` — ` (em-dash) separator, while the entry holds only the leading anchor
+(e.g. a throw site's
+`not-yet-implemented — query-join-rightouterjoin-link-type: only InnerJoin and …`
+matches an entry declaring `not-yet-implemented`). Anchors are compared for
+**equality** after that trim, not by prefix or substring: `external-htt` does not
+match `external-http`.
+
+One consequence is worth stating plainly, because it costs the manifest real
+precision: every in-scope shape gap reports the SAME anchor,
+`not-yet-implemented`, so an entry declaring it matches whichever such refusal
+that test raises rather than one specific surface. That is the trade the anchor
+exists to make — the token is what stops an AL `[TryFunction]` from absorbing a
+runner gap into `false` (`ApplicationObjectBasePatches.IsPermanentOutOfScope`),
+and the surface's own anchor is kept as the reason's second token for a reader.
+Use `expect-fail-known-gap` with an `Issue` when the entry needs to name one
+surface and one piece of tracked work.
 
 ### `expect-divergence` vs the other two failure modes
 
