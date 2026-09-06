@@ -1,4 +1,7 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -39,10 +42,12 @@ namespace AlRunner.Tests;
 /// allowlist below fails, in the C#-written manifests the rule already covered AND in the
 /// checked-in fixture manifests it did not.
 ///
-/// Matching is on the JSON PROPERTY (<c>"application"</c> followed by a colon), never the
-/// bare word: several files quote <c>"application"</c> in a comment explaining that they
-/// deliberately do NOT declare it, and flagging those would train readers to ignore this
-/// test.
+/// Matching is on the JSON PROPERTY, never the bare word, and never on prose that merely
+/// spells the property: several files quote it in a comment explaining that they deliberately
+/// do NOT declare it, and flagging those would train readers to ignore this test. A raw-text
+/// regex could not draw that line and did flag one (#3064), so a .json file is now read as a
+/// parsed manifest and a .cs file is searched only inside its string literals — see
+/// <see cref="DeclaresBaseApplicationFloor(string, string)"/>.
 /// </summary>
 public sealed class BaseAppFloorFixtureGuardTests
 {
@@ -106,11 +111,91 @@ public sealed class BaseAppFloorFixtureGuardTests
         DeclaresBaseApplicationFloor(path, File.ReadAllText(path));
 
     /// <summary>
-    /// RED placeholder (#3064): still the raw-text scan, so a comment quoting the property
-    /// counts as declaring it. Replaced in the next commit.
+    /// #3064 — the same question about content held in memory, dispatched on the file kind.
+    /// A <c>.json</c> file IS a manifest, so the property is read from the parsed document; a
+    /// <c>.cs</c> file only ever REACHES a manifest through a string literal, so only string
+    /// literals are searched.
+    ///
+    /// Before this, both were one raw-text regex over the whole file, which cannot tell a JSON
+    /// property from a comment quoting one. ServerAppVersionBumpTests.cs (PR #2908) failed the
+    /// BC 27.5 and 28.4 legs for a <c>//</c> comment written to record that the file complies
+    /// with this very rule — so the guard punished a file for explaining that it obeyed, and
+    /// the cheapest way back to green was to delete the explanation. The alternative, adding
+    /// the file to <see cref="AllowedSources"/>, would have recorded a violation that does not
+    /// exist, and an allowlist carrying entries for files that never violated anything is one
+    /// a reader stops trusting — which is the mechanism the rule depends on.
     /// </summary>
     internal static bool DeclaresBaseApplicationFloor(string fileName, string text) =>
-        ApplicationProperty.IsMatch(text);
+        Path.GetExtension(fileName).Equals(".json", StringComparison.OrdinalIgnoreCase)
+            ? ManifestDeclaresFloor(text)
+            : CSharpWritesFloor(text);
+
+    /// <summary>
+    /// A manifest declares the floor on exactly the terms the runner reads it. All three
+    /// readers — <c>Dependencies.ReadDependencies</c>, <c>InProcessAppPackager</c> and
+    /// <c>Provisioning</c> — do <c>root.TryGetProperty("application", …)</c> and gate on
+    /// <c>ValueKind == JsonValueKind.String</c> with a non-blank value, so a key of that name
+    /// nested in a <c>dependencies[]</c> entry, or a null one, synthesises no implicit
+    /// Microsoft/Application root and costs nothing. Matching the readers is what makes this a
+    /// guard against the COST rather than against a spelling.
+    ///
+    /// A manifest that will not parse falls back to the raw scan and over-reports. A guard that
+    /// answered "no violation" about content it could not read would be the exact failure this
+    /// class exists to prevent, so the fallback errs toward flagging.
+    /// </summary>
+    private static bool ManifestDeclaresFloor(string text)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("application", out var v)
+                && v.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(v.GetString());
+        }
+        catch (JsonException)
+        {
+            return ApplicationProperty.IsMatch(text);
+        }
+    }
+
+    /// <summary>
+    /// A C# source writes the floor when the property appears inside a STRING LITERAL, the only
+    /// route by which text in a .cs file can end up in a manifest on disk. Roslyn is what draws
+    /// the line: the sibling guards in this project strip whole-line <c>//</c> comments by hand
+    /// (ScratchDirOwnershipGuardTests, FieldTriggerShapeGapCallSiteTests), which misses a
+    /// trailing comment and a <c>/* */</c> block, and a hand-rolled stripper would in turn have
+    /// to know not to cut at the <c>//</c> inside a URL literal. Tokenising asks the compiler
+    /// instead.
+    ///
+    /// <c>DescendantTokens()</c> does not descend into trivia, so comments — including XML doc
+    /// comments and <c>#if false</c> regions — contribute no tokens at all. Both
+    /// <c>Text</c> (the escaped form a manifest embedded in a C# literal uses,
+    /// <c>\"application\":</c>) and <c>ValueText</c> (the unescaped value) are checked, so
+    /// either spelling counts.
+    /// </summary>
+    private static bool CSharpWritesFloor(string text)
+    {
+        foreach (var token in CSharpSyntaxTree.ParseText(text).GetRoot().DescendantTokens())
+        {
+            if (!IsStringContent(token.Kind())) continue;
+            if (ApplicationProperty.IsMatch(token.Text) || ApplicationProperty.IsMatch(token.ValueText))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Every token kind whose text is string CONTENT rather than code.</summary>
+    private static bool IsStringContent(SyntaxKind kind) => kind
+        is SyntaxKind.StringLiteralToken
+        or SyntaxKind.Utf8StringLiteralToken
+        or SyntaxKind.SingleLineRawStringLiteralToken
+        or SyntaxKind.MultiLineRawStringLiteralToken
+        or SyntaxKind.Utf8SingleLineRawStringLiteralToken
+        or SyntaxKind.Utf8MultiLineRawStringLiteralToken
+        or SyntaxKind.InterpolatedStringTextToken
+        or SyntaxKind.InterpolatedRawStringEndToken;
 
     /// <summary>
     /// Checked-in fixture manifests permitted to declare the floor, with the reason. Each
