@@ -60,6 +60,31 @@ def green_set(**kw):
     return runs
 
 
+def padded(runs, wf_run: int = 1, base_id: int = 990000):
+    """`runs` plus a passing check run for every ruleset context it omits.
+
+    Most fixtures below reconstruct ONE interesting context -- a supersession, a
+    cancellation, an ordering inversion -- and were written when the ruleset
+    required two contexts, so listing the other one by hand was the whole job.
+    With ten required contexts (#3199) an unpadded fixture leaves eight of them
+    `missing`, and classify() correctly answers "not everything has reported"
+    instead of the question the test is asking. Padding restores the intended
+    single variable: everything else is present and green, so the verdict can
+    only be about the shape under test.
+
+    Deliberately additive and name-checked -- it never overwrites an entry the
+    fixture placed itself, so it cannot mask the very conclusion being asserted.
+    """
+    have = {r["name"] for r in runs}
+    out = list(runs)
+    for i, c in enumerate(cw.RULESET_CONTEXTS):
+        if c not in have:
+            out.append({"name": c, "status": "completed", "conclusion": "success",
+                        "id": base_id + i,
+                        "details_url": f"https://x/actions/runs/{wf_run}/job/{base_id + i}"})
+    return out
+
+
 print("ci-wait.py verdict logic")
 
 # --- the plain green case must stay green, or a fix that flags everything wins
@@ -200,7 +225,7 @@ runs = [run(n, "success") for n in LEGS]
 runs.append(run("BC test matrix passed", "success"))
 runs.append(run("Tests updated", "failure", cid=101297899468))
 runs.append(run("Tests updated", "skipped", cid=101297995090))
-v = cw.classify(runs)
+v = cw.classify(padded(runs))
 check("a failure superseded by a newer skipped run is GREEN, not FAILED",
       v.code == 0, f"(code={v.code}) {v.lines}")
 
@@ -210,7 +235,7 @@ runs = [run(n, "success") for n in LEGS]
 runs.append(run("BC test matrix passed", "success"))
 runs.append(run("Tests updated", "skipped", cid=101297899468))
 runs.append(run("Tests updated", "failure", cid=101297995090))
-v = cw.classify(runs)
+v = cw.classify(padded(runs))
 check("...but a failure that IS the newest entry still fails", v.code == 1, f"(code={v.code})")
 
 # --- an older cancelled entry must not hold the pool 'incomplete' forever
@@ -218,7 +243,7 @@ runs = [run(n, "success") for n in LEGS]
 runs.append(run("BC test matrix passed", "success"))
 runs.append(run("Tests updated", "cancelled", cid=10))
 runs.append(run("Tests updated", "success", cid=20))
-v = cw.classify(runs)
+v = cw.classify(padded(runs))
 check("an older cancelled entry does not stall the verdict", v.code == 0, f"(code={v.code})")
 
 # --- an empty rollup is not a verdict
@@ -413,7 +438,10 @@ def two_run_set(old_conclusion, new_conclusion):
     # the OLDER run's job started later, so it carries the HIGHER check-run id
     runs.append(cr("Tests updated", old_conclusion, OLD_RUN, 101303131614))
     runs.append(cr("Tests updated", new_conclusion, NEW_RUN, 101303055037))
-    return runs
+    # Attributed to NEW_RUN, the live one: padding backed by an unknown run id
+    # would read as "a newer run may re-report this" and hold the verdict
+    # pending, which is the opposite of the single variable under test.
+    return padded(runs, wf_run=NEW_RUN)
 
 
 v = cw.classify(two_run_set("failure", "success"), workflow_runs=ALL_DONE_RUNS)
@@ -474,7 +502,7 @@ runs = [cr(n, "success", NEW_RUN, 101303055000 + i) for i, n in enumerate(LEGS)]
 runs.append(cr("BC test matrix passed", "success", NEW_RUN, 101303055107))
 runs.append(cr("Tests updated", "failure", NEW_RUN, 101303055037))
 runs.append(cr("Tests updated", "success", NEW_RUN, 101303099999))
-v = cw.classify(runs, workflow_runs=ALL_DONE_RUNS)
+v = cw.classify(padded(runs, wf_run=NEW_RUN), workflow_runs=ALL_DONE_RUNS)
 check("inside one workflow run the newer check-run id still wins",
       v.code == 0, f"(code={v.code}) {v.lines}")
 
@@ -507,7 +535,7 @@ check("...and warns the failing list can still grow",
 runs = [cr(LEGS[0], "failure", NEW_RUN, 101303055001),
         cr("BC test matrix passed", None, NEW_RUN, 101303055107, status="queued"),
         cr("Tests updated", "success", NEW_RUN, 101303055037)]
-v = cw.classify(runs, workflow_runs=QUEUED_RUNS)
+v = cw.classify(padded(runs, wf_run=NEW_RUN), workflow_runs=QUEUED_RUNS)
 check("the unreported count is stated as a LOWER bound, not an exact number",
       any("at least 1 required check" in l for l in v.lines), v.lines)
 check("...and the caveat says a leg with no check run yet is not counted at all",
@@ -518,7 +546,7 @@ runs = [cr(LEGS[0], "failure", NEW_RUN, 101303055001),
         cr(LEGS[1], "success", NEW_RUN, 101303055002),
         cr("BC test matrix passed", "failure", NEW_RUN, 101303055107),
         cr("Tests updated", "success", NEW_RUN, 101303055037)]
-v = cw.classify(runs, workflow_runs=ALL_DONE_RUNS)
+v = cw.classify(padded(runs, wf_run=NEW_RUN), workflow_runs=ALL_DONE_RUNS)
 check("a complete rollup's failing list carries no 'still to come' caveat",
       v.code == 1 and not any("grow" in l.lower() for l in v.lines),
       f"(code={v.code}) {v.lines}")
@@ -842,8 +870,9 @@ check("an EMPTY required-context set is refused too", v.code == 3,
 # A green must be able to account for every ruleset context BY NAME, and say so.
 # Every real green that night named 9 or 10 checks; both false greens named 1.
 v = cw.classify(green_set())
+_n = len(cw.RULESET_CONTEXTS)
 check("a green names how many ruleset contexts it accounted for",
-      any("2/2 ruleset context(s)" in l for l in v.lines), v.lines)
+      any(f"{_n}/{_n} ruleset context(s)" in l for l in v.lines), v.lines)
 check("...and names them",
       all(any(c in l for l in v.lines) for c in cw.RULESET_CONTEXTS), v.lines)
 
@@ -861,15 +890,26 @@ RECORDED_BRANCH_RULES = [
     {"type": "required_status_checks", "ruleset_id": 15001420, "parameters": {
         "strict_required_status_checks_policy": False,
         "do_not_enforce_on_create": False,
-        "required_status_checks": [{"context": "BC test matrix passed"},
-                                   {"context": "Tests updated"}]}},
+        "required_status_checks": [
+            {"context": ".github/scripts/ unit tests"},
+            {"context": "Agent definitions must allowlist the MCP tools they document"},
+            {"context": "BC test matrix passed"},
+            {"context": "PR body closing references must be correct, both directions"},
+            {"context": "PR title/body must not contain a CI-skip directive"},
+            {"context": "Required contexts must not be cancellable on the same commit"},
+            {"context": "Tests updated"},
+            {"context": "pull_request trigger lists must keep their load-bearing event types"},
+            {"context": "scripts/ unit tests"},
+            {"context": "tools/ unit tests"}]}},
 ]
 DEGRADED_BRANCH_RULES = [
     r for r in RECORDED_BRANCH_RULES if r["type"] != "required_status_checks"
 ] + [{"type": "required_status_checks", "ruleset_id": 15001420, "parameters": {
         "strict_required_status_checks_policy": False,
         "do_not_enforce_on_create": False,
-        "required_status_checks": [{"context": "Tests updated"}]}}]
+        "required_status_checks": [
+            {"context": c} for c in cw.RULESET_CONTEXTS
+            if c != "BC test matrix passed"]}}]
 
 ctx, status, notes = cw.resolve_required_contexts(fetch=lambda b: RECORDED_BRANCH_RULES)
 check("the recorded live ruleset resolves to both required contexts",
@@ -891,12 +931,11 @@ check("an UNREADABLE ruleset falls back to the full built-in set, never a subset
 
 EXTRA = RECORDED_BRANCH_RULES[:3] + [
     {"type": "required_status_checks", "ruleset_id": 15001420, "parameters": {
-        "required_status_checks": [{"context": "BC test matrix passed"},
-                                   {"context": "Tests updated"},
-                                   {"context": "Some new gate"}]}}]
+        "required_status_checks": [{"context": c} for c in cw.RULESET_CONTEXTS]
+                                  + [{"context": "Some new gate"}]}}]
 ctx, status, notes = cw.resolve_required_contexts(fetch=lambda b: EXTRA)
 check("a context ADDED in the UI is picked up and waited for",
-      sorted(ctx) == ["BC test matrix passed", "Some new gate", "Tests updated"]
+      sorted(ctx) == sorted(list(cw.RULESET_CONTEXTS) + ["Some new gate"])
       and status == "live", f"{ctx} {status}")
 
 
@@ -936,7 +975,11 @@ def absorbed_failure_set(failing_name):
     # the cancelled leftover, and a genuinely failing NEWEST entry for one name
     runs.append(cr(failing_name, "cancelled", KILLED_PR_CHECK, 101496919780))
     runs.append(cr(failing_name, "failure", LIVE_PR_CHECK, 101496925176))
-    return runs
+    # padded() never overwrites a name the caller placed, so when `failing_name`
+    # IS a ruleset context its failure stands and is not papered over by a
+    # synthetic success. The "same shape on a REQUIRED context" assertion below
+    # depends on exactly that.
+    return padded(runs, wf_run=MATRIX_RUN)
 
 
 runs = absorbed_failure_set("preflight.py unit tests")
@@ -964,7 +1007,7 @@ runs.append(cr("BC test matrix passed", "success", MATRIX_RUN, 101499731123))
 runs.append(cr("Tests updated", "success", REQ_RUN, 101496768931))
 runs.append(cr("scripts/ unit tests", "cancelled", KILLED_PR_CHECK, 101496919785))
 runs.append(cr("scripts/ unit tests", "success", LIVE_PR_CHECK, 101496925213))
-v = cw.classify(runs, workflow_runs=C6377B30_RUNS)
+v = cw.classify(padded(runs, wf_run=MATRIX_RUN), workflow_runs=C6377B30_RUNS)
 check("a cancelled entry a newer run re-reported as SUCCESS is still GREEN",
       v.code == 0, f"(code={v.code}) {v.lines}")
 check("...and is still explained as harmlessly superseded",
@@ -989,12 +1032,17 @@ check("...and never describes that failure as harmless",
 runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
 runs.append(cr("BC test matrix passed", "success", MATRIX_RUN, 101499731123))
 runs.append(cr("Tests updated", "success", REQ_RUN, 101496768931))
-runs.append(cr("scripts/ unit tests", "failure", KILLED_PR_CHECK, 101496919785))
-v = cw.classify(runs, workflow_runs=C6377B30_RUNS)
+# _COSMETIC, not "scripts/ unit tests": that name became a REQUIRED ruleset
+# context (#3199), and a required context left `cancelled` correctly BLOCKS
+# (exit 4) rather than being discounted. The required version of this shape is
+# already asserted immediately above; this one is about the non-required path,
+# so it needs a name that is genuinely not required.
+runs.append(cr(_COSMETIC, "failure", KILLED_PR_CHECK, 101496919785))
+v = cw.classify(padded(runs, wf_run=MATRIX_RUN), workflow_runs=C6377B30_RUNS)
 check("a failure from a run that is itself CANCELLED is still discounted",
       v.code == 0, f"(code={v.code}) {v.lines}")
 check("...and is not announced as a real failing check",
-      not any("scripts/ unit tests" in l and "failure" in l for l in v.lines),
+      not any(_COSMETIC in l and "failure" in l for l in v.lines),
       "\n".join(v.lines))
 
 # A REQUIRED context whose check run concluded `failure` on its merits inside a
