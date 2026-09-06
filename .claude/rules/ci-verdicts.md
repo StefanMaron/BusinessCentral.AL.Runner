@@ -211,6 +211,49 @@ while CI you are responsible for is still running (`no-backgrounding-long-comman
 Re-check with `gh run view <id> --json status,conclusion` and treat anything other than
 `completed` as "not yet reported".
 
+### In the corpus, "which harness code ran" has two dials, and the obvious one is wrong
+
+Same failure mode one level down: a verdict about **which code ran**, where the intuitive
+identifier answers a different question. When a corpus failure is traced to a change in
+`StefanMaron/MsDyn365Bc.On.Linux`, the obvious way to ask "did this run carry that change" is
+the run's `referenced_workflows` — and for most harness fixes that is the wrong dial.
+
+The corpus calls `MsDyn365Bc.On.Linux/.github/workflows/bc-test-from-source.yml@master`, and
+that reusable workflow then checks the harness out **again**, separately, for its scripts:
+`ref: ${{ inputs.bc_linux_ref }}`, default `master`. The corpus does not pass `bc_linux_ref`.
+
+| dial | what it controls | resolved when |
+|---|---|---|
+| `referenced_workflows` SHA | the **workflow YAML** — job graph, steps, inputs | at dispatch |
+| `bc_linux_ref` (default `master`) | the **scripts** — `run-tests-hybrid.py`, `run-tests-altool.py`, `run-tests.sh`, `publish-app.sh` | when the job's checkout step runs |
+
+Nearly every harness fix that matters here is a **script** change — the hybrid runner's leg
+scheduling, the altool infrastructure-retry gate, the publish helper. The two dials usually
+agree, because both track `master`, but they are read at different times and the gap between
+them is the account-wide queue backlog this file already knows about. On a quiet queue that is
+seconds; on a busy one, hours, and then one run's YAML and its scripts come from different
+commits.
+
+So compare the **job's** start time against the harness commit's timestamp, not the run's
+`referenced_workflows`:
+
+```bash
+gh api repos/StefanMaron/BusinessCentral.AL.Language.Tests/actions/runs/<id>/jobs \
+  --jq '.jobs[] | select(.name|test("/ test")) | "\(.name) started=\(.started_at)"'
+gh api repos/StefanMaron/MsDyn365Bc.On.Linux/commits/<sha> --jq .commit.committer.date
+```
+
+A job whose `started_at` precedes the commit cannot have checked it out. One that started
+after it almost certainly did — the checkout runs within seconds of job start — with a genuine
+ambiguity window of a few tens of seconds, worth stating rather than resolving by assumption.
+
+Recorded because it was published as evidence and was not: diagnosing
+`MsDyn365Bc.On.Linux#61`, two corpus runs were reported as having "resolved `9dc3244` and
+`ccb401a`" and therefore predating the retry gate. The conclusion was right and the evidence
+named the wrong dial — the gate lives in `scripts/run-tests-altool.py`, so what decided it was
+when each job's checkout ran. It agreed only because the queue was short that day. Getting this
+backwards argues for reverting a fix that was never in the run.
+
 ## 3. Never re-run a failed job — not even to gather evidence
 
 `gh run rerun` and the web "Re-run" button overwrite the failed run's logs permanently. Read
