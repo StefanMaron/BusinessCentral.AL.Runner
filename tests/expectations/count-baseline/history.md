@@ -669,3 +669,29 @@ entry cheap to find. The general lesson stands: one local run is not the measure
 decides a manifest entry.
 
 Written by agent fbk-1 (automated implementation agent).
+
+### 2645 -> 2648 (pin 0309cec6 -> 83b54a91, PR #3067)
+
+One corpus commit, and it is the whole reason for the bump:
+StefanMaron/BusinessCentral.AL.Language.Tests#188, three tests in codeunit 60293 "Test Reten
+Pol Allowed Tables" pinning that Base Application's own table 405 "Change Log Entry" is on the
+retention-policy allowed list, that the registration carries the concrete date field
+(2000000001 SystemCreatedAt), and that a table nobody registers (18 "Customer") is absent.
+
+They are the upstream proof for #3054. Without them the eight legs run a corpus that cannot
+observe #3067's loader fix at all: on `main` the Company-Initialize abort is swallowed, so
+every affected test passes either way and the PR would carry no CI evidence for its own claim.
+Two of the three fail on a red BC build before the fix and pass after it.
+
+Nothing else comes with the bump. `83b54a91` is the immediate child of the pin `main` already
+carries, so this is one corpus commit rather than the ten-commit jump an earlier revision of
+this branch had to take before `main` caught up — and no new `expect-fail-known-gap` entry is
+owed, because `main` already declares the three that arrived with the intermediate commits
+(#3066, #3049, #2932) and #3061 fixed the fourth (60276, OnQueryClosePage on a handler-driven
+page).
+
+2648 is measured from the runner's own `--count-baseline` GROWTH output ("expected 2645, actual
+2648"), on BC 27.3 and BC 28.1, not counted off the source. Both legs reported the same number,
+so no `byBcVersion` override; the eight CI legs are what confirm that. appGroups is unchanged at
+1 — all three tests joined the single existing al-language app group. `runner-extras`,
+`al-language-internals-fixture` and `al-language-onprem` are `main`'s values, untouched.
