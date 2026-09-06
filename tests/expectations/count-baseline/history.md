@@ -634,34 +634,32 @@ which takes seven corpus merges rather than one. Eight of the thirty-five are co
 "MQC Tests" (corpus PR #186), pinning the close lifecycle of a page the platform closes for a
 `[ModalPageHandler]` / `[PageHandler]` -- the upstream half of issue #3050, whose runner fix is
 folded into this same PR. 2645 is measured from an actual run against the new pin, not counted
-off the source. appGroups is unchanged at 1.
+off the source. appGroups is unchanged at 1. The other twenty-seven arrived because the
+maintainer's pin sat at `9ba6f581` while six further corpus PRs merged on top of it, and a pin
+only moves forward as a whole; all twenty-seven pass on all eight CI legs.
 
-The other twenty-seven arrived because the maintainer's pin sat at `9ba6f581` while six further
-corpus PRs merged on top of it, and a pin can only move forward as a whole. Twenty of them pass
-against this branch as-is. Seven do not, and they are NOT this PR's change: measured on an
-unmodified `origin/main` checkout carrying the identical `0309cec6` pin, the corpus reports
-**2631P/14F** -- the same seven, plus the seven "MQC Tests" failures this PR fixes. On this
-branch the same pin reports **2638P/7F**. Each of the seven gets an `expect-fail-known-gap`
-entry pointing at an issue that stays open after this PR merges:
-
-- codeunit 60455 "Test Page Action RunObject Tests", five tests -> #2931 (an action whose only
-  effect is `RunObject` is refused as out-of-scope; #2931 already records that this is a gap
-  rather than a boundary, and is in progress).
-- codeunit 60405 "Test Module Owns Own Table", `AppCanRegisterItsOwnTableOnTheAllowedList` ->
-  #3049. Its sibling negative in the same codeunit passes, so the ownership check answers no for
-  everything rather than being absent.
-- codeunit 60490 "Test Tbl Evt Async Sub Error",
-  `TableEventSubscriberInAnotherApp_ErrorReachesTheCaller` -> #2932. The System Application's
-  `OnBeforeInsertEvent` subscriber on "Retention Policy Setup" does not refuse the row and its
-  error never reaches the caller; the positive control in the same codeunit passes.
-
-The same bump is the first pin to contain the `tests/al-language-onprem` app at all, so a
-suite line appears for it here at **19** and two of its tests get entries: codeunit 61201
-"Test Published App Sys Table", `PublishedApplication_ThisApp_PackageIdIsItsRuntimePackageId`
-and `PublishedApplication_CalcFields_Installed_IsTrueForThisApp` -> #3066, which already records
+The same bump is the first pin to contain the `tests/al-language-onprem` app at all -- which
+`scripts/corpus-app-dirs.py` enumerates automatically, so it began executing 19 tests nothing
+had declared for. A suite line appears for it here at **19**, and two of its tests get entries:
+codeunit 61201 "Test Published App Sys Table",
+`PublishedApplication_ThisApp_PackageIdIsItsRuntimePackageId` and
+`PublishedApplication_CalcFields_Installed_IsTrueForThisApp` -> #3066, which already records
 that a real service tier contradicts the runner on both. Seven other tests in that codeunit
-pass. `--count-baseline` accepted the new suite with no line at all, so the line is added
-deliberately rather than because the gate demanded it: a suite the baseline does not name is a
-suite whose disappearance the gate cannot notice.
+pass, and the pair fails identically on every one of the eight legs. `--count-baseline` accepted
+the new suite with no line at all, so the line is added deliberately rather than because the
+gate demanded it: a suite the baseline does not name is a suite whose disappearance the gate
+cannot notice.
+
+Worth recording, because it cost a CI round: three further known-gap entries were added here
+first -- codeunit 60455 "TPARO Tests" (5 tests), 60405
+`AppCanRegisterItsOwnTableOnTheAllowedList`, 60490
+`TableEventSubscriberInAnotherApp_ErrorReachesTheCaller` -- on the strength of a local run that
+showed them failing. They do not fail on CI: every leg reports the corpus at 2645P/0F/0E, and
+the manifest's own drift guard caught the entries with "Test passed cleanly but manifest
+declares expect-fail-known-gap". The local failures were an artifact of this developer box's BC
+artifact (28.1.49838.53910) versus the matrix's (28.1.49838.54308). The lesson is the one
+`ask-the-corpus-before-claiming-bc-behavior.md` already states in the other direction: a single
+local run is not the measurement that decides a manifest entry, and the drift guard failing
+loudly in both directions is what made the mistake cheap.
 
 Written by agent fbk-1 (automated implementation agent).
