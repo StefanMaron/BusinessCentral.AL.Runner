@@ -143,6 +143,31 @@ the cause.
 
 7. **No stale worktree for this identity**, and no leftover scratch directories from a killed
    run.
+8. **Code-navigation tooling answers correctly** — the C# language server behind
+   `tools/lsp-query.py`, `graphify`, and the bc-decompiler MCP server. Not "is it installed":
+   each of these fails by producing a confidently wrong answer rather than an error, so the
+   check is whether it returns a **known-good answer** that the checkout is verified to contain.
+
+   - `tools/lsp-query.py` exits 2 when the server never answered. Read as "nothing calls this",
+     that is a false negative wearing the shape of a finding.
+   - `graphify update` and `graphify query` both default to `graphify-out/graph.json` *relative
+     to the current directory*, so a rebuild in one directory and a query in another silently
+     use different files. A root-level copy once sat 13 days stale while the documented rebuild
+     appeared to work.
+   - `.mcp.json` changes need a **session restart**, so "configured" and "usable right now" are
+     different states and only the second is worth anything. Preflight establishes the second by
+     speaking MCP to the server directly; a session still has to restart before it can call it.
+
+   Each probe also validates its own fixture against the working tree first, so a renamed symbol
+   reports as "this check's probe drifted" rather than as a broken language server.
+
+   **These WARN and never FAIL.** They do not affect whether the runner is correct, only how
+   fast and how accurately an agent reads it, and every one degrades to a documented fallback
+   (`rg`, `tools/context-pack.py`) that still produces correct work. Halting an unattended cycle
+   over a four-day-old graph file costs more than the staleness does, and the remedy is a
+   two-second rebuild. `--strict` is where zero tolerance belongs, because that is the caller's
+   policy and not this step's. Keeping FAIL for the checks that genuinely mean "this box will
+   produce wrong answers" is what keeps FAIL worth reading.
 
 **Print the preflight as a readable report** — one line per check, PASS or FAIL with the reason
 and the command that produced it. That report is what a new contributor reads to find out
