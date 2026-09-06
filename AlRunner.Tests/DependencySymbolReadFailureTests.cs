@@ -203,6 +203,59 @@ public sealed class DependencySymbolReadFailureTests : IDisposable
         return list;
     }
 
+    /// <summary>
+    /// The drained items of <paramref name="walk"/> that came from THIS fixture's .app.
+    ///
+    /// <para>Every assertion about what a walk did with the fixture must be scoped like
+    /// this, because <b>the registered set is never only what a test registered</b>:
+    /// <c>RegisterSystemAppPackage()</c> puts the platform SystemApp package into
+    /// <c>_bcAppPaths</c> once per process at engine bootstrap, and <c>ResetForReload</c>
+    /// deliberately KEEPS it — see <c>ClearPerBundleBcAppPaths</c> in
+    /// RecordPatches.BcAppFallback.cs and #2755, where dropping it broke the NCL-internal
+    /// system tables for the rest of a --server process. So on any run where the in-process
+    /// BC engine bootstrapped, five of these seven walks legitimately yield the System
+    /// package's own tables, codeunits, pages and objects — hundreds of them, none of which
+    /// this fixture has anything to say about. #3031's sibling file got this right
+    /// (<c>Assert.DoesNotContain("BUG3031 VANISH", …)</c>); this file did not, and a global
+    /// <c>Assert.Empty</c>/<c>Assert.NotEmpty</c> over the whole walk passed only on a
+    /// machine with no engine while failing both CI legs that run this suite.</para>
+    /// </summary>
+    private static List<object> FixtureItems(string walk)
+        => Drain(walk).Where(IsFixtureItem).ToList();
+
+    /// <summary>Ids this fixture's SymbolReference declares, across every container.</summary>
+    private static readonly HashSet<int> FixtureObjectIds =
+        new() { TableId, CodeunitId, PageId, ReportId, QueryId };
+
+    /// <summary>
+    /// Does this walk item describe the fixture .app? One arm per walk item type, and an
+    /// unrecognised type THROWS rather than answering false: a filter that silently stops
+    /// matching would turn every <c>FixtureItems</c> assertion below into a tautology.
+    /// </summary>
+    private static bool IsFixtureItem(object item) => item switch
+    {
+        // DependencyAppSymbols — one entry per registered .app.
+        BcAppSymbolCache.AppSymbols a =>
+            string.Equals(a.AppId, AppGuid, StringComparison.OrdinalIgnoreCase),
+        // EnumerateBcAppTableSymbols
+        ParsedTable t => t.TableId == TableId,
+        // EnumerateBcAppPageSymbols
+        BcAppSymbolCache.PageSymbol p => p.Id == PageId,
+        // EnumerateBcAppReportSymbols
+        BcAppSymbolCache.ReportSymbol r => r.Id == ReportId,
+        // EnumerateBcAppCodeunitSymbols
+        BcAppSymbolCache.ObjectSymbol o => FixtureObjectIds.Contains(o.Id),
+        // EnumerateBcAppProfileSymbols — (AppId, AppName, ProfileSymbol)
+        ValueTuple<Guid, string, BcAppSymbolCache.ProfileSymbol> pr =>
+            string.Equals(pr.Item3.ProfileId, ProfileId, StringComparison.OrdinalIgnoreCase),
+        // EnumerateBcAppObjects — (Kind, Id, Name, Caption)
+        ValueTuple<string, int, string, string> ob => FixtureObjectIds.Contains(ob.Item2),
+        _ => throw new Xunit.Sdk.XunitException(
+            $"unrecognised walk item type {item.GetType()} — add an arm here. A filter that "
+            + "matches nothing would make every fixture-scoped assertion in this file pass "
+            + "vacuously."),
+    };
+
     /// <summary>Every private walk this issue converted, with the surface text it must name.</summary>
     public static TheoryData<string, string> Walks() => new()
     {
@@ -222,7 +275,10 @@ public sealed class DependencySymbolReadFailureTests : IDisposable
     public void HealthyApp_EveryWalkYieldsItsSymbols(string walk, string _)
     {
         RegisterHealthy("healthy.app");
-        Assert.NotEmpty(Drain(walk));
+        // FixtureItems, not Drain: on an engine-bootstrapped process the platform SystemApp
+        // registration alone satisfies a bare NotEmpty, so this row would pass without the
+        // fixture's .app ever being read. See FixtureItems' remarks.
+        Assert.NotEmpty(FixtureItems(walk));
     }
 
     [Fact]
@@ -341,8 +397,19 @@ public sealed class DependencySymbolReadFailureTests : IDisposable
     [MemberData(nameof(Walks))]
     public void VanishedApp_EveryWalkSkipsItRatherThanRefusing(string walk, string _)
     {
+        // The positive control lives INSIDE the row on purpose: "the fixture contributes
+        // nothing" is only a claim about the skip if the same filter demonstrably finds the
+        // fixture one line earlier. Without it, a filter that matched nothing — a renamed
+        // symbol type, a changed id — would read as a passing skip.
+        RegisterHealthy("vanishing.app");
+        Assert.NotEmpty(FixtureItems(walk));
+
         RegisterThenVanish();
-        Assert.Empty(Drain(walk));
+
+        // Two claims in one line. Draining does not THROW (the vanished .app is skipped, not
+        // refused — that is the whole distinction #3143 restored), and the fixture's symbols
+        // are gone from the answer while every other registered .app's are still served.
+        Assert.Empty(FixtureItems(walk));
     }
 
     [Fact]
