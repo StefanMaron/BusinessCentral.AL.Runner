@@ -241,7 +241,9 @@ public sealed partial class BcCompiler
     // cycle 1 and 4 FAIL from cycle 2 onward with the clear and no replay.
     //
     // So the registration is shadowed here exactly like the page/xmlport metadata: captured
-    // after the full Emit that produced the file, replayed at every fast-path return. The
+    // after the full Emit that produced the file — and ONLY from that Emit, which is why the
+    // path is threaded in as a parameter rather than read from the LastBundleQuerySymbolsPath
+    // static (see CaptureRadMetadataSnapshotFull) — then replayed at every fast-path return. The
     // VALUE is the path rather than the parsed symbols because the file is per-process and
     // per-module (PerProcessScratch, #2967) and is rewritten in place by each full Emit of this
     // module — so replaying the path re-registers whatever that module's most recent real
@@ -253,7 +255,8 @@ public sealed partial class BcCompiler
     /// <summary>Full (re)capture — called after a clean full Emit, when every object this app
     /// declares is known and the live registries already hold its current metadata.</summary>
     private void CaptureRadMetadataSnapshotFull(
-        string moduleName, IEnumerable<NavCA.IApplicationObjectTypeSymbol> declared)
+        string moduleName, IEnumerable<NavCA.IApplicationObjectTypeSymbol> declared,
+        string? bundleQuerySymbolsPath)
     {
         var pages = new Dictionary<int, string>();
         var xmlPorts = new Dictionary<int, string>();
@@ -269,14 +272,35 @@ public sealed partial class BcCompiler
         _radPageMetadataByModule[moduleName] = pages;
         _radXmlPortMetadataByModule[moduleName] = xmlPorts;
 
-        // #2939: the query-symbol source file this same Emit just wrote, if this module
-        // declares a query at all. LastBundleQuerySymbolsPath is set (or nulled) at the top of
-        // every Emit and this method is called from RecordIncrementalBaseline, i.e. from INSIDE
-        // that same Emit, so it names this module and no other even in a bundled multi-group
-        // run. A module that declares no query records nothing and replays nothing.
-        var querySymbolsPath = LastBundleQuerySymbolsPath;
-        if (querySymbolsPath != null && File.Exists(querySymbolsPath))
-            _radQuerySymbolsPathByModule[moduleName] = querySymbolsPath;
+        // #2939: the query-symbol source file THIS module's own full compile just wrote, or
+        // null when it wrote none (it declares no query, or it is not the bundle-emit path at
+        // all). A module that records nothing replays nothing.
+        //
+        // This arrives as a PARAMETER, and deliberately does not read
+        // BcCompiler.LastBundleQuerySymbolsPath here. That static is process-global, and
+        // RecordIncrementalBaseline — this method's only caller — has TWO call sites, only one
+        // of which owns it:
+        //
+        //   BcCompiler.Emit                 nulls the static at the top of the method and sets
+        //                                   it via EmitAndRegisterBundleQuerySymbols, so the
+        //                                   value belongs to THIS module. Emit binds it to a
+        //                                   local and passes that local in.
+        //   BcCompiler.EmitDepSymbols       (trackIncrementalBaseline: true, reached from
+        //                                   EmitDepSymbolsIncremental) never touches the static.
+        //                                   Reading it there returns whatever the last Emit
+        //                                   ANYWHERE in the process left behind — and source-dep
+        //                                   compilers are separate BcCompiler instances from the
+        //                                   bundle emitter (Program.cs's layered pre-pass), so
+        //                                   that path names a DIFFERENT module. It passes null.
+        //
+        // Reading the static here let the dep path adopt the bundle's SymbolReference.json;
+        // ReplayRadMetadataSnapshot then re-registered that foreign file on every RAD fast-path
+        // return for the dep module, and EnsureBcSymbolQueryIndex's first-wins merge served its
+        // column ids for any colliding query id — a wrong value out of a real row, i.e. the very
+        // defect #2939 exists to close, arriving through the door its fix opened. Pinned by
+        // RadQuerySymbolsSnapshotModuleScopeTests.
+        if (bundleQuerySymbolsPath != null && File.Exists(bundleQuerySymbolsPath))
+            _radQuerySymbolsPathByModule[moduleName] = bundleQuerySymbolsPath;
         else
             _radQuerySymbolsPathByModule.Remove(moduleName);
     }
@@ -1195,16 +1219,32 @@ public sealed partial class BcCompiler
     private static string[] SplitLines(string text) => text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
 
     /// <summary>
-    /// Called by <see cref="Emit"/> after a clean success, when its caller passed
-    /// <c>trackIncrementalBaseline: true</c>. Builds the (Kind,Id-or-Name)-keyed state
-    /// <see cref="TryEmitIncremental"/> needs for the NEXT cycle, for every object kind (see
-    /// this file's header comment for how each of the six id-less kinds is recovered).
+    /// Called after a clean success, when the caller passed <c>trackIncrementalBaseline: true</c>.
+    /// Builds the (Kind,Id-or-Name)-keyed state <see cref="TryEmitIncremental"/> needs for the
+    /// NEXT cycle, for every object kind (see this file's header comment for how each of the six
+    /// id-less kinds is recovered).
+    ///
+    /// TWO call sites, and they are not interchangeable — anything here that reaches for
+    /// process-global state has to hold for both:
+    /// <list type="bullet">
+    /// <item><see cref="Emit"/>, the per-bundle compile. Writes and registers this module's
+    /// query symbols itself, and passes the resulting path as
+    /// <paramref name="bundleQuerySymbolsPath"/>.</item>
+    /// <item><c>EmitDepSymbols(trackIncrementalBaseline: true)</c>, reached from
+    /// <c>EmitDepSymbolsIncremental</c> for a SOURCE DEPENDENCY, on a different
+    /// <see cref="BcCompiler"/> instance from the bundle emitter. Emits no bundle query symbols,
+    /// so it passes null.</item>
+    /// </list>
     /// </summary>
+    /// <param name="bundleQuerySymbolsPath">The SymbolReference.json THIS module's compile just
+    /// wrote for its own queries, or null when it wrote none. Never
+    /// <see cref="LastBundleQuerySymbolsPath"/> read at the callee — see
+    /// <see cref="CaptureRadMetadataSnapshotFull"/>.</param>
     private void RecordIncrementalBaseline(
         string moduleName, NavCA.Compilation compilation, IReadOnlyList<string> alFiles,
         IReadOnlyList<EmittedSource> captured, NavCA.SymbolReferenceSpecification[] specs,
         ManifestCompilerInputs manifestInputs, string? manifestAppJsonPath, Guid appId, string publisher, Version version,
-        string? appRootDir, BcEmitOutput fullOutput)
+        string? appRootDir, BcEmitOutput fullOutput, string? bundleQuerySymbolsPath)
     {
         var declared = compilation.GetDeclaredApplicationObjectSymbols();
         var byName = new Dictionary<string, List<(NavCA.SymbolKind Kind, int? Id, string? Path)>>(StringComparer.Ordinal);
@@ -1328,7 +1368,7 @@ public sealed partial class BcCompiler
         // the shadow copy TryEmitIncremental's fast paths replay on every later cycle that
         // does NOT run a full Emit for this app. See _radPageMetadataByModule's header
         // comment.
-        CaptureRadMetadataSnapshotFull(moduleName, declared);
+        CaptureRadMetadataSnapshotFull(moduleName, declared, bundleQuerySymbolsPath);
     }
 
     /// <summary>Drops the current baseline for a bundle — used when a caller knows the next cycle must be a full rebuild regardless (e.g. a watched suite set changed).</summary>
