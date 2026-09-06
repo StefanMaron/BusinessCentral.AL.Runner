@@ -272,7 +272,12 @@ public static class BlobStoreIsolationPatches
 
         var metaTable = mrbType.GetProperty("MetaTable", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             ?.GetValue(mutableRecordBuffer);
-        var getFieldByIndex = metaTable?.GetType().GetMethod("GetFieldByIndex", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        var getFieldByIndex = metaTable == null ? null : BcShape.FindMethod(
+            metaTable.GetType(), "GetFieldByIndex",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            "BLOB store isolation (per-record buffered BLOB writes)",
+            "NCLMetaTable.GetFieldByIndex",
+            "the record's BLOB fields cannot be enumerated");
         var fieldCount = mrbType.GetProperty("FieldCount", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             ?.GetValue(mutableRecordBuffer) is int fc ? fc : 0;
         if (metaTable == null || getFieldByIndex == null) return;

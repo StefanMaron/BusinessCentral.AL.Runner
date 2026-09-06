@@ -46,6 +46,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using AlRunner.Infrastructure;
 using AlRunner.Patches;
 using Xunit;
@@ -264,6 +265,317 @@ public sealed class BcShapeMethodLookupTests
         Assert.NotNull(m);
         Assert.Equal("HiddenHelper", m!.Name);
     }
+
+    // ══ 4. The shape, not just the sites converted here ═════════════════════════════════
+    //
+    // The issue reports 212 name-only lookups. Re-measured on this tree with an argument-level
+    // parser rather than a per-statement regex, the census is:
+    //
+    //     Type.GetMethod(...) call sites in AlRunner/**/*.cs   324
+    //       ... passing an explicit signature                  123
+    //       ... resolving by NAME ALONE                        201
+    //             of which target typeof(<a runner-owned type>) 103
+    //             of which could reach a Microsoft-shipped type  98
+    //
+    // The 103 are the Cecil rewriter and the hook installers resolving the runner's OWN
+    // replacement methods. Microsoft cannot ship an overload into AlRunner.BcRuntime, so no BC
+    // update can move them, and converting them would buy nothing. The scan below therefore
+    // counts only the second group — a lookup whose declaring type comes from somewhere other
+    // than this assembly.
+    //
+    // What it asserts, and the limit of it: the repo-wide TOTAL, which cannot rise without a
+    // failure, so a new name-only BC-typed lookup anywhere in AlRunner/ is caught the moment it
+    // is written. It does not pin the per-file distribution, so moving one site out of file A
+    // and into file B nets to zero and passes; the per-file breakdown is printed on failure for
+    // whoever has to update the number. Deliberately a ratchet rather than a zero: 76 sites
+    // remain, and #3069 asks for them file by file so the guard never has to be weakened.
+
+    /// <summary>
+    /// Every remaining name-only method lookup that could reach a Microsoft-shipped type. Lower
+    /// it as sites are converted; it may never rise. On a mismatch the assertion prints the
+    /// per-file breakdown, which is the number to put here.
+    /// </summary>
+    private const int NameOnlyBcTypedMethodLookups = 76;
+
+    /// <summary>The floor is not cosmetic: a scan that silently narrowed to a handful of files
+    /// would report a small number and read as progress. AlRunner/ holds ~195 sources.</summary>
+    private const int MinimumProductionSourcesScanned = 150;
+
+    /// <summary>Files this change converted. They must stay at zero, so the slice cannot regress
+    /// while the ratchet above is being lowered elsewhere.</summary>
+    private static readonly string[] ConvertedFiles =
+    {
+        "Patches/AsyncStateMachineSpike.cs",
+        "Patches/BlobStoreIsolationPatches.cs",
+        "Patches/NavRecordRefPatches.cs",
+        "Patches/RecordPatches.FieldFindIntercept.cs",
+        "Patches/RecordPatches.FieldVirtualTable.cs",
+        "Patches/RecordPatches.QueryProjection.cs",
+    };
+
+    [Fact]
+    public void NameOnlyBcTypedMethodLookups_HaveNotIncreased()
+    {
+        var byFile = ScanNameOnlyBcTypedLookups(out var filesScanned);
+
+        Assert.True(filesScanned >= MinimumProductionSourcesScanned,
+            $"the scan saw only {filesScanned} production sources under AlRunner/, below the "
+            + $"{MinimumProductionSourcesScanned} floor — it narrowed, and a narrowed scan reports "
+            + "a small number that reads as progress.");
+
+        var total = byFile.Values.Sum();
+        Assert.True(total == NameOnlyBcTypedMethodLookups,
+            $"name-only BC-typed method lookups are {total}, recorded as "
+            + $"{NameOnlyBcTypedMethodLookups}. Converting sites? Lower the constant. Adding one? "
+            + "Use BcShape.FindMethod/RequiredMethod instead (#3069). Breakdown:"
+            + Environment.NewLine
+            + string.Join(Environment.NewLine,
+                byFile.OrderByDescending(kv => kv.Value).ThenBy(kv => kv.Key, StringComparer.Ordinal)
+                      .Select(kv => $"  {kv.Value,4}  {kv.Key}")));
+    }
+
+    [Fact]
+    public void TheConvertedFiles_HaveNoNameOnlyBcTypedMethodLookupLeft()
+    {
+        var byFile = ScanNameOnlyBcTypedLookups(out _);
+
+        var offenders = ConvertedFiles
+            .Where(f => byFile.TryGetValue(f, out var n) && n > 0)
+            .Select(f => $"  {byFile[f]}  {f}")
+            .ToArray();
+
+        Assert.True(offenders.Length == 0,
+            "these files were converted by #3069 and must resolve every BC method lookup through "
+            + "BcShape, so an added Microsoft overload names the gap instead of arriving as an "
+            + "AmbiguousMatchException the asserterror seam absorbs:" + Environment.NewLine
+            + string.Join(Environment.NewLine, offenders));
+    }
+
+    /// <summary>
+    /// CONTROL for the scan itself: it must actually FIND something in the shape it looks for,
+    /// or both assertions above are vacuous. Pins that at least one known-remaining file is still
+    /// counted, and that a file made only of runner-owned lookups is not.
+    /// </summary>
+    [Fact]
+    public void TheScan_CountsABcTypedLookupAndIgnoresARunnerOwnedOne()
+    {
+        var byFile = ScanNameOnlyBcTypedLookups(out _);
+
+        // BcRuntime.cs holds both kinds: dozens of typeof(AlRunner.BcRuntime).GetMethod(nameof(…))
+        // hook installs (not counted) and a set of lazily-resolved BC lookups (counted).
+        Assert.True(byFile.GetValueOrDefault("BcRuntime.cs") > 0,
+            "the scan found no BC-typed name-only lookup in BcRuntime.cs, which has several — the "
+            + "target classifier is over-matching and the totals above mean nothing.");
+
+        // NclCecilRewrite.Dispatch.cs is entirely runner-owned helper resolution: every lookup
+        // there is typeof(AlRunner.…).GetMethod(nameof(…)) against the runner's own patch classes.
+        Assert.Equal(0, byFile.GetValueOrDefault("Infrastructure/NclCecilRewrite.Dispatch.cs"));
+    }
+
+    // ── the scanner ─────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Per-file counts of <c>Type.GetMethod</c> call sites that pass no signature AND whose
+    /// declaring type is not a type of this assembly. Keys are paths relative to <c>AlRunner/</c>.
+    /// </summary>
+    private static Dictionary<string, int> ScanNameOnlyBcTypedLookups(out int filesScanned)
+    {
+        var runnerRoot = Path.Combine(RepoRoot, "AlRunner");
+        var sources = ProductionSources(runnerRoot);
+        filesScanned = sources.Count;
+
+        var runnerTypeNames = RunnerTypeNames();
+        var result = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var path in sources)
+        {
+            var code = CodeWithoutLineComments(path);
+            var runnerOwnedLocals = RunnerOwnedLocals(code, runnerTypeNames);
+            var count = 0;
+
+            foreach (var (target, args) in GetMethodCalls(code))
+            {
+                if (args.Count == 0) continue;                     // StackFrame.GetMethod()
+                if (HasExplicitSignature(args)) continue;
+                if (IsRunnerOwnedTarget(target, runnerTypeNames, runnerOwnedLocals)) continue;
+                count++;
+            }
+
+            if (count > 0)
+                result[Path.GetRelativePath(runnerRoot, path).Replace('\\', '/')] = count;
+        }
+
+        return result;
+    }
+
+    /// <summary>Simple and full names of every type in the AlRunner assembly.</summary>
+    private static HashSet<string> RunnerTypeNames()
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var t in typeof(BcRuntime).Assembly.GetTypes())
+        {
+            names.Add(t.Name);
+            if (t.FullName != null) names.Add(t.FullName.Replace('+', '.'));
+        }
+        return names;
+    }
+
+    /// <summary>
+    /// Locals assigned <c>typeof(&lt;a runner type&gt;)</c> in this file. Without this the Cecil
+    /// rewriter's <c>var patchTypeMi = typeof(AlRunner.Patches.MediaSetPatches); … patchTypeMi
+    /// .GetMethod(nameof(…))</c> would count as a BC lookup, which would ask for conversions that
+    /// buy nothing and make the ratchet dishonest.
+    /// </summary>
+    private static HashSet<string> RunnerOwnedLocals(string code, HashSet<string> runnerTypeNames)
+    {
+        var locals = new HashSet<string>(StringComparer.Ordinal);
+        foreach (Match m in Regex.Matches(code, @"\b(?:var|Type)\s+(\w+)\s*=\s*typeof\(\s*([\w\.]+)\s*\)"))
+            if (runnerTypeNames.Contains(m.Groups[2].Value)) locals.Add(m.Groups[1].Value);
+        return locals;
+    }
+
+    private static bool IsRunnerOwnedTarget(
+        string target, HashSet<string> runnerTypeNames, HashSet<string> runnerOwnedLocals)
+    {
+        var typeofMatch = Regex.Match(target, @"typeof\(\s*([\w\.]+)\s*\)\s*[!?]?\s*$");
+        if (typeofMatch.Success) return runnerTypeNames.Contains(typeofMatch.Groups[1].Value);
+
+        var identifier = Regex.Match(target, @"([A-Za-z_]\w*)\s*[!?]?\s*$");
+        return identifier.Success && runnerOwnedLocals.Contains(identifier.Groups[1].Value);
+    }
+
+    /// <summary>
+    /// A signature is explicit when <c>types:</c> is named, or when a positional argument is a
+    /// <c>Type[]</c> — <c>Type.EmptyTypes</c>, <c>new[] { … }</c>, <c>new Type[] { … }</c>, or an
+    /// identifier ending in "Types". Those overloads match one signature and cannot raise
+    /// AmbiguousMatchException.
+    /// </summary>
+    private static bool HasExplicitSignature(IReadOnlyList<string> args)
+    {
+        if (args.Any(a => a.StartsWith("types:", StringComparison.Ordinal))) return true;
+
+        // GetMethod(name, types) | (name, flags, types) | (name, flags, binder, types, modifiers)
+        foreach (var index in new[] { 1, 2, 3 })
+            if (index < args.Count && LooksLikeTypeArray(args[index])) return true;
+        return false;
+    }
+
+    private static bool LooksLikeTypeArray(string arg)
+        => arg.StartsWith("Type.EmptyTypes", StringComparison.Ordinal)
+           || arg.StartsWith("new[]", StringComparison.Ordinal)
+           || arg.StartsWith("new []", StringComparison.Ordinal)
+           || arg.StartsWith("new Type[", StringComparison.Ordinal)
+           || Regex.IsMatch(arg, @"^[\w\.]*Types$")
+           || Regex.IsMatch(arg, @"^\w+ParameterTypes$");
+
+    /// <summary>
+    /// Every <c>.GetMethod(</c> call in <paramref name="code"/> as (text preceding the call,
+    /// top-level arguments). A character scanner rather than a regex: an argument list holds
+    /// nested calls, generics and string literals containing brackets, so a regex either stops at
+    /// the first <c>)</c> or swallows the rest of the file.
+    /// </summary>
+    private static IEnumerable<(string Target, IReadOnlyList<string> Args)> GetMethodCalls(string code)
+    {
+        foreach (Match m in Regex.Matches(code, @"\.GetMethod\s*\("))
+        {
+            var i = m.Index + m.Length;
+            var depth = 1;
+            var inString = false;
+            while (i < code.Length && depth > 0)
+            {
+                var c = code[i];
+                if (inString)
+                {
+                    if (c == '\\') { i += 2; continue; }
+                    if (c == '"') inString = false;
+                    i++;
+                    continue;
+                }
+                if (c == '"') inString = true;
+                else if (c is '(' or '[' or '{') depth++;
+                else if (c is ')' or ']' or '}') depth--;
+                i++;
+            }
+            var inner = code.Substring(m.Index + m.Length, Math.Max(0, i - 1 - (m.Index + m.Length)));
+            var targetStart = Math.Max(0, m.Index - 200);
+            yield return (Flatten(code.Substring(targetStart, m.Index - targetStart)), SplitTopLevel(inner));
+        }
+    }
+
+    private static string Flatten(string s) => Regex.Replace(s, @"\s+", " ").TrimEnd();
+
+    private static IReadOnlyList<string> SplitTopLevel(string s)
+    {
+        var args = new List<string>();
+        var current = new System.Text.StringBuilder();
+        var depth = 0;
+        var inString = false;
+        for (var i = 0; i < s.Length; i++)
+        {
+            var c = s[i];
+            if (inString)
+            {
+                current.Append(c);
+                if (c == '\\' && i + 1 < s.Length) { current.Append(s[++i]); continue; }
+                if (c == '"') inString = false;
+                continue;
+            }
+            if (c == '"') { inString = true; current.Append(c); continue; }
+            if (c is '(' or '[' or '{' or '<') depth++;
+            else if (c is ')' or ']' or '}' or '>') depth--;
+            if (c == ',' && depth == 0) { args.Add(Flatten(current.ToString()).Trim()); current.Clear(); continue; }
+            current.Append(c);
+        }
+        if (current.ToString().Trim().Length > 0) args.Add(Flatten(current.ToString()).Trim());
+        return args;
+    }
+
+    /// <summary>
+    /// The source with whole-line <c>//</c> comments removed, for the reason the sibling guards
+    /// already document: headers in this repository quote the retired shape in prose on purpose,
+    /// and the claim under test is about CODE.
+    /// </summary>
+    private static string CodeWithoutLineComments(string path)
+        => string.Join('\n', File.ReadAllLines(path)
+            .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+
+    /// <summary>
+    /// Every production C# source under <paramref name="root"/>, discovered by walking. Throws
+    /// when the walk finds nothing — same contract as FieldTriggerShapeGapCallSiteTests, and for
+    /// the same reason: a scan with nothing to scan reports zero and reads as success. .claude is
+    /// excluded because agent worktrees there are full checkouts of this repository.
+    /// </summary>
+    private static IReadOnlyList<string> ProductionSources(string root)
+    {
+        var skipped = new[] { "bin", "obj", ".git", ".claude", ".vs", "node_modules", "packages" };
+        var found = new List<string>();
+        var pending = new Stack<string>();
+        pending.Push(root);
+
+        while (pending.Count > 0)
+        {
+            var dir = pending.Pop();
+            foreach (var sub in Directory.EnumerateDirectories(dir))
+            {
+                var name = Path.GetFileName(sub);
+                if (skipped.Contains(name, StringComparer.Ordinal)) continue;
+                if (name.EndsWith(".Tests", StringComparison.Ordinal)) continue;
+                pending.Push(sub);
+            }
+            found.AddRange(Directory.EnumerateFiles(dir, "*.cs"));
+        }
+
+        if (found.Count == 0)
+            throw new InvalidOperationException(
+                $"The scan found no C# sources under '{root}'. A scan with nothing to scan reports "
+                + "zero violations and reads as success, so it fails here instead.");
+
+        found.Sort(StringComparer.Ordinal);
+        return found;
+    }
+
+    private static readonly string RepoRoot = Path.GetFullPath(
+        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
     // ══ 4. Plumbing ═════════════════════════════════════════════════════════════════════
 
