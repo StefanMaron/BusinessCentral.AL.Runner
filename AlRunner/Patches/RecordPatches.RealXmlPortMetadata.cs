@@ -26,6 +26,7 @@
 //   something to paper over: the caller is told (null) and the skeleton is restored
 //   exactly as it was, so behaviour never silently degrades into "wrong answer" territory.
 using System.Reflection;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -123,8 +124,10 @@ public static partial class RecordPatches
                 if (_fNCLMetaAppObjMetadataLoaded != null)
                     AlRunner.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, false);
 
-                meta.GetType()
-                    .GetMethod("LoadMetadata", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+                BcShape.Method(
+                    meta.GetType(), "LoadMetadata",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    "XmlPort Metadata read from BC's own xmlport metadata")
                     .Invoke(meta, null);
 
                 _xmlPortsWithRealMetadata.Add(xmlPortId);

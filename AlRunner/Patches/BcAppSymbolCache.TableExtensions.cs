@@ -20,11 +20,18 @@ namespace AlRunner.Patches;
 /// Declared here (not in BcAppSymbolCache.cs) to avoid token-shift SIGSEGV — see file header.
 /// <para>TargetTableName has the #appId# prefix stripped from TargetObject.</para>
 /// </summary>
+/// <param name="CalcFormulaTexts">The raw <c>CalcFormula</c> property TEXT of every FlowField
+/// in <paramref name="Fields"/> that declares one, keyed by field id. Carried as text rather
+/// than as a parsed <c>ParsedCalcFormula</c> because this parse runs at .app REGISTRATION time
+/// (<c>RecordPatches.AddBcAppPath</c>) and must not call into <c>RecordPatches</c>; the
+/// consumer parses it once the runtime is up — see
+/// <c>RecordPatches.BcAppFallback.EnsureBcSymbolExtensionIndex</c> (#3121).</param>
 internal sealed record TableExtensionSymbol(
     int ExtensionId,
     string ExtensionName,
     string TargetTableName,
-    List<ParsedField> Fields);
+    List<ParsedField> Fields,
+    IReadOnlyDictionary<int, string>? CalcFormulaTexts = null);
 
 internal static partial class BcAppSymbolCache
 {
@@ -130,9 +137,16 @@ internal static partial class BcAppSymbolCache
     ///
     /// Field-parse loop is an intentional copy of the loop in <see cref="TryParseTableSymbol"/> —
     /// do NOT refactor into a shared helper. A prior attempt caused SIGSEGV.
-    /// CalcFormula is intentionally null: parsing it calls RecordPatches.TryParseCalcFormula,
+    /// ParsedField.CalcFormula stays null here: parsing it calls RecordPatches.TryParseCalcFormula,
     /// which must not be called at startup (RecordPatches may not yet be initialised → SIGSEGV).
-    /// Extension FlowFields with CalcFormulas don't exist in standard precompiled BC apps.
+    /// The raw property TEXT is carried on TableExtensionSymbol.CalcFormulaTexts instead and
+    /// parsed by the consumer once the runtime is up (#3121).
+    /// <para>The sentence that used to stand here — "Extension FlowFields with CalcFormulas
+    /// don't exist in standard precompiled BC apps" — is false. Measured against BC 28.1:
+    /// <c>Customer."Outstanding Serv.Invoices(LCY)"</c> (Service) and
+    /// <c>"Stockkeeping Unit"."Qty. on Prod. Order"</c> (Manufacturing) are exactly that shape,
+    /// and dropping their formula made <c>CalcFields</c> refuse them with BC's own
+    /// "You must define a CalcFormula for the {0} FlowField in the {1} table".</para>
     /// </summary>
     private static TableExtensionSymbol? TryParseTableExtensionSymbol(System.Text.Json.JsonElement ext)
     {
@@ -158,6 +172,7 @@ internal static partial class BcAppSymbolCache
         if (string.IsNullOrEmpty(targetTableName)) return null;
 
         var fields = new List<ParsedField>();
+        var calcFormulaTexts = new Dictionary<int, string>();
         if (ext.TryGetProperty("Fields", out var fieldsJson) && fieldsJson.ValueKind == System.Text.Json.JsonValueKind.Array)
         {
             foreach (var field in fieldsJson.EnumerateArray())
@@ -174,7 +189,11 @@ internal static partial class BcAppSymbolCache
                 // #1716 — a tableextension may add the FlowFilter field a FlowField reads.
                 var isFlowFilter = props.TryGetValue("FieldClass", out var fieldClass2)
                     && string.Equals(fieldClass2, "FlowFilter", StringComparison.OrdinalIgnoreCase);
-                // CalcFormula intentionally null — see doc-comment above.
+                // ParsedField.CalcFormula stays null here; the raw text rides along on the
+                // extension symbol and is parsed by the consumer — see doc-comment above.
+                if (isFlowField && props.TryGetValue("CalcFormula", out var calcFormulaText)
+                    && !string.IsNullOrWhiteSpace(calcFormulaText))
+                    calcFormulaTexts[fieldId] = calcFormulaText;
                 props.TryGetValue("OptionMembers", out var optionMembers);
                 props.TryGetValue("InitValue", out var initValue);
                 var isAutoIncrement = props.TryGetValue("AutoIncrement", out var autoIncrement)
@@ -186,6 +205,7 @@ internal static partial class BcAppSymbolCache
                     MinValue: minValue, MaxValue: maxValue));
             }
         }
-        return new TableExtensionSymbol(extId, extName, targetTableName, fields);
+        return new TableExtensionSymbol(extId, extName, targetTableName, fields,
+            calcFormulaTexts.Count > 0 ? calcFormulaTexts : null);
     }
 }

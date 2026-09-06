@@ -32,6 +32,7 @@
 //   continuing with a skeleton, which would answer TestPage questions wrongly instead of
 //   refusing to answer them.
 using System.Reflection;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -236,8 +237,10 @@ public static partial class RecordPatches
                 if (_fNCLMetaAppObjMetadataLoaded != null)
                     AlRunner.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, false);
 
-                meta.GetType()
-                    .GetMethod("LoadMetadata", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+                BcShape.Method(
+                    meta.GetType(), "LoadMetadata",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    "Page Metadata read from BC's own page metadata")
                     .Invoke(meta, null);
 
                 _pagesWithRealMetadata.Add(pageId);

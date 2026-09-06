@@ -31,6 +31,7 @@
 // forwards to the same ComputeAggregateCore the single-dataitem path uses.
 using System.Collections;
 using System.Reflection;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -194,7 +195,9 @@ public static partial class RecordPatches
     private static IEnumerable ExecuteJoinQuery(object nclMetaQuery, object? flowFiltersAndMarks)
     {
         EnsureJoinExecutorLoaded();
-        var queryDef = _tNCLMetaQuery!.GetProperty("QueryDefinition", BindingFlags.Public | BindingFlags.Instance)!
+        var queryDef = BcShape.Property(
+            _tNCLMetaQuery!, "QueryDefinition", BindingFlags.Public | BindingFlags.Instance,
+            "AL query execution (multi-dataitem join)")
             .GetValue(nclMetaQuery)!;
         if (!_joinSourceByQueryDef.TryGetValue(queryDef, out var dataAccessSource))
             throw RunnerShapeGap.Query(

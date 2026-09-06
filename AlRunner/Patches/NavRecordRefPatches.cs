@@ -12,6 +12,7 @@ using System.Runtime.CompilerServices;
 using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
+using AlRunner.Infrastructure;
 
 namespace AlRunner;
 
@@ -306,7 +307,8 @@ public static partial class BcRuntime
         {
             var tContainer = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.TreeSharedObjectContainer")!;
             var tITree = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ITreeObject")!;
-            _skeletonSharedObjectContainer = tContainer.GetConstructor(new[] { tITree })!
+            _skeletonSharedObjectContainer = BcShape.Constructor(
+                tContainer, new[] { tITree }, "RecordRef and stream skeleton state")
                 .Invoke(new object?[] { RootTreeStub });
         }
 
@@ -317,9 +319,9 @@ public static partial class BcRuntime
             var openShared = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.SharedNavObjectList`1")!;
             var closedShared = openShared.MakeGenericType(tArg);
             var tIContainer = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ITreeSharedObjectContainer")!;
-            return closedShared.GetConstructor(
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                null, new[] { tIContainer }, null)!;
+            return BcShape.Constructor(
+                closedShared, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                new[] { tIContainer }, "RecordRef and stream skeleton state");
         });
         var shared = ctor.Invoke(new[] { _skeletonSharedObjectContainer });
         _mTreeSetReferenceTarget?.Invoke(tree, new[] { shared });
@@ -519,15 +521,17 @@ public static partial class BcRuntime
         {
             var tContainer = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.TreeSharedObjectContainer")!;
             var tITree = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ITreeObject")!;
-            _skeletonSharedObjectContainer = tContainer.GetConstructor(new[] { tITree })!
+            _skeletonSharedObjectContainer = BcShape.Constructor(
+                tContainer, new[] { tITree }, "RecordRef and stream skeleton state")
                 .Invoke(new object?[] { RootTreeStub });
         }
         if (_ctorSharedNavStream == null)
         {
             var tShared = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.SharedNavStream")!;
             var tIContainer = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ITreeSharedObjectContainer")!;
-            _ctorSharedNavStream = tShared.GetConstructor(
-                BindingFlags.NonPublic | BindingFlags.Instance, null, new[] { tIContainer }, null)!;
+            _ctorSharedNavStream = BcShape.Constructor(
+                tShared, BindingFlags.NonPublic | BindingFlags.Instance, new[] { tIContainer },
+                "RecordRef and stream skeleton state");
         }
         var shared = _ctorSharedNavStream.Invoke(new object?[] { _skeletonSharedObjectContainer });
         _mTreeSetReferenceTarget?.Invoke(tree, new object?[] { shared });
@@ -567,7 +571,8 @@ public static partial class BcRuntime
         {
             var tContainer = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.TreeSharedObjectContainer")!;
             var tITree = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ITreeObject")!;
-            _skeletonSharedObjectContainer = tContainer.GetConstructor(new[] { tITree })!
+            _skeletonSharedObjectContainer = BcShape.Constructor(
+                tContainer, new[] { tITree }, "RecordRef and stream skeleton state")
                 .Invoke(new object?[] { RootTreeStub });
         }
         if (_ctorSharedHttpReq == null)
@@ -612,7 +617,8 @@ public static partial class BcRuntime
         {
             var tContainer = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.TreeSharedObjectContainer")!;
             var tITree = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ITreeObject")!;
-            _skeletonSharedObjectContainer = tContainer.GetConstructor(new[] { tITree })!
+            _skeletonSharedObjectContainer = BcShape.Constructor(
+                tContainer, new[] { tITree }, "RecordRef and stream skeleton state")
                 .Invoke(new object?[] { RootTreeStub });
         }
         if (_ctorSharedHttpResponseMsg == null)
@@ -656,7 +662,8 @@ public static partial class BcRuntime
         {
             var tContainer = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.TreeSharedObjectContainer")!;
             var tITree = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ITreeObject")!;
-            _skeletonSharedObjectContainer = tContainer.GetConstructor(new[] { tITree })!
+            _skeletonSharedObjectContainer = BcShape.Constructor(
+                tContainer, new[] { tITree }, "RecordRef and stream skeleton state")
                 .Invoke(new object?[] { RootTreeStub });
         }
         if (_ctorSharedHttpClient == null)
@@ -727,8 +734,8 @@ public static partial class BcRuntime
         var navNcl = AppDomain.CurrentDomain.GetAssemblies()
             .First(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
         var tVdp = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.VirtualDataProvider")!;
-        var fPermSet = tVdp.GetField("PermissionSet",
-            BindingFlags.NonPublic | BindingFlags.Static)!;
+        var fPermSet = BcShape.Field(
+            tVdp, "PermissionSet", BindingFlags.NonPublic | BindingFlags.Static, "RecordRef and stream skeleton state");
         _allGrantedPermSet = fPermSet.GetValue(null)!;
         return _allGrantedPermSet;
     }

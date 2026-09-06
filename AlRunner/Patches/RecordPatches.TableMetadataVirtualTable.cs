@@ -482,23 +482,15 @@ public static partial class RecordPatches
         return pageIdsByName.TryGetValue(reference, out var id) ? id : 0;
     }
 
+    /// <summary>
+    /// #3143: NOT swallowed — an unreadable dependency used to leave every table it declares
+    /// out of Table Metadata (2000000136), which AL reads to decide whether a table EXISTS.
+    /// See RecordPatches.DependencyAppSymbolWalk.cs for the vanished/unreadable split.
+    /// </summary>
     private static IEnumerable<ParsedTable> EnumerateBcAppTableSymbols()
     {
-        foreach (var appPath in _bcAppPaths.ToArray())
-        {
-            List<ParsedTable> tables;
-            try
-            {
-                tables = BcAppSymbolCache.Get(appPath).Tables;
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine(
-                    $"[RecordPatches] Table Metadata: SymbolReference read failed for {Path.GetFileName(appPath)}: {ex.Message}");
-                continue;
-            }
-            foreach (var t in tables)
+        foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("tables (Table Metadata)"))
+            foreach (var t in symbols.Tables)
                 yield return t;
-        }
     }
 }

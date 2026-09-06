@@ -230,6 +230,10 @@ public static partial class RecordPatches
     public static void ResetForReload()
     {
         _metaTableCache.Clear();
+        // #3121: every table is rebuilt from scratch below, so carrying the previous bundle's
+        // pending CalcFormula rebuilds forward only buys a wasted repopulate pass on the next
+        // .app registration.
+        ClearUnresolvedCalcFormulaTables();
         _recordTypeCache.Clear();
         // Sibling of the line above, and it said so in its own comment ("Cached HITS only,
         // mirroring _recordTypeCache") while not being mirrored HERE — nothing cleared it on
@@ -554,8 +558,9 @@ public static partial class RecordPatches
 
         // NCLMetaTable and factory (Microsoft.Dynamics.Nav.Runtime / Ncl)
         _tNCLMetaTable = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaTable")!;
-        _mCreateFromMetaTable = _tNCLMetaTable.GetMethod("CreateFromMetaTable",
-            BindingFlags.NonPublic | BindingFlags.Static)!;
+        _mCreateFromMetaTable = BcShape.Method(
+            _tNCLMetaTable, "CreateFromMetaTable", BindingFlags.NonPublic | BindingFlags.Static,
+            "AL record data access");
 
         // NCLMetadata.GetMetaTableById(int,bool,int), NCLMetadata.GetMetaApplicationObject
         // (ObjectType,int,bool,int and ApplicationObjectId,bool,int), and
@@ -564,18 +569,21 @@ public static partial class RecordPatches
 
         // DataAccessTableVersionTokens.CreateForTempTable()
         var tDatv = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.DataAccessTableVersionTokens")!;
-        _mCreateForTempTable = tDatv.GetMethod("CreateForTempTable",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)!;
+        _mCreateForTempTable = BcShape.Method(
+            tDatv, "CreateForTempTable", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+            "AL record data access");
 
         // VirtualAndTempTransactionalDataCache.Instance
         var tVatdc = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.VirtualAndTempTransactionalDataCache")!;
-        _fVatdcInstance = tVatdc.GetField("Instance",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)!;
+        _fVatdcInstance = BcShape.Field(
+            tVatdc, "Instance", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+            "AL record data access");
 
         // DataAccessSource and CreateTempDataAccess
         _tDataAccessSource = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.DataAccessSource")!;
-        _mCreateTempDataAccess = _tDataAccessSource.GetMethod("CreateTempDataAccess",
-            BindingFlags.NonPublic | BindingFlags.Instance)!;
+        _mCreateTempDataAccess = BcShape.Method(
+            _tDataAccessSource, "CreateTempDataAccess", BindingFlags.NonPublic | BindingFlags.Instance,
+            "AL record data access");
         // GetVirtualDataAccess(NCLMetaTable) — BC's real router for virtual/system tables
         // (Field=2000000041 → FieldDataProvider, AllObj=2000000038 → AllObjDataProvider, …).
         // We re-route virtual tables here instead of dumping them into the empty temp store.
@@ -938,10 +946,12 @@ public static partial class RecordPatches
         EnsureDateStoreCoversProviderRequest(self, request);
 
         var rt = request.GetType();
-        var companyToken   = (int)rt.GetProperty("CompanyToken")!.GetValue(request)!;
-        var filtersAndMarks = rt.GetProperty("FiltersAndMarks")!.GetValue(request);
-        var sourceTable    = (NCLMetaTable)rt.GetProperty("MetaApplicationObject")!.GetValue(request)!;
-        var fieldsToCalc   = (FieldList)rt.GetProperty("FieldsToCalculate")!.GetValue(request)!;
+        var companyToken   = (int)BcShape.Property(rt, "CompanyToken", "AL record data access").GetValue(request)!;
+        var filtersAndMarks = BcShape.Property(rt, "FiltersAndMarks", "AL record data access").GetValue(request);
+        var sourceTable    = (NCLMetaTable)BcShape.Property(
+            rt, "MetaApplicationObject", "AL record data access").GetValue(request)!;
+        var fieldsToCalc   = (FieldList)BcShape.Property(
+            rt, "FieldsToCalculate", "AL record data access").GetValue(request)!;
         int fieldCount     = fieldsToCalc.Count;
 
         var primaryKeySortingFields = _fTtdpPrimaryKeySortingFields!.GetValue(self);

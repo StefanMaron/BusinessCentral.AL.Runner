@@ -11,6 +11,7 @@
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using AlRunner.Patches;
+using AlRunner.Infrastructure;
 
 namespace AlRunner;
 
@@ -705,8 +706,8 @@ public static partial class BcRuntime
         if (vt.IsGenericType
             && vt.GetGenericTypeDefinition() == typeof(Microsoft.Dynamics.Nav.Runtime.ByRef<>))
         {
-            object? inner = vt
-                .GetProperty("Value", BindingFlags.Public | BindingFlags.Instance)!
+            object? inner = BcShape.Property(
+                vt, "Value", BindingFlags.Public | BindingFlags.Instance, "AL event dispatch (var parameter)")
                 .GetValue(value);
             return CoerceArg(inner, paramType);
         }

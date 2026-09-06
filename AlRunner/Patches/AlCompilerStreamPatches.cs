@@ -44,6 +44,7 @@
 // real .NET stream's bytes.
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using AlRunner.Infrastructure;
 
 namespace AlRunner;
 
@@ -70,14 +71,15 @@ public static partial class BcRuntime
 
         if (obj == null)
         {
-            _mNavOutStreamDefault ??= tNavOutStream.GetMethod("Default",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
-                null, new[] { tITreeObject }, null)!;
+            _mNavOutStreamDefault ??= BcShape.Method(
+                tNavOutStream, "Default", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+                new[] { tITreeObject }, "AL InStream/OutStream construction");
             return _mNavOutStreamDefault.Invoke(null, new[] { parentOfResult })!;
         }
 
-        _pNavDotNetValue ??= obj.GetType().GetProperty("Value",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!;
+        _pNavDotNetValue ??= BcShape.Property(
+            obj.GetType(), "Value", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            "AL InStream/OutStream construction");
         var value = _pNavDotNetValue.GetValue(obj);
         if (value is System.IO.Stream stream)
         {
@@ -86,17 +88,17 @@ public static partial class BcRuntime
             {
                 var tProvider = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavStreamProvider")!;
                 var tIContainer = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ITreeSharedObjectContainer")!;
-                _ctorNavStreamProviderFromStream = tProvider.GetConstructor(
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                    null, new[] { typeof(System.IO.Stream), tIContainer }, null)!;
+                _ctorNavStreamProviderFromStream = BcShape.Constructor(
+                    tProvider, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    new[] { typeof(System.IO.Stream), tIContainer }, "AL InStream/OutStream construction");
             }
             var provider = _ctorNavStreamProviderFromStream.Invoke(new object[] { stream, container });
             if (_ctorNavOutStream == null)
             {
                 var tINavStreamProvider = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.INavStreamProvider")!;
-                _ctorNavOutStream = tNavOutStream.GetConstructor(
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                    null, new[] { tITreeObject, tINavStreamProvider }, null)!;
+                _ctorNavOutStream = BcShape.Constructor(
+                    tNavOutStream, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    new[] { tITreeObject, tINavStreamProvider }, "AL InStream/OutStream construction");
             }
             return _ctorNavOutStream.Invoke(new[] { parentOfResult, provider })!;
         }
@@ -107,7 +109,8 @@ public static partial class BcRuntime
             var tEx = AppDomain.CurrentDomain.GetAssemblies()
                 .Select(a => a.GetType("Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLConversionException"))
                 .First(t => t != null)!;
-            _ctorNavNclConversionException = tEx.GetConstructor(new[] { typeof(Type), typeof(Type) })!;
+            _ctorNavNclConversionException = BcShape.Constructor(
+                tEx, new[] { typeof(Type), typeof(Type) }, "AL InStream/OutStream construction");
         }
         throw (Exception)_ctorNavNclConversionException.Invoke(new object[] { obj.GetType(), tNavOutStream });
     }
@@ -127,14 +130,15 @@ public static partial class BcRuntime
 
         if (obj == null)
         {
-            _mNavInStreamDefault ??= tNavInStream.GetMethod("Default",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
-                null, new[] { tITreeObject }, null)!;
+            _mNavInStreamDefault ??= BcShape.Method(
+                tNavInStream, "Default", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+                new[] { tITreeObject }, "AL InStream/OutStream construction");
             return _mNavInStreamDefault.Invoke(null, new[] { parentOfResult })!;
         }
 
-        _pNavDotNetValue ??= obj.GetType().GetProperty("Value",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!;
+        _pNavDotNetValue ??= BcShape.Property(
+            obj.GetType(), "Value", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            "AL InStream/OutStream construction");
         var value = _pNavDotNetValue.GetValue(obj);
         if (value is System.IO.Stream stream)
         {
@@ -143,9 +147,9 @@ public static partial class BcRuntime
             {
                 var tProvider = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavStreamProvider")!;
                 var tIContainer = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ITreeSharedObjectContainer")!;
-                _ctorNavStreamProviderFromStream = tProvider.GetConstructor(
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                    null, new[] { typeof(System.IO.Stream), tIContainer }, null)!;
+                _ctorNavStreamProviderFromStream = BcShape.Constructor(
+                    tProvider, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    new[] { typeof(System.IO.Stream), tIContainer }, "AL InStream/OutStream construction");
             }
             // Same NavStreamProvider type the OutStream direction uses above — it is
             // shared infrastructure, not tied to In vs Out.
@@ -153,9 +157,9 @@ public static partial class BcRuntime
             if (_ctorNavInStream == null)
             {
                 var tINavStreamProvider = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.INavStreamProvider")!;
-                _ctorNavInStream = tNavInStream.GetConstructor(
-                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                    null, new[] { tITreeObject, tINavStreamProvider }, null)!;
+                _ctorNavInStream = BcShape.Constructor(
+                    tNavInStream, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                    new[] { tITreeObject, tINavStreamProvider }, "AL InStream/OutStream construction");
             }
             return _ctorNavInStream.Invoke(new[] { parentOfResult, provider })!;
         }
@@ -166,7 +170,8 @@ public static partial class BcRuntime
             var tEx = AppDomain.CurrentDomain.GetAssemblies()
                 .Select(a => a.GetType("Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLConversionException"))
                 .First(t => t != null)!;
-            _ctorNavNclConversionException = tEx.GetConstructor(new[] { typeof(Type), typeof(Type) })!;
+            _ctorNavNclConversionException = BcShape.Constructor(
+                tEx, new[] { typeof(Type), typeof(Type) }, "AL InStream/OutStream construction");
         }
         throw (Exception)_ctorNavNclConversionException.Invoke(new object[] { obj.GetType(), tNavInStream });
     }
@@ -190,7 +195,8 @@ public static partial class BcRuntime
             var navNcl = NclAssembly();
             var tContainer = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.TreeSharedObjectContainer")!;
             var tITree = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ITreeObject")!;
-            _skeletonSharedObjectContainer = tContainer.GetConstructor(new[] { tITree })!
+            _skeletonSharedObjectContainer = BcShape.Constructor(
+                tContainer, new[] { tITree }, "AL InStream/OutStream construction")
                 .Invoke(new object?[] { RootTreeStub });
         }
         return _skeletonSharedObjectContainer;

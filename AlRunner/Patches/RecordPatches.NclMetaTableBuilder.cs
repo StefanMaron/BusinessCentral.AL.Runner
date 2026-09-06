@@ -13,6 +13,7 @@ using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -401,7 +402,8 @@ public static partial class RecordPatches
                     var kvpCtor = kvpType.GetConstructor(new[] { typeof(int), _tMetaField! })!;
                     for (int j = 0; j < fields.Length; j++)
                     {
-                        var fid = (int)_tMetaField!.GetProperty("Id")!.GetValue(fields[j])!;
+                        var fid = (int)BcShape.Property(
+                            _tMetaField!, "Id", "AL table metadata construction").GetValue(fields[j])!;
                         kvpArray.SetValue(kvpCtor.Invoke(new[] { (object)fid, fields[j] }), j);
                     }
                     args[i] = createRangeMethod.Invoke(null, new object[] { kvpArray })!;
@@ -482,6 +484,16 @@ public static partial class RecordPatches
         object? calcFormulaObj = (f.IsFlowField && f.CalcFormula != null && parentTable != null)
             ? BuildMetaCalcFormula(f.CalcFormula, parentTable)
             : null;
+        // #3121 — the diagnostic whose absence cost a diagnosis. Every failure INSIDE
+        // BuildMetaCalcFormula already logs, but the three-clause gate above could refuse the
+        // call silently, so a FlowField reaching NCLMetaField with EmptyFormula (which
+        // CalcFields then refuses with BC's "You must define a CalcFormula ...") had no line
+        // naming it. `[RecordPatches]`-tagged, so it is verbose-only.
+        if (f.IsFlowField && calcFormulaObj == null)
+            Console.Error.WriteLine(
+                $"[RecordPatches] BuildMetaField: FlowField '{f.FieldName}' (id {f.FieldId}) in "
+                + $"'{parentTable?.TableName ?? "<no parent table>"}' built WITHOUT a CalcFormula "
+                + $"(hasFormula={f.CalcFormula != null}, hasParentTable={parentTable != null})");
 
         // TableRelation → ImmutableArray<MetaFieldRelation>, one element per arm. NCLMetaField
         // turns each into the NCLMetaFieldRelation that GetReferencingRelations' reverse
@@ -1057,6 +1069,10 @@ public static partial class RecordPatches
         if (srcTable == null)
         {
             Console.Error.WriteLine($"[RecordPatches] BuildMetaCalcFormula: source table '{cf.SourceTableName}' not found in parsed tables");
+            // #3121: a .app registered LATER can still declare it — remember the table so its
+            // metadata is rebuilt when the registered set grows, instead of keeping a
+            // permanently formula-less FlowField that CalcFields then refuses.
+            NoteUnresolvedCalcFormulaSourceTable(parentTable.TableId, cf.SourceTableName);
             return null;
         }
 
@@ -1539,8 +1555,10 @@ public static partial class RecordPatches
                 if (attrs.Length == 0) continue;
                 foreach (var a in attrs)
                 {
-                    var fieldNo = (int)attrType.GetProperty("FieldNo")!.GetValue(a)!;
-                    var ttObj = attrType.GetProperty("TriggerType")!.GetValue(a)!;
+                    var fieldNo = (int)BcShape.Property(
+                        attrType, "FieldNo", "AL table metadata construction").GetValue(a)!;
+                    var ttObj = BcShape.Property(
+                        attrType, "TriggerType", "AL table metadata construction").GetValue(a)!;
                     var ttName = Enum.GetName(triggerTypeEnum, ttObj);
                     byField.TryGetValue(fieldNo, out var pair);
                     if (ttName == "OnValidate") pair.validate = mi;
@@ -1685,8 +1703,10 @@ public static partial class RecordPatches
                 if (attrs.Length == 0) continue;
                 foreach (var a in attrs)
                 {
-                    var fieldNo = (int)_tFieldTriggerHandlerAttr!.GetProperty("FieldNo")!.GetValue(a)!;
-                    var ttObj = _tFieldTriggerHandlerAttr.GetProperty("TriggerType")!.GetValue(a)!;
+                    var fieldNo = (int)BcShape.Property(
+                        _tFieldTriggerHandlerAttr!, "FieldNo", "AL table metadata construction").GetValue(a)!;
+                    var ttObj = BcShape.Property(
+                        _tFieldTriggerHandlerAttr, "TriggerType", "AL table metadata construction").GetValue(a)!;
                     var ttName = Enum.GetName(_tFieldTriggerType!, ttObj);
                     if (ttName == "OnValidate" || ttName == "OnLookup")
                     {

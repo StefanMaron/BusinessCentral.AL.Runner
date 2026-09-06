@@ -29,13 +29,26 @@
 // ("Object Type", "Object ID"). Both inventories are keyed on the object ID, so a BC test
 // suite runs its codeunits in ascending object ID.
 //
-// WHAT THIS TEST PROVES, and why it cannot pass by luck. The fixture names its files so that
+// WHAT THIS TEST PROVES. The whole chain — AL source, emit, load, execute — really is wired to
+// ascending object id, end to end, through the real runner. The fixture names its files so that
 // ordinal FILE order is the exact REVERSE of object-ID order — Aardvark=62295, Middle=62290,
-// Zulu=62285. File order is what reaches the AL compiler (SafeDirectoryScan.Files sorts
-// ordinally, #2892), so an implementation that does not reorder produces DESCENDING ids here,
-// deterministically. The assertions below are written as the RULE ("the ids that ran are in
-// ascending order"), not as a hardcoded sequence that an unsorted implementation might satisfy
-// on a lucky day.
+// Zulu=62285 — and file order is what reaches the AL compiler (SafeDirectoryScan.Files sorts
+// ordinally, #2892). The assertions are written as the RULE ("the ids that ran are in ascending
+// order"), not as a hardcoded sequence.
+//
+// WHAT IT CANNOT PROVE, corrected (#3086). This header used to say an implementation that does
+// not reorder "produces DESCENDING ids here, deterministically". That is false, and the commit
+// that wrote it measured the counter-example itself: GetTypes() returned 62295, 62285, 62290 for
+// this very fixture — neither file order nor id order. What this test observes is the compiler's
+// layout on this machine composed with the rule, and the layout is the thing #2801 established is
+// not stable. So it detects a broken sort only when the layout happens to disagree with ascending
+// id; measured with OrderTestCodeunitsByObjectId reduced to `types => types`, three of the four
+// tests here failed and all seven SuiteAbortOnTimeoutTests — the suite whose flake motivated the
+// fix — still passed.
+//
+// TestCodeunitOrderingContractTests carries the unconditional half: it hands the ordering helper
+// an input array it controls, so it fails against a no-op on any machine, any BC version, in
+// milliseconds. Neither file replaces the other.
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
