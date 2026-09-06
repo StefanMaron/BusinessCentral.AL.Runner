@@ -2325,29 +2325,22 @@ public static partial class RecordPatches
             if (IsObjectMetadataSystemTable(table))
                 return MaterialiseObjectMetadataStore(self, perTable, table, tableId);
 
-            // ── Object (2000000001) ──────────────────────────────────────────────────────
-            // The other half of the table relation Object Metadata."Object ID" declares
-            // (TableRelation = Object.ID WHERE(Type = FIELD("Object Type"))). Also NOT a
-            // virtual table: the legacy object registry, a real application-database SQL
-            // table. Its store was empty, so every read answered "no such object" — silently,
-            // because Microsoft has that field's TestTableRelation commented out (#2774).
+            // ── Object (2000000001) HAS NO BRANCH HERE, ON PURPOSE (#3071) ───────────────
+            // It used to have one, projecting the runner's object inventory into the legacy
+            // registry so that Object Metadata."Object ID"'s declared
+            // TableRelation = Object.ID WHERE(Type = FIELD("Object Type")) pointed at
+            // something (#2774). A real service tier then measured the table: corpus codeunit
+            // 61202 (StefanMaron/BusinessCentral.AL.Language.Tests#197) found it present,
+            // readable and EMPTY on seven BC OnPrem legs, with a control arm reading the
+            // populated sibling in the same session so "empty" could not be an unreadable
+            // table. A declared relation is not evidence that its target is populated.
             //
-            // Its rows are an object INVENTORY, so unlike Object Metadata's fixed id list they
-            // are projected from the same EnumerateKnownAlObjects that answers AllObj — which
-            // is what stops the two tables disagreeing about which objects exist.
-            //
-            // Same --test-data precedence as Object Metadata directly above, for the same
-            // reason (a restored backup can genuinely carry rows for a real SQL table), and
-            // through the same ordered materialisation: GetOrCreateHydratedDataAccess is what
-            // stops a second thread being handed this store between "created" and "hydrated",
-            // finding it empty and synthesising over rows that are about to arrive (#2788).
-            // See RecordPatches.ObjectSystemTable.cs and RecordPatches.TableMaterialisation.cs.
-            if (IsObjectSystemTable(table))
-            {
-                var objectDa = GetOrCreateHydratedDataAccess(self, perTable, table, tableId);
-                PopulateObjectSystemTable(objectDa, table);
-                return objectDa;
-            }
+            // So this table now takes the generic fall-through at the end of this method, the
+            // one every other application-database table takes. That is deliberate rather than
+            // incidental: the fall-through is the SAME GetOrCreateHydratedDataAccess call the
+            // deleted branch made, so a --test-data backup's real rows still land, in the same
+            // order, with the same #2788 hand-out guarantee — only the synthesis is gone.
+            // See RecordPatches.ObjectSystemTable.cs for the measurement.
 
             // ── Page Control Field (2000000192) ──────────────────────────────────────────
             // Virtual on the service tier too: one row per field control declared on a
