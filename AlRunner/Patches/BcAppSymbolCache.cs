@@ -175,7 +175,17 @@ internal static partial class BcAppSymbolCache
     // declares no RunObject" — and a TestPage that invokes one is then refused as declaring no
     // effect at all, the exact pre-fix behaviour replayed from cache rather than a cache miss.
     // That is a wrong ANSWER, so it needs the bump.
-    private const int CacheVersion = 31;
+    // v32: ActionRunObjectSymbol gained the PARSED RunPageLink and its declared entry count
+    // (#2942) — it used to record only that a link was PRESENT, which was enough to refuse the
+    // action and is not enough to apply it. Both halves of the rule above are true of this one
+    // at once. The record's SHAPE changed and ActionRunObjectSymbol is reachable from
+    // CachePayload, so PayloadShape already gives it a different key on its own; and the PARSE
+    // changed too, because the RunPageLink property text was read for presence only and is now
+    // read for content. The bump is the explicit statement of the second half, which no
+    // structural hash can see. Without the key changing, a stale payload would answer
+    // DeclaredRunPageLinkEntries = 0 — which RunnerPageInstance.ResolveRunTargetFromSymbols
+    // reads as "this action declares no link", opening the target on its WHOLE table.
+    private const int CacheVersion = 32;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -401,12 +411,27 @@ internal static partial class BcAppSymbolCache
     /// a precompiled page this is all there is and the consumer resolves the name against the
     /// run's own page inventory — see RunnerPageInstance.ResolveRunTargetFromSymbols.</para>
     ///
-    /// <para><c>HasRunPageLink</c> records only the PRESENCE of a <c>RunPageLink</c>, not its
-    /// content: the runner does not apply an action's link filters yet, and opening the target
-    /// without them would show a different rowset than real BC, so presence alone is what the
-    /// consumer needs in order to refuse loudly instead.</para>
+    /// <para><c>RunPageLink</c> is the action's link, parsed out of the same AL property text
+    /// a part's <c>SubPageLink</c> comes in — the grammar is identical, so
+    /// <c>ParseSubPageLink</c> reads both — and still unresolved: the field NAMES have to be
+    /// turned into numbers against the TARGET's and the HOST's source tables, which needs the
+    /// page inventory this layer does not have. RunnerPageInstance.ResolveRunTargetFromSymbols
+    /// does that (issue #2942).</para>
+    ///
+    /// <para><c>DeclaredRunPageLinkEntries</c> is how many top-level entries the property text
+    /// actually declared, which is NOT always <c>RunPageLink.Count</c>: an entry the parser does
+    /// not understand is dropped with a note on stderr. The consumer compares the two and
+    /// refuses when they differ, because a link applied with one entry missing selects MORE rows
+    /// than BC would — a silent wrong answer, not a smaller one.</para>
     /// </summary>
-    internal sealed record ActionRunObjectSymbol(string ObjectName, bool RunPageOnRec, bool HasRunPageLink);
+    internal sealed record ActionRunObjectSymbol(
+        string ObjectName,
+        bool RunPageOnRec,
+        int DeclaredRunPageLinkEntries,
+        List<PageSubFormLinkSymbol>? RunPageLink = null)
+    {
+        internal bool HasRunPageLink => DeclaredRunPageLinkEntries > 0;
+    }
 
     /// <summary>
     /// A precompiled dependency's <c>pageextension</c>, as far as SymbolReference.json states
@@ -1244,12 +1269,24 @@ internal static partial class BcAppSymbolCache
         var props = SymbolProperties(node);
         if (!props.TryGetValue("RunObject", out var runObject) || string.IsNullOrWhiteSpace(runObject))
             return null;
+        var hasLink = props.TryGetValue("RunPageLink", out var link) && !string.IsNullOrWhiteSpace(link);
+        var declaredEntries = 0;
+        List<PageSubFormLinkSymbol>? parsedLink = null;
+        if (hasLink)
+        {
+            foreach (var entry in SplitTopLevelCommas(link!))
+                if (entry.Trim().Length > 0) declaredEntries++;
+            // Same grammar as a part's SubPageLink -- `"Field" = field("Other")`, `= const(X)`,
+            // `= filter(A|B)`, comma-separated -- so the same parser reads it (issue #2942).
+            parsedLink = ParseSubPageLink(link);
+        }
         return new ActionRunObjectSymbol(
             runObject!,
             // AL's default is false, so only an explicit "1"/"true" sets it — the compiler
             // writes RunPageOnRec = "1" for `RunPageOnRec = true`.
             SymbolBool(props, "RunPageOnRec"),
-            props.TryGetValue("RunPageLink", out var link) && !string.IsNullOrWhiteSpace(link));
+            declaredEntries,
+            parsedLink);
     }
 
     /// <summary>
