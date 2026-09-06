@@ -288,6 +288,18 @@ public static partial class RecordPatches
             // SystemApp regression above is what that caution was warning about.
             ClearPerBundleBcAppPaths();
         }
+        // #3207: the object-reference const memo goes with them, and must be cleared HERE rather
+        // than left to expire — it has no expiry. ResolveObjectIdByKindAndName memoises
+        // (kind, name) -> id on top of ResolveTableIdByName / EnumerateKnownAlObjects, which read
+        // _parsedTables and _bcSymbolTableIndex, i.e. exactly the state the three statements above
+        // just discarded. Its doc comment justifies caching successes with "an id never changes
+        // once known", and that holds INSIDE a bundle and not across a reload: bundle 2 of a
+        // --server/--watch process declaring the same object name at a different id kept getting
+        // bundle 1's, so the memo defeated an invalidation its own dependency performs. The
+        // consequence is silent — a where() condition pinned to the wrong table id computes a
+        // plausible wrong number rather than failing — which is the failure #3205's own comment
+        // says it is avoiding, and the same shape as #2478 and #2755 in this same reset path.
+        _objectRefConstIds.Clear();
         _fieldTriggersWiredTables.Clear();
         _parsedPages.Clear();
         _parsedPageExtensions.Clear();

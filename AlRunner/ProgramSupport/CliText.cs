@@ -37,6 +37,13 @@ internal static partial class ProgramSupport
         w.WriteLine("  dependency set is runnable (see DEPENDENCIES below); it proves only that");
         w.WriteLine("  symbols resolved.");
         w.WriteLine();
+        w.WriteLine("  \"The TestPage is not open.\" IS NEVER THE WHOLE STORY. That is BC's own message");
+        w.WriteLine("  for a page whose row-load trigger raised an AL error: the page is torn down and");
+        w.WriteLine("  the raised error's own text never reaches AL, on a real service tier as well as");
+        w.WriteLine("  here. So do NOT read it as a page-lifecycle problem. The runner prints the error");
+        w.WriteLine("  it was reported in place of on a one-line [testpage] note under the failure —");
+        w.WriteLine("  that named error is the one to fix.");
+        w.WriteLine();
 
         w.WriteLine("INVOCATION — the shortest correct command lines");
         w.WriteLine("  Run one bundle (a dir containing app.json, or any dir below one):");
@@ -647,8 +654,8 @@ internal static partial class ProgramSupport
         w.WriteLine("                          passes, or an out-of-scope throw with no entry, fails");
         w.WriteLine("                          the run with a diagnostic naming the entry to fix.");
         w.WriteLine("  --expectations-require-match");
-        w.WriteLine("                          Assert that this invocation discovers a test for EVERY entry");
-        w.WriteLine("                          in the active manifest, and fail (exit 5) on any that");
+        w.WriteLine("                          Assert that this RUN discovers a test for EVERY entry in");
+        w.WriteLine("                          the active manifest, and fail (exit 5) on any that");
         w.WriteLine("                          matched nothing, naming the file, the codeunit and the");
         w.WriteLine("                          method. Without it such an entry is silently inert: one");
         w.WriteLine("                          wrong letter in CodeunitName or Method untracks a declared");
@@ -657,7 +664,10 @@ internal static partial class ProgramSupport
         w.WriteLine("                          the manifest is shared across invocations, so an entry");
         w.WriteLine("                          naming a corpus codeunit legitimately matches nothing in a");
         w.WriteLine("                          run over a different bundle. Only pass it where covering");
-        w.WriteLine("                          every entry is actually true.");
+        w.WriteLine("                          every entry is actually true. After a watchdog resume the");
+        w.WriteLine("                          final attempt folds the earlier attempts carried in with");
+        w.WriteLine("                          --merge-results into what it audits, so the claim is about");
+        w.WriteLine("                          the run and not one process (#3168).");
         w.WriteLine("  --count-baseline PATH   Load a per-suite test/app-group expected-count manifest");
         w.WriteLine("                          (schema: AlRunner/Infrastructure/CountBaseline.cs) and");
         w.WriteLine("                          fail the run (exit 4) if a suite's count does not exactly");

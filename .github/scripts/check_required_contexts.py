@@ -63,8 +63,12 @@ unauthenticated on this public repo, so no token is needed in CI.
 
 A lookup that FAILS is a failure, never "no differences". An unauthenticated 404
 and an empty result are indistinguishable, and reading an error as agreement is
-the failure mode this check exists to prevent. Set SKIP_RULESET_DRIFT_CHECK=1 to
-run the rest of the guard offline on purpose; CI does not set it.
+the failure mode this check exists to prevent. SKIP_RULESET_DRIFT_CHECK=1 runs
+the rest of the guard offline on purpose, and prints that it has. CI sets it in
+exactly one place: pr-gate.yml's invocation, which produces a REQUIRED context and
+so must not be able to go red because api.github.com was unreachable. The
+invocation in pr-check.yml sets no bypass and does the live comparison; that one
+reports without gating.
 
 Usage
 -----
@@ -75,6 +79,19 @@ context list can be overridden with the REQUIRED_CONTEXTS environment variable
 (newline- or comma-separated) — that exists so the unit tests can drive synthetic
 fixtures, not as a production knob. Setting it also skips the live-ruleset
 comparison, because a synthetic context list has nothing to compare against.
+PENDING_CONTEXTS overrides PENDING_REQUIRED_CONTEXTS the same way, and for the
+same reason; an empty value means "none", which is what a fixture directory
+needs.
+
+The third gap this guards (#3165)
+---------------------------------
+Every guard in pr-check.yml used to be advisory: none of its twelve jobs was one
+of the two contexts the ruleset required, so each could report red while the pull
+request stayed mergeable, and three PRs merged that way. The gating jobs now live
+in pr-gate.yml, which carries no `concurrency` block precisely because of the rule
+above — the second of the two remedies it names. PENDING_REQUIRED_CONTEXTS is how
+the code side lands before the by-hand ruleset edit rather than after it; see the
+comment on that list.
 
 Exit codes
 ----------
@@ -106,7 +123,59 @@ import yaml
 # Measured 2026-09-05: exactly these two, matched by context NAME only (the
 # ruleset entries carry no integration_id), which is why a required job may move
 # between workflow files as long as its `name:` is unchanged.
-DEFAULT_REQUIRED_CONTEXTS = ["All BC versions passed", "Tests updated"]
+#
+# Renamed from "All BC versions passed" by #3141, together with the branch ruleset.
+# The pull-request matrix now runs three of the eight BC versions, so the old name
+# asserted something the run had not measured. Renaming a required status check is a
+# two-sided edit that cannot be atomic: this file (plus tools/ci-wait.py and the job's
+# `name:` in test-matrix.yml) moves in a pull request, the ruleset moves in the GitHub
+# UI, and between the two this guard reports drift. That red is expected and advisory —
+# pr-check.yml produces no required context — but the merge itself is blocked until the
+# ruleset carries the new name, because until then the PR waits on a context no workflow
+# reports any more.
+DEFAULT_REQUIRED_CONTEXTS = ["BC test matrix passed", "Tests updated"]
+
+# Contexts this repository INTENDS the branch ruleset to require, but which it
+# does not require yet (#3165). Everything in pr-gate.yml is here.
+#
+# Why a second list exists at all. The ruleset is edited by hand in the GitHub
+# UI; the code that produces those contexts arrives through a pull request. The
+# two cannot land in the same instant, so there is a window, and both halves have
+# to be green on both sides of it:
+#
+#   * Before the ruleset edit. Putting these names straight into
+#     DEFAULT_REQUIRED_CONTEXTS makes the drift comparison below fail on every
+#     PR ("this repo's lists carry context(s) the branch ruleset no longer
+#     requires"). Putting them into tools/ci-wait.py's RULESET_CONTEXTS is
+#     worse: that tuple is a FLOOR, and ci-wait.py returns exit 3 UNDETERMINED
+#     whenever the live ruleset is a subset of it (#3002) -- so every agent's CI
+#     wait in the repository would stop returning a verdict until a human
+#     happened to edit the ruleset. Neither list may move first.
+#   * After the ruleset edit. A name that has just become required must not make
+#     the guard red for being "added" drift, or the edit itself breaks CI.
+#
+# So a PENDING name is analysed exactly like a required one -- it must be
+# produced by a pull_request workflow, and it must not be cancellable on the head
+# commit -- while the live-ruleset drift comparison tolerates it in EITHER state.
+# That is the whole of the difference. It is NOT a way to park a context nothing
+# checks.
+#
+# This list is meant to empty itself: once the ruleset requires a name, the guard
+# prints a ::notice:: asking for it to be promoted into DEFAULT_REQUIRED_CONTEXTS
+# here and into RULESET_CONTEXTS in tools/ci-wait.py. Nothing breaks while that
+# is outstanding -- ci-wait.py reads the LIVE ruleset first and only falls back
+# to its built-in tuple when that read fails, loudly -- so the promotion is
+# tidying, not a race.
+PENDING_REQUIRED_CONTEXTS = [
+    "PR title/body must not contain a CI-skip directive",
+    "PR body closing references must be correct, both directions",
+    "pull_request trigger lists must keep their load-bearing event types",
+    "Required contexts must not be cancellable on the same commit",
+    "Agent definitions must allowlist the MCP tools they document",
+    "tools/ unit tests",
+    ".github/scripts/ unit tests",
+    "scripts/ unit tests",
+]
 
 REPO = "StefanMaron/BusinessCentral.AL.Runner"
 DEFAULT_BRANCH = "main"
@@ -148,12 +217,39 @@ SAME_SHA_TYPES = {
 DEFAULT_PR_TYPES = ["opened", "synchronize", "reopened"]
 
 
+def _split(raw: str) -> list[str]:
+    """Newline- or comma-separated, but NEVER both at once.
+
+    A check-run name may contain a comma -- "PR body closing references must be
+    correct, both directions" does -- so splitting on commas unconditionally
+    turned one context into two, and the guard then reported the halves as
+    'produced by NO workflow'. Newlines win when present: they are the only
+    separator that cannot appear inside a name.
+    """
+    if "\n" in raw:
+        parts = raw.split("\n")
+    else:
+        parts = raw.split(",")
+    return [p.strip() for p in parts if p.strip()]
+
+
 def required_contexts() -> list[str]:
     raw = os.environ.get("REQUIRED_CONTEXTS")
     if not raw:
         return list(DEFAULT_REQUIRED_CONTEXTS)
-    parts = [p.strip() for chunk in raw.split("\n") for p in chunk.split(",")]
-    return [p for p in parts if p]
+    return _split(raw)
+
+
+def pending_contexts() -> list[str]:
+    """PENDING_REQUIRED_CONTEXTS, overridable for this script's own unit tests.
+
+    Presence of the variable is what counts, not truthiness: PENDING_CONTEXTS=""
+    means "no pending contexts", which is what a synthetic fixture directory
+    needs, and is a different statement from leaving it unset.
+    """
+    if "PENDING_CONTEXTS" in os.environ:
+        return _split(os.environ["PENDING_CONTEXTS"])
+    return list(PENDING_REQUIRED_CONTEXTS)
 
 
 def repo_root() -> str:
@@ -231,7 +327,20 @@ def resolve_contexts(fetch=None, ci_wait_path: str | None = None
         ]
 
     cw_contexts = sorted(getattr(cw, "RULESET_CONTEXTS", ()) or ())
-    if cw_contexts != sorted(DEFAULT_REQUIRED_CONTEXTS):
+    early = sorted(set(cw_contexts) & set(pending_contexts()))
+    if early:
+        # Named separately from generic drift because the consequence is specific
+        # and repository-wide: RULESET_CONTEXTS is ci-wait.py's FLOOR, and a floor
+        # wider than the live ruleset makes every invocation return exit 3
+        # UNDETERMINED rather than a verdict (#3002).
+        problems.append(
+            f"tools/ci-wait.py's RULESET_CONTEXTS carries {', '.join(repr(e) for e in early)}, "
+            f"which is still PENDING here — that tuple is ci-wait.py's FLOOR, so listing a "
+            f"context the live ruleset does not require yet makes ci-wait.py return exit 3 "
+            f"UNDETERMINED on EVERY pull request until the ruleset is edited (#3002/#3165). "
+            f"Promote a pending name only once the ruleset actually requires it"
+        )
+    elif cw_contexts != sorted(DEFAULT_REQUIRED_CONTEXTS):
         problems.append(
             f"tools/ci-wait.py's RULESET_CONTEXTS {cw_contexts} disagrees with "
             f"DEFAULT_REQUIRED_CONTEXTS {sorted(DEFAULT_REQUIRED_CONTEXTS)} here — "
@@ -278,7 +387,19 @@ def resolve_contexts(fetch=None, ci_wait_path: str | None = None
         return fallback, problems
 
     live = list(live)
-    added = sorted(set(live) - set(DEFAULT_REQUIRED_CONTEXTS))
+    pending = set(pending_contexts())
+    arrived = sorted(set(live) & pending)
+    if arrived:
+        # Tolerated, and said out loud. This is the moment the ruleset edit
+        # landed; the code side is already correct, and the only thing left is to
+        # move the name out of the transitional list.
+        print(f"::notice::the branch ruleset now requires "
+              f"{', '.join(repr(a) for a in arrived)}, which this file still lists in "
+              f"PENDING_REQUIRED_CONTEXTS. Nothing is broken -- ci-wait.py reads the live "
+              f"ruleset first -- but promote them into DEFAULT_REQUIRED_CONTEXTS here and "
+              f"into RULESET_CONTEXTS in tools/ci-wait.py, so the fallback list ci-wait.py "
+              f"uses when that read FAILS is complete too (#3165).")
+    added = sorted(set(live) - set(DEFAULT_REQUIRED_CONTEXTS) - pending)
     removed = sorted(set(DEFAULT_REQUIRED_CONTEXTS) - set(live))
     if added:
         problems.append(
@@ -426,11 +547,12 @@ def main(argv: list[str], fetch=None) -> int:
     # It is a REAL bypass, not just a test seam: this branch skips BOTH the live
     # ruleset comparison AND the ci-wait.py cross-check, and it used to do so in
     # total silence -- unlike SKIP_RULESET_DRIFT_CHECK, which at least prints.
-    # A future agent unbreaking CI during a GitHub API outage by setting it in
-    # pr-check.yml would get a green job with the guard switched off and nothing
-    # in the log saying so. Hence the ::warning::, and hence
-    # test_check_required_contexts.py asserting that pr-check.yml's step sets
-    # neither variable.
+    # A future agent unbreaking CI during a GitHub API outage by setting it in a
+    # workflow would get a green job with the guard switched off and nothing in
+    # the log saying so. Hence the ::warning::, and hence
+    # test_check_required_contexts.py asserting -- across EVERY shipped workflow,
+    # not one named file -- that no invocation sets REQUIRED_CONTEXTS or
+    # PENDING_CONTEXTS, and that at least one sets no bypass at all.
     if os.environ.get("REQUIRED_CONTEXTS"):
         print("::warning::REQUIRED_CONTEXTS is set, so the live ruleset comparison "
               "and the tools/ci-wait.py cross-check are BOTH skipped. This guard is "
@@ -440,6 +562,13 @@ def main(argv: list[str], fetch=None) -> int:
     else:
         contexts, drift = resolve_contexts(fetch=fetch)
         problems.extend(drift)
+
+    # A PENDING context is analysed exactly like a required one. That is what
+    # makes the transitional list safe to have: the gating workflow is proven
+    # non-cancellable and actually produced BEFORE the ruleset starts depending
+    # on it, rather than after somebody notices a merge is refused (#3165).
+    pending_only = [c for c in pending_contexts() if c not in contexts]
+    contexts = list(contexts) + pending_only
 
     for ctx in contexts:
         sources = produced.get(ctx)
@@ -474,8 +603,11 @@ def main(argv: list[str], fetch=None) -> int:
             )
         return 1
 
-    names = ", ".join(contexts)
+    names = ", ".join(c for c in contexts if c not in pending_only)
     print(f"required contexts cannot be left cancelled on the head commit: {names}")
+    if pending_only:
+        print("pending contexts (analysed the same way, not required yet): "
+              + ", ".join(pending_only))
     return 0
 
 

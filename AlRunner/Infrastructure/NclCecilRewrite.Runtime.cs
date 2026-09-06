@@ -754,6 +754,23 @@ public static partial class NclCecilRewrite
                 ByParams(Rt + "DataAccessSource", "GetDataAccessForQuery", "NCLMetaQueryDefinition"),
                 H(recordPatches, "DataAccessSource_GetDataAccessForQuery"));
 
+            // ── PermissionManagement.IsPermissionSetAssignedAsync (#3039) ────────────────
+            // The real body ends in `session.Permissions.HasRole(companyName, permissionSet)`
+            // and NavSession.Permissions is null on the skeleton session, so every AL path
+            // through NavUserAccountHelper.IsPermissionSetAssigned — codeunit 153's IsSuper,
+            // and therefore codeunit 9002's User/OnBeforeModifyEvent subscriber — NREs on a
+            // perfectly valid User.Modify. Populating Permissions for real is not available:
+            // NavUserPermissions.HasRole/GetRoles both need a SQL-backed NavTenant.Database,
+            // which BcRuntime documents as out of scope. The replacement answers from the
+            // Access Control table (2000000053) instead — see
+            // RecordPatches.PermissionSetAssignment.cs for the full mechanism and for the one
+            // stated fact it adds (the skeleton session is SUPER, as three sibling rewrites in
+            // this file and NclCecilRewrite.Metadata.cs already assume).
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "PermissionManagement", "IsPermissionSetAssignedAsync",
+                         "NavSession", "Guid", "PermissionSetKey", "String"),
+                H(recordPatches, "PermissionManagement_IsPermissionSetAssignedAsync"));
+
             // ── TempTableDataProvider ctor (NavSession,NCLMetaTable) + CalcNumeric ──
             {
                 var ttdp = nclMod.GetType(Rt + "TempTableDataProvider")

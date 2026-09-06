@@ -20,14 +20,32 @@ internal static partial class ProgramSupport
     /// STANDALONE passed, because then FindBucketRoot landed on a directory that does have an
     /// app.json. Union the children instead: their manifests are where the `application` /
     /// `platform` roots are declared.
+    ///
+    /// #2996: "the children" means the SUITES, at whatever depth they sit — not the bundle
+    /// root's direct sub-directories, which is what this used to scan. EnumerateSuites recurses
+    /// until it finds a suite on each branch and is what decides which apps become AppGroups
+    /// and get compiled; a one-level scan here disagreed with it for any tree one level deeper.
+    /// The al-language corpus root is exactly that shape — its three apps live at
+    /// &lt;root&gt;/tests/&lt;app&gt;/app.json — so pointing the runner at it found three apps to
+    /// compile and ZERO manifests to resolve dependencies from. Program.cs printed
+    /// "WARN: no app.json under &lt;root&gt; — skipping dep loading" and compiled all three with no
+    /// Microsoft closure at all: AL0185 on `Table 'Object Metadata'`, `Table 'AllObj'`,
+    /// `Codeunit 'Temp Blob'`, `Table 'Customer'`, 60 objects dropped from one app and zero
+    /// emitted from another. Running the same three apps from &lt;root&gt;/tests — one level
+    /// shallower, nothing else changed — gave 2698 tests. Deriving this set FROM EnumerateSuites
+    /// keeps the two from drifting again: the manifests are exactly the app.json files of the
+    /// suites that are about to be compiled.
     /// </summary>
     internal static List<string> CollectBundleManifests(string? bucketRoot, string bundleAbs)
     {
         if (bucketRoot != null && File.Exists(Path.Combine(bucketRoot, "app.json")))
             return new List<string> { Path.Combine(bucketRoot, "app.json") };
         if (!Directory.Exists(bundleAbs)) return new List<string>();
-        // Direct children only — that is the shape EnumerateSuites recognises, and it keeps
-        // the scan away from app.json files buried inside extracted .app packages.
+        // The suites this bundle will actually compile — the same enumeration BuildAppGroups
+        // consumes, so the dependency closure covers exactly the apps in the bundle and no
+        // others. EnumerateSuites stops descending at the first suite on each branch, which is
+        // what keeps the scan away from app.json files buried inside a suite's own extracted
+        // .app packages (the property the old direct-children scan was relied on for).
         //
         // Suites declaring a newer BC than the one under test are dropped HERE, before their
         // dependencies join the union. The union is bundle-wide, so one such suite's unmet
@@ -38,9 +56,10 @@ internal static partial class ProgramSupport
         // Deliberately NOT applied to the bucket-root branch above: a root manifest speaks for
         // the whole bucket, so honoring a floor there would silently skip everything under it.
         // That case should stay a loud failure.
-        var children = Directory.EnumerateDirectories(bundleAbs)
+        var children = EnumerateSuites(bundleAbs)
             .Select(d => Path.Combine(d, "app.json"))
             .Where(File.Exists)
+            .Distinct(StringComparer.Ordinal)
             .OrderBy(p => p, StringComparer.Ordinal)
             .ToList();
 

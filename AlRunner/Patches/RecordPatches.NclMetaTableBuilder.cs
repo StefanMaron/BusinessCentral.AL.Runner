@@ -797,7 +797,10 @@ public static partial class RecordPatches
                     return null;
                 }
                 conditionObjects.Add(BuildMetaCondition(localField.FieldId,
-                    c.Kind == ParsedCalcFilterKind.Const ? "CONST" : "FILTER", c.Value ?? ""));
+                    c.Kind == ParsedCalcFilterKind.Const ? "CONST" : "FILTER",
+                    c.Kind == ParsedCalcFilterKind.Const
+                        ? ResolveObjectReferenceConst(c.Value)
+                        : c.Value ?? ""));
             }
 
             var filterObjects = new List<object>();
@@ -836,7 +839,10 @@ public static partial class RecordPatches
                 }
 
                 filterObjects.Add(BuildMetaFilter(srcField.FieldId,
-                    w.Kind == ParsedCalcFilterKind.Const ? "CONST" : "FILTER", w.Value ?? ""));
+                    w.Kind == ParsedCalcFilterKind.Const ? "CONST" : "FILTER",
+                    w.Kind == ParsedCalcFilterKind.Const
+                        ? ResolveObjectReferenceConst(w.Value)
+                        : w.Value ?? ""));
             }
 
             var ctor = _tMetaFieldRelation.GetConstructors()
@@ -858,6 +864,122 @@ public static partial class RecordPatches
             relationObjects.Add(ctor.Invoke(args)!);
         }
         return MakeImmutableArray(_tMetaFieldRelation, relationObjects.ToArray());
+    }
+
+    /// <summary>
+    /// AL's object-reference syntax (<c>Database::"Some Table"</c>, <c>Report::"Email Merge"</c>,
+    /// …) resolved to the object ID, as the decimal text a <c>MetaFilter</c> /
+    /// <c>MetaCondition</c> carries.
+    /// <para>#3195. <see cref="ConstValueText"/> deliberately hands a const literal over as
+    /// TEXT, because <c>NCLMetaFilterConst</c> evaluates it against the SOURCE field's own type
+    /// exactly as it does a user-typed filter — right for <c>const('SPECIAL')</c> and for an
+    /// option member, and wrong for this one shape. <c>Database::X</c> is not a value a user
+    /// can type into a filter; it is compiler syntax, and by the time a real service tier reads
+    /// the metadata BC's own compiler has already replaced it with the object's id. Left as
+    /// written it reaches the runtime as the literal text and
+    /// <c>The value "Database::"Customer"" can't be evaluated into type Integer</c> is what
+    /// CalcFields raises.</para>
+    /// <para>Measured on the shipped BC 28.1 packages, walking every table and tableextension
+    /// field property in SymbolReference.json: <b>22</b> CalcFormula properties carry a
+    /// <c>Database::</c> const (every <c>"Coupled to Dataverse"</c> field, on Customer, Item,
+    /// Vendor, Contact, Currency, …), <b>2</b> TableRelation properties carry one
+    /// (<c>Interaction Template."Word Template Code"</c> and its sibling), and <b>3</b>
+    /// TableRelation properties carry a <c>Report::</c> one
+    /// (<c>Interaction Tmpl. Language."Custom Layout Code"</c>, <c>."Report Layout Name"</c>,
+    /// <c>."Report Layout AppID"</c> — all
+    /// <c>where("Report ID" = const(Report::"Email Merge"))</c>). Both prefixes are therefore
+    /// handled, and so are the other four the AL compiler accepts in this position — measured
+    /// by compiling <c>const(Page::…)</c> / <c>const(Codeunit::…)</c> / <c>const(Query::…)</c> /
+    /// <c>const(XmlPort::…)</c> in both properties with Microsoft's own compiler, which takes
+    /// all of them. (A query column's <c>ColumnFilter</c> is NOT one of these positions: the
+    /// same compiler refuses <c>const(Database::X)</c> there with
+    /// <c>error AL0118: The name 'Database' does not exist in the current context</c>.)</para>
+    /// <para>An unresolvable name is left <b>as written</b>, loudly, rather than replaced with
+    /// 0 or dropped — BC's own evaluator then fails naming the text, which is a diagnosis,
+    /// where a silently wrong id would pin the condition to the wrong rows. Same rule
+    /// <see cref="DependencyPageMetadataXml.NormalizeConstLinkValue"/> already applies to a
+    /// SubPageLink const (#2735).</para>
+    /// <para>Anything that is not one of these prefixes — a quoted literal, a number, an enum
+    /// or option member, <c>true</c>/<c>false</c> — is returned untouched, so the
+    /// evaluate-against-the-field's-own-type rule that <see cref="ConstValueText"/> documents
+    /// keeps applying to every other const.</para>
+    /// </summary>
+    internal static string ResolveObjectReferenceConst(string? constText)
+    {
+        var s = constText ?? "";
+        if (s.Length == 0 || s.IndexOf("::", StringComparison.Ordinal) < 0) return s;
+
+        foreach (var (prefix, kind) in ObjectReferenceConstPrefixes)
+        {
+            if (!s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+
+            // The object name may be a quoted AL identifier; ConstValueText's rule strips the
+            // quotes and resolves AL's doubled-quote escape, which is exactly what the name
+            // indices are keyed on.
+            var objectName = ConstValueText(s.Substring(prefix.Length));
+            if (objectName.Length == 0) return s;
+
+            var id = ResolveObjectIdByKindAndName(kind, objectName);
+            if (id > 0) return id.ToString(CultureInfo.InvariantCulture);
+
+            Console.Error.WriteLine(
+                $"[warn] const({s}) names a {kind.ToLowerInvariant()} no loaded app declares; the " +
+                $"condition keeps the text as written, so BC's own evaluator will refuse it by name " +
+                $"rather than the filter silently pinning to a wrong id");
+            return s;
+        }
+
+        return s;
+    }
+
+    /// <summary>The AL object-reference prefixes that name an object ID, paired with the object
+    /// kind <see cref="EnumerateKnownAlObjects"/> reports for that kind. <c>Enum::</c> is
+    /// deliberately absent: <c>"Some Enum"::Member</c> in a const is an enum VALUE, which BC's
+    /// filter grammar already resolves by member name against the source field's own type.</summary>
+    private static readonly (string Prefix, string Kind)[] ObjectReferenceConstPrefixes =
+    {
+        ("Database::", "Table"),
+        ("Page::", "Page"),
+        ("Report::", "Report"),
+        ("Codeunit::", "Codeunit"),
+        ("Query::", "Query"),
+        ("XmlPort::", "XMLport"),
+    };
+
+    /// <summary>Successful (kind, name) → id resolutions. Only successes are memoised: an id
+    /// never changes once known, but a MISS can become a hit when a further dependency .app is
+    /// registered later in the run, and caching that would freeze the miss.</summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Kind, string Name), int>
+        _objectRefConstIds = new();
+
+    private static int ResolveObjectIdByKindAndName(string kind, string objectName)
+    {
+        var key = (kind, objectName.ToLowerInvariant());
+        if (_objectRefConstIds.TryGetValue(key, out var cached)) return cached;
+
+        int id;
+        if (string.Equals(kind, "Table", StringComparison.OrdinalIgnoreCase))
+        {
+            // Tables have their own index, and going through it also materialises the
+            // ParsedTable — which BuildMetaCalcFormula's source-table lookup wants anyway.
+            id = ResolveTableIdByName(objectName);
+        }
+        else
+        {
+            var wantedKind = NormalizeObjectTypeName(kind);
+            id = -1;
+            foreach (var (objKind, objId, name, _) in EnumerateKnownAlObjects())
+            {
+                if (objId <= 0) continue;
+                if (!string.Equals(name, objectName, StringComparison.OrdinalIgnoreCase)) continue;
+                if (NormalizeObjectTypeName(objKind) != wantedKind) continue;
+                id = objId;
+                break;
+            }
+        }
+
+        if (id > 0) _objectRefConstIds[key] = id;
+        return id;
     }
 
     /// <summary>
@@ -965,7 +1087,11 @@ public static partial class RecordPatches
                     break;
 
                 case ParsedCalcFilterKind.Const:
-                    filterObjects.Add(BuildMetaFilter(srcFilterField.FieldId, "CONST", filter.Value ?? ""));
+                    // #3195: Database::X / Report::X and the four siblings are compiler syntax,
+                    // not a filter value — BC's compiler has already replaced them with the
+                    // object id by the time a service tier reads this metadata.
+                    filterObjects.Add(BuildMetaFilter(srcFilterField.FieldId, "CONST",
+                        ResolveObjectReferenceConst(filter.Value)));
                     break;
 
                 case ParsedCalcFilterKind.Filter:

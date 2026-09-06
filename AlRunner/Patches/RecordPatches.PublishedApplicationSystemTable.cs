@@ -75,7 +75,11 @@
 //
 //   Every other column keeps NCLMetaField.EmptyValue, BC's own per-field default — nothing is
 //   invented. Fields are located by NAME off the metatable at runtime, so a BC metadata change
-//   says so instead of writing into the wrong slot.
+//   says so instead of writing into the wrong slot — and, since #3015, a name that does not
+//   resolve REFUSES rather than skipping the write. Only "ID" used to be checked that way;
+//   every other column, "Runtime Package ID" and the four version parts included, silently
+//   kept its default, which is the one shape that makes a wrong row look like a right one at
+//   every later read. SeededRowColumns.cs carries the full argument.
 //
 //   It runs once per bundle, immediately before CaptureInstallBaseline(), for the same reason
 //   the Company row does: seeded after the baseline, the first codeunit boundary drops it.
@@ -269,9 +273,9 @@ public static partial class RecordPatches
 
         InsertApplicationTableRow(
             PublishedApplicationSystemTableId, meta, source,
-            // "ID" is the column BC filters on to find an app at all. Its absence means this is
-            // not the Published Application table this file was written against.
-            requiredFieldName: "ID",
+            // Every column below is required, "ID" no more than the rest (#3015). It is the
+            // one BC filters on to find an app at all, but a missing "Runtime Package ID" or
+            // "Version Major" is just as fatal and used to be skipped in silence.
             fill: Set =>
             {
                 Set("ID", module.AppId);
@@ -303,8 +307,6 @@ public static partial class RecordPatches
     {
         InsertApplicationTableRow(
             InstalledApplicationSystemTableId, meta, source,
-            // The whole point of the row: the column the FlowField matches on.
-            requiredFieldName: "Runtime Package ID",
             fill: Set =>
             {
                 Set("Runtime Package ID", AppPackageIdentity.RuntimePackageIdFor(module.AppId));
@@ -321,10 +323,14 @@ public static partial class RecordPatches
     /// metatable at runtime, so a BC metadata change says so instead of writing into the wrong
     /// slot, and every column the caller does not set keeps <c>NCLMetaField.EmptyValue</c> —
     /// BC's own per-field default. Nothing is invented.
+    ///
+    /// A column <paramref name="fill"/> asks for and the metatable does not have raises rather
+    /// than being skipped (#3015): the row would otherwise be inserted with BC's default in
+    /// that column, still be found by its key, and read correct forever after.
     /// </summary>
     private static void InsertApplicationTableRow(
         int tableId, NCLMetaTable meta, object source,
-        string requiredFieldName, Action<Action<string, object?>> fill)
+        Action<Action<string, object?>> fill)
     {
         var fieldByName = new Dictionary<string, NCLMetaField>(StringComparer.OrdinalIgnoreCase);
         for (var fi = 0; fi < meta.FieldCount; fi++)
@@ -332,12 +338,6 @@ public static partial class RecordPatches
             var f = meta.GetFieldByIndex(fi);
             fieldByName[f.FieldName] = f;
         }
-
-        if (!fieldByName.ContainsKey(requiredFieldName))
-            throw new InvalidOperationException(
-                $"Table {tableId} metatable has no \"{requiredFieldName}\" field "
-                + $"[fields={string.Join("/", fieldByName.Values.Select(f => $"{f.FieldNo}:{f.FieldName}"))}] "
-                + "— BC metadata shape changed");
 
         var values = new NavValue[meta.FieldCount];
         for (var fi = 0; fi < meta.FieldCount; fi++)
@@ -348,16 +348,33 @@ public static partial class RecordPatches
             values[idx] = f.EmptyValue;
         }
 
+        // #3015 — every Set() below is a declaration that the column is REQUIRED, so there is
+        // no second list to keep in step with the writes and no "only ID is hard-checked"
+        // asymmetry. A column that does not resolve is recorded and raised before the Insert,
+        // never skipped: see SeededRowColumns.cs for why refusing beats reporting on this path.
+        var columns = new SeededRowColumns<NCLMetaField>(
+            // "<Name> (system table <id>)" — the api half of the refusal, and it may not
+            // contain " — ": OutOfScopeMessage.TryParse cuts the api from the reason at the
+            // first one (#2945).
+            $"{meta.TableName} (system table {tableId})", fieldByName,
+            slotOf: f => f.FieldIndex,
+            describeField: f => $"{f.FieldNo}:{f.FieldName}",
+            slotCount: values.Length);
+
         void Set(string fieldName, object? value)
         {
+            // Resolve FIRST, then look at the value. A column whose value happens to be null
+            // on this run must still be proved to exist, or a rename hides behind a manifest
+            // that simply did not state a Name or a Publisher.
+            if (!columns.TryResolve(fieldName, out var f, out var idx)) return;
+            // A null is the absence of a VALUE, not a metadata mismatch: BC's own EmptyValue,
+            // already in the slot, is the faithful answer and nothing is invented.
             if (value == null) return;
-            if (!fieldByName.TryGetValue(fieldName, out var f)) return;
-            var idx = f.FieldIndex;
-            if (idx < 0 || idx >= values.Length) return;
             values[idx] = value is NavValue already ? already : NavValue.CreateNavValueFromObject(f, value);
         }
 
         fill(Set);
+        columns.ThrowIfAnyColumnCouldNotBeWritten();
 
         var perTable = _dataAccessByTable.GetValue(source,
             static _ => new System.Collections.Concurrent.ConcurrentDictionary<int, object>());

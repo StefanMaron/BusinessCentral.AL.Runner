@@ -212,8 +212,14 @@ nowhere** — bring the closure list back for approval.
 
 Merge when **all of**:
 
-1. All 8 required legs green **on the PR's current head SHA**. `gh pr checks` reports the
-   newest *completed* run, which can predate the last push — confirm the SHA.
+1. Every required context green **on the PR's current head SHA**. `gh pr checks` reports
+   the newest *completed* run, which can predate the last push — confirm the SHA.
+   **Do not count legs.** Since #3141 a pull request runs three BC legs
+   (`.github/pr-bc-versions.txt`: 27.0, 27.5, 28.4), not eight, so a bar phrased as "all 8
+   legs green" would refuse a legitimate PR or send you hunting for legs that do not exist.
+   The legs are not required contexts anyway — the aggregate `BC test matrix passed` is, and
+   it fails when any leg of whatever matrix ran fails. The other five versions run on
+   `main` via `main-verdict-floor.yml`, not on the PR.
 2. `git merge-tree --write-tree --messages origin/main origin/<branch>` is clean.
    `mergeStateStatus: CLEAN` only covers textual conflicts.
 3. The proving test exists. If the claim is about BC's behavior, that test is upstream and
@@ -255,6 +261,15 @@ run cancelled, and re-running destroys that log like any other. Check the commit
 first and, if one failed, read its log or take a second run by another route
 (`ci-verdicts.md` §3, §5). Do not reach for `--admin`: protection is working, the context
 genuinely is not satisfied.
+
+**Which checks gate is now a property of the file a job lives in** (#3165). Everything in
+`.github/workflows/pr-gate.yml` produces a required context and blocks; everything in
+`pr-check.yml` is advisory and cannot. Before the split all twelve guards lived in
+`pr-check.yml` and none of them gated, so #3116, #3112 and #3095 each merged with one in a
+`FAILURE` state, and a red closing-reference or CI-skip tick stopped nothing. `pr-gate.yml`
+carries no `concurrency` block, deliberately — that is the same #2726 rule applied to a
+workflow whose jobs ARE the required contexts. Do not read the gating list out of a document;
+ask `gh api .../rules/branches/main` and let the answer be the measurement.
 
 **Auto-merge drains the queue — but a drained queue is not a verified one.** The
 "branches must be up to date" protection rule was removed, so arming several PRs lets them

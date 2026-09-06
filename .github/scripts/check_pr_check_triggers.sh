@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Fails when a workflow's `pull_request` trigger is missing a required event
-# type. Written for pr-check.yml, whose reject-ci-skip-directives and
-# reject-bad-closing-references jobs both read the PR title/body -- see
-# #2159.
+# type. Written for the workflow holding reject-ci-skip-directives and
+# reject-bad-closing-references, which both read the PR title/body -- see
+# #2159. That is pr-gate.yml since #3165: both jobs now produce REQUIRED
+# status-check contexts, and a required context may not live in a workflow that
+# can cancel it on the same commit (#2726), so they moved out of pr-check.yml
+# and the 'edited' requirement moved with them.
 #
 # The gap this guards: `pull_request` only reruns a workflow on the event
 # types listed under `on.pull_request.types`. If `edited` is not one of
@@ -25,7 +28,7 @@
 # across multiple lines needs a corresponding update here.
 #
 # Usage: check_pr_check_triggers.sh [path-to-workflow-yaml] [required,types]
-# Defaults to .github/workflows/pr-check.yml relative to this script, and to
+# Defaults to .github/workflows/pr-gate.yml relative to this script, and to
 # the historical six-type list below.
 #
 # The second argument exists because #2726 moved the require-tests job ("Tests
@@ -41,7 +44,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKFLOW="${1:-$SCRIPT_DIR/../workflows/pr-check.yml}"
+WORKFLOW="${1:-$SCRIPT_DIR/../workflows/pr-gate.yml}"
 
 if [ ! -f "$WORKFLOW" ]; then
   echo "::error::workflow file not found: $WORKFLOW" >&2
@@ -58,7 +61,7 @@ fi
 # 'edited' is required so a title/body edit after opened/synchronize/
 # reopened/labeled/unlabeled gets re-validated by the two jobs that read
 # PR_TITLE/PR_BODY (#2159). The rest are pre-existing and load-bearing for
-# reasons documented inline in pr-check.yml itself; this check also catches
+# reasons documented inline in pr-gate.yml itself; this check also catches
 # one of them being dropped by accident while editing the trigger line for
 # something unrelated.
 DEFAULT_REQUIRED_TYPES="opened,synchronize,reopened,labeled,unlabeled,edited"

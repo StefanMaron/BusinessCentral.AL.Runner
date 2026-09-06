@@ -29,7 +29,9 @@
 //
 //   Every other column gets BC's own NavValue.GetDefaultNavValue, and every field is located
 //   by NAME off the metatable at runtime — never by a hardcoded ordinal, so a BC metadata
-//   change says so instead of silently writing a value into the wrong slot.
+//   change says so instead of silently writing a value into the wrong slot. Since #3015 a name
+//   that does not resolve says so too: only "Name" used to be checked, and a renamed
+//   "Display Name" or "Id" kept its default on a row that still inserted and still Get()s.
 //
 //   It runs once per bundle, immediately before CaptureInstallBaseline(), so the row is part
 //   of the committed baseline every test is restored to and survives the per-codeunit restore.
@@ -152,32 +154,56 @@ public static partial class RecordPatches
             values[idx] = f.EmptyValue;
         }
 
+        // #3015 — this used to hard-check only "Name" and skip every other column in silence,
+        // so a renamed "Display Name" or "Id" produced a row that was inserted, found by its
+        // primary key, and wrong. Each Set() below now declares its column required; one that
+        // does not resolve is raised before the Insert.
+        //
+        // WHERE THAT RAISE GOES, and why it is not the refusal the Published Application
+        // seeder makes. Two reasons, and the second is the stronger one:
+        //
+        //   1. This row is seeded per app group, AFTER the dep+company baseline cache block in
+        //      TestExecutor (line 606 — the block ends at 594), so it is NOT part of the
+        //      snapshot persisted to disk. The caller's existing catch therefore reaches stderr
+        //      on EVERY run, rather than once on the single run that would have poisoned a
+        //      cache and then never again.
+        //
+        //   2. Stderr is not the only signal, and it is not the one that stops the run. A
+        //      refused row is a row that was never inserted, so Company.Get(CompanyName())
+        //      raises for a company every other surface reports as existing and the tests that
+        //      read it go RED — which is how #2329 presented in the first place. That is worth
+        //      naming, because Console.Error on its own has repeatedly not been a sufficient
+        //      signal in this repository.
+        //
+        // The dependency Published Application rows are inside the persisted MISS branch and
+        // have neither property, so they refuse.
+        var columns = new SeededRowColumns<NCLMetaField>(
+            $"{meta.TableName} (system table {CompanySystemTableId})", fieldByName,
+            slotOf: f => f.FieldIndex,
+            describeField: f => $"{f.FieldNo}:{f.FieldName}",
+            slotCount: values.Length);
+
         // BC's own value factory, so each column is typed by its own field metadata rather
-        // than by a type this file picked. A field the metatable does not have is skipped:
-        // "Name" is the only one whose absence is a shape change worth failing on.
+        // than by a type this file picked.
         void Set(string fieldName, object? value)
         {
+            // Resolve FIRST, then look at the value: companyId is genuinely nullable (it is
+            // read by reflection off the skeleton NavCompany), and checking the value first
+            // would let a renamed "Id" hide behind a run where there was nothing to write.
+            if (!columns.TryResolve(fieldName, out var f, out var idx)) return;
+            // A null is the absence of a VALUE, not a metadata mismatch: BC's own EmptyValue,
+            // already in the slot, is the faithful answer.
             if (value == null) return;
-            if (!fieldByName.TryGetValue(fieldName, out var f)) return;
-            var idx = f.FieldIndex;
-            if (idx < 0 || idx >= values.Length) return;
             values[idx] = value is NavValue already
                 ? already
                 : NavValue.CreateNavValueFromObject(f, value);
         }
 
-        // "Name" is the primary key and the value AL's CompanyName() returns, so it is the
-        // one field whose absence means this is not the Company table we think it is.
-        if (!fieldByName.ContainsKey("Name"))
-            throw new InvalidOperationException(
-                $"Company metatable ({CompanySystemTableId}) has no \"Name\" field "
-                + $"[fields={string.Join("/", fieldByName.Values.Select(f => $"{f.FieldNo}:{f.FieldName}"))}] "
-                + "— BC metadata shape changed");
-
         Set("Name", companyName);
         Set("Display Name", companyName);
         Set("Evaluation Company", false);
         Set("Id", companyId);
+        columns.ThrowIfAnyColumnCouldNotBeWritten();
 
         var perTable = _dataAccessByTable.GetValue(source,
             static _ => new System.Collections.Concurrent.ConcurrentDictionary<int, object>());

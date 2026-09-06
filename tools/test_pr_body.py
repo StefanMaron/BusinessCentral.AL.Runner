@@ -573,7 +573,7 @@ check("...and nothing was written", f.edits == 0, f"edits={f.edits}")
 print("\nparity with .github/scripts/check_closing_reference.sh")
 # --------------------------------------------------------------------------
 # The server-side gate is that shell script. If this Python port drifts from it,
-# pr-body.py starts passing bodies pr-check.yml rejects (or the reverse), and the
+# pr-body.py starts passing bodies pr-gate.yml rejects (or the reverse), and the
 # local check stops meaning anything.
 
 SH = os.path.join(HERE, "..", ".github", "scripts", "check_closing_reference.sh")

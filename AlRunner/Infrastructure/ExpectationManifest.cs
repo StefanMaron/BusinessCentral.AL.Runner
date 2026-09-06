@@ -66,12 +66,18 @@ public sealed record ExpectationEntry(
 /// <paramref name="TestMethods"/> is the UNFILTERED set of [Test] methods the type
 /// declares, so a <c>--test</c> filter narrowing what RUNS cannot make an entry look
 /// orphaned.
+/// <paramref name="MethodsAreComplete"/> is false for a codeunit reconstructed from an
+/// EARLIER attempt's carried results (#3168): a carry file records the tests that RAN,
+/// which is the codeunit's full declared set only when nothing filtered it. The audit
+/// still matches on it — a method that ran certainly exists — but must not tell the
+/// reader that a method it cannot see is undeclared.
 /// </summary>
 public sealed record DiscoveredTestCodeunit(
     int? ObjectId,
     string Name,
     string TypeName,
-    IReadOnlyCollection<string> TestMethods);
+    IReadOnlyCollection<string> TestMethods,
+    bool MethodsAreComplete = true);
 
 /// <summary>
 /// An entry the run loaded but could not attach to any discovered test, with a
@@ -110,6 +116,52 @@ public sealed class ExpectationManifest
     public void NoteDiscoveredTestCodeunit(DiscoveredTestCodeunit codeunit)
     {
         lock (_discoveredLock) _discovered.Add(codeunit);
+    }
+
+    /// <summary>
+    /// Fold an EARLIER watchdog-resume attempt's results into the discovery set (#3168).
+    ///
+    /// <see cref="NoteDiscoveredTestCodeunit"/> is called by the executor IN THIS PROCESS,
+    /// so on its own the audit can only speak for this attempt. A resumed run (#2280) is
+    /// several processes: the final one re-runs the bundle with every already-attempted
+    /// codeunit excluded and carries the earlier attempts' results in (--merge-results,
+    /// Infrastructure.ResumeCarry). Without this, an entry naming a test that ran in an
+    /// earlier attempt is reported as matching nothing — "check CodeunitName for a typo"
+    /// about an entry that is entirely correct, which is the one distinction this audit
+    /// exists to draw. Exactly the shape --count-baseline already handles by summing
+    /// `allResults` rather than this attempt's slice (#2719).
+    ///
+    /// Today the final attempt happens to load the excluded codeunits anyway —
+    /// TestExclusionFilter is consulted per METHOD, inside the loop, after discovery is
+    /// recorded — so the audit's whole-run claim currently holds by accident. This makes
+    /// it hold by construction, and covers the case the accident does not: a bucket the
+    /// final attempt never reaches (its own watchdog abort returns from the type loop,
+    /// so every later codeunit in that bucket goes unloaded).
+    ///
+    /// A carried codeunit's method list is what RAN, not what it declares, so it is
+    /// marked <see cref="DiscoveredTestCodeunit.MethodsAreComplete"/> = false.
+    /// </summary>
+    public void NoteDiscoveredFromCarriedResults(IEnumerable<TestResult> carried)
+    {
+        foreach (var group in carried
+            .Where(r => !string.IsNullOrEmpty(r.Codeunit))
+            .GroupBy(r => (Type: r.Codeunit, Display: r.CodeunitDisplayName ?? r.Codeunit)))
+        {
+            // "<ctor>" is the executor's placeholder for a codeunit that would not
+            // construct (TestExecutor), not an AL method — matching an entry against it
+            // would be matching against a name no AL author can have written.
+            var methods = group
+                .Select(r => r.Method)
+                .Where(m => !string.IsNullOrEmpty(m) && !m.StartsWith("<", StringComparison.Ordinal))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            NoteDiscoveredTestCodeunit(new DiscoveredTestCodeunit(
+                TestExecutor.ParseAlObjectId(group.Key.Type),
+                group.Key.Display,
+                group.Key.Type,
+                methods,
+                MethodsAreComplete: false));
+        }
     }
 
     /// <summary>
@@ -162,6 +214,15 @@ public sealed class ExpectationManifest
             var shown = methods.Count <= 12
                 ? string.Join(", ", methods)
                 : string.Join(", ", methods.Take(12)) + $", … ({methods.Count} total)";
+            // #3168: every sighting of this codeunit came from a carried attempt, whose
+            // method list is what RAN. Saying "declares no test method" off that would be
+            // a claim the run cannot support — a filtered-out method is missing from the
+            // list for a reason that has nothing to do with the entry.
+            if (named.All(d => !d.MethodsAreComplete))
+                return $"codeunit \"{entry.CodeunitName}\" was reached only by an earlier resume "
+                     + $"attempt, which ran no test method '{entry.Method}'. The methods it ran: "
+                     + $"{shown}. A method filtered out of that attempt would look the same, so "
+                     + "check the filter before the entry";
             return $"codeunit \"{entry.CodeunitName}\" was loaded but declares no test method "
                  + $"'{entry.Method}'. Its test methods: {shown}";
         }

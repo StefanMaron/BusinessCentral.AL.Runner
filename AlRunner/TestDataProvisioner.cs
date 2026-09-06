@@ -168,20 +168,105 @@ internal static class TestDataProvisioner
 
     private static ArmedPlan? _armed;
 
-    // Running tallies, accumulated across on-demand loads rather than known at Arm() time.
-    //
-    // #2997: mutated ONLY through Interlocked, never `++` or `+=`. Two threads can be inside
-    // LoadOnDemand at once — TestExecutor.InvokeWithTimeout runs every [Test] on its own worker
-    // thread and does not kill it when the watchdog expires, so an abandoned thread keeps
-    // hydrating while the bundle loop carries on in the same process (the route #2914
-    // established) — and a read-modify-write from two threads drops counts. Measured: eight
-    // threads doing 10,000 write-offs each landed 79,543 of 80,000.
-    //
-    // Reads are Volatile.Read. Not for tearing — these are aligned int32s, which the CLI
-    // guarantees are read and written atomically (ECMA-335 I.12.6.6), so a torn read was never
-    // possible — but so a reader is not handed a value from before another thread's increment
-    // that it has no other reason to see.
-    private static int _tablesDone, _rowsDone, _refused, _readerRefused, _droppedColumns, _columnsNotInThisBuild;
+    /// <summary>
+    /// The running --test-data tallies, accumulated across on-demand loads rather than known at
+    /// Arm() time.
+    ///
+    /// #2997: mutated ONLY through Interlocked, never `++` or `+=`. Two threads can be inside
+    /// LoadOnDemand at once — TestExecutor.InvokeWithTimeout runs every [Test] on its own worker
+    /// thread and does not kill it when the watchdog expires, so an abandoned thread keeps
+    /// hydrating while the bundle loop carries on in the same process (the route #2914
+    /// established) — and a read-modify-write from two threads drops counts. Measured: eight
+    /// threads doing 10,000 write-offs each landed 79,543 of 80,000.
+    ///
+    /// #3025: the counts are held as ONE immutable value, swapped by CompareExchange, because
+    /// six individually-atomic counters still cannot be READ as a set. Each field was fresh and
+    /// each was true; the combination was not. A reader that took the table count, lost its
+    /// slice to a thread finishing a table, then took the row count, printed rows belonging to a
+    /// table it had not counted — at worst "loaded 4200 row(s) in 0 table(s)", which is a
+    /// sentence describing no instant that ever existed. This is a diagnostic a person uses to
+    /// decide whether their test data loaded, so a summary that contradicts itself sends them
+    /// hunting a bug that is not there. Note this was never a TORN read in the ECMA-335 sense —
+    /// aligned int32s are read and written atomically (I.12.6.6) — it was a torn SET.
+    ///
+    /// The same argument applies to the write side, which is why one table's hydration is one
+    /// update rather than four: publishing the table count and the row count separately leaves a
+    /// window in which the two disagree, and no reader, however careful, can be prevented from
+    /// landing in it.
+    ///
+    /// Not a lock: readers never block, and a writer's retry loop only spins when it actually
+    /// lost a race, which needs two threads inside LoadOnDemand at the same moment.
+    ///
+    /// An instance rather than six statics so the concurrency claim is provable on a board no
+    /// other test in the assembly can reach; the production board is the static below.
+    /// </summary>
+    internal sealed class TallyBoard
+    {
+        /// <summary>All six counts as ONE immutable value. Six separate fields cannot be read
+        /// as a set — see the class comment — and the cheapest thing that can is an object whose
+        /// reference is swapped atomically.</summary>
+        private sealed record Counts(
+            int Tables, int Rows, int Refused, int ReaderRefused,
+            int DroppedColumns, int ColumnsNotInThisBuild)
+        {
+            internal static readonly Counts Zero = new(0, 0, 0, 0, 0, 0);
+        }
+
+        private Counts _counts = Counts.Zero;
+
+        /// <summary>
+        /// Apply one event to the counts. Lock-free: read the current value, derive the next
+        /// one, and publish it only if nothing else got there first — otherwise start again with
+        /// what the winner wrote. Every publication is a whole consistent set, so a reader is
+        /// never handed a state that was half-applied.
+        ///
+        /// The retry loop is unbounded on purpose: it makes progress whenever any thread does,
+        /// and the contention it is written for is two threads, once per table load.
+        /// </summary>
+        private void Update(Func<Counts, Counts> next)
+        {
+            while (true)
+            {
+                var before = Volatile.Read(ref _counts);
+                if (ReferenceEquals(Interlocked.CompareExchange(ref _counts, next(before), before), before))
+                    return;
+            }
+        }
+
+        /// <summary>One table's successful hydration, applied as a SINGLE update. A table the
+        /// backup holds but that has no rows is not a table hydrated, yet its dropped columns
+        /// are still real and counted — which is why this takes the row count rather than a
+        /// "did it work" flag, and why the table count and the row count have to move together:
+        /// "rows counted implies the table that produced them counted" is only an invariant if
+        /// nothing can observe the gap between them.</summary>
+        internal void NoteHydrated(int rows, int droppedColumns, int columnsNotInThisBuild)
+            => Update(c => c with
+            {
+                Tables = c.Tables + (rows > 0 ? 1 : 0),
+                Rows = c.Rows + rows,
+                DroppedColumns = c.DroppedColumns + droppedColumns,
+                ColumnsNotInThisBuild = c.ColumnsNotInThisBuild + columnsNotInThisBuild,
+            });
+
+        /// <summary>One table whose rows the hydrator refused to rebuild.</summary>
+        internal void NoteRefused() => Update(c => c with { Refused = c.Refused + 1 });
+
+        /// <summary>One table the backup reader itself refused.</summary>
+        internal void NoteReaderRefused() => Update(c => c with { ReaderRefused = c.ReaderRefused + 1 });
+
+        /// <summary>The tallies, read out as the summary a person sees. ONE read of ONE
+        /// reference, so the six numbers below are the six numbers that were true together at
+        /// one instant — which is the whole point of #3025.</summary>
+        internal Summary Capture(string backupPath, string company, int skippedAmbiguous)
+        {
+            var c = Volatile.Read(ref _counts);
+            return new Summary(backupPath, company, c.Tables, c.Rows,
+                skippedAmbiguous, c.Refused, c.ReaderRefused,
+                c.DroppedColumns, c.ColumnsNotInThisBuild);
+        }
+    }
+
+    private static TallyBoard _tallies = new();
 
     /// <summary>Tables the backup offers that ended the run without their rows because the
     /// deferred load (#2877) could not be run safely. Read by the proving test, so "written off"
@@ -294,17 +379,32 @@ internal static class TestDataProvisioner
     /// "the flag is on but Arm() has not run for this app group yet".</summary>
     internal static bool IsArmed => _armed != null;
 
-    /// <summary>The armed backup/company pair, for a diagnosis that has to name them.</summary>
+    /// <summary>The armed backup/company pair, for a diagnosis that has to name them.
+    ///
+    /// #3025, same shape as the summary: read the field ONCE. `_armed == null ? null :
+    /// (_armed.Backup, _armed.Company)` loads it three times, and the bundle loop re-arms or
+    /// resets it between groups while an abandoned hydration thread is still running (#2914).
+    /// Three loads can therefore null-reference after a null check that just passed, or pair one
+    /// plan's backup with the next plan's company — a diagnosis naming a backup/company
+    /// combination that was never armed.</summary>
     internal static (string Backup, string Company)? ArmedBackup
-        => _armed == null ? null : (_armed.Backup, _armed.Company);
+    {
+        get
+        {
+            var armed = _armed;
+            return armed == null ? null : (armed.Backup, armed.Company);
+        }
+    }
 
     internal static void ResetForTests()
     {
         _lastSummary = null;
         _armed = null;
-        // Plain stores on purpose (#2997): the reset runs between runs with no other thread in
+        // A fresh board rather than six stores into the old one: one reference store, so a
+        // reader that is still running cannot be handed a half-cleared set of tallies.
+        _tallies = new TallyBoard();
+        // Plain store on purpose (#2997): the reset runs between runs with no other thread in
         // play, and routing it through Interlocked would imply a concurrency it does not have.
-        _tablesDone = _rowsDone = _refused = _readerRefused = _droppedColumns = _columnsNotInThisBuild = 0;
         _deferredLoadsWrittenOff = 0;
         _tableOutcome.Clear();
         RecordPatches.TestDataOnDemandLoader = null;
@@ -334,7 +434,10 @@ internal static class TestDataProvisioner
         // which AL table id a backup table maps to is decided by the .app closure the reader
         // was given, so a group with a different closure needs its own plan.
         var symbolKey = string.Join('\n', symbols);
-        if (_armed != null && _armed.SymbolKey == symbolKey && _armed.Backup == backup)
+        // One read, for the reason in ArmedBackup: three loads can test three different plans,
+        // and "already armed for this backup" would then be true of no plan in particular.
+        var armed = _armed;
+        if (armed != null && armed.SymbolKey == symbolKey && armed.Backup == backup)
         {
             // The loader is a static field; re-install it in case something cleared it.
             InstallLoader();
@@ -417,7 +520,6 @@ internal static class TestDataProvisioner
                 out var meta, out var pristineRows);
             if (result.Rows > 0)
             {
-                Interlocked.Increment(ref _tablesDone);
                 // #2875: say so, rather than leaving anyone downstream to infer it from the
                 // store. A table the runner can ALSO synthesise rows for (Object 2000000001)
                 // has to know which writer owns its rows, and "the provider has rows" cannot
@@ -434,9 +536,7 @@ internal static class TestDataProvisioner
                 if (meta != null)
                     RecordPatches.AppendBaselineTable(source, tableId, meta, pristineRows);
             }
-            Interlocked.Add(ref _rowsDone, result.Rows);
-            Interlocked.Add(ref _droppedColumns, result.ColumnsFromUninstalledApps);
-            Interlocked.Add(ref _columnsNotInThisBuild, result.ColumnsNotInThisBuild);
+            _tallies.NoteHydrated(result.Rows, result.ColumnsFromUninstalledApps, result.ColumnsNotInThisBuild);
             _tableOutcome[tableId] = result.Rows > 0
                 ? $"{result.Rows} row(s) loaded from '{Path.GetFileName(armed.Backup)}' company '{armed.Company}'"
                 : $"'{entry.TableName}' in '{Path.GetFileName(armed.Backup)}' company '{armed.Company}' "
@@ -446,7 +546,7 @@ internal static class TestDataProvisioner
         }
         catch (TestDataHydrationRefusal ex)
         {
-            Interlocked.Increment(ref _refused);
+            _tallies.NoteRefused();
             _tableOutcome[tableId] = $"the backup's rows for it were refused — {ex.Message}";
             Console.Error.WriteLine($"[test-data] REFUSED {ex.Message}");
         }
@@ -456,16 +556,13 @@ internal static class TestDataProvisioner
             // a table that is unavailable, not a run that is broken. Reported with the reader's
             // own text IN FULL, because that text is the only diagnosis there is and the bundle
             // reporter keeps only line 1 of an EXEC-FAIL message.
-            Interlocked.Increment(ref _readerRefused);
+            _tallies.NoteReaderRefused();
             _tableOutcome[tableId] =
                 $"the backup reader refused table '{entry.TableName}' — {ex.Message.Split('\n')[0]}";
             Console.Error.WriteLine(
                 $"[test-data] READER REFUSED table '{entry.TableName}': {ex.Message}");
         }
-        _lastSummary = new Summary(armed.Backup, armed.Company,
-            Volatile.Read(ref _tablesDone), Volatile.Read(ref _rowsDone),
-            armed.SkippedAmbiguous, Volatile.Read(ref _refused), Volatile.Read(ref _readerRefused),
-            Volatile.Read(ref _droppedColumns), Volatile.Read(ref _columnsNotInThisBuild));
+        _lastSummary = _tallies.Capture(armed.Backup, armed.Company, armed.SkippedAmbiguous);
     }
 
     /// <summary>

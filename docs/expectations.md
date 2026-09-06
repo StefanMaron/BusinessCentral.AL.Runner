@@ -43,13 +43,33 @@ Measured on `AlRunner.Tests/Fixtures/ExpectationsBundle` (codeunit 60810
 All three printed `[expectations] loaded 1 entry from <dir>` first. `loaded` is true
 and says nothing about `matched`.
 
-`--expectations-require-match` asserts that **this invocation discovers a test for
-every entry in the active manifest**, and fails with exit code 5 on any that matched
+`--expectations-require-match` asserts that **this run discovers a test for every
+entry in the active manifest**, and fails with exit code 5 on any that matched
 nothing, naming the file, the codeunit, the method, and what was found instead — the
 object id loaded under a different name, or the test methods that do exist. A green
 audit says how much it accounted for (`match audit: all 17 entries matched a
 discovered test`), so it is never mute about its scope, and it refuses to run against
 an inactive or empty manifest rather than passing vacuously.
+
+**The run, not the process** (#3168). A watchdog resume (#2280) is several processes,
+and `--resume-aborts` defaults to 5 with nothing in the corpus step turning it off, so
+this is normal operation rather than a corner. Only the final attempt audits; it folds
+every earlier attempt's carried results (`--merge-results`) into its discovery set
+first, the same correction `--count-baseline` took in #2719. Without that fold an entry
+whose test ran in an earlier attempt reads as matching nothing, and the leg fails
+telling the reader to check `CodeunitName` for a typo about an entry that is correct —
+the one distinction this audit exists to draw.
+
+Two consequences, both deliberate:
+
+- A carried attempt records the methods that **ran**, not the methods a codeunit
+  declares. So a carried codeunit satisfies only the methods actually seen, and an
+  unmatched entry against one is reported as "reached only by an earlier resume
+  attempt, which ran no test method X" rather than the sharper "declares no test
+  method X" reserved for a codeunit loaded in this process.
+- If a carried attempt file was named and cannot be read (#2747), the discovery set is
+  knowably short by a whole attempt, so the audit stands down and says so. The run
+  already refuses to report as complete (exit 2), so nothing is suppressed.
 
 It is **opt-in**, for the same reason `--count-baseline` is. The expectations
 directory is auto-probed and shared by every invocation in this repo: the corpus leg

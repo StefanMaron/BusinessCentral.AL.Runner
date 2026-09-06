@@ -804,3 +804,67 @@ first.
 No `absentOn`: both pages and both tables exist on every supported leg, and the bundle already
 declares `"application": "27.0.0.0"`. The 26 is measured from a run of the bundle, not counted
 off the source.
+
+## +6 runner-extras tests: `permission-set-assignment` (#3039)
+
+`tests/runner-extras/permission-set-assignment` is new, so `runner-extras` goes from 55 app
+groups / 306 tests to 56 / 312. No existing group's count moves. (Rebased onto the
+`microsoft-dependencies` 24 -> 26 bump above, which is why the starting total is 306 and not
+the 304 measured before that bump landed.)
+
+The suite is the RED -> GREEN for #3039: BC's
+`PermissionManagement.IsPermissionSetAssignedAsync` ends in
+`session.Permissions.HasRole(...)`, `NavSession.Permissions` is null on the skeleton session,
+and every AL path through `NavUserAccountHelper.IsPermissionSetAssigned` therefore raised
+`NavNCLDotNetInvokeException` on a valid `User.Modify`. Five of the six tests fail without the
+fix; the sixth is the `asserterror` control that must keep passing either way, because it
+proves codeunit 9002's subscriber still runs rather than having been bypassed.
+
+No `absentOn`: the bundle declares `"platform": "27.0.0.0"` / `"application": "27.0.0.0"` and
+uses only codeunit 152 `"User Permissions"` and table 2000000053 `"Access Control"`, both of
+which exist across the supported range. That was not validated locally — a self-built runner
+is compiled against Ncl 28.x and cannot run 27.x artifacts — so the 27.0/27.3/27.5 legs are
+what adjudicate it. If any of them discovers a different number, the exit-4 message names it
+and the line gains an `absentOn`.
+
+Written by agent impl-13 (automated implementation agent).
+
+## 2665 -> 2676 — corpus pin 861a5662 (#193) -> 6e198a97 (#195, #190, #192, #194, #198)
+
++11 tests, and the number is the guard's own `actual`, read off the run that reported
+
+```
+[count-baseline] GROWTH: suite 'al-language' tests count: expected 2668, actual 2676 (BC 28.1)
+```
+
+not computed from the diff. It was read twice, because the pin moved mid-task: the first four
+corpus commits put it at 2668, and corpus #198 merged while this branch was being measured and
+took it to 2676. Both numbers came from the guard.
+
+Where the eleven come from:
+
+| corpus PR | tests | what it adds |
+|---|---|---|
+| #190 | +1 | `Validate_RelationWithWhereFieldLink_NarrowsToTheReferencingRowsOwnGroup` in `fieldref/TestFieldRefRelation.al`, alongside the rename/renumber of `ALTRelationWhereField` that makes a swapped `where(A = field(B))` role detectable at all |
+| #192 | +1 | `PlainModal_HasNoBuiltInCancelAction` in `handlers/TestPageModalQueryClose_Tests.al` |
+| #194 | +1 | `ControlPageRunOnTheLoggingTargetWithoutAHandlerIsRefusedAndOpensNothing` in `handlers/TestPageActionRunObjectNoHandler_Tests.al`, plus the `SingleInstance` probe codeunit 60286 it reads |
+| #195 | 0 | renames a test; the version literal moves into a `Label` |
+| #198 | +8 | `record/TestCodeunitInventoryOrder.al`, codeunit 60964, pinning the row order of the Codeunit Metadata and AllObjWithCaption inventories |
+
+#192 also renames `Modal_HandlerInvokesNothing_ObservedCloseLifecycle` to `LookupModal_...` and
+`LookupCancelHandler` to `CancelHandler`, and drops two log assertions it argues are
+unfalsifiable; none of that moves the count.
+
+`appGroups` is unchanged at 1. `runner-extras` (304 tests, run separately and green),
+`al-language-internals-fixture` (0) and `al-language-onprem` (19) are `main`'s values,
+untouched — #192's only OnPrem change derives four `Published Application` version parts from
+`ModuleInfo` instead of writing `1/0/0/0` out, which adds no test.
+
+**One runner gap, fixed in this PR rather than declared.** `PlainModal_HasNoBuiltInCancelAction`
+was the only red test of the eleven: real BC refuses `TestPage.Cancel()` on a non-lookup page
+whose PageType gives the client no dialog chrome, and the runner offered it. `LiveNavTestPage`
+now gates plain `Cancel` on the PageType. **No new expectation entries** — the other ten passed
+unchanged, including all eight of #198's, which their author expected to pass only by
+coincidence.
+
+Written by agent stma-auto-1 (automated implementation agent), cycle 138.

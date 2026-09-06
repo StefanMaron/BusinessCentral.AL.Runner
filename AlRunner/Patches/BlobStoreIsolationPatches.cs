@@ -68,6 +68,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -261,13 +262,22 @@ public static class BlobStoreIsolationPatches
         if (ReferenceEquals(workTableBuffer, storedTableBuffer)) return;
 
         var mrbType = mutableRecordBuffer.GetType();
-        _mGetChangedFieldValue ??= mrbType.GetMethod("GetChangedFieldValue",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        _mGetChangedFieldValue ??= BcShape.FindMethod(
+            mrbType, "GetChangedFieldValue",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            "BLOB store isolation (per-record buffered BLOB writes)",
+            "MutableRecordBuffer.GetChangedFieldValue",
+            "a buffered BLOB write cannot be read back");
         if (_mGetChangedFieldValue == null) return;
 
         var metaTable = mrbType.GetProperty("MetaTable", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             ?.GetValue(mutableRecordBuffer);
-        var getFieldByIndex = metaTable?.GetType().GetMethod("GetFieldByIndex", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        var getFieldByIndex = metaTable == null ? null : BcShape.FindMethod(
+            metaTable.GetType(), "GetFieldByIndex",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            "BLOB store isolation (per-record buffered BLOB writes)",
+            "NCLMetaTable.GetFieldByIndex",
+            "the record's BLOB fields cannot be enumerated");
         var fieldCount = mrbType.GetProperty("FieldCount", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             ?.GetValue(mutableRecordBuffer) is int fc ? fc : 0;
         if (metaTable == null || getFieldByIndex == null) return;

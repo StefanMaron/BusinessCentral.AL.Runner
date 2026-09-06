@@ -166,6 +166,119 @@ public sealed class ExpectationMatchAuditTests
         Assert.Empty(manifest.FindUnmatchedEntries());
     }
 
+    // ── Carried resume attempts (#3168) ──────────────────────────────────────────
+    //
+    // NoteDiscoveredTestCodeunit is called by the executor IN THIS PROCESS. A resumed
+    // run (#2280) is several processes, and the final one is handed the earlier
+    // attempts' results (--merge-results). An entry naming a test that ran in an earlier
+    // attempt was reported as matching nothing — "check CodeunitName for a typo" about a
+    // correct entry, which is the one distinction the audit exists to draw.
+
+    private static TestResult CarriedTest(
+        string typeName, string method, string? displayName) =>
+        new(typeName, method, TestOutcome.Pass, null, null, TimeSpan.FromMilliseconds(1),
+            CodeunitDisplayName: displayName);
+
+    [Fact]
+    public void AnEntryMatchedOnlyByACarriedAttempt_IsNotReportedAsUnmatched()
+    {
+        var manifest = LoadOneEntryManifest("Expct Fixture Tests", "GreenPath_KnownGapDeclared");
+        // This process discovered a DIFFERENT codeunit — the entry's own is reachable
+        // only through the carry, so nothing here can pass vacuously.
+        manifest.NoteDiscoveredTestCodeunit(
+            new DiscoveredTestCodeunit(60455, "Other Suite", "Codeunit60455", new[] { "Whatever" }));
+        Assert.Single(manifest.FindUnmatchedEntries());   // RED state, asserted in place
+
+        manifest.NoteDiscoveredFromCarriedResults(new[]
+        {
+            CarriedTest("Codeunit60810", "GreenPath_KnownGapDeclared", "Expct Fixture Tests"),
+        });
+
+        Assert.Empty(manifest.FindUnmatchedEntries());
+    }
+
+    [Fact]
+    public void ACarriedAttempt_AlsoMatchesAnEntryWrittenAgainstTheClrTypeName()
+    {
+        // The carry records both names, so both spellings an entry may use must work —
+        // matching TestExecutor.LookupExpectation, exactly as in-process discovery does.
+        var manifest = LoadOneEntryManifest("Codeunit60810", "GreenPath_KnownGapDeclared");
+        manifest.NoteDiscoveredFromCarriedResults(new[]
+        {
+            CarriedTest("Codeunit60810", "GreenPath_KnownGapDeclared", "Expct Fixture Tests"),
+        });
+
+        Assert.Empty(manifest.FindUnmatchedEntries());
+    }
+
+    [Fact]
+    public void ACarriedAttempt_DoesNotMatchAMethodItNeverRan_AndSaysSoHonestly()
+    {
+        // The audit must not become a rubber stamp: a carried codeunit satisfies only the
+        // methods that actually ran. And the diagnostic must not claim the codeunit
+        // "declares no test method X" — a carry file records what RAN, which is the full
+        // declared set only when nothing filtered it.
+        var manifest = LoadOneEntryManifest("Expct Fixture Tests", "GreenPath_PlainPass");
+        manifest.NoteDiscoveredFromCarriedResults(new[]
+        {
+            CarriedTest("Codeunit60810", "GreenPath_KnownGapDeclared", "Expct Fixture Tests"),
+        });
+
+        var unmatched = Assert.Single(manifest.FindUnmatchedEntries());
+        Assert.Contains("reached only by an earlier resume attempt", unmatched.Diagnostic,
+            StringComparison.Ordinal);
+        Assert.Contains("ran no test method 'GreenPath_PlainPass'", unmatched.Diagnostic,
+            StringComparison.Ordinal);
+        Assert.Contains("The methods it ran: GreenPath_KnownGapDeclared", unmatched.Diagnostic,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("declares no test method", unmatched.Diagnostic,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InProcessDiscovery_KeepsTheDeclaresWording_EvenAlongsideACarriedAttempt()
+    {
+        // The counterpart to the test above: when the codeunit was really loaded here,
+        // its method list IS the declared set, so the sharper wording must survive.
+        var manifest = LoadOneEntryManifest("Expct Fixture Tests", "GreenPath_PlainPas");
+        manifest.NoteDiscoveredTestCodeunit(TheFixtureCodeunit());
+        manifest.NoteDiscoveredFromCarriedResults(new[]
+        {
+            CarriedTest("Codeunit60810", "GreenPath_KnownGapDeclared", "Expct Fixture Tests"),
+        });
+
+        var unmatched = Assert.Single(manifest.FindUnmatchedEntries());
+        Assert.Contains("declares no test method 'GreenPath_PlainPas'", unmatched.Diagnostic,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ACarriedCtorPlaceholder_IsNotTreatedAsAMethodName()
+    {
+        // TestExecutor records "<ctor>" for a codeunit that would not construct. No AL
+        // author can write that name, so an entry must never match it.
+        var manifest = LoadOneEntryManifest("Expct Fixture Tests", "<ctor>");
+        manifest.NoteDiscoveredFromCarriedResults(new[]
+        {
+            CarriedTest("Codeunit60810", "<ctor>", "Expct Fixture Tests"),
+        });
+
+        Assert.Single(manifest.FindUnmatchedEntries());
+    }
+
+    [Fact]
+    public void ACarriedResultWithNoDisplayName_StillMatchesOnTheTypeName()
+    {
+        // CodeunitDisplayName is nullable in the carry format; the type name is not.
+        var manifest = LoadOneEntryManifest("Codeunit60810", "GreenPath_KnownGapDeclared");
+        manifest.NoteDiscoveredFromCarriedResults(new[]
+        {
+            CarriedTest("Codeunit60810", "GreenPath_KnownGapDeclared", null),
+        });
+
+        Assert.Empty(manifest.FindUnmatchedEntries());
+    }
+
     [Theory]
     [InlineData("Codeunit60810", 60810)]
     [InlineData("Codeunit6020", 6020)]

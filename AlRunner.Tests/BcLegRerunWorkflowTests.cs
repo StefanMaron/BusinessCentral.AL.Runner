@@ -3,7 +3,7 @@
 // failing-leg set across two independent runs of the same code") can be satisfied without
 // `gh run rerun`, which section 3 bans because it overwrites the failed run's log in place.
 //
-// The reason this needs a guard rather than a comment: `All BC versions passed` is the ONE
+// The reason this needs a guard rather than a comment: `BC test matrix passed` is the ONE
 // required status check in main's branch ruleset (verified against the live ruleset — the
 // other required context is `Tests updated`, and the individual `bc-tests / BC <ver>` legs
 // are NOT required). If a SINGLE-leg run could report that context, one leg's green would
@@ -28,7 +28,7 @@ public sealed class BcLegRerunWorkflowTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".github", "workflows"));
 
     private const string Workflow = "bc-leg-rerun.yml";
-    private const string RequiredCheckJobName = "All BC versions passed";
+    private const string RequiredCheckJobName = "BC test matrix passed";
 
     private static string Read(string name)
     {

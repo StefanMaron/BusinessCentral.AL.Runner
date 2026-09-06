@@ -27,6 +27,14 @@ on:
 # was already gated by this same matrix on its own PR before merge. So the net keeps the
 # newest main run -- the only one whose answer is about the tree anybody has -- and drops the
 # rest instead of holding job slots for them.
+#
+# #3141 narrowed the PULL-REQUEST matrix to three legs (.github/pr-bc-versions.txt);
+# push is untouched and still resolves all eight. That makes this cancellation policy
+# matter more, not less, for the five legs pull requests no longer run -- but the
+# cadence guarantee for them does not live here. It lives in main-verdict-floor.yml
+# (#3003/#3158), which runs the full eight against main's HEAD every 30 minutes unless
+# that SHA already has a conclusive verdict. Adding a second schedule here would run a
+# full matrix nobody asked for on top of it.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -40,12 +48,23 @@ jobs:
     uses: ./.github/workflows/bc-tests.yml
 
   all-tests:
-    name: All BC versions passed
-    # Deliberately still a job in THIS file, not in bc-tests.yml: "All BC versions
-    # passed" is the one required status check on main, and a check's context is
-    # its job name qualified by the calling job. Moving it into the reusable
-    # workflow would rename it to "bc-tests / All BC versions passed" and silently
-    # leave the branch ruleset requiring a check that no longer reports.
+    name: BC test matrix passed
+    # Deliberately still a job in THIS file, not in bc-tests.yml: this is the one
+    # required status check on main (the other required context is "Tests updated",
+    # from require-tests.yml), and a check's context is its job name qualified by the
+    # calling job. Moving it into the reusable workflow would rename it to
+    # "bc-tests / BC test matrix passed" and silently leave the branch ruleset
+    # requiring a check that no longer reports.
+    #
+    # It was called "All BC versions passed" until #3141 narrowed the pull-request
+    # matrix to three legs. At that point the old name asserted that all BC versions
+    # passed on a run where five of them had not been executed, and the name of a
+    # required check is exactly what a person reads when deciding whether to trust a
+    # green pull request. "BC test matrix passed" is true on all three paths this
+    # workflow has: three legs on a pull request, eight on a push to main, eight on a
+    # release (publish.yml, which calls the same reusable matrix). The step below prints
+    # which versions actually gated, so the run itself says what the name deliberately
+    # does not.
     needs: [bc-tests]
     if: always()
     runs-on: ubuntu-latest
@@ -63,4 +82,10 @@ jobs:
             echo "fail-fast is off, so all failing legs are reported, not just the first."
             exit 1
           fi
-          echo "All required BC versions + smoke passed."
+          echo "The BC test matrix passed."
+          echo "Which versions ran is decided by resolve-versions in bc-tests.yml:"
+          echo "  pull_request        -> .github/pr-bc-versions.txt (a subset, see #3141)"
+          echo "  push (main)         -> .github/bc-versions.txt (every version)"
+          echo "The five versions a pull request does not run are covered on a cadence by"
+          echo "main-verdict-floor.yml, which runs all eight against main every 30 minutes."
+          echo "Read the 'Resolve BC versions' step of this run for the exact list it gated on."

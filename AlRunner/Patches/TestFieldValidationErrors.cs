@@ -61,17 +61,19 @@
 //         PermissionSetByUser.AllUsersHavePermission.GetValidationError(1), ...)
 //
 // These are not the same shape, and the difference is mechanical rather than guessed: probing
-// the runner's own control-binding map (AL_RUNNER_BINDING_PROBE over that test) shows page 9807
-// resolves AllUsersHavePermission as a PAGE VARIABLE, while page 60797's NameCtl in the corpus
-// test is REC-BOUND. A page-global control stages no row edit, so there is nothing for
-// "Refresh to discard" to discard.
+// the runner's own control-binding map (AL_RUNNER_BINDING_PROBE over that test) shows page 9816
+// "Permission Set by User" resolves AllUsersHavePermission as a PAGE VARIABLE, while page
+// 60797's NameCtl in the corpus test is REC-BOUND. A page-global control stages no row edit, so
+// there is nothing for "Refresh to discard" to discard. (An earlier version of this comment said
+// page 9807; 9807 is "User Card", and AllUsersHavePermission is not on it.)
 //
 // Hence the suffix lives on LiveNavTestField (Rec-bound) and NOT on PageVariableTestField.
-// That split rests on ONE measurement per side, and only the Rec-bound side's is a service-tier
-// measurement — the page-global side rests on Microsoft's assertion, which no tier run in this
-// repository has confirmed. Corpus PR #184 asks it directly; until that answers, this is the
-// most defensible reading of the evidence available and is flagged as such rather than
-// presented as settled.
+// BOTH SIDES ARE NOW SERVICE-TIER MEASUREMENTS. The Rec-bound side came from corpus run
+// 34002487601 (PR #182). The page-global side was the open question this comment used to flag:
+// corpus PR #184 asked it directly and merged 2026-09-06 with all eight BC Cloud legs green
+// (run 34016443056), so corpus codeunit 60808 "TP PageVar Validation Error" now states on a real
+// tier that a page-global control's stored validation error carries NO refresh suffix. The split
+// below is measured, not the most defensible reading of partial evidence.
 //
 // IDS
 //

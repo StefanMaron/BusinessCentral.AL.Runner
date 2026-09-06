@@ -30,7 +30,10 @@
 //     1. The name is one BcCompiler provably writes — `<16 hex>` or `<16 hex>.tmp-<8 hex>`.
 //        Anything else under the root belongs to somebody else and is never touched, so a
 //        future change to the naming scheme degrades to "stops reclaiming", never to
-//        "deletes the wrong tree".
+//        "deletes the wrong tree". This governs CLAIM FILES as well as directories: a file
+//        spelt `<something>.inuse-<n>` is only read as a claim, and only ever deleted, when
+//        `<something>` passes the same test (#3038). MarkInUse produces nothing else, so this
+//        costs no reclamation; it keeps the code saying what the rule says.
 //     2. No LIVE process claims it. Every process that stages or reuses a stage writes an
 //        in-use marker beside it (`<stage>.inuse-<pid>`), in ScratchDirs' own sidecar format,
 //        and liveness is decided by ScratchDirs.IsOwnerAlive — pid plus the boot-relative
@@ -38,7 +41,8 @@
 //        `.owner` sidecar this is a claim by ANY NUMBER of processes at once, and it means
 //        "someone is reading this", never "delete this when I exit".
 //     3. It has not been used for `maxAge` — 7 days by default, overridable with
-//        AL_RUNNER_PKGDEDUP_MAX_AGE_DAYS. "Used" is the NEWER of the directory's own mtime
+//        AL_RUNNER_PKGDEDUP_MAX_AGE_DAYS, which is floored at one hour so a mistyped
+//        fraction cannot ask for condition-3-in-name-only. "Used" is the NEWER of the directory's own mtime
 //        and its markers' mtimes, because a stage is written once and read on every reuse:
 //        its own mtime otherwise records only its creation. atime cannot serve — relatime
 //        and noatime are the norm — so MarkInUse stamps the directory explicitly, and the
@@ -62,6 +66,30 @@
 //   best-effort and swallows every failure, so a tree that could not be removed stays under
 //   that name with nothing else in the root to reclaim it — the same unbounded growth this
 //   class closes, reached through a sibling function rather than through the stage itself.
+//
+//   THE ROLLOUT WINDOW, AND HOW FAR IT ACTUALLY REACHES (#3038). A runner from a build that
+//   predates this file writes no claim, so condition 2 is vacuously satisfied for it and a
+//   new-build runner in another worktree can prune a stage such a process has just adopted.
+//   There is no way to retrofit a claim into an already-running process, so the window cannot
+//   be closed — only bounded, and the bound is condition 3. Reaching the failure needs a stage
+//   that NO new-build runner has touched for maxAge, because any new-build use stamps its
+//   mtime; on the default threshold that means a stage created a week ago and read only by
+//   claim-less builds since.
+//
+//   Measured on the reporting machine on 2026-09-06, hours after this file landed, with 114
+//   worktrees present: 140 built al-runner.dll, 120 of them claim-less, the newest of those
+//   built 08:36 against a merge at 08:37 — so no further claim-less binaries are being
+//   produced, and the population only shrinks. In the one shared root (TMPDIR is set here, so
+//   Path.GetTempPath() is not /tmp and /tmp/al-runner-pkgdedup does not exist at all): 180
+//   stage directories, oldest 1.28 days, ZERO past the threshold. Nothing in the cache was
+//   eligible for deletion at any point in the window, and the earliest date anything could
+//   become eligible was 2026-09-12 — by which a claim-less binary would have to have been
+//   both never rebuilt and continuously running for six days.
+//
+//   That bound is entirely condition 3's, which is why MinMaxAge exists: a mistyped
+//   AL_RUNNER_PKGDEDUP_MAX_AGE_DAYS used to be able to shrink it to under a second, and with
+//   both conditions vacuous at once the window would have been immediate rather than
+//   week-deep. The floor is the only part of this that was fixable, and it is fixed.
 //
 //   RESIDUAL RACE, stated rather than papered over: another process can pass
 //   `Directory.Exists(stage)` in the instant between this pass reading the markers and
@@ -103,6 +131,19 @@ internal static class PkgDedupCache
     internal static readonly TimeSpan DefaultMaxAge = TimeSpan.FromDays(7);
 
     internal const string MaxAgeEnvVar = "AL_RUNNER_PKGDEDUP_MAX_AGE_DAYS";
+
+    /// <summary>The shortest threshold <see cref="MaxAgeFrom"/> will hand back, whatever the
+    /// environment asks for. Rejecting only zero and negatives was not enough: `0.00001` is a
+    /// positive number of days and bought a 0.86-SECOND threshold (#3038), which is the very
+    /// thing the fallback above exists to refuse, spelt differently.
+    ///
+    /// <para>Condition 3 is the only protection a directory carrying no claim has, and two
+    /// such directories exist by construction: a `&lt;key&gt;.tmp-&lt;rand&gt;` that
+    /// <c>PkgDedupStaging.Publish</c> has not returned from yet, and any stage a run from a
+    /// build predating #2990 is reading. An hour is far longer than either staging or a
+    /// compile and far shorter than the default, so it bounds a typo without taking the knob
+    /// away.</para></summary>
+    internal static readonly TimeSpan MinMaxAge = TimeSpan.FromHours(1);
 
     /// <summary>What one <see cref="Prune(string, TimeSpan, DateTime)"/> pass did.
     /// <see cref="Removed"/> lists deleted directories; <see cref="Kept"/> counts recognised
@@ -259,7 +300,9 @@ internal static class PkgDedupCache
     /// <summary>The configured threshold, or <see cref="DefaultMaxAge"/> when the environment
     /// says nothing usable. Anything non-positive or unparseable falls back rather than being
     /// honoured: "0" would mean "delete a stage the moment it is written", which is precisely
-    /// the failure this class exists to avoid, and a typo must never be able to ask for it.</summary>
+    /// the failure this class exists to avoid, and a typo must never be able to ask for it.
+    /// A positive value below <see cref="MinMaxAge"/> is raised to it for the same reason —
+    /// "0.00001" is not zero but asks for the same thing.</summary>
     internal static TimeSpan MaxAgeFromEnvironment()
         => MaxAgeFrom(Environment.GetEnvironmentVariable(MaxAgeEnvVar));
 
@@ -269,9 +312,11 @@ internal static class PkgDedupCache
         if (!double.TryParse(raw.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var days))
             return DefaultMaxAge;
         if (!(days > 0) || double.IsNaN(days) || double.IsInfinity(days)) return DefaultMaxAge;
-        try { return TimeSpan.FromDays(days); }
+        TimeSpan asked;
+        try { asked = TimeSpan.FromDays(days); }
         catch (OverflowException) { return DefaultMaxAge; }
         catch (ArgumentException) { return DefaultMaxAge; }
+        return asked < MinMaxAge ? MinMaxAge : asked;
     }
 
     // ── The pass ───────────────────────────────────────────────────────────────────────────
@@ -309,9 +354,17 @@ internal static class PkgDedupCache
             {
                 var name = Path.GetFileName(entry);
                 var idx = name.LastIndexOf(InUseInfix, StringComparison.Ordinal);
-                if (idx > 0 && File.Exists(entry))
+                // Condition 1 applies here too (#3038). A claim is only ours to interpret —
+                // and, further down, only ours to DELETE — when the thing it claims is a name
+                // the runner provably writes. MarkInUse never targets anything else, so this
+                // rejects nothing the runner produced; what it stops is judging a file that
+                // merely happens to be spelt `<something>.inuse-<n>`. Rejected here rather
+                // than in the orphan loop so the rule is applied once, and so such a file
+                // lands in Skipped — "refused to judge" — instead of being silently swallowed
+                // into the marker table and counted nowhere.
+                if (idx > 0 && IsStageDirName(name[..idx]) && File.Exists(entry))
                 {
-                    var target = name[..idx];
+                    var target = name[..idx];   // already proven a stage name by the test above
                     if (!markers.TryGetValue(target, out var list)) markers[target] = list = new List<string>();
                     list.Add(entry);
                     continue;

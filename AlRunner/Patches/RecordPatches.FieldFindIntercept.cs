@@ -51,6 +51,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -638,8 +639,14 @@ public static partial class RecordPatches
             const string rt = "Microsoft.Dynamics.Nav.Runtime.";
 
             var tDataAccess = nclAsm.GetType(rt + "DataAccess")!;
-            _mInnerFindAsync = tDataAccess.GetMethod("InnerFindAsync",
-                BindingFlags.NonPublic | BindingFlags.Instance)
+            // Enumerated rather than Type.GetMethod(name, flags) — see BcShape.FindMethod and
+            // #3069. A second InnerFindAsync would otherwise arrive as an anonymous
+            // AmbiguousMatchException that the asserterror seam absorbs.
+            _mInnerFindAsync = BcShape.FindMethod(
+                tDataAccess, "InnerFindAsync", BindingFlags.NonPublic | BindingFlags.Instance,
+                "Field virtual table (system table 2000000041) find interception",
+                "DataAccess.InnerFindAsync",
+                "the Field virtual table cannot be served")
                 ?? throw new InvalidOperationException("DataAccess.InnerFindAsync not found");
             _pDaSession = tDataAccess.GetProperty("Session", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
                 ?? throw new InvalidOperationException("DataAccess.Session not found");

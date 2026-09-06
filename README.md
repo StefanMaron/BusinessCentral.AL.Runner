@@ -127,7 +127,9 @@ a separate rule instead: every run writes a `<stage>.inuse-<pid>` claim on the s
 and a stage is deleted only when no live process claims it **and** nothing has used it for
 seven days. A directory whose name is not one the compiler writes is never touched. Set
 `AL_RUNNER_PKGDEDUP_MAX_AGE_DAYS` to change the threshold; anything unparseable or
-non-positive falls back to the default rather than being honoured. See
+non-positive falls back to the default rather than being honoured, and any positive value
+under one hour is raised to one hour — a stage still being staged into carries no claim yet,
+so a sub-minute threshold would delete it out from under the run that is writing it. See
 `AlRunner/Infrastructure/PkgDedupCache.cs`.
 
 ### Watch mode (live dashboard)
@@ -222,6 +224,13 @@ next to the failure, never in place of it. It appears only when the failure name
 that table is measurably empty, so a genuine bug against a populated table is never mislabelled
 as missing data. With `--test-data` already on, the line says instead why the table is still
 empty (refused, not in this backup, or empty in it).
+
+A failure reported as `The TestPage is not open.` gets the same treatment. That is BC's own
+message for a page whose row-load trigger raised an AL error — the page is torn down and the
+raised error's text never reaches AL, on a real service tier too — so the message names the
+symptom and not the cause. The runner prints the error it was reported in place of on a one-line
+`[testpage]` note under the failure. What AL sees is unchanged: `asserterror` and
+`GetLastErrorText` still read only BC's message.
 
 Environment variables: `AL_RUNNER_VERBOSE=1`, `AL_RUNNER_SHOW_PASS=1`, `AL_RUNNER_TRACE_NRE=1` (logs every first-chance NRE before AL `asserterror` swallows it), `AL_RUNNER_BCBAK` (path to the `bcbak` backup reader used by `--test-data`), `AL_RUNNER_ARTIFACTS_ROOT` (see below).
 

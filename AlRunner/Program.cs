@@ -4039,13 +4039,35 @@ if (expectationsRequireMatch)
     else if (willResume)
     {
         // Same reasoning as --count-baseline above: this attempt ran a slice and hands
-        // the rest to a fresh process, so its discovery set is not the run's.
+        // the rest to a fresh process, so its discovery set is not the run's. The final
+        // attempt makes that promise true by folding the carried attempts in — see the
+        // NoteDiscoveredFromCarriedResults call below (#3168).
         Console.Error.WriteLine(
             "[expectations] match audit skipped: this attempt is resuming in a fresh process; "
             + "the final attempt audits the whole run.");
     }
+    else if (carryIncomplete)
+    {
+        // #3168 + #2747: an earlier attempt's carry file was named and could not be read,
+        // so the discovery set is knowably short by a whole attempt. Reporting an entry as
+        // matching nothing from here would accuse a correct entry of a typo on the strength
+        // of a lost scratch file. The run already refuses to report as complete (exit 2
+        // below), so standing down here suppresses nothing.
+        Console.Error.WriteLine(
+            "[expectations] match audit skipped: a carried attempt file could not be read, so "
+            + "this run's discovery set is incomplete and an unmatched entry would be "
+            + "unattributable. See the resume message above.");
+    }
     else
     {
+        // #3168: the audit's claim is about the RUN, not this process. A resumed run's final
+        // attempt is handed every earlier attempt's results (--merge-results); a test that ran
+        // there is a test this run discovered. Same correction --count-baseline took in #2719
+        // — carriedResults only, because this process's own discoveries are already recorded
+        // by TestExecutor, unfiltered, which is the better record of the two.
+        if (carriedResults.Count > 0)
+            expectations.NoteDiscoveredFromCarriedResults(carriedResults.SelectMany(b => b.Tests));
+
         var unmatched = expectations.FindUnmatchedEntries();
         if (unmatched.Count > 0)
         {

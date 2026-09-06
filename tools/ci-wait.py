@@ -39,8 +39,9 @@ Exit codes
     0  every required check passed ON THE CURRENT HEAD -- safe to report green
     1  at least one required check failed; the failing log is printed
     2  timed out while still running -- NOT a verdict, call again
-    3  could not determine state (auth, network, no checks reported, or the
-       required-context set could not be established without narrowing it)
+    3  could not determine state (auth, network, no checks reported, the
+       required-context set could not be established without narrowing it, or
+       THIS FILE is behind origin/main -- see "Which copy is running" below)
     4  everything green, but the merge is still blocked and nothing else reports
        why: a REQUIRED context is `cancelled` on this commit (#2726), or a
        REQUIRED context produced no check run at all once every workflow run for
@@ -89,6 +90,29 @@ so: the line now reads "N/N ruleset context(s) accounted for". Every real green
 that night named nine or ten checks and both false greens named one; that
 asymmetry is the only reason a human caught them.
 
+Which copy is running (#3020)
+-----------------------------
+Everything above is about this FILE being right. It says nothing about the copy
+that actually ran: an agent invokes this by relative path from its own worktree,
+and a worktree is created once and never fast-forwarded. Measured 2026-09-06 over
+this repository's 109 worktrees, 71 of the 99 copies of this file were NOT
+origin/main's, in four distinct versions -- and replaying the recorded PR #2971
+rollup through them, 59 printed the exact false GREEN #3018 had already fixed.
+
+So before any verdict, this asks `tools/agent_self_freshness.py` whether
+origin/main has moved this file since the checkout branched. If it has, that is
+exit 3 -- NOT a verdict -- and no GitHub call is made at all.
+
+Exit 3 rather than a new code, deliberately. Agents branch on these numbers, and
+3 already means "no verdict, do not act", which is exactly the right handling; a
+code nobody recognises would be handled by whatever each caller's else-branch
+happens to do. The several causes of 3 are distinguished in the printed message,
+which is already how the rest of them are told apart.
+
+A branch that legitimately edits this tool is not stale and is not refused: what
+makes a copy stale is origin/main having moved the file since the branch point,
+not the working file differing from origin/main's.
+
 Exit 4, and why it is not exit 0
 --------------------------------
 A branch ruleset satisfies a required status check from the newest check run
@@ -117,10 +141,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import agent_self_freshness as _freshness
+except Exception:  # pragma: no cover - a copy detached from its sibling module
+    _freshness = None
 
 REPO = "StefanMaron/BusinessCentral.AL.Runner"
 TRANSIENT = ("i/o timeout", "connection reset", "502 Bad", "dial tcp",
@@ -240,7 +271,7 @@ def live_ruleset_contexts(branch: str = "main") -> tuple[str, ...] | None:
     active. That is why it is the right endpoint and /rulesets/<id> is not:
     there is no ruleset id to get wrong. Measured 2026-09-05, it answers 200
     even unauthenticated on this public repo, and reports exactly
-    ["All BC versions passed", "Tests updated"] carrying ruleset_id 15001420.
+    ["BC test matrix passed", "Tests updated"] carrying ruleset_id 15001420.
     """
     payload = live_ruleset_payload(branch)
     if payload is None:
@@ -338,9 +369,15 @@ def resolve_required_contexts(branch: str = "main", fetch=None):
 # ruleset if you do want to name an id.
 #
 # Names containing "(required)" are the bc-tests matrix legs. They are not
-# ruleset contexts themselves, but "All BC versions passed" fails when any of
+# ruleset contexts themselves, but "BC test matrix passed" fails when any of
 # them does, so a cancelled leg blocks just as surely.
-RULESET_CONTEXTS = ("All BC versions passed", "Tests updated")
+#
+# Renamed from "All BC versions passed" by #3141: a pull request now runs three of the
+# eight BC versions (.github/pr-bc-versions.txt), so the old name claimed more than the
+# run had measured. This tuple and DEFAULT_REQUIRED_CONTEXTS in
+# .github/scripts/check_required_contexts.py must stay identical to each other AND to the
+# live ruleset — that guard fails on drift in either direction (#2785).
+RULESET_CONTEXTS = ("BC test matrix passed", "Tests updated")
 
 NOT_FAILURES = ("success", "neutral", "skipped")
 
@@ -947,7 +984,39 @@ def main() -> int:
     ap.add_argument("--timeout", type=int, default=1800)
     ap.add_argument("--interval", type=int, default=25)
     ap.add_argument("--no-log", action="store_true")
+    # Skips only the `git ls-remote` that confirms the local origin/main ref
+    # against the remote. It does NOT disable the staleness check itself: there
+    # is no flag for that, because the only legitimate reason to want one -- a
+    # branch that edits this tool -- is already not refused.
+    ap.add_argument("--no-freshness-fetch", action="store_true")
     args = ap.parse_args()
+
+    # BEFORE anything is asked of GitHub: is the copy of this file that is
+    # running actually current? A stale copy answers confidently and wrongly,
+    # and #3002's false GREEN is still on disk in most of this box's worktrees
+    # (#3020). A refusal here is exit 3 -- undetermined, never a verdict.
+    if _freshness is None:
+        print("note: could not establish whether this copy of ci-wait.py is current "
+              "-- tools/agent_self_freshness.py could not be imported. Answering "
+              "anyway; nothing has checked that this copy carries the latest fixes.")
+    else:
+        # Both halves, not just this file. The verdict logic lives here, but the
+        # freshness rule itself lives in the sibling module, and a stale copy of
+        # THAT is a stale guard -- the same blind spot one level down. The remote
+        # confirmation is asked for once and reused, so this costs one ls-remote.
+        refused = False
+        confirm = not args.no_freshness_fetch
+        for target in (os.path.abspath(__file__),
+                       os.path.abspath(_freshness.__file__)):
+            fresh = _freshness.assess(target, remote_check=confirm)
+            confirm = False  # one ls-remote, not one per file
+            for note in fresh.notes:
+                print(note)
+            refused = refused or fresh.refuse
+        if refused:
+            print("\nREFUSING to judge PR #%s from a STALE ci-wait.py. This is NOT a "
+                  "verdict -- nothing was asked of GitHub." % args.pr)
+            return 3
 
     sha = head_sha(args.pr)
     if not sha:
