@@ -818,6 +818,16 @@ shutil.rmtree(_g, ignore_errors=True)
 
 # The FAIL path has to be reachable, not merely classifiable: a directory whose parent
 # denies unlink. Skipped as root, which ignores the permission bits.
+#
+# The FAIL needs BOTH halves of its precondition, and the test has to build both. An
+# un-deletable stray is one half; `graphify` being installed is the other, because a
+# stray is only dangerous while something can query it, so classify_graphify answers
+# "not on PATH" first on a machine without the binary. An earlier version of this block
+# built the stray and read the binary off the machine running the tests, which passes on
+# a developer box and fails on a CI runner -- red on three unrelated PRs at once (#3140).
+# `graphify` is never executed here: probe_graphify guards both of its `run` calls on
+# `not st.stray_kept`, so a kept stray means no subprocess, and the path only has to
+# exist as a string.
 if os.geteuid() != 0:
     import stat as _stat
     _g = tempfile.mkdtemp(prefix="preflight-stray-keep-")
@@ -826,18 +836,69 @@ if os.geteuid() != 0:
     with open(os.path.join(_g, "graphify-out", "graph.json"), "w") as fh:
         fh.write("{}")
     os.chmod(_g, _stat.S_IRUSR | _stat.S_IXUSR)
+    _real_which = shutil.which
+    pf.shutil.which = lambda c, *a, **k: ("/fake/bin/graphify" if c == "graphify"
+                                          else _real_which(c, *a, **k))
     try:
         _st = pf.probe_graphify(_g, timeout=10)
         _r = pf.classify_graphify(_st)
+        check("the test supplies the graphify binary instead of reading the machine",
+              _st.binary == "/fake/bin/graphify", str(_st.binary))
         check("a stray that cannot be deleted is kept and reported",
               _st.stray_kept == [os.path.join(_g, "graphify-out")], str(_st.stray_kept))
         check("an un-deletable stray reaches FAIL end to end, not just in a fixture",
               _r.status == "FAIL", _r.summary)
         check("and that FAIL is what halts a cycle",
               pf.overall_exit([_r], strict=False) == 1)
+        # A kept stray must not spawn graphify -- the binary above does not exist, so a
+        # regression that dropped the `not st.stray_kept` guard would show up as rc 127.
+        check("a kept stray stops preflight running graphify at all",
+              _st.rebuilt is False and _st.query_rc is None,
+              f"rebuilt={_st.rebuilt} query_rc={_st.query_rc}")
+
+        # Same machine, same stray, no binary: the danger needs a querier, so this is a
+        # WARN and the cycle continues. The stray still has to be NAMED -- it stays on
+        # disk and starts answering false negatives the moment graphify is installed.
+        pf.shutil.which = lambda c, *a, **k: (None if c == "graphify"
+                                              else _real_which(c, *a, **k))
+        _st_nb = pf.probe_graphify(_g, timeout=10)
+        _r_nb = pf.classify_graphify(_st_nb)
+        check("a kept stray without graphify installed does not halt a cycle",
+              _r_nb.status == "WARN", _r_nb.status)
+        check("but the kept stray is still named, not dropped for want of a binary",
+              os.path.join(_g, "graphify-out") in " ".join([_r_nb.summary, *_r_nb.detail,
+                                                           _r_nb.remedy or ""]),
+              _r_nb.summary + str(_r_nb.detail))
+        check("and the remedy is deleting the stray, not installing graphify",
+              "rm -rf" in (_r_nb.remedy or ""), str(_r_nb.remedy))
     finally:
+        pf.shutil.which = _real_which
         os.chmod(_g, _stat.S_IRWXU)
         shutil.rmtree(_g, ignore_errors=True)
+
+# A stray preflight SUCCESSFULLY removed is a real change to the machine, and
+# probe_graphify's contract is that both repairs are reported, "never folded into a
+# silent PASS". Without a binary the classifier returned "graphify is not on PATH" and
+# said nothing about the directory it had just deleted (#3140).
+_g = tempfile.mkdtemp(prefix="preflight-stray-nobin-")
+os.makedirs(os.path.join(_g, "AlRunner"))
+os.makedirs(os.path.join(_g, "graphify-out"))
+_real_which = shutil.which
+pf.shutil.which = lambda c, *a, **k: (None if c == "graphify" else _real_which(c, *a, **k))
+try:
+    _st = pf.probe_graphify(_g, timeout=10)
+    _r = pf.classify_graphify(_st)
+    check("a stray is deleted even when graphify is not installed",
+          _st.stray_removed == [os.path.join(_g, "graphify-out")]
+          and not os.path.exists(os.path.join(_g, "graphify-out")), str(_st.stray_removed))
+    check("the deletion is reported even when graphify is not installed",
+          os.path.join(_g, "graphify-out") in " ".join([_r.summary, *_r.detail]),
+          _r.summary + str(_r.detail))
+    check("reporting the deletion does not turn a missing binary into a halt",
+          _r.status == "WARN", _r.status)
+finally:
+    pf.shutil.which = _real_which
+    shutil.rmtree(_g, ignore_errors=True)
 
 # ---- nav-bc-decompiler: configured is not the same as usable
 def dec_with(**kw):

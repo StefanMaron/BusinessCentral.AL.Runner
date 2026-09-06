@@ -1359,10 +1359,31 @@ def classify_graphify(st: GraphifyState) -> CheckResult:
         "graph answers `No matching nodes found.` -- and exits 0 -- for symbols that "
         "exist, which is indistinguishable from a true negative.")
     if not st.binary:
+        # No querier, so no wrong answer is possible and nothing here may halt a cycle.
+        # The stray repair is still reported: probe_graphify deletes a stray before this
+        # branch is ever reached, and an un-deletable one stays on disk and starts
+        # answering false negatives the moment somebody installs graphify in this
+        # checkout. Reporting only "not on PATH" dropped both facts on the floor.
+        detail, remedy = [], ("Install it, or use tools/context-pack.py and rg instead. "
+                              "Nothing is blocked.")
+        if st.stray_kept:
+            detail = ([f"a graph outside {GRAPHIFY_DIR}/ could not be removed and is "
+                       f"still there:"]
+                      + [f"stray: {p}" for p in st.stray_kept]
+                      + ([st.stray_error] if st.stray_error else [])
+                      + [stray_why,
+                         "Not a halt while graphify is absent -- nothing can read it "
+                         "yet -- but it answers false negatives as soon as one is "
+                         "installed here."])
+            remedy = ("Delete it by hand -- it is gitignored derived data:\n"
+                      + "\n".join(f"  rm -rf {p}" for p in st.stray_kept)
+                      + "\n" + remedy)
+        elif st.stray_removed:
+            detail = [f"removed a stray graph that would have answered false negatives: {p}"
+                      for p in st.stray_removed] + [stray_why]
         return CheckResult(name=name, status="WARN", command="command -v graphify",
                            summary="graphify is not on PATH",
-                           remedy="Install it, or use tools/context-pack.py and rg instead. "
-                                  "Nothing is blocked.")
+                           detail=detail, remedy=remedy)
     # A stray that is still there is the one condition here that can halt a cycle: it
     # produces wrong answers, silently, and no rebuild fixes it.
     if st.stray_kept:
