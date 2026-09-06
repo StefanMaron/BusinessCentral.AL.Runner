@@ -178,9 +178,6 @@ public static partial class RecordPatches
                 if (page.AutoSplitKey) w.WriteAttributeString("AutoSplitKey", "1");
                 if (page.MultipleNewLines) w.WriteAttributeString("MultipleNewLines", "1");
                 if (page.DelayedInsert) w.WriteAttributeString("DelayedInsert", "1");
-                // The page's SourceTableView, which BC's own NavForm.ApplySourceTableView
-                // reads from exactly here (issue #2820) — see EmitSourceTableViewXml.
-                if (page.TableView is { } view) EmitSourceTableViewXml(w, page, view);
             }
             // The attributes above only mean anything alongside a SourceTable, so a page
             // without one gets the bare element the compiler itself emits — not
@@ -189,7 +186,25 @@ public static partial class RecordPatches
             //
             // The five below are OUTSIDE that branch on purpose — measured, not assumed; see
             // EmitSourceObjectPropertiesXml.
+            //
+            // ORDER IS LOAD-BEARING, and this is the whole reason the SourceTableView child
+            // element moved below them: every attribute of <SourceObject> must be written
+            // BEFORE its first child element, because XmlWriter refuses an attribute once the
+            // writer has entered element content. Writing these five after
+            // EmitSourceTableViewXml threw InvalidOperationException for exactly the pages
+            // declaring a SourceTableView AND one of the five — Base Application 700 "Error
+            // Messages" and 1710 "Deferral Lines - G/L", both `LinksAllowed = 0` plus a view —
+            // and the throw came back as a NULL metadata document, so BC then NRE'd in
+            // NCLMetaForm.GetFrozenPageDefinitionWithExtensionWithoutMergedMultiLanguage and
+            // page 1710's view stopped filtering. The unit tests could not see it: their
+            // fixture pages declare a view or one of the five, never both. Three corpus tests
+            // did.
             EmitSourceObjectPropertiesXml(w, page);
+            // The page's SourceTableView, which BC's own NavForm.ApplySourceTableView reads
+            // from exactly here (issue #2820) — see EmitSourceTableViewXml. A CHILD ELEMENT,
+            // so it must come after every attribute above.
+            if (page.SourceTableId > 0 && page.TableView is { } view)
+                EmitSourceTableViewXml(w, page, view);
             w.WriteEndElement(); // SourceObject
             w.WriteEndElement(); // Properties
 

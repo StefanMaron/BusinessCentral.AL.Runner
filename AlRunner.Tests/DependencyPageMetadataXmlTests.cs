@@ -699,6 +699,7 @@ public class DependencyPageMetadataXmlTests
     private const int NoViewPageId = 88123602;
     private const int UnresolvableViewPageId = 88123603;
     private const int WhereOnlyViewPageId = 88123604;
+    private const int ViewPlusPropsPageId = 88123605;
 
     private const string ViewSymbolReference = """
         {
@@ -747,6 +748,17 @@ public class DependencyPageMetadataXmlTests
               "Properties": [
                 { "Name": "PageType", "Value": "List" },
                 { "Name": "SourceTable", "Value": "88123620" },
+                { "Name": "SourceTableView", "Value": "where(Bucket = const(7))" }
+              ]
+            },
+            {
+              "Id": 88123605,
+              "Name": "DPX View Plus Props Page",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "88123620" },
+                { "Name": "LinksAllowed", "Value": "0" },
+                { "Name": "PopulateAllFields", "Value": "1" },
                 { "Name": "SourceTableView", "Value": "where(Bucket = const(7))" }
               ]
             }
@@ -1237,6 +1249,49 @@ public class DependencyPageMetadataXmlTests
         finally
         {
             Console.SetError(previousError);
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The combination is its own case, and the corpus found it when the unit tests could not:
+    /// <c>&lt;SourceTableView&gt;</c> is a CHILD ELEMENT of <c>&lt;SourceObject&gt;</c> while the
+    /// #2860 five are ATTRIBUTES of it, and <c>XmlWriter</c> refuses an attribute once the
+    /// writer has entered element content. Writing the five after the view therefore threw
+    /// <c>InvalidOperationException</c> for exactly the pages declaring BOTH — Base Application
+    /// 700 "Error Messages" and 1710 "Deferral Lines - G/L", each <c>LinksAllowed = 0</c>
+    /// alongside a <c>SourceTableView</c> — and the throw surfaced as a NULL metadata document,
+    /// so BC NRE'd in
+    /// <c>NCLMetaForm.GetFrozenPageDefinitionWithExtensionWithoutMergedMultiLanguage</c> and
+    /// page 1710's view silently stopped filtering. Three corpus tests caught it against a
+    /// clean 2599/2599 baseline.
+    ///
+    /// <para>So this asserts both halves survive together, which is what pins the write
+    /// ORDER — attributes first, child elements after.</para>
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_PageWithBothAViewAndSourceObjectProperties_CarriesBoth()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, ViewSymbolReference));
+
+            var sourceObject = ReadSourceObjectFor(ViewPlusPropsPageId);
+            var ns = MetaNs(sourceObject.OwnerDocument!);
+
+            Assert.Equal("0", sourceObject.GetAttribute("LinksAllowed"));
+            Assert.Equal("1", sourceObject.GetAttribute("PopulateAllFields"));
+
+            var filter = (XmlElement?)sourceObject.SelectSingleNode("m:SourceTableView/m:TableFilters", ns);
+            Assert.NotNull(filter);
+            Assert.Equal("2", filter!.GetAttribute("FieldID"));
+            Assert.Equal("CONST", filter.GetAttribute("FilterType"));
+            Assert.Equal("7", filter.GetAttribute("FilterValue"));
+        }
+        finally
+        {
             Directory.Delete(dir, recursive: true);
         }
     }
