@@ -689,7 +689,7 @@ do have a source. This section is the record.
 
 ---
 
-### `Record "Object Metadata"` — the rows are synthesised and the payload columns read blank
+### `Record "Object Metadata"` — the rows are synthesised and the payload columns refuse by name
 
 <a id="object-metadata-system-table"></a>
 
@@ -706,48 +706,107 @@ The runner has no application database and publishes nothing into one, so:
 |---|---|---|
 | `Object Type`, `Object ID` | One row per application-database system table | Synthesised from BC's own `SystemTables.ApplicationDatabaseTables` |
 | `Emit Version` | The tier's compiler emit version | BC's own `NavEnvironment.Instance.EmitVersion` |
-| `Metadata`, `User Code`, `User AL Code`, `Symbol Reference` (BLOB) | The published metadata payload | Always **empty** |
-| `Metadata Version`, `Hash`, `Object Subtype`, `Has Subscribers`, `Schema Hash` | Derived from that payload | Always **`0` / empty / `false`** |
+| `Metadata`, `User Code`, `User AL Code`, `Symbol Reference` (BLOB) | The published metadata payload | **Refuses by name** on read (see below) |
+| `Metadata Version`, `Hash`, `Object Subtype`, `Has Subscribers`, `Schema Hash` | Derived from that payload | **Refuses by name** on read (see below) |
 
-**The row set is an upper bound derived from Microsoft's code, not a service-tier-confirmed
-equality.** The selecting predicate is the insert in
-`InPlacePublisher.UpsertIntoMetadataStorageImpl`: the System app's own table objects,
-intersected with `ApplicationDatabaseTables`, minus ids with static metadata XML (which is only
-2000001071, so a no-op here). Enumerating the `.al` sources inside `System.app`, all 43 ids have
-a table object on both BC 27.0 and 28.1. What is *not* established is whether the 11 ids
-declared `ObsoleteState = Removed` get rows on a real tier; if one ever reports fewer than 43,
-that is where the difference will be.
+**A service tier HAS adjudicated the row set, and it is an equality: 43 rows.** That was open
+for a while and is not any more. The selecting predicate is the insert in
+`InPlacePublisher.UpsertIntoMetadataStorageImpl` — the System app's own table objects,
+intersected with `ApplicationDatabaseTables`, minus ids with static metadata XML (only
+2000001071, a no-op here) — and Microsoft's
+`CleanupObjectMetadataFromNonApplicationDatabaseTables` migration bounds the retained set from
+above with a `DELETE`. A `DELETE` proves ⊆, never =, so neither established the count; an
+earlier version of this section claimed the runner and a real tier "cannot disagree about which
+ids belong" and was wrong for exactly that reason.
 
-An earlier version of this section said the runner and a real tier "cannot disagree about which
-ids belong". That was wrong, and worth recording as a mistake to avoid repeating: it rested on
-Microsoft's `CleanupObjectMetadataFromNonApplicationDatabaseTables` migration, whose
-`DELETE ... WHERE [Object Type] <> 1 OR [Object ID] NOT IN (...)` bounds the retained set from
-*above* and does not create a row for each id. A `DELETE` proves ⊆, never =.
+What settled it is a **`Target = OnPrem` app in the corpus**, which is the thing this section
+used to say was needed and which now exists:
+`tests/al-language/tests/al-language-onprem/record/TestObjectMetadataSystemTable.al`, codeunit
+61200, from corpus PR
+[#179](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/179) — merged with
+**all 16 legs green, 8 Cloud and 8 OnPrem**, BC 27.0 through 28.4. It pins the count at exactly
+43, that `ObsoleteState = Removed` ids (2000000151) and `Pending` ids (2000000001) both get
+rows, that virtual and ordinary application tables get none, the `Emit Version` range, the
+`FindLast` landing id — and, in
+`ObjectMetadata_CalcFields_Metadata_HasAPayload`, that the `Metadata` BLOB carries a payload on
+a real tier. So the divergence below is measured against a tier rather than inferred from
+Microsoft's publish code.
 
-**No service tier has adjudicated any of this**, and not for want of trying. The BC-behaviour
-half belongs in the al-language corpus and cannot be expressed there: the corpus app targets
-Cloud, the table is `Scope = OnPrem`, so `Record "Object Metadata"` fails `AL0296` at compile,
-and the `RecordRef` route is refused at *runtime* by `NavRecordRef.CheckIsOpenAllowed` —
+Only the **Cloud** route stays refused, and that is a property of the calling app's
+compilation target rather than of the table: the corpus's main app targets Cloud, the table is
+`Scope = OnPrem`, so `Record "Object Metadata"` fails `AL0296` at compile there, and the
+`RecordRef` way round is refused at *runtime* by `NavRecordRef.CheckIsOpenAllowed` —
 `"You cannot open record 2000000071 from a RecordRef data type when you are using target Cloud."`
 2000000071 is in `SystemTables.InternalTables`, and the escape hatch
 `SystemTables.OnPremSystemTableRecordRefAllowed` is only `{ 2000000187, 2000000188 }`. Corpus PR
 [#153](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/153) is closed with
 that evidence, from
 [run 33968379281](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/actions/runs/33968379281),
-where all 8 BC legs failed on that message before reaching a single assertion. Settling the
-remainder needs an OnPrem-target app in the corpus, or Microsoft's `Tests-SINGLESERVER` bucket,
-which is OnPrem-target and reads this table directly.
+where all 8 BC legs failed on that message before reaching a single assertion.
+`NavRecordRef.IsOpenAllowed` returns early for an OnPrem target and never reaches the
+`InternalTables` test at all, which is why one app with a different target was enough.
 
-The payload columns are a **declared divergence** — there is nothing to reproduce, because
-nothing was ever published. Per `.claude/rules/loud-failures.md` those nine columns should refuse
-by name rather than read blank; that needs a per-(table, field) blob-read seam on the shared
-`TempTableDataProvider` path which does not exist yet, and **issue #2771** tracks it. Throwing at
-row-build time instead is not an option — it would take out `FindSet` / `FindLast` / `Count` as
-well, which is the bug (#2519) this table's support closed.
+The nine payload columns **refuse by name** when read (#2771). There is nothing to reproduce,
+because nothing was ever published, and a blank was indistinguishable from a real empty value —
+`HasValue()` false on a 0-byte BLOB, `''`, `0`, `false` — so a caller could not tell the runner's
+"I have no source for this" from BC's "this is empty". Reading one now raises
+`out-of-scope: Object Metadata."<column>" (system table 2000000071)`.
+
+The full reason reads
+`not-yet-implemented — object-metadata-payload — the runner publishes nothing into an
+application database, …`, and the **anchor** — everything before the first em-dash, which is what
+`ExpectationManifest.ReasonAnchor` compares and what
+`tests/expectations/oos-object-metadata.json` carries — is therefore `not-yet-implemented`, not
+`object-metadata-payload`. That is a mechanical choice, not a claim that the payload is coming.
+`ApplicationObjectBasePatches.IsPermanentOutOfScope` is
+`!oos.Reason.StartsWith("not-yet-implemented")`, and a refusal it calls permanent is trapped into
+`false` for an AL `[TryFunction]` — faithful when a real BC environment also lacks the surface,
+wrong here, because a tier *does* answer this, so `if not TryCalcMetadata() then` would read as a
+clean "no payload" that no tier would ever produce. The anchor buys the tear-through. That it
+then says "yet" about something permanent is a real vocabulary gap: the runner has no anchor
+meaning "permanent, but a tier does answer it", so the only spelling that buys the tear-through is
+the one that says "yet". Tracked in **#3154**, and named here rather than papered over. (Not
+#2946, which is closed and covered a different third case — "BC's internals are not the shape this
+patch was written against" — and became `BcShapeGapException`, a type that deliberately never
+reaches `IsPermanentOutOfScope`.)
+
+The refusal fires **only over rows the runner synthesised**. `Object Metadata` is a real
+application-database table, not a virtual one, so a `--test-data` backup can genuinely carry rows
+for it with a real published payload in exactly these nine columns. On that path
+`PopulateObjectMetadataSystemTable` already declines to synthesise (`ProviderHasAnyRow`), and it
+now also tells the guard, so the nine columns read their restored values instead of refusing.
+Without that gate the refusal failed loudly over correct data — the reachable case is Microsoft's
+`Tests-SINGLESERVER` bucket, which is OnPrem-target, reads this table directly, and requires
+`--test-data`.
+
+The refusal is on the **read of that column**, never at row-build time. Throwing while building
+the row would take `FindSet` / `FindLast` / `Count` / `IsEmpty` with it, which is the bug (#2519)
+this table's support closed; `tests/runner-extras/object-metadata-system-table` asserts all four
+request paths still answer, positively and negatively, alongside the refusals.
+
+Two seams, because BC reads the two kinds of column through different machinery. The BLOBs are
+caught at the runner's own blob-load site in `FlowFieldPatches.RecordImpl_CalcFieldsAsync_3` —
+**not** at `DataAccess.GetBlobContentAsync`, which is where BC itself would read them and which is
+dead here, because the runner replaces both `RecordImplementation.CalcFieldsAsync` overloads
+outright. The five scalars have no data-access call to intercept at all: a plain AL field read is
+`NavRecord.GetFieldValueSafe(fieldNo, expectedType)` straight off the record buffer, so that is
+the seam. Neither covers a `RecordRef`/`FieldRef` read, which 2000000071 cannot be opened as
+anyway (see the `CheckIsOpenAllowed` refusal above).
+
+The corpus test that reads the payload on a real tier —
+`ObjectMetadata_CalcFields_Metadata_HasAPayload` — therefore raises that refusal here, and is
+declared `expect-oos` in `tests/expectations/oos-object-metadata.json`. It was `expect-divergence`
+while the runner answered blank, and the classifier is what caught the change: an entry
+declaring a divergence for a test that raises an out-of-scope signal fails with "declare it
+expect-oos instead". The entry's `Reason` anchor is `not-yet-implemented` rather than a
+`docs/scope.md` section, which is not a promise to implement it — that token is what
+`ApplicationObjectBasePatches.IsPermanentOutOfScope` reads to decide whether an AL
+`[TryFunction]` may swallow a refusal, and real BC does **not** lack this surface, so swallowing
+it would restore the silent default the refusal exists to remove.
 
 `tests/runner-extras/object-metadata-system-table` asserts the runner-side behaviour so it cannot
-move quietly. It deliberately uses only ids that are live table objects, so it does not encode
-the open `ObsoleteState = Removed` question as settled in either direction.
+move quietly. It deliberately uses only ids that are live table objects; the corpus app above is
+what pins the `ObsoleteState = Removed` and `Pending` ids against a tier.
 
 **When the runner cannot answer at all, it refuses and says so as a gap, not as a scope
 boundary.** Twelve preconditions guard this table — BC's `SystemTables` type and its
@@ -858,9 +917,11 @@ runner — not what a tier's `Object` table holds. **issue #2834** tracks the mi
 coverage for this whole area.
 
 The blank columns are a **declared divergence** for the same reason Object Metadata's payload
-columns are: there is no registry behind them to reproduce. Per
-`.claude/rules/loud-failures.md` they should refuse by name rather than read blank, which needs
-the per-(table, field) read seam **issue #2771** tracks — this table is its second consumer.
+columns were: there is no registry behind them to reproduce. Per
+`.claude/rules/loud-failures.md` they should refuse by name rather than read blank. The
+per-(table, field) read seam that needs is no longer missing — **#2771** built it
+(`RecordPatches.NoSourceColumns.cs`) and this table is its intended second consumer — so what
+is left is registering the names and measuring the blast radius, which **issue #3096** tracks.
 `Caption` is in the blank list even though the shared inventory does carry a caption, because
 whether this legacy table's field 20 holds the object's AL caption is a BC claim no tier here
 can adjudicate; **issue #2839** tracks it rather than guessing.

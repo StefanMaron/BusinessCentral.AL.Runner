@@ -127,17 +127,19 @@
 //     Hash, "Object Subtype", "Has Subscribers", "Schema Hash".
 //
 //   On a real tier those carry the output of publishing the system app into the application
-//   database. The runner never publishes anything into a database and has no such payload, so
-//   they get BC's own NavValue.GetDefaultNavValue — an empty BLOB, 0, the empty string.
+//   database. The runner never publishes anything into a database and has no such payload. The
+//   row still carries BC's own NavValue.GetDefaultNavValue in those slots — it has to, or
+//   FindSet / Count / IsEmpty / keyed Get could not answer at all — but READING one of them now
+//   REFUSES BY NAME (#2771). See RecordPatches.NoSourceColumns.cs for the two seams and why
+//   there are two of them.
 //
-//   THIS IS A DECLARED DIVERGENCE, NOT A FAITHFUL SUBSTITUTION, and it is recorded as one in
-//   docs/limitations.md and asserted by tests/runner-extras/object-metadata-system-table so it
-//   cannot change quietly. Making a CalcFields of those BLOBs refuse by name (which is what
-//   .claude/rules/loud-failures.md would prefer) needs a per-field blob-read seam on the shared
-//   TempTableDataProvider path that does not exist yet; issue #2771 tracks it. Until then the
-//   choice is between an empty payload and no row at all, and no row at all is the strictly
-//   worse answer: it is the bug this file closes, and it makes the two columns that CAN be
-//   answered unreadable too.
+//   Until #2771 those blanks went back to AL as ordinary values, and that was the defect: a
+//   0-byte BLOB reports HasValue() false and yields an empty CreateInStream, and 0 / '' / false
+//   are legitimate column values, so a caller could not tell "the runner has no source for this"
+//   from "this is genuinely empty". The refusal is on the READ, never at row-build time —
+//   throwing while building the row would take out FindSet / FindLast / Count / IsEmpty as well,
+//   which is the bug this file closes and would make the three columns that CAN be answered
+//   unreadable too.
 //
 // ── PRECEDENCE AGAINST --test-data ───────────────────────────────────────────────────────
 //   Unlike a virtual table, 2000000071 is a real SQL table and a restored backup can genuinely
@@ -299,7 +301,17 @@ public static partial class RecordPatches
         RunObjectMetadataPopulateOnce(provider, () =>
         {
             // --test-data (or an install baseline) already put real rows here — leave them alone.
-            if (ProviderHasAnyRow(provider)) return;
+            if (ProviderHasAnyRow(provider))
+            {
+                // ...and tell the no-source guard, or it refuses the nine payload columns over
+                // rows that HAVE a source. This is the one branch that knows the difference:
+                // everything below synthesises, everything here was restored. Without this the
+                // refusal added for #2771 contradicts the precedence rule stated in this file's
+                // header ("Real rows always win over synthesised ones") and fails loudly on
+                // correct data. See RecordPatches.NoSourceColumns.cs.
+                MarkObjectMetadataRowsAreReal();
+                return;
+            }
 
             var objectTypeOrdinal = EnsureObjectMetadataObjectTypeOrdinal(metaTable);
             var emitVersion = ReadNavEnvironmentEmitVersion();
