@@ -5,16 +5,18 @@
 /// resolved "no trigger found" to "run nothing, quietly" would fail:
 ///
 ///   TriggerlessAction / TriggerlessRef  a RunObject naming a PAGE. Since #2931 the runner
-///                                       PERFORMS this rather than refusing it, so with no
-///                                       [PageHandler] declared it must fail with BC's own
-///                                       unhandled-UI error and NOT with a runner refusal.
+///                                       PERFORMS this rather than refusing it, and since #2975
+///                                       it performs it even with no [PageHandler] bound -- the
+///                                       target opens unattended and nothing is raised. The
+///                                       target page records its own opening so the arms have
+///                                       something to assert.
 ///   LinkedPageAction                    the same, plus RunPageLink. Since #2942 the runner
 ///                                       applies the link and opens the target on the rowset it
-///                                       selects, so with no [PageHandler] declared this too
-///                                       must reach BC's own unhandled-UI error and not a
-///                                       runner refusal. What the link SELECTS is pinned
-///                                       upstream in the al-language corpus
-///                                       (handlers/TestPageActionRunPageLink.al).
+///                                       selects; since #2975 it does so with no [PageHandler]
+///                                       bound too, so this arm asserts the target opened AND
+///                                       that it opened FILTERED, rather than an error. What the
+///                                       link SELECTS is pinned upstream in the al-language
+///                                       corpus (handlers/TestPageActionRunPageLink.al).
 ///   ReportRunObjectAction               a RunObject naming a REPORT: in scope, not implemented.
 ///   NoEffectAction / NoEffectRef        neither a trigger nor a RunObject, so genuinely
 ///                                       nothing to run; the refusal that names the actionref's
@@ -102,14 +104,22 @@ page 64541 "Par Host Page"
             {
                 ApplicationArea = All;
                 Caption = 'Triggerless Action';
-                RunObject = page "Par Host Page";
+                // Not the host page: see ParRunObjectTarget.Page.al. The target records its own
+                // opening, which is what makes the two RunObject arms falsifiable now that
+                // (#2975) an unattended RunObject raises nothing to assert on.
+                RunObject = page "Par RunObject Target";
             }
 
             action(LinkedPageAction)
             {
                 ApplicationArea = All;
                 Caption = 'Linked Page Action';
-                RunObject = page "Par Host Page";
+                // Same target as TriggerlessAction, and for the same reason (#2975): with no
+                // [PageHandler] bound nothing is raised any more, so the only way to tell a
+                // performed RunObject from a silently skipped one is a target that records its
+                // own opening. This one also records whether it opened FILTERED, which is what
+                // separates this arm from the unlinked one.
+                RunObject = page "Par RunObject Target";
                 RunPageLink = "No." = field("No.");
             }
 

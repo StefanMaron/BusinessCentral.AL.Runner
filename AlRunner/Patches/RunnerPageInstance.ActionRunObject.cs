@@ -231,10 +231,10 @@ internal sealed partial class RunnerPageInstance
         }
 
         // BC's own static NavForm.RunAsync(formId, record, fieldNo), spelled out so the form
-        // instance is in reach: it is what the unattended open below has to register and open,
-        // and it must be the SAME instance NavForm.RunAsync's own preamble positioned with
-        // SetSourceTable(record, clone: true, ...). Creating a second one would run the page's
-        // construction twice and lose the host's row.
+        // instance is in reach before anything runs — the unattended open below has to register
+        // and open THIS instance, and NavForm's constructor is where a RunPageOnRec record
+        // becomes the target's rowset (`if (record != null) { SetSourceTable(record, clone:
+        // true); if (bookmarkType != BookmarkType.Record) SyncTempTableWithSourceTableAsync(...) }`).
         var session = NavCurrentThread.Session;
         using var handle = new NavFormHandle(
             session,
@@ -245,21 +245,13 @@ internal sealed partial class RunnerPageInstance
         // question TestHandleForm asks and in the same order (a TestPage.Trap() short-circuits
         // the handler lookup there, so it must short-circuit here too, or the probe would fire
         // FindHandler's RemoveHandlerName side effect that BC would not have fired).
-        var attended = HasTrapForPage(session, form) || FindPageHandler(session, form) != null;
-
-        try
+        if (HasTrapForPage(session, form) || FindPageHandler(session, form) != null)
         {
             form.RunAsync(record, 0).AsTask().GetAwaiter().GetResult();
+            return;
         }
-        catch (NavNCLMissingUIHandlerException) when (!attended)
-        {
-            // Guaranteed to be TestHandleForm's own lookup and nothing deeper: `attended` is
-            // false, so FindHandler cannot have returned a handler and not one statement of the
-            // target page has run yet. The exception filter is what makes that airtight — an
-            // unqualified catch here would also swallow an unhandled-UI refusal raised from
-            // INSIDE a handled page.
-            OpenTargetUnattended(session, form);
-        }
+
+        OpenTargetUnattended(session, form);
     }
 
     /// <summary>
@@ -275,7 +267,16 @@ internal sealed partial class RunnerPageInstance
     /// whether real BC raises those here, so this raises neither rather than inventing one.</para>
     ///
     /// <para>An <c>Error()</c> raised by the target's own OnOpenPage is NOT absorbed — it is AL,
-    /// and a real test failure. Only BC's missing-handler refusal is, and only by the caller.</para>
+    /// and a real test failure.</para>
+    ///
+    /// <para>Reached by ASKING first rather than by catching BC's refusal, and that ordering is
+    /// load-bearing rather than stylistic. Letting <c>NavForm.RunAsync</c> raise and then opening
+    /// the page in a catch does produce the same OnOpenPage — measured — but the writes that
+    /// trigger makes are then made AFTER an error, and the runner's error handling rolls the
+    /// database back to the last commit point (<c>SessionTransactionExtensions.Rollback</c> ->
+    /// <c>RecordPatches.RollbackToCommitPoint</c>). Measured on the runner-extras arm, which has
+    /// no <c>Commit()</c>: the target's OnOpenPage ran and its row was gone. Real BC never raises
+    /// on this route at all, so neither does this.</para>
     /// </summary>
     private static void OpenTargetUnattended(NavSession session, NavForm form)
     {
