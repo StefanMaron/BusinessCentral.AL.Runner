@@ -283,7 +283,14 @@ public sealed class PermissionMetadataMethodOverloadGuardTests
     // `(int)compare.Invoke(...)` is a BC-shape assumption. A Compare that stopped returning int
     // raises InvalidCastException inside the seam, so the asserterror passes on a sort real BC
     // performs fine. Driven through InstallPermissionSetSlot — the real call path — with the
-    // four reflection statics it reads injected for one call.
+    // five reflection statics it reads injected for one call.
+    //
+    // Measured on the pre-fix build, the absorbed exception is not the InvalidCastException
+    // itself: List.Sort catches whatever the comparison delegate throws and rethrows it as
+    // System.InvalidOperationException ("Failed to compare two elements in the array") with the
+    // cast failure as InnerException. So the seam absorbs a type whose name says nothing about
+    // reflection at all — more anonymous than the raw cast failure, not less, and one more
+    // reason type-based classification at the seam could not have caught this.
 
     [Fact]
     public void InstallPermissionSetSlot_RaisesAShapeGap_WhenCompareNoLongerReturnsInt()
