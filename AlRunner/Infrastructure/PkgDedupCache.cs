@@ -30,7 +30,10 @@
 //     1. The name is one BcCompiler provably writes — `<16 hex>` or `<16 hex>.tmp-<8 hex>`.
 //        Anything else under the root belongs to somebody else and is never touched, so a
 //        future change to the naming scheme degrades to "stops reclaiming", never to
-//        "deletes the wrong tree".
+//        "deletes the wrong tree". This governs CLAIM FILES as well as directories: a file
+//        spelt `<something>.inuse-<n>` is only read as a claim, and only ever deleted, when
+//        `<something>` passes the same test (#3038). MarkInUse produces nothing else, so this
+//        costs no reclamation; it keeps the code saying what the rule says.
 //     2. No LIVE process claims it. Every process that stages or reuses a stage writes an
 //        in-use marker beside it (`<stage>.inuse-<pid>`), in ScratchDirs' own sidecar format,
 //        and liveness is decided by ScratchDirs.IsOwnerAlive — pid plus the boot-relative
@@ -38,7 +41,8 @@
 //        `.owner` sidecar this is a claim by ANY NUMBER of processes at once, and it means
 //        "someone is reading this", never "delete this when I exit".
 //     3. It has not been used for `maxAge` — 7 days by default, overridable with
-//        AL_RUNNER_PKGDEDUP_MAX_AGE_DAYS. "Used" is the NEWER of the directory's own mtime
+//        AL_RUNNER_PKGDEDUP_MAX_AGE_DAYS, which is floored at one hour so a mistyped
+//        fraction cannot ask for condition-3-in-name-only. "Used" is the NEWER of the directory's own mtime
 //        and its markers' mtimes, because a stage is written once and read on every reuse:
 //        its own mtime otherwise records only its creation. atime cannot serve — relatime
 //        and noatime are the norm — so MarkInUse stamps the directory explicitly, and the
@@ -103,6 +107,19 @@ internal static class PkgDedupCache
     internal static readonly TimeSpan DefaultMaxAge = TimeSpan.FromDays(7);
 
     internal const string MaxAgeEnvVar = "AL_RUNNER_PKGDEDUP_MAX_AGE_DAYS";
+
+    /// <summary>The shortest threshold <see cref="MaxAgeFrom"/> will hand back, whatever the
+    /// environment asks for. Rejecting only zero and negatives was not enough: `0.00001` is a
+    /// positive number of days and bought a 0.86-SECOND threshold (#3038), which is the very
+    /// thing the fallback above exists to refuse, spelt differently.
+    ///
+    /// <para>Condition 3 is the only protection a directory carrying no claim has, and two
+    /// such directories exist by construction: a `&lt;key&gt;.tmp-&lt;rand&gt;` that
+    /// <c>PkgDedupStaging.Publish</c> has not returned from yet, and any stage a run from a
+    /// build predating #2990 is reading. An hour is far longer than either staging or a
+    /// compile and far shorter than the default, so it bounds a typo without taking the knob
+    /// away.</para></summary>
+    internal static readonly TimeSpan MinMaxAge = TimeSpan.FromHours(1);
 
     /// <summary>What one <see cref="Prune(string, TimeSpan, DateTime)"/> pass did.
     /// <see cref="Removed"/> lists deleted directories; <see cref="Kept"/> counts recognised
@@ -259,7 +276,9 @@ internal static class PkgDedupCache
     /// <summary>The configured threshold, or <see cref="DefaultMaxAge"/> when the environment
     /// says nothing usable. Anything non-positive or unparseable falls back rather than being
     /// honoured: "0" would mean "delete a stage the moment it is written", which is precisely
-    /// the failure this class exists to avoid, and a typo must never be able to ask for it.</summary>
+    /// the failure this class exists to avoid, and a typo must never be able to ask for it.
+    /// A positive value below <see cref="MinMaxAge"/> is raised to it for the same reason —
+    /// "0.00001" is not zero but asks for the same thing.</summary>
     internal static TimeSpan MaxAgeFromEnvironment()
         => MaxAgeFrom(Environment.GetEnvironmentVariable(MaxAgeEnvVar));
 
@@ -269,9 +288,11 @@ internal static class PkgDedupCache
         if (!double.TryParse(raw.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var days))
             return DefaultMaxAge;
         if (!(days > 0) || double.IsNaN(days) || double.IsInfinity(days)) return DefaultMaxAge;
-        try { return TimeSpan.FromDays(days); }
+        TimeSpan asked;
+        try { asked = TimeSpan.FromDays(days); }
         catch (OverflowException) { return DefaultMaxAge; }
         catch (ArgumentException) { return DefaultMaxAge; }
+        return asked < MinMaxAge ? MinMaxAge : asked;
     }
 
     // ── The pass ───────────────────────────────────────────────────────────────────────────
@@ -309,7 +330,15 @@ internal static class PkgDedupCache
             {
                 var name = Path.GetFileName(entry);
                 var idx = name.LastIndexOf(InUseInfix, StringComparison.Ordinal);
-                if (idx > 0 && File.Exists(entry))
+                // Condition 1 applies here too (#3038). A claim is only ours to interpret —
+                // and, further down, only ours to DELETE — when the thing it claims is a name
+                // the runner provably writes. MarkInUse never targets anything else, so this
+                // rejects nothing the runner produced; what it stops is judging a file that
+                // merely happens to be spelt `<something>.inuse-<n>`. Rejected here rather
+                // than in the orphan loop so the rule is applied once, and so such a file
+                // lands in Skipped — "refused to judge" — instead of being silently swallowed
+                // into the marker table and counted nowhere.
+                if (idx > 0 && IsStageDirName(name[..idx]) && File.Exists(entry))
                 {
                     var target = name[..idx];
                     if (!markers.TryGetValue(target, out var list)) markers[target] = list = new List<string>();
