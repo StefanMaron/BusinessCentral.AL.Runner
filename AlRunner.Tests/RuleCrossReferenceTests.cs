@@ -116,4 +116,38 @@ public sealed class RuleCrossReferenceTests
             Assert.Contains(target, File.ReadAllText(path));
         }
     }
+
+    /// <summary>
+    /// #3213's rule is only useful if an agent meets it at the moment the question comes
+    /// up — before it starts implementing. That means two entry points must keep pointing
+    /// at it: the implementation contract, which is where the workflow reaches the
+    /// decision, and <c>branch-and-pr.md</c>, whose "one open PR per impl agent" line is
+    /// the one a reader could otherwise mistake for a prohibition on closing several
+    /// issues from a single PR.
+    ///
+    /// This pins reachability only. It would pass against an empty rule file, and there is
+    /// deliberately no assertion over the rule's prose — the content of a judgement rule
+    /// has no cheap non-vacuous guard, and pinning sentences would only make future edits
+    /// brittle. What it does catch is the failure mode this class already exists for: a
+    /// rule that nobody links, which is a rule nobody reads.
+    /// </summary>
+    [Fact]
+    public void TheSiblingIssueBatchingRuleIsReachableFromTheEntryPointsThatNeedIt()
+    {
+        const string target = "batch-sibling-issues-by-file.md";
+        Assert.True(File.Exists(Path.Combine(RulesDir, target)), $"{target} is missing");
+
+        var implAgent = Path.Combine(RepoRoot, ".claude", "agents", "impl-agent.md");
+        Assert.True(File.Exists(implAgent), $"not found: {implAgent}");
+        Assert.Contains(target, File.ReadAllText(implAgent));
+
+        var branchAndPr = Path.Combine(RulesDir, "branch-and-pr.md");
+        Assert.True(File.Exists(branchAndPr), $"not found: {branchAndPr}");
+        Assert.Contains(target, File.ReadAllText(branchAndPr));
+
+        // Reverse direction: a reader who arrives at the batching rule must be able to get
+        // back to the "one open PR" constraint it reconciles with, or the reconciliation
+        // is only visible from one side.
+        Assert.Contains("branch-and-pr.md", File.ReadAllText(Path.Combine(RulesDir, target)));
+    }
 }
