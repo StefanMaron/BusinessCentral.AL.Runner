@@ -134,6 +134,14 @@ public static partial class RecordPatches
     // Parsed tableextension fields: base-table-name (lowercased) → list of extra fields.
     private static readonly Dictionary<string, List<ParsedField>> _parsedExtensionFields = new();
 
+    // Parsed tableextension KEYS: base-table-name (lowercased) → the keys every tableextension
+    // on that table declares, in merge order (#3216). The sibling of the line above, and it did
+    // not exist: the fields half of a tableextension merge was written and the keys half never
+    // was, so `RecordRef.KeyCount()`/`KeyIndex()` reported only the base table's own keys while
+    // the extension's fields were already present as columns. Stored as NAMES — see
+    // ParsedExtensionKey for why ids cannot be resolved at parse time.
+    private static readonly Dictionary<string, List<ParsedExtensionKey>> _parsedExtensionKeys = new();
+
     // Parsed tableextension object ids: base-table-name (lowercased) → tableextension object
     // ids extending it, in AL declaration order (= the order BC registers them, which the
     // trigger pipeline preserves). Used to instantiate the emitted TableExtension{id} CLR
@@ -158,7 +166,8 @@ public static partial class RecordPatches
     /// before EnsureBcSymbolExtensionIndex ran stayed frozen forever without the precompiled
     /// extension's fields.
     /// </summary>
-    private static void MergeExtensionFields(string baseTableName, int extensionId, IEnumerable<ParsedField> fields)
+    private static void MergeExtensionFields(string baseTableName, int extensionId, IEnumerable<ParsedField> fields,
+        IEnumerable<ParsedExtensionKey>? keys = null)
     {
         if (string.IsNullOrEmpty(baseTableName)) return;
         var key = baseTableName.ToLowerInvariant();
@@ -177,6 +186,30 @@ public static partial class RecordPatches
             foreach (var f in fields)
                 if (existingIds.Add(f.FieldId))
                     existing.Add(f);
+        }
+
+        // #3216 — the keys half of the same merge, de-duplicated on (key name + field-name
+        // composition) for the same reason the fields above are de-duplicated on field id: one
+        // extension can legitimately be scanned twice (a dependency source dir registered by
+        // two suites, or a SymbolReference.json read again after an .app re-registration), and
+        // a key listed twice would show up twice in RecordRef.KeyIndex(). The composition is
+        // part of the identity because two DIFFERENT tableextensions on one table may each
+        // declare a key called "Key1" — AL only requires a key name to be unique within its own
+        // object — so name alone would silently drop the second one.
+        if (keys != null)
+        {
+            if (!_parsedExtensionKeys.TryGetValue(key, out var existingKeys))
+                _parsedExtensionKeys[key] = existingKeys = new List<ParsedExtensionKey>();
+            foreach (var k in keys)
+            {
+                if (k.FieldNames.Count == 0) continue;
+                if (existingKeys.Any(e => string.Equals(e.Name, k.Name, StringComparison.OrdinalIgnoreCase)
+                        && e.FieldNames.Count == k.FieldNames.Count
+                        && e.FieldNames.Zip(k.FieldNames, (a, b) =>
+                               string.Equals(a, b, StringComparison.OrdinalIgnoreCase)).All(x => x)))
+                    continue;
+                existingKeys.Add(k);
+            }
         }
 
         if (extensionId > 0)
@@ -249,6 +282,10 @@ public static partial class RecordPatches
         _tableExtensionTypeCache.Clear();
         _parsedTables.Clear();
         _parsedExtensionFields.Clear();
+        // #3216 — cleared alongside _parsedExtensionFields, never separately: the two halves
+        // describe one merge, and a keys map surviving a reload would attach the previous
+        // bundle's extension keys to the next bundle's tables.
+        _parsedExtensionKeys.Clear();
         _extensionIdsByBaseTable.Clear();
         // #2478: must invalidate _bcSymbolTableIndex too, not just _bcSymbolExtensionIndexBuilt —
         // EnsureBcSymbolExtensionIndex's only call site is inside EnsureBcSymbolTableIndex, gated
