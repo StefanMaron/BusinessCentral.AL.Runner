@@ -2129,6 +2129,72 @@ public sealed class ProvisioningCheckTests : IDisposable
         Assert.Contains(older, dirs);
     }
 
+    // ── The trade this narrowing makes, pinned in both directions ────────────
+    // Coverage is decided from file NAMES. A name is not its bytes, so a package whose name
+    // dominates but whose content is unusable hides a complete older copy that the
+    // unfiltered search set would have resolved from. The reachable shape is an interrupted
+    // ArtifactDownloader write: neither downloader writes to a temporary file and renames,
+    // so a killed 98 MB File.WriteAllBytes leaves a truncated package behind under the right
+    // name. These two tests state the cost and the consequence, so neither can change
+    // silently.
+
+    /// <summary>Helper: a package with the right NAME and unusable BYTES — the leading third
+    /// of a well-formed one, which is the shape an interrupted write leaves: the NAVX header
+    /// is intact and the archive behind it is not.</summary>
+    private static void WriteTruncatedApp(string dir, string fileName,
+        string name, string publisher, string version)
+    {
+        Directory.CreateDirectory(dir);
+        var whole = MakeR2RNavxApp(Guid.NewGuid().ToString(), name, publisher, version);
+        File.WriteAllBytes(Path.Combine(dir, fileName), whole.Take(whole.Length / 3).ToArray());
+    }
+
+    [Fact]
+    public void CollectRunnerOwnedProvisionDirs_TruncatedPackageInTheDominantDir_LosesTheOlderCompleteCopy()
+    {
+        var root = Path.Combine(_dir, "artifacts-3037-truncated");
+        var older = Path.Combine(root, "28.1.49838.54100", "platform-apps");
+        WritePlatformAppSet(older, "28.1.49838.54100");
+        var newest = Path.Combine(root, "28.1.49838.54308", "platform-apps");
+        WritePlatformAppSet(newest, "28.1.49838.54308");
+        File.Delete(Path.Combine(newest, "Microsoft_Base Application_28.1.49838.54308.app"));
+        WriteTruncatedApp(newest, "Microsoft_Base Application_28.1.49838.54308.app",
+            "Base Application", "Microsoft", "28.1.49838.54308");
+
+        var dirs = ProvisioningCheck.CollectRunnerOwnedProvisionDirs(root, "28.1");
+
+        // The cost: the newest directory NAMES every app, so the older complete copy of Base
+        // Application is dropped even though it is the only usable one on disk.
+        Assert.Equal(new[] { newest }, dirs.ToArray());
+    }
+
+    [Fact]
+    public void CollectRunnerOwnedProvisionDirs_TruncatedPackageInTheDominantDir_FailsLoudlyNamingTheApp()
+    {
+        // The consequence, and why the cost is acceptable: what the run does about it is
+        // report Base Application as missing — by name, over a search set it can print — not
+        // return a wrong answer. Nothing caches the narrowed result, so re-fetching the
+        // package clears it.
+        var root = Path.Combine(_dir, "artifacts-3037-truncated-loud");
+        var older = Path.Combine(root, "28.1.49838.54100", "platform-apps");
+        WritePlatformAppSet(older, "28.1.49838.54100");
+        var newest = Path.Combine(root, "28.1.49838.54308", "platform-apps");
+        WritePlatformAppSet(newest, "28.1.49838.54308");
+        File.Delete(Path.Combine(newest, "Microsoft_Base Application_28.1.49838.54308.app"));
+        WriteTruncatedApp(newest, "Microsoft_Base Application_28.1.49838.54308.app",
+            "Base Application", "Microsoft", "28.1.49838.54308");
+        var required = new[] { "Application", "Base Application", "System Application" };
+
+        var narrowed = ProvisioningCheck.CollectRunnerOwnedProvisionDirs(root, "28.1");
+
+        Assert.Equal(new[] { "Base Application" },
+            ProvisioningCheck.FindMissingPlatformApps(required, narrowed).ToArray());
+        // The contrast that proves the fixture is sound and the difference really is the
+        // narrowing: over BOTH directories the older complete copy answers, as it did before
+        // this filter existed.
+        Assert.Empty(ProvisioningCheck.FindMissingPlatformApps(required, new[] { newest, older }));
+    }
+
     // ── AppFileCoverageKey: the filename split the narrowing rests on ────────
 
     [Theory]

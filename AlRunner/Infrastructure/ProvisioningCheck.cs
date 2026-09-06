@@ -650,16 +650,24 @@ public static class ProvisioningCheck
     /// set (Base Application alone is ~98 MB), and every caller — <see
     /// cref="AlRunner.DependencyResolver"/>'s index, <see cref="FindMissingPlatformApps"/>,
     /// <see cref="ScanDependencyEdges"/> — reads a manifest, and since #2987 therefore a
-    /// content hash, for every <c>.app</c> in every directory returned here. Measured on a
-    /// box with four provisioned patches: 694.2 MB across 355 files scanned to resolve six
-    /// packages, most of it the same Base Application four times over.
+    /// content hash, for every <c>.app</c> in every directory returned here.
     ///
-    /// So a directory is omitted when — and only when — every package in it is already
-    /// reachable, at an equal or higher version, through a directory that stays; see
-    /// <see cref="ContributesUncoveredPackages"/> for why that is lossless and which cases it
-    /// deliberately keeps (a partially downloaded newest patch, a hand-placed newer package
-    /// under an older patch, and every empty directory). It never fabricates a directory, and
-    /// it never omits one whose contents are not otherwise reachable.</para>
+    /// Measured against <c>main</c> at 80abc76a — so WITH #3042's inode-keyed content-hash
+    /// memo already in place, which collapses hard-linked duplicates and does nothing for
+    /// these, since separate downloads are separate files. Four provisioned patches, one
+    /// bundle needing six packages: the search set was 8 directories / 351 packages /
+    /// 677.4 MB, and is now 3 / 119 / 266.5 MB. Interleaved, 5 samples, best-of:
+    /// 2.18 s wall and 2.41 s CPU before, 1.81 s and 1.75 s after, against a same-binary
+    /// control that moved 0.10 s. On a hard-linked root the difference is 0.03 s — inside
+    /// that control — because #3042 already covers that shape.
+    ///
+    /// So a directory is omitted when — and only when — every package in it is already named,
+    /// at an equal or higher version, by a directory that stays. Coverage is decided from the
+    /// DIRECTORY LISTING — names and the versions those names encode — and never from a
+    /// package's contents; <see cref="ContributesUncoveredPackages"/> states exactly what that
+    /// buys, what it costs, and which cases it deliberately keeps (a partially downloaded
+    /// newest patch, a hand-placed newer package under an older patch, and every empty
+    /// directory). It never fabricates a directory.</para>
     /// </summary>
     public static IReadOnlyList<string> CollectRunnerOwnedProvisionDirs(
         string artifactsRootDir, string majorMinorPrefix)
@@ -688,17 +696,17 @@ public static class ProvisioningCheck
     /// its whole contents into <paramref name="covered"/> so a later (older) patch directory
     /// is measured against it.
     ///
-    /// <para><b>Why this is lossless.</b> The narrowing decides purely on FILE NAMES — one
-    /// directory listing per directory, no package is opened, nothing is hashed — and it
-    /// drops a directory only when every package in it is already reachable at an equal or
-    /// higher version through a directory that stays. Three consequences worth stating,
-    /// because each is a way this could have gone wrong:</para>
+    /// <para><b>What the decision rests on.</b> FILE NAMES — one directory listing per
+    /// directory, no package is opened, nothing is hashed — so a directory is dropped only
+    /// when every package in it is already NAMED, at an equal or higher filename-encoded
+    /// version, by a directory that stays. Three cases it deliberately keeps, because each is
+    /// a way this could have gone wrong:</para>
     /// <list type="bullet">
-    /// <item>A directory whose newest sibling is only PARTIALLY downloaded stays.
-    /// <see cref="AlRunner.Provisioning.ArtifactDownloader.PlatformApps"/> writes each
-    /// <c>.app</c> straight into its output directory and <c>continue</c>s past an entry it
-    /// could not fetch, so a partial set is reachable, and the older complete one is what
-    /// answers the need.</item>
+    /// <item>A directory whose newest sibling holds a DIFFERENT, smaller set stays. The
+    /// curated download sets are fetched entry by entry, so an interrupted
+    /// <see cref="AlRunner.Provisioning.ArtifactDownloader.PlatformApps"/> can leave a newest
+    /// patch that names only some of the apps, and the older complete one supplies the
+    /// rest.</item>
     /// <item>The <see cref="EnumerateVersionDirNames"/> order is newest patch first, so a
     /// duplicate is dropped from the OLDER directory, never the newer one. But the decision
     /// does not rest on that order where a file name can settle it: a hand-placed
@@ -711,11 +719,39 @@ public static class ProvisioningCheck
     /// behind — the shape #2234's own regression tests construct.</item>
     /// </list>
     ///
+    /// <para><b>What it costs, stated rather than papered over.</b> A name is not its bytes.
+    /// A file whose NAME dominates but whose CONTENT is unusable — the reachable shape being
+    /// a <c>File.WriteAllBytes</c> interrupted part-way through a 98 MB package, since neither
+    /// downloader writes to a temporary file and renames — now hides a complete older copy
+    /// that the unfiltered search set would have resolved from. Reproduced: a
+    /// <c>Microsoft_Base Application_&lt;newer&gt;.app</c> truncated to 1 MB over a complete
+    /// copy one patch back turns a run that used to pass into exit 2 with "missing from every
+    /// searched cache: Base Application".</para>
+    ///
+    /// <para>That is a deliberate trade, not an oversight, and it is pinned by
+    /// ProvisioningCheckTests.CollectRunnerOwnedProvisionDirs_TruncatedPackageInTheDominantDir_*.
+    /// The failure is LOUD — it names the app, lists every directory searched and prints the
+    /// provision command — and nothing caches the narrowed result, so it is a refusal rather
+    /// than a wrong answer, and it clears the moment the package is re-fetched. It is argued
+    /// to be BETTER than silently resolving around it: a truncated package in the artifact
+    /// cache is a real defect, and recovering from a stale patch leaves it there indefinitely
+    /// while making the next `provision` look unnecessary.</para>
+    ///
+    /// <para>Two content checks were considered and rejected. A ZIP end-of-central-directory
+    /// record in the last 64 bytes: measured on this machine, 0 of 119 real packages have one
+    /// — every signed <c>.app</c> carries a ~10 KB signature blob after the archive, ending
+    /// in an <c>NXSB</c> trailer, so the EOCD sits ~10 KB from the end and the check would
+    /// credit nothing. Requiring that <c>NXSB</c> trailer instead does catch truncation, but
+    /// it is an undocumented property of Microsoft's signing that no unsigned package would
+    /// satisfy. Neither closes the general case — a package corrupt in the MIDDLE passes both
+    /// — so neither would restore a literal losslessness claim, and a strong claim resting on
+    /// a weak check is worse than an accurate weaker one. The honest check is reading the
+    /// manifest, which is the entire cost this avoids.</para>
+    ///
     /// <para>An unrecognised file-name shape yields no version from
     /// <see cref="AppFileCoverageKey"/>, which can only make this MORE conservative: it can
-    /// no longer prove one copy outranks another, so the directory stays. The failure
-    /// direction is a directory scanned needlessly, never a package that should have been
-    /// found and was not.</para>
+    /// no longer prove one copy outranks another, so the directory stays. That failure
+    /// direction is a directory scanned needlessly, never a package that goes unfound.</para>
     /// </summary>
     private static bool ContributesUncoveredPackages(string dir, Dictionary<string, Version?> covered)
     {
