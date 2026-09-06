@@ -124,11 +124,18 @@ internal static class MissingTestDataDiagnosis
     /// Resolve the failure to exactly one table the store can answer for. Ordered by how strong
     /// the evidence is: an id the runner itself recorded, then a table name BC put on a typed
     /// property. Anything else is not evidence and returns false.
+    ///
+    /// <para>The walk follows InnerException AND the converted-error link a TestPage teardown
+    /// leaves behind (#3189). A page trigger that fails on a missing setup record is reported to
+    /// AL as BC's "The TestPage is not open.", and that replacement carries neither the table id
+    /// nor a NavTestFieldException — so without this step the mask hid the evidence from this
+    /// diagnosis too, and exactly the failure #2240 exists to explain went unexplained whenever
+    /// it happened inside a page trigger.</para>
     /// </summary>
     private static bool TryNameTable(Exception ex, out AlRunner.Patches.RecordPatches.StoredTableCensus census)
     {
         census = default!;
-        for (var e = ex; e != null; e = e.InnerException)
+        for (var e = ex; e != null; e = Next(e))
         {
             if (e.Data[TableIdDataKey] is int taggedId
                 && AlRunner.Patches.RecordPatches.TryCensusTable(taggedId, out census))
@@ -140,5 +147,11 @@ internal static class MissingTestDataDiagnosis
                 return true;
         }
         return false;
+
+        // InnerException first, so an ordinary wrapped failure walks exactly as it did before.
+        // The converted-error link is only ever present on a replacement the runner built
+        // itself, and a replacement has no InnerException on the path that carries it.
+        static Exception? Next(Exception e) =>
+            e.InnerException ?? MaskedTriggerErrorDiagnosis.Unmask(e);
     }
 }
