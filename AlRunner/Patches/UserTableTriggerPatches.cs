@@ -282,12 +282,25 @@ public static class UserTableTriggerPatches
     /// switch listing 2000000120. So for User it is always false, and <c>DeleteAllAsync</c>
     /// falls to its row loop, which calls <c>record.ALDeleteAsync(DataError.ThrowError,
     /// runApplicationTrigger, isBulkDelete: true)</c> per row. Both AL surfaces funnel here.
-    /// The <c>SurdDeleteAll…</c> test in tests/runner-extras/user-delete-cascade measures it
-    /// rather than trusting the reading.</para>
+    /// The <c>UstDeleteAllCascadesTheSameWayDeleteDoes</c> test in
+    /// tests/runner-extras/user-system-table-triggers measures it rather than trusting the
+    /// reading.</para>
     ///
     /// <para>WHY IT GUARDS ON THE ROW EXISTING. BC cascades in OnAFTERDelete — i.e. only for a
     /// delete that happened. A Cecil prepend runs before, so without the guard a refused or
     /// no-op delete would still take the dependent rows with it.</para>
+    ///
+    /// <para>DELIBERATE DIVERGENCE — "after" here is approximate. This is a PREPEND, so the
+    /// guard above ("does the row exist?") is the closest thing available to BC's
+    /// after-the-fact position. The case it does not cover is a delete that is attempted on a
+    /// row that DOES exist and then fails anyway — an AL <c>OnDelete</c> trigger raising, most
+    /// obviously. There the cascade has already run and BC's would not have. The runner's
+    /// write-transaction rollback covers it in practice, because the raise rolls the cascade
+    /// back with everything else since the last commit point, but that is rollback doing the
+    /// work rather than the guard, and it is not the same statement. Left as-is deliberately:
+    /// moving to a genuine post-delete position would mean owning BC's delete entry point
+    /// rather than prepending to it, which is a much larger change than the divergence costs.
+    /// Listed here alongside the other deliberate divergences in this file's header.</para>
     /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void OnAfterUserDelete(object? record)

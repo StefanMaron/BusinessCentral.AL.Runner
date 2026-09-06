@@ -86,16 +86,15 @@
 //     * On a real tier the duplicate user name is refused by a TRIGGER, not an index. Ncl's
 //       SystemTableTriggers.OnBeforeInsertAsync `case 2000000120:` arm validates a unique user
 //       name (with the Windows SID, authentication email and application id) before writing.
-//       UserTableTriggerPatches's own header records that the runner reproduces exactly one
-//       thing from that arm — its User Property companion insert — and that "None of that
-//       [validation] is reproduced here".
 //
-//   So the run is left holding two rows sharing a user name where BC would hold one
-//   (AlRunner#2983, with the reproducer). Today's reachable refusal is the primary-key one,
-//   which is the benign AlreadyPresent case; Refused is reached only from the exception path.
-//   It is implemented anyway: the bug was discarding the signal, and #2983 — closed by
-//   reproducing the trigger's validation or by enforcing uniqueness in the store — is exactly
-//   what would make Refused reachable from AL. That fixture is the canary for the moment it is.
+//   UPDATED by #2983: UserTableTriggerPatches now DOES reproduce that arm's two uniqueness
+//   refusals — the user name (field 2) and the non-empty Windows Security ID (field 7) — through
+//   BC's own exception factories. So a same-named foreign user now refuses this insert, and
+//   Refused is reachable from AL rather than only from the exception path. The seed's own
+//   RowWithSameSecurityIdExists skip keeps the session user itself out of that refusal.
+//   tests/runner-extras/user-system-table-triggers measures both refusals and their controls.
+//   Still NOT reproduced from the same arm: ValidateAuthenticationEmailAsync and
+//   ValidateApplicationIdAsync (#2363's subject) — see UserTableTriggerPatches's header.
 //
 // PRECOMPILED-DLL RESPECT
 //   No AL business-logic body is touched. NavRecord, NCLMetaTable, NCLMetaField and NavValue are
@@ -129,13 +128,14 @@ public static partial class RecordPatches
     /// neither, and marked the bundle seeded either way.
     ///
     /// Which refusals are reachable is measured, not assumed. The runner's store for this table
-    /// is BC's own <c>CreateTempDataAccess</c>, which enforces the primary key only; and real
-    /// BC refuses a duplicate user name from its system-table TRIGGER
-    /// (<c>SystemTableTriggers.OnBeforeInsertAsync</c>, <c>case 2000000120:</c>), which
-    /// <c>UserTableTriggerPatches</c> deliberately does not reproduce. So today a same-named
-    /// foreign user does NOT refuse this insert (AlRunner#2983), and <see cref="Refused"/> is
-    /// reached only from the exception path. It is implemented regardless: the defect was
-    /// discarding the signal, and #2983 is exactly what makes the second refusal reachable.
+    /// is BC's own <c>CreateTempDataAccess</c>, which enforces the primary key only; real BC
+    /// refuses a duplicate user name from its system-table TRIGGER
+    /// (<c>SystemTableTriggers.OnBeforeInsertAsync</c>, <c>case 2000000120:</c>), and since
+    /// #2983 <c>UserTableTriggerPatches</c> reproduces that refusal. So a same-named foreign
+    /// user DOES refuse this insert now, and <see cref="Refused"/> is reachable from AL and not
+    /// only from the exception path — which is what this enum was built to be able to say.
+    /// The seed skips the refusal for a row that already carries this security id
+    /// (<c>RowWithSameSecurityIdExists</c>), so seeding the session user stays idempotent.
     /// </summary>
     internal enum UserRowSeedOutcome
     {

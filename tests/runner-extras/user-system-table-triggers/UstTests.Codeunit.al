@@ -53,6 +53,7 @@ codeunit 65621 "UST Tests"
         FirstNameTok: Label 'UST-FIRST', Locked = true;
         SecondNameTok: Label 'UST-SECOND', Locked = true;
         WinSidTok: Label 'S-1-5-21-1111111111-2222222222-3333333333-1001', Locked = true;
+        WinSidUniqueErr: Label 'The same Windows Account can be connected to only one', Locked = true;
 
     local procedure NewUser(var UserRec: Record User; Name: Text): Guid
     var
@@ -145,6 +146,13 @@ codeunit 65621 "UST Tests"
         SecondUser."Windows Security ID" := WinSidTok;
 
         asserterror SecondUser.Insert();
+        // Only the leading clause is asserted. BC's full text is
+        // 'The same Windows Account can be connected to only one Dynamics 365 Business Central
+        // user.' -- the tail interpolates the product name, which is branding and moves without
+        // the behaviour moving. The clause below is what BC's own message resource states about
+        // the RULE, and nothing else in this runner produces it. A bare `asserterror` would have
+        // been satisfied by any error at all, including the row simply failing to insert.
+        Assert.ExpectedError(WinSidUniqueErr, GetLastErrorText());
         Assert.IsFalse(
             Reader.Get(SecondSid),
             'a second user carrying an existing Windows Security ID must not be in the table');
@@ -193,15 +201,13 @@ codeunit 65621 "UST Tests"
     end;
 
     [Test]
-    procedure UstDeletingAUserTakesItsAccessControlAndIsolatedStorageRows()
+    procedure UstDeletingAUserTakesItsAccessControlRows()
     var
         UserRec: Record User;
         AccessControl: Record "Access Control";
-        IsolatedStorage: Record "Isolated Storage";
         Sid: Guid;
-        AppId: Guid;
     begin
-        Sid := NewUser(UserRec, 'UST-DEL-DEPENDENTS');
+        Sid := NewUser(UserRec, 'UST-DEL-ACCESSCONTROL');
 
         AccessControl.Init();
         AccessControl."User Security ID" := Sid;
@@ -209,13 +215,11 @@ codeunit 65621 "UST Tests"
         AccessControl."Company Name" := CopyStr(CompanyName(), 1, MaxStrLen(AccessControl."Company Name"));
         AccessControl.Insert();
 
-        AppId := CreateGuid();
-        IsolatedStorage.Init();
-        IsolatedStorage."App Id" := AppId;
-        IsolatedStorage.Scope := IsolatedStorage.Scope::User;
-        IsolatedStorage."User Id" := Sid;
-        IsolatedStorage."Key" := 'UST-KEY';
-        IsolatedStorage.Insert();
+        AccessControl.Reset();
+        AccessControl.SetRange("User Security ID", Sid);
+        Assert.AreEqual(
+            1, AccessControl.Count(),
+            'precondition: the Access Control row must actually be in the table before the delete');
 
         UserRec.Delete();
 
@@ -224,12 +228,76 @@ codeunit 65621 "UST Tests"
         Assert.AreEqual(
             0, AccessControl.Count(),
             'deleting a User must take its Access Control rows (2000000053, field 1)');
+    end;
+
+    [Test]
+    procedure UstDeletingAUserTakesItsIsolatedStorageRows()
+    // Deliberately its OWN test rather than sharing one with Access Control. AL stops a test at
+    // its first failing assertion, so a combined test's RED never evaluates the second table's
+    // assertion at all -- the cascade for it would be unproven while the suite looked green.
+    var
+        UserRec: Record User;
+        IsolatedStorage: Record "Isolated Storage";
+        Sid: Guid;
+    begin
+        Sid := NewUser(UserRec, 'UST-DEL-ISOLATEDSTORAGE');
+
+        IsolatedStorage.Init();
+        IsolatedStorage."App Id" := CreateGuid();
+        IsolatedStorage.Scope := IsolatedStorage.Scope::User;
+        IsolatedStorage."User Id" := Sid;
+        IsolatedStorage."Key" := 'UST-KEY';
+        IsolatedStorage.Insert();
+
+        IsolatedStorage.Reset();
+        IsolatedStorage.SetRange("User Id", Sid);
+        // Without this the test passes against a cascade that does nothing: if the Insert above
+        // silently failed to persist, Count() reads 0 both before and after the delete.
+        Assert.AreEqual(
+            1, IsolatedStorage.Count(),
+            'precondition: the Isolated Storage row must actually be in the table before the delete');
+
+        UserRec.Delete();
 
         IsolatedStorage.Reset();
         IsolatedStorage.SetRange("User Id", Sid);
         Assert.AreEqual(
             0, IsolatedStorage.Count(),
             'deleting a User must take its Isolated Storage rows (2000000107, field 4)');
+    end;
+
+    [Test]
+    procedure UstDeletingAUserTakesItsTenantReportLayoutSelectionRows()
+    // The fourth of BC's four cascade targets. Its field 5 "User ID" is a Guid, and the table's
+    // clustered key is (Report ID, Company Name, User ID) -- so a row keyed on this user is
+    // reachable by a filter on field 5 alone.
+    var
+        UserRec: Record User;
+        LayoutSelection: Record "Tenant Report Layout Selection";
+        Sid: Guid;
+    begin
+        Sid := NewUser(UserRec, 'UST-DEL-LAYOUTSELECTION');
+
+        LayoutSelection.Init();
+        LayoutSelection."Report ID" := 65620;
+        LayoutSelection."Company Name" := CopyStr(CompanyName(), 1, MaxStrLen(LayoutSelection."Company Name"));
+        LayoutSelection."User ID" := Sid;
+        LayoutSelection."Layout Name" := 'UST-LAYOUT';
+        LayoutSelection.Insert();
+
+        LayoutSelection.Reset();
+        LayoutSelection.SetRange("User ID", Sid);
+        Assert.AreEqual(
+            1, LayoutSelection.Count(),
+            'precondition: the Tenant Report Layout Selection row must be in the table before the delete');
+
+        UserRec.Delete();
+
+        LayoutSelection.Reset();
+        LayoutSelection.SetRange("User ID", Sid);
+        Assert.AreEqual(
+            0, LayoutSelection.Count(),
+            'deleting a User must take its Tenant Report Layout Selection rows (2000000233, field 5)');
     end;
 
     [Test]
@@ -241,6 +309,8 @@ codeunit 65621 "UST Tests"
         KeptUser: Record User;
         UserProperty: Record "User Property";
         AccessControl: Record "Access Control";
+        IsolatedStorage: Record "Isolated Storage";
+        LayoutSelection: Record "Tenant Report Layout Selection";
         DoomedSid: Guid;
         KeptSid: Guid;
     begin
@@ -252,6 +322,20 @@ codeunit 65621 "UST Tests"
         AccessControl."Role ID" := 'UST-KEPT-ROLE';
         AccessControl."Company Name" := CopyStr(CompanyName(), 1, MaxStrLen(AccessControl."Company Name"));
         AccessControl.Insert();
+
+        IsolatedStorage.Init();
+        IsolatedStorage."App Id" := CreateGuid();
+        IsolatedStorage.Scope := IsolatedStorage.Scope::User;
+        IsolatedStorage."User Id" := KeptSid;
+        IsolatedStorage."Key" := 'UST-KEPT-KEY';
+        IsolatedStorage.Insert();
+
+        LayoutSelection.Init();
+        LayoutSelection."Report ID" := 65621;
+        LayoutSelection."Company Name" := CopyStr(CompanyName(), 1, MaxStrLen(LayoutSelection."Company Name"));
+        LayoutSelection."User ID" := KeptSid;
+        LayoutSelection."Layout Name" := 'UST-KEPT-LAYOUT';
+        LayoutSelection.Insert();
 
         DoomedUser.Delete();
 
@@ -267,6 +351,18 @@ codeunit 65621 "UST Tests"
         Assert.AreEqual(
             1, AccessControl.Count(),
             'the other user''s Access Control row must survive');
+
+        IsolatedStorage.Reset();
+        IsolatedStorage.SetRange("User Id", KeptSid);
+        Assert.AreEqual(
+            1, IsolatedStorage.Count(),
+            'the other user''s Isolated Storage row must survive');
+
+        LayoutSelection.Reset();
+        LayoutSelection.SetRange("User ID", KeptSid);
+        Assert.AreEqual(
+            1, LayoutSelection.Count(),
+            'the other user''s Tenant Report Layout Selection row must survive');
     end;
 
     [Test]
