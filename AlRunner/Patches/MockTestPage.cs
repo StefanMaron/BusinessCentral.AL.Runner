@@ -425,7 +425,15 @@ internal class LiveNavTestPage : MockITestPage
     /// </summary>
     public override ITestAction GetBuiltInAction(FormResult formResult)
     {
-        if (_tornDown) throw MakeTestPageNotOpenException();
+        // Torn down, OR the page has already been closed from AL while the handler was still
+        // running -- CurrPage.Close() from an action's OnAction. A handler that then reaches
+        // for the built-in OK()/Cancel() is asking a page that no longer exists to close
+        // itself again, and real BC refuses it by name rather than closing twice: "The
+        // TestPage is not open." (corpus codeunit 60296 "MQC Self Close Tests", measured on a
+        // service tier). The instance the handler holds is not the one that performed the
+        // close -- BC's ClosePage path builds its own -- so the local teardown flag cannot see
+        // it and BC's own form state is what has to be asked (issue #3091).
+        if (_tornDown || FormAlreadyClosed()) throw MakeTestPageNotOpenException();
         if (!Offers(formResult)) return null!;
         return new RecordingBuiltInAction(this, formResult);
     }
@@ -635,6 +643,22 @@ internal class LiveNavTestPage : MockITestPage
     // (action invocation) propagates with its own error text and leaves the page open. Only
     // Loaded() (the record-positioning trigger) sets this flag.
     private bool _tornDown;
+
+    /// <summary>
+    /// Whether BC itself no longer considers this page's form open. Answers FALSE when there
+    /// is no form to ask or the property cannot be read, so an unreadable shape can never
+    /// start refusing calls that used to work — the guard only ever fires on a definite "BC
+    /// says closed".
+    /// </summary>
+    private bool FormAlreadyClosed()
+    {
+        var form = _page?.Form;
+        if (form == null) return false;
+        var isOpen = form.GetType().GetProperty("IsOpen",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+            | System.Reflection.BindingFlags.Instance);
+        return isOpen?.GetValue(form) is false;
+    }
 
     // Set only around the page-construction-time initial positioning call (MarkOpened /
     // RunnerTestClientSession.GetPage's own MoveFirst()). MarkOpened's caller wraps it in a
@@ -1369,6 +1393,12 @@ internal class LiveNavTestPage : MockITestPage
                 "testpage-close-veto — the page's OnQueryClosePage returned false, which in BC "
                 + "leaves the page open awaiting the user. See docs/scope.md");
         FlushParts(); FlushRow(); _opened = false;
+
+        // The triggers above are this page's close, so BC's own form state has to agree that
+        // it happened — otherwise IsOpen stays true and whoever else is holding the form runs
+        // the close a second time. ForceClose raises nothing, which is exactly right here:
+        // the triggers have already run once (issue #3091).
+        _page?.ForceCloseForm();
     }
     public override void Dispose() { FlushParts(); FlushRow(); }
 

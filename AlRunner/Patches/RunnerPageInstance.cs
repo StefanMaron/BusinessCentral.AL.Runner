@@ -1514,6 +1514,36 @@ internal sealed partial class RunnerPageInstance
     }
 
     /// <summary>
+    /// Bring BC's own form state in line after this page has already been closed by the
+    /// runner's trigger-raising path, using BC's <c>NavForm.ForceClose()</c> — which
+    /// unregisters the form and clears <c>IsOpen</c> and, deliberately, raises nothing.
+    ///
+    /// It exists because there are two ways a modal page ends and they used to disagree about
+    /// whether the page was still open. <c>CurrPage.Close()</c> reaches BC's
+    /// <c>NavForm.Close()</c> → <c>NavTestExecution.ClosePage</c> → <c>ITestPage.Close()</c>,
+    /// which lands on <see cref="LiveNavTestPage.Close"/> and raises OnQueryClosePage and
+    /// OnClosePage itself — but never called <c>CloseForm</c>, so <c>IsOpen</c> stayed true and
+    /// the modal dispatch ran the whole sequence a second time when the handler returned. Both
+    /// triggers fired twice, and a page that persists from OnQueryClosePage wrote twice
+    /// (issue #3091).
+    ///
+    /// <c>ForceClose</c> rather than <c>CloseForm</c> is the point: the triggers have already
+    /// run exactly once, at the moment the AL asked for them, and <c>CloseForm</c> would raise
+    /// OnClosePage again. Real BC runs each once — corpus codeunit 60296 "MQC Self Close
+    /// Tests", measured on a service tier.
+    /// </summary>
+    internal void ForceCloseForm()
+    {
+        var forceClose = FindNavFormMethod("ForceClose", Type.EmptyTypes);
+        if (forceClose == null) return;   // nothing to reconcile on a shape without it
+        try { forceClose.Invoke(_form, Array.Empty<object>()); }
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+        }
+    }
+
+    /// <summary>
     /// Run the page's OnNewRecord trigger — the one that seeds the defaults a blank record
     /// does not have (<c>Rec.Validate(Scope, Scope::Tenant)</c> and friends). Skipping it
     /// does not fail where the mistake is: the row still inserts, just carrying the field
