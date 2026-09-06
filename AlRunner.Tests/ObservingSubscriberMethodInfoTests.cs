@@ -64,6 +64,23 @@ public class ObservingSubscriberMethodInfoTests
             await Task.Yield();
             throw new InvalidOperationException("ASYNC-GENERIC-SUBSCRIBER-ERROR");
         }
+
+        // async ValueTask<T> is the ONLY shape that reaches BcRuntime.ObserveAsyncResult's
+        // last arm — the one that has to find ValueTask<>.AsTask by reflection, because a
+        // boxed ValueTask<T> is neither a Task nor a ValueTask and so matches no case label.
+        public async ValueTask<int> AsyncGenericValueTaskThrows()
+        {
+            AsyncCalls++;
+            await Task.Yield();
+            throw new InvalidOperationException("ASYNC-GENERIC-VALUETASK-SUBSCRIBER-ERROR");
+        }
+
+        public async ValueTask<int> AsyncGenericValueTaskOk()
+        {
+            AsyncCalls++;
+            await Task.Yield();
+            return 42;
+        }
     }
 
     private static MethodInfo M(string name) =>
@@ -113,10 +130,64 @@ public class ObservingSubscriberMethodInfoTests
     [Fact]
     public void AsyncGenericSubscriberThatThrows_AlsoSurfacesTheError()
     {
-        // Task<T> / ValueTask<T> take a different arm of BcRuntime.ObserveAsyncResult.
+        // Task<T> takes the SAME arm of BcRuntime.ObserveAsyncResult as a plain Task —
+        // `case Task t`, because Task<T> derives from Task. An earlier version of this
+        // comment claimed a different arm; that was wrong (#3115), so the claim is asserted
+        // here rather than left as prose. The genuinely different arm is ValueTask<T>'s,
+        // covered by AsyncGenericValueTaskSubscriberThatThrows_... below.
+        var raw = M(nameof(Subscriber.AsyncGenericThrows)).Invoke(new Subscriber(), null);
+        Assert.IsAssignableFrom<Task>(raw);
+
         var tie = Assert.Throws<TargetInvocationException>(
             () => Invoke(M(nameof(Subscriber.AsyncGenericThrows)), new Subscriber()));
         Assert.Equal("ASYNC-GENERIC-SUBSCRIBER-ERROR", tie.InnerException!.Message);
+    }
+
+    [Fact]
+    public void AsyncGenericValueTaskSubscriberThatThrows_SurfacesTheErrorThroughTheReflectionArm()
+    {
+        // The arm this test exists for: a boxed ValueTask<T> matches NEITHER `case Task t`
+        // NOR `case ValueTask vt`, so BcRuntime.ObserveAsyncResult can only observe it by
+        // finding ValueTask<>.AsTask through reflection. Assert that first — otherwise this
+        // test could silently drift onto one of the arms the tests above already cover and
+        // stop proving anything about the reflection. Remove that arm and this test fails
+        // with "no exception was thrown", which is exactly the swallow of #2932.
+        var target = new Subscriber();
+        var raw = M(nameof(Subscriber.AsyncGenericValueTaskThrows)).Invoke(target, null)!;
+        Assert.IsType<ValueTask<int>>(raw);
+        Assert.False(raw is Task, "ValueTask<T> must not match `case Task t`");
+        Assert.False(raw is ValueTask, "ValueTask<T> must not match `case ValueTask vt`");
+
+        // Undecorated, MethodInfo.Invoke RETURNED NORMALLY above: the error is reachable only
+        // by completing the returned ValueTask<int>. That is precisely the value BC's
+        // memberId==0 branch discards, and precisely the swallow #2932 was about.
+        var onlyOnTheTask = Assert.Throws<InvalidOperationException>(
+            () => ((ValueTask<int>)raw).AsTask().GetAwaiter().GetResult());
+        Assert.Equal("ASYNC-GENERIC-VALUETASK-SUBSCRIBER-ERROR", onlyOnTheTask.Message);
+        Assert.Equal(1, target.AsyncCalls);
+
+        // Decorated, the same call raises — wrapped in a TargetInvocationException, which is
+        // what routes it to BC's CallEventSubscriberInternalAsync ExceptionDispatchInfo arm,
+        // the same arm a synchronously-thrown subscriber error already takes.
+        var decoratedTarget = new Subscriber();
+        var tie = Assert.Throws<TargetInvocationException>(
+            () => Invoke(M(nameof(Subscriber.AsyncGenericValueTaskThrows)), decoratedTarget));
+        var inner = Assert.IsType<InvalidOperationException>(tie.InnerException);
+        Assert.Equal("ASYNC-GENERIC-VALUETASK-SUBSCRIBER-ERROR", inner.Message);
+        // The state machine ran to the throw rather than being short-circuited.
+        Assert.Equal(1, decoratedTarget.AsyncCalls);
+    }
+
+    [Fact]
+    public void AsyncGenericValueTaskSubscriberThatSucceeds_ReturnsItsValueAndRanItsBody()
+    {
+        // Negative half: observing the reflection arm must not manufacture a failure, and
+        // must not eat the subscriber's return value either — BC's memberId==0 branch
+        // discards it, but the decorator sits in front of BC and has to hand it back.
+        var target = new Subscriber();
+        var result = Invoke(M(nameof(Subscriber.AsyncGenericValueTaskOk)), target);
+        Assert.Equal(42, Assert.IsType<ValueTask<int>>(result).AsTask().GetAwaiter().GetResult());
+        Assert.Equal(1, target.AsyncCalls);
     }
 
     // ---- and the negative half: it must not manufacture failures ---------------------
@@ -174,5 +245,33 @@ public class ObservingSubscriberMethodInfoTests
         Assert.Equal(1, withParam.GetParameters().Length);
         Assert.Equal(typeof(int), withParam.GetParameters()[0].ParameterType);
         Assert.Equal(typeof(void), withParam.ReturnType);
+    }
+
+    [Fact]
+    public void EqualsIsAsymmetric_ByDesignAndPinnedHere()
+    {
+        // Equality on this decorator is asymmetric, and that is deliberate (#3115): the
+        // decorator answers as the method it wraps, and the inner RuntimeMethodInfo cannot be
+        // taught to answer back. It is safe only because nothing compares it — see the doc
+        // comment on ObservingSubscriberMethodInfo.Equals for the whole-assembly scan of
+        // Ncl.dll that establishes that. This test is here so that changing the semantics is
+        // a deliberate act rather than a silent one, and so the hash/equality mismatch below
+        // is on the record for whoever puts one of these in a set.
+        var inner = M(nameof(Subscriber.AsyncOk));
+        var decorator = new ObservingSubscriberMethodInfo(inner);
+
+        Assert.True(decorator.Equals(inner));
+        Assert.False(inner.Equals(decorator));
+        Assert.True(decorator.Equals(new ObservingSubscriberMethodInfo(inner)));
+        Assert.False(decorator.Equals(new ObservingSubscriberMethodInfo(M(nameof(Subscriber.SyncOk)))));
+        Assert.False(decorator.Equals(null));
+
+        // Same hash as the inner method. That is what makes the asymmetry reachable in a
+        // hashed collection at all — both land in the same bucket, and only then does the
+        // direction of the Equals call decide the answer, so such a collection would report
+        // membership differently depending on which of the two was stored. Not asserted here:
+        // which side a given collection calls Equals on is a BCL implementation detail, and
+        // pinning it would be pinning the BCL rather than this type.
+        Assert.Equal(inner.GetHashCode(), decorator.GetHashCode());
     }
 }
