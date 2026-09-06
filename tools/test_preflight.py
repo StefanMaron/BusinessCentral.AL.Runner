@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import datetime as dt
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -1062,6 +1063,486 @@ check("the navigation warnings render one line each with a name",
       _txt.count("WARN") >= 3, _txt)
 check("the rendered navigation report tells the reader what to do",
       _txt.count("-> what to do:") >= 3, _txt)
+
+
+# ------------------------------------------------ the push probe (#3076)
+# preflight's exit 1 means "this box would produce untrustworthy results", and
+# the autonomous cycle treats it as stop-everything. A SINGLE DROPPED PACKET must
+# not produce it: measured 2026-09-06, the probe was refused, then succeeded, then
+# was refused again by hand -- 1 of 3 -- and six consecutive runs seconds later
+# all succeeded. The FAIL halted a healthy box.
+#
+# The opposite error is worse, though. A retry that masks a genuinely broken
+# credential defeats the check entirely, so the line drawn here is the CLASS of
+# the failure, not the count: a REFUSAL (permission, authentication, no such
+# repository) is persistent and is never retried, and no number of retries can
+# produce a PASS without one attempt actually negotiating successfully.
+pf.PUSH_RETRY_BACKOFF = (0, 0)          # the tests must not sleep
+
+# Real git output. The last line of both is the same boilerplate, which is why
+# the reported summary read "push was refused: and the repository exists." for a
+# failure that was a dropped packet.
+SSH_TIMEOUT = ("ssh: connect to host github.com port 22: Connection timed out\r\n"
+               "fatal: Could not read from remote repository.\n\n"
+               "Please make sure you have the correct access rights\n"
+               "and the repository exists.\n")
+SSH_DENIED = ("git@github.com: Permission denied (publickey).\r\n"
+              "fatal: Could not read from remote repository.\n\n"
+              "Please make sure you have the correct access rights\n"
+              "and the repository exists.\n")
+HTTPS_403 = ("remote: Permission to StefanMaron/BusinessCentral.AL.Runner.git denied to bot.\n"
+             "fatal: unable to access 'https://github.com/StefanMaron/"
+             "BusinessCentral.AL.Runner.git/': The requested URL returned error: 403\n")
+
+
+class PushScript:
+    """A pf.run replacement that answers the push probe from a script.
+
+    Every other command it is asked (the push remote's URL) is answered
+    truthfully, so the check under test sees a normal box apart from the
+    transport.
+    """
+
+    def __init__(self, outcomes, push_url="git@github.com:StefanMaron/"
+                                          "BusinessCentral.AL.Runner.git"):
+        self.outcomes = list(outcomes)
+        self.push_calls = 0
+        self.push_url = push_url
+
+    def __call__(self, argv, **kw):
+        if "push" in argv:
+            self.push_calls += 1
+            outcome = self.outcomes[min(self.push_calls, len(self.outcomes)) - 1]
+            if outcome == "ok":
+                return pf.Ran(rc=0, out="To github.com:StefanMaron/x.git\n", err="")
+            if outcome == "timeout":
+                return pf.Ran(rc=124, out="", err="", timed_out=True)
+            return pf.Ran(rc=128, out="", err=outcome)
+        if "get-url" in argv:
+            return pf.Ran(rc=0, out=self.push_url + "\n", err="")
+        return pf.Ran(rc=0, out="", err="")
+
+
+def push_result(outcomes, **kw):
+    script = PushScript(outcomes, **kw)
+    saved = pf.run
+    pf.run = script
+    try:
+        return pf.check_push("/repo", "stma-auto-1"), script
+    finally:
+        pf.run = saved
+
+
+# ---- classification: which failures are worth a second attempt, and which are a verdict
+check("an SSH connection timeout is transient",
+      pf.classify_transport_error(SSH_TIMEOUT) == "transient",
+      pf.classify_transport_error(SSH_TIMEOUT))
+check("a publickey refusal is an authentication verdict, not a transient",
+      pf.classify_transport_error(SSH_DENIED) == "auth",
+      pf.classify_transport_error(SSH_DENIED))
+check("an HTTPS 403 is an authorization verdict",
+      pf.classify_transport_error(HTTPS_403) == "auth",
+      pf.classify_transport_error(HTTPS_403))
+check("a reset during SSH key exchange is transient",
+      pf.classify_transport_error(
+          "kex_exchange_identification: Connection reset by peer") == "transient")
+check("a name-resolution failure is transient",
+      pf.classify_transport_error(
+          "fatal: unable to access 'https://github.com/x.git/': "
+          "Could not resolve host: github.com") == "transient")
+check("'Repository not found' is persistent, not something to retry",
+      pf.classify_transport_error("ERROR: Repository not found.") == "auth",
+      pf.classify_transport_error("ERROR: Repository not found."))
+check("the shared boilerplate alone classifies as unknown, never as an auth verdict",
+      pf.classify_transport_error("fatal: Could not read from remote repository.\n"
+                                  "Please make sure you have the correct access rights\n"
+                                  "and the repository exists.\n") == "unknown",
+      pf.classify_transport_error("fatal: Could not read from remote repository.\n"
+                                  "Please make sure you have the correct access rights\n"
+                                  "and the repository exists.\n"))
+
+# ---- the reported line: the cause, not the last line of boilerplate
+check("the summary line names the transport failure, not 'and the repository exists.'",
+      pf.transport_error_line(SSH_TIMEOUT)
+      == "ssh: connect to host github.com port 22: Connection timed out",
+      pf.transport_error_line(SSH_TIMEOUT))
+check("the summary line names the publickey refusal",
+      pf.transport_error_line(SSH_DENIED) == "git@github.com: Permission denied (publickey).",
+      pf.transport_error_line(SSH_DENIED))
+check("an error with nothing but boilerplate still reports something",
+      pf.transport_error_line("") == "no message",
+      pf.transport_error_line(""))
+
+# ---- 1 of 3, the measured case: a WARN that names what it measured, never a FAIL
+_res, _script = push_result([SSH_TIMEOUT, SSH_TIMEOUT, "ok"])
+check("two dropped packets followed by a success does not fail the box",
+      _res.status == "WARN", f"{_res.status}: {_res.summary}")
+check("a flaky transport is retried to the third attempt",
+      _script.push_calls == 3, _script.push_calls)
+check("the flaky verdict says what it measured",
+      "1 of 3" in _res.summary, _res.summary)
+check("the flaky verdict names the transport",
+      "ssh" in (_res.summary + " ".join(_res.detail)).lower(),
+      f"{_res.summary} | {_res.detail}")
+
+# ---- a healthy box costs exactly one attempt, and still PASSes
+_res, _script = push_result(["ok"])
+check("a working push is a PASS", _res.status == "PASS", _res.summary)
+check("a working push costs one attempt, not three", _script.push_calls == 1,
+      _script.push_calls)
+
+# ---- a real refusal FAILs on the first attempt: retrying it would only delay a verdict
+_res, _script = push_result([SSH_DENIED, "ok", "ok"])
+check("a publickey refusal fails the box", _res.status == "FAIL", _res.summary)
+check("a refusal is never retried -- a later success cannot un-refuse it",
+      _script.push_calls == 1, _script.push_calls)
+check("the refusal summary names the refusal itself",
+      "Permission denied (publickey)" in _res.summary, _res.summary)
+check("the refusal summary is not the trailing boilerplate",
+      "and the repository exists" not in _res.summary, _res.summary)
+
+# ---- transport down for every attempt is still a FAIL, but it says reachability
+_res, _script = push_result([SSH_TIMEOUT, SSH_TIMEOUT, SSH_TIMEOUT])
+check("a transport that never works fails the box", _res.status == "FAIL", _res.summary)
+check("no number of retries invents a PASS", _script.push_calls == 3, _script.push_calls)
+check("an unreachable transport is reported as reachability, not authorization",
+      "reach" in _res.summary.lower() or "reach" in " ".join(_res.detail).lower(),
+      f"{_res.summary} | {_res.detail}")
+check("the unreachable remedy does not send the reader to re-authenticate first",
+      "port 22" in (_res.remedy + " ".join(_res.detail)) or
+      "network" in _res.remedy.lower(), _res.remedy)
+
+# ---- an unrecognised error is retried rather than treated as a verdict
+_res, _script = push_result(["something nobody has seen before\n",
+                             "something nobody has seen before\n", "ok"])
+check("an unclassifiable error is retried, not read as a broken credential",
+      _script.push_calls == 3 and _res.status == "WARN",
+      f"{_script.push_calls} {_res.status}")
+
+# ---- the hang diagnosis survives: an interactive prompt nobody answers
+_res, _script = push_result(["timeout", "timeout", "timeout"])
+check("a probe that hangs every time still reports the interactive-prompt cause",
+      _res.status == "FAIL" and "interactive" in _res.summary,
+      f"{_res.status}: {_res.summary}")
+_res, _script = push_result(["timeout", "ok"])
+check("one hung attempt followed by a success is a flaky transport, not a hang",
+      _res.status == "WARN" and _script.push_calls == 2,
+      f"{_res.status} {_script.push_calls}")
+
+# ---- run_retry spaces its attempts instead of firing them back to back
+_slept: list = []
+_calls: list = []
+
+
+def _always_fail(argv, **kw):
+    _calls.append(argv)
+    return pf.Ran(rc=1, out="", err="nope")
+
+
+_saved_run = pf.run
+pf.run = _always_fail
+try:
+    _r = pf.run_retry(["gh", "api", "user"], attempts=3, sleeper=_slept.append)
+finally:
+    pf.run = _saved_run
+check("run_retry uses every attempt before giving up", len(_calls) == 3, len(_calls))
+check("run_retry waits between attempts rather than firing them back to back",
+      len(_slept) == 2 and all(s > 0 for s in _slept), _slept)
+
+_slept, _calls = [], []
+_saved_run = pf.run
+pf.run = lambda argv, **kw: (_calls.append(argv), pf.Ran(rc=0, out="ok", err=""))[1]
+try:
+    pf.run_retry(["gh", "api", "user"], attempts=3, sleeper=_slept.append)
+finally:
+    pf.run = _saved_run
+check("run_retry never sleeps after a first-attempt success",
+      len(_calls) == 1 and _slept == [], f"{len(_calls)} {_slept}")
+
+
+# --------------------------------------- token scopes: what this box can merge (#3192)
+# check_github reported "merge a PR: yes" from the REPOSITORY's permissions while
+# the token had no `workflow` scope, so every PR touching .github/workflows/ was
+# unmergeable -- discovered at the last step, after review and after CI.
+GH_AUTH_STATUS = ("github.com\n"
+                  "  ✓ Logged in to github.com account StefanMaron (keyring)\n"
+                  "  - Active account: true\n"
+                  "  - Git operations protocol: ssh\n"
+                  "  - Token: gho_************************************\n"
+                  "  - Token scopes: 'admin:public_key', 'gist', 'read:org', 'repo'\n")
+
+check("the token's scopes are read out of a real `gh auth status`",
+      pf.parse_token_scopes(GH_AUTH_STATUS)
+      == {"admin:public_key", "gist", "read:org", "repo"},
+      pf.parse_token_scopes(GH_AUTH_STATUS))
+check("a status with no scopes line is unknown, not an empty scope set",
+      pf.parse_token_scopes("github.com\n  - Active account: true\n") is None,
+      pf.parse_token_scopes("github.com\n  - Active account: true\n"))
+check("'Token scopes: none' is unknown too -- a fine-grained token has no classic scopes",
+      pf.parse_token_scopes("  - Token scopes: none\n") is None,
+      pf.parse_token_scopes("  - Token scopes: none\n"))
+
+
+class GhScript:
+    """pf.run replacement answering the three commands check_github issues."""
+
+    def __init__(self, auth_status=GH_AUTH_STATUS, perms=None, auth_rc=0, auth_err=""):
+        self.auth_status = auth_status
+        self.auth_rc = auth_rc
+        self.auth_err = auth_err
+        self.perms = perms if perms is not None else {
+            "admin": True, "maintain": True, "push": True, "pull": True, "triage": True}
+
+    def __call__(self, argv, **kw):
+        joined = " ".join(argv)
+        if "auth" in argv and "status" in argv:
+            if self.auth_rc:
+                return pf.Ran(rc=self.auth_rc, out="", err=self.auth_err)
+            return pf.Ran(rc=0, out=self.auth_status, err="")
+        if "user" in joined:
+            return pf.Ran(rc=0, out="StefanMaron\n", err="")
+        if "repos/" in joined:
+            return pf.Ran(rc=0, out=json.dumps(self.perms), err="")
+        return pf.Ran(rc=0, out="", err="")
+
+
+class FakeShutil:
+    which = staticmethod(lambda name: "/usr/bin/" + name)
+    rmtree = staticmethod(shutil.rmtree)
+
+
+def github_result(**kw):
+    saved_run, saved_shutil = pf.run, pf.shutil
+    pf.run, pf.shutil = GhScript(**kw), FakeShutil
+    try:
+        return pf.check_github("StefanMaron/BusinessCentral.AL.Runner")
+    finally:
+        pf.run, pf.shutil = saved_run, saved_shutil
+
+
+_res = github_result()
+check("a token without `workflow` scope is a WARN, not a silent PASS",
+      _res.status == "WARN", f"{_res.status}: {_res.summary}")
+check("the warning names the scope that is missing",
+      "workflow" in _res.summary, _res.summary)
+check("the report says which class of PR this box cannot merge",
+      any(".github/workflows/" in d for d in _res.detail), _res.detail)
+check("the machine-readable answer records it too",
+      _res.data.get("can_merge_workflow_changes") is False, _res.data)
+check("the remedy does not teach the loop a second mode",
+      "human" in _res.remedy or "gh auth refresh" in _res.remedy, _res.remedy)
+
+_res = github_result(auth_status=GH_AUTH_STATUS.replace(
+    "'read:org'", "'read:org', 'workflow'"))
+check("a token WITH `workflow` scope passes",
+      _res.status == "PASS", f"{_res.status}: {_res.summary}")
+check("and says so, rather than staying silent about the class",
+      any(".github/workflows/" in d and "yes" in d for d in _res.detail), _res.detail)
+check("the machine-readable answer records the affirmative",
+      _res.data.get("can_merge_workflow_changes") is True, _res.data)
+
+_res = github_result(auth_status="github.com\n  - Active account: true\n")
+check("unreadable scopes never manufacture a warning",
+      _res.status == "PASS", f"{_res.status}: {_res.summary}")
+check("unreadable scopes are said out loud rather than assumed",
+      any("scope" in d and ("not" in d or "could not" in d) for d in _res.detail),
+      _res.detail)
+check("and the machine-readable answer is unknown, not False",
+      _res.data.get("can_merge_workflow_changes") is None, _res.data)
+
+
+# ---- the same dropped packet, one function over: `gh auth status` also uses the network
+GH_UNREACHABLE = ("error connecting to github.com\n"
+                  "Post \"https://github.com/api/v3/graphql\": dial tcp 140.82.121.4:443: "
+                  "i/o timeout\n")
+check("gh's own transport failure classifies as transient",
+      pf.classify_transport_error(GH_UNREACHABLE) == "transient",
+      pf.classify_transport_error(GH_UNREACHABLE))
+
+_res = github_result(auth_rc=1, auth_err=GH_UNREACHABLE)
+check("an unreachable github.com is not reported as a missing credential",
+      _res.status == "FAIL" and "not authenticated" not in _res.summary,
+      f"{_res.status}: {_res.summary}")
+check("it is reported as reachability instead",
+      "reach" in _res.summary, _res.summary)
+
+_res = github_result(auth_rc=1, auth_err="You are not logged into any GitHub hosts. "
+                                         "To log in, run: gh auth login\n")
+check("a genuine logged-out gh still FAILs as not authenticated",
+      _res.status == "FAIL" and "not authenticated" in _res.summary,
+      f"{_res.status}: {_res.summary}")
+
+
+# ------------------------ how current the checkout being measured is (real git)
+# The whole-tree version of the same trap: a coordinator read tools/ci-wait.py out
+# of a top-level checkout 40+ commits behind origin/main, found a constant that
+# origin/main had already renamed, concluded the tool was broken for every pull
+# request in the repository, and misdirected four agents. origin/main's copy was
+# correct throughout. Real git here, not a fixture: the question is what git says
+# about HEAD against refs/remotes/origin/main, and a mocked answer proves nothing.
+def lag_repo(behind: int, base_age_days: float = 0.0) -> str:
+    root = tempfile.mkdtemp(prefix="preflight-lag-")
+    git("init", "-q", "-b", "main", ".", cwd=root)
+    git("config", "user.email", "t@example.com", cwd=root)
+    git("config", "user.name", "T", cwd=root)
+    when = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=base_age_days)
+    stamp = when.strftime("%Y-%m-%dT%H:%M:%S+00:00")
+    open(os.path.join(root, "f"), "w").write("base\n")
+    git("add", "f", cwd=root)
+    git("commit", "-q", "-m", "base", cwd=root,
+        env=dict(os.environ, GIT_AUTHOR_DATE=stamp, GIT_COMMITTER_DATE=stamp))
+    branch_point = git("rev-parse", "HEAD", cwd=root).stdout.strip()
+    for i in range(behind):
+        open(os.path.join(root, "f"), "w").write(f"main {i}\n")
+        git("commit", "-q", "-am", f"main {i}", cwd=root)
+    tip = git("rev-parse", "HEAD", cwd=root).stdout.strip()
+    git("update-ref", "refs/remotes/origin/main", tip, cwd=root)
+    git("checkout", "-q", "-B", "work", branch_point, cwd=root)
+    return root
+
+
+_root = lag_repo(behind=3)
+_lag = pf.checkout_lag("this checkout", _root)
+check("a checkout three commits behind measures as three",
+      _lag["behind"] == 3 and _lag["ahead"] == 0, _lag)
+check("and the branch point's age is measured, not guessed",
+      _lag["base_age_hours"] is not None and _lag["base_age_hours"] < 1, _lag)
+_res = pf.classify_checkout([_lag])
+check("normal drift is a PASS -- a warning that always fires is not read",
+      _res.status == "PASS", f"{_res.status}: {_res.summary}")
+check("but the number is reported either way, which is what was missing",
+      any("3 commit(s) behind" in d for d in _res.detail), _res.detail)
+shutil.rmtree(_root, ignore_errors=True)
+
+_root = lag_repo(behind=40)
+_res = pf.classify_checkout([pf.checkout_lag("the main checkout", _root)])
+check("40 commits behind -- the measured incident -- WARNs",
+      _res.status == "WARN", f"{_res.status}: {_res.summary}")
+check("the warning says what to stop doing, not just what to run",
+      "measure" in _res.remedy.lower() or "conclude" in _res.remedy.lower(), _res.remedy)
+shutil.rmtree(_root, ignore_errors=True)
+
+_root = lag_repo(behind=1, base_age_days=3)
+_res = pf.classify_checkout([pf.checkout_lag("this checkout", _root)])
+check("a tree branched three days ago WARNs even when it is one commit behind",
+      _res.status == "WARN", f"{_res.status}: {_res.summary}")
+shutil.rmtree(_root, ignore_errors=True)
+
+_root = tempfile.mkdtemp(prefix="preflight-lag-none-")
+git("init", "-q", "-b", "main", ".", cwd=_root)
+_lag = pf.checkout_lag("this checkout", _root)
+check("a checkout with no origin/main says so rather than reporting zero",
+      _lag["error"] and _lag["behind"] is None, _lag)
+_res = pf.classify_checkout([_lag])
+check("and that is a WARN about not knowing, never a PASS",
+      _res.status == "WARN" and "could not" in _res.summary, _res.summary)
+shutil.rmtree(_root, ignore_errors=True)
+
+_res = pf.classify_checkout([{"label": "a", "error": "no origin/main"},
+                             {"label": "b", "branch": "main", "ahead": 0, "behind": 40,
+                              "base_age_hours": 30.0, "error": ""}])
+check("one unmeasurable checkout does not hide a stale one",
+      _res.status == "WARN" and "40 commit(s)" in _res.summary, _res.summary)
+
+
+# ------------------------------------- a stale copy of preflight must not answer (#3164)
+# Same exposure #3020 fixed in ci-wait.py and pr-body.py: an agent runs the copy
+# in its own worktree, and a worktree is created once and never fast-forwarded.
+# Measured 2026-09-06, 40 of the 59 worktrees carrying tools/preflight.py had a
+# version that was not origin/main's, across 4 distinct versions. A copy predating
+# #2936 reports a HEALTHY box as unable to push -- a wrong verdict, from the tool
+# whose entire job is to produce trustworthy ones.
+class FakeFreshness:
+    def __init__(self, refuse, notes=("note: preflight.py is STALE.",)):
+        self._refuse = refuse
+        self.notes = list(notes)
+        self.targets: list = []
+        self.remote_checks: list = []
+        self.__file__ = "/repo/tools/agent_self_freshness.py"
+
+    def assess(self, target, remote_check=True, **kw):
+        self.targets.append(target)
+        self.remote_checks.append(remote_check)
+        return pf_freshness_result(self._refuse, self.notes)
+
+
+def pf_freshness_result(refuse, notes):
+    class R:
+        pass
+    r = R()
+    r.refuse = refuse
+    r.notes = list(notes)
+    r.state = "stale" if refuse else "current"
+    return r
+
+
+def refusal_with(fresh, **kw):
+    saved = pf._freshness
+    pf._freshness = fresh
+    printed: list = []
+    try:
+        return pf.freshness_refusal(printed.append, **kw), printed
+    finally:
+        pf._freshness = saved
+
+
+_fake = FakeFreshness(refuse=True)
+_code, _printed = refusal_with(_fake)
+check("a stale preflight.py refuses rather than reporting on the box",
+      _code == 3, _code)
+check("the refusal is exit 3 -- could not complete, never a verdict about the box",
+      pf.EXIT_MEANING[3] and _code == 3, pf.EXIT_MEANING.get(3))
+check("the refusal explains itself and prints the notes",
+      any("STALE" in p for p in _printed) and
+      any("preflight" in p for p in "\n".join(_printed).splitlines()),
+      _printed)
+check("both this file and the freshness module itself are checked",
+      len(_fake.targets) == 2 and
+      any(t.endswith("preflight.py") for t in _fake.targets) and
+      any(t.endswith("agent_self_freshness.py") for t in _fake.targets),
+      _fake.targets)
+check("the remote is confirmed once, not once per file",
+      _fake.remote_checks == [True, False], _fake.remote_checks)
+
+_fake = FakeFreshness(refuse=False, notes=["note: current."])
+_code, _printed = refusal_with(_fake)
+check("a current copy answers normally", _code is None, _code)
+
+_code, _printed = refusal_with(FakeFreshness(refuse=True), remote_check=False)
+check("--no-freshness-fetch skips the ls-remote but not the staleness check",
+      _code == 3, _code)
+
+_saved = pf._freshness
+pf._freshness = None
+_printed = []
+try:
+    _code = pf.freshness_refusal(_printed.append)
+finally:
+    pf._freshness = _saved
+check("a copy detached from the freshness module answers, but says nothing checked it",
+      _code is None and any("could not establish" in p for p in _printed), _printed)
+
+# ---- and the refusal happens BEFORE anything is probed
+_probed: list = []
+_saved_check_space, _saved_refusal = pf.check_space, pf.freshness_refusal
+pf.check_space = lambda *a, **k: _probed.append(a) or pf.CheckResult(
+    name="disk", status="PASS", summary="x")
+pf.freshness_refusal = lambda *a, **k: 3
+_buf = io.StringIO()
+_saved_stdout = sys.stdout
+sys.stdout = _buf
+try:
+    _rc = pf.main(["--json"])
+finally:
+    sys.stdout = _saved_stdout
+    pf.check_space, pf.freshness_refusal = _saved_check_space, _saved_refusal
+check("main returns 3 on a stale copy", _rc == 3, _rc)
+check("a refused run probes nothing at all", _probed == [], _probed)
+_doc = json.loads(_buf.getvalue())
+check("--json still emits a document, so a machine reader cannot read silence as success",
+      _doc.get("exit_code") == 3, _buf.getvalue()[:200])
+check("the JSON refusal carries no checks and says why",
+      _doc.get("checks") == [] and "refusal" in _doc, sorted(_doc))
 
 
 print()

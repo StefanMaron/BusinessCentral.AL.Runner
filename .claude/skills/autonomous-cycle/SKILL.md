@@ -199,6 +199,26 @@ check a busy coordinator can decline is not a check — one skipped step 5 acros
 ~20 agents and filled a 7.7 GB tmpfs, after which every shell on the box failed without naming
 the cause.
 
+Two things about the verdicts it produces, because both change what "stop" means:
+
+- **Exit 3 now also means the running copy of `preflight.py` is stale** — `origin/main` moved
+  that file after this checkout branched, so it would report out of an older rulebook without
+  saying so (a copy predating #2936 calls a healthy box unable to push). It prints the remedy;
+  run `origin/main`'s copy. Nothing about the box was probed, so it is not a verdict about the
+  box.
+- **The `checkout` check reports how far the tree it is measuring is behind `origin/main`**,
+  for both the checkout preflight is running from and the main checkout, and WARNs past 25
+  commits or a branch point 12 hours old. Anything read out of a checkout is as old as that
+  checkout: a coordinator once diagnosed a repository-wide CI breakage from a tree 40+ commits
+  behind, in which a tool still carried a constant `origin/main` had already renamed, and
+  misdirected four agents before the tree was the suspect.
+- **A single network failure is not a verdict either.** The push probe retries a transport
+  failure and reports `1 of 3 attempts` as a WARN rather than failing the box; a genuine
+  refusal — permission, authentication, no such repository — still FAILs on the first attempt
+  and is never retried (#3076). The `github` check WARNs when the token has no `workflow`
+  scope, which is not a reason to stop: it means pull requests touching `.github/workflows/`
+  need a human to merge them, and the loop must not route them differently (#3192).
+
 1. **Known-good baseline — run the corpus.** `tests/al-language` is green or it is not, and its
    expected count lives in `tests/expectations/count-baseline/`, checked in and only moved by a
    PR that deliberately bumps it. That makes it the right health check and means no new baseline
