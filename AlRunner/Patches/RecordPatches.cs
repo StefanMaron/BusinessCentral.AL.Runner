@@ -292,12 +292,15 @@ public static partial class RecordPatches
             // precompiled tableextension fields vanish from every metatable from the second
             // server request on. That failure was silent; this one was too.
             //
-            // Still accumulating, same shape, deliberately NOT changed here: the sibling list
-            // _bcQuerySymbolJsonPaths (RecordPatches.BcAppFallback.cs), tracked in #2939. It
+            // #2939: the sibling list _bcQuerySymbolJsonPaths goes with it, and now does. It
             // feeds _bcSymbolQueryIndex through the same derived/registered split and is the
-            // other input to RegisteredBcAppSymbolStateKey. Left alone because #2755 scoped
-            // itself to _bcAppPaths and called the blast radius out explicitly — and the
-            // SystemApp regression above is what that caution was warning about.
+            // other input to RegisteredBcAppSymbolStateKey. #2755 left it alone deliberately,
+            // having scoped itself to _bcAppPaths; measured, it was the worse of the two,
+            // because its merge is first-wins and the stale file sorts first — bundle 2 got
+            // bundle 1's query column ids INSTEAD of its own rather than in addition to them.
+            // Its clear is unconditional (no SystemApp-style exemption applies: every entry is
+            // a loose per-bundle SymbolReference.json), and lives in ClearPerBundleBcAppPaths
+            // beside the one above so the two cannot drift apart the way #2478's pair did.
             ClearPerBundleBcAppPaths();
         }
         // #3207: the object-reference const memo goes with them, and must be cleared HERE rather
