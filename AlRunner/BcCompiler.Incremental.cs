@@ -168,6 +168,7 @@ using NavCA = Microsoft.Dynamics.Nav.CodeAnalysis;
 using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 using NavEmit = Microsoft.Dynamics.Nav.CodeAnalysis.Emit;
 using NavSymRef = Microsoft.Dynamics.Nav.CodeAnalysis.SymbolReference;
+using AlRunner.Infrastructure;
 
 namespace AlRunner;
 
@@ -1739,8 +1740,9 @@ public sealed partial class BcCompiler
     }
 
     private static NavSymRef.ModuleDefinition CloneModuleDefinition(NavSymRef.ModuleDefinition module)
-        => (NavSymRef.ModuleDefinition)typeof(NavSymRef.ModuleDefinition)
-            .GetMethod("Clone", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(module, null)!;
+        => (NavSymRef.ModuleDefinition)BcShape.Method(
+            typeof(NavSymRef.ModuleDefinition), "Clone", BindingFlags.NonPublic | BindingFlags.Instance,
+            "incremental AL compilation (symbol-reference cloning)").Invoke(module, null)!;
 
     /// <summary>
     /// <c>MemberwiseClone</c>, reached by reflection because it is <c>protected</c> on
@@ -1813,7 +1815,9 @@ public sealed partial class BcCompiler
     /// correctly to whichever concrete type the instance actually is.
     /// </summary>
     private static PropertyInfo RadContainerProperty(string propName)
-        => typeof(NavSymRef.IObjectContainerDefinition).GetProperty(propName)!;
+        => BcShape.Property(
+            typeof(NavSymRef.IObjectContainerDefinition), propName,
+            "incremental AL compilation (symbol-reference cloning)");
 
     /// <summary>
     /// Depth-first walk of <paramref name="root"/> and every <c>NamespaceDefinition</c> nested

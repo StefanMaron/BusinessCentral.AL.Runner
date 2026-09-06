@@ -147,9 +147,9 @@ public static partial class BcRuntime
         var tree = treeProp!.GetValue(self)!;
 
         var treeType = tree.GetType();
-        var mGet = treeType.GetMethod("GetReferenceTarget",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-            null, Type.EmptyTypes, null)!;
+        var mGet = BcShape.Method(
+            treeType, "GetReferenceTarget", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            Type.EmptyTypes, "async AL method dispatch");
         var existing = mGet.Invoke(tree, null);
         if (existing != null) return existing;
 
@@ -169,9 +169,9 @@ public static partial class BcRuntime
         var ctor = _sharedNavObjectDictCtorByClosed.GetOrAdd(selfType, _ =>
         {
             var closedShared = _tSharedNavObjectDictionaryOpen!.MakeGenericType(typeArgs);
-            return closedShared.GetConstructor(
-                BindingFlags.Public | BindingFlags.Instance,
-                null, new[] { _tITreeSharedObjectContainer! }, null)!;
+            return BcShape.Constructor(
+                closedShared, BindingFlags.Public | BindingFlags.Instance, new[] { _tITreeSharedObjectContainer! },
+                "async AL method dispatch");
         });
 
         // Lazily build the skeleton container if NavRecordRef.get_Target hasn't yet.
@@ -181,7 +181,8 @@ public static partial class BcRuntime
                 .First(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
             var tContainer = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.TreeSharedObjectContainer")!;
             var tITree = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ITreeObject")!;
-            _skeletonSharedObjectContainer = tContainer.GetConstructor(new[] { tITree })!
+            _skeletonSharedObjectContainer = BcShape.Constructor(
+                tContainer, new[] { tITree }, "async AL method dispatch")
                 .Invoke(new object?[] { RootTreeStub });
         }
 

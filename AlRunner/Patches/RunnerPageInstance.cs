@@ -34,6 +34,7 @@
 using System.Reflection;
 using AlRunner;
 using Microsoft.Dynamics.Nav.Runtime;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -1044,15 +1045,15 @@ internal sealed partial class RunnerPageInstance
     internal static string SourceExpressionKey(int controlId) => "Control" + controlId;
 
     internal static NavValue? GetValue(object expression)
-        => (NavValue?)expression.GetType()
-            .GetMethod("Get", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                binder: null, types: Type.EmptyTypes, modifiers: null)!
+        => (NavValue?)BcShape.Method(
+            expression.GetType(), "Get", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            Type.EmptyTypes, "TestPage field expression access")
             .Invoke(expression, null);
 
     internal static void SetValue(object expression, NavValue value)
-        => expression.GetType()
-            .GetMethod("Set", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
-                binder: null, types: new[] { typeof(NavValue) }, modifiers: null)!
+        => BcShape.Method(
+            expression.GetType(), "Set", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            new[] { typeof(NavValue) }, "TestPage field expression access")
             .Invoke(expression, new object?[] { value });
 
     /// <summary>
