@@ -54,6 +54,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(PermissionMetadataStaticsSerialCollection.Name)]
 public sealed class PermissionMetadataNullForgivingGuardTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -106,7 +107,7 @@ public sealed class PermissionMetadataNullForgivingGuardTests
     public void RequireBcMethod_RaisesAShapeGapNamingTheMember_WhenTheMethodHasMoved()
     {
         var ex = Assert.Throws<BcShapeGapException>(
-            () => Invoke("RequireBcMethod", typeof(NoAddCollection), "Add"));
+            () => Invoke("RequireBcMethod", typeof(NoAddCollection), "Add", null, null));
 
         Assert.Equal($"{nameof(NoAddCollection)}.Add", ex.Member);
         Assert.Contains("method not found", ex.Detail, StringComparison.Ordinal);
@@ -115,7 +116,7 @@ public sealed class PermissionMetadataNullForgivingGuardTests
     [Fact]
     public void RequireBcMethod_StillReturnsTheMethod_WhenPresent()
     {
-        var m = (MethodInfo)Invoke("RequireBcMethod", typeof(Dictionary<string, object>), "Add")!;
+        var m = (MethodInfo)Invoke("RequireBcMethod", typeof(Dictionary<string, object>), "Add", null, null)!;
 
         Assert.Equal("Add", m.Name);
         Assert.Equal(2, m.GetParameters().Length);
@@ -172,7 +173,7 @@ public sealed class PermissionMetadataNullForgivingGuardTests
         "IncludedPermissionSets" => ((PropertyInfo)Invoke("RequireBcProperty", typeof(FakeMetaPermissionSetWithoutIncludes), "IncludedPermissionSets")!).PropertyType,
         "ExcludedPermissionSets" => ((PropertyInfo)Invoke("RequireBcProperty", typeof(FakeMetaPermissionSetWithoutIncludes), "ExcludedPermissionSets")!).PropertyType,
         "ObjectName"             => ((PropertyInfo)Invoke("RequireBcProperty", typeof(NoAddCollection), "ObjectName")!).Name,
-        "Add"                    => ((MethodInfo)Invoke("RequireBcMethod", typeof(NoAddCollection), "Add")!).Name,
+        "Add"                    => ((MethodInfo)Invoke("RequireBcMethod", typeof(NoAddCollection), "Add", null, null)!).Name,
         "permissionSetLookup"    => Invoke("RequireBcLookupDictionaryType", typeof(string)),
         _ => throw new InvalidOperationException($"test setup: unknown case {@case}"),
     };

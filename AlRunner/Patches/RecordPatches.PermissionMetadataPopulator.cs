@@ -189,17 +189,24 @@ public static partial class RecordPatches
                 $"has {arr.Length} slots, so ObjectType.PermissionSet ({PermissionSetObjectTypeOrdinal}) is out of range — BC's permission-set metadata inventory cannot be populated");
 
         var comparer = _fComparerInstance!.GetValue(null)
-            ?? Activator.CreateInstance(_tGroupSummaryComparer!)!;
+            ?? RequireBcInstance(_tGroupSummaryComparer!, "NavAppGroup.GroupSummaryComparer");
 
         // GroupSummaryComparer implements IComparer<NavAppGroupObjectMetadataSummary> and NOT
         // the non-generic IComparer, so Array.Sort's non-generic overload cannot take it —
         // measured, it throws InvalidCastException. Drive its Compare(x, y) directly instead,
         // which is the same ordering BC's own constructor applies before freezing the array.
-        var compare = _tGroupSummaryComparer!.GetMethod("Compare",
-            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw PermissionMetadataBcShapeGap(
+        var compare = RequireBcMethod(_tGroupSummaryComparer!, "Compare",
+            new[] { _tSummary!, _tSummary! }, "NavAppGroup.GroupSummaryComparer.Compare");
+        // The (int) cast below is a BC-shape assumption, not an AL one: a Compare that stopped
+        // returning int would raise InvalidCastException (or, if it went void, a
+        // NullReferenceException on the unboxed null) INSIDE the seam that absorbs everything
+        // but a BcShapeGapException, so `asserterror` would pass on a sort real BC performs
+        // fine (#3062). Refuse by name here instead, before the cast can be reached.
+        if (compare.ReturnType != typeof(int))
+            throw PermissionMetadataBcShapeGap(
                 "NavAppGroup.GroupSummaryComparer.Compare",
-                "method not found — BC's permission-set metadata inventory cannot be populated");
+                $"returns {compare.ReturnType.Name}, not the Int32 this sort unboxes"
+                + " — BC's permission-set metadata inventory cannot be populated");
         summaries.Sort((x, y) => (int)compare.Invoke(comparer, new[] { x, y })!);
 
         var typed = Array.CreateInstance(_tSummary!, summaries.Count);
@@ -225,8 +232,8 @@ public static partial class RecordPatches
         var lazyField = _fPermissionSetLookup!;
         var lazyType = lazyField.FieldType;                       // LazyEx<Dictionary<NavCode, Summary>>
         var dictType = RequireBcLookupDictionaryType(lazyType);
-        var dict = Activator.CreateInstance(dictType)!;
-        var add = RequireBcMethod(dictType, "Add");
+        var dict = RequireBcInstance(dictType, "NavAppGroup.permissionSetLookup");
+        var add = RequireBcMethod(dictType, "Add", RequireBcLookupKeyValueTypes(dictType));
         var nameProp = RequireBcProperty(_tSummary!, "ObjectName");
 
         foreach (var s in summaries)
@@ -437,11 +444,12 @@ public static partial class RecordPatches
             ?? throw PermissionMetadataBcShapeGap(
                 "NCLMetaPermissionSet",
                 "type not found in Ncl — BC's permission-set metadata inventory cannot be populated");
-        _mCreateEmptyMetaPermissionSet ??= metaType.GetMethod("CreateEmptyNCLMetaPermissionSet",
-            BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw PermissionMetadataBcShapeGap(
-                "NCLMetaPermissionSet.CreateEmptyNCLMetaPermissionSet",
-                "static method not found — BC's permission-set metadata inventory cannot be populated");
+        // No signature pinned: two of the five parameter types (INCLMetaApplicationObjectLoader,
+        // NavAppGroup) would have to be resolved by name just to state it, and a wrong statement
+        // would refuse a build that works. Unique by name is the weaker guarantee, and it is
+        // still enough to keep an added overload from arriving as an AmbiguousMatchException the
+        // asserterror seam swallows.
+        _mCreateEmptyMetaPermissionSet ??= RequireBcMethod(metaType, "CreateEmptyNCLMetaPermissionSet");
 
         var baseGroup = _fBaseGroupPM!.GetValue(null);
         var meta = _mCreateEmptyMetaPermissionSet.Invoke(null,
@@ -452,12 +460,11 @@ public static partial class RecordPatches
         // excludes, and Permissions as PermissionDefinition objects. Poking the backing fields
         // by hand (what this did before) could only ever fill the ones somebody remembered;
         // this way every field BC sets is set, by BC.
-        var assign = metaType.GetMethod("AssignFromMetaPermissionSet",
-            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
-            ?? throw PermissionMetadataBcShapeGap(
-                "NCLMetaPermissionSet.AssignFromMetaPermissionSet",
-                "method not found — BC's permission-set metadata inventory cannot be populated");
-        assign.Invoke(meta, new[] { BuildMetaPermissionSet(declaration) });
+        // Build the MetaPermissionSet FIRST so its own runtime type pins the signature looked
+        // up: the argument this call passes and the overload it resolves then cannot disagree.
+        var mps = BuildMetaPermissionSet(declaration);
+        var assign = RequireBcMethod(metaType, "AssignFromMetaPermissionSet", new[] { mps.GetType() });
+        assign.Invoke(meta, new[] { mps });
 
         EnsureCachePopulatorReflection();
         if (_fNCLMetaAppObjMetadataLoaded != null)
@@ -597,7 +604,7 @@ public static partial class RecordPatches
                 "MetaPermissionSet.Access",
                 "property not found — BC's permission-set metadata inventory cannot be populated");
 
-        var mps = Activator.CreateInstance(_tMetaPermissionSet)!;
+        var mps = RequireBcInstance(_tMetaPermissionSet, "MetaPermissionSet");
         SetProperty(mps, "Id", declaration.Id);
         SetProperty(mps, "Name", declaration.Name);
         SetProperty(mps, "Assignable", declaration.Assignable);
@@ -615,7 +622,7 @@ public static partial class RecordPatches
         {
             // MetaPermission is a STRUCT: box it once, set the three properties on the box,
             // then add — adding first would copy an empty value into the list.
-            var mp = Activator.CreateInstance(_tMetaPermission)!;
+            var mp = RequireBcInstance(_tMetaPermission!, "MetaPermission");
             SetProperty(mp, "Id", p.ObjectId);
             SetProperty(mp, "Value", p.Value);
             var objectTypeProp = _tMetaPermission.GetProperty("Type",
@@ -717,12 +724,102 @@ public static partial class RecordPatches
                $"{declaring.Name}.{propertyName}",
                "property not found — BC's permission-set metadata inventory cannot be populated");
 
-    /// <summary>A method of a BC-shape-derived type this file invokes by name.</summary>
-    private static MethodInfo RequireBcMethod(Type declaring, string methodName)
-        => declaring.GetMethod(methodName)
-           ?? throw PermissionMetadataBcShapeGap(
-               $"{declaring.Name}.{methodName}",
-               "method not found — BC's permission-set metadata inventory cannot be populated");
+    /// <summary>
+    /// A method of a BC-shape-derived type this file invokes by name (#3062).
+    ///
+    /// Resolved by ENUMERATING candidates rather than by <c>Type.GetMethod(string)</c>, because
+    /// that overload throws <see cref="System.Reflection.AmbiguousMatchException"/> the moment
+    /// Microsoft ships a second method of the same name — which is exactly the BC-layout change
+    /// this helper exists to name, and which <c>NavMethodScope_AssertError</c> would swallow, so
+    /// `asserterror` would PASS on a read real BC performs fine. Enumerating cannot throw, so
+    /// every outcome here is either the method or a BcShapeGapException naming the member.
+    ///
+    /// <paramref name="parameterTypes"/> pins the signature the call site's <c>Invoke</c>
+    /// argument array is built for. Pass it wherever the types are derivable from something
+    /// already in hand and so cannot be stated wrongly (the lookup dictionary's own generic
+    /// arguments, the summary type, the instance being passed); an added overload is then
+    /// resolved rather than merely reported. Where it is null the method must be unique by
+    /// name, and a second one is refused BY NAME instead of arriving as an anonymous
+    /// AmbiguousMatchException.
+    ///
+    /// Two candidates left after filtering are refused rather than guessed: with distinct
+    /// signatures that is a real overload the call site cannot choose between, and with
+    /// identical ones it is a `new`-hidden member, where picking silently could drive the wrong
+    /// declaration. Measured on Ncl 27.3, 27.5, 28.1 (two builds) and 28.2, all four call sites
+    /// in this file resolve to exactly one candidate today, so neither refusal fires on a BC
+    /// build the runner has seen.
+    /// </summary>
+    private static MethodInfo RequireBcMethod(
+        Type declaring, string methodName, Type[]? parameterTypes = null, string? memberName = null)
+    {
+        var member = memberName ?? $"{declaring.Name}.{methodName}";
+        var signature = parameterTypes == null
+            ? string.Empty
+            : $"({string.Join(", ", parameterTypes.Select(t => t.Name))})";
+
+        var candidates = declaring.GetMethods(
+                BindingFlags.Instance | BindingFlags.Static
+                | BindingFlags.Public | BindingFlags.NonPublic)
+            .Where(m => m.Name == methodName)
+            .Where(m => parameterTypes == null
+                        || m.GetParameters().Select(pp => pp.ParameterType).SequenceEqual(parameterTypes))
+            .ToArray();
+
+        if (candidates.Length == 0)
+            throw PermissionMetadataBcShapeGap(
+                member,
+                $"method not found{(signature.Length == 0 ? string.Empty : " with signature " + signature)}"
+                + " — BC's permission-set metadata inventory cannot be populated");
+
+        if (candidates.Length > 1)
+            throw PermissionMetadataBcShapeGap(
+                member,
+                $"BC declares {candidates.Length} methods named {methodName}"
+                + $"{(signature.Length == 0 ? string.Empty : " with signature " + signature)}"
+                + ", so the runner cannot tell which one its call site means"
+                + " — BC's permission-set metadata inventory cannot be populated");
+
+        return candidates[0];
+    }
+
+    /// <summary>
+    /// A BC type this file instantiates. <c>Activator.CreateInstance(Type)</c> raises
+    /// MissingMethodException when the parameterless constructor is gone — anonymous, and
+    /// absorbed by the asserterror seam exactly like the AmbiguousMatchException above (#3062).
+    /// Resolve the constructor first so the refusal names the type instead.
+    /// </summary>
+    private static object RequireBcInstance(Type type, string member)
+    {
+        // A struct has no declared parameterless constructor and never needs one — measured:
+        // BC declares MetaPermission as a value type, and asking for one refuses a shape that
+        // works. Only a reference type can lose the constructor Activator.CreateInstance wants.
+        if (type.IsValueType) return Activator.CreateInstance(type)!;
+
+        var ctor = type.GetConstructor(
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+            binder: null, types: Type.EmptyTypes, modifiers: null)
+            ?? throw PermissionMetadataBcShapeGap(
+                member,
+                $"{type.Name} has no parameterless constructor"
+                + " — BC's permission-set metadata inventory cannot be populated");
+        return ctor.Invoke(null);
+    }
+
+    /// <summary>
+    /// The key and value types of <c>NavAppGroup.permissionSetLookup</c>'s dictionary, which are
+    /// the signature of the <c>Add</c> this file drives. Derived from the dictionary type itself
+    /// rather than stated, so the signature cannot disagree with the instance it is invoked on.
+    /// </summary>
+    private static Type[] RequireBcLookupKeyValueTypes(Type dictType)
+    {
+        var args = dictType.GetGenericArguments();
+        if (args.Length != 2)
+            throw PermissionMetadataBcShapeGap(
+                "NavAppGroup.permissionSetLookup",
+                $"holds a {dictType.Name}, not the two-argument Dictionary<TKey, TValue> whose Add this"
+                + " code drives — BC's permission-set metadata inventory cannot be populated");
+        return args;
+    }
 
     /// <summary>
     /// The dictionary type inside <c>NavAppGroup.permissionSetLookup</c>, which BC declares as
