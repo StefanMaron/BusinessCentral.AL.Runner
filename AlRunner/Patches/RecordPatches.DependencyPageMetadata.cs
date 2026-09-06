@@ -100,8 +100,11 @@ public static partial class RecordPatches
     /// The precompiled dependency <c>pageextension</c> with object id
     /// <paramref name="extensionId"/>, or null when no loaded dependency .app declares one
     /// (issue #2723's pageextension arm). Same walk as <see cref="TryGetDependencyPageSymbol"/>,
-    /// same failure handling — a .app whose SymbolReference cannot be read is skipped loudly,
-    /// never treated as "declares none".
+    /// same failure handling: a .app that has VANISHED from disk since registration is
+    /// skipped with a <c>[warn]</c> Log's default verbosity shows, and a .app that is
+    /// present but whose SymbolReference cannot be read RAISES
+    /// <see cref="BcAppSymbolReadException"/> — neither is treated as "declares none". See
+    /// RecordPatches.DependencyAppSymbolWalk.cs for why those two are not one condition.
     /// </summary>
     private static BcAppSymbolCache.PageExtensionSymbol? TryGetDependencyPageExtensionSymbol(int extensionId)
     {
@@ -131,11 +134,12 @@ public static partial class RecordPatches
     /// Every loaded dependency .app's parsed symbols, in registration order, so the page and
     /// pageextension lookups share one walk and one failure policy.
     ///
-    /// <para>#3143: the doc comment on <see cref="TryGetDependencyPageExtensionSymbol"/> has
-    /// always claimed a .app whose SymbolReference cannot be read is "skipped loudly, never
-    /// treated as 'declares none'". It was neither: the skip WAS "declares none", and its
-    /// only trace was a `[RecordPatches]`-tagged line Log's default filter drops. It is now
-    /// true — see RecordPatches.DependencyAppSymbolWalk.cs.</para>
+    /// <para>#3143: this used to swallow EVERY read failure and <c>continue</c>, so a .app the
+    /// runner could not read reported "declares no pages" — a wrong answer rather than a
+    /// missing one, whose only trace was a `[RecordPatches]`-tagged line Log's default filter
+    /// drops. The two conditions are now separated: a VANISHED .app is skipped on `[warn]`,
+    /// and one that is present but unreadable raises
+    /// <see cref="BcAppSymbolReadException"/>. See RecordPatches.DependencyAppSymbolWalk.cs.</para>
     /// </summary>
     private static IEnumerable<BcAppSymbolCache.AppSymbols> DependencyAppSymbols()
     {
