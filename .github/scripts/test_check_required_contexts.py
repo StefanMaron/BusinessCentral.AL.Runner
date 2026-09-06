@@ -452,13 +452,13 @@ check("...disjoint from DEFAULT_REQUIRED_CONTEXTS (a name is one or the other)",
 # message and a cause nowhere near it.
 _COMMA_NAME = "PR body closing references must be correct, both directions"
 check("a context name containing a comma survives the newline-separated override",
-      crc._split(f"All BC versions passed\n{_COMMA_NAME}")
-      == ["All BC versions passed", _COMMA_NAME],
-      str(crc._split(f"All BC versions passed\n{_COMMA_NAME}")))
+      crc._split(f"BC test matrix passed\n{_COMMA_NAME}")
+      == ["BC test matrix passed", _COMMA_NAME],
+      str(crc._split(f"BC test matrix passed\n{_COMMA_NAME}")))
 check("...while a single-line value still splits on commas",
-      crc._split("All BC versions passed, Tests updated")
-      == ["All BC versions passed", "Tests updated"],
-      str(crc._split("All BC versions passed, Tests updated")))
+      crc._split("BC test matrix passed, Tests updated")
+      == ["BC test matrix passed", "Tests updated"],
+      str(crc._split("BC test matrix passed, Tests updated")))
 
 PENDING_CANCELLABLE = """
 name: PR Check
