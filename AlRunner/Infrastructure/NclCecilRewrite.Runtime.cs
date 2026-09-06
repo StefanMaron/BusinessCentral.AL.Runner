@@ -892,6 +892,23 @@ public static partial class NclCecilRewrite
                 H(recordPatches, "DataAccess_DateWindowGuardForCount"),
                 argSlots: 2); // `this` — the DataAccess — and the count request
 
+            // ── DataAccess.CountAsync — virtual Field table (2000000041) on-demand populate ──
+            // Same gap, one table over. The Field table's rows for a given TableNo are built on
+            // demand, and until #2792 the ONLY place that happened for a table nothing else had
+            // materialised was the find guard above. Record.Count() / IsEmpty() build a
+            // CountCacheRequest, so they missed it and answered over an empty store.
+            //
+            // Measured on main, one Base Application bundle, table 5802 never opened as a Record:
+            //   Field.SetRange(TableNo, 5802); Count()   -> 0   IsEmpty() -> true
+            //   Field.SetRange(TableNo, 5802); FindSet() -> 85 rows
+            // Same filter, same table, two different answers — and 0 is indistinguishable from
+            // "this table has no fields". A service tier computes the virtual table per request
+            // and answers 85 both ways.
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "CountAsync", "CountCacheRequest"),
+                H(recordPatches, "DataAccess_FieldGuardForCount"),
+                argSlots: 2); // `this` — the DataAccess — and the count request
+
             // ── DataAccess.InternalTryGetByPrimaryKeyAsync — Aggregate Permission Set live
             //    redrive (issue #2504) ──────────────────────────────────────────────────
             // Record.Get() with a full primary key never reaches InnerFindAsync at all — it
@@ -921,6 +938,31 @@ public static partial class NclCecilRewrite
                 ByParams(Rt + "DataAccess", "InternalTryGetByPrimaryKeyAsync", "PrimaryKeyCacheRequest"),
                 H(recordPatches, "DataAccess_DateWindowGuardForGet"),
                 argSlots: 2); // `this` — the DataAccess — and the primary-key request
+
+            // ── DataAccess.InternalTryGetByPrimaryKeyAsync — virtual Field table (#2792) ──────
+            // The third of the three request paths, and the Field table was left behind on it by
+            // both #2504 and #2648. Measured on main, table 5803 never opened as a Record:
+            // Field.Get(5803, 1) answered FALSE, where a service tier answers TRUE with
+            // FieldName "Entry No.". The guard builds that table's Field rows from the RECORD ID
+            // (a keyed Get carries its key there and may carry no TableNo filter at all) and
+            // then returns; the original body runs unchanged, for this and every other table.
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "InternalTryGetByPrimaryKeyAsync", "PrimaryKeyCacheRequest"),
+                H(recordPatches, "DataAccess_FieldGuardForGet"),
+                argSlots: 2); // `this` — the DataAccess — and the primary-key request
+
+            // ── DataAccess.ExistsAsync — virtual Field table (2000000041), the FOURTH path ────
+            // Record.IsEmpty() does not take the count path. RecordImplementation.IsEmptyAsync
+            // calls its own ExistsAsync, which builds an ExistsCacheRequest and reaches
+            // DataAccess.ExistsAsync — decompiled from Ncl.dll, and not what the Date count
+            // guard's comment above claims. With the count and Get guards in place but not this
+            // one, Field.SetRange(TableNo, 270); IsEmpty() still answered TRUE while Count()
+            // over the same filter answered 2. ExistsAsync is a large async state machine, so
+            // unlike the tiny FindAsync it is not R2R-inlined past the prepend.
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "ExistsAsync", "ExistsCacheRequest"),
+                H(recordPatches, "DataAccess_FieldGuardForExists"),
+                argSlots: 2); // `this` — the DataAccess — and the exists request
 
             // ── NavDatabase / NavRecordId collation comparers ───────────────────
             ReplaceBodyWithHelper(nclMod,
