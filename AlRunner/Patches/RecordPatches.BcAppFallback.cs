@@ -819,19 +819,16 @@ public static partial class RecordPatches
     {
         if (_bcSymbolQueryIndex != null) return;
         var idx = new Dictionary<int, BcAppSymbolCache.QuerySymbol>();
-        foreach (var appPath in _bcAppPaths)
-        {
-            try
-            {
-                foreach (var q in BcAppSymbolCache.Get(appPath).Queries)
-                    if (!idx.ContainsKey(q.Id))
-                        idx[q.Id] = q;
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"[RecordPatches] BcAppFallback: query SymbolReference read failed for {Path.GetFileName(appPath)}: {ex.Message}");
-            }
-        }
+        // #3143: NOT swallowed. The old catch left the .app's queries out of the index and
+        // then PUBLISHED it (_bcSymbolQueryIndex = idx below), so the partial index was
+        // served as the complete answer for the rest of the process — AL running a query
+        // that dependency declares got "unknown query id" rather than a refusal. Same
+        // failure shape EnsureBcSymbolExtensionIndex's "#2712, no catch here" comment
+        // describes. See RecordPatches.DependencyAppSymbolWalk.cs.
+        foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("queries (query symbol index)"))
+            foreach (var q in symbols.Queries)
+                if (!idx.ContainsKey(q.Id))
+                    idx[q.Id] = q;
         // Loose SymbolReference.json sources (the bundle's own freshly-compiled queries).
         // Registered AFTER .app sources but only filling gaps (ContainsKey guard), so a
         // prebuilt .app's authoritative ids always win.

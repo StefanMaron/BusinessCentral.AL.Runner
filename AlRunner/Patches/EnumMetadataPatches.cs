@@ -187,6 +187,24 @@ public static class AlEnumMetadataRegistry
 
     public static int Count => _byId.Count;
 
+    /// <summary>
+    /// Register every enum a precompiled dependency .app declares.
+    ///
+    /// <para>#3143: this had the same swallow as the ten dependency-symbol reads that issue
+    /// listed — `catch (Exception)` plus an `[EnumMetadata]`-tagged stderr line, which Log's
+    /// default-verbosity filter drops because it starts with a bracketed component tag. The
+    /// effect was that an unreadable .app registered NO enums, and AL casting one of them to
+    /// its interface then failed as an ordinary-looking AL error naming the enum rather than
+    /// the package that could not be read.</para>
+    ///
+    /// <para>#3143 confirmed what that issue only suspected: this method has NO live callers.
+    /// <c>RecordPatches.AddBcAppPath</c> is the only path by which a dependency's enums reach
+    /// this registry, and it already reads eagerly and refuses loudly. The swallow is
+    /// converted rather than left alone because it is public and a future caller would
+    /// inherit it silently; the empty/absent guard above is UNCHANGED, because "no path
+    /// given" and "the file is not there" are genuinely "nothing to register", not
+    /// "could not find out".</para>
+    /// </summary>
     public static void RegisterFromAppPath(string appPath)
     {
         if (string.IsNullOrEmpty(appPath) || !File.Exists(appPath)) return;
@@ -203,9 +221,9 @@ public static class AlEnumMetadataRegistry
                     enumSymbol.DefaultImplementations?.ToArray(),
                     enumSymbol.UnknownImplementations?.ToArray());
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not AlRunner.Infrastructure.BcAppSymbolReadException)
         {
-            Console.Error.WriteLine($"[EnumMetadata] failed to read {Path.GetFileName(appPath)}: {ex.Message}");
+            throw new AlRunner.Infrastructure.BcAppSymbolReadException(appPath, "enums", ex);
         }
     }
 

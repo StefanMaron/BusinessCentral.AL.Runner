@@ -295,24 +295,16 @@ public static partial class RecordPatches
         }
     }
 
+    /// <summary>
+    /// #3143: NOT swallowed — an unreadable dependency used to leave every page it declares
+    /// out of Page Metadata (2000000138) AND out of Page Control Field, the other consumer of
+    /// this walk. See RecordPatches.DependencyAppSymbolWalk.cs.
+    /// </summary>
     private static IEnumerable<BcAppSymbolCache.PageSymbol> EnumerateBcAppPageSymbols()
     {
-        foreach (var appPath in _bcAppPaths.ToArray())
-        {
-            List<BcAppSymbolCache.PageSymbol> pages;
-            try
-            {
-                pages = BcAppSymbolCache.Get(appPath).Pages;
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine(
-                    $"[RecordPatches] Page Metadata: SymbolReference read failed for {Path.GetFileName(appPath)}: {ex.Message}");
-                continue;
-            }
-            foreach (var p in pages)
+        foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("pages (Page Metadata)"))
+            foreach (var p in symbols.Pages)
                 yield return p;
-        }
     }
 
     /// <summary>

@@ -79,26 +79,20 @@ public static partial class RecordPatches
         => (IsPageParsed(pageId) && _parsedPages.TryGetValue(pageId, out var page) && page.SourceTableTemporary)
            || TryGetDependencyPageSymbol(pageId)?.SourceTableTemporary == true;
 
+    /// <summary>
+    /// #3143: NOT swallowed. This is the highest-leverage of the ten sites, because almost
+    /// every caller reads it as `TryGetDependencyPageSymbol(id)?.X ?? default` — so a read
+    /// that could not answer used to produce `InsertAllowed = true`, `SourceTableId = 0`,
+    /// `PageType = null`, `IsPageKnown = false`. Those are not missing answers, they are
+    /// wrong ones, and no AL-visible signal distinguished them. Now shares the one walk with
+    /// the pageextension lookups below; see RecordPatches.DependencyAppSymbolWalk.cs.
+    /// </summary>
     private static BcAppSymbolCache.PageSymbol? TryGetDependencyPageSymbol(int pageId)
     {
-        foreach (var appPath in _bcAppPaths.ToArray())
-        {
-            List<BcAppSymbolCache.PageSymbol> pages;
-            try
-            {
-                pages = BcAppSymbolCache.Get(appPath).Pages;
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine(
-                    $"[RecordPatches] dependency page metadata: SymbolReference read failed for "
-                    + $"{Path.GetFileName(appPath)}: {ex.Message}");
-                continue;
-            }
-            foreach (var p in pages)
+        foreach (var symbols in DependencyAppSymbols())
+            foreach (var p in symbols.Pages)
                 if (p.Id == pageId)
                     return p;
-        }
         return null;
     }
 
@@ -134,29 +128,20 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// Every loaded dependency .app's parsed symbols, in registration order, skipping (and
-    /// reporting) any whose SymbolReference.json cannot be read — factored out of
-    /// <see cref="TryGetDependencyPageSymbol"/> so the page and pageextension lookups share
-    /// one walk and one failure policy.
+    /// Every loaded dependency .app's parsed symbols, in registration order, so the page and
+    /// pageextension lookups share one walk and one failure policy.
+    ///
+    /// <para>#3143: the doc comment on <see cref="TryGetDependencyPageExtensionSymbol"/> has
+    /// always claimed a .app whose SymbolReference cannot be read is "skipped loudly, never
+    /// treated as 'declares none'". It was neither: the skip WAS "declares none", and its
+    /// only trace was a `[RecordPatches]`-tagged line Log's default filter drops. It is now
+    /// true — see RecordPatches.DependencyAppSymbolWalk.cs.</para>
     /// </summary>
     private static IEnumerable<BcAppSymbolCache.AppSymbols> DependencyAppSymbols()
     {
-        foreach (var appPath in _bcAppPaths.ToArray())
-        {
-            BcAppSymbolCache.AppSymbols symbols;
-            try
-            {
-                symbols = BcAppSymbolCache.Get(appPath);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine(
-                    $"[RecordPatches] dependency page metadata: SymbolReference read failed for "
-                    + $"{Path.GetFileName(appPath)}: {ex.Message}");
-                continue;
-            }
+        foreach (var (_, symbols) in
+                 EnumerateRegisteredBcAppSymbols("pages and pageextensions (dependency page metadata)"))
             yield return symbols;
-        }
     }
 
     /// <summary>

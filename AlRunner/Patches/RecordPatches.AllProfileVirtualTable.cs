@@ -273,19 +273,11 @@ public static partial class RecordPatches
     private static IEnumerable<(Guid AppId, string AppName, BcAppSymbolCache.ProfileSymbol Symbol)>
         EnumerateBcAppProfileSymbols()
     {
-        foreach (var appPath in _bcAppPaths.ToArray())
+        // #3143: a read that CANNOT answer no longer reports "this app declares no
+        // profiles". The `continue` below is kept for the one case where that IS the
+        // answer — symbols read fine and list none.
+        foreach (var (appPath, symbols) in EnumerateRegisteredBcAppSymbols("profiles (All Profile)"))
         {
-            BcAppSymbolCache.AppSymbols symbols;
-            try
-            {
-                symbols = BcAppSymbolCache.Get(appPath);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine(
-                    $"[RecordPatches] All Profile: SymbolReference read failed for {Path.GetFileName(appPath)}: {ex.Message}");
-                continue;
-            }
             if (symbols.Profiles is not { Count: > 0 } profiles) continue;
             if (!Guid.TryParse(symbols.AppId, out var appId))
             {

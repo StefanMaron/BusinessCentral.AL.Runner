@@ -336,26 +336,17 @@ public static partial class RecordPatches
     /// about which codeunits a dependency contains. The codeunit-only properties ride on
     /// <see cref="BcAppSymbolCache.ObjectSymbol"/>; see its doc comment.
     /// </summary>
+    /// <summary>
+    /// #3143: NOT swallowed — see RecordPatches.DependencyAppSymbolWalk.cs. Reads the SAME
+    /// surface AllObj does, through the same walk, so the two tables cannot now disagree
+    /// about which dependency contributed codeunits either.
+    /// </summary>
     private static IEnumerable<BcAppSymbolCache.ObjectSymbol> EnumerateBcAppCodeunitSymbols()
     {
-        foreach (var appPath in _bcAppPaths.ToArray())
-        {
-            List<BcAppSymbolCache.ObjectSymbol> objects;
-            try
-            {
-                objects = BcAppSymbolCache.Get(appPath).Objects;
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine(
-                    $"[RecordPatches] CodeUnit Metadata: SymbolReference read failed for "
-                    + $"{Path.GetFileName(appPath)}: {ex.Message}");
-                continue;
-            }
-            foreach (var o in objects)
+        foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("objects (CodeUnit Metadata)"))
+            foreach (var o in symbols.Objects)
                 if (o.Id > 0 && NormalizeObjectTypeName(o.Kind) == "codeunit")
                     yield return o;
-        }
     }
 
     /// <summary>
