@@ -488,6 +488,8 @@ public static partial class RecordPatches
         object? calcFormulaObj = (f.IsFlowField && f.CalcFormula != null && parentTable != null)
             ? BuildMetaCalcFormula(f.CalcFormula, parentTable)
             : null;
+        if (f.IsFlowField && calcFormulaObj == null)
+            Console.Error.WriteLine($"[RecordPatches] BuildMetaField PROBE: FlowField '{f.FieldName}' (id {f.FieldId}) table '{parentTable?.TableName ?? "<null>"}' hasFormula={f.CalcFormula != null} hasParent={parentTable != null}");
 
         // TableRelation → ImmutableArray<MetaFieldRelation>, one element per arm. NCLMetaField
         // turns each into the NCLMetaFieldRelation that GetReferencingRelations' reverse
