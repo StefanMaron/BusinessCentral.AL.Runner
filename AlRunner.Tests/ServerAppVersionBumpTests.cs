@@ -31,12 +31,13 @@ public sealed class ServerAppVersionBumpTests
 
     private static string WriteBundle(string suffix, string version, string appName, string appId = AppId, int idBase = 62280)
     {
-        var root = Path.Combine(
-            Path.GetTempPath(), "al-runner-server-versionbump-" + suffix, Guid.NewGuid().ToString("N"));
+        var root = TestScratch.Dir("al-runner-server-versionbump-" + suffix);
         Directory.CreateDirectory(root);
 
-        // No "application": the Base Application floor is not the subject and costs ~70 s
-        // cold per invocation (.claude/rules/no-base-app-in-csharp-tests.md).
+        // No Base Application floor is declared below: it is not the subject here and costs
+        // ~70 s cold per invocation (.claude/rules/no-base-app-in-csharp-tests.md). Written
+        // without the literal property spelling because BaseAppFloorFixtureGuardTests scans
+        // this file as raw text and cannot tell a comment from a manifest key (see #3064).
         File.WriteAllText(Path.Combine(root, "app.json"), $$"""
         {
           "id": "{{appId}}",
