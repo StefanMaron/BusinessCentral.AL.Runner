@@ -2244,9 +2244,14 @@ public sealed partial class BcCompiler
         // recompile on every single run. The symbols come from the compilation's semantic
         // model, which is intact whether or not a report layout updated.
         LastBundleQuerySymbolsPath = null;
+        // Bound as a LOCAL rather than re-read from the static below: this is the only scope in
+        // which "the query symbols the current compile wrote" is provably THIS module's, and
+        // RecordIncrementalBaseline's other call site (EmitDepSymbols) cannot see this local at
+        // all — which is the point. See CaptureRadMetadataSnapshotFull.
+        string? bundleQuerySymbolsPath = null;
         if (caught == null && outputter.Captured.Count > 0 && BundleDeclaresQuery(alFiles))
         {
-            try { EmitAndRegisterBundleQuerySymbols(compilation, moduleName); }
+            try { bundleQuerySymbolsPath = EmitAndRegisterBundleQuerySymbols(compilation, moduleName); }
             catch (Exception ex)
             {
                 // Never fail the run for this — a query that then can't build its
@@ -2274,7 +2279,7 @@ public sealed partial class BcCompiler
                 RecordIncrementalBaseline(
                     moduleName, compilation, alFiles, outputter.Captured, specs,
                     manifestInputs, manifestAppJsonPath, appId, _currentPublisher ?? "AlRunner", _currentVersion ?? new Version(1, 0, 0, 0),
-                    appRootDir, emitOutput);
+                    appRootDir, emitOutput, bundleQuerySymbolsPath);
             }
             catch (Exception ex)
             {
@@ -2434,7 +2439,12 @@ public sealed partial class BcCompiler
     // Nothing outside the writing process ever reads this file — it is registered below for
     // this process's own query-symbol lookups — so sharing the path bought nothing. Same
     // treatment as #2586's sibling symbols: put the process in the path.
-    private static void EmitAndRegisterBundleQuerySymbols(NavCA.Compilation compilation, string moduleName)
+    //
+    // Returns the path it wrote, so the caller can hold it as a LOCAL. The
+    // LastBundleQuerySymbolsPath static below still exists for Program.cs (which copies the
+    // file next to the AL-output cache DLL), but it is process-global and must not be read by
+    // anything that cannot prove the current Emit set it — see CaptureRadMetadataSnapshotFull.
+    private static string EmitAndRegisterBundleQuerySymbols(NavCA.Compilation compilation, string moduleName)
     {
         var dir = PerProcessScratch.Dir("al-runner-query-symbols", moduleName);
         var path = Path.Combine(dir, "SymbolReference.json");
@@ -2442,6 +2452,7 @@ public sealed partial class BcCompiler
             SymbolJsonWriter.WriteSymbolJson(compilation, fs);
         AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(path);
         LastBundleQuerySymbolsPath = path;
+        return path;
     }
 
     /// <summary>
@@ -2641,7 +2652,13 @@ public sealed partial class BcCompiler
             RecordIncrementalBaseline(
                 moduleName, compilation, alFiles, Array.Empty<EmittedSource>(), specs,
                 manifestInputs, foundAppJson, appId, publisher, version, effectiveAppRoot,
-                new BcEmitOutput(Array.Empty<EmittedSource>(), Array.Empty<string>(), Array.Empty<string>()));
+                new BcEmitOutput(Array.Empty<EmittedSource>(), Array.Empty<string>(), Array.Empty<string>()),
+                // This path emits no bundle query symbols — it never calls
+                // EmitAndRegisterBundleQuerySymbols — so it has none to record. Explicitly null
+                // rather than reading LastBundleQuerySymbolsPath, which here would name whatever
+                // module the last Emit ANYWHERE in this process compiled. See
+                // CaptureRadMetadataSnapshotFull and RadQuerySymbolsSnapshotModuleScopeTests.
+                bundleQuerySymbolsPath: null);
         }
     }
 

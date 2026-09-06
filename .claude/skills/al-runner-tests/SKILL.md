@@ -212,11 +212,11 @@ git -C tests/al-language checkout origin/master
 git add tests/al-language
 ```
 
-**A pin bump cannot be its own PR — it is red by construction.** The new
-upstream tests it pulls in exist because they exercise a gap the runner does
-not yet handle; bumping the pin alone fails CI for that reason before anyone
-reviews it. Fold the pin bump into the **fix PR** that makes those new tests
-pass, together with the `tests/expectations/count-baseline/test-count-baseline.json`
+**A pin bump that pulls in a test needing a new fix cannot be its own PR — it
+is red by construction.** Those upstream tests exist because they exercise a gap
+the runner does not yet handle; bumping the pin alone fails CI for that reason
+before anyone reviews it. Fold that bump into the **fix PR** that makes those new
+tests pass, together with the `tests/expectations/count-baseline/test-count-baseline.json`
 update (`--count-baseline` is an exact match — it fails on growth as well as
 shrinkage). Any other tests that newly fail after the bump are separate runner
 gaps: patch the runner or add an expectation entry for them; never patch the

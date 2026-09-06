@@ -812,7 +812,30 @@ public static partial class RecordPatches
                     if (ParseFieldSyntax(f) is { } pf)
                         fields.Add(pf);
 
-            Console.Error.WriteLine($"[TableExt] parsed extension {extId} '{extName}' extends '{baseName}' with {fields.Count} fields");
+            // #3216 — the keys a tableextension declares. Every one is a SECONDARY key on the
+            // extended table: a tableextension cannot restate the primary key, so unlike
+            // TryParseTableFile above there is no "first key is the PK" branch here.
+            // Field names are kept AS WRITTEN and resolved to ids in BuildNCLMetaTable — a key
+            // may name a base-table field ("Status") that this parse has no sight of, because
+            // the extension is routinely parsed before the table it extends.
+            var extKeys = new List<ParsedExtensionKey>();
+            if (ext.Keys != null)
+            {
+                foreach (var k in ext.Keys.Keys)
+                {
+                    var keyName = IdentText(k.Name);
+                    var keyFieldNames = new List<string>();
+                    foreach (var kf in k.Fields)
+                    {
+                        var kn = IdentText(kf as NavSyntax.IdentifierNameSyntax);
+                        if (!string.IsNullOrWhiteSpace(kn)) keyFieldNames.Add(kn);
+                    }
+                    if (keyFieldNames.Count > 0)
+                        extKeys.Add(new ParsedExtensionKey(keyName, keyFieldNames));
+                }
+            }
+
+            Console.Error.WriteLine($"[TableExt] parsed extension {extId} '{extName}' extends '{baseName}' with {fields.Count} fields, {extKeys.Count} keys");
 
             // Merge into _parsedExtensionFields, record the extension id (so its emitted
             // TableExtension{extId} CLR type can be instantiated and registered on each
@@ -822,7 +845,7 @@ public static partial class RecordPatches
             // explained on MergeExtensionFields itself (#2126) — happen atomically in the
             // shared helper so a second writer (RecordPatches.BcAppFallback.cs's
             // EnsureBcSymbolExtensionIndex) can't repeat this file's own former omission of it.
-            MergeExtensionFields(baseName, extId, fields);
+            MergeExtensionFields(baseName, extId, fields, extKeys);
         }
     }
 
@@ -1414,6 +1437,20 @@ internal record ParsedRelationArm(string TableName, string? FieldName, List<Pars
 /// <param name="MaxValue">Same shape as <see cref="MinValue"/>, for MaxValue.</param>
 internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false, string ObsoleteState = "No", string? ObsoleteReason = null, string? MinValue = null, string? MaxValue = null);
 internal record ParsedKey(string Name, List<int> FieldIds);
+
+/// <summary>A key declared by a <c>tableextension</c> on the table it extends (#3216).
+/// <para>Carries field NAMES, not field ids, which is the whole reason it is not a
+/// <see cref="ParsedKey"/>. A tableextension key may name a field the tableextension itself
+/// added AND a field the base table declares (<c>key(ExtMixed; "Status", "Ext Rank")</c>),
+/// and the extension is routinely parsed BEFORE the table it extends — from a sibling source
+/// dir, or out of a dependency's SymbolReference.json at registration time. Resolving names to
+/// ids at parse time would therefore drop whichever half is not in hand yet, and drop it
+/// silently. Resolution is deferred to <c>BuildNCLMetaTable</c>, the one place that has the
+/// base table's fields and every merged extension field together.</para>
+/// <para>All of a tableextension's keys are SECONDARY keys — a tableextension cannot restate
+/// the primary key, so the "first key is the PK" rule that governs a table's own key list
+/// (see <c>TryParseTableFile</c>) must NOT be applied here.</para></summary>
+internal record ParsedExtensionKey(string Name, List<string> FieldNames);
 
 /// <summary>Which value shape a <see cref="ParsedColumnFilter"/> condition carries — matches
 /// <c>Microsoft.Dynamics.Nav.Types.Metadata.FilterType</c>'s CONST/FILTER members exactly

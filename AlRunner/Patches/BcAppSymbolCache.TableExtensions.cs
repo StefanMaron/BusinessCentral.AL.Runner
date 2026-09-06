@@ -26,12 +26,21 @@ namespace AlRunner.Patches;
 /// (<c>RecordPatches.AddBcAppPath</c>) and must not call into <c>RecordPatches</c>; the
 /// consumer parses it once the runtime is up — see
 /// <c>RecordPatches.BcAppFallback.EnsureBcSymbolExtensionIndex</c> (#3121).</param>
+/// <param name="Keys">The keys the tableextension declares on the table it extends (#3216).
+/// Every one is a SECONDARY key — a tableextension cannot restate the primary key — and each
+/// carries FIELD NAMES rather than ids, exactly as SymbolReference.json states them
+/// (<c>"Keys": [{ "Name": "Key12", "FieldNames": ["Service Item Group"] }]</c>) and exactly as
+/// the AL-source path records them, so the two sources hand
+/// <c>RecordPatches.MergeExtensionFields</c> the same shape. Empty for the great majority of
+/// precompiled extensions: 6 of Base Application 28.1's 90 tableextensions declare any keys at
+/// all.</param>
 internal sealed record TableExtensionSymbol(
     int ExtensionId,
     string ExtensionName,
     string TargetTableName,
     List<ParsedField> Fields,
-    IReadOnlyDictionary<int, string>? CalcFormulaTexts = null);
+    IReadOnlyDictionary<int, string>? CalcFormulaTexts = null,
+    List<ParsedExtensionKey>? Keys = null);
 
 internal static partial class BcAppSymbolCache
 {
@@ -205,7 +214,35 @@ internal static partial class BcAppSymbolCache
                     MinValue: minValue, MaxValue: maxValue));
             }
         }
+        // #3216 — the extension's own keys. Same JSON shape the base-table reader consumes in
+        // BcAppSymbolCache.cs (Keys[].Name + Keys[].FieldNames), minus the "first key is the
+        // PK" split, which does not apply to a tableextension. Names are passed through
+        // unresolved: the target table may be a source-parsed table in this bundle that has not
+        // been read yet, so there is no field list to resolve against here.
+        var keys = new List<ParsedExtensionKey>();
+        if (ext.TryGetProperty("Keys", out var keysJson) && keysJson.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            foreach (var key in keysJson.EnumerateArray())
+            {
+                var keyName = key.TryGetProperty("Name", out var keyNameProp)
+                    ? keyNameProp.GetString() ?? "Key"
+                    : "Key";
+                var fieldNames = new List<string>();
+                if (key.TryGetProperty("FieldNames", out var fieldNamesJson)
+                    && fieldNamesJson.ValueKind == System.Text.Json.JsonValueKind.Array)
+                {
+                    foreach (var fieldNameJson in fieldNamesJson.EnumerateArray())
+                    {
+                        var fieldName = fieldNameJson.GetString();
+                        if (!string.IsNullOrWhiteSpace(fieldName)) fieldNames.Add(fieldName);
+                    }
+                }
+                if (fieldNames.Count > 0)
+                    keys.Add(new ParsedExtensionKey(keyName, fieldNames));
+            }
+        }
+
         return new TableExtensionSymbol(extId, extName, targetTableName, fields,
-            calcFormulaTexts.Count > 0 ? calcFormulaTexts : null);
+            calcFormulaTexts.Count > 0 ? calcFormulaTexts : null, keys);
     }
 }

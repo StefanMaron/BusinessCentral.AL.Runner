@@ -42,7 +42,8 @@ Step 3 is the one that is never optional. Full detail, including escape hatches:
    orchestrator merges it, not the authoring agent, once the corpus's eight required BC
    legs — one per version — are green. Eight OnPrem legs run alongside without gating.
 4. **After that PR merges, bump the submodule pin** in this repo, folded into the fix PR
-   (`al-language-submodule.md` — a pin bump cannot be its own PR, it is red by construction).
+   (`al-language-submodule.md` — folding it in is the *fold* case; a bump whose fix has already
+   merged is a catch-up bump and is legitimately its own PR).
 5. **Then merge the runner change here**, showing the corpus test going RED → GREEN against the
    new pin.
 

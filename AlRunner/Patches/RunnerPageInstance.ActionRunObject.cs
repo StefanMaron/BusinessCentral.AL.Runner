@@ -72,6 +72,38 @@
 //   `LiveNavTestPart.ApplyLink` already applies a part's SubPageLink, and the CONST quoting rule
 //   is literally shared with it (`LiveNavTestPart.ConstFilterExpression`).
 //
+// NO HANDLER BOUND — THE TARGET STILL OPENS (issue #2975)
+//   The AL routes that open a page (`Page.Run` / `Page.RunModal`) are REFUSED when the test
+//   binds nothing to answer them: NavTestExecution.TestHandleForm asks FindHandler with its
+//   `throwIfNotFound = true` default and the resulting NavNCLMissingUIHandlerException
+//   ("Unhandled UI: Page N") surfaces to AL while NavForm.RunAsync is still on its call stack.
+//   Company.RegisterForm runs only AFTER that lookup succeeds, so on the AL route a
+//   handler-less page is never registered, never opens, and never raises its OnOpenPage.
+//
+//   The RunObject route does NOT behave that way, and eight real service tiers say so — corpus
+//   codeunit 60285 "TPARONH Tests", green on 27.0, 27.3, 27.5 and 28.0-28.4. Microsoft's
+//   client-services layer builds, registers and OPENS the target first and only then asks
+//   NavTestExecution.ShowForm for a handler, so the target's OnOpenPage has already run by the
+//   time BC finds nobody bound; and the throw is then off AL's call stack, where
+//   NavOpenTaskPageAction.ShowForm (Microsoft.Dynamics.Nav.Client.UI.dll, 28.1) catches it:
+//
+//       catch (NavTestBaseException) { throw; }                     // reaches AL
+//       catch (NavBaseException ex3) {                              // does NOT reach AL
+//           if (!ex3.SuppressMessage) ...MessageHelper.ShowError(ex3, showModal: true);
+//           childForm.Close(FormClose.ForceClose);
+//       }
+//
+//   NavNCLMissingUIHandlerException derives from NavNCLException -> NavException ->
+//   NavBaseException and is NOT a NavTestBaseException, so it lands in the second arm: the
+//   error is shown to a user who is not there, the form is force-closed, and Invoke() returns
+//   normally. The two corpus arms measure exactly both halves — the target's OnOpenPage row is
+//   written, on the HOST's current row (RunPageOnRec), and AL sees no error.
+//
+//   So the non-modal RunObject route below asks BC's own FindHandler whether anything is bound
+//   BEFORE running the page, and when nothing is, opens the target through BC's own
+//   NavForm.OpenForm and force-closes it the way Microsoft's catch does. Nothing about handler
+//   matching, trapping or OnOpenPage is reimplemented — see RunTargetPage.
+//
 // WHAT IS STILL REFUSED, LOUDLY
 //   RunObject targeting a Report / Codeunit / XmlPort / Query. It raises with a
 //   `not-yet-implemented` reason anchor, which `docs/expectations.md` lets a manifest track as
@@ -80,7 +112,9 @@
 //   answer, which is what `loud-failures.md` exists to prevent. The same applies to a link whose
 //   fields this run cannot resolve to numbers: a link that cannot be applied is refused by name,
 //   never dropped, because a dropped link shows the target's WHOLE table.
+using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
+using Microsoft.Dynamics.Nav.Types.Exceptions;
 using MetaTypes = Microsoft.Dynamics.Nav.Types.Metadata;
 
 namespace AlRunner.Patches;
@@ -168,18 +202,36 @@ internal sealed partial class RunnerPageInstance
     /// two in that order (see this file's header).</para>
     /// </summary>
     private void RunTargetPage(int actionId, ActionRunTarget target)
+        => RunPageThroughBcFrontDoor(
+            target.ObjectId,
+            target.Links.Count > 0
+                ? BuildLinkedTargetRecord(actionId, target)
+                : (target.RunPageOnRec ? _record : null));
+
+    /// <summary>
+    /// Open <paramref name="pageId"/> through BC's own <c>NavForm.RunAsync</c> /
+    /// <c>RunModalAsync</c>, on <paramref name="record"/> when one is supplied.
+    ///
+    /// <para>Static and internal since #3185, because the other caller has no
+    /// RunnerPageInstance to go through: a list page's BUILT-IN View/Edit action opens the
+    /// page's <c>CardPageId</c> card, and the runner can know that card's id from the page
+    /// inventory even for a list it never compiled a page instance for.</para>
+    /// </summary>
+    internal static void RunPageThroughBcFrontDoor(int pageId, NavRecord? record)
     {
-        var pageId = target.ObjectId;
-        var runPageOnRec = target.RunPageOnRec;
-
-        var record = target.Links.Count > 0
-            ? BuildLinkedTargetRecord(actionId, target)
-            : (runPageOnRec ? _record : null);
-
         if (TargetPageOpensModally(pageId))
         {
             // isInLookupTrigger / isLookup both false — the shape the AL compiler emits for a
             // plain `Page.RunModal(id, Rec)`, and the one RunnerModalDispatch already serves.
+            //
+            // Deliberately NOT given the unattended-open treatment below. BC parts here too —
+            // NavTestExecution.ShowDialog asks FindHandler with throwIfNotFound: FALSE and then
+            // raises NavTestPageInvokedWithoutHandlerException, which IS a NavTestBaseException
+            // and therefore IS rethrown into AL by NavOpenTaskPageAction.ShowForm's first catch
+            // arm. So a dialog target with nothing bound raises in real BC, where a non-modal
+            // one does not. No service tier has measured that arm — corpus codeunit 60285's
+            // targets are both PageType = Card — so the modal route keeps refusing loudly
+            // rather than being changed on a reading. Tracked by issue #3223.
             if (record != null)
                 NavForm.RunModalAsync(false, false, pageId, record).AsTask().GetAwaiter().GetResult();
             else
@@ -187,10 +239,186 @@ internal sealed partial class RunnerPageInstance
             return;
         }
 
-        if (record != null)
-            NavForm.RunAsync(pageId, record).AsTask().GetAwaiter().GetResult();
-        else
-            NavForm.RunAsync(pageId).AsTask().GetAwaiter().GetResult();
+        // BC's own static NavForm.RunAsync(formId, record, fieldNo), spelled out so the form
+        // instance is in reach before anything runs — the unattended open below has to register
+        // and open THIS instance, and NavForm's constructor is where a RunPageOnRec or
+        // RunPageLink record becomes the target's rowset (`if (record != null) {
+        // SetSourceTable(record, clone: true); if (bookmarkType != BookmarkType.Record)
+        // SyncTempTableWithSourceTableAsync(...) }`).
+        //
+        // Exactly the static overload's body, less its `if (formId == 0 && record != null)
+        // formId = record.LookupFormId` fallback, which cannot be reached here: a target with
+        // ObjectId <= 0 was already refused by name above.
+        //
+        // What is NOT spelled out is the INSTANCE overload, `NavForm.RunAsync(record, fieldNo)`
+        // — and only on the unattended branch, which calls OpenForm instead. Measured on Ncl
+        // 28.1, that branch therefore does not get the instance overload's re-bind of the same
+        // record with `forceSecurityFilterFiltered: true` (the constructor has already bound it
+        // without that flag), its `hasRun` / NavNCLObjectHasAlreadyBeenRunException guard, its
+        // NavFormRuntimeParameters, or its `clientCallback.FormRun`. Skipping the last is the
+        // point — a client callback is what there is no client for. The rest is believed inert
+        // for a page opened once, from an action, with nothing bound; believed, not measured,
+        // so it is stated as the qualification it is rather than as `nothing is lost`. The
+        // ATTENDED branch below calls the instance overload and loses none of it.
+        var session = NavCurrentThread.Session;
+        using var handle = new NavFormHandle(
+            session,
+            NavGlobal.NCLMetadata.GetMetaFormById(pageId, requireCompiled: true).CreateObjectInstance(record));
+        var form = handle.Target;
+
+        // Ask BC, before running anything, whether this page is answered at all — the same
+        // question TestHandleForm asks and in the same order: a TestPage.Trap() short-circuits
+        // the handler lookup there, so it short-circuits here too. The probe itself leaves no
+        // trace either way (see HasPageHandler), so the ordering is about asking the same
+        // question BC asks, not about damage control.
+        if (HasTrapForPage(session, form) || HasPageHandler(session, form))
+        {
+            form.RunAsync(record, 0).AsTask().GetAwaiter().GetResult();
+            return;
+        }
+
+        OpenTargetUnattended(session, form);
+    }
+
+    /// <summary>
+    /// Open <paramref name="form"/> with nobody bound to answer it, then force-close it — the
+    /// shape Microsoft's own <c>NavOpenTaskPageAction.ShowForm</c> is left in when its
+    /// <c>catch (NavBaseException)</c> arm fires (see this file's header). Registering first is
+    /// what BC's client layer does before it looks a handler up, and <c>NavForm.OpenForm</c> is
+    /// the only thing that raises <c>OnOpenPage</c>.
+    ///
+    /// <para><c>ForceClose</c>, not <c>CloseForm</c>, and deliberately: Microsoft closes with
+    /// <c>FormClose.ForceClose</c> on this path, and <c>NavForm.ForceClose</c> unregisters
+    /// without raising <c>OnClosePage</c> / <c>OnQueryClosePage</c>. Nothing has measured
+    /// whether real BC raises those here, so this raises neither rather than inventing one.</para>
+    ///
+    /// <para>An <c>Error()</c> raised by the target's own OnOpenPage is NOT absorbed — it is AL,
+    /// and a real test failure.</para>
+    ///
+    /// <para>Reached by ASKING first rather than by catching BC's refusal, and that ordering is
+    /// load-bearing rather than stylistic. Letting <c>NavForm.RunAsync</c> raise and then opening
+    /// the page in a catch does produce the same OnOpenPage — measured — but the writes that
+    /// trigger makes are then made AFTER an error, and the runner's error handling rolls the
+    /// database back to the last commit point (<c>SessionTransactionExtensions.Rollback</c> ->
+    /// <c>RecordPatches.RollbackToCommitPoint</c>). Measured on the runner-extras arm, which has
+    /// no <c>Commit()</c>: the target's OnOpenPage ran and its row was gone. Real BC never raises
+    /// on this route at all, so neither does this.</para>
+    /// </summary>
+    private static void OpenTargetUnattended(NavSession session, NavForm form)
+    {
+        session.Company.RegisterForm(form);
+        try
+        {
+            form.OpenForm();
+        }
+        finally
+        {
+            if (form.IsOpen) form.ForceClose();
+            else session.Company.UnregisterForm(form);
+        }
+    }
+
+    /// <summary>
+    /// Whether the test has an outstanding <c>TestPage.Trap()</c> for this form's page, asked
+    /// through BC's own <c>NavTestExecution.HasTrap</c> — the same question, on the same state,
+    /// that <see cref="RunnerModalDispatch"/> asks on the dispatch side.
+    /// </summary>
+    private static bool HasTrapForPage(NavSession session, NavForm form)
+    {
+        var hasTrap = session.TestExecution.GetType().GetMethod(
+            "HasTrap",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null, types: new[] { typeof(int) }, modifiers: null)
+            // A BC SHAPE GAP, not a plain InvalidOperationException (#2946). This read happens
+            // during Invoke(), on AL's own call stack, so an asserterror around the invoke
+            // would CATCH an InvalidOperationException and PASS — the inverted result
+            // BcShapeGapException exists to prevent. The "Ncl shape changed; do not commit"
+            // guards this was modelled on all live in AlRunner/Infrastructure/NclCecilRewrite.*,
+            // which runs at bootstrap with no asserterror in scope; that precedent does not
+            // reach here. See RunnerPageInstance.cs's lookup-trigger guard for the same shape.
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                $"TestPage action target page {form.ObjectId.ObjectNumber}",
+                "NavTestExecution.HasTrap(int)",
+                "method not found on this BC build, so the runner cannot ask BC whether the "
+                + "test has an outstanding TestPage.Trap() for this RunObject target — and "
+                + "without that answer it cannot tell a trapped open from an unattended one");
+
+        return hasTrap.Invoke(session.TestExecution, new object?[] { form.ObjectId.ObjectNumber }) is true;
+    }
+
+    /// <summary>
+    /// Whether a <c>[PageHandler]</c> is bound that BC would dispatch this form to — BC's OWN
+    /// <c>NavTestExecution.FindHandler</c>, called with <c>throwIfNotFound: false</c> so asking
+    /// does not raise. Nothing about handler matching is reimplemented: the
+    /// <c>[HandlerFunctions]</c> split, the handler-type check and the <c>[NavObjectId]</c>
+    /// match against THIS page all stay Microsoft's.
+    ///
+    /// <para>Asking is made side-effect-free by snapshotting and restoring the one piece of
+    /// state <c>FindHandler</c> mutates, rather than by arguing that the mutation is harmless.
+    /// It is not harmless in general. <c>FindHandler</c> iterates the IMMUTABLE declared
+    /// <c>[HandlerFunctions]</c> string and calls <c>RemoveHandlerName</c>, which edits a
+    /// SEPARATE worklist field, <c>executingHandlers</c> — and does so with a substring
+    /// <c>IndexOf</c> / <c>Remove(index, length)</c> (measured, Ncl 28.1), not a token match. So
+    /// a probe would consume one entry of <c>[HandlerFunctions]('H,H')</c>, and BC's
+    /// end-of-test <c>CheckAllHandlersConsumed</c> would then NOT raise its
+    /// <c>NavNCLUnexecutedUIHandlerException</c> where real BC does; and a name that is a
+    /// substring of another declared name would come off the wrong entry. Neither is observable
+    /// today — <c>MetadataPatches.CheckAllHandlersConsumed</c> is not called yet — which makes
+    /// it exactly the kind of trap that surfaces as an unexplained regression on the day that
+    /// worklist is turned on.</para>
+    ///
+    /// <para>The field is private on <c>NavTestExecution</c> in every BC major this runner
+    /// supports (checked on 27.0 and 28.1). If it ever is not, this throws rather than probing
+    /// with an uncontrolled side effect.</para>
+    /// </summary>
+    private static bool HasPageHandler(NavSession session, NavForm form)
+    {
+        var testExecution = session.TestExecution;
+        var findHandler = testExecution.GetType().GetMethod(
+            "FindHandler",
+            BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null,
+            types: new[] { typeof(NavHandlerType), typeof(NavApplicationObjectBase), typeof(bool), typeof(string) },
+            modifiers: null)
+            // Same reasoning as HasTrap above: raised on AL's call stack, so it must be the
+            // type an asserterror cannot swallow (#2946).
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                $"TestPage action target page {form.ObjectId.ObjectNumber}",
+                "NavTestExecution.FindHandler(NavHandlerType, NavApplicationObjectBase, bool, string)",
+                "method not found on this BC build, so the runner cannot ask BC's own matcher "
+                + "whether a [PageHandler] is bound for this RunObject target, and would have "
+                + "to reimplement handler matching to answer it");
+
+        var worklist = testExecution.GetType().GetField(
+            "executingHandlers",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            // Refusing rather than probing without it is the whole point of this guard: without
+            // the worklist there is nothing to restore, so the probe would silently consume a
+            // handler entry. Raised as a shape gap for the same call-stack reason as above.
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                $"TestPage action target page {form.ObjectId.ObjectNumber}",
+                "NavTestExecution.executingHandlers",
+                "field not found on this BC build, so the runner cannot snapshot and restore "
+                + "the handler worklist that FindHandler mutates, and asking whether a handler "
+                + "is bound would consume one [HandlerFunctions] entry as a side effect");
+
+        var before = worklist.GetValue(testExecution);
+        try
+        {
+            return findHandler.Invoke(
+                testExecution,
+                new object?[] { NavHandlerType.Page, form, false, null }) is MethodInfo;
+        }
+        catch (TargetInvocationException ex)
+        {
+            throw ex.GetBaseException();
+        }
+        finally
+        {
+            // Restore unconditionally, including on the throwing path: a probe that raised
+            // half-way through FindHandler has still run RemoveHandlerName if it got that far.
+            worklist.SetValue(testExecution, before);
+        }
     }
 
     /// <summary>
@@ -486,8 +714,13 @@ internal sealed partial class RunnerPageInstance
     /// the same thing whichever route recovered it.</para>
     ///
     /// <para>Refuses rather than returning a partial link, in both directions: a target page
-    /// with no resolvable source table has no rowset to filter, and an entry the parser dropped
-    /// would leave the target showing MORE rows than BC does.</para>
+    /// with no resolvable source table has no rowset to filter, and an entry the parser could
+    /// not read would leave the target showing MORE rows than BC does. The refusal fires on the
+    /// entry count AND on the unreadable entries the parse now carries alongside it (#3267) —
+    /// the count alone was load-bearing while it was also being computed by a splitter that
+    /// disagreed with the parse about AL preprocessor directives, and two independent signals
+    /// for one fail-closed decision is the cheaper arrangement than one that has to stay
+    /// exactly right.</para>
     /// </summary>
     private IReadOnlyList<ActionRunLink> LinksFromSymbols(
         int actionId, BcAppSymbolCache.ActionRunObjectSymbol spec, int targetPageId)
@@ -495,13 +728,24 @@ internal sealed partial class RunnerPageInstance
         if (!spec.HasRunPageLink) return NoLinks;
 
         var parsed = spec.RunPageLink;
-        if (parsed == null || parsed.Count != spec.DeclaredRunPageLinkEntries)
+        var unreadable = spec.UnreadableRunPageLinkEntries;
+        if (parsed == null || parsed.Count != spec.DeclaredRunPageLinkEntries
+            || unreadable is { Count: > 0 })
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage action {actionId} on page {_pageId}",
                 $"not-yet-implemented — the action declares RunObject = '{spec.ObjectName}' with a "
                 + $"RunPageLink of {spec.DeclaredRunPageLinkEntries} entr(ies), and this run "
                 + $"could read {parsed?.Count ?? 0} of them out of the symbol file. Applying the "
-                + "rest alone would show MORE rows than real BC, so it is refused instead");
+                + "rest alone would show MORE rows than real BC, so it is refused instead"
+                // The entry TEXT, not just the shortfall. The count says how many were lost and
+                // the developer still has to open SymbolReference.json to find out which; the
+                // text is the thing that says whether this is AL grammar the parser has never
+                // seen or a link that was never going to work. Carried through the payload
+                // (#3267) so a warm content-addressed cache hit replays it -- the same reason
+                // PagePartSymbol.UnreadableSubPageLinkEntries exists rather than a stderr line.
+                + (unreadable is { Count: > 0 }
+                    ? $". The entr(ies) it could not read: {string.Join(" | ", unreadable)}"
+                    : string.Empty));
 
         var targetTableId = RecordPatches.ResolveSourceTableIdForAnyPage(targetPageId);
         var hostTableId = RecordPatches.ResolveSourceTableIdForAnyPage(_pageId);

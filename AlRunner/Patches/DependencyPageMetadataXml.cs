@@ -553,13 +553,31 @@ public static partial class RecordPatches
     {
         w.WriteStartElement("SourceTableView");
 
-        if (view.SortingFieldNames.Count > 0 || view.Ascending.HasValue)
+        if (view.SortingFields.Count > 0 || view.Ascending.HasValue)
         {
-            var keyFieldIds = new List<string>(view.SortingFieldNames.Count);
+            var keyFieldIds = new List<string>(view.SortingFields.Count);
             var unresolved = false;
-            foreach (var fieldName in view.SortingFieldNames)
+            foreach (var sortField in view.SortingFields)
             {
-                var id = RecordPatches.TryResolveDependencyFieldId(page.SourceTableId, fieldName);
+                var id = RecordPatches.TryResolveDependencyFieldId(page.SourceTableId, sortField.FieldName);
+
+                // #3271: an entry inside an AL `#if` block may not be in the compiled app at
+                // all, and this app's own field inventory is the only evidence available —
+                // same rule and same reasoning as the conditional filter arm below, and as
+                // EmitSubFormLinkXml's. Omit it and keep the rest of the key: a guarded entry
+                // the app does not contain is not in the compiled page either, so the shorter
+                // key is what that page actually declares. Refusing the whole key instead
+                // would leave the page on the table's DEFAULT order, which is further from
+                // what BC does rather than closer.
+                if (sortField.Conditional && id is null)
+                {
+                    Console.Error.WriteLine(
+                        $"[RecordPatches] page {page.Id} \"{page.Name}\": conditional SourceTableView "
+                        + $"sorting field \"{sortField.FieldName}\" omitted — the field it names is not "
+                        + "in this app, so the AL directive guarding it compiled the entry out");
+                    continue;
+                }
+
                 if (id is null) { unresolved = true; break; }
                 // BC's own spelling for MetaTable.GetKeyFieldIds: "Field<id>", in view order.
                 keyFieldIds.Add("Field" + id.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -579,7 +597,7 @@ public static partial class RecordPatches
                 // KeyFields only when KeyFieldsSetByView says to).
                 Console.Error.WriteLine(
                     $"[RecordPatches] page {page.Id} \"{page.Name}\": SourceTableView sorting("
-                    + string.Join(", ", view.SortingFieldNames)
+                    + string.Join(", ", view.SortingFields.Select(f => f.FieldName))
                     + $") not applied — a field name did not resolve against table {page.SourceTableId}");
             }
             if (view.Ascending.HasValue)

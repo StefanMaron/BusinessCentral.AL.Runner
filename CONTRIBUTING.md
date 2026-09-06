@@ -110,7 +110,9 @@ dotnet run --project AlRunner -c Release -- --cache ~/.cache/al-runner/al-out te
 
 ### Bump the corpus pin
 
-The submodule is its own PR. Inspect the corpus diff before bumping:
+Which PR the bump belongs in depends on what the new commits need — the three cases are in
+`.claude/rules/al-language-submodule.md`. A catch-up bump, where the fix it needs has already
+merged, is its own PR. Inspect the corpus diff before bumping:
 
 ```bash
 git -C tests/al-language fetch

@@ -92,7 +92,7 @@ The **GitHub assignee field** is the boundary between agent-owned and human-owne
 - Set `status: review-ready` on the PR once CI is green.
 - One PR at a time per impl agent.
 - Never edit `CHANGELOG.md`.
-- Never edit a file inside `tests/al-language/`. A pin bump is folded into the fix PR it enables, never its own PR (`al-language-submodule.md`).
+- Never edit a file inside `tests/al-language/`. A pin bump is folded into the fix PR it enables when that fix is new; a catch-up bump, whose fix already merged, is its own PR (`al-language-submodule.md`).
 - Honour the precompiled-DLL contract (`.claude/rules/precompiled-dll-respect.md`) and loud-failures rule (`.claude/rules/loud-failures.md`).
 - `--repo StefanMaron/BusinessCentral.AL.Runner` on every `gh` command when running outside the repo's default.
 
