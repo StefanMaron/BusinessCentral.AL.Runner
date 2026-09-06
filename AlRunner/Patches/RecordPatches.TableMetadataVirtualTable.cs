@@ -19,8 +19,8 @@
 //
 // WHERE THE ROWS COME FROM (two sources, neither invented)
 //   1. Tables the runner compiles itself — parsed from their AL source
-//      (RecordPatches.AlSourceParser.cs: name, TableType, DataPerCompany and the
-//      LookupPageId / DrillDownPageId references).
+//      (RecordPatches.AlSourceParser.cs: name, TableType, DataClassification, ExternalName,
+//      DataPerCompany and the LookupPageId / DrillDownPageId references).
 //   2. Tables living in a PRECOMPILED dependency (Base Application, System
 //      Application, ISV apps) — read from that .app's SymbolReference.json
 //      (BcAppSymbolCache.TryParseTableSymbol). This is the only route for an R2R
@@ -135,9 +135,11 @@ public static partial class RecordPatches
     /// One column of a Table Metadata row, matched by the metatable's own FIELD NAME so the
     /// mapping tracks whatever the System package in the resolved artifact declares rather
     /// than a hardcoded field-number table. Columns the runner cannot answer truthfully
-    /// (ObsoleteState/Reason, ReplicateData, ExtensionID, TableType beyond temporary, …) get
-    /// BC's own default — which is also what a real row carries for a table declaring none
-    /// of them.
+    /// (ObsoleteState/Reason, ReplicateData, ExtensionID, Scope, Access, …) get BC's own
+    /// default — which is also what a real row carries for a table declaring none of them.
+    /// TableType, DataClassification and ExternalName USED to be in that list and are not any
+    /// more (#2938): for those three the default was not "what a table declaring none carries"
+    /// but a wrong answer about every table that DOES declare one.
     /// </summary>
     private static object? BuildTableMetadataValue(NCLMetaField field, TableMetadataRow row)
     {
