@@ -92,7 +92,13 @@ public static partial class RecordPatches
     private sealed record CodeunitMetaRow(int Id, string Name, int TableNo, bool SingleInstance, string Subtype);
 
     private static List<CodeunitMetaRow>? _codeunitMetaRows;
-    private static (int Apps, int Decls) _codeunitMetaRowsBuiltFrom = (-1, -1);
+    // The .app term is RecordPatches' registration EPOCH, never _bcAppPaths.Count (#2888):
+    // the registered set can SHRINK since #2755 / PR #2873, so a count cannot tell a set that
+    // lost N entries and gained N different ones from the one it was built against — and in
+    // --watch mode (same bundle, one edited file) that is the NORMAL case, not a corner. The
+    // remaining terms stay counts and are sound as counts, because the dictionaries they count
+    // are only ever cleared by ResetForReload, which bumps the epoch in the same breath.
+    private static (int Epoch, int Decls) _codeunitMetaRowsBuiltFrom = (-1, -1);
     private static readonly object _codeunitMetaRowsLock = new();
 
     // Resolved once per process from the parsed CodeUnit Metadata metatable's own "Subtype"
@@ -165,11 +171,11 @@ public static partial class RecordPatches
     /// </summary>
     private static List<CodeunitMetaRow> EnumerateKnownCodeunitMetadata()
     {
-        var generation = (_bcAppPaths.Count, _parsedObjectDecls.Count);
+        var generation = (BcAppRegistrationEpoch, _parsedObjectDecls.Count);
         if (_codeunitMetaRows != null && _codeunitMetaRowsBuiltFrom == generation) return _codeunitMetaRows;
         lock (_codeunitMetaRowsLock)
         {
-            generation = (_bcAppPaths.Count, _parsedObjectDecls.Count);
+            generation = (BcAppRegistrationEpoch, _parsedObjectDecls.Count);
             if (_codeunitMetaRows != null && _codeunitMetaRowsBuiltFrom == generation) return _codeunitMetaRows;
 
             var rows = new Dictionary<int, CodeunitMetaRow>();

@@ -103,7 +103,13 @@ public static partial class RecordPatches
     // would permanently hide every Base Application table — the same trap the Report
     // Metadata provider documents.
     private static List<TableMetadataRow>? _tableMetadataRows;
-    private static (int Apps, int Parsed, int Pages) _tableMetadataRowsBuiltFrom = (-1, -1, -1);
+    // The .app term is RecordPatches' registration EPOCH, never _bcAppPaths.Count (#2888):
+    // the registered set can SHRINK since #2755 / PR #2873, so a count cannot tell a set that
+    // lost N entries and gained N different ones from the one it was built against — and in
+    // --watch mode (same bundle, one edited file) that is the NORMAL case, not a corner. The
+    // remaining terms stay counts and are sound as counts, because the dictionaries they count
+    // are only ever cleared by ResetForReload, which bumps the epoch in the same breath.
+    private static (int Epoch, int Parsed, int Pages) _tableMetadataRowsBuiltFrom = (-1, -1, -1);
     private static readonly object _tableMetadataRowsLock = new();
 
     /// <summary>
@@ -248,11 +254,11 @@ public static partial class RecordPatches
     /// </summary>
     private static List<TableMetadataRow> EnumerateKnownTableMetadata()
     {
-        var generation = (_bcAppPaths.Count, _parsedTables.Count, _parsedPages.Count);
+        var generation = (BcAppRegistrationEpoch, _parsedTables.Count, _parsedPages.Count);
         if (_tableMetadataRows != null && _tableMetadataRowsBuiltFrom == generation) return _tableMetadataRows;
         lock (_tableMetadataRowsLock)
         {
-            generation = (_bcAppPaths.Count, _parsedTables.Count, _parsedPages.Count);
+            generation = (BcAppRegistrationEpoch, _parsedTables.Count, _parsedPages.Count);
             if (_tableMetadataRows != null && _tableMetadataRowsBuiltFrom == generation) return _tableMetadataRows;
 
             // Built once and closed over below rather than through ResolvePageReference's own

@@ -78,7 +78,13 @@ public static partial class RecordPatches
         string Enabled, string Editable, string Visible, string SourceExpression, int Sequence);
 
     private static List<PageControlFieldRow>? _pageControlFieldRows;
-    private static (int Apps, int Parsed) _pageControlFieldRowsBuiltFrom = (-1, -1);
+    // The .app term is RecordPatches' registration EPOCH, never _bcAppPaths.Count (#2888):
+    // the registered set can SHRINK since #2755 / PR #2873, so a count cannot tell a set that
+    // lost N entries and gained N different ones from the one it was built against — and in
+    // --watch mode (same bundle, one edited file) that is the NORMAL case, not a corner. The
+    // remaining terms stay counts and are sound as counts, because the dictionaries they count
+    // are only ever cleared by ResetForReload, which bumps the epoch in the same breath.
+    private static (int Epoch, int Parsed) _pageControlFieldRowsBuiltFrom = (-1, -1);
     private static readonly object _pageControlFieldRowsLock = new();
 
     private static void PopulatePageControlFieldVirtualTable(object dataAccess, NCLMetaTable metaTable)
@@ -126,11 +132,11 @@ public static partial class RecordPatches
 
     private static List<PageControlFieldRow> EnumerateKnownPageControlFields()
     {
-        var generation = (_bcAppPaths.Count, _parsedPages.Count);
+        var generation = (BcAppRegistrationEpoch, _parsedPages.Count);
         if (_pageControlFieldRows != null && _pageControlFieldRowsBuiltFrom == generation) return _pageControlFieldRows;
         lock (_pageControlFieldRowsLock)
         {
-            generation = (_bcAppPaths.Count, _parsedPages.Count);
+            generation = (BcAppRegistrationEpoch, _parsedPages.Count);
             if (_pageControlFieldRows != null && _pageControlFieldRowsBuiltFrom == generation) return _pageControlFieldRows;
 
             var rows = new List<PageControlFieldRow>();
