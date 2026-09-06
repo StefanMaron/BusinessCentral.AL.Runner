@@ -130,6 +130,8 @@ A reported bug is one observation of a shape, and the shape usually repeats — 
 
 Not scope creep: fixing one of N instances closes the issue while leaving the bug in, and the next report reads as a regression. If the wider fix is genuinely too large, say so and file the rest (`.claude/rules/file-issues-for-gaps.md`) — never silently fix only what was reported.
 
+**The same three questions apply to the open-issue queue, not just to the code** — scan it for the symbol, file and subsystem your fix will land in, and fold in any issue whose fix lands in the same file, each with its own RED → GREEN. That is one PR closing several issues, not several claims. `.claude/rules/batch-sibling-issues-by-file.md` has the boundaries and why there is no fixed cap.
+
 In one day this step found: a sibling `_parsedPages` gap in `GetInsertAllowedForPage`, called at every TestPage construction site (#2088); five more call sites doing the same unrooted `Path.Combine` on a home directory (#2114); a `--help` section listing a shipped feature as unimplemented (#2118); a wrong statement-attribution bug an existing test had encoded as correct (#2074); a `WorkDate` regression that would have broken nearly every `execute` call (#2117). CI was green in all five and would have stayed green.
 
 ### Code navigation, and `grep` failing silently
