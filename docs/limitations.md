@@ -1081,6 +1081,30 @@ because four readers of one private BC structure raised three different exceptio
 them. `AlRunner/Infrastructure/BcShapeGapException.cs` carries the full derivation, including
 why it is a separate type rather than a third reason anchor.
 
+### The `!` sweep — 73 more member lookups that used to fail as a silent null
+
+[#3051](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3051) closed the other
+half of the same defect. `t.GetProperty("X")!` is a compiler annotation: it emits no code and
+throws nothing, so a member Microsoft has moved hands the runner a silent null and the
+`NullReferenceException` lands at the first *use* of it, on a line that no longer names X. On an
+AL-entered path `asserterror` then swallows it and **passes** — the inversion described above,
+with nothing in the output naming the member.
+
+134 such lookups existed across `AlRunner/`. 73 of them read BC's own internals and now resolve
+through `BcShape.Property` / `.Method` / `.Field` / `.Constructor`, which raise a
+`bc-shape-gap:` naming `Declaring.Member`. They span AL query execution and its filter
+push-down, table and query metadata construction, record data access, `RecordRef` and stream
+skeleton state, `InStream`/`OutStream` construction, the event-subscriber inventory, Page and
+XmlPort Metadata, TestPage field expressions, task-scheduler shutdown, and incremental AL
+compilation.
+
+The remaining 61 stay as they are on purpose, and none of them is a question about BC's layout:
+the receiver is a type in this repository (36), a BCL type (7 outright plus 4 more behind a
+local), a framework tuple's `Item1`/`Item2` (8), the runner's own side-loaded
+`AlRunner.QueryJoin.dll` (4), or an artifact the runner emitted itself (2).
+`AlRunner.Tests/BcInternalsNullForgivingGuardTests.cs` holds that classification to an exact
+count in both directions, so neither adding a lookup nor quietly dropping one goes unnoticed.
+
 Two shape gaps live on the TestPage surface
 ([#2999](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2999)), and both are
 reached only when BC's own metadata is not the shape the runner reads:
