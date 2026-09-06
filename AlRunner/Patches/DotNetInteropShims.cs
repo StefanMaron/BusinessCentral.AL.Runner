@@ -158,7 +158,12 @@ public static class DotNetInteropShims
             api,
             "dotnet-platform-unsupported — "
             + (lib == null ? "the .NET library backing this type" : lib)
-            + $" refuses every entry point on this operating system ({System.Runtime.InteropServices.RuntimeInformation.OSDescription}). "
+            // OSDescription alone is not enough to act on: on the box where #3212 was measured
+            // it renders as the distribution's name, "Omarchy", which does not tell a reader
+            // this is the non-Windows case at all. The RID always names the OS family.
+            + " refuses every entry point on this operating system ("
+            + $"{System.Runtime.InteropServices.RuntimeInformation.OSDescription}, "
+            + $"{System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}). "
             + "BC's own message for this is \"The type initializer … threw an exception\", which names "
             + $"neither. .NET reported: {refused.Message}",
             "dotnet-platform");

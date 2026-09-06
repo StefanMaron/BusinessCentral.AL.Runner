@@ -78,6 +78,10 @@ public sealed class DotNetInteropPlatformRefusalTests
         Assert.Contains("System.Drawing.Common", oos.Reason, StringComparison.Ordinal);
         // .NET's own sentence, which is the part that says a native package will not help.
         Assert.Contains("not supported on non-Windows platforms", oos.Reason, StringComparison.Ordinal);
+        // The RID, because OSDescription alone can be a distribution name that never says
+        // "not Windows" — on the box #3212 was measured on it renders as "Omarchy".
+        Assert.Contains(System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier,
+            oos.Reason, StringComparison.Ordinal);
         Assert.Equal("dotnet-platform", oos.DocAnchor);
         // The rendered message keeps the stable contract prefix and lands on a real anchor.
         Assert.StartsWith("out-of-scope: NavDotNet.CreateDotNet(System.Drawing.Bitmap) — ",
