@@ -1316,7 +1316,12 @@ internal static partial class BcAppSymbolCache
                 if (entry.Trim().Length > 0) declaredEntries++;
             // Same grammar as a part's SubPageLink -- `"Field" = field("Other")`, `= const(X)`,
             // `= filter(A|B)`, comma-separated -- so the same parser reads it (issue #2942).
-            parsedLink = ParseSubPageLink(link);
+            // The unreadable list is discarded here, and only here: an unreadable entry is
+            // counted in declaredEntries but never reaches the result, so this path already
+            // refuses through DeclaredRunPageLinkEntries != RunPageLink.Count (applied in
+            // RunnerPageInstance.ActionRunObject.cs). PagePartSymbol carries the list instead
+            // because a part has no such count to compare against.
+            parsedLink = ParseSubPageLink(link, out _);
         }
         return new ActionRunObjectSymbol(
             runObject!,
