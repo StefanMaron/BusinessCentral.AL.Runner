@@ -232,9 +232,25 @@ internal sealed partial class RunnerPageInstance
 
         // BC's own static NavForm.RunAsync(formId, record, fieldNo), spelled out so the form
         // instance is in reach before anything runs — the unattended open below has to register
-        // and open THIS instance, and NavForm's constructor is where a RunPageOnRec record
-        // becomes the target's rowset (`if (record != null) { SetSourceTable(record, clone:
-        // true); if (bookmarkType != BookmarkType.Record) SyncTempTableWithSourceTableAsync(...) }`).
+        // and open THIS instance, and NavForm's constructor is where a RunPageOnRec or
+        // RunPageLink record becomes the target's rowset (`if (record != null) {
+        // SetSourceTable(record, clone: true); if (bookmarkType != BookmarkType.Record)
+        // SyncTempTableWithSourceTableAsync(...) }`).
+        //
+        // Exactly the static overload's body, less its `if (formId == 0 && record != null)
+        // formId = record.LookupFormId` fallback, which cannot be reached here: a target with
+        // ObjectId <= 0 was already refused by name above.
+        //
+        // What is NOT spelled out is the INSTANCE overload, `NavForm.RunAsync(record, fieldNo)`
+        // — and only on the unattended branch, which calls OpenForm instead. Measured on Ncl
+        // 28.1, that branch therefore does not get the instance overload's re-bind of the same
+        // record with `forceSecurityFilterFiltered: true` (the constructor has already bound it
+        // without that flag), its `hasRun` / NavNCLObjectHasAlreadyBeenRunException guard, its
+        // NavFormRuntimeParameters, or its `clientCallback.FormRun`. Skipping the last is the
+        // point — a client callback is what there is no client for. The rest is believed inert
+        // for a page opened once, from an action, with nothing bound; believed, not measured,
+        // so it is stated as the qualification it is rather than as `nothing is lost`. The
+        // ATTENDED branch below calls the instance overload and loses none of it.
         var session = NavCurrentThread.Session;
         using var handle = new NavFormHandle(
             session,
@@ -242,10 +258,11 @@ internal sealed partial class RunnerPageInstance
         var form = handle.Target;
 
         // Ask BC, before running anything, whether this page is answered at all — the same
-        // question TestHandleForm asks and in the same order (a TestPage.Trap() short-circuits
-        // the handler lookup there, so it must short-circuit here too, or the probe would fire
-        // FindHandler's RemoveHandlerName side effect that BC would not have fired).
-        if (HasTrapForPage(session, form) || FindPageHandler(session, form) != null)
+        // question TestHandleForm asks and in the same order: a TestPage.Trap() short-circuits
+        // the handler lookup there, so it short-circuits here too. The probe itself leaves no
+        // trace either way (see HasPageHandler), so the ordering is about asking the same
+        // question BC asks, not about damage control.
+        if (HasTrapForPage(session, form) || HasPageHandler(session, form))
         {
             form.RunAsync(record, 0).AsTask().GetAwaiter().GetResult();
             return;
@@ -310,19 +327,31 @@ internal sealed partial class RunnerPageInstance
     }
 
     /// <summary>
-    /// The <c>[PageHandler]</c> BC would dispatch this form to, or null when the test bound
-    /// none — BC's OWN <c>NavTestExecution.FindHandler</c>, called with
-    /// <c>throwIfNotFound: false</c> so asking does not raise. Nothing about handler matching is
-    /// reimplemented: the <c>[HandlerFunctions]</c> split, the handler-type check and the
-    /// <c>[NavObjectId]</c> match against THIS page all stay Microsoft's.
+    /// Whether a <c>[PageHandler]</c> is bound that BC would dispatch this form to — BC's OWN
+    /// <c>NavTestExecution.FindHandler</c>, called with <c>throwIfNotFound: false</c> so asking
+    /// does not raise. Nothing about handler matching is reimplemented: the
+    /// <c>[HandlerFunctions]</c> split, the handler-type check and the <c>[NavObjectId]</c>
+    /// match against THIS page all stay Microsoft's.
     ///
-    /// <para>Asking is idempotent. The only state <c>FindHandler</c> mutates on a hit is
-    /// <c>executingHandlers</c>, through <c>RemoveHandlerName</c>, which removes the first
-    /// occurrence of the name and does nothing when the name is already gone — so the lookup
-    /// TestHandleForm makes moments later leaves the run in exactly the state one lookup
-    /// would have.</para>
+    /// <para>Asking is made side-effect-free by snapshotting and restoring the one piece of
+    /// state <c>FindHandler</c> mutates, rather than by arguing that the mutation is harmless.
+    /// It is not harmless in general. <c>FindHandler</c> iterates the IMMUTABLE declared
+    /// <c>[HandlerFunctions]</c> string and calls <c>RemoveHandlerName</c>, which edits a
+    /// SEPARATE worklist field, <c>executingHandlers</c> — and does so with a substring
+    /// <c>IndexOf</c> / <c>Remove(index, length)</c> (measured, Ncl 28.1), not a token match. So
+    /// a probe would consume one entry of <c>[HandlerFunctions]('H,H')</c>, and BC's
+    /// end-of-test <c>CheckAllHandlersConsumed</c> would then NOT raise its
+    /// <c>NavNCLUnexecutedUIHandlerException</c> where real BC does; and a name that is a
+    /// substring of another declared name would come off the wrong entry. Neither is observable
+    /// today — <c>MetadataPatches.CheckAllHandlersConsumed</c> is not called yet — which makes
+    /// it exactly the kind of trap that surfaces as an unexplained regression on the day that
+    /// worklist is turned on.</para>
+    ///
+    /// <para>The field is private on <c>NavTestExecution</c> in every BC major this runner
+    /// supports (checked on 27.0 and 28.1). If it ever is not, this throws rather than probing
+    /// with an uncontrolled side effect.</para>
     /// </summary>
-    private static MethodInfo? FindPageHandler(NavSession session, NavForm form)
+    private static bool HasPageHandler(NavSession session, NavForm form)
     {
         var testExecution = session.TestExecution;
         var findHandler = testExecution.GetType().GetMethod(
@@ -335,15 +364,28 @@ internal sealed partial class RunnerPageInstance
                 "NavTestExecution.FindHandler(NavHandlerType, NavApplicationObjectBase, bool, string) "
                 + "not found — Ncl shape changed; do not commit");
 
+        var worklist = testExecution.GetType().GetField(
+            "executingHandlers",
+            BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                "NavTestExecution.executingHandlers not found — Ncl shape changed; do not commit");
+
+        var before = worklist.GetValue(testExecution);
         try
         {
             return findHandler.Invoke(
                 testExecution,
-                new object?[] { NavHandlerType.Page, form, false, null }) as MethodInfo;
+                new object?[] { NavHandlerType.Page, form, false, null }) is MethodInfo;
         }
         catch (TargetInvocationException ex)
         {
             throw ex.GetBaseException();
+        }
+        finally
+        {
+            // Restore unconditionally, including on the throwing path: a probe that raised
+            // half-way through FindHandler has still run RemoveHandlerName if it got that far.
+            worklist.SetValue(testExecution, before);
         }
     }
 
