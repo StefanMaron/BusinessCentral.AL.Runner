@@ -868,7 +868,7 @@ def absorbed_failure_set(failing_name):
     """Required contexts all green; `failing_name` red on the live run, with a
     cancelled sibling entry left behind by a superseded run of that workflow."""
     runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
-    runs.append(cr("All BC versions passed", "success", MATRIX_RUN, 101499731123))
+    runs.append(cr("BC test matrix passed", "success", MATRIX_RUN, 101499731123))
     runs.append(cr("Tests updated", "success", REQ_RUN, 101496768931))
     # the cancelled leftover, and a genuinely failing NEWEST entry for one name
     runs.append(cr(failing_name, "cancelled", KILLED_PR_CHECK, 101496919780))
@@ -897,7 +897,7 @@ check("...and points at the workflow run that produced the failure",
 # The mirror, so this is not just "never say harmless": a cancelled entry that a
 # newer run really did re-report as SUCCESS is still explained as harmless.
 runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
-runs.append(cr("All BC versions passed", "success", MATRIX_RUN, 101499731123))
+runs.append(cr("BC test matrix passed", "success", MATRIX_RUN, 101499731123))
 runs.append(cr("Tests updated", "success", REQ_RUN, 101496768931))
 runs.append(cr("scripts/ unit tests", "cancelled", KILLED_PR_CHECK, 101496919785))
 runs.append(cr("scripts/ unit tests", "success", LIVE_PR_CHECK, 101496925213))
@@ -924,7 +924,7 @@ check("...and never describes that failure as harmless",
 # A failure inside a run that IS cancelled at the run level stays discountable --
 # that is the deliberate #3002 trade-off, and narrowing it is not this fix.
 runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
-runs.append(cr("All BC versions passed", "success", MATRIX_RUN, 101499731123))
+runs.append(cr("BC test matrix passed", "success", MATRIX_RUN, 101499731123))
 runs.append(cr("Tests updated", "success", REQ_RUN, 101496768931))
 runs.append(cr("scripts/ unit tests", "failure", KILLED_PR_CHECK, 101496919785))
 v = cw.classify(runs, workflow_runs=C6377B30_RUNS)
@@ -940,7 +940,7 @@ check("...and is not announced as a real failing check",
 # exit-4 advice ("a cancelled run has no failure log to overwrite") is wrong for
 # exactly this entry: it has one, and `gh run rerun` destroys it permanently.
 runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
-runs.append(cr("All BC versions passed", "success", MATRIX_RUN, 101499731123))
+runs.append(cr("BC test matrix passed", "success", MATRIX_RUN, 101499731123))
 runs.append(cr("Tests updated", "failure", KILLED_PR_CHECK, 101496919511))
 v = cw.classify(runs, workflow_runs=C6377B30_RUNS)
 check("a required failure inside a CANCELLED run is blocked, not failed",
@@ -954,7 +954,7 @@ check("...and says what it actually concluded, not just 'cancelled'",
 # ...and the plain case keeps the unqualified advice, or the warning above would
 # just be noise on every cancellation.
 runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
-runs.append(cr("All BC versions passed", "success", MATRIX_RUN, 101499731123))
+runs.append(cr("BC test matrix passed", "success", MATRIX_RUN, 101499731123))
 runs.append(cr("Tests updated", "cancelled", KILLED_PR_CHECK, 101496919511))
 v = cw.classify(runs, workflow_runs=C6377B30_RUNS)
 check("a genuinely cancelled required context is blocked with no such warning",

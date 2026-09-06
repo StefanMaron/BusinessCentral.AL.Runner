@@ -5,19 +5,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # The full eight-leg matrix, on the default branch, once a day (#3141).
-  #
-  # A pull request runs .github/pr-bc-versions.txt -- three legs, not eight -- because
-  # 28.1, 28.2, 28.3 and 27.3 never once reported a failure a neighbouring leg on the
-  # same commit did not, across 37 days of history. "Never once, in 37 days" is not
-  # "never", so the five dropped legs have to keep running somewhere or a regression
-  # only 28.2 can see would be caught never rather than late.
-  #
-  # Every push to main already runs all eight, but #3003 measured those cancelled 35
-  # times out of 40 by the next merge -- so on a busy day the push path is not a
-  # reliable full run and cannot be the only one. This is.
-  schedule:
-    - cron: '0 3 * * *'
 
 
 # Two agents pushing to the same branch used to leave BOTH runs holding job slots: every
@@ -41,14 +28,15 @@ on:
 # newest main run -- the only one whose answer is about the tree anybody has -- and drops the
 # rest instead of holding job slots for them.
 #
-# The group is keyed on the EVENT as well as the ref (#3141). A schedule fires on the
-# default branch, so a scheduled run and a merge push to main carry the identical
-# `github.ref`; keyed on the ref alone, the next merge would cancel the daily full
-# matrix, and the five legs pull requests no longer run would exist on paper only.
-# Separating them costs nothing -- push still supersedes push, and a pull request's ref
-# (`refs/pull/N/merge`) was already distinct.
+# #3141 narrowed the PULL-REQUEST matrix to three legs (.github/pr-bc-versions.txt);
+# push is untouched and still resolves all eight. That makes this cancellation policy
+# matter more, not less, for the five legs pull requests no longer run -- but the
+# cadence guarantee for them does not live here. It lives in main-verdict-floor.yml
+# (#3003/#3158), which runs the full eight against main's HEAD every 30 minutes unless
+# that SHA already has a conclusive verdict. Adding a second schedule here would run a
+# full matrix nobody asked for on top of it.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -72,10 +60,11 @@ jobs:
     # matrix to three legs. At that point the old name asserted that all BC versions
     # passed on a run where five of them had not been executed, and the name of a
     # required check is exactly what a person reads when deciding whether to trust a
-    # green pull request. "BC test matrix passed" is true on all four paths: three legs
-    # on a pull request, eight on a push to main, eight on the schedule, eight on a
-    # release. The step below prints which versions actually gated, so the run itself
-    # says what the name deliberately does not.
+    # green pull request. "BC test matrix passed" is true on all three paths this
+    # workflow has: three legs on a pull request, eight on a push to main, eight on a
+    # release (publish.yml, which calls the same reusable matrix). The step below prints
+    # which versions actually gated, so the run itself says what the name deliberately
+    # does not.
     needs: [bc-tests]
     if: always()
     runs-on: ubuntu-latest
@@ -96,5 +85,7 @@ jobs:
           echo "The BC test matrix passed."
           echo "Which versions ran is decided by resolve-versions in bc-tests.yml:"
           echo "  pull_request        -> .github/pr-bc-versions.txt (a subset, see #3141)"
-          echo "  push / schedule     -> .github/bc-versions.txt (every version)"
+          echo "  push (main)         -> .github/bc-versions.txt (every version)"
+          echo "The five versions a pull request does not run are covered on a cadence by"
+          echo "main-verdict-floor.yml, which runs all eight against main every 30 minutes."
           echo "Read the 'Resolve BC versions' step of this run for the exact list it gated on."

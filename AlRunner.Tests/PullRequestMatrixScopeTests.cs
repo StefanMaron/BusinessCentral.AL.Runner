@@ -4,9 +4,10 @@
 // The measurement behind the narrowing is in the issue: over 37 days, 28.1, 28.2, 28.3 and
 // 27.3 never once reported a failure that a neighbouring leg on the same commit did not,
 // while 27.0 and 27.5 each caught defects no 28.x leg caught. So the 27/28 split is real and
-// the middle minors are paying for a result the run already has. `main` still gets all eight,
-// on a schedule and on every push, so a regression only 28.2 can see is caught within the
-// schedule interval rather than never.
+// the middle minors are paying for a result the run already has. `main` still gets all eight:
+// on every push, and — the guarantee that actually holds when merges are cancelling each
+// other — every 30 minutes from main-verdict-floor.yml (#3003/#3158), which is why this file
+// pins that workflow's shape too.
 //
 // Why this needs a guard rather than a comment. Three separate silent-failure shapes live in
 // this change, and every one of them reports green:
@@ -224,8 +225,13 @@ public sealed class PullRequestMatrixScopeTests
         // ran still reports success.
         var step = ResolveStep();
 
+        // The predicate names the guard's OWN message, not the phrase "empty matrix" — the
+        // pull-request-list validation above also says "would resolve to an empty matrix", so
+        // a looser match stayed green with this entire `if` block deleted. Second time this
+        // file has had a test that passed without pinning what it claimed to pin.
         var errors = Regex.Matches(step, @"::error::[^\n]*").Select(m => m.Value).ToList();
-        Assert.Contains(errors, e => e.Contains("empty matrix", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(errors, e => e.Contains("resolved an empty matrix", StringComparison.Ordinal)
+                                     && e.Contains("$GATING_PREFIXES", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -244,34 +250,44 @@ public sealed class PullRequestMatrixScopeTests
         Assert.Contains("expected=$(grep -v '^#' .github/bc-versions.txt", workflow, StringComparison.Ordinal);
     }
 
-    // ---- main still gets all eight -----------------------------------------------------
+    // ---- the dropped legs still run somewhere, on a cadence ---------------------------
 
     [Fact]
-    public void TestMatrix_RunsTheFullMatrixOnASchedule()
+    public void DroppedLegs_StillRunAtFullWidth_OnAPeriodicMainWorkflow()
     {
         // Narrowing pull requests is only defensible if something still runs the legs that
-        // were dropped. Without this, a 28.2-only regression is caught never rather than
-        // within the schedule interval.
-        var triggers = WorkflowTriggers.TriggersOf(Read("test-matrix.yml"));
+        // were dropped, on a cadence, without a human asking. main-verdict-floor.yml
+        // (#3003/#3158) is that thing: it delegates to the same reusable matrix, sets no
+        // version filter, and fires on a schedule — so `github.event_name` is `schedule`,
+        // never `pull_request`, and the narrowing below cannot reach it.
+        //
+        // This test is here rather than in MainVerdictFloorWorkflowTests because the floor
+        // predates #3141 and does not know it is now load-bearing for the pull-request
+        // narrowing. Deleting or `pull_request`-triggering the floor would silently make
+        // 27.3, 28.0, 28.1, 28.2 and 28.3 stop running anywhere on a cadence.
+        var floor = Read("main-verdict-floor.yml");
+        var code = CodeOnly(floor);
+        var triggers = WorkflowTriggers.TriggersOf(floor);
 
         Assert.Contains("schedule", triggers);
-        Assert.Contains("pull_request", triggers);
-        Assert.Contains("push", triggers);
-        Assert.Matches(new Regex(@"cron:\s*'[^']+'"), Read("test-matrix.yml"));
+        Assert.DoesNotContain("pull_request", triggers);
+        Assert.Matches(new Regex(@"cron:\s*'[^']+'"), code);
+        Assert.Contains("uses: ./.github/workflows/bc-tests.yml", code, StringComparison.Ordinal);
+        Assert.DoesNotContain("bc-version-filter", code, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void TestMatrix_ScheduledRunIsNotCancelledByAMergeToMain()
+    public void TestMatrix_AddsNoSecondScheduleOfItsOwn()
     {
-        // A schedule fires on the default branch, so `github.ref` is the same
-        // `refs/heads/main` a merge push carries. With cancel-in-progress: true and a group
-        // keyed on ref alone, the next merge would kill the only run that covers the five
-        // legs pull requests no longer run — the full matrix would then exist on paper only.
-        var code = CodeOnly(Read("test-matrix.yml"));
-        var group = Regex.Match(code, @"group:\s*(.+)");
+        // The first draft of #3141 put a daily `schedule:` here. main-verdict-floor.yml
+        // already runs the full eight against main's HEAD every 30 minutes, skipping when
+        // that SHA already has a conclusive verdict — a strictly stronger guarantee than a
+        // daily run, and one this workflow's `cancel-in-progress: true` cannot give. A
+        // schedule here would be ~75 job-minutes a day of duplicate, on an Actions queue
+        // that is scoped per ACCOUNT and already the binding constraint (#3141).
+        var triggers = WorkflowTriggers.TriggersOf(Read("test-matrix.yml"));
 
-        Assert.True(group.Success, "test-matrix.yml must still declare a concurrency group");
-        Assert.Contains("github.event_name", group.Groups[1].Value, StringComparison.Ordinal);
+        Assert.Equal(new[] { "push", "pull_request" }, triggers);
     }
 
     // ---- the required-context rename ----------------------------------------------------
