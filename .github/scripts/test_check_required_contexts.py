@@ -316,6 +316,36 @@ jobs:
 }
 
 
+def _extra_gate_workflow(contexts) -> str:
+    """A safe pull_request workflow producing exactly `contexts`.
+
+    DERIVED from DEFAULT_REQUIRED_CONTEXTS rather than written out, so the
+    fixture cannot drift from the list it is meant to exercise. When the eight
+    pr-gate.yml contexts were promoted into that list (#3199), a hand-written
+    fixture covering only the original two made four tests fail with "required
+    context ... is produced by NO workflow" -- a fixture problem wearing the
+    costume of a real finding. Generating it removes that failure mode: add a
+    required context and this fixture grows with it.
+
+    No `concurrency:` block, so it is safe under the #2726 rule even though it
+    lists the same-SHA trigger types the real pr-gate.yml does.
+    """
+    jobs = "".join(
+        f"  gate{i}:\n    name: {c}\n    runs-on: ubuntu-latest\n"
+        for i, c in enumerate(contexts)
+    )
+    return ("\nname: PR Gate\non:\n  pull_request:\n"
+            "    types: [opened, synchronize, reopened, labeled, unlabeled, edited]\n"
+            "jobs:\n" + jobs)
+
+
+# The two above are produced by the two hand-written workflows; everything else
+# the ruleset requires gets a generated job so the guard has a producer for it.
+_ALREADY = {"Tests updated", "BC test matrix passed"}
+SAFE_WORKFLOWS["pr-gate.yml"] = _extra_gate_workflow(
+    [c for c in crc.DEFAULT_REQUIRED_CONTEXTS if c not in _ALREADY])
+
+
 def rules_payload(contexts):
     """The shape GET /repos/{o}/{r}/rules/branches/main returns (measured 2026-09-05)."""
     return [
@@ -510,8 +540,12 @@ check("a PENDING context in a workflow that cannot cancel it passes",
 
 # The drift comparison, both sides of the window. This is the pair that decides
 # whether the PR is mergeable before the ruleset edit AND after it.
+# A SEPARATE key, not "pr-gate.yml": SAFE_WORKFLOWS already carries a generated
+# pr-gate.yml producing every promoted required context (#3199), and overwriting
+# it here would leave those eight with no producer, failing the guard for a
+# reason that has nothing to do with the pending seam under test.
 _PENDING_WF = dict(SAFE_WORKFLOWS)
-_PENDING_WF["pr-gate.yml"] = PENDING_SAFE
+_PENDING_WF["pending-gate.yml"] = PENDING_SAFE
 
 rc, msg = run_live(lambda: rules_payload(crc.DEFAULT_REQUIRED_CONTEXTS),
                    files=_PENDING_WF, pending="Soon To Gate")
@@ -657,6 +691,46 @@ check("...and none of them sets REQUIRED_CONTEXTS or PENDING_CONTEXTS",
       not _offenders, "; ".join(_offenders))
 check("...and at least one runs the LIVE drift comparison with no bypass",
       _unbypassed > 0, f"{_unbypassed} of {_invocations} invocation(s) unbypassed")
+
+# --- OPT-IN, network. Everything above is offline on purpose (see the note at
+# --- the REQUIRED_CONTEXTS override): making the whole file need a network call
+# --- would turn a GitHub API blip into a red unit-test job. This block asks the
+# --- one question the offline tests structurally cannot -- do the two built-in
+# --- lists match what the `main` ruleset ACTUALLY requires right now -- and runs
+# --- only when asked for with CI_LIVE_RULESET_CHECK=1.
+# ---
+# --- This is not the repository's only live enforcement, and it is not the main
+# --- one. pr-check.yml runs check_required_contexts.py itself with no bypass on
+# --- every pull request, and resolve_contexts() there fails on drift in either
+# --- direction. With PENDING_REQUIRED_CONTEXTS empty that comparison is EXACT,
+# --- so a ruleset change is caught on the next PR without anyone opting in. What
+# --- this block adds is the ability to ask the question on demand, from a
+# --- developer's machine, without opening a PR to find out (#3199).
+if os.environ.get("CI_LIVE_RULESET_CHECK") == "1":
+    print()
+    print("live ruleset comparison (CI_LIVE_RULESET_CHECK=1)")
+    try:
+        _live = sorted(crc.load_ci_wait().contexts_from_branch_rules(
+            crc.fetch_branch_rules()) or [])
+    except Exception as _exc:  # noqa: BLE001 - a failed lookup is a failed check
+        _live = None
+        check("the live branch ruleset could be read", False, repr(_exc))
+
+    if _live:
+        # A failed lookup is NOT agreement -- the same rule the guard itself
+        # applies. An empty/None parse lands in the `if _live:` false branch and
+        # is reported by the check above rather than passing silently.
+        check("DEFAULT_REQUIRED_CONTEXTS matches the live `main` ruleset exactly",
+              sorted(crc.DEFAULT_REQUIRED_CONTEXTS) == _live,
+              f"built-in={sorted(crc.DEFAULT_REQUIRED_CONTEXTS)} live={_live}")
+        check("...and so does tools/ci-wait.py's RULESET_CONTEXTS",
+              sorted(crc.load_ci_wait().RULESET_CONTEXTS) == _live,
+              f"built-in={sorted(crc.load_ci_wait().RULESET_CONTEXTS)} live={_live}")
+        # The promotion obligation from #3199: a name the ruleset already
+        # requires has no business sitting in the transitional list.
+        check("...and no PENDING name is already required by the live ruleset",
+              not (set(PENDING or []) & set(_live)),
+              f"pending={sorted(set(PENDING or []) & set(_live))}")
 
 print()
 if FAILURES:

@@ -133,7 +133,18 @@ import yaml
 # pr-check.yml produces no required context — but the merge itself is blocked until the
 # ruleset carries the new name, because until then the PR waits on a context no workflow
 # reports any more.
-DEFAULT_REQUIRED_CONTEXTS = ["BC test matrix passed", "Tests updated"]
+DEFAULT_REQUIRED_CONTEXTS = [
+    "BC test matrix passed",
+    "Tests updated",
+    "PR title/body must not contain a CI-skip directive",
+    "PR body closing references must be correct, both directions",
+    "pull_request trigger lists must keep their load-bearing event types",
+    "Required contexts must not be cancellable on the same commit",
+    "Agent definitions must allowlist the MCP tools they document",
+    "tools/ unit tests",
+    ".github/scripts/ unit tests",
+    "scripts/ unit tests",
+]
 
 # Contexts this repository INTENDS the branch ruleset to require, but which it
 # does not require yet (#3165). Everything in pr-gate.yml is here.
@@ -166,16 +177,15 @@ DEFAULT_REQUIRED_CONTEXTS = ["BC test matrix passed", "Tests updated"]
 # is outstanding -- ci-wait.py reads the LIVE ruleset first and only falls back
 # to its built-in tuple when that read fails, loudly -- so the promotion is
 # tidying, not a race.
-PENDING_REQUIRED_CONTEXTS = [
-    "PR title/body must not contain a CI-skip directive",
-    "PR body closing references must be correct, both directions",
-    "pull_request trigger lists must keep their load-bearing event types",
-    "Required contexts must not be cancellable on the same commit",
-    "Agent definitions must allowlist the MCP tools they document",
-    "tools/ unit tests",
-    ".github/scripts/ unit tests",
-    "scripts/ unit tests",
-]
+# Empty, and that is the finished state, not an oversight: the `main` ruleset
+# requires all ten names in DEFAULT_REQUIRED_CONTEXTS above, so nothing is
+# waiting to be gated (#3199, measured 2026-09-06). Keeping the list empty is
+# what makes the live drift comparison in resolve_contexts() EXACT again --
+# every pending name is a name the comparison deliberately tolerates in either
+# state, so a non-empty list is a hole in the #2785 check for as long as it
+# lasts. Refill it only while a new gating job is landing, and empty it in the
+# same pass that adds the name to the ruleset.
+PENDING_REQUIRED_CONTEXTS: list[str] = []
 
 REPO = "StefanMaron/BusinessCentral.AL.Runner"
 DEFAULT_BRANCH = "main"
