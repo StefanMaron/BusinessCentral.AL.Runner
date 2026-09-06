@@ -283,4 +283,48 @@ public sealed class PermissionSetSymbolReadFailureTests : IDisposable
         Console.Error.Flush();
         Assert.DoesNotContain("[RecordPatches]", text);
     }
+
+    [Fact]
+    public void RefusalMessage_SurvivesLogsDefaultFilter_UnlikeAComponentTaggedLine()
+    {
+        // The other half of "the loud failure actually reaches the user". A refusal that is
+        // thrown but then filtered out of the terminal is no better than the swallow it
+        // replaced, and this repository has shipped that bug at least five times (see Log.cs's
+        // [bc] / [expectations] / [reexec] / [dap] / [warn] notes). So the message is pushed
+        // through the REAL FilteredWriter at DEFAULT verbosity rather than trusting that
+        // BcAppSymbolReadException's "no leading [tag]" comment is still true.
+        var refusal = new BcAppSymbolReadException(
+            Path.Combine(_root, "perm.app"), "permission sets", new InvalidOperationException("boom"));
+
+        var savedOut = Console.Out;
+        var savedErr = Console.Error;
+        var savedVerbose = Log.Verbose;
+        var captured = new StringWriter();
+        string text;
+        try
+        {
+            Console.SetError(captured);
+            Console.SetOut(TextWriter.Null);
+            Log.Verbose = false;
+            Log.Install();
+            Console.Error.WriteLine(refusal.Message);
+            // The control: the tag the OLD code used, through the same writer, same call.
+            Console.Error.WriteLine("[RecordPatches] Metadata Permission Set: SymbolReference read failed");
+            Console.Error.Flush();
+            text = captured.ToString();
+        }
+        finally
+        {
+            Console.SetOut(savedOut);
+            Console.SetError(savedErr);
+            Log.Verbose = savedVerbose;
+        }
+
+        // The refusal reaches the terminal, naming the .app and the surface ...
+        Assert.Contains("symbol-read-fail", text);
+        Assert.Contains("perm.app", text);
+        Assert.Contains("permission sets", text);
+        // ... and the old line, written through the very same writer, does not.
+        Assert.DoesNotContain("[RecordPatches]", text);
+    }
 }
