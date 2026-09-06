@@ -18,6 +18,18 @@
 //   NavNCLEvaluateException: The value "Database::"Customer"" can't be evaluated into type Integer
 // while the corpus stayed green.
 //
+// BARE VERSUS QUOTED (#3207)
+// -------------------------
+// This file's Theory comment claimed both spellings were covered when every fixture object had a
+// space in its name and so had to be quoted. Re-measured over the shipped BC 28.1 packages: of
+// the 22 Base Application CalcFormula properties carrying a Database:: const, 7 are written BARE
+// (Customer, Item, Currency, Vendor, Contact, Opportunity, Resource) and 15 are quoted; the 5
+// TableRelation ones are all quoted. The production code was already right — ConstValueText
+// strips only a matched pair of quotes — so this was a coverage gap and an overstated comment,
+// not a defect. It is a gap the corpus cannot fill either: every object it can name is
+// source-compiled, so the bare spelling on the precompiled SymbolReference route reaches no test
+// but this one.
+//
 // The pass-through arm matters as much as the resolving arm. ConstValueText hands a const literal
 // over as TEXT on purpose, because NCLMetaFilterConst evaluates it against the source field's own
 // type exactly as it does a user-typed filter — so an option member, a quoted literal and a
@@ -53,7 +65,8 @@ public sealed class ObjectReferenceConstResolutionTests : IDisposable
 
     // One .app declaring a table and a report whose NAMES need AL quoting (a space, and a period
     // in "Interaction Tmpl. Language"-style naming), plus a second table so a resolver answering
-    // with "the first table it finds" fails. Ids are far from any Base Application id so a hit
+    // with "the first table it finds" fails, plus a SINGLE-WORD table name that AL does not quote
+    // — see the bare-name note in the header. Ids are far from any Base Application id so a hit
     // cannot come from the real packages.
     // no-base-app-in-csharp-tests.md: a bare SymbolReference package, no application floor.
     private string WriteSymbolApp()
@@ -68,6 +81,8 @@ public sealed class ObjectReferenceConstResolutionTests : IDisposable
             { "Id": 70931, "Name": "ORC Coupling Row",
               "Fields": [ { "Id": 1, "Name": "Entry No.", "TypeDefinition": { "Name": "Integer" } } ] },
             { "Id": 70932, "Name": "ORC Other Row",
+              "Fields": [ { "Id": 1, "Name": "Entry No.", "TypeDefinition": { "Name": "Integer" } } ] },
+            { "Id": 70933, "Name": "ORCBareRow",
               "Fields": [ { "Id": 1, "Name": "Entry No.", "TypeDefinition": { "Name": "Integer" } } ] }
           ],
           "Reports": [ { "Id": 70941, "Name": "ORC Merge Report" } ],
@@ -88,10 +103,20 @@ public sealed class ObjectReferenceConstResolutionTests : IDisposable
     }
 
     [Theory]
-    // Database:: — the reported shape. Quoted and bare spellings of the SAME name must land on
-    // the same id, since AL quotes an identifier only when it has to.
+    // Database:: — the reported shape, in both spellings AL emits.
     [InlineData("Database::\"ORC Coupling Row\"", "70931")]
     [InlineData("Database::\"ORC Other Row\"", "70932")]
+    // BARE, i.e. no quotes at all, because AL quotes an identifier only when it has to. Seven of
+    // the 22 Base Application CalcFormula properties that carry a Database:: const are written
+    // this way — Customer, Item, Currency, Vendor, Contact, Opportunity, Resource, re-measured
+    // over the shipped BC 28.1 packages for #3207 — and until then no test anywhere, runner-local
+    // or corpus, asserted one. ConstValueText strips a
+    // matched pair of quotes and passes anything else through, so the quoted and bare spellings
+    // of the SAME name must land on the same id; both are asserted, because a resolver that
+    // stripped a fixed number of leading characters would satisfy one and not the other.
+    [InlineData("Database::ORCBareRow", "70933")]
+    [InlineData("Database::\"ORCBareRow\"", "70933")]
+    [InlineData("database::ORCBareRow", "70933")]
     // Report:: — the sibling the Base Application ships in 3 TableRelations.
     [InlineData("Report::\"ORC Merge Report\"", "70941")]
     // Codeunit:: — same syntax, resolved through the same object index.
@@ -134,6 +159,14 @@ public sealed class ObjectReferenceConstResolutionTests : IDisposable
         // And a name declared as a TABLE is not a REPORT: the kind is part of the lookup key.
         Assert.Equal("Report::\"ORC Coupling Row\"",
             RecordPatches.ResolveObjectReferenceConst("Report::\"ORC Coupling Row\""));
+
+        // Both halves again for a BARE name, which is the spelling seven Base Application
+        // CalcFormulas actually use: an undeclared one is kept as written rather than answered
+        // with 0 or with some other object's id, and the kind still discriminates.
+        Assert.Equal("Database::ORCNoSuchBareRow",
+            RecordPatches.ResolveObjectReferenceConst("Database::ORCNoSuchBareRow"));
+        Assert.Equal("Report::ORCBareRow",
+            RecordPatches.ResolveObjectReferenceConst("Report::ORCBareRow"));
     }
 
     [Fact]
