@@ -836,6 +836,131 @@ check("a context ADDED in the UI is picked up and waited for",
       sorted(ctx) == ["All BC versions passed", "Some new gate", "Tests updated"]
       and status == "live", f"{ctx} {status}")
 
+
+# ===========================================================================
+# #3142: "Superseded ... Harmless" must never absorb a genuine failure
+# ===========================================================================
+# Observed on PR #3112's head c6377b30: a GREEN verdict listed
+# `preflight.py unit tests` under "Superseded ... Harmless" while that context's
+# NEWEST check run on the commit concluded `failure`, from a workflow run that
+# was itself `failure` -- neither cancelled nor superseded. Nothing else in the
+# output said anything had failed.
+#
+# The payload is BUILT here rather than fetched, so the property is pinned
+# independently of whatever the API happens to return today. It is the shape of
+# the real one: three check runs for one context name, the middle one cancelled
+# by a superseding run, the newest a real failure.
+#
+# The invariant: a `failure` may be discounted ONLY when the run that PRODUCED
+# it is itself cancelled or superseded -- never on the strength of some OTHER
+# run carrying the same context name.
+MATRIX_RUN, KILLED_PR_CHECK, LIVE_PR_CHECK, REQ_RUN = 34036994584, 34037049850, 34037050361, 34036994488
+
+C6377B30_RUNS = [
+    {"id": MATRIX_RUN, "name": "Test Matrix", "status": "completed", "conclusion": "success"},
+    {"id": KILLED_PR_CHECK, "name": "PR Check", "status": "completed", "conclusion": "cancelled"},
+    {"id": LIVE_PR_CHECK, "name": "PR Check", "status": "completed", "conclusion": "failure"},
+    {"id": REQ_RUN, "name": "Require Tests", "status": "completed", "conclusion": "success"},
+]
+
+
+def absorbed_failure_set(failing_name):
+    """Required contexts all green; `failing_name` red on the live run, with a
+    cancelled sibling entry left behind by a superseded run of that workflow."""
+    runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
+    runs.append(cr("All BC versions passed", "success", MATRIX_RUN, 101499731123))
+    runs.append(cr("Tests updated", "success", REQ_RUN, 101496768931))
+    # the cancelled leftover, and a genuinely failing NEWEST entry for one name
+    runs.append(cr(failing_name, "cancelled", KILLED_PR_CHECK, 101496919780))
+    runs.append(cr(failing_name, "failure", LIVE_PR_CHECK, 101496925176))
+    return runs
+
+
+runs = absorbed_failure_set("preflight.py unit tests")
+v = cw.classify(runs, workflow_runs=C6377B30_RUNS)
+# The verdict itself is correct and must STAY correct: `preflight.py unit tests`
+# is not a ruleset context, so it does not gate the merge.
+check("a failing NON-required context still does not block the merge",
+      v.code == 0, f"(code={v.code}) {v.lines}")
+harmless = [l for l in v.lines if "harmless" in l.lower()]
+idx = v.lines.index(harmless[0]) if harmless else len(v.lines)
+check("...but a context whose NEWEST run FAILED is never listed as harmlessly "
+      "superseded (#3142)",
+      not any("preflight.py unit tests" in l for l in v.lines[idx:]),
+      "\n".join(v.lines))
+check("...and the green output NAMES it as failing, so a real red is not silent",
+      any("preflight.py unit tests" in l and "failure" in l for l in v.lines),
+      "\n".join(v.lines))
+check("...and points at the workflow run that produced the failure",
+      any(str(LIVE_PR_CHECK) in l for l in v.lines), "\n".join(v.lines))
+
+# The mirror, so this is not just "never say harmless": a cancelled entry that a
+# newer run really did re-report as SUCCESS is still explained as harmless.
+runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
+runs.append(cr("All BC versions passed", "success", MATRIX_RUN, 101499731123))
+runs.append(cr("Tests updated", "success", REQ_RUN, 101496768931))
+runs.append(cr("scripts/ unit tests", "cancelled", KILLED_PR_CHECK, 101496919785))
+runs.append(cr("scripts/ unit tests", "success", LIVE_PR_CHECK, 101496925213))
+v = cw.classify(runs, workflow_runs=C6377B30_RUNS)
+check("a cancelled entry a newer run re-reported as SUCCESS is still GREEN",
+      v.code == 0, f"(code={v.code}) {v.lines}")
+check("...and is still explained as harmlessly superseded",
+      any("scripts/ unit tests" in l for l in v.lines)
+      and any("harmless" in l.lower() for l in v.lines), "\n".join(v.lines))
+check("...and is NOT reported as a failing check",
+      not any("scripts/ unit tests" in l and "failure" in l for l in v.lines),
+      "\n".join(v.lines))
+
+# The same shape on a REQUIRED context has to fail outright, not merely be
+# named. One ruleset edit is all that separates the two payloads.
+runs = absorbed_failure_set("Tests updated")
+v = cw.classify(runs, workflow_runs=C6377B30_RUNS)
+check("the same shape on a REQUIRED context is a FAILED verdict, not a green "
+      "with a footnote",
+      v.code == 1, f"(code={v.code}) {v.lines}")
+check("...and never describes that failure as harmless",
+      not any("harmless" in l.lower() for l in v.lines), "\n".join(v.lines))
+
+# A failure inside a run that IS cancelled at the run level stays discountable --
+# that is the deliberate #3002 trade-off, and narrowing it is not this fix.
+runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
+runs.append(cr("All BC versions passed", "success", MATRIX_RUN, 101499731123))
+runs.append(cr("Tests updated", "success", REQ_RUN, 101496768931))
+runs.append(cr("scripts/ unit tests", "failure", KILLED_PR_CHECK, 101496919785))
+v = cw.classify(runs, workflow_runs=C6377B30_RUNS)
+check("a failure from a run that is itself CANCELLED is still discounted",
+      v.code == 0, f"(code={v.code}) {v.lines}")
+check("...and is not announced as a real failing check",
+      not any("scripts/ unit tests" in l and "failure" in l for l in v.lines),
+      "\n".join(v.lines))
+
+# A REQUIRED context whose check run concluded `failure` on its merits inside a
+# run that was cancelled afterwards is still reported as BLOCKED, not FAILED --
+# that trade-off errs away from green and is not being narrowed here. But the
+# exit-4 advice ("a cancelled run has no failure log to overwrite") is wrong for
+# exactly this entry: it has one, and `gh run rerun` destroys it permanently.
+runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
+runs.append(cr("All BC versions passed", "success", MATRIX_RUN, 101499731123))
+runs.append(cr("Tests updated", "failure", KILLED_PR_CHECK, 101496919511))
+v = cw.classify(runs, workflow_runs=C6377B30_RUNS)
+check("a required failure inside a CANCELLED run is blocked, not failed",
+      v.code == 4, f"(code={v.code}) {v.lines}")
+check("...and the output warns that this one has a real log to lose",
+      any("WOULD overwrite" in l for l in v.lines), "\n".join(v.lines))
+check("...and says what it actually concluded, not just 'cancelled'",
+      any("Tests updated" in l and "failure" in l for l in v.lines),
+      "\n".join(v.lines))
+
+# ...and the plain case keeps the unqualified advice, or the warning above would
+# just be noise on every cancellation.
+runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
+runs.append(cr("All BC versions passed", "success", MATRIX_RUN, 101499731123))
+runs.append(cr("Tests updated", "cancelled", KILLED_PR_CHECK, 101496919511))
+v = cw.classify(runs, workflow_runs=C6377B30_RUNS)
+check("a genuinely cancelled required context is blocked with no such warning",
+      v.code == 4 and not any("WOULD overwrite" in l for l in v.lines),
+      f"(code={v.code}) " + "\n".join(v.lines))
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")
