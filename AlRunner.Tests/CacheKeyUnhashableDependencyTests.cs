@@ -21,36 +21,48 @@
 // property #2754 exists to remove, and the exact property the #2754 PR body criticised in
 // the old "?" term ("simply cannot HIT", which was never true).
 //
-// Constructing "resolved but unhashable"
-// -------------------------------------
-// It looks impossible from outside the process: DependencyResolver.EnsureIndexed calls
-// AppLoader.ReadManifest on every .app it finds, so a package it cannot open is a package it
-// never indexes, and the run fails at resolution instead of reaching the hash.
+// "Resolved but unhashable" no longer exists end-to-end (#2987) — READ THIS FIRST
+// -----------------------------------------------------------------------------
+// This file used to construct that state and drive all three claims through the real runner.
+// The construction was: DependencyResolver.EnsureIndexed calls AppLoader.ReadManifest on every
+// .app it finds, and ReadManifest was backed by an on-disk index keyed by (full path, length,
+// last-write-ticks) — which `chmod 000` changes none of. So one warm-up run with the package
+// readable populated that index, and the next run resolved the package from the index WITHOUT
+// opening it while ComputeAppContentHash, which must read the bytes, threw.
 //
-// But ReadManifest is backed by an on-disk index under CacheRoots.Resolve("app-manifests"),
-// keyed by (full path, length, last-write-ticks) — and `chmod 000` changes none of those. So:
-// run once with the package readable to warm that index (the same --cache root is shared
-// across all runs here, which is what makes the index visible to the next process), then make
-// it unreadable. The resolver now answers from the index WITHOUT opening the file, and
-// ComputeAppContentHash — which must read the bytes — throws.
+// #2987 keyed that index on the package's CONTENT, because a stat standing in for content in a
+// PERSISTED, cross-process index is what let one package be served under another's identity.
+// Identifying a package therefore now requires reading it, and the construction above is gone:
+// an unreadable package is not indexed at all, so it is never resolved, so the hash is never
+// reached. A package the resolver DID index is one whose hash it already computed and memoized
+// under the same (path, length, mtime) key the dep term will use — so the degraded term cannot
+// be reached for a resolved dependency even if the file becomes unreadable mid-run.
 //
-// That construction is also the review finding's other half in concrete form: "the resolver
-// read this package's manifest moments ago" does not imply the bytes are readable, so
-// "unhashable means the compile is about to fail anyway" is an assumption, not a fact.
+// That is also what closes #2954's residue ("unhashable on two consecutive runs while the
+// content changes between them") without the "do not cache this run" signal that issue
+// proposes: the state that signal existed to handle no longer occurs.
 //
-// The three arms
-// --------------
-// NEGATIVE (the regression) — X unhashable, Y's content CHANGES between two runs. The keys
-// must differ. This is the arm that fails against the throw-and-collapse code.
+// What the arms are now
+// ---------------------
+// The two claims that still have teeth are pinned directly on ProgramSupport
+// .DependencyContentTerm, which is `internal` for exactly this reason — a defensive branch no
+// caller can reach still has to behave, and #2954's own review comment sets that bar ("driven
+// by a test rather than shipped unexercised"):
 //
-// CONTROL — X unhashable, nothing else changes. The keys must be EQUAL. Without it the
-// negative arm would be satisfied by a degraded term that simply varies per run (a nonce),
-// which would force a permanent MISS for any bundle with an unreadable dependency instead of
-// tracking what actually changed.
+//   NON-COLLAPSING — one unhashable package degrades ONE term. Two different unhashable
+//   packages must not produce the same term, which is the property the throw-and-collapse
+//   code destroyed: it replaced the whole list with `unresolved:<type>:<message>`, a string
+//   deterministic across runs, so a warm cache served the DLL compiled against a DIFFERENT
+//   dependency's earlier bytes.
 //
-// LOUD — the run must SAY it keyed a dependency on something weaker than its content, naming
-// the package. A cache silently downgrading its own identity is the failure mode
-// .claude/rules/loud-failures.md exists for.
+//   LOUD — keying a dependency on something weaker than its content must SAY so, naming the
+//   package (.claude/rules/loud-failures.md).
+//
+// And the end-to-end arm now pins the behaviour that REPLACED the old construction: a package
+// which becomes unreadable after being indexed is skipped and NAMED, rather than resolved from
+// an entry nothing can tie to the bytes on disk. Silently dropping it would produce "a required
+// dependency package is missing" for a package sitting in the cache directory — the
+// mysterious-missing-dependency shape #2206 is about.
 
 using System.Diagnostics;
 using System.IO.Compression;
@@ -111,11 +123,13 @@ public sealed class CacheKeyUnhashableDependencyTests : IDisposable
     }
 
     /// <summary>
-    /// The shared setup all three arms use: a bundle depending on X and Y, both packages
-    /// written and resolvable, one warm-up run to populate the app-manifest index under the
-    /// shared cache root, then X made unreadable.
+    /// A bundle depending on X and Y, both packages written and resolvable, one warm-up run to
+    /// populate the app-manifest index under the shared cache root, then X made unreadable.
+    ///
+    /// <para>Before #2987 the warm-up was what made X resolvable-but-unhashable. It now makes
+    /// X resolvable only while it is readable, which is the point of the arm below.</para>
     /// </summary>
-    private (string Bundle, string PkgDir, string CacheDir, string XPath, string YPath) ArrangeUnhashableX(string name)
+    private (string Bundle, string PkgDir, string CacheDir, string XPath, string YPath) ArrangeUnreadableX(string name)
     {
         var bundle = WriteTwoDepFixture(Path.Combine(_scratch, name + "-bundle"));
         var pkgDir = Path.Combine(_scratch, name + "-pkg");
@@ -125,84 +139,128 @@ public sealed class CacheKeyUnhashableDependencyTests : IDisposable
         var xPath = WriteSyntheticApp(pkgDir, DepXId, "Fabrikam Dep X", payloadFill: (byte)'X');
         var yPath = WriteSyntheticApp(pkgDir, DepYId, "Fabrikam Dep Y", payloadFill: (byte)'1');
 
-        // Warm-up run, with BOTH packages readable: this is what writes the app-manifests index
-        // entries the later runs resolve X from without opening it.
         var warm = RunPrintCacheKey(bundle, pkgDir, cacheDir);
         Assert.True(warm.Key != null, $"warm-up run produced no cache key:\n{warm.Output}");
 
         Skip.IfNot(TryMakeUnreadable(xPath),
             "cannot make a file unreadable here (running as root, or a filesystem that ignores "
-            + "mode bits), so 'resolved but unhashable' cannot be constructed");
+            + "mode bits)");
 
         return (bundle, pkgDir, cacheDir, xPath, yPath);
     }
 
     /// <summary>
-    /// THE REGRESSION ARM. One unhashable dependency must not erase the identity of the others:
-    /// with X unhashable throughout, changing Y's bytes must still change the key.
+    /// THE END-TO-END ARM, rewritten for #2987. A dependency package that becomes unreadable
+    /// after its manifest was indexed must be SKIPPED AND NAMED — not resolved from an index
+    /// entry that a stat, and only a stat, ties to those bytes.
     ///
-    /// Against the throw-and-collapse code both runs key on the identical
-    /// `unresolved:UnauthorizedAccessException:Access to the path '…' is denied.` string, the
-    /// keys are equal, and a warm cache serves the DLL compiled against Y's previous bytes.
+    /// <para>Both halves matter. Resolving it anyway is the defect #2987 removes: the entry
+    /// carries the package's Publisher/Name/Version/AppId and its whole declared dependency
+    /// list, so a stat collision serves one package's identity for another's bytes. Skipping it
+    /// SILENTLY is the #2206 shape: the run fails with "a required dependency package is
+    /// missing" while the package sits in the cache directory, and nothing connects the two.
+    /// The warm-up run above proves the package WAS resolvable a moment earlier, so this arm
+    /// cannot pass by the package having been broken all along.</para>
     /// </summary>
     [SkippableFact]
-    public void UnhashableDependency_DoesNotHideAnotherDependencysContentChange()
+    public void DependencyUnreadableAfterIndexing_IsSkippedAndNamed_NotResolvedFromTheIndex()
     {
         TestArtifacts.SkipIfMissing();
-        var (bundle, pkgDir, cacheDir, _, yPath) = ArrangeUnhashableX("regression");
-
-        var before = RunPrintCacheKey(bundle, pkgDir, cacheDir);
-        Assert.True(before.Key != null, $"no cache key with X unreadable:\n{before.Output}");
-
-        // Y keeps its declared id/name/publisher/version and changes only its bytes — the same
-        // shape #2754 is about, now with an unhashable sibling standing next to it.
-        var yBefore = File.ReadAllBytes(yPath);
-        WriteSyntheticApp(pkgDir, DepYId, "Fabrikam Dep Y", payloadFill: (byte)'2');
-        Assert.False(yBefore.AsSpan().SequenceEqual(File.ReadAllBytes(yPath)),
-            "Y's bytes did not change — the fixture is not exercising the defect");
-
-        var after = RunPrintCacheKey(bundle, pkgDir, cacheDir);
-        Assert.True(after.Key != null, $"no cache key after rewriting Y:\n{after.Output}");
-
-        Assert.NotEqual(before.Key, after.Key);
-    }
-
-    /// <summary>
-    /// THE CONTROL. With X unhashable and nothing else touched, the key must be STABLE. This is
-    /// what forbids "fixing" the arm above with a per-run nonce: a degraded term that simply
-    /// varies would satisfy the inequality while forcing a permanent MISS on every bundle that
-    /// has an unreadable dependency, which is a different way of throwing the cache away.
-    /// </summary>
-    [SkippableFact]
-    public void UnhashableDependency_WithNothingElseChanged_KeysStably()
-    {
-        TestArtifacts.SkipIfMissing();
-        var (bundle, pkgDir, cacheDir, _, _) = ArrangeUnhashableX("control");
-
-        var first = RunPrintCacheKey(bundle, pkgDir, cacheDir);
-        var second = RunPrintCacheKey(bundle, pkgDir, cacheDir);
-
-        Assert.True(first.Key != null, $"no cache key on the first run:\n{first.Output}");
-        Assert.Equal(first.Key, second.Key);
-    }
-
-    /// <summary>
-    /// THE LOUD ARM. Downgrading a dependency's cache identity from its content to a path+stat
-    /// is exactly the kind of quiet weakening .claude/rules/loud-failures.md is about, so the
-    /// run must name the package it could not hash. Against the throw-and-collapse code the
-    /// message is the generic "dependency resolution failed" instead — which is also a false
-    /// statement, since resolution succeeded.
-    /// </summary>
-    [SkippableFact]
-    public void UnhashableDependency_IsReportedByName()
-    {
-        TestArtifacts.SkipIfMissing();
-        var (bundle, pkgDir, cacheDir, xPath, _) = ArrangeUnhashableX("loud");
+        var (bundle, pkgDir, cacheDir, xPath, _) = ArrangeUnreadableX("unreadable");
 
         var run = RunPrintCacheKey(bundle, pkgDir, cacheDir);
 
-        Assert.Contains("could not hash dependency package", run.Output);
-        Assert.Contains(Path.GetFileName(xPath), run.Output);
+        // Named, with the reason and the path — not silently dropped.
+        Assert.Contains("[packages] cannot read", run.Output);
+        Assert.Contains(xPath, run.Output);
+
+        // And NOT served from the warm index entry: no cache key comes out of a run whose
+        // closure could not be resolved. Before #2987 this run produced a key.
+        Assert.True(run.Key == null,
+            "a package whose bytes cannot be read was still resolved — the app-manifests index "
+            + $"answered for content nothing verified:\n{run.Output}");
+    }
+
+    /// <summary>
+    /// NON-COLLAPSING, pinned directly on the degraded term (#2987 made it unreachable through
+    /// the runner — see this file's header). Two DIFFERENT unhashable packages must produce
+    /// two DIFFERENT terms.
+    ///
+    /// <para>This is the property the throw-and-collapse code destroyed. It replaced the whole
+    /// dependency list with one `unresolved:&lt;type&gt;:&lt;message&gt;` string — an exception
+    /// type and message, both deterministic across runs — so two closures that differ only in
+    /// another dependency's bytes keyed identically and a warm cache served the wrong DLL.
+    /// Asserting the two terms differ, and that each names its own package, is what a
+    /// per-dependency degradation means.</para>
+    /// </summary>
+    [SkippableFact]
+    public void DependencyContentTerm_TwoUnhashablePackages_DegradeSeparately()
+    {
+        var dir = Path.Combine(_scratch, "term-separate");
+        Directory.CreateDirectory(dir);
+        var a = WriteSyntheticApp(dir, DepXId, "Fabrikam Dep X", payloadFill: (byte)'X');
+        var b = WriteSyntheticApp(dir, DepYId, "Fabrikam Dep Y", payloadFill: (byte)'1');
+
+        // Readable first: the term is the package's content hash, and the two differ. Without
+        // this half the arm below would pass against an implementation that degraded
+        // EVERYTHING, which is the opposite of what is being claimed.
+        var hashedA = ProgramSupport.DependencyContentTerm(a);
+        var hashedB = ProgramSupport.DependencyContentTerm(b);
+        Assert.StartsWith("sha256:", hashedA);
+        Assert.StartsWith("sha256:", hashedB);
+        Assert.NotEqual(hashedA, hashedB);
+
+        Skip.IfNot(TryMakeUnreadable(a) && TryMakeUnreadable(b),
+            "cannot make a file unreadable here (running as root, or a filesystem that ignores "
+            + "mode bits)");
+        AlRunner.Infrastructure.RunnerFingerprint.ClearFileContentHashMemoForTests();
+
+        var degradedA = ProgramSupport.DependencyContentTerm(a);
+        var degradedB = ProgramSupport.DependencyContentTerm(b);
+
+        Assert.StartsWith("unhashable:", degradedA);
+        Assert.StartsWith("unhashable:", degradedB);
+        // Each names its OWN package: the term carries the path, so one unhashable package
+        // cannot stand in for another.
+        Assert.Contains(Path.GetFullPath(a), degradedA);
+        Assert.Contains(Path.GetFullPath(b), degradedB);
+        Assert.NotEqual(degradedA, degradedB);
+    }
+
+    /// <summary>
+    /// LOUD. Downgrading a dependency's cache identity from its content to a path+stat is the
+    /// kind of quiet weakening .claude/rules/loud-failures.md exists for, so it must name the
+    /// package it could not hash — and say what it fell back to.
+    /// </summary>
+    [SkippableFact]
+    public void DependencyContentTerm_Unhashable_IsReportedByName()
+    {
+        var dir = Path.Combine(_scratch, "term-loud");
+        Directory.CreateDirectory(dir);
+        var x = WriteSyntheticApp(dir, DepXId, "Fabrikam Dep X", payloadFill: (byte)'X');
+
+        Skip.IfNot(TryMakeUnreadable(x),
+            "cannot make a file unreadable here (running as root, or a filesystem that ignores "
+            + "mode bits)");
+        AlRunner.Infrastructure.RunnerFingerprint.ClearFileContentHashMemoForTests();
+
+        var stderr = new StringWriter();
+        var previous = Console.Error;
+        string term;
+        try
+        {
+            Console.SetError(stderr);
+            term = ProgramSupport.DependencyContentTerm(x);
+        }
+        finally { Console.SetError(previous); }
+
+        Assert.StartsWith("unhashable:", term);
+        var said = stderr.ToString();
+        Assert.Contains("could not hash dependency package", said);
+        Assert.Contains(Path.GetFullPath(x), said);
+        // It must also say what it did INSTEAD — "could not hash" alone leaves the reader
+        // unable to tell a weakened key from a failed run.
+        Assert.Contains("keying it on path+stat instead", said);
     }
 
     // ── fixture writers ───────────────────────────────────────────────────────────────────

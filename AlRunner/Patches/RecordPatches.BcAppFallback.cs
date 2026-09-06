@@ -556,12 +556,34 @@ public static partial class RecordPatches
             var asmInfo = !string.IsNullOrEmpty(asm.Location) && File.Exists(asm.Location)
                 ? new FileInfo(asm.Location)
                 : null;
-            var suffix = asmInfo != null
-                ? $"{asmInfo.Length:x}-{asmInfo.LastWriteTimeUtc.Ticks:x}"
+            // #2987 — the suffix is the SystemApp DLL's CONTENT hash. It was its length +
+            // mtime, under a comment calling that "content-addressed", which is the same
+            // substitution #2987 removed from AppLoader's app-manifests index and #2955 from
+            // the r2r-chunks cache: the published name promises "this is the package inside
+            // THESE bytes" to every other process on the machine, and a stat cannot keep that
+            // promise. Two runner builds whose SystemApp DLL agrees on length and mtime — a
+            // rebuild, a checkout, a copy — would have the second adopt the first's extracted
+            // package and register it as its own. BC reports a package that does not match as
+            // `AL1023 ... is not valid` against the whole compilation, so it is a run-wide
+            // failure attributed to the wrong thing.
+            //
+            // Affordable here for the reason it was not obviously affordable in #2987: this
+            // runs ONCE per process over a ~6 MB DLL, not once per package over a whole
+            // package cache, and it goes through the shared memo, so a DLL any other layer has
+            // already hashed costs a dictionary lookup.
+            //
+            // A DLL whose hash is unavailable falls back to the per-process GUID the
+            // no-asmInfo case already used: no identity, no shared name, never a shared name
+            // that lies.
+            var contentHash = asmInfo != null
+                ? SafeContentHash(asmInfo.FullName)
+                : null;
+            var suffix = contentHash != null
+                ? "sha256-" + contentHash
                 : Guid.NewGuid().ToString("N");
-            // #2967 — SCRATCH-DIR CLASSIFICATION: deliberately SHARED and content-addressed
-            // (the suffix is the SystemApp DLL's length + mtime), so it must NOT become a
-            // per-process path: every runner on the machine reuses one 6 MB extraction.
+            // #2967 — SCRATCH-DIR CLASSIFICATION: deliberately SHARED and content-addressed,
+            // so it must NOT become a per-process path: every runner on the machine reuses one
+            // 6 MB extraction.
             //
             // It was UNSAFE as written, though, and this was the one site matching the
             // "reader sees a half-written file under a name that promises its content" shape.
@@ -591,6 +613,24 @@ public static partial class RecordPatches
             var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
             Console.Error.WriteLine($"[RecordPatches] BcAppFallback: SystemApp registration failed: {inner.GetType().Name}: {inner.Message}");
         }
+    }
+
+    /// <summary>
+    /// The file's content hash, or null when it cannot be computed. Null is what makes the
+    /// caller fall back to a per-process name instead of publishing a SHARED name it cannot
+    /// stand behind — keying on RunnerFingerprint's "unknown" sentinel would give every
+    /// unidentifiable DLL one shared extraction, which is the wrong-answer shape #2987 removes
+    /// rather than a smaller version of it.
+    /// </summary>
+    private static string? SafeContentHash(string path)
+    {
+        try
+        {
+            var hash = AlRunner.Infrastructure.RunnerFingerprint.ComputeFileContentHashMemoized(path);
+            return string.IsNullOrEmpty(hash)
+                || hash == AlRunner.Infrastructure.RunnerFingerprint.UnknownContentHash ? null : hash;
+        }
+        catch { return null; }
     }
 
     /// <summary>
