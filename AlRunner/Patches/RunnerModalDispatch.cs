@@ -88,7 +88,7 @@ public static class RunnerModalDispatch
             // fired every close trigger a second time, so a page persisting from
             // OnQueryClosePage wrote twice (issue #3091). Real BC runs each exactly once:
             // corpus codeunit 60296 "MQC Self Close Tests".
-            if (opened && IsFormOpen(form) && !TryQueryCloseForm(form!, result)) result = null;
+            if (opened && IsFormOpen(form) && !TryQueryCloseForm(form!, result, testExecution)) result = null;
         }
         finally
         {
@@ -161,7 +161,7 @@ public static class RunnerModalDispatch
             // [PageHandler]-driven Page.Run raises OnQueryClosePage with CloseAction OK and
             // then OnClosePage. A trapped page is the test's to close, so it is left alone.
             if (opened && !trapped && IsFormOpen(form))
-                TryQueryCloseForm(form!, NonModalCloseResult(form!));
+                TryQueryCloseForm(form!, NonModalCloseResult(form!), testExecution);
         }
         finally
         {
@@ -326,9 +326,13 @@ public static class RunnerModalDispatch
     /// here reproduces exactly that: the caller drops the handler's result, so the FormResult.None
     /// BC already pushed on formResultStack is what the calling AL reads back.
     ///
-    /// Anything else the trigger raises — an Error() in AL, most of all — propagates untouched.
+    /// Anything ELSE the trigger raises — an Error() in AL, most of all — is classified by
+    /// <see cref="RunnerFormCloseHandler"/>, which reproduces what BC's own client-side close
+    /// handler does with it: show the text as a message and refuse the close. Letting it
+    /// propagate untouched, which is what this method used to do, produced an envelope no real
+    /// service tier produces (issue #3057).
     /// </summary>
-    private static bool TryQueryCloseForm(object form, object? result)
+    private static bool TryQueryCloseForm(object form, object? result, object? testExecution)
     {
         var queryCloseForm = form.GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             .FirstOrDefault(m => m.Name == "QueryCloseForm"
@@ -351,9 +355,9 @@ public static class RunnerModalDispatch
             Invoke(queryCloseForm, form, new object?[] { closeActionValue });
             return true;
         }
-        catch (Exception ex) when (ex.GetType().Name == "NavFormCloseNotAllowedException")
+        catch (Exception ex)
         {
-            return false;
+            return RunnerFormCloseHandler.RefuseCloseAfter(ex, testExecution);
         }
     }
 

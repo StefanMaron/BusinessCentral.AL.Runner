@@ -960,3 +960,36 @@ companion row is gone, which the unfixed runner does not do. `al-language` (2676
 pin bump is involved.
 
 Written by agent impl-24 (automated implementation agent).
+
+## al-language 2681 → 2689 — corpus pin `b0c6248a` → `7394c15f` (#3057, corpus #202)
+
++8 tests, all in the `tests/al-language` app, from the three corpus commits between the two
+pins. `git -C tests/al-language diff --name-only b0c6248a..7394c15f` touches nothing outside
+that app, so `runner-extras` (330), `appGroups` (1), `al-language-internals-fixture` (0) and
+`al-language-onprem` (19) are `main`'s values, untouched.
+
+Where the 8 come from, counted per file rather than inferred from the totals:
+
+| corpus commit | corpus PR | file | `[Test]` delta |
+|---|---|---|---|
+| `cd824ef` | #196 | `record/TestPageMetadataVirtualTable.al` | 3 → 4 (+1) |
+| `def7430` | #200 | `handlers/TestPageSubscriberRefusal_Tests.al` | new, +3 |
+| `7394c15` | #202 | `handlers/TestPageQueryCloseError_Tests.al` | new, +4 |
+
+**Why the bump is folded into this PR and not its own.** Of those 8, exactly 2 are red without
+this PR's fix, and both are #202's — the two arms that assert an AL error raised inside
+`OnQueryClosePage` arrives as BC's own unhandled-message refusal. Measured, not predicted: a
+build of `main` (`d6776eeb`) run against the corpus at `7394c15f` gives 2689 tests, 2687 pass,
+2 fail, and the two are `ErrorInQueryClosePage_ArrivesAsAnUnhandledMessage` and
+`ErrorInQueryClosePage_TestPageClose_ArrivesAsAnUnhandledMessage`. The same corpus on this
+branch is 2689/2689. So the bump alone would be red by construction and belongs here.
+
+The other 6 already pass on `main` — the runner fixes for corpus #196 and #200 merged as #3128
+and #3180 earlier, ahead of their pin. An earlier draft of this PR predicted 5 failures at this
+pin, attributing four more to corpus #199 and one to #196; those were measured before #3128 and
+#3180 merged, and all five are now green.
+
+**2689 is measured at this head, not carried forward.** The prediction in the PR body was also
+2689, but it was made against a different `main` and was re-run rather than copied.
+
+Written by agent impl-4 (automated implementation agent).
