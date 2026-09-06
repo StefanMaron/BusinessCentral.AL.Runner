@@ -585,6 +585,18 @@ CASES = [
     ("prose with a bare number", "Closes #2783\n\nThis fixes 3 bugs in the parser.\n"),
     ("cross-repo declaration", "Fixes StefanMaron/BusinessCentral.AL.Runner#42\n"),
     ("url reference inline", "Closes #2783\n\nsee https://github.com/o/r/issues/77 fixes https://github.com/o/r/issues/77\n"),
+    # #3094: the colon separator. GitHub honors "closes: #N" and neither
+    # implementation saw it, so this pair of files agreed with each other and
+    # both disagreed with GitHub -- which is the one failure mode a parity
+    # suite cannot catch by construction unless the case is actually listed
+    # here. It closed #2942 for real when PR #2951 merged.
+    ("colon declaration", "Closes: #2783\n"),
+    ("colon inline foreign keyword", "Closes #2783\n\nThis does not close: #2125.\n"),
+    ("colon with no space", "Closes #2783\n\nThis does not close:#2125.\n"),
+    ("semicolon inline foreign keyword", "Closes #2783\n\nSuperseded; fixes; #2125 stays open.\n"),
+    ("colon cross-repo inline", "Closes #2783\n\nNot this one, resolved: owner/repo#2125\n"),
+    ("colon url inline", "Closes #2783\n\nThis does not close: https://github.com/o/r/issues/2125\n"),
+    ("colon restatement of a declared target", "Closes #2783\n\nIt closes: #2783 indeed.\n"),
 ]
 
 if not shutil.which("bash") or not os.path.exists(SH):

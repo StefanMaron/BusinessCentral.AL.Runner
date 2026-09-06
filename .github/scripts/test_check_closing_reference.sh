@@ -263,6 +263,73 @@ assert_exit "PR_COMMITS unset still fails a stray body reference" 1 "fix: someth
 
 This does not close #456."
 
+# --- #3094: the SEPARATOR, not the reference form ----------------------------
+#
+# The third occurrence of this bug class, after #2127/#2125 and #2486/#2479.
+# Both earlier fixes widened WHERE the script looks (the body, then the commit
+# messages). This one is about the shape of the reference itself: the script
+# required whitespace between the keyword and the reference
+# ("[[:space:]]+"), so no colon form matched EITHER pattern, while GitHub's
+# parser honors it.
+#
+# Measured, not assumed. Merge commit bb09fa5b (PR #2951) carried the line
+# below in a commit message, and the issue timeline attributes the close to it:
+#
+#   closed at 2026-09-06T09:55:35Z commit_id=bb09fa5b...
+#
+# #2942 was closed although the sentence says in plain words that it stays
+# open. The guard was green.
+#
+# The first case is that exact string.
+assert_exit_commits "the real #3094 sentence: 'closes: #N' in a commit message fails" 1 \
+  "feat: something" \
+  "Closes #2931" \
+  "feat: something
+
+open rather than #2931, which this PR closes: #2942 for RunPageLink and #2943"
+
+# Both directions of the same defect, in the body this time.
+assert_exit "a stray colon-form close of an undeclared issue fails" 1 "fix: something" \
+  "Closes #123
+
+This does not close: #456."
+assert_exit "a stray colon-form close with no space fails" 1 "fix: something" \
+  "Closes #123
+
+This does not close:#456."
+assert_exit "a stray semicolon-form close fails" 1 "fix: something" \
+  "Closes #123
+
+Superseded; fixes; #456 stays open."
+assert_exit "a stray colon-form close naming a URL fails" 1 "fix: something" \
+  "Closes #123
+
+This does not close: https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/456"
+assert_exit "a stray colon-form close with a repo prefix fails" 1 "fix: something" \
+  "Closes #123
+
+Not this one, resolved: owner/repo#456"
+
+# The MIRROR bug: a body that declares its target with a colon is declaring it
+# as far as GitHub is concerned, so the script must recognise it as the
+# canonical line rather than reporting "no linked issue" while GitHub closes one.
+assert_exit "a canonical 'Closes: #N' line is recognised as the declared target" 0 \
+  "fix: something" "Closes: #123"
+assert_exit "a canonical 'Closes: #N' line with a trailing period passes" 0 \
+  "fix: something" "Closes: #123."
+
+# Widening the separator must not start matching ordinary prose. A keyword and
+# a reference separated by WORDS is not a closing reference in any form GitHub
+# honors, and flagging it would train authors to ignore this check.
+assert_exit "a keyword separated from the reference by prose still passes" 0 \
+  "fix: something" "Closes #123
+
+This fixes the regression reported in #456."
+assert_exit "'fixes N bugs' with no # is still not a reference" 0 "fix: something" \
+  "Closes #123
+
+This fixes 3 bugs in the parser."
+
 # --- #2646: the PR template must not answer the check on the author's behalf ---
 #
 # The template exists so the escape hatch is discoverable where the body is

@@ -148,8 +148,21 @@ REF_HASH = r"(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#[0-9]+"
 REF_URL = r"https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:issues|pull)/[0-9]+"
 REF = f"(?:{REF_HASH}|{REF_URL})"
 
-CANONICAL_LINE_RE = re.compile(rf"^[ \t]*(?:{KEYWORDS})[ \t]+{REF}[ \t]*\.?[ \t]*$", re.I)
-STRAY_RE = re.compile(rf"\b(?:{KEYWORDS})[ \t]+{REF}", re.I)
+# Separator between the keyword and the reference. This was "[ \t]+", which
+# REQUIRES whitespace and so could not match a colon -- while GitHub's parser
+# honors "closes: #N". That accidentally closed #2942 when PR #2951 merged
+# (#3094). Kept deliberately wider than any documented GitHub syntax, because
+# the two failure directions do not cost the same: a false positive costs one
+# reword, a false negative silently closes somebody else's issue.
+#
+# It must stay in step with SEP in .github/scripts/check_closing_reference.sh --
+# that script is the server-side gate, this is only the local preflight, and
+# tools/test_pr_body.py asserts parity between the two on a case list that now
+# includes the colon forms.
+SEP = r"[ \t]*[,;:]?[ \t]*"
+
+CANONICAL_LINE_RE = re.compile(rf"^[ \t]*(?:{KEYWORDS}){SEP}{REF}[ \t]*\.?[ \t]*$", re.I)
+STRAY_RE = re.compile(rf"\b(?:{KEYWORDS}){SEP}{REF}", re.I)
 
 
 def _ref_number(fragment: str) -> int | None:
@@ -171,7 +184,12 @@ def declared_targets(body: str) -> list[int]:
     out: list[int] = []
     for line in body.split("\n"):
         if CANONICAL_LINE_RE.match(line):
-            m = STRAY_RE.search(line) or re.search(rf"(?:{KEYWORDS})[ \t]+{REF}", line, re.I)
+            # {SEP}, not a hardcoded "[ \t]+". This is a THIRD copy of the
+            # keyword/reference shape; the shell script has the same one, and
+            # widening the two named constants but not this extraction made
+            # CANONICAL_LINE_RE match a line that then yielded no number, so
+            # "Closes: #123" declared nothing at all (#3094).
+            m = STRAY_RE.search(line) or re.search(rf"(?:{KEYWORDS}){SEP}{REF}", line, re.I)
             n = _ref_number(m.group(0)) if m else None
             if n is not None and n not in out:
                 out.append(n)
