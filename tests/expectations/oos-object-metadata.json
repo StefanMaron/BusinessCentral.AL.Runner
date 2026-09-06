@@ -1,0 +1,11 @@
+[
+  {
+    "codeunitId": 61200,
+    "CodeunitName": "Test Object Metadata Sys Table",
+    "Method": "ObjectMetadata_CalcFields_Metadata_HasAPayload",
+    "Mode": "expect-oos",
+    "Reason": "not-yet-implemented",
+    "Doc": "docs/limitations.md#object-metadata-system-table",
+    "Note": "Real BC writes the output of publishing the system app into the application database, so the Metadata BLOB on Object Metadata (2000000071) carries a payload; a real service tier confirmed that on all eight BC legs of StefanMaron/BusinessCentral.AL.Language.Tests#179. The runner has no application database and publishes nothing into one, so it has no source for that column. It used to hand back BC's own default — a 0-byte BLOB indistinguishable from a legitimately empty one — and this entry was expect-divergence for exactly that answer. Since #2771 the read is REFUSED by name instead (RecordPatches.NoSourceColumns), which is an out-of-scope signal, so expect-divergence is no longer the true mode: the classifier fails such an entry with 'Declare it expect-oos instead', and it did, on all eight legs. WHY THE ANCHOR IS not-yet-implemented AND NOT A docs/scope.md SECTION: the anchor is not a promise to implement, it is the token ApplicationObjectBasePatches.IsPermanentOutOfScope reads to decide whether an AL [TryFunction] may swallow the refusal. Real BC does NOT lack this surface — it answers with a payload — so trapping the refusal into `false` would reproduce nothing real and would restore the silent default the refusal exists to remove (.claude/rules/loud-failures.md). Every other refusal that must tear through a TryFunction spells it the same way. No Issue, deliberately: nothing is owed here, the runner will never publish into an application database, and the standing decision lives in the Doc above. Updated by an automated agent (stma-auto-1) while driving PR #3101; the entry was originally filed by impl-26 for issue #2984."
+  }
+]

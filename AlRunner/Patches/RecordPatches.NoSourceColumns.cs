@@ -133,13 +133,52 @@ public static partial class RecordPatches
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, Dictionary<int, string>>
         _noSourceFieldsByMetaTable = new();
 
-    /// <summary>The last metatable the scalar guard looked at, and whether it had any no-source
-    /// columns. Reads and writes are deliberately unsynchronised: both fields are written
-    /// together with a plain store and a torn pair can only ever cost a redundant lookup on the
-    /// next call, never a wrong answer, because <see cref="NoSourceFieldsFor"/> is consulted
-    /// whenever the cached table does not match by reference.</summary>
-    private static object? _noSourceLastMetaTable;
-    private static Dictionary<int, string>? _noSourceLastFields;
+    /// <summary>
+    /// The last metatable the scalar guard resolved to "this table has NO columns the runner
+    /// lacks a source for". One field, and it only ever holds a metatable for which
+    /// <see cref="NoSourceFieldsFor"/> returned null — those two properties together are what
+    /// make a wrong answer unrepresentable rather than merely unlikely.
+    ///
+    /// <para>THIS USED TO BE TWO FIELDS — the metatable and its resolved field map — published
+    /// with two separate plain stores, under a comment claiming a torn pair "can only ever cost
+    /// a redundant lookup, never a wrong answer". That claim was FALSE, and both directions are
+    /// wrong answers rather than slow ones. With the stores ordered `fields` then `table`, and
+    /// thread A on the registered table while thread B is on any other table:</para>
+    ///
+    /// <list type="bullet">
+    ///   <item><description>A stores its map, B stores null, A stores the registered table →
+    ///   the pair reads (registered table, no columns), so the fast path returns and the
+    ///   refusal is SILENTLY SKIPPED — the blank goes back to AL, which is the exact silent
+    ///   default this whole file exists to remove (.claude/rules/loud-failures.md).</description></item>
+    ///   <item><description>B stores null, A stores its map, B stores its own table → the pair
+    ///   reads (unrelated table, registered map), so an ordinary table SPURIOUSLY REFUSES at
+    ///   field numbers 3/6/9/15/18/27/30/33-37. The guard is prepended for every table in the
+    ///   process, so that blast radius is not confined to Object Metadata.</description></item>
+    /// </list>
+    ///
+    /// <para>A single field cannot be torn, and the invariant above ("only a table with nothing
+    /// registered is ever stored here") means a stale read costs a re-lookup and nothing else.
+    /// Reads and writes stay unsynchronised deliberately: a reference store is atomic, and the
+    /// only value the field can carry is one whose answer is "nothing to refuse".</para>
+    ///
+    /// <para>The window is narrow today but real: AL runs on one thread at a time, except that
+    /// <c>TestExecutor.InvokeWithTimeout</c> does not abort a timed-out test's thread, so an
+    /// abandoned test keeps executing AL alongside the next one. <c>--jobs</c> shards across
+    /// worker PROCESSES, so it does not widen it. Narrow is not a reason to keep a comment that
+    /// says the shape is safe.</para>
+    /// </summary>
+    private static object? _noSourceLastTableWithNothingRegistered;
+
+    /// <summary>True when <paramref name="metaTable"/> is the one the scalar guard last resolved
+    /// to "nothing registered". Only ever a fast path — a false answer costs a re-lookup.</summary>
+    internal static bool IsKnownToHaveNoNoSourceColumns(object metaTable)
+        => ReferenceEquals(metaTable, _noSourceLastTableWithNothingRegistered);
+
+    /// <summary>Record that <paramref name="metaTable"/> has no registered no-source columns.
+    /// The ONLY writer of <see cref="_noSourceLastTableWithNothingRegistered"/>, and the reason
+    /// the field's invariant holds: call it only after a lookup returned null.</summary>
+    internal static void RememberHasNoNoSourceColumns(object metaTable)
+        => _noSourceLastTableWithNothingRegistered = metaTable;
 
     /// <summary>
     /// The no-source columns of <paramref name="metaTable"/> as fieldNo → column name, or null
@@ -250,20 +289,25 @@ public static partial class RecordPatches
         var metaTable = self?.MetaTable;
         if (metaTable == null) return;
 
-        // The fast path: same metatable as last time, and it had nothing registered.
-        if (ReferenceEquals(metaTable, _noSourceLastMetaTable))
+        // The fast path, and the whole cache: the last metatable known to have NOTHING
+        // registered. It is deliberately one-sided. A NEGATIVE answer is the only thing worth
+        // caching here — it covers every table in the process but the one — and caching only
+        // the negative is what lets the cache be a single field, which is what makes a wrong
+        // answer unrepresentable instead of merely improbable. See the field's own comment for
+        // the two wrong answers the two-field version could produce.
+        if (IsKnownToHaveNoNoSourceColumns(metaTable)) return;
+
+        // Not the remembered table. Resolve it properly — for a registered table this is a
+        // one-entry dictionary lookup plus a ConditionalWeakTable hit, and a registered table
+        // is never cached here, so it pays that on every read. Object Metadata is read rarely;
+        // correctness is worth more than a cached positive.
+        var fields = NoSourceFieldsFor(metaTable);
+        if (fields == null)
         {
-            var remembered = _noSourceLastFields;
-            if (remembered == null) return;
-            if (remembered.TryGetValue(fieldNo, out var known))
-                throw NoSourceColumnRefusal(metaTable.TableId, known);
+            RememberHasNoNoSourceColumns(metaTable);
             return;
         }
-
-        var fields = NoSourceFieldsFor(metaTable);
-        _noSourceLastFields = fields;
-        _noSourceLastMetaTable = metaTable;
-        if (fields != null && fields.TryGetValue(fieldNo, out var name))
+        if (fields.TryGetValue(fieldNo, out var name))
             throw NoSourceColumnRefusal(metaTable.TableId, name);
     }
 }
