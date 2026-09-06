@@ -3,9 +3,12 @@
 // observe it at all. MaskedTriggerErrorDiagnosisTests asserts on each arm's reported block.
 //
 //   MaskedPartTriggerError_IsReportedWithTheCauseNamed   fails; must carry BC's message AND the
-//                                                        converted cause
+//                                                        converted cause, and NO [test-data] note
 //   MaskedPartTriggerError_AlStillSeesOnlyBcsOwnMessage  passes; pins that the cause stays OUT
 //                                                        of what AL can read
+//   MaskedSetupRecordError_CarriesBothExplanations       fails; must carry the converted cause
+//                                                        AND the [test-data] note for the empty
+//                                                        table behind it
 //   PlainFailure_IsReportedWithNoTestPageDiagnosis       fails; must carry NO diagnosis
 //
 // The middle one is the guard that stops the fix from becoming "leak the original into AL".
@@ -64,6 +67,19 @@ codeunit 70545 "MTD Tests"
         Assert.AreEqual(NotOpenTxt, GetLastErrorText(),
             'AL must see BC''s own message and nothing else — the converted cause is diagnostic ' +
             'output, not an AL-visible error (issue #3189)');
+    end;
+
+    [Test]
+    procedure MaskedSetupRecordError_CarriesBothExplanations()
+    var
+        Card: TestPage "MTD Setup Card";
+    begin
+        SeedOneHeaderWithOneLine();
+        // Fails by construction, like the arm above, but on a MISSING SETUP RECORD rather than a
+        // bare Error(). "MTD Setup" is never given a row, so the converted exception carries the
+        // typed evidence MissingTestDataDiagnosis needs (the AL table id) behind the TestPage
+        // mask — which is the only way to observe that its walk follows the link (#3189).
+        Card.OpenEdit();
     end;
 
     [Test]
