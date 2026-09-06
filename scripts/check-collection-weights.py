@@ -56,6 +56,17 @@ their own comments say they crossed only on whichever leg happened to run slow. 
    cannot switch the gate off. It needs MIN_CALIBRATION_SAMPLES pairs; below that it is two
    numbers, not a measurement, and the factor stays 1.0.
 
+   MEASURED, and worth knowing before you credit this half with anything: on #3110's own
+   run (34054350482) BOTH unit legs printed "leg clock at or under the table's", i.e. the
+   factor came back 1.0 and the bands were the unscaled 60s/75s. That is structural rather
+   than luck. MeasuredWeightSeconds records each collection's observed MAXIMUM, so
+   median(observed / recorded) is normally BELOW 1.0 and the floor swallows it; the
+   calibration engages only on a leg slower than the historical max for most collections.
+   So the flake in #3103 is fixed by the flat 60s -> 75s move, not by this. Kept anyway,
+   because it is the half that protects a genuinely slow leg, and because it can only ever
+   loosen -- it cannot produce a false red. Do not read a green run as evidence it works;
+   read the "leg clock" clause in the output, which says which case you are in.
+
 2. **Advisory below, failing above.** At/above 2x UnmeasuredWeightSeconds the collection is
    worth recording, and is reported as a GitHub `::warning::` annotation so it lands in the
    checks UI instead of 400 lines down a log — visible, per #1887's actual complaint, but

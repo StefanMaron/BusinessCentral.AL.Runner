@@ -252,8 +252,9 @@ public sealed class CollectionCostOrdererTests
 
         Assert.True(File.Exists(Path.Combine(repoRoot, "scripts", "check-collection-weights.py")),
             "scripts/check-collection-weights.py is referenced by bc-tests.yml but is not checked in.");
-        // pr-check.yml runs every scripts/tests/*.test.py; without this file the two bands
-        // and the leg calibration #3103 added are unasserted.
+        // pr-gate.yml's scripts-tests job runs every scripts/tests/*.test.py (it moved there
+        // from pr-check.yml in #3165); without this file the two bands and the leg
+        // calibration #3103 added are unasserted.
         Assert.True(
             File.Exists(Path.Combine(repoRoot, "scripts", "tests", "check-collection-weights.test.py")),
             "scripts/tests/check-collection-weights.test.py is missing; the guard's own behaviour would be untested.");

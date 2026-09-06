@@ -74,7 +74,9 @@
 // scripts/check-collection-weights.py is the loud guard that replaces "someone reads it by
 // hand": run against the same trx/unit-tests.trx the occupancy report already parses, it
 // reports a collection absent from this table above 2x UnmeasuredWeightSeconds and FAILS CI
-// above 3x — the exact shape of both misses above. #3103 split those two bands apart: the
+// above the --fail-threshold bc-tests.yml passes it, 75s = 2.5x (the script's own
+// DEFAULT_FAIL_MULTIPLE is 3x, but nothing in this repository runs it without the flag)
+// — the exact shape of both misses above. #3103 split those two bands apart: the
 // single failing line used to sit at 2x, which is summed wall clock on a shared runner, so
 // SuiteAbortOnTimeoutTests measured 59.4s on one PR's run and 63.7s on another's and turned
 // a required check red on a PR that had never touched it. Both bands are now scaled by how
