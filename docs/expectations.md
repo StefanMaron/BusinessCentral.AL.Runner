@@ -289,11 +289,18 @@ a clean run does not hide manifested deviations from the corpus.
    anchor in `docs/scope.md`. If a new surface is OOS for a reason not yet
    documented, add the section to `docs/scope.md` in the same PR.
 2. **`expect-fail-known-gap` requires an `Issue` link.** No untracked known
-   failures. The issue must be open at PR time. Nothing in the run can check
+   failures. The issue must be open at PR time. Nothing in the *run* can check
    that — the manifest is evaluated in-process with no network — so when the
    issue closes, the entry must move to whichever mode is now true
    (`expect-oos`, `expect-divergence`) or be deleted. A known-gap entry pointing
    at a closed issue is the exact bookkeeping lie this mode set exists to avoid.
+
+   Since #3089 one half of that *is* checked, in CI rather than in the run:
+   `pr-check.yml`'s `expectation-gap-issue-consistency` job fails a PR that
+   declares `Closes #N` while an entry still links issue N
+   (`.github/scripts/check_expectation_gap_issues.py`). See
+   [the guard](#the-ci-guard-on-issue-links) below for what it does and does not
+   cover.
 3. **`expect-divergence` requires `Reason` + `Doc`, and forbids `Issue`.** It
    declares a standing decision, so it has to point at where that decision is
    recorded. If you find yourself wanting to link an issue, the entry is a gap,
@@ -311,3 +318,45 @@ a clean run does not hide manifested deviations from the corpus.
    file — so the full-corpus CI leg runs with `--expectations-require-match`
    and fails on an entry that matched no test. See the section above; a typo
    here does not make the entry invalid, it makes it inert.
+
+## The CI guard on issue links
+
+`.github/scripts/check_expectation_gap_issues.py`, run by `pr-check.yml`'s
+`expectation-gap-issue-consistency` job. Two halves, deliberately unequal.
+
+**Blocking, and it needs no network.** If the PR closes issue N — read from the
+title, the body and every commit message, because this repo squash-merges with
+`squash_merge_commit_message=COMMIT_MESSAGES` and a closing keyword in a commit
+message closes the issue regardless of the body — and an `expect-fail-known-gap`
+entry links issue N, the job fails and names the file, the codeunit, the method
+and the line the reference came from.
+
+That is not a guess about which one is wrong. The PR asserts the gap is fixed;
+the manifest asserts it is not; both are in the same diff, so the author can
+settle it — delete the entry, re-target it at the open issue tracking what
+remains, or drop the closing reference. Before this existed the disagreement
+merged green and turned up as a red `main` the next morning, twice in one hour on
+2026-09-05: issue #2795 (fixed by PR #2809) left an entry in
+`known-gaps-testpage-boolean-spelling.json`, and issue #2805 (fixed by PR #2825)
+left two in `known-gaps-start-session-isolation.json`. Both were reported after
+the fact, as #2844 and #2858.
+
+**Non-blocking, and it is the only half that touches the network.**
+`--report-closed-issues` looks up every linked issue and emits a `::warning::`
+for the ones already closed. It never fails the job, because #2858 established
+that a closed issue does not by itself prove the entry is stale — an issue can
+close as a duplicate, or close with the gap still open. Six entries pointed at
+closed issues at the time and only one was actually failing. When the API cannot
+be reached it prints a warning naming what it could **not** check rather than
+reporting nothing, so an unreachable API never reads as a clean bill of health.
+
+**What makes it non-vacuous.** Every path where the check could quietly become
+decoration exits 2 (a failure, not a pass): a missing manifest directory, a file
+that will not parse, an entry whose `Issue` does not resolve to a real issue
+reference, a `known-gaps-*.json` whose entries are not known gaps — a
+prefix/`Mode` disagreement would otherwise silence that whole file — and a run
+where the PR title, body and commit messages are all empty, which means the fetch
+failed rather than that the PR is empty. A passing run prints how many entries it
+actually scanned. `.github/scripts/test_check_expectation_gap_issues.py` builds
+each of these conditions on purpose in a temp directory rather than asserting
+over whatever the manifest holds today.

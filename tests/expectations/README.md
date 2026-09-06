@@ -25,7 +25,20 @@ expectation should touch one file with one entry.
 
 The file prefix and the entry's `Mode` must agree — the prefix is what a human
 scanning the directory reads. Moving an entry between modes means moving it
-between files.
+between files. A `known-gaps-*.json` holding entries that are not
+`expect-fail-known-gap` fails `pr-check.yml`, because that disagreement would
+silence the whole file for the guard below.
+
+## A PR that closes a gap issue must delete or re-target its entry
+
+`pr-check.yml`'s `expectation-gap-issue-consistency` job fails a PR that declares
+`Closes #N` while an `expect-fail-known-gap` entry here still links issue N. The
+PR says the gap is fixed and the manifest says it is not; both are in the same
+diff, so it is settled there rather than by a red `main` the next morning — which
+is what happened twice in one hour on 2026-09-05 (see #2844 and #2858). The same
+job also warns, without failing, about entries linking an issue that is already
+closed; a closed issue is a lead, not proof the entry is stale. Details and the
+anti-vacuity rules: [`docs/expectations.md`](../../docs/expectations.md#the-ci-guard-on-issue-links).
 
 ## `count-baseline/` is a different concern, deliberately not a top-level `.json`
 
