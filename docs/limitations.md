@@ -713,8 +713,25 @@ The nine payload columns **refuse by name** when read (#2771). There is nothing 
 because nothing was ever published, and a blank was indistinguishable from a real empty value —
 `HasValue()` false on a 0-byte BLOB, `''`, `0`, `false` — so a caller could not tell the runner's
 "I have no source for this" from BC's "this is empty". Reading one now raises
-`out-of-scope: Object Metadata."<column>" (system table 2000000071)` with reason
-`object-metadata-payload`.
+`out-of-scope: Object Metadata."<column>" (system table 2000000071)`.
+
+The full reason reads
+`not-yet-implemented — object-metadata-payload — the runner publishes nothing into an
+application database, …`, and the **anchor** — everything before the first em-dash, which is what
+`ExpectationManifest.ReasonAnchor` compares and what
+`tests/expectations/oos-object-metadata.json` carries — is therefore `not-yet-implemented`, not
+`object-metadata-payload`. That is a mechanical choice, not a claim that the payload is coming.
+`ApplicationObjectBasePatches.IsPermanentOutOfScope` is
+`!oos.Reason.StartsWith("not-yet-implemented")`, and a refusal it calls permanent is trapped into
+`false` for an AL `[TryFunction]` — faithful when a real BC environment also lacks the surface,
+wrong here, because a tier *does* answer this, so `if not TryCalcMetadata() then` would read as a
+clean "no payload" that no tier would ever produce. The anchor buys the tear-through. That it
+then says "yet" about something permanent is a real vocabulary gap: the runner has no anchor
+meaning "permanent, but a tier does answer it", so the only spelling that buys the tear-through is
+the one that says "yet". Tracked in **#3154**, and named here rather than papered over. (Not
+#2946, which is closed and covered a different third case — "BC's internals are not the shape this
+patch was written against" — and became `BcShapeGapException`, a type that deliberately never
+reaches `IsPermanentOutOfScope`.)
 
 The refusal is on the **read of that column**, never at row-build time. Throwing while building
 the row would take `FindSet` / `FindLast` / `Count` / `IsEmpty` with it, which is the bug (#2519)
