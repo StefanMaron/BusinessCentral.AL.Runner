@@ -112,6 +112,20 @@ internal sealed partial class RunnerPageInstance
 
     internal object Form => _form;
 
+    private static readonly object Sentinel = new();
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, object>
+        ClosedForms = new();
+
+    /// <summary>
+    /// Whether AL has already closed this form through <see cref="ForceCloseForm"/> — the
+    /// CurrPage.Close() path. Weak-keyed on the form so a closed page cannot keep itself
+    /// alive, and false for every form nobody closed that way, including one that was never
+    /// opened.
+    /// </summary>
+    internal static bool WasClosedFromAl(object? form)
+        => form != null && ClosedForms.TryGetValue(form, out _);
+
     /// <summary>
     /// The record this instance is actually bound to — null for a record-less page. Needed
     /// by callers of <see cref="AdoptFromHost"/>: when adoption reuses an ALREADY-bound
@@ -1534,6 +1548,18 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     internal void ForceCloseForm()
     {
+        // Recorded BEFORE the call and keyed on the FORM, because that is the only object the
+        // two views of this page share: RunnerTestClientSession.GetPage builds a fresh
+        // LiveNavTestPage (and Adopt a fresh RunnerPageInstance) every time, so the instance
+        // the handler is holding is never the one that performed the close. A flag on either
+        // instance would be invisible to the other.
+        //
+        // Deliberately NOT read off NavForm.IsOpen: a page a test opened itself may have a form
+        // that was never opened at all, and "never opened" must stay distinguishable from
+        // "closed from AL" -- reading IsOpen for this refused four TRT Tests whose OpenNew() /
+        // OK().Invoke() flow is entirely legitimate.
+        ClosedForms.AddOrUpdate(_form, Sentinel);
+
         var forceClose = FindNavFormMethod("ForceClose", Type.EmptyTypes);
         if (forceClose == null) return;   // nothing to reconcile on a shape without it
         try { forceClose.Invoke(_form, Array.Empty<object>()); }

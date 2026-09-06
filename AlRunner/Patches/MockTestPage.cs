@@ -433,7 +433,8 @@ internal class LiveNavTestPage : MockITestPage
         // service tier). The instance the handler holds is not the one that performed the
         // close -- BC's ClosePage path builds its own -- so the local teardown flag cannot see
         // it and BC's own form state is what has to be asked (issue #3091).
-        if (_tornDown || FormAlreadyClosed()) throw MakeTestPageNotOpenException();
+        if (_tornDown || RunnerPageInstance.WasClosedFromAl(_page?.Form))
+            throw MakeTestPageNotOpenException();
         if (!Offers(formResult)) return null!;
         return new RecordingBuiltInAction(this, formResult);
     }
@@ -644,21 +645,7 @@ internal class LiveNavTestPage : MockITestPage
     // Loaded() (the record-positioning trigger) sets this flag.
     private bool _tornDown;
 
-    /// <summary>
-    /// Whether BC itself no longer considers this page's form open. Answers FALSE when there
-    /// is no form to ask or the property cannot be read, so an unreadable shape can never
-    /// start refusing calls that used to work — the guard only ever fires on a definite "BC
-    /// says closed".
-    /// </summary>
-    private bool FormAlreadyClosed()
-    {
-        var form = _page?.Form;
-        if (form == null) return false;
-        var isOpen = form.GetType().GetProperty("IsOpen",
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
-            | System.Reflection.BindingFlags.Instance);
-        return isOpen?.GetValue(form) is false;
-    }
+
 
     // Set only around the page-construction-time initial positioning call (MarkOpened /
     // RunnerTestClientSession.GetPage's own MoveFirst()). MarkOpened's caller wraps it in a
