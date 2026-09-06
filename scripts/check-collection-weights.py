@@ -59,9 +59,15 @@ their own comments say they crossed only on whichever leg happened to run slow. 
 2. **Advisory below, failing above.** At/above 2x UnmeasuredWeightSeconds the collection is
    worth recording, and is reported as a GitHub `::warning::` annotation so it lands in the
    checks UI instead of 400 lines down a log — visible, per #1887's actual complaint, but
-   exit 0. Only at/above 3x does it fail: a collection weighted 30s when it really costs
-   90s+ is the tail #1887 measured, and 90s sits in a sparse part of the observed
-   distribution rather than in the middle of it.
+   exit 0. Above the failing band it exits 1. That band is an absolute number of SECONDS,
+   not a fixed multiple: --fail-threshold sets it outright, and DEFAULT_FAIL_MULTIPLE (3x,
+   i.e. 90s) is only the fallback for a caller that passes nothing. The shipping caller
+   passes one -- bc-tests.yml runs this with --fail-threshold 75 (2.5x). 90s would stop
+   enforcing over roughly eight entries of the weight table, among them
+   CountBaselineIntegrationTests at 84s, one of the two collections #1887 originally FOUND
+   with this gate, so it cannot catch its own founding case. That step's comment carries the
+   full reasoning, and the number is pinned by
+   scripts/tests/check-collection-weights.test.py::WorkflowFailThresholdTests.
 
 What is deliberately unchanged: a genuinely heavy unlisted collection (#1887's own
 InstallSeedDepCompanyCacheTests at ~196s) still fails the leg, on a slow leg too, because
