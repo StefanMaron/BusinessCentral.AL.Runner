@@ -156,7 +156,7 @@ public static partial class RecordPatches
             var extFieldsNew = extFields.Where(f => !baseFieldIds.Contains(f.FieldId));
             var allParsed = new[] { timestampParsed }.Concat(parsed.Fields)
                 .Concat(extFieldsNew)
-                .Concat(SystemFields).ToArray();
+                .Concat(SystemParsedFields).ToArray();
             var fields = allParsed.Select((f, idx) =>
                 BuildMetaField(f, idx, parsed.PkFieldIds.Contains(f.FieldId), parsed)).ToArray();
 
@@ -756,9 +756,7 @@ public static partial class RecordPatches
             int fieldId = 0;
             if (target != null && arm.FieldName != null)
             {
-                var tf = target.Fields.FirstOrDefault(x =>
-                    string.Equals(x.FieldName, arm.FieldName, StringComparison.OrdinalIgnoreCase));
-                if (tf != null)
+                if (TryResolveTableFieldByName(target, arm.FieldName, out var tf))
                 {
                     fieldId = tf.FieldId;
                 }
@@ -784,9 +782,8 @@ public static partial class RecordPatches
             var conditionObjects = new List<object>();
             foreach (var c in arm.Conditions)
             {
-                var localField = referencingTable?.Fields.FirstOrDefault(x =>
-                    string.Equals(x.FieldName, c.SourceFieldName, StringComparison.OrdinalIgnoreCase));
-                if (localField == null)
+                if (referencingTable == null
+                    || !TryResolveTableFieldByName(referencingTable, c.SourceFieldName, out var localField))
                 {
                     Console.Error.WriteLine(
                         $"[RecordPatches] TableRelation on '{forFieldName}': condition field '{c.SourceFieldName}' not found on '{referencingTable?.TableName}' — relation dropped");
@@ -802,9 +799,7 @@ public static partial class RecordPatches
             var filterObjects = new List<object>();
             foreach (var w in arm.Filters)
             {
-                var srcField = target.Fields.FirstOrDefault(x =>
-                    string.Equals(x.FieldName, w.SourceFieldName, StringComparison.OrdinalIgnoreCase));
-                if (srcField == null)
+                if (!TryResolveTableFieldByName(target, w.SourceFieldName, out var srcField))
                 {
                     Console.Error.WriteLine(
                         $"[RecordPatches] TableRelation on '{forFieldName}': where() field '{w.SourceFieldName}' not found on '{target.TableName}' — relation dropped");
@@ -820,9 +815,8 @@ public static partial class RecordPatches
                 // field(upperlimit(X)).
                 if (w.Kind == ParsedCalcFilterKind.Field)
                 {
-                    var refField = referencingTable?.Fields.FirstOrDefault(x =>
-                        string.Equals(x.FieldName, w.ParentFieldName, StringComparison.OrdinalIgnoreCase));
-                    if (refField == null)
+                    if (referencingTable == null
+                        || !TryResolveTableFieldByName(referencingTable, w.ParentFieldName!, out var refField))
                     {
                         Console.Error.WriteLine(
                             $"[RecordPatches] TableRelation on '{forFieldName}': where() field() link '{w.ParentFieldName}' not found on '{referencingTable?.TableName}' — relation dropped");
@@ -1006,24 +1000,21 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// The five BC system fields every table carries. They are appended to every metatable the
-    /// runner builds (see the field list in <c>BuildNclMetaTable</c>) but are NOT part of
+    /// The BC system fields every table carries, in the id order BC itself uses. They are
+    /// appended to every metatable the runner builds but are NOT part of
     /// <c>ParsedTable.Fields</c>, because no AL source declares them — the platform does.
     ///
-    /// <para>Hoisted to a single definition so <see cref="BuildMetaCalcFormula"/> resolves the
-    /// same set of fields the metatable actually has: Base Application FlowFields do filter on
-    /// them (<c>Purchase Line."Matched Order Lines"</c> is
-    /// <c>where("Purchase Line SystemId" = field(SystemId))</c>), and a lookup that could not
-    /// see them dropped the arm and summed every row — issue #3178.</para>
+    /// <para>This is the ONE declaration of the set: <c>BuildNCLMetaTable</c> appends exactly
+    /// these to the MetaField[] it builds, and <see cref="TryResolveTableFieldByName"/>
+    /// resolves a CalcFormula or TableRelation field name against exactly these. Keeping
+    /// resolver and materialised set the same array is the invariant that matters — resolving
+    /// a name to an id the built NCLMetaTable does not carry faults inside NCL instead of
+    /// refusing loudly here (#3178).</para>
     ///
-    /// <para>Deliberately NOT folded into <see cref="GetAllFieldsIncludingExtensions"/>: its
-    /// other callers bind page controls and SubPageLinks by name, where a control named
-    /// <c>SystemId</c> should keep resolving exactly as it does now.</para>
-    ///
-    /// <para><c>timestamp</c> (id 0) is not here. It is a synthetic column the runner adds for
-    /// RecordRef access, not a field AL can name in a CalcFormula.</para>
+    /// <para><c>timestamp</c> (id 0) is deliberately not here. It is a synthetic column the
+    /// runner adds for RecordRef access, not a field AL can name in a formula.</para>
     /// </summary>
-    private static readonly ParsedField[] SystemFields =
+    private static readonly ParsedField[] SystemParsedFields = new[]
     {
         new ParsedField(2000000000, "SystemId",         "Guid",     0),
         new ParsedField(2000000001, "SystemCreatedAt",  "DateTime", 0),
@@ -1033,23 +1024,60 @@ public static partial class RecordPatches
     };
 
     /// <summary>
+    /// Resolve a field NAME that a CalcFormula or a TableRelation states, on
+    /// <paramref name="table"/>, to the <see cref="ParsedField"/> the built NCLMetaTable
+    /// carries for it. Three sources, because the built metatable carries all three and the
+    /// AL author may name any of them:
+    ///
+    /// <list type="number">
+    /// <item>the table's own declared fields;</item>
+    /// <item>every field a tableextension merged onto it —
+    /// <see cref="GetAllFieldsIncludingExtensions"/>, whose <c>_parsedExtensionFields</c> is
+    /// written for AL-source and precompiled extensions alike. #3263: a FlowFilter or a summed
+    /// field a tableextension contributed was invisible here, so the arm naming it was dropped
+    /// and the aggregate answered over every row. #2490 fixed the identical omission for
+    /// TestPage control binding;</item>
+    /// <item><see cref="SystemParsedFields"/>. #3178: <c>where(X = field(SystemId))</c> is what
+    /// seven Base App FlowFields and every API page's <c>TableRelation = T.SystemId</c> look
+    /// like, and the parsed field list does not carry the system fields.</item>
+    /// </list>
+    ///
+    /// <para>Returns false for a genuinely unknown name; every caller then logs and refuses,
+    /// so an unresolvable reference stays loud instead of silently narrowing nothing.</para>
+    /// </summary>
+    private static bool TryResolveTableFieldByName(ParsedTable table, string fieldName, out ParsedField field)
+    {
+        foreach (var f in ResolvableFields(table))
+            if (string.Equals(f.FieldName, fieldName, StringComparison.OrdinalIgnoreCase))
+            {
+                field = f;
+                return true;
+            }
+        field = default!;
+        return false;
+    }
+
+    /// <summary>Every field a formula on <paramref name="table"/> may name: the table's own,
+    /// its tableextensions', and the system fields. Materialise it once when a caller resolves
+    /// several names against one table — <see cref="GetAllFieldsIncludingExtensions"/> builds a
+    /// HashSet on each call whenever the table carries extension fields.</summary>
+    private static IEnumerable<ParsedField> ResolvableFields(ParsedTable table)
+        => GetAllFieldsIncludingExtensions(table).Concat(SystemParsedFields);
+
+    /// <summary>
     /// Build the <c>MetaCalcFormula</c> for one FlowField.
     ///
     /// <para>Every field name in the formula — the source field, each where-arm's own field on
-    /// the source table, and the parent field a <c>field(...)</c> arm names — resolves against
-    /// <see cref="GetAllFieldsIncludingExtensions"/>, NOT against <c>ParsedTable.Fields</c>
-    /// alone. A tableextension's fields live in <c>_parsedExtensionFields</c>
-    /// (<c>MergeExtensionFields</c> is the single writer, for AL-source and precompiled
-    /// extensions alike), so the base-fields-only lookup this used to do could not see a
-    /// FlowFilter or a summed field a tableextension contributed — issue #3263, the same
-    /// omission #2490 fixed for TestPage control binding.</para>
+    /// the source table, and the parent field a <c>field(...)</c> arm names — resolves through
+    /// <see cref="ResolvableFields"/>, so a tableextension field (#3263) and a system field
+    /// (#3178) resolve exactly like a field the table declares itself.</para>
     ///
     /// <para>A reference that still does not resolve makes the WHOLE formula fail to build and
     /// is recorded against <paramref name="flowFieldId"/>, so <c>CalcFields</c> refuses naming
     /// the table and the field it could not resolve. Dropping just that arm — what this did
     /// before — returned the number the dropped filter was supposed to narrow, with no
     /// diagnostic at default verbosity: the silent wrong answer `loud-failures.md` exists to
-    /// prevent.</para>
+    /// prevent (#3279).</para>
     /// </summary>
     private static object? BuildMetaCalcFormula(ParsedCalcFormula cf, ParsedTable parentTable, int flowFieldId)
     {
@@ -1084,10 +1112,11 @@ public static partial class RecordPatches
         // Resolve source field (for Sum/Lookup/Average/Min/Max)
         // Materialised once each: the helper allocates a HashSet whenever the table carries
         // extension fields, and the where-arm loop below would otherwise pay for that per arm.
-        // SystemFields as well as the extension fields: the metatable carries both, and a
-        // CalcFormula may name either (#3263 for the extension half, #3178 for the system half).
-        var srcFields = GetAllFieldsIncludingExtensions(srcTable).Concat(SystemFields).ToList();
-        var parentFields = GetAllFieldsIncludingExtensions(parentTable).Concat(SystemFields).ToList();
+        // Materialised once each: ResolvableFields walks the extension index, which builds a
+        // HashSet whenever the table carries extension fields, and the where-arm loop below
+        // would otherwise pay for that per arm.
+        var srcFields = ResolvableFields(srcTable).ToList();
+        var parentFields = ResolvableFields(parentTable).ToList();
 
         int srcFieldId = 0;
         if (cf.SourceFieldName != null)
