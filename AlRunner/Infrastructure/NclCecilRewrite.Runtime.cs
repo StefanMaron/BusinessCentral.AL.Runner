@@ -881,15 +881,35 @@ public static partial class NclCecilRewrite
                 H(recordPatches, "DataAccess_FieldFindManaged"));
 
             // ── DataAccess.CountAsync — Date virtual table (2000000007) window guard ─────
-            // Record.Count() / IsEmpty() reach a CountCacheRequest, not a FindCacheRequest, so
-            // the find guard above never sees them. Without this prepend a Count over a range
-            // outside the materialised Date window would answer with however many rows the
-            // window happens to hold — the silent short answer the window guard exists to
-            // prevent. The helper widens the window (or throws past the row cap) and returns;
-            // the original CountAsync body then runs unchanged, for this and every other table.
+            // Record.Count() reaches a CountCacheRequest, not a FindCacheRequest, so the find
+            // guard above never sees it. Without this prepend a Count over a range outside the
+            // materialised Date window would answer with however many rows the window happens
+            // to hold — the silent short answer the window guard exists to prevent. The helper
+            // widens the window (or throws past the row cap) and returns; the original
+            // CountAsync body then runs unchanged, for this and every other table.
+            //
+            // This comment used to read "Record.Count() / IsEmpty()". IsEmpty() has never
+            // reached CountAsync — see the ExistsAsync prepend below (#3006).
             PrependStaticCall(nclMod,
                 ByParams(Rt + "DataAccess", "CountAsync", "CountCacheRequest"),
                 H(recordPatches, "DataAccess_DateWindowGuardForCount"),
+                argSlots: 2); // `this` — the DataAccess — and the count request
+
+            // ── DataAccess.CountAsync — virtual Field table (2000000041) on-demand populate ──
+            // Same gap, one table over. The Field table's rows for a given TableNo are built on
+            // demand, and until #2792 the ONLY place that happened for a table nothing else had
+            // materialised was the find guard above. Record.Count() / IsEmpty() build a
+            // CountCacheRequest, so they missed it and answered over an empty store.
+            //
+            // Measured on main, one Base Application bundle, table 5802 never opened as a Record:
+            //   Field.SetRange(TableNo, 5802); Count()   -> 0   IsEmpty() -> true
+            //   Field.SetRange(TableNo, 5802); FindSet() -> 85 rows
+            // Same filter, same table, two different answers — and 0 is indistinguishable from
+            // "this table has no fields". A service tier computes the virtual table per request
+            // and answers 85 both ways.
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "CountAsync", "CountCacheRequest"),
+                H(recordPatches, "DataAccess_FieldGuardForCount"),
                 argSlots: 2); // `this` — the DataAccess — and the count request
 
             // ── DataAccess.InternalTryGetByPrimaryKeyAsync — Aggregate Permission Set live
@@ -921,6 +941,52 @@ public static partial class NclCecilRewrite
                 ByParams(Rt + "DataAccess", "InternalTryGetByPrimaryKeyAsync", "PrimaryKeyCacheRequest"),
                 H(recordPatches, "DataAccess_DateWindowGuardForGet"),
                 argSlots: 2); // `this` — the DataAccess — and the primary-key request
+
+            // ── DataAccess.InternalTryGetByPrimaryKeyAsync — virtual Field table (#2792) ──────
+            // The third of the three request paths, and the Field table was left behind on it by
+            // both #2504 and #2648. Measured on main, table 5803 never opened as a Record:
+            // Field.Get(5803, 1) answered FALSE, where a service tier answers TRUE with
+            // FieldName "Entry No.". The guard builds that table's Field rows from the RECORD ID
+            // (a keyed Get carries its key there and may carry no TableNo filter at all) and
+            // then returns; the original body runs unchanged, for this and every other table.
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "InternalTryGetByPrimaryKeyAsync", "PrimaryKeyCacheRequest"),
+                H(recordPatches, "DataAccess_FieldGuardForGet"),
+                argSlots: 2); // `this` — the DataAccess — and the primary-key request
+
+            // ── DataAccess.ExistsAsync — Date virtual table (2000000007), the FOURTH path ───
+            // Record.IsEmpty() does not take the count path. RecordImplementation.IsEmptyAsync
+            // calls its OWN ExistsAsync, which builds an ExistsCacheRequest and reaches
+            // DataAccess.ExistsAsync — decompiled from Ncl.dll 28.1, and not what the count
+            // guard's comment claimed for a whole release. Measured on main, one process, one
+            // record variable, on consecutive lines:
+            //
+            //   Date.SetRange("Period Start", 18500101D..18500107D);
+            //   IsEmpty() -> TRUE      Count() -> 7
+            //
+            // A service tier computes this table across years 1..9999 and answers 7 both ways,
+            // so TRUE is a wrong answer, not a missing feature — and the quiet kind, because
+            // "this range holds no periods" is what IsEmpty() returning true normally means.
+            // ExistsAsync is a large async state machine, so unlike the tiny FindAsync it is
+            // not R2R-inlined past the prepend.
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "ExistsAsync", "ExistsCacheRequest"),
+                H(recordPatches, "DataAccess_DateWindowGuardForExists"),
+                argSlots: 2); // `this` — the DataAccess — and the exists request
+
+            // ── DataAccess.ExistsAsync — virtual Field table (2000000041), the FOURTH path ────
+            // Record.IsEmpty() does not take the count path. RecordImplementation.IsEmptyAsync
+            // calls its own ExistsAsync, which builds an ExistsCacheRequest and reaches
+            // DataAccess.ExistsAsync — decompiled from Ncl.dll. The Date count guard's comment
+            // used to claim otherwise; #3006 corrected it and added the Date half of this same
+            // prepend directly above. With the count and Get guards in place but not this
+            // one, Field.SetRange(TableNo, 270); IsEmpty() still answered TRUE while Count()
+            // over the same filter answered 2. ExistsAsync is a large async state machine, so
+            // unlike the tiny FindAsync it is not R2R-inlined past the prepend.
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "ExistsAsync", "ExistsCacheRequest"),
+                H(recordPatches, "DataAccess_FieldGuardForExists"),
+                argSlots: 2); // `this` — the DataAccess — and the exists request
 
             // ── NavDatabase / NavRecordId collation comparers ───────────────────
             ReplaceBodyWithHelper(nclMod,

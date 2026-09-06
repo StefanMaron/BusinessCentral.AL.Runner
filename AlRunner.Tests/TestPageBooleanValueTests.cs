@@ -29,11 +29,13 @@
 // not an unsupported surface to refuse as out of scope — which is why the negative assertions
 // below check for that message rather than for a RunnerOutOfScopeException.
 //
-// NOTE ON WHAT CHANGED IN #2900. Resolve now raises only the INNER half of that message. The
-// "Validation error for Field: <name>,  Message = '…'" wrapper is composed one layer out, by
-// BC's own NavTestField.CheckError, from the refusal TestFieldValidationErrors records — so the
-// AL-visible string all eight legs measured is unchanged, and the assertions below moved down to
-// the layer this helper actually owns. TestFieldValidationErrorsTests pins the other half.
+// NOTE ON WHAT CHANGED IN #2900. Resolve now raises only the CORE of that message. Two layers
+// are added around it by code that is not this helper's: TestFieldValidationErrors appends
+// " (Select Refresh to discard errors)" when it records the refusal, and BC's own
+// NavTestField.CheckError then wraps the result in "Validation error for Field: <name>,
+// Message = '…'". The AL-visible string all eight legs measured is unchanged; the assertions
+// below moved down to the layer this helper actually owns, and
+// TestFieldValidationErrorsTests pins the other two.
 using AlRunner;
 using Microsoft.Dynamics.Nav.Types.Exceptions;
 using Microsoft.Dynamics.Nav.Runtime;
@@ -136,12 +138,13 @@ public sealed class TestPageBooleanValueTests
         var ex = Assert.Throws<NavNCLDialogException>(
             () => TestPageBooleanValue.Resolve(input, "Rec True"));
 
-        // The bare inner message, exactly — the wrapper is BC's (#2900), so asserting it here
-        // would pin a string this helper no longer produces.
+        // The core message, exactly — neither the refresh suffix nor BC's wrapper belongs to
+        // this helper any more (#2900), so asserting either here would pin a string it no
+        // longer produces.
         Assert.Equal(
-            $"Your entry of '{input}' is not an acceptable value for 'Rec True'. "
-            + "(Select Refresh to discard errors)",
+            $"Your entry of '{input}' is not an acceptable value for 'Rec True'.",
             ex.Message);
         Assert.DoesNotContain("Validation error for Field", ex.Message);
+        Assert.DoesNotContain("Select Refresh", ex.Message);
     }
 }

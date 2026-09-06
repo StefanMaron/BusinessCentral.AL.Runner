@@ -80,9 +80,20 @@ dotnet build AlRunner.slnx -c Release
 
 ### Run the al-language corpus
 
+The corpus is more than one app — the Cloud-target coverage app, its internals fixture, and
+(from corpus PR #179 on) an OnPrem-target app for the `Scope = OnPrem` system tables a
+Cloud app cannot name at all. Each is a separate bundle root. Let the enumeration find them,
+the same way CI does, so a local run covers what CI covers:
+
 ```bash
-dotnet run --project AlRunner -c Release -- tests/al-language/tests/al-language
+mapfile -t CORPUS_APPS < <(python3 scripts/corpus-app-dirs.py tests/al-language)
+dotnet run --project AlRunner -c Release -- "${CORPUS_APPS[@]}"
 ```
+
+Naming `tests/al-language/tests/al-language` directly still works and is the right thing when
+you want that one app. It is not the corpus: it is whichever apps the pin happened to carry
+when the path was written, which is how a second corpus app rode in on a pin bump without ever
+being executed (#2984).
 
 ### Run with extra options
 
@@ -111,6 +122,12 @@ git commit -m "Bump tests/al-language to <sha>"
 ```
 
 Tests that newly fail after the bump are runner gaps — patch the runner (or add an expectation entry), never the corpus.
+
+If the bump brings in a whole new corpus **app**, CI runs it automatically — the app list is
+enumerated, not named (#2984) — but the new app also needs its own line in
+`tests/expectations/count-baseline/test-count-baseline.json`, keyed by its directory basename.
+`AlRunner.Tests/CorpusAppEnumerationWorkflowTests.cs` fails in milliseconds when one is missing,
+rather than letting the app's test count go unguarded.
 
 ---
 
@@ -161,7 +178,8 @@ Every PR must:
 Pull requests run against a matrix of BC versions. A PR cannot merge unless every job is green. Run the corpus locally before pushing:
 
 ```bash
-dotnet run --project AlRunner -c Release -- tests/al-language/tests/al-language
+mapfile -t CORPUS_APPS < <(python3 scripts/corpus-app-dirs.py tests/al-language)
+dotnet run --project AlRunner -c Release -- "${CORPUS_APPS[@]}"
 ```
 
 Exit codes: `0` all tests passed, `1` a test failed/errored, `2` a bundle could not execute (process-level error, or a bad invocation), `3` a bundle could not compile, `4` a `--count-baseline` mismatch. All non-zero codes fail CI.

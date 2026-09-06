@@ -182,12 +182,13 @@ public static partial class RecordPatches
     private static void InstallPermissionSetSlot(object baseGroup, List<object> summaries)
     {
         var arr = _fSummariesByType!.GetValue(baseGroup) as Array
-            ?? throw new InvalidOperationException(
-                "NavAppGroup.groupObjectMetadataSummariesByType is not an array — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppGroup.groupObjectMetadataSummariesByType",
+                "holds a value that is not an array, so the PermissionSet slot cannot be indexed — BC's permission-set metadata inventory cannot be populated");
         if (PermissionSetObjectTypeOrdinal >= arr.Length)
-            throw new InvalidOperationException(
-                $"NavAppGroup.groupObjectMetadataSummariesByType has {arr.Length} slots, "
-                + $"so ObjectType.PermissionSet ({PermissionSetObjectTypeOrdinal}) is out of range — Ncl shape changed; do not commit");
+            throw PermissionMetadataBcShapeGap(
+                "NavAppGroup.groupObjectMetadataSummariesByType",
+                $"has {arr.Length} slots, so ObjectType.PermissionSet ({PermissionSetObjectTypeOrdinal}) is out of range — BC's permission-set metadata inventory cannot be populated");
 
         var comparer = _fComparerInstance!.GetValue(null)
             ?? Activator.CreateInstance(_tGroupSummaryComparer!)!;
@@ -198,8 +199,9 @@ public static partial class RecordPatches
         // which is the same ordering BC's own constructor applies before freezing the array.
         var compare = _tGroupSummaryComparer!.GetMethod("Compare",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException(
-                "GroupSummaryComparer.Compare not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppGroup.GroupSummaryComparer.Compare",
+                "method not found — BC's permission-set metadata inventory cannot be populated");
         summaries.Sort((x, y) => (int)compare.Invoke(comparer, new[] { x, y })!);
 
         var typed = Array.CreateInstance(_tSummary!, summaries.Count);
@@ -208,8 +210,9 @@ public static partial class RecordPatches
         var frozenType = _tFrozenSharingArrayOpen!.MakeGenericType(_tSummary!);
         var ctor = frozenType.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             .FirstOrDefault(c => c.GetParameters().Length == 2)
-            ?? throw new InvalidOperationException(
-                "FrozenSharingArray<T>(IReadOnlyList<T>, IComparer<T>) not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "FrozenSharingArray<T>(IReadOnlyList<T>, IComparer<T>)",
+                "constructor not found — BC's permission-set metadata inventory cannot be populated");
         arr.SetValue(ctor.Invoke(new[] { typed, comparer }), PermissionSetObjectTypeOrdinal);
     }
 
@@ -246,8 +249,9 @@ public static partial class RecordPatches
         var lazyCtor = lazyType.GetConstructors(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
             .FirstOrDefault(c => c.GetParameters().Length == 1
                                  && c.GetParameters()[0].ParameterType == funcType)
-            ?? throw new InvalidOperationException(
-                "LazyEx<T>(Func<T>) not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "LazyEx<T>(Func<T>)",
+                "constructor not found — BC's permission-set metadata inventory cannot be populated");
         FieldPoke.SetInstance(lazyField, baseGroup, lazyCtor.Invoke(new object?[] { factory }));
     }
 
@@ -301,73 +305,95 @@ public static partial class RecordPatches
         const BindingFlags Inst = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 
         _tNavAppGroupPM = ncl.GetType("Microsoft.Dynamics.Nav.Runtime.Apps.NavAppGroup")
-            ?? throw new InvalidOperationException("NavAppGroup not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppGroup",
+                "type not found in Ncl — BC's permission-set metadata inventory cannot be populated");
         _fBaseGroupPM = _tNavAppGroupPM.GetField("BaseGroup", BindingFlags.Public | BindingFlags.Static)
-            ?? throw new InvalidOperationException("NavAppGroup.BaseGroup not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppGroup.BaseGroup",
+                "static field not found — BC's permission-set metadata inventory cannot be populated");
         _fSummariesByType = _tNavAppGroupPM.GetField("groupObjectMetadataSummariesByType", Inst)
-            ?? throw new InvalidOperationException(
-                "NavAppGroup.groupObjectMetadataSummariesByType not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppGroup.groupObjectMetadataSummariesByType",
+                "field not found — BC's permission-set metadata inventory cannot be populated");
         _fPermissionSetLookup = _tNavAppGroupPM.GetField("permissionSetLookup", Inst)
-            ?? throw new InvalidOperationException(
-                "NavAppGroup.permissionSetLookup not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppGroup.permissionSetLookup",
+                "field not found — BC's permission-set metadata inventory cannot be populated");
 
         _tSummary = ncl.GetType("Microsoft.Dynamics.Nav.Runtime.Apps.NavAppGroupObjectMetadataSummary")
-            ?? throw new InvalidOperationException(
-                "NavAppGroupObjectMetadataSummary not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppGroupObjectMetadataSummary",
+                "type not found in Ncl — BC's permission-set metadata inventory cannot be populated");
         _ctorSummary = _tSummary.GetConstructors(Inst).FirstOrDefault(c => c.GetParameters().Length == 6)
-            ?? throw new InvalidOperationException(
-                "NavAppGroupObjectMetadataSummary(NavAppGroup, NavAppRuntimeMetadata, ObjectType, int, string, string) "
-                + "not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppGroupObjectMetadataSummary(NavAppGroup, NavAppRuntimeMetadata, ObjectType, int, string, string)",
+                "constructor not found — BC's permission-set metadata inventory cannot be populated");
 
         _tFrozenSharingArrayOpen = ncl.GetType("Microsoft.Dynamics.Nav.Runtime.FrozenSharingArray`1")
-            ?? throw new InvalidOperationException("FrozenSharingArray`1 not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "FrozenSharingArray`1",
+                "type not found in Ncl — BC's permission-set metadata inventory cannot be populated");
         _tGroupSummaryComparer = _tNavAppGroupPM.GetNestedType("GroupSummaryComparer",
             BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException(
-                "NavAppGroup.GroupSummaryComparer not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppGroup.GroupSummaryComparer",
+                "nested type not found — BC's permission-set metadata inventory cannot be populated");
         _fComparerInstance = _tGroupSummaryComparer.GetField("Instance",
             BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException(
-                "GroupSummaryComparer.Instance not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppGroup.GroupSummaryComparer.Instance",
+                "static field not found — BC's permission-set metadata inventory cannot be populated");
 
         _tNavCode = ncl.GetType("Microsoft.Dynamics.Nav.Runtime.NavCode")
             ?? types.GetType("Microsoft.Dynamics.Nav.Types.NavCode")
-            ?? throw new InvalidOperationException("NavCode not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavCode",
+                "type not found in Ncl or Types — BC's permission-set metadata inventory cannot be populated");
         _ctorNavCode = _tNavCode.GetConstructors(Inst).FirstOrDefault(c =>
         {
             var p = c.GetParameters();
             return p.Length == 2 && p[0].ParameterType == typeof(int) && p[1].ParameterType == typeof(string);
-        }) ?? throw new InvalidOperationException("NavCode(int, string) not found — Ncl shape changed; do not commit");
+        }) ?? throw PermissionMetadataBcShapeGap(
+            "NavCode(int, string)",
+            "constructor not found — BC's permission-set metadata inventory cannot be populated");
 
         _tObjectTypePM = types.GetType("Microsoft.Dynamics.Nav.Types.ObjectType")
-            ?? throw new InvalidOperationException("ObjectType not found — Types shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "ObjectType",
+                "type not found in Types — BC's permission-set metadata inventory cannot be populated");
         if (!Enum.IsDefined(_tObjectTypePM, PermissionSetObjectTypeOrdinal)
             || Enum.ToObject(_tObjectTypePM, PermissionSetObjectTypeOrdinal).ToString() != "PermissionSet")
-            throw new InvalidOperationException(
-                $"ObjectType value {PermissionSetObjectTypeOrdinal} is not PermissionSet in this BC build "
-                + "— the slot index this file writes would be the wrong object type; do not commit");
+            throw PermissionMetadataBcShapeGap(
+                "ObjectType",
+                $"value {PermissionSetObjectTypeOrdinal} is not PermissionSet in this BC build, so the slot index this file writes would be the wrong object type — BC's permission-set metadata inventory cannot be populated");
 
         var apps = AppDomain.CurrentDomain.GetAssemblies()
                        .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Apps")
                    ?? Assembly.Load("Microsoft.Dynamics.Nav.Apps");
         _tAppRuntimeMetadata = apps.GetType("Microsoft.Dynamics.Nav.Apps.Runtime.NavAppRuntimeMetadata")
-            ?? throw new InvalidOperationException(
-                "NavAppRuntimeMetadata not found — Microsoft.Dynamics.Nav.Apps shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppRuntimeMetadata",
+                "type not found in Microsoft.Dynamics.Nav.Apps — BC's permission-set metadata inventory cannot be populated");
         // The SHORTER of the two public constructors: same values minus the summaries and
         // dependencies lists, which a synthesised owner has nothing truthful to put in.
         _ctorAppRuntimeMetadata = _tAppRuntimeMetadata.GetConstructors()
             .OrderBy(c => c.GetParameters().Length).FirstOrDefault()
-            ?? throw new InvalidOperationException(
-                "NavAppRuntimeMetadata has no public constructor — Apps shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppRuntimeMetadata",
+                "has no public constructor — BC's permission-set metadata inventory cannot be populated");
         _tAppId = _ctorAppRuntimeMetadata.GetParameters()
             .FirstOrDefault(p => p.ParameterType.Name == "AppId")?.ParameterType
-            ?? throw new InvalidOperationException(
-                "NavAppRuntimeMetadata's constructor takes no AppId — Apps shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NavAppRuntimeMetadata..ctor",
+                "takes no AppId parameter — BC's permission-set metadata inventory cannot be populated");
         _ctorAppId = _tAppId.GetConstructors().FirstOrDefault(c =>
         {
             var p = c.GetParameters();
             return p.Length == 1 && p[0].ParameterType == typeof(Guid);
-        }) ?? throw new InvalidOperationException("AppId(Guid) not found — Common shape changed; do not commit");
+        }) ?? throw PermissionMetadataBcShapeGap(
+            "AppId(Guid)",
+            "constructor not found — BC's permission-set metadata inventory cannot be populated");
 
         _permMetaReflectionReady = true;
     }
@@ -411,12 +437,14 @@ public static partial class RecordPatches
 
         var ncl = _tNavAppGroupPM!.Assembly;
         var metaType = ncl.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaPermissionSet")
-            ?? throw new InvalidOperationException(
-                "NCLMetaPermissionSet not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NCLMetaPermissionSet",
+                "type not found in Ncl — BC's permission-set metadata inventory cannot be populated");
         _mCreateEmptyMetaPermissionSet ??= metaType.GetMethod("CreateEmptyNCLMetaPermissionSet",
             BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException(
-                "NCLMetaPermissionSet.CreateEmptyNCLMetaPermissionSet not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NCLMetaPermissionSet.CreateEmptyNCLMetaPermissionSet",
+                "static method not found — BC's permission-set metadata inventory cannot be populated");
 
         var baseGroup = _fBaseGroupPM!.GetValue(null);
         var meta = _mCreateEmptyMetaPermissionSet.Invoke(null,
@@ -429,8 +457,9 @@ public static partial class RecordPatches
         // this way every field BC sets is set, by BC.
         var assign = metaType.GetMethod("AssignFromMetaPermissionSet",
             BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
-            ?? throw new InvalidOperationException(
-                "NCLMetaPermissionSet.AssignFromMetaPermissionSet not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "NCLMetaPermissionSet.AssignFromMetaPermissionSet",
+                "method not found — BC's permission-set metadata inventory cannot be populated");
         assign.Invoke(meta, new[] { BuildMetaPermissionSet(declaration) });
 
         EnsureCachePopulatorReflection();
@@ -444,8 +473,9 @@ public static partial class RecordPatches
     {
         var f = declaring.GetField($"<{propertyName}>k__BackingField",
             BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
-            ?? throw new InvalidOperationException(
-                $"NCLMetaPermissionSet.{propertyName} has no backing field — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                $"NCLMetaPermissionSet.{propertyName}",
+                "has no backing field — BC's permission-set metadata inventory cannot be populated");
         FieldPoke.SetInstance(f, target, value);
     }
 
@@ -453,8 +483,9 @@ public static partial class RecordPatches
     {
         var prop = declaring.GetProperty(propertyName,
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException(
-                $"NCLMetaPermissionSet.{propertyName} not found — Ncl shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                $"NCLMetaPermissionSet.{propertyName}",
+                "property not found — BC's permission-set metadata inventory cannot be populated");
         var element = prop.PropertyType.IsGenericType
             ? prop.PropertyType.GetGenericArguments()[0]
             : typeof(object);
@@ -552,19 +583,22 @@ public static partial class RecordPatches
             ?? throw new InvalidOperationException("Microsoft.Dynamics.Nav.Types is not loaded");
 
         _tMetaPermissionSet ??= types.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaPermissionSet")
-            ?? throw new InvalidOperationException(
-                "MetaPermissionSet not found — Types shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "MetaPermissionSet",
+                "type not found in Types — BC's permission-set metadata inventory cannot be populated");
         _tMetaPermission ??= types.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaPermission")
-            ?? throw new InvalidOperationException(
-                "MetaPermission not found — Types shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "MetaPermission",
+                "type not found in Types — BC's permission-set metadata inventory cannot be populated");
         // AccessModifier is the enum MetaPermissionSet.Access is declared as. Take it FROM
         // that property rather than from a namespace guess: it does not live where the
         // sibling metadata types do, and hardcoding a namespace turned into a run-aborting
         // "Types shape changed" on the first real run.
         _tAccessModifier ??= _tMetaPermissionSet.GetProperty("Access",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.PropertyType
-            ?? throw new InvalidOperationException(
-                "MetaPermissionSet.Access not found — Types shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                "MetaPermissionSet.Access",
+                "property not found — BC's permission-set metadata inventory cannot be populated");
 
         var mps = Activator.CreateInstance(_tMetaPermissionSet)!;
         SetProperty(mps, "Id", declaration.Id);
@@ -589,8 +623,9 @@ public static partial class RecordPatches
             SetProperty(mp, "Value", p.Value);
             var objectTypeProp = _tMetaPermission.GetProperty("Type",
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                ?? throw new InvalidOperationException(
-                    "MetaPermission.Type not found — Types shape changed; do not commit");
+                ?? throw PermissionMetadataBcShapeGap(
+                    "MetaPermission.Type",
+                    "property not found — BC's permission-set metadata inventory cannot be populated");
             objectTypeProp.SetValue(mp, Enum.ToObject(objectTypeProp.PropertyType, p.ObjectType));
             permissions.Add(mp);
         }
@@ -641,9 +676,9 @@ public static partial class RecordPatches
                     return ps.Length == 2 && ps[0].ParameterType == typeof(int) && ps[1].ParameterType == typeof(string);
                 });
             if (ctor != null) { list.Add(ctor.Invoke(new object?[] { 30, name })); continue; }
-            throw new InvalidOperationException(
-                $"MetaPermissionSet include/exclude list element type {element.Name} is not one this "
-                + "code knows how to fill — Types shape changed; do not commit");
+            throw PermissionMetadataBcShapeGap(
+                $"MetaPermissionSet include/exclude list element type {element.Name}",
+                "is not one this code knows how to fill — BC's permission-set metadata inventory cannot be populated");
         }
         return list;
     }
@@ -664,8 +699,9 @@ public static partial class RecordPatches
     {
         var prop = target.GetType().GetProperty(name,
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-            ?? throw new InvalidOperationException(
-                $"{target.GetType().Name}.{name} not found — Types shape changed; do not commit");
+            ?? throw PermissionMetadataBcShapeGap(
+                $"{target.GetType().Name}.{name}",
+                "property not found — BC's permission-set metadata inventory cannot be populated");
         prop.SetValue(target, value);
     }
 }

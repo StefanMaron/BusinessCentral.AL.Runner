@@ -56,7 +56,37 @@ after the merge rather than reusing the earlier number is what caught it: all ni
 run with "Test passed cleanly but manifest declares expect-fail-known-gap". The total stays 2599
 either way — a reclassification, not a count change.
 
+**#2984 — `al-language-internals-fixture` gets a line of its own; `al-language` does not move.**
+The corpus leg used to be handed one path, `tests/al-language/tests/al-language`, so the corpus
+had exactly one suite key however many apps the submodule carried. It now enumerates
+(`scripts/corpus-app-dirs.py`) and passes each corpus app as its own bundle root, so the
+dependency-only fixture app becomes its own suite: `{ "tests": 0, "appGroups": 1 }`, the same
+shape a dependency-only `runner-extras` group has. Measured, not computed — BC 28.1, pinned
+corpus `aa49fb4`: 2 buckets, 2554 tests, exit 0, against 2554 in 1 bucket for the single-app
+invocation it replaces (72.9s → 74.6s cold wall, the 1.7s being the fixture's own compile).
+`al-language` stays at 2554 because nothing about that app's run changed. Rebased onto a
+`main` that has since bumped the pin to `ab6fbefa` (the 2554 -> 2599 entry above): 2554 is
+the number at the pin this was measured against, and enumerating the corpus's apps does not
+move whatever that number is. The fixture app is still a separate, test-free app at
+`ab6fbefa`, so its `{ "tests": 0, "appGroups": 1 }` line is unchanged by the bump.
+
 ## runner-extras
+
+### date-virtual-table-window 5 -> 9 (PRs for #3006 and #2965)
+
+Four tests added to an existing app group, so no new group line. Written down because two of
+the four assert something the group's name does not suggest and the reason is worth keeping:
+
+- `Date_IsEmptyBeforeTheWindow_WidensTheWindowLikeCountDoes` and
+  `Date_ClosedRangePastTheRowCap_ThrowsOnTheIsEmptyPathToo` cover `IsEmpty()`, which is a
+  FOURTH `DataAccess` request path (`ExistsAsync`/`ExistsCacheRequest`) and not a spelling of
+  `Count()` — the assumption that let #3006 sit unnoticed.
+- `Date_IsEmptyInsideTheWindow_StillAnswersTrueWhenNothingMatches` is its negative arm: a
+  materialised range that genuinely holds no Week period must still answer `true`.
+- `Date_RowCapRefusal_TearsThroughATryFunction_InsteadOfReadingAsFalse` is #2965's: it asserts
+  the runtime consequence of the refusal's claim, not its wording.
+
+Measured by running the group, not computed: `9P/0F/0E across 9 tests`, cold and warm.
 
 ## Migrated log (everything above 2026-09-05, verbatim)
 

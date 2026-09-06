@@ -77,6 +77,14 @@ public static partial class RecordPatches
     private const int AllObjFieldObjectType = 1;
     private const int AllObjFieldObjectId = 3;
     private const int AllObjFieldObjectName = 4;
+    // #2963: the two package columns System Application ownership checks compare against the
+    // matching Published Application row. Located by field NO here for the same reason the
+    // three above are — an AllObj shape change should miss loudly, not write a GUID into
+    // whatever column happens to sit at that index.
+    // (60 / 61, verified against this BC artifact's own Field metadata for 2000000038 —
+    // they are NOT adjacent to the low-numbered columns above.)
+    private const int AllObjFieldAppPackageId = 60;
+    private const int AllObjFieldAppRuntimePackageId = 61;
 
     private static bool _aovReflectionReady;
     // Shared by AllObj, Report Metadata and Report Layout List; see SystemPopulatedValues.
@@ -118,18 +126,33 @@ public static partial class RecordPatches
         var ordinals = EnsureAllObjObjectTypeOrdinals(allObjMetaTable);
         var done = _aovPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<(int, int), byte>());
 
+        var owners = BuildObjectOwnerIndex();
+
         foreach (var (kind, id, name, _) in EnumerateKnownAlObjects())
         {   // AllObj has no caption column; the shared inventory carries one for
             // AllObjWithCaption (2000000058), which reads the same rows.
             if (id <= 0) continue;
-            if (!ordinals.TryGetValue(NormalizeObjectTypeName(kind), out var typeOrdinal))
+            var normalized = NormalizeObjectTypeName(kind);
+            if (!ordinals.TryGetValue(normalized, out var typeOrdinal))
                 // This AL object kind has no column in THIS BC version's AllObj option
                 // set (e.g. a kind introduced after the artifact). Real BC would not
                 // list it either — skipping is faithful, inventing an ordinal is not.
                 continue;
             if (!done.TryAdd((typeOrdinal, id), 0))
                 continue;
-            InsertAllObjRow(provider, allObjMetaTable, typeOrdinal, id, name);
+            // The app that owns this object: stated by the declaring .app's own
+            // SymbolReference.json when it came from one, or by the emitted assembly that
+            // declares it when the runner compiled it here. Anything the index cannot answer
+            // for stays Guid.Empty and therefore matches no Published Application row.
+            //
+            // NOT a fallback to the current bundle. That is the conservative direction and it
+            // is deliberate: an object kind with no entry in _emittedObjectTypePrefixes, or one
+            // reached before its assembly was registered, is an object whose owner the runner
+            // does not know — and answering "the bundle" there would let the bundle own it,
+            // which is a permission granted on a guess. An unowned object simply fails the
+            // ownership check, which is what a wrong guess should look like.
+            var owningAppId = owners.TryGetValue((normalized, id), out var owner) ? owner : Guid.Empty;
+            InsertAllObjRow(provider, allObjMetaTable, typeOrdinal, id, name, owningAppId);
         }
     }
 
@@ -206,7 +229,7 @@ public static partial class RecordPatches
     /// GetSystemPopulatedVirtualRecordValues fills timestamp/SystemId/audit, we write the
     /// three columns we can answer truthfully, and BC's own GetDefaultNavValue fills the rest.
     /// </summary>
-    private static void InsertAllObjRow(object provider, NCLMetaTable allObjMetaTable, int typeOrdinal, int objectId, string objectName)
+    private static void InsertAllObjRow(object provider, NCLMetaTable allObjMetaTable, int typeOrdinal, int objectId, string objectName, Guid owningAppId)
     {
         var values = _aovSystemValues!.Invoke(allObjMetaTable, AllObjVirtualTableId, typeOrdinal, objectId, 0);
 
@@ -222,9 +245,21 @@ public static partial class RecordPatches
                 AllObjFieldObjectType => _aovNavOptionCreate!.Invoke(null, new object?[] { field.FieldOptionMetadata, typeOrdinal }),
                 AllObjFieldObjectId => _aovNavIntegerCreate!.Invoke(null, new object?[] { objectId }),
                 AllObjFieldObjectName => _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, objectName ?? string.Empty }),
-                // Every other AllObj column (App Package ID, App Runtime Package ID,
-                // Object Namespace, …) is exactly what AllObjDataProvider emits for a base
-                // object with no app package and no namespace: the type's default value.
+                // #2963 — the owning app's package ids, the same deterministic values
+                // AppPackageIdentity puts on that app's Published Application row. System
+                // Application ownership checks compare the two
+                // (Reten. Pol. Allowed Tbl. Impl.ModuleOwnsTable:
+                //  `AllObj."App Runtime Package ID" <> PublishedApplication."Runtime Package ID"`),
+                // so leaving BOTH sides at the type default would answer "yes, this app owns
+                // it" for every app/table pair rather than for the right one. An object whose
+                // owner is unknown keeps Guid.Empty and therefore matches nothing.
+                AllObjFieldAppPackageId
+                    => NavValue.CreateNavValueFromObject(field, AppPackageIdentity.PackageIdFor(owningAppId)),
+                AllObjFieldAppRuntimePackageId
+                    => NavValue.CreateNavValueFromObject(field, AppPackageIdentity.RuntimePackageIdFor(owningAppId)),
+                // Every other AllObj column (Object Namespace, …) is exactly what
+                // AllObjDataProvider emits for a base object with no namespace: the type's
+                // default value.
                 _ => _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false }),
             };
             values.SetValue(v, idx);
@@ -284,6 +319,90 @@ public static partial class RecordPatches
         _aovObjectTypeOrdinals = map;
         return map;
     }
+
+    /// <summary>
+    /// Owning app id per (normalized object kind, object id), for every object that came from
+    /// a registered precompiled dependency .app. The app id is the one stated at the root of
+    /// that .app's own SymbolReference.json — the same source
+    /// <c>RecordPatches.MetadataPermissionSetVirtualTable</c> uses for permission-set
+    /// ownership, so the two cannot disagree about who owns what.
+    ///
+    /// Objects the runner COMPILED in this process are indexed too, from the emitted assembly
+    /// that declares them, so the bundle under test and every source-compiled dependency each
+    /// own exactly their own objects.
+    ///
+    /// Anything this index cannot answer for is left OUT, and the caller then uses
+    /// <c>Guid.Empty</c> rather than falling back to whichever app is current. That is
+    /// deliberate and it fails closed: an unowned object matches no Published Application row,
+    /// so an ownership check on it declines. Attributing it to the current bundle instead would
+    /// grant a permission on a guess.
+    /// </summary>
+    private static Dictionary<(string Kind, int Id), Guid> BuildObjectOwnerIndex()
+    {
+        var index = new Dictionary<(string Kind, int Id), Guid>();
+        var fromSymbols = new HashSet<Guid>();
+        foreach (var appPath in _bcAppPaths.ToArray())
+        {
+            BcAppSymbolCache.AppSymbols symbols;
+            try { symbols = BcAppSymbolCache.Get(appPath); }
+            catch { continue; }   // the AllObj row itself is built either way; see EnumerateBcAppObjects
+            if (!Guid.TryParse(symbols.AppId, out var appId) || appId == Guid.Empty)
+                // A symbol reference stating no app id leaves its objects unowned rather than
+                // getting an invented owner — Guid.Empty then matches no Published Application
+                // row, which is the honest answer.
+                continue;
+            fromSymbols.Add(appId);
+            foreach (var o in symbols.Objects)
+                index[(NormalizeObjectTypeName(o.Kind), o.Id)] = appId;
+        }
+
+        // Objects the runner COMPILED in this process — the bundle under test and any
+        // source-compiled dependency — have no .app symbol reference to be owned by, so their
+        // owner is the app whose emitted assembly declares them.
+        //
+        // "Whichever bundle is current" is NOT a substitute, and this is measured rather than
+        // guessed: with that fallback, running the whole runner-extras tree in one process
+        // stamped this suite's own table with a DIFFERENT app group's runtime package id
+        // (expected {6EDA7750-…}, got {5A8EDAC8-…}), because AllObj had been populated while
+        // another app group was current. Reading the declaring assembly is exact regardless of
+        // which app group is executing.
+        //
+        // Assemblies whose app already came from a symbol reference are skipped: those objects
+        // are indexed and enumerating Base Application's ~132k types to re-learn it is not free.
+        foreach (var (asm, appId) in AlRunner.BcRuntime.RegisteredModuleAssemblies())
+        {
+            if (fromSymbols.Contains(appId)) continue;
+            foreach (var (prefix, kind) in _emittedObjectTypePrefixes)
+            {
+                IEnumerable<Type> types;
+                try { types = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm).EnumerateWithPrefix(prefix); }
+                catch { continue; }
+                foreach (var t in types)
+                {
+                    if (!int.TryParse(t.Name.AsSpan(prefix.Length), out var id) || id <= 0) continue;
+                    index[(NormalizeObjectTypeName(kind), id)] = appId;
+                }
+            }
+        }
+        return index;
+    }
+
+    /// <summary>
+    /// CLR type-name prefix → AL object kind, for the object kinds an emitted AL assembly
+    /// declares as a type named <c>&lt;Prefix&gt;&lt;N&gt;</c>. The same mapping
+    /// <c>BcRuntime</c>'s publisher-scope decode uses, kept in the AllObj kind vocabulary
+    /// (<c>Record</c> is a Table) because <see cref="NormalizeObjectTypeName"/> is applied to
+    /// both sides.
+    /// </summary>
+    private static readonly (string Prefix, string Kind)[] _emittedObjectTypePrefixes =
+    {
+        ("Record", "Table"),
+        ("Codeunit", "Codeunit"),
+        ("Page", "Page"),
+        ("Report", "Report"),
+        ("Query", "Query"),
+        ("XmlPort", "XMLport"),
+    };
 
     private static string NormalizeObjectTypeName(string raw)
     {

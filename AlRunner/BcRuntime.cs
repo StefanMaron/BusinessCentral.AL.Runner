@@ -122,6 +122,44 @@ public static partial class BcRuntime
         => _currentBundleInfo;
 
     /// <summary>
+    /// Every AL module the runner has loaded — one entry per distinct app id, across the
+    /// registered dependency assemblies and the bundle under test. This is the manifest data
+    /// a real BC service tier would have written into the Published Application table at
+    /// publish time, and it is what
+    /// <c>RecordPatches.EnsurePublishedApplicationRowsSeeded</c> seeds from (#2963).
+    ///
+    /// Deduplicated by app id on purpose: one app can be loaded as several assemblies (Base
+    /// Application ships as multiple chunk DLLs), and a service tier lists an app once.
+    /// The bundle under test is included — it is a published app as far as any AL code that
+    /// calls NavApp.GetCallerModuleInfo and then looks itself up is concerned, which is
+    /// exactly the shape System Application ownership checks use.
+    /// </summary>
+    /// <summary>
+    /// Every registered AL assembly with the app id it belongs to. Where
+    /// <see cref="RegisteredModules"/> answers "which apps are loaded", this answers "which
+    /// assembly is whose", which is what an object-to-owner index needs: an AL object's owner
+    /// is the app whose assembly declares it, and that is exact even when several app groups
+    /// are compiled in one process (#2963).
+    /// </summary>
+    public static IReadOnlyList<(Assembly Assembly, Guid AppId)> RegisteredModuleAssemblies()
+        => _moduleInfoByAssembly
+            .Where(kv => kv.Value.AppId != Guid.Empty)
+            .Select(kv => (kv.Key, kv.Value.AppId))
+            .ToList();
+
+    public static IReadOnlyList<(Guid AppId, string Name, string Publisher, string Version)> RegisteredModules()
+    {
+        var byId = new Dictionary<Guid, (Guid AppId, string Name, string Publisher, string Version)>();
+        foreach (var info in _moduleInfoByAssembly.Values)
+            if (info.AppId != Guid.Empty)
+                byId[info.AppId] = info;
+        var bundle = _currentBundleInfo;
+        if (bundle.AppId != Guid.Empty)
+            byId[bundle.AppId] = bundle;
+        return byId.Values.ToList();
+    }
+
+    /// <summary>
     /// Module info of the app whose emitted assembly is <paramref name="asm"/> —
     /// called by the per-assembly ALNavApp_GetCurrentModuleInfo polyfill with its own
     /// executing assembly. Falls back to the current bundle info (single-bundle case /
@@ -229,6 +267,28 @@ public static partial class BcRuntime
                     && type.Namespace.StartsWith("AlRunnerShim", StringComparison.Ordinal)) continue;
                 // Same AL method, not a caller: fold away the emitted scope frame object.
                 if (type.Name.Contains("_Scope", StringComparison.Ordinal)) continue;
+                // #2963 — the PRECOMPILED compile shape of the same thing. Microsoft's AL
+                // compiler emits a method whose body needs one as an `async ValueTask` state
+                // machine, so ONE AL method invocation occupies two managed frames: the
+                // compiler-generated `<Method>d__N.MoveNext` and the outer `<Method>` that
+                // started it. Both are in the callee's own assembly, so leaving MoveNext
+                // unfolded made the walk accept the callee's own outer frame as "the
+                // immediate caller" — and NavApp.GetCallerModuleInfo answered with the
+                // callee's app for every call into a precompiled Microsoft facade.
+                //
+                // Measured on BC 28.1 before this fold, calling
+                // `Reten. Pol. Allowed Tables.AddAllowedTable` from a test app:
+                //   [4] Codeunit3905+<AddAllowedTable_873312463>d__17::MoveNext
+                //   [7] Codeunit3905::AddAllowedTable_873312463
+                // both System Application, and the answer was "System Application" instead of
+                // the calling app. That is what made every ModuleOwnsTable check decline even
+                // once Published Application had rows (#2963).
+                //
+                // Recognised by the state-machine INTERFACE plus [CompilerGenerated], not by
+                // the `d__` name mangling, so it cannot be spoofed by an AL object that
+                // happens to be named that way, and does not depend on Roslyn's naming.
+                if (type.IsDefined(typeof(System.Runtime.CompilerServices.CompilerGeneratedAttribute), inherit: false)
+                    && typeof(System.Runtime.CompilerServices.IAsyncStateMachine).IsAssignableFrom(type)) continue;
                 // #1722 — the CROSS-APP invocation path. Calling an AL procedure in another
                 // app does not land as one managed frame: the AL emit routes it through a
                 // compiler-generated `Codeunit<N>.OnInvoke` dispatcher, and that dispatcher
@@ -241,7 +301,24 @@ public static partial class BcRuntime
                 // every library invoked across an app boundary. `OnInvoke` is emitted by the
                 // AL compiler, never authored (AL's codeunit trigger is `OnRun`), so folding
                 // it cannot swallow a genuine AL caller frame.
-                if (method!.Name == "OnInvoke") continue;
+                // `OnInvokeAsync` is the same dispatcher in the PRECOMPILED compile shape:
+                // Microsoft's AL compiler emits `Codeunit<N>.OnInvokeAsync` where the runner's
+                // own emit produces `OnInvoke`. Measured on BC 28.1, the managed frames for one
+                // AL call from a test codeunit into `Reten. Pol. Allowed Tables.AddAllowedTable`
+                // are, registered-assembly frames only:
+                //     [4]  Codeunit3905+<AddAllowedTable_…>d__15::MoveNext   (System App)
+                //     [7]  Codeunit3905::AddAllowedTable_…                   (System App)
+                //     [8]  Codeunit3905::OnInvokeAsync                       (System App)
+                //     [11] Codeunit61040+…_Scope__…::OnRun                   (the caller)
+                //     [13] Codeunit61040::OwnTableCanBeRegisteredAsAllowed   (the caller)
+                // Folding [4] but not [8] still answers "System Application" — the callee's own
+                // app — for every call into a precompiled Microsoft facade. Both AL emitters
+                // generate these names; AL's authored codeunit trigger is `OnRun`, so folding
+                // them cannot swallow an AUTHORED AL caller frame. "Authored" is the load-bearing
+                // word for the state-machine fold above too: AL cannot author a
+                // [CompilerGenerated] type implementing IAsyncStateMachine, which is what makes
+                // recognising one safe.
+                if (method!.Name is "OnInvoke" or "OnInvokeAsync") continue;
 
                 if (currentAlFrame == null) { currentAlFrame = asm; continue; }
                 // BC breaks on the FIRST frame after the skipped one — even when it

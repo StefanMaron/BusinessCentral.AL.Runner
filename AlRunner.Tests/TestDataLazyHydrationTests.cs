@@ -371,6 +371,62 @@ public sealed class TestDataLazyLoadPolicyTests : IDisposable
         Assert.All(TableLoadReads(),
             l => Assert.Contains("|Untouched|", l, StringComparison.Ordinal));
     }
+
+    /// <summary>
+    /// #2997, the behavioural half. Drives the REAL write-off path — the notifier Arm() installs,
+    /// so the increment under test is production code and not a stand-in — from several threads
+    /// at once and asserts the exact total. Against the unfixed `_deferredLoadsWrittenOff++` the
+    /// read-modify-write drops counts and the total comes back short.
+    ///
+    /// WHAT THIS DOES NOT PROVE, stated plainly: this is a hammer, not a forced interleaving.
+    /// Nothing here makes two threads collide at the increment — it makes a collision very
+    /// likely by running a large number of them, so against unsynchronised code it fails
+    /// PROBABILISTICALLY, not by construction. Against the fixed code it is exact and
+    /// deterministic. The deterministic proof of the mechanism is
+    /// TestDataProvisionerTallyAtomicityTests.
+    ///
+    /// The per-table reason and the stderr line are written on every call as they are in a real
+    /// run; stderr is redirected because the point is the count, and 80,000 NOT LOADED lines in
+    /// a CI log is not information.
+    /// </summary>
+    [Fact]
+    public void TheWriteOffTally_IsExactUnderConcurrentWriteOffs()
+    {
+        TestDataProvisioner.Arm();
+        var noteWrittenOff = RecordPatches.TestDataDeferredLoadWriteOffNotifier;
+        Assert.NotNull(noteWrittenOff);
+        Assert.Equal(0, TestDataProvisioner.DeferredLoadsWrittenOff);
+
+        const int Threads = 8;
+        const int PerThread = 10_000;
+
+        var savedErr = Console.Error;
+        Console.SetError(TextWriter.Null);
+        try
+        {
+            var go = new ManualResetEventSlim(false);
+            var workers = Enumerable.Range(0, Threads).Select(_ => Task.Run(() =>
+            {
+                go.Wait(TimeSpan.FromSeconds(30));
+                for (var n = 0; n < PerThread; n++)
+                    noteWrittenOff!(TouchedTableId, "a concurrency probe (#2997)");
+            })).ToArray();
+            go.Set();
+            Assert.True(Task.WaitAll(workers, TimeSpan.FromSeconds(120)),
+                "a write-off worker never completed");
+        }
+        finally
+        {
+            Console.SetError(savedErr);
+        }
+
+        Assert.Equal(Threads * PerThread, TestDataProvisioner.DeferredLoadsWrittenOff);
+
+        // …and the count really is the count of write-offs, not of calls: a table the plan does
+        // not offer still returns before the tally, on every thread.
+        noteWrittenOff!(NotInTheBackupTableId, "not in the plan");
+        Assert.Equal(Threads * PerThread, TestDataProvisioner.DeferredLoadsWrittenOff);
+    }
 }
 
 /// <summary>

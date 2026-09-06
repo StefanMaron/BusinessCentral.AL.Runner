@@ -169,6 +169,18 @@ internal static class TestDataProvisioner
     private static ArmedPlan? _armed;
 
     // Running tallies, accumulated across on-demand loads rather than known at Arm() time.
+    //
+    // #2997: mutated ONLY through Interlocked, never `++` or `+=`. Two threads can be inside
+    // LoadOnDemand at once — TestExecutor.InvokeWithTimeout runs every [Test] on its own worker
+    // thread and does not kill it when the watchdog expires, so an abandoned thread keeps
+    // hydrating while the bundle loop carries on in the same process (the route #2914
+    // established) — and a read-modify-write from two threads drops counts. Measured: eight
+    // threads doing 10,000 write-offs each landed 79,543 of 80,000.
+    //
+    // Reads are Volatile.Read. Not for tearing — these are aligned int32s, which the CLI
+    // guarantees are read and written atomically (ECMA-335 I.12.6.6), so a torn read was never
+    // possible — but so a reader is not handed a value from before another thread's increment
+    // that it has no other reason to see.
     private static int _tablesDone, _rowsDone, _refused, _readerRefused, _droppedColumns, _columnsNotInThisBuild;
 
     /// <summary>Tables the backup offers that ended the run without their rows because the
@@ -176,7 +188,7 @@ internal static class TestDataProvisioner
     /// is an assertable count rather than something inferred from log text.</summary>
     private static int _deferredLoadsWrittenOff;
 
-    internal static int DeferredLoadsWrittenOff => _deferredLoadsWrittenOff;
+    internal static int DeferredLoadsWrittenOff => Volatile.Read(ref _deferredLoadsWrittenOff);
 
     /// <summary>The most recent hydration's outcome — the assertable signal a test uses
     /// instead of re-deriving what happened from log text. Under the on-demand policy it is
@@ -267,7 +279,7 @@ internal static class TestDataProvisioner
                 + $"company '{armed.Company}' has no table with this id, so nothing was loaded";
             return;
         }
-        _deferredLoadsWrittenOff++;
+        Interlocked.Increment(ref _deferredLoadsWrittenOff);
         _tableOutcome[tableId] = "its storage was first created from inside another table's "
             + $"--test-data hydration and {reason}, so the rows "
             + $"'{Path.GetFileName(armed.Backup)}' company '{armed.Company}' holds for it were "
@@ -290,6 +302,8 @@ internal static class TestDataProvisioner
     {
         _lastSummary = null;
         _armed = null;
+        // Plain stores on purpose (#2997): the reset runs between runs with no other thread in
+        // play, and routing it through Interlocked would imply a concurrency it does not have.
         _tablesDone = _rowsDone = _refused = _readerRefused = _droppedColumns = _columnsNotInThisBuild = 0;
         _deferredLoadsWrittenOff = 0;
         _tableOutcome.Clear();
@@ -399,16 +413,16 @@ internal static class TestDataProvisioner
                 out var meta, out var pristineRows);
             if (result.Rows > 0)
             {
-                _tablesDone++;
+                Interlocked.Increment(ref _tablesDone);
                 // The rows are in the live store now, but no snapshot knows about them: a load
                 // fired mid-test is long past CaptureInstallBaselineSnapshot(). Without this
                 // the very next codeunit/test boundary would wipe them.
                 if (meta != null)
                     RecordPatches.AppendBaselineTable(source, tableId, meta, pristineRows);
             }
-            _rowsDone += result.Rows;
-            _droppedColumns += result.ColumnsFromUninstalledApps;
-            _columnsNotInThisBuild += result.ColumnsNotInThisBuild;
+            Interlocked.Add(ref _rowsDone, result.Rows);
+            Interlocked.Add(ref _droppedColumns, result.ColumnsFromUninstalledApps);
+            Interlocked.Add(ref _columnsNotInThisBuild, result.ColumnsNotInThisBuild);
             _tableOutcome[tableId] = result.Rows > 0
                 ? $"{result.Rows} row(s) loaded from '{Path.GetFileName(armed.Backup)}' company '{armed.Company}'"
                 : $"'{entry.TableName}' in '{Path.GetFileName(armed.Backup)}' company '{armed.Company}' "
@@ -418,7 +432,7 @@ internal static class TestDataProvisioner
         }
         catch (TestDataHydrationRefusal ex)
         {
-            _refused++;
+            Interlocked.Increment(ref _refused);
             _tableOutcome[tableId] = $"the backup's rows for it were refused — {ex.Message}";
             Console.Error.WriteLine($"[test-data] REFUSED {ex.Message}");
         }
@@ -428,14 +442,16 @@ internal static class TestDataProvisioner
             // a table that is unavailable, not a run that is broken. Reported with the reader's
             // own text IN FULL, because that text is the only diagnosis there is and the bundle
             // reporter keeps only line 1 of an EXEC-FAIL message.
-            _readerRefused++;
+            Interlocked.Increment(ref _readerRefused);
             _tableOutcome[tableId] =
                 $"the backup reader refused table '{entry.TableName}' — {ex.Message.Split('\n')[0]}";
             Console.Error.WriteLine(
                 $"[test-data] READER REFUSED table '{entry.TableName}': {ex.Message}");
         }
-        _lastSummary = new Summary(armed.Backup, armed.Company, _tablesDone, _rowsDone,
-            armed.SkippedAmbiguous, _refused, _readerRefused, _droppedColumns, _columnsNotInThisBuild);
+        _lastSummary = new Summary(armed.Backup, armed.Company,
+            Volatile.Read(ref _tablesDone), Volatile.Read(ref _rowsDone),
+            armed.SkippedAmbiguous, Volatile.Read(ref _refused), Volatile.Read(ref _readerRefused),
+            Volatile.Read(ref _droppedColumns), Volatile.Read(ref _columnsNotInThisBuild));
     }
 
     /// <summary>

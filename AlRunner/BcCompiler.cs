@@ -802,9 +802,12 @@ public sealed partial class BcCompiler
     // package rewritten in place (InProcessAppPackager's synthetic .apps, a --watch rebuild)
     // invalidates its own entry.
     //
-    // AppLoader.ReadPackageMeta keeps the same key across PROCESSES in its on-disk index and
-    // answers both questions off one open; this is the in-process layer in front of it, and the
-    // one ResetSharedReferencesForTests clears so a test can force the scan to re-read.
+    // AppLoader.ReadPackageMeta answers both questions off one open and carries them across
+    // PROCESSES in its on-disk index — that index is keyed on the package's CONTENT since
+    // #2987, not on this stat; this is the in-process layer in front of it, and the one
+    // ResetSharedReferencesForTests clears so a test can force the scan to re-read. A stat is
+    // the right key HERE precisely because this dictionary dies with the process: all it has
+    // to notice is a package rewritten underneath it.
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<
         string, (long Length, long Ticks, AppManifest? Manifest, bool HasSymbolReference)> _appMetaCache = new();
 
@@ -1018,7 +1021,7 @@ public sealed partial class BcCompiler
 
         lock (_stageSync)
         {
-            _stageRootCache ??= Path.Combine(Path.GetTempPath(), "al-runner-pkgdedup");
+            _stageRootCache ??= PkgDedupCache.Root;
             var stage = Path.Combine(_stageRootCache, key);
             // #2967: existence is a valid test of COMPLETENESS — a stage is only ever created
             // by one atomic rename, measured — but it is NOT a test of VALIDITY. The key
@@ -1052,9 +1055,20 @@ public sealed partial class BcCompiler
                 // same staged files, so the compile is unaffected; only the cross-compile
                 // reuse of this key is lost.
                 var published = PkgDedupStaging.Publish(tmp, stage, Console.Error);
+                // Claim it before it is handed to a compile (#2990). `published` is `stage`
+                // normally and `tmp` when Publish had to fall back, and BOTH need the claim:
+                // the fallback scratch dir is used for this entire run and nothing else ever
+                // deletes it, so without this it is exactly the shape that accumulated.
+                PkgDedupCache.MarkInUse(published);
                 _stageProvenance[published] = (packageDirs.ToList(), unstaged);
                 return new List<string> { published };
             }
+            // The REUSE path needs the same claim as the create path above, and needs it more.
+            // A stage reused for months is never rewritten, so its own mtime records only the
+            // day it was created — claiming here is what tells the prune it is live, and what
+            // stamps its last-USE time. Marking only the create path would leave every
+            // long-lived --watch / --server session's stage looking abandoned.
+            PkgDedupCache.MarkInUse(stage);
             _stageProvenance[stage] = (packageDirs.ToList(), unstaged);
             return new List<string> { stage };
         }

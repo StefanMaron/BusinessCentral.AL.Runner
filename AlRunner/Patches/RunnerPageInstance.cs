@@ -774,13 +774,16 @@ internal sealed class RunnerPageInstance
         // The whole property text as one registered name. This is the shape a bare page global
         // takes, it is by far the most common one, and taking it first means the parser below
         // never sees a name whose own spelling happens to contain grammar characters.
+        // The api carries no " — ": OutOfScopeMessage.TryParse cuts the api from the reason at
+        // the FIRST one, so "TestPage page N element M — Visible" made the untyped recovery path
+        // report the api as "TestPage page N element M" and fold "Visible" into the reason. Same
+        // defect #2945 fixed for Feature Key Modify, live at all three sites here (#2999).
         if (atOpen && _expressionValuesAtOpen.TryGetValue(raw, out var frozen))
             return frozen is bool fb
                 ? fb
-                : throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                    $"TestPage page {_pageId} element {elementId} — {propertyName}",
-                    $"testpage-control-property — expression '{raw}' evaluated to "
-                    + $"'{frozen ?? "null"}', which is not a Boolean. See docs/scope.md");
+                : throw TestPageShapeGap.ControlProperty(
+                    $"TestPage {propertyName} on page {_pageId} element {elementId}",
+                    $"expression '{raw}' evaluated to '{frozen ?? "null"}', which is not a Boolean");
 
         var expression = _sourceExpressions[raw];
         if (expression != null)
@@ -788,10 +791,10 @@ internal sealed class RunnerPageInstance
             var direct = GetValue(expression);
             return direct?.ClientObject is bool db
                 ? db
-                : throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                    $"TestPage page {_pageId} element {elementId} — {propertyName}",
-                    $"testpage-control-property — expression '{raw}' evaluated to "
-                    + $"'{direct?.ClientObject ?? "null"}', which is not a Boolean. See docs/scope.md");
+                : throw TestPageShapeGap.ControlProperty(
+                    $"TestPage {propertyName} on page {_pageId} element {elementId}",
+                    $"expression '{raw}' evaluated to '{direct?.ClientObject ?? "null"}', "
+                    + "which is not a Boolean");
         }
 
         // Not one bare name, so it is an expression: `not Flag`, `A and B`, `Value <> ''`. The
@@ -807,10 +810,9 @@ internal sealed class RunnerPageInstance
         // Loudly, not true-by-default: this property IS the page's read-only contract, and
         // answering "editable" for one we could not evaluate makes every test of that contract
         // unfailable. Naming the expression and what went wrong is what makes the gap fixable.
-        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-            $"TestPage page {_pageId} element {elementId} — {propertyName}",
-            $"testpage-control-property — the property is bound to expression '{raw}', which "
-            + $"cannot be evaluated: {why}. See docs/scope.md");
+        throw TestPageShapeGap.ControlProperty(
+            $"TestPage {propertyName} on page {_pageId} element {elementId}",
+            $"the property is bound to expression '{raw}', which cannot be evaluated: {why}");
     }
 
     /// <summary>
@@ -1245,17 +1247,25 @@ internal sealed class RunnerPageInstance
 
         var has = AlRunner.Patches.RecordPatches.TryHasFieldLookupTrigger(sourceRecord, sourceFieldNo);
 
-        // Undeterminable is its own outcome, with its own message. Saying "neither declares an
+        // Undeterminable is its own outcome, with its own TYPE. Saying "neither declares an
         // OnLookup trigger" when the real reason is that BC's metafield shape moved under our
         // reflection would send the reader to look at their AL, where there is nothing to find.
+        //
+        // A BC SHAPE GAP, not a scope claim (#2946/#2995). This site's own text already said
+        // "This is a runner/BC-shape problem, not a problem with the AL under test" while
+        // raising a permanence claim about scope. TryHasFieldLookupTrigger is three-valued on
+        // purpose and returns null ONLY when EnsureFieldTriggerReflection could not resolve BC's
+        // private backing fields, or the reflection threw — a read that SUCCEEDS and says the
+        // field declares no trigger returns false and lands on the permanent refusal below.
+        // That is exactly the line: the read could not be performed, versus the read succeeded
+        // and the answer was unwelcome.
         if (has == null)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            throw new AlRunner.Infrastructure.BcShapeGapException(
                 $"TestPage lookup on control {controlId} (page {_pageId})",
-                $"testpage-lookup — the control declares no OnLookup trigger, and whether field "
-                + $"{sourceFieldNo} of its source table declares one could not be determined on this "
-                + "BC build (RecordPatches.TryHasFieldLookupTrigger could not read BC's field-trigger "
-                + "metadata). This is a runner/BC-shape problem, not a problem with the AL under test. "
-                + "See docs/scope.md");
+                "NCLMetaField.EventTriggerDataValue / EventTriggerData.LookupHandler",
+                $"could not determine whether field {sourceFieldNo} of the source table declares "
+                + "an OnLookup trigger on this BC build, so the runner cannot tell a field with a "
+                + "table trigger from one whose lookup comes from a TableRelation");
 
         if (has != true)
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
@@ -1785,12 +1795,16 @@ internal sealed class RunnerPageInstance
             }
             else if (MemberId(declaringObjectId, memberName) != memberId) continue;
 
+            // A runner gap, not a BC-shape gap: the collision is in the RUNNER's own name→id
+            // hash over emitted method names, not in anything BC's metadata states. The anchor
+            // stays per-surface (testpage-onlookup / -onaction / …) so the four callers of this
+            // one method remain distinguishable to a reader.
             if (match != null)
-                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                throw TestPageShapeGap.TriggerAmbiguity(
                     $"TestPage {surface} (member {memberId})",
-                    $"testpage-{surface.ToLowerInvariant()} — both '{match.Name}' and '{m.Name}' on "
-                    + $"{target.GetType().Name} resolve to member {memberId}; the runner cannot "
-                    + "tell which trigger belongs to it. See docs/scope.md");
+                    $"testpage-{surface.ToLowerInvariant()}",
+                    $"both '{match.Name}' and '{m.Name}' on {target.GetType().Name} resolve to "
+                    + $"member {memberId}; the runner cannot tell which trigger belongs to it");
             match = m;
         }
         return match == null ? null : new TriggerMatch(target, match);

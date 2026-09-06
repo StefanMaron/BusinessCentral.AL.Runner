@@ -43,13 +43,35 @@
 //   The real table spans years 1 through 9999 — 3.6 million Date rows alone — so it cannot be
 //   materialised whole. We materialise a window of whole years (default 1900-01-01 ..
 //   2099-12-31, about 87,000 rows across all five period types) and EXTEND that window on
-//   demand whenever an AL filter names a closed bound outside it. EnsureDateWindowCoversRequest
-//   does that, from both request paths a Record Date read can take: the InnerFindAsync guard in
-//   RecordPatches.FieldFindIntercept.cs (FindFirst / FindSet / FindLast / Get) and a prepend on
-//   DataAccess.CountAsync (Count / IsEmpty), which carry different request types. Past
-//   AL_RUNNER_DATE_WINDOW_MAX_ROWS the extension throws RunnerOutOfScopeException naming the
-//   requested bound, the window and the cap, rather than answering a larger request with fewer
-//   rows.
+//   demand whenever an AL filter names a closed bound outside it, on all FOUR request paths a
+//   Record Date read can take. They carry four different request types, all deriving from
+//   DataCacheRequest, and each needs its own guard:
+//
+//     AL                                  DataAccess method                  request type
+//     ---------------------------------------------------------------------------------------
+//     Find / FindSet / FindFirst / FindLast  InnerFindAsync                  FindCacheRequest
+//     Count                                  CountAsync                      CountCacheRequest
+//     IsEmpty                                ExistsAsync                     ExistsCacheRequest
+//     Get("Period Type", "Period Start")     InternalTryGetByPrimaryKeyAsync PrimaryKeyCacheRequest
+//
+//   This header said "both request paths ... DataAccess.CountAsync (Count / IsEmpty)" until
+//   #3006. IsEmpty() has never reached CountAsync: RecordImplementation.IsEmptyAsync calls its
+//   own ExistsAsync, which builds an ExistsCacheRequest (decompiled from Ncl.dll 28.1). Because
+//   the comment asserted otherwise, nobody looked, and a closed range outside the window
+//   answered IsEmpty() = true with Count() = 7 on the very next line -- a wrong answer, since a
+//   service tier computes this table across years 1..9999 and answers 7 both ways.
+//
+//   The exists path is shared with more than IsEmpty(): DataAccess.ExistsAsync is also what an
+//   `Exist` FlowField (FlowFieldsHelper), a NavQuery and RecordImplementation.ValidateRelation
+//   reach, so all three now get the widened window too.
+//
+//   The find guard lives in RecordPatches.FieldFindIntercept.cs; the other three are prepends
+//   registered in NclCecilRewrite.Runtime.cs. All four funnel into
+//   EnsureDateWindowCoversRequest (or, for the keyed Get, into PopulateDateSpan from the record
+//   id), so one invariant is maintained in one place rather than four copies drifting apart.
+//   Past AL_RUNNER_DATE_WINDOW_MAX_ROWS the extension throws RunnerOutOfScopeException naming
+//   the requested bound, the window and the cap, rather than answering a larger request with
+//   fewer rows.
 //
 //   The one thing the window does NOT cover is an OPEN bound: `SetFilter("Period Start",
 //   '%1..', D)` asks BC for everything up to 9999-12-31, and we answer it from the window.
@@ -64,6 +86,61 @@
 //   DateTimeHelper, NCLMetaTable, NavValue, ReadOnlyRecordBuffer and TempTableDataProvider are
 //   runtime-engine types; we call BC's own helpers by reflection and feed the result into our
 //   own in-memory store.
+//
+// WHAT THE REFUSALS IN THIS FILE CLAIM (#2965)
+//   All nine used to end "see docs/scope.md". That file is the manifest of what is
+//   PERMANENTLY out of scope -- SMTP, HTTP egress, printing -- and it names no table at all,
+//   let alone this one, which this very file implements. The citation was also load-bearing
+//   rather than decorative. ApplicationObjectBasePatches.IsPermanentOutOfScope:
+//
+//       return oos != null && !oos.Reason.StartsWith("not-yet-implemented", StringComparison.Ordinal);
+//
+//   Under the old anchor that returned TRUE, so an AL [TryFunction] reading the Date table
+//   trapped a runner shape gap into `false` -- the silent default .claude/rules/loud-failures.md
+//   exists to prevent. They all route through DateShapeGap now, so the refusal tears through.
+//
+//   Every site was classified before it was touched, in the three buckets
+//   RecordPatches.VirtualTableShapeGap.cs defines:
+//
+//     site                                          what is missing                     bucket
+//     ---------------------------------------------------------------------------------------
+//     PopulateDateSpan: no in-memory provider       the runner's own store wiring         (2)
+//     PopulateDateSpan: past the row cap            the window is bounded; BC is not      (2)
+//     InsertDateRow: DatePeriodRoundUp refused      BC's own helper answered no           (2)
+//     PeriodName: GetPeriodName threw               BC's own provider threw               (2)
+//     EnsureDateFieldLayout: column moved           BC's metatable shape                  (2)
+//     EnsureDatePeriodTypes: no field 1             BC's metatable shape                  (2)
+//     EnsureDatePeriodTypes: no option metadata     BC's metatable shape                  (2)
+//     EnsureDatePeriodTypes: no matching option     BC's metatable shape                  (2)
+//     RecordPatches.cs dispatch: no skeleton session  the runner's own state              (2)
+//
+//   Nothing is in bucket (1), "genuinely out of scope". To be in (1) a refusal has to be
+//   faithful to real BC -- BC itself unable to answer, so an AL [TryFunction] reading `false`
+//   is the OBSERVABLE BC OUTCOME rather than a runner gap. Real BC computes this table on
+//   demand across years 1 through 9999 and never refuses a Date read, so a refusal here is
+//   always the runner failing to keep up.
+//
+//   THE ROW-CAP REFUSAL WAS CHECKED SEPARATELY, because it is not obviously the same category
+//   as the other eight: the other eight fire when BC's shape or the runner's store is not what
+//   this file needs, while the row cap fires on a perfectly well-formed request that the runner
+//   has simply chosen not to serve. It lands in (2) all the same, and for the stronger of the
+//   two reasons: a service tier answers that request with rows, so `false` from a [TryFunction]
+//   would be a WRONG answer rather than an unavailable one. It is not bucket (3) either --
+//   "implementable now" would mean writing the message differently, and the message already
+//   says exactly what to do (raise AL_RUNNER_DATE_WINDOW_MAX_ROWS, or narrow the filter). What
+//   would actually retire it is computing rows per request instead of materialising a window.
+//
+//   tests/runner-extras/date-virtual-table-window pins the row-cap refusal with
+//   Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)'), which matches on the
+//   API prefix only. RunnerOutOfScopeException.BuildMessage renders
+//   "out-of-scope: <api> - <reason> - see <link>", so rewriting the REASON leaves that prefix
+//   untouched -- confirmed by running the suite, not assumed.
+//
+//   One site changed its Api as well as its reason: the "Period Name" refusal used to raise
+//   Api = `Date (virtual table 2000000007) - "Period Name"`. OutOfScopeMessage.TryParse cuts
+//   the api from the reason at the FIRST em-dash, so that api made the typed and untyped
+//   recovery paths disagree -- the same defect #2945 found on the Feature Key Modify surface.
+//   The column is named in the DETAIL now, and there is one Date surface rather than two.
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -74,6 +151,22 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
+    /// <summary>
+    /// Every refusal raised for the Date table, built in one place. See
+    /// RecordPatches.VirtualTableShapeGap.cs for the three-bucket classification and for why
+    /// the anchor is "not-yet-implemented" rather than a docs/scope.md section (#2945); see
+    /// this file's header for the per-site classification behind the nine (#2965).
+    /// </summary>
+    /// <remarks>
+    /// The doc link is this table's OWN limitations section rather than the shared
+    /// shape-gaps one, because the window and its row cap are already written up there and
+    /// that section is what a reader hitting the cap needs.
+    /// </remarks>
+    internal static RunnerOutOfScopeException DateShapeGap(string detail)
+        => VirtualTableShapeGap(
+            "Date (virtual table 2000000007)", "date-virtual-table", detail,
+            "docs/limitations.md#date-virtual-table");
+
     internal const int DateVirtualTableId = 2000000007;
 
     // Field numbers of the Date table, exactly as BC's own DateDataProvider hardcodes them
@@ -210,9 +303,9 @@ public static partial class RecordPatches
         EnsureDataAccessProviderReflection(dataAccess);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
-            ?? throw new RunnerOutOfScopeException(
-                "Date (virtual table 2000000007)",
-                "date-virtual-table — Date data access has no in-memory provider; see docs/scope.md");
+            ?? throw DateShapeGap(
+                "the Date data access handed over no in-memory provider, so there is nothing to "
+                + "populate");
 
         // Remember the handout so the find-time guard can extend the window later without one.
         _dvtLastDataAccess = dataAccess;
@@ -231,9 +324,8 @@ public static partial class RecordPatches
 
             var estimate = EstimateDateRowCount(newMin, newMax);
             if (estimate > DateWindowMaxRows)
-                throw new RunnerOutOfScopeException(
-                    "Date (virtual table 2000000007)",
-                    $"date-virtual-table — a Date filter asks for periods in "
+                throw DateShapeGap(
+                    "a Date filter asks for periods in "
                     // #2968: `:N0` picks up the ambient group separator, so this diagnostic
                     // read differently per operator locale. Invariant, like the rest of the
                     // runner's own output.
@@ -243,8 +335,7 @@ public static partial class RecordPatches
                         $"{DateWindowMaxRows:N0}-row cap for the materialised window ")
                     + System.FormattableString.Invariant(
                         $"(currently [{(span.Any ? span.Min : newMin):yyyy-MM-dd}..{(span.Any ? span.Max : newMax):yyyy-MM-dd}]). ")
-                    + "Raise AL_RUNNER_DATE_WINDOW_MAX_ROWS, or narrow the filter; "
-                    + "see docs/limitations.md#date-virtual-table");
+                    + "Raise AL_RUNNER_DATE_WINDOW_MAX_ROWS, or narrow the filter");
 
             // Same rationale as the Field and Integer tables: make our metatable report
             // IsVirtualTable=false so BC's find takes the NORMAL temp-table DataAccess path
@@ -332,10 +423,9 @@ public static partial class RecordPatches
         var values = _dvtSystemValues!.Invoke(dateMetaTable, DateVirtualTableId, periodTypeOrdinal, dayNumber, 0);
 
         if (!TryRoundUp(periodStart, periodType, out var periodEnd))
-            throw new RunnerOutOfScopeException(
-                "Date (virtual table 2000000007)",
-                $"date-virtual-table — BC's DatePeriodRoundUp refused {periodStart:yyyy-MM-dd} for period type "
-                + $"{periodType}; see docs/scope.md");
+            throw DateShapeGap(
+                $"BC's own DateTimeHelper.DatePeriodRoundUp refused {periodStart:yyyy-MM-dd} for period "
+                + $"type {periodType}, so the row's \"Period End\" cannot be built");
 
         var periodNo = (int)_dvtCalcPeriodNumber!.Invoke(null, new object?[] { periodType, periodStart })!;
 
@@ -476,12 +566,54 @@ public static partial class RecordPatches
 
     /// <summary>
     /// Prepended to DataAccess.CountAsync(CountCacheRequest) for every table. Record.Count()
-    /// and IsEmpty() take the count path, not the find path, so the InnerFindAsync guard never
-    /// sees them; without this a Count over a range outside the materialised Date window would
-    /// return however many rows the window happens to hold. For every table but 2000000007 this
-    /// does one integer comparison and returns.
+    /// takes the count path, not the find path, so the InnerFindAsync guard never sees it;
+    /// without this a Count over a range outside the materialised Date window would return
+    /// however many rows the window happens to hold. For every table but 2000000007 this does
+    /// one integer comparison and returns.
+    ///
+    /// <para>This comment used to say "Record.Count() AND IsEmpty()", and that was wrong — see
+    /// <see cref="DataAccess_DateWindowGuardForExists"/> below. The claim went unchallenged
+    /// long enough to hide a wrong answer for a whole release, which is why the correction is
+    /// spelled out rather than quietly edited: IsEmpty() has never reached CountAsync.</para>
     /// </summary>
     public static void DataAccess_DateWindowGuardForCount(object self, object request)
+    {
+        if (FindRequestTableId(request) != DateVirtualTableId) return;
+        EnsureDateWindowCoversRequest(self, request);
+    }
+
+    /// <summary>
+    /// Prepended to DataAccess.ExistsAsync(ExistsCacheRequest) for every table — the FOURTH
+    /// request path into this table, and the one the count guard's comment above wrongly
+    /// claimed to cover (issue #3006).
+    ///
+    /// <para><c>Record.IsEmpty()</c> does not take the count path. Decompiled from Ncl.dll
+    /// 28.1: <c>NavRecord.GetALIsEmptyAsync</c> -> <c>RecordImplementation.IsEmptyAsync()</c>
+    /// -> <c>RecordImplementation.IsEmptyAsync(FiltersAndMarks)</c> -> its own
+    /// <c>ExistsAsync(FiltersAndMarks, SecurityFiltering)</c> ->
+    /// <c>dataAccess.ExistsAsync(new ExistsCacheRequest(...))</c>. <c>CountAsync</c> is never
+    /// on that chain. <c>ExistsCacheRequest</c> derives from <c>DataCacheRequest</c> exactly as
+    /// the find, count and primary-key requests do, so it carries the same
+    /// <c>MetaApplicationObject</c> and <c>FiltersAndMarks</c> this guard reads — the guard
+    /// simply was never registered on it.</para>
+    ///
+    /// <para>Measured on main before this existed, one process, one record variable, on
+    /// consecutive lines:</para>
+    /// <code>
+    ///   Date.SetRange("Period Start", 18500101D..18500107D);
+    ///   IsEmpty()  -> TRUE
+    ///   Count()    -> 7
+    /// </code>
+    /// <para>On a real service tier the Date table spans years 1 through 9999 and both answer
+    /// the same thing, so TRUE is a wrong answer rather than a missing feature — and a quiet
+    /// one, since "this range holds no periods" is what an IsEmpty() returning true normally
+    /// means.</para>
+    ///
+    /// <para><c>DataAccess.ExistsAsync</c> is a large async state machine, so unlike the tiny
+    /// <c>FindAsync</c> it is not R2R-inlined past a prepend. For every table but 2000000007
+    /// this does one integer comparison and returns.</para>
+    /// </summary>
+    public static void DataAccess_DateWindowGuardForExists(object self, object request)
     {
         if (FindRequestTableId(request) != DateVirtualTableId) return;
         EnsureDateWindowCoversRequest(self, request);
@@ -694,13 +826,12 @@ public static partial class RecordPatches
         }
         catch (TargetInvocationException tie)
         {
-            throw new RunnerOutOfScopeException(
-                "Date (virtual table 2000000007) — \"Period Name\"",
-                "date-virtual-table — BC's DateDataProvider.GetPeriodName could not name the period "
-                + $"({periodType} starting {periodStart:yyyy-MM-dd}): {tie.InnerException?.Message}. "
-                + "The session's FormatSettings are what BC reads for the weekday and month names; "
-                + "answering with an invented name would put a wrong caption in a green test. "
-                + "See docs/scope.md");
+            throw DateShapeGap(
+                "BC's own DateDataProvider.GetPeriodName could not name the period for the "
+                + $"\"Period Name\" column ({periodType} starting {periodStart:yyyy-MM-dd}): "
+                + $"{tie.InnerException?.Message}. The session's FormatSettings are what BC reads "
+                + "for the weekday and month names; answering with an invented name would put a "
+                + "wrong caption in a green test");
         }
     }
 
@@ -726,12 +857,12 @@ public static partial class RecordPatches
                 && string.Equals(actual.Replace(" ", string.Empty), name.Replace(" ", string.Empty),
                     StringComparison.OrdinalIgnoreCase))
                 return;
-            throw new RunnerOutOfScopeException(
-                "Date (virtual table 2000000007)",
-                $"date-virtual-table — field {fieldNo} of the Date metatable is "
+            throw DateShapeGap(
+                $"field {fieldNo} of the Date metatable is "
                 + $"'{(byNo.TryGetValue(fieldNo, out var a) ? a : "<absent>")}', not '{name}' "
                 + $"[fields={string.Join("/", allFields.Select(f => $"{f.FieldNo}:{f.FieldName}"))}] "
-                + "— BC metadata shape changed; see docs/scope.md");
+                + "- BC's own column layout moved, and writing a value at the old slot would put "
+                + "\"Period No.\" into \"Period End\"");
         }
 
         Expect(DateFieldPeriodType, "Period Type");
@@ -756,15 +887,14 @@ public static partial class RecordPatches
 
         var typeField = (GetAllFields(dateMetaTable) ?? Enumerable.Empty<NCLMetaField>())
             .FirstOrDefault(f => f.FieldNo == DateFieldPeriodType)
-            ?? throw new RunnerOutOfScopeException(
-                "Date (virtual table 2000000007)",
-                "date-virtual-table — the Date metatable has no field 1 (\"Period Type\"); see docs/scope.md");
+            ?? throw DateShapeGap(
+                "the Date metatable has no field 1 (\"Period Type\"), which is the field every row "
+                + "is keyed on");
 
         var optionString = typeField.FieldOptionMetadata?.OptionString
-            ?? throw new RunnerOutOfScopeException(
-                "Date (virtual table 2000000007)",
-                "date-virtual-table — the Date \"Period Type\" field carries no option metadata, so its "
-                + "ordinals cannot be resolved; see docs/scope.md");
+            ?? throw DateShapeGap(
+                "the Date \"Period Type\" field carries no option metadata, so its ordinals cannot be "
+                + "resolved and a guessed one would mis-key every row");
 
         var parts = optionString.Split(',');
         var pairs = new List<(int, object)>();
@@ -780,11 +910,10 @@ public static partial class RecordPatches
         }
 
         if (pairs.Count == 0)
-            throw new RunnerOutOfScopeException(
-                "Date (virtual table 2000000007)",
-                $"date-virtual-table — none of the Date \"Period Type\" options ('{optionString}') matches a "
-                + $"BC DatePeriodType value ('{string.Join(",", Enum.GetNames(_dvtPeriodTypeEnum!))}'); "
-                + "see docs/scope.md");
+            throw DateShapeGap(
+                $"none of the Date \"Period Type\" options ('{optionString}') matches a "
+                + $"BC DatePeriodType value ('{string.Join(",", Enum.GetNames(_dvtPeriodTypeEnum!))}'), "
+                + "so there is no period type to enumerate");
 
         _dvtPeriodTypes = pairs.ToArray();
         return _dvtPeriodTypes;

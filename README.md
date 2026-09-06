@@ -119,6 +119,17 @@ runners can share one `TMPDIR`; directories from builds before this mechanism (n
 no pid in the name) are left alone and can be removed by hand. See
 `AlRunner/Infrastructure/ScratchDirs.cs`.
 
+One temp directory is not owned by any single process: `al-runner-pkgdedup/`, where the
+compiler stages a deduplicated set of `.app` packages under a name derived from that set.
+Sharing it across concurrent and later runs is the point, so a stage has to outlive the run
+that created it and the ownership sweep above cannot reclaim anything there. It is pruned on
+a separate rule instead: every run writes a `<stage>.inuse-<pid>` claim on the stage it uses,
+and a stage is deleted only when no live process claims it **and** nothing has used it for
+seven days. A directory whose name is not one the compiler writes is never touched. Set
+`AL_RUNNER_PKGDEDUP_MAX_AGE_DAYS` to change the threshold; anything unparseable or
+non-positive falls back to the default rather than being honoured. See
+`AlRunner/Infrastructure/PkgDedupCache.cs`.
+
 ### Watch mode (live dashboard)
 
 ```bash

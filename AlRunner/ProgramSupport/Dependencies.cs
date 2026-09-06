@@ -678,8 +678,27 @@ internal static partial class ProgramSupport
     /// test in this repo can construct, and an untestable branch is what this method exists to
     /// stop shipping.</para>
     /// </summary>
-    private static string DependencyContentTerm(string appPath)
+    // internal, not private: #2987 made this branch unreachable end-to-end (see the
+    // paragraph above), so a direct unit test is the only thing that still exercises it.
+    internal static string DependencyContentTerm(string appPath)
     {
+        // #2987 — READ THIS BEFORE CHANGING THE DEGRADED PATH BELOW.
+        //
+        // Everything after the `if (hash != "unknown")` line is now DEFENSIVE, not a path a
+        // real run reaches. AppLoader's app-manifests index used to be keyed on a stat, so a
+        // package could be RESOLVED from a warm index entry while its bytes were unreadable —
+        // which is exactly what CacheKeyUnhashableDependencyTests used to construct with
+        // `chmod 000`, and what made "resolved but unhashable" a real state. #2987 keyed that
+        // index on the package's CONTENT, so identifying a package now requires reading it:
+        // a package the resolver indexed is a package whose hash it computed, memoized under
+        // the same (path, length, mtime) key this call will use. The degraded term therefore
+        // cannot be reached for a resolved dependency.
+        //
+        // That is also what closes #2954's residue — "unhashable on two consecutive runs while
+        // the content changes between them" — without a "do not cache this run" signal: the
+        // state it needed no longer exists. Kept rather than deleted because the reachability
+        // argument is about the CALLER, and a future caller that resolves a dependency some
+        // other way would land here; it must degrade one term, never collapse the list.
         string failure;
         try
         {

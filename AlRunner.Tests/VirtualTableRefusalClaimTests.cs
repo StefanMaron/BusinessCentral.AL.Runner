@@ -1,6 +1,6 @@
-// VirtualTableRefusalClaimTests — what the 48 refusals in the sixteen
+// VirtualTableRefusalClaimTests — what the refusals in the seventeen
 // RecordPatches.*VirtualTable.cs populators actually claim, and what an AL [TryFunction]
-// does with one (#2945).
+// does with one (#2945, extended to the Date table by #2965).
 //
 // WHY THIS IS A RUNNER-SIDE MECHANISM TEST AND NOT AN AL BUNDLE
 // ------------------------------------------------------------
@@ -52,14 +52,16 @@ namespace AlRunner.Tests;
 public sealed class VirtualTableRefusalClaimTests
 {
     private const string GapDoc = "docs/limitations.md#virtual-table-shape-gaps";
+    private const string DateDoc = "docs/limitations.md#date-virtual-table";
     private const string TimeZoneDoc = "docs/limitations.md#time-zone-virtual-table";
     private const string WindowsLanguageDoc = "docs/limitations.md#windows-language-virtual-table";
 
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
-    /// <summary>The sixteen files this issue covers. ObjectMetadataSystemTable is #2894's and
-    /// DateVirtualTable is #2648's — both deliberately outside this change.</summary>
+    /// <summary>The seventeen files covered. ObjectMetadataSystemTable is #2894's and keeps its
+    /// own factory. DateVirtualTable joined under #2965 — it was held back from #2945 only
+    /// because #2648 was changing it concurrently, not because it classified differently.</summary>
     private static readonly string[] CoveredFiles =
     {
         "RecordPatches.AggregatePermissionSetVirtualTable.cs",
@@ -67,6 +69,7 @@ public sealed class VirtualTableRefusalClaimTests
         "RecordPatches.AllObjWithCaptionVirtualTable.cs",
         "RecordPatches.AllProfileVirtualTable.cs",
         "RecordPatches.CodeunitMetadataVirtualTable.cs",
+        "RecordPatches.DateVirtualTable.cs",
         "RecordPatches.FeatureKeyVirtualTable.cs",
         "RecordPatches.FieldVirtualTable.cs",
         "RecordPatches.IntegerVirtualTable.cs",
@@ -104,6 +107,7 @@ public sealed class VirtualTableRefusalClaimTests
         new object[] { "AllObjWithCaptionShapeGap",      "AllObjWithCaption (virtual table 2000000058)",        "allobjwithcaption-virtual-table",         GapDoc },
         new object[] { "AllProfileShapeGap",             "All Profile (virtual table 2000000178)",              "all-profile-virtual-table",              GapDoc },
         new object[] { "CodeunitMetadataShapeGap",       "CodeUnit Metadata (virtual table 2000000137)",        "codeunit-metadata-virtual-table",         GapDoc },
+        new object[] { "DateShapeGap",                   "Date (virtual table 2000000007)",                     "date-virtual-table",                      DateDoc },
         new object[] { "FeatureKeyShapeGap",             "Feature Key (system table 2000000211)",               "feature-key-virtual-table",               GapDoc },
         new object[] { "FeatureKeyModifyShapeGap",       "Feature Key (system table 2000000211): Modify",       "feature-key-modify",                      GapDoc },
         new object[] { "FieldVirtualShapeGap",           "Field (virtual table 2000000041)",                    "field-virtual-table",                     GapDoc },
@@ -161,8 +165,8 @@ public sealed class VirtualTableRefusalClaimTests
     public void EveryDiscoveredFactory_ClaimsNotYetImplemented()
     {
         var factories = AllShapeGapFactories().ToList();
-        Assert.True(factories.Count >= 18,
-            $"expected at least the 18 virtual-table factories, found {factories.Count}");
+        Assert.True(factories.Count >= 19,
+            $"expected at least the 19 virtual-table factories, found {factories.Count}");
 
         foreach (var m in factories)
         {
@@ -226,13 +230,15 @@ public sealed class VirtualTableRefusalClaimTests
         var scope = File.ReadAllText(Path.Combine(RepoRoot, "docs", "scope.md"));
 
         foreach (var anchor in new[]
-                 { "virtual-table-shape-gaps", "time-zone-virtual-table", "windows-language-virtual-table" })
+                 { "virtual-table-shape-gaps", "time-zone-virtual-table", "windows-language-virtual-table",
+                   "date-virtual-table" })
             Assert.Contains($"<a id=\"{anchor}\"></a>", limitations, StringComparison.Ordinal);
 
         // The reason the old link was wrong has to stay true, or this fix is moot: scope.md is
         // the permanent manifest and names none of these tables.
         foreach (var table in new[]
-                 { "AllObj", "Time Zone", "Windows Language", "Feature Key", "Page Control Field" })
+                 { "AllObj", "Time Zone", "Windows Language", "Feature Key", "Page Control Field",
+                   "virtual table 2000000007" })
             Assert.DoesNotContain(table, scope, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -290,13 +296,23 @@ public sealed class VirtualTableRefusalClaimTests
         var total = CoveredFiles.Concat(SiblingFiles).Sum(file =>
         {
             var src = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Patches", file));
-            return Regex.Matches(src, @"throw (RecordPatches\.)?[A-Za-z]+ShapeGap\(").Count;
+            // The (?<!Bc) is load-bearing. #2994 added a SECOND convention whose factories also
+            // end in "ShapeGap" — AggregatePermissionSetBcShapeGap and friends — but those return
+            // BcShapeGapException, a different type with a different contract (it tears through
+            // asserterror and no expect-oos entry can absorb it). Counting both together would
+            // make this number mean nothing. This assertion is about the RunnerOutOfScopeException
+            // refusals #2945 corrected, so a *BcShapeGap( call is deliberately not one of them.
+            return Regex.Matches(src, @"throw (RecordPatches\.)?[A-Za-z]+(?<!Bc)ShapeGap\(").Count;
         });
 
         // 51 in the sixteen populators + 3 in RecordPatches.cs's dispatch chain + 4 in
         // AllProfileWritePatches.cs. A refusal DELETED rather than corrected would mean a
         // precondition went back to being read as a default, which is the failure this whole
         // change is about, so the count is asserted exactly.
+        //
+        // 58 -> 67 (#2965): the Date populator's eight refusals joined, plus the ninth in
+        // RecordPatches.cs's dispatch chain that spelled "date-virtual-table" itself. The Date
+        // file was held out of #2945 only because #2648 was rewriting it at the time.
         //
         // 55 -> 58 (#2938): the Table Metadata populator gained three refusals when TableType
         // and DataClassification stopped being answered with a constant. Two guard the option
@@ -306,7 +322,7 @@ public sealed class VirtualTableRefusalClaimTests
         // ordinal 0 would assert "Normal" about a table that declared something else, which is
         // the same silent wrong answer the issue is about. Going UP is the expected direction
         // here; this assertion exists to catch the count going down.
-        Assert.Equal(58, total);
+        Assert.Equal(67, total);
     }
 
 
