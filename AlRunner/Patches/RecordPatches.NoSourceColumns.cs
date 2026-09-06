@@ -169,6 +169,70 @@ public static partial class RecordPatches
     /// </summary>
     private static object? _noSourceLastTableWithNothingRegistered;
 
+    // ── ROW PROVENANCE: --test-data BEATS THE REFUSAL ───────────────────────────────────────
+    //
+    // A registered column has no source only because the RUNNER SYNTHESISED the row. 2000000071
+    // is not a virtual table — it is a real application-database system table, so a --test-data
+    // backup can genuinely carry rows for it, with a genuine published payload in exactly the
+    // nine columns this file refuses.
+    //
+    // RecordPatches.ObjectMetadataSystemTable.cs already states that precedence in its header —
+    // "Real rows always win over synthesised ones" — and implements it with
+    // `if (ProviderHasAnyRow(provider)) return;`. The refusal did not honour it. Keyed on
+    // TableId alone, it raised out-of-scope over rows that HAVE a source: a loud failure on
+    // correct data, and the mirror image of the spurious-refusal half of the torn-pair bug
+    // reached by a different route.
+    //
+    // Reachable, not theoretical: docs/limitations.md names Microsoft's Tests-SINGLESERVER
+    // bucket as the settling route for this table, that bucket is OnPrem-target and reads
+    // 2000000071 directly, and --test-data is mandatory for those buckets.
+    //
+    // WHY ONE PROCESS-WIDE FLAG RATHER THAN ONE PER PROVIDER. The populate is per provider and a
+    // run can create several stores, so per-provider looks like the tighter scope. It is not
+    // reachable as a MIXED state: 2000000071 holds no company-scoped data, so a backup either
+    // carries Object Metadata rows — and every freshly created store is hydrated from it before
+    // the populator sees it — or it carries none and every store synthesises. The flag is
+    // therefore uniform across the stores of a run wherever it is uniform at all.
+    //
+    // It is also deliberately ONE-WAY, which is what makes a mixed run safe rather than merely
+    // unlikely: once any store is found holding real rows, no later synthesising store can
+    // re-arm the refusal, so the failure mode this fix removes cannot come back through the
+    // ordering of two stores. The cost of that choice is the opposite error — a synthesised
+    // store read after a real one would return a blank instead of refusing — which is #2771's
+    // original silent blank, strictly less bad than failing loudly over correct data, and
+    // unreachable for the reason above.
+    private static volatile bool _objectMetadataRowsAreReal;
+
+    /// <summary>
+    /// True when this run has seen an Object Metadata store that already held rows — i.e.
+    /// --test-data (or an install baseline) supplied them and
+    /// <c>PopulateObjectMetadataSystemTable</c> left the store alone.
+    /// </summary>
+    public static bool ObjectMetadataRowsAreReal => _objectMetadataRowsAreReal;
+
+    /// <summary>
+    /// Called by <c>PopulateObjectMetadataSystemTable</c> on the branch where
+    /// <c>ProviderHasAnyRow</c> answered true, i.e. exactly where it declines to synthesise.
+    /// One-way on purpose — see the block comment above.
+    /// </summary>
+    public static void MarkObjectMetadataRowsAreReal() => _objectMetadataRowsAreReal = true;
+
+    /// <summary>Test hook. The flag is process-wide, so a test that sets it has to put it back.</summary>
+    internal static void ResetObjectMetadataRowProvenanceForTests() => _objectMetadataRowsAreReal = false;
+
+    /// <summary>
+    /// Whether the no-source refusal should fire for <paramref name="tableId"/> at all. False for
+    /// every unregistered table, and false for Object Metadata once its rows are known to be
+    /// real. The single gate both seams pass through, so the BLOB path and the scalar path
+    /// cannot disagree about provenance.
+    /// </summary>
+    public static bool NoSourceRefusalIsActiveFor(int tableId)
+    {
+        if (!_noSourceColumnNames.ContainsKey(tableId)) return false;
+        if (tableId == ObjectMetadataSystemTableId && _objectMetadataRowsAreReal) return false;
+        return true;
+    }
+
     /// <summary>True when <paramref name="metaTable"/> is the one the scalar guard last resolved
     /// to "nothing registered". Only ever a fast path — a false answer costs a re-lookup.</summary>
     internal static bool IsKnownToHaveNoNoSourceColumns(object metaTable)
@@ -189,6 +253,7 @@ public static partial class RecordPatches
     {
         if (metaTable == null) return null;
         if (!_noSourceColumnNames.TryGetValue(metaTable.TableId, out var names)) return null;
+        if (!NoSourceRefusalIsActiveFor(metaTable.TableId)) return null;
 
         if (_noSourceFieldsByMetaTable.TryGetValue(metaTable, out var cached)) return cached;
 

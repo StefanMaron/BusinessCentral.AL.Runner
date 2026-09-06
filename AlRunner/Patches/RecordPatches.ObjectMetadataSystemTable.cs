@@ -301,7 +301,17 @@ public static partial class RecordPatches
         RunObjectMetadataPopulateOnce(provider, () =>
         {
             // --test-data (or an install baseline) already put real rows here — leave them alone.
-            if (ProviderHasAnyRow(provider)) return;
+            if (ProviderHasAnyRow(provider))
+            {
+                // ...and tell the no-source guard, or it refuses the nine payload columns over
+                // rows that HAVE a source. This is the one branch that knows the difference:
+                // everything below synthesises, everything here was restored. Without this the
+                // refusal added for #2771 contradicts the precedence rule stated in this file's
+                // header ("Real rows always win over synthesised ones") and fails loudly on
+                // correct data. See RecordPatches.NoSourceColumns.cs.
+                MarkObjectMetadataRowsAreReal();
+                return;
+            }
 
             var objectTypeOrdinal = EnsureObjectMetadataObjectTypeOrdinal(metaTable);
             var emitVersion = ReadNavEnvironmentEmitVersion();

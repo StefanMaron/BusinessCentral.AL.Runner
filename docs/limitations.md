@@ -652,7 +652,7 @@ do have a source. This section is the record.
 
 ---
 
-### `Record "Object Metadata"` — the rows are synthesised and the payload columns read blank
+### `Record "Object Metadata"` — the rows are synthesised and the payload columns refuse by name
 
 <a id="object-metadata-system-table"></a>
 
@@ -732,6 +732,15 @@ the one that says "yet". Tracked in **#3154**, and named here rather than papere
 #2946, which is closed and covered a different third case — "BC's internals are not the shape this
 patch was written against" — and became `BcShapeGapException`, a type that deliberately never
 reaches `IsPermanentOutOfScope`.)
+
+The refusal fires **only over rows the runner synthesised**. `Object Metadata` is a real
+application-database table, not a virtual one, so a `--test-data` backup can genuinely carry rows
+for it with a real published payload in exactly these nine columns. On that path
+`PopulateObjectMetadataSystemTable` already declines to synthesise (`ProviderHasAnyRow`), and it
+now also tells the guard, so the nine columns read their restored values instead of refusing.
+Without that gate the refusal failed loudly over correct data — the reachable case is Microsoft's
+`Tests-SINGLESERVER` bucket, which is OnPrem-target, reads this table directly, and requires
+`--test-data`.
 
 The refusal is on the **read of that column**, never at row-build time. Throwing while building
 the row would take `FindSet` / `FindLast` / `Count` / `IsEmpty` with it, which is the bug (#2519)
