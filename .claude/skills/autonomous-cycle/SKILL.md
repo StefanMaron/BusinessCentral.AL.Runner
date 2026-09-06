@@ -57,9 +57,22 @@ In the same session at least four confident conclusions were wrong and were caug
 a human pushed back or because something was re-measured. Parallelism multiplies that risk.
 Serial work with a review step does not.
 
-Exactly one agent runs. When it returns, you review, act, and start the next.
+Exactly one **implementation** agent runs, plus one **reviewer** alongside it. That pairing is
+the default and the human changes it at session start, not the loop. One implementer produces at
+most one PR at a time, so a single reviewer always outpaces it and review cannot fall behind by
+construction. When the implementer returns, you act on it and start the next; when the reviewer
+returns, you start the next reviewer rather than a second implementer.
 
 ## Reviewing is not overhead, and it is where queues actually stall
+
+**The default is one implementation agent and one reviewer.** Not a ratio to compute — a
+baseline to start from, changed only by the human at session start. One implementer produces at
+most one PR at a time and one reviewer clears roughly four an hour, so review cannot fall behind
+by construction, and the pile-up this section describes never begins.
+
+The measured throughput below is what to scale *by* when a human raises the concurrency, not a
+license to raise it. At six implementation agents you need roughly two reviewers to hold steady;
+work that out from the numbers rather than adding implementers because slots are free.
 
 When a coordinator does run several agents at once — the attended mode this skill's serial rule
 does not cover — the thing that breaks first is review, not implementation. Measured across one

@@ -99,6 +99,15 @@ them; "these three are one fix, that one is not, here is why" is a complete answ
 
 ## Keep a reviewer running, and size the batch
 
+**The default is one implementation agent and one reviewer.** Not a ratio to compute — a
+baseline to start from, changed only by the human at session start. One implementer produces at
+most one PR at a time and one reviewer clears roughly four an hour, so review cannot fall behind
+by construction, and the pile-up this section describes never begins.
+
+The measured throughput below is what to scale *by* when a human raises the concurrency, not a
+license to raise it. At six implementation agents you need roughly two reviewers to hold steady;
+work that out from the numbers rather than adding implementers because slots are free.
+
 Review is the step that stalls, and it stalls by arithmetic rather than by anyone deciding
 badly. Measured on 2026-09-06: a reviewer clears **6 PRs in 93 minutes (~15.6 min/PR)** and
 **3 corpus PRs in 64 minutes (~21 min/PR)**, so one reviewer sustains about **4 PRs/hour**.
