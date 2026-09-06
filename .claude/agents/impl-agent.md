@@ -65,27 +65,35 @@ Read it: `gh issue view <N> --repo StefanMaron/BusinessCentral.AL.Runner`.
 
 If you were not handed an isolated checkout, run `git status --short` on the tree you were given before touching git. Uncommitted changes you did not make mean another agent is mid-edit there — do **not** `git checkout -b`, you will either drag their work onto your branch or yank the tree out from under them. Take a worktree instead.
 
-`.claude/worktrees/<AGENT-ID>` may already exist from an earlier task, because identities are reused. That is expected. **Do not pick a fresh identity just to get a clean directory** — reset the one you have:
+Your working tree is `.claude/worktrees/<AGENT-ID>-issue-<N>` — the identity **and** the issue number, mirroring the branch name `agent/<AGENT-ID>/issue-<N>`. Both halves are load-bearing, and the issue number is the one that is easy to leave out.
+
+A path built from the identity alone is the #3014 defect. Two autonomous loops claimed the slot `stma-auto-1`, so both rendered the same directory `.claude/worktrees/stma-auto-1` — while their branch names, which *do* carry the issue number, stayed distinct. A directory is what `git commit` and `git push` consult to decide which branch they act on, so the second loop's two commits (554 added lines across 9 files, belonging to a different issue) landed on the first loop's PR branch, and the Test Matrix reported **success** on the mixture. Same account on both sides, so the author field, the branch prefix and the commit shape were all identical, and nothing objected at any layer.
+
+The directory normally does not exist yet. It exists only when you are **resuming the same issue** (Step 1), because the issue number is part of the name. **Do not pick a fresh identity just to get a clean directory** — reset the one you have:
 
 ```
 git fetch origin main
 
-# Only if the worktree already exists from a previous task:
-git -C .claude/worktrees/<AGENT-ID> status --porcelain              # must be empty
-git -C .claude/worktrees/<AGENT-ID> log --oneline origin/main..HEAD # must be empty
-rm -rf .claude/worktrees/<AGENT-ID> && git worktree prune   # NOT `git worktree remove` — see below
+# Only if the worktree already exists, i.e. you are resuming this same issue:
+git -C .claude/worktrees/<AGENT-ID>-issue-<N> status --porcelain              # must be empty
+git -C .claude/worktrees/<AGENT-ID>-issue-<N> log --oneline origin/main..HEAD # must be empty
+rm -rf .claude/worktrees/<AGENT-ID>-issue-<N> && git worktree prune   # NOT `git worktree remove` — see below
 
-git worktree add .claude/worktrees/<AGENT-ID> -b agent/<AGENT-ID>/issue-<N> origin/main
-cd .claude/worktrees/<AGENT-ID>
+git worktree add .claude/worktrees/<AGENT-ID>-issue-<N> -b agent/<AGENT-ID>/issue-<N> origin/main
+cd .claude/worktrees/<AGENT-ID>-issue-<N>
 ```
 
 **`git worktree remove` refuses on every worktree in this repository.** It reports
 `fatal: working trees containing submodules cannot be moved or removed`, because each one
 carries `tests/al-language/`. `--force` does not help. Run the two checks below, then
-`rm -rf .claude/worktrees/<AGENT-ID> && git worktree prune`, which is the only sequence that
+`rm -rf .claude/worktrees/<AGENT-ID>-issue-<N> && git worktree prune`, which is the only sequence that
 works here.
 
+**If that directory already exists and you are not resuming this issue, stop and report.** Somebody else is in it. Do not reset it, do not `cd` into it, and do not run the two checks as though it were yours to reclaim — a foreign claim looks identical whether the agent that made it is live or gone.
+
 **Never remove a worktree without running both checks first.** An agent that crashed mid-task leaves its only copy of that work there — nowhere else. If either check prints anything, stop and report rather than discard.
+
+Per-issue directories do not accumulate: `tools/preflight.py --reap` removes the worktrees of MERGED pull requests once they are clean, keyed on the pull request's state rather than on the directory's name.
 
 Verify with `git rev-parse --show-toplevel` before your first commit. Never `git add -A` / `git add .` in a tree that might carry another agent's edits — stage only the files you changed, by name.
 
