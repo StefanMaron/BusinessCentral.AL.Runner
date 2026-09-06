@@ -839,15 +839,68 @@ internal class LiveNavTestPage : MockITestPage
             // Record-only mode: no page to ask, so no filters and no trigger to run either.
             // Non-null: guaranteed by the RequireRecord guard at the top of this method.
             _record!.ALInit();
+            // The tail of NavForm.NewRecordAsync is `OldRecord.ALAssign(SourceTable)`, and
+            // TryNewRecord runs it on the page path. Record-only mode never reaches BC's
+            // method at all, so the snapshot RowChangedSinceNewRecord compares against has to
+            // be taken here or the gate below would measure this row against some earlier one.
+            _record!.OldRecord.ALAssign(_record);
         }
 
         _pendingNewRow = true;
+    }
+
+    /// <summary>
+    /// BC's own "is this row worth saving" gate, lifted from <c>NavForm.SaveRecordAsync</c>:
+    /// <c>!SafeSourceTable.CompareAllNormalFields(SafeSourceTable.OldRecord, null)</c>. When it
+    /// answers false, SaveRecordAsync falls straight through to its UpdateRequest and writes
+    /// NOTHING — no SplitKey, no OnInsertRecord, no Insert.
+    ///
+    /// The comparison works because <c>NewRecordAsync</c> ends with
+    /// <c>OldRecord.ALAssign(SourceTable)</c>, taken AFTER <c>InitializeFieldsFromFilters</c>
+    /// and AFTER <c>OnNewRecord</c>. So the baseline is the row exactly as <c>New()</c> left it,
+    /// and only a write the test itself made can move it — which is what makes a row nobody
+    /// filled in disappear when the card closes, while <c>New()</c> + <c>SetValue</c> + close
+    /// still writes a row.
+    ///
+    /// <para><c>fieldsInitializedFromFilters</c> is passed as null deliberately, and it is not a
+    /// simplification: in <c>CompareAllNormalFields</c> that set FORCES a difference rather than
+    /// excluding one, so passing it would report every filter-stamped row as changed and save
+    /// it. Which of the two SaveRecordAsync overloads the close path behaves like is settled by
+    /// measurement, not by reading: corpus CU60648
+    /// <c>New_NothingTouched_IsDiscardedWhenTheCardCloses</c> does <c>New()</c> on a part whose
+    /// linked field IS in the primary key — so the stamp definitely happened — and real BC
+    /// 27.0 through 28.4 still reports the row gone. That is only possible with
+    /// <c>detectChangeFromFieldsInitializedFromFilters: false</c>, which is what the no-argument
+    /// <c>SaveRecordAsync()</c> (the one <c>NavForm.UpdateCoreAsync</c> uses) passes.</para>
+    ///
+    /// <para>Not applied to <see cref="FlushPendingModify"/>, and that is BC's asymmetry rather
+    /// than an omission: on the modify half SaveRecordAsync ORs the comparison with
+    /// <c>calledFromALCode &amp;&amp; RecordImplementation.HasChangedFields</c>, and
+    /// <c>_pendingModify</c> is only ever set by <see cref="MarkEdited"/> — i.e. exactly when a
+    /// control assigned a field. Whether BC's <c>HasActualChangedValues()</c> also demands the
+    /// value actually MOVED is unmeasured; see issue #3055.</para>
+    /// </summary>
+    private bool RowChangedSinceNewRecord()
+    {
+        // Non-null: only reached from FlushPendingNewRow, gated by _pendingNewRow, which is
+        // only set after InsertEmptyRow's RequireRecord guard (or by MarkEdited, which is only
+        // wired to a Rec-bound control and so implies a record too).
+        var record = _record!;
+        return !record.CompareAllNormalFields(record.OldRecord, null);
     }
 
     internal void FlushPendingNewRow()
     {
         if (!_pendingNewRow) return;
         _pendingNewRow = false;
+        // A row New() started and nothing wrote to is not persisted — BC discards it rather
+        // than inserting a blank line, so a subpage part that showed 2 rows still shows 2.
+        // See RowChangedSinceNewRecord for the mechanism and what measured it.
+        //
+        // The captured insert position is dropped with the row: it describes bounds read at
+        // THIS New()'s cursor, and leaving it armed would offer them to the next insert, which
+        // may be on another row or another part entirely.
+        if (!RowChangedSinceNewRecord()) { _insertPositionCaptured = false; return; }
         // AutoSplitKey, in BC's own order: SplitKey, then OnInsertRecord, then the record's
         // Insert (NavForm.SaveRecordAsync / NavForm.InsertAsync(belowXRec) both do exactly
         // this). Skipping it left the last primary-key field at its Init() default, so a page
@@ -871,9 +924,14 @@ internal class LiveNavTestPage : MockITestPage
         _record!.ALInsertAsync(DataError.TrapError, true, false).GetAwaiter().GetResult();
     }
 
-    /// <summary>Abandon an in-progress new row without writing it — how Cancel closes.</summary>
+    /// <summary>
+    /// Abandon an in-progress new row without writing it — how Cancel closes. Clears the
+    /// captured insert position for the same reason FlushPendingNewRow's discard branch does:
+    /// the bounds belong to the row being thrown away, and an armed capture would be consumed
+    /// by whatever inserts next.
+    /// </summary>
     internal void DiscardPendingNewRow()
-    { _pendingNewRow = false; _pendingModify = false; _onNewRowLine = false; _newRowLineReturnPosition = null; }
+    { _pendingNewRow = false; _pendingModify = false; _onNewRowLine = false; _newRowLineReturnPosition = null; _insertPositionCaptured = false; }
 
     // BC's AutoSplitKey increment. Named NavForm.AutoSplitKeyIncrement there, and the same
     // literal in the client's AutoKeyGenerator — both sides of the wire agree on 10000.
