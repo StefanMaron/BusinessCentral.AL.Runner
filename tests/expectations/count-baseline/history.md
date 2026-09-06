@@ -41,11 +41,20 @@ The guard was also confirmed ARMED rather than silently skipping, since it print
 match: re-running against a copy of this file carrying 2600 exits 4 with
 `DROP: ... expected 2600, actual 2599`.
 
-Of the 2599, 10 are new `expect-fail-known-gap` entries covering pre-existing runner gaps the
-bump made visible — 5 under #2901 (SourceTableView not applied, reaching these tests through
-`Previous()`), 4 under #2938 (Table Metadata constants), 1 under #2970 (FlowField CalcFormula
-type validation). All three issues stay open after this PR merges. The 4 tests from #174 pass,
-because this PR is the fix for them; no entry was written for those.
+Of the 2599, 5 are new `expect-fail-known-gap` entries covering pre-existing runner gaps the
+bump made visible — 4 under #2938 (Table Metadata constants) and 1 under #2970 (FlowField
+CalcFormula type validation). Both issues stay open after this PR merges. The 4 tests from #174
+pass, because this PR is the fix for them; no entry was written for those.
+
+Ten gaps were measured at the first pass, not five. The other five were the
+`Codeunit60756.TestPage_Previous_*` family, entered under #2901 (SourceTableView not applied,
+reaching those tests through `Previous()`). Between that measurement and this branch's final
+merge, #2861 landed on `main` and FIXED SourceTableView, which also deleted
+`known-gaps-testpage-sourcetableview.json` and its four codeunit 60822 entries. Re-measuring
+after the merge rather than reusing the earlier number is what caught it: all nine now pass, so
+`pass-known-gap` reads 17 rather than 26, and leaving the five entries in would have failed the
+run with "Test passed cleanly but manifest declares expect-fail-known-gap". The total stays 2599
+either way — a reclassification, not a count change.
 
 ## runner-extras
 
