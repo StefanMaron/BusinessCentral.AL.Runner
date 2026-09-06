@@ -29,6 +29,13 @@
 //   with its own "member not found", which is loud and names the member. A shim that
 //   answered them with a plausible default would be exactly the silent fake that rule
 //   forbids.
+//
+// THE OTHER HALF: WHEN THERE IS NO HONEST SUBSTITUTE (#3212)
+//   A substitute is only possible where the answer is fully determined by the inputs. It is
+//   not for System.Drawing, whose whole job is to produce pixels only a GDI+ implementation
+//   produces — so that case gets TryClassifyPlatformRefusal below instead: BC still runs, still
+//   fails, but the failure names the type, the .NET library that refused, and the reason,
+//   rather than "The type initializer for 'Gdip' threw an exception".
 using System.Globalization;
 
 namespace AlRunner.Patches;
@@ -80,12 +87,81 @@ public static class DotNetInteropShims
         }
         catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
         {
+            // A .NET type that exists but refuses this OS is a scope boundary, not a BC error
+            // — name it before BC's own wrapper buries it. Null for everything else.
+            var refusal = TryClassifyPlatformRefusal(typeName, tie.InnerException);
+            if (refusal != null) throw refusal;
+
             // Preserve BC's own exception (NavNCLDotNetCreateException drives the add-in
             // fallback in the caller's catch block) AND its stack — see the ExceptionDispatchInfo
             // note in fix_saveas_recordref_filter: `throw inner` would reset it.
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
             throw; // unreachable
         }
+    }
+
+    /// <summary>
+    /// Turn "a .NET type refused this operating system" into a named refusal, or return null
+    /// so the caller rethrows BC's own exception untouched.
+    ///
+    /// <para>WHY (#3212). BC's Base Application constructs .NET objects through AL interop, and
+    /// some of those types are Windows-only in modern .NET. Table 2121 "O365 Brand Color"
+    /// .MakePicture builds a <c>System.Drawing.Bitmap</c> to draw a colour swatch; on Linux the
+    /// shipped <c>System.Drawing.Common</c> 8.0 fails its <c>Gdip</c> class initializer, and
+    /// BC's <c>NavAutomationHelper.Create</c> catches the resulting
+    /// <c>TargetInvocationException</c> and rethrows <c>NavNCLDotNetInvokeException</c>:
+    /// "A call to System.Drawing.Bitmap failed with this message: The type initializer for
+    /// 'Gdip' threw an exception." That names neither the surface nor the reason, which is the
+    /// half <c>.claude/rules/loud-failures.md</c> forbids. Eleven Tests-SMB tests died on it.</para>
+    ///
+    /// <para>MEASURED, not assumed — and it settles the experiment #3212 could not run.
+    /// The refusal is NOT a missing <c>libgdiplus</c>: decompiled from the artifact BC ships
+    /// (28.2.50931.54319), <c>SafeNativeMethods.Gdip..cctor</c> is
+    /// <c>if (!OperatingSystem.IsWindows()) NativeLibrary.SetDllImportResolver(…, delegate {
+    /// throw new PlatformNotSupportedException(SR.PlatformNotSupported_Unix); });</c> followed
+    /// by <c>GdiplusStartup</c>, and the assembly contains no <c>libgdiplus</c> string at all —
+    /// only <c>gdiplus.dll</c>. Installing a native package cannot change the outcome, and the
+    /// .NET 6 <c>System.Drawing.EnableUnixSupport</c> switch no longer exists in 8.0. So this is
+    /// a permanent boundary on a non-Windows host, not a runner TODO.</para>
+    ///
+    /// <para>FAITHFULNESS (the audit obligation in loud-failures.md). This substitutes no value
+    /// and changes no successful path: it only fires where BC was already about to fail, and it
+    /// fires on the exception .NET itself raised rather than on a guess about which types are
+    /// Windows-only — so on a Windows host, where these constructions succeed, it never runs.
+    /// Reason deliberately does NOT begin with "not-yet-implemented", so
+    /// <c>NavApplicationObjectBase.TryInvoke</c> keeps trapping it into <c>false</c> exactly as
+    /// it traps today's <c>NavNCLDotNetInvokeException</c> — this change makes the failure
+    /// legible, it does not move its classification.</para>
+    /// </summary>
+    internal static AlRunner.Infrastructure.RunnerOutOfScopeException? TryClassifyPlatformRefusal(
+        string? typeName, Exception? thrown)
+    {
+        // Walk the whole chain rather than peeking at a fixed depth: BC wraps the platform's
+        // exception twice today (NavNCLDotNetInvokeException → TypeInitializationException →
+        // PlatformNotSupportedException), and that nesting is Types.dll's business, not a
+        // contract. A chain is acyclic by construction — InnerException is fixed at
+        // construction time — so this terminates.
+        PlatformNotSupportedException? refused = null;
+        for (var e = thrown; e != null && refused == null; e = e.InnerException)
+            refused = e as PlatformNotSupportedException;
+        if (refused == null) return null;
+
+        // Exception.Source defaults to the assembly of the throwing method, which is the .NET
+        // library that refused — "System.Drawing.Common" for the #3212 case. Reported when
+        // present because it, not the AL-visible type name, is what a reader has to look up.
+        var lib = string.IsNullOrEmpty(refused.Source) ? null : refused.Source;
+        var api = string.IsNullOrEmpty(typeName)
+            ? "NavDotNet.CreateDotNet"
+            : $"NavDotNet.CreateDotNet({typeName})";
+
+        return new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            api,
+            "dotnet-platform-unsupported — "
+            + (lib == null ? "the .NET library backing this type" : lib)
+            + $" refuses every entry point on this operating system ({System.Runtime.InteropServices.RuntimeInformation.OSDescription}). "
+            + "BC's own message for this is \"The type initializer … threw an exception\", which names "
+            + $"neither. .NET reported: {refused.Message}",
+            "dotnet-platform");
     }
 }
 
