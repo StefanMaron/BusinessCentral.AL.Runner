@@ -296,12 +296,11 @@ a clean run does not hide manifested deviations from the corpus.
    at a closed issue is the exact bookkeeping lie this mode set exists to avoid.
 
    Since #3089 one half of that *is* checked, in CI rather than in the run:
-   `pr-check.yml`'s `expectation-gap-issue-consistency` job goes red on a PR
+   `pr-gate.yml`'s `expectation-gap-issue-consistency` job goes red on a PR
    that declares `Closes #N` while an entry still links issue N
-   (`.github/scripts/check_expectation_gap_issues.py`). It is an annotation, not
-   a merge block — the job is not a required status check. See
+   (`.github/scripts/check_expectation_gap_issues.py`). See
    [the guard](#the-ci-guard-on-issue-links) below for what it does and does not
-   cover.
+   cover, and for what "goes red" is and is not worth.
 3. **`expect-divergence` requires `Reason` + `Doc`, and forbids `Issue`.** It
    declares a standing decision, so it has to point at where that decision is
    recorded. If you find yourself wanting to link an issue, the entry is a gap,
@@ -322,8 +321,12 @@ a clean run does not hide manifested deviations from the corpus.
 
 ## The CI guard on issue links
 
-`.github/scripts/check_expectation_gap_issues.py`, run by `pr-check.yml`'s
-`expectation-gap-issue-consistency` job. Two halves, deliberately unequal.
+`.github/scripts/check_expectation_gap_issues.py`. Two halves, deliberately
+unequal — and since #3198 they live in different workflows, because that is the
+split #3198 introduced: `pr-gate.yml` holds the guards that are meant to block,
+`pr-check.yml` the advisory ones. The offline half is
+`pr-gate.yml`'s `expectation-gap-issue-consistency`; the half that calls
+`api.github.com` is `pr-check.yml`'s `expectation-gap-closed-issue-sweep`.
 
 **Blocking, and it needs no network.** If the PR closes issue N — read from the
 title, the body and every commit message, because this repo squash-merges with
@@ -337,13 +340,19 @@ the manifest asserts it is not; both are in the same diff, so the author can
 settle it — delete the entry, re-target it at the open issue tracking what
 remains, or drop the closing reference.
 
-**"Blocking" means the job goes red, not that the merge is refused.** `main`'s
-ruleset requires exactly two contexts, `All BC versions passed` and
-`Tests updated`; this job is neither, so `tools/ci-wait.py`'s `is_required()`
-answers `False` for it, auto-merge ignores it, and it cannot turn a `ci-wait`
-verdict red. It annotates and a human reads the annotation — the same standing
-as `reject-ci-skip-directives` and `reject-bad-closing-references` in the same
-workflow. Making it required is a ruleset decision, deliberately not taken here.
+**"Blocking" means the job goes red. Whether the merge is refused is a
+separate, ruleset-level fact.** It sits in `pr-gate.yml` because it meets that
+file's rule of thumb — a failure is a real defect in the pull request, it cannot
+fail for an environmental reason, and it is cheap. But as `pr-gate.yml`'s own
+header says, being in that file does not by itself make a job a required
+context: `main`'s ruleset currently requires exactly two, `All BC versions
+passed` and `Tests updated`, so `tools/ci-wait.py`'s `is_required()` answers
+`False` for this job and auto-merge ignores it. Adding it to the ruleset is an
+administrator action and is deliberately not claimed here. What this PR can do
+is put it on the side of the split whose jobs are meant to gate, next to
+`reject-ci-skip-directives` and `reject-bad-closing-references` — rather than in
+`pr-check.yml`, where #3116, #3112 and #3095 each merged with a job in a
+FAILURE state.
 
 ### The two orderings, and which one this covers
 

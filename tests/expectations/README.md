@@ -26,17 +26,18 @@ expectation should touch one file with one entry.
 The file prefix and the entry's `Mode` must agree — the prefix is what a human
 scanning the directory reads. Moving an entry between modes means moving it
 between files. A `known-gaps-*.json` holding entries that are not
-`expect-fail-known-gap` fails `pr-check.yml`, because that disagreement would
-silence the whole file for the guard below.
+`expect-fail-known-gap` fails the guard below, because that disagreement would
+silence the whole file for it.
 
 ## A PR that closes a gap issue must delete or re-target its entry
 
-`pr-check.yml`'s `expectation-gap-issue-consistency` job goes red on a PR that
+`pr-gate.yml`'s `expectation-gap-issue-consistency` job goes red on a PR that
 declares `Closes #N` while an `expect-fail-known-gap` entry here still links
 issue N. The PR says the gap is fixed and the manifest says it is not; both are
 in the same diff, so it is settled there rather than by a red `main` the next
-morning. It annotates rather than blocks — the job is not a required status
-check on `main`.
+morning. It is in the workflow whose jobs are meant to gate, but `main`'s
+ruleset does not list it, so today it annotates rather than refuses the merge —
+see `docs/expectations.md`.
 
 It covers one of the two orderings: the entry already being in the checkout when
 the closing PR is checked. The mirror case — the entry arriving *after* that
