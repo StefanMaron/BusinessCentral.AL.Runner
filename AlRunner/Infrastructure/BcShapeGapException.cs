@@ -276,4 +276,110 @@ internal static class BcShape
         => value as IEnumerable
            ?? throw new BcShapeGapException(
                surface, member, $"holds a {value.GetType().Name}, which cannot be enumerated — {detail}");
+
+    // ── THE NULL-FORGIVING HALF (#3051) ─────────────────────────────────────────────────
+    //
+    // `t.GetProperty("X")!` is a COMPILER ANNOTATION. It throws nothing. When Microsoft moves
+    // X the lookup hands back a silent null and the NullReferenceException lands at the first
+    // USE of it — `.PropertyType`, `.GetValue`, `.Invoke` — on a line that no longer names X.
+    // MethodScopePatches.NavMethodScope_AssertError is an unfiltered catch(Exception), so on
+    // any AL-entered path that NRE is SWALLOWED and `asserterror` PASSES on a read real BC
+    // performs fine. That is an inverted result, not merely a hidden gap (#3046 measured it).
+    //
+    // The helpers below are the one-line replacement. They resolve exactly what the `!` site
+    // resolved — same BindingFlags, same overload selection — and raise a BcShapeGapException
+    // naming `Declaring.Member` when the read cannot be performed. Nothing else changes:
+    // a member that IS there comes back exactly as before.
+    //
+    // WHAT THEY ARE NOT FOR. The line in this file's header still governs. These say "the read
+    // could not be performed", so they belong on BC-internals lookups only. A lookup of the
+    // runner's OWN members (`typeof(BcRuntime).GetMethod(nameof(...))`) or of a BCL member
+    // (`typeof(string).GetField(nameof(string.Empty))`, `ValueTuple`'s Item1) is not a BC
+    // layout question at all and stays as it is — see BcInternalsNullForgivingGuardTests, which
+    // holds the remaining population to an exact per-file count.
+
+    /// <summary>Public or non-public, instance — the flags most BC-internals reads want.</summary>
+    public const BindingFlags AnyInstance =
+        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+
+    /// <summary>Public or non-public, static.</summary>
+    public const BindingFlags AnyStatic =
+        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static;
+
+    /// <summary>
+    /// The property <paramref name="name"/> on <paramref name="declaring"/> resolved with
+    /// <paramref name="flags"/>, or a <see cref="BcShapeGapException"/> naming it.
+    /// </summary>
+    public static PropertyInfo RequiredProperty(
+        Type declaring, string name, BindingFlags flags, string surface, string? detail = null)
+        => declaring.GetProperty(name, flags)
+           ?? throw Gap(declaring, name, "property", flags, surface, detail);
+
+    /// <summary>
+    /// The method <paramref name="name"/> on <paramref name="declaring"/> resolved with
+    /// <paramref name="flags"/>, or a <see cref="BcShapeGapException"/> naming it.
+    /// </summary>
+    public static MethodInfo RequiredMethod(
+        Type declaring, string name, BindingFlags flags, string surface, string? detail = null)
+        => declaring.GetMethod(name, flags)
+           ?? throw Gap(declaring, name, "method", flags, surface, detail);
+
+    /// <summary>
+    /// The method <paramref name="name"/> whose parameter types are exactly
+    /// <paramref name="types"/>, or a <see cref="BcShapeGapException"/> naming it. The overload
+    /// filter is part of the question: a method that survives a rename but changes its parameter
+    /// list is the same "BC's layout moved" case as an absent one.
+    /// </summary>
+    public static MethodInfo RequiredMethod(
+        Type declaring, string name, BindingFlags flags, Type[] types, string surface, string? detail = null)
+        => declaring.GetMethod(name, flags, binder: null, types: types, modifiers: null)
+           ?? throw Gap(declaring, name, $"method taking ({TypeList(types)})", flags, surface, detail);
+
+    /// <summary>
+    /// The field <paramref name="name"/> on <paramref name="declaring"/> resolved with
+    /// <paramref name="flags"/>, or a <see cref="BcShapeGapException"/> naming it.
+    ///
+    /// <para>Deliberately NOT the hierarchy walk <see cref="RequiredField(Type, string, string, string)"/>
+    /// does: these sites replace a <c>GetField(name, flags)</c> that never walked either, and
+    /// silently widening the search would change which member a converted site resolves.</para>
+    /// </summary>
+    public static FieldInfo RequiredField(
+        Type declaring, string name, BindingFlags flags, string surface, string? detail = null)
+        => declaring.GetField(name, flags)
+           ?? throw Gap(declaring, name, "field", flags, surface, detail);
+
+    /// <summary>
+    /// The constructor of <paramref name="declaring"/> taking exactly <paramref name="types"/>,
+    /// or a <see cref="BcShapeGapException"/> naming the signature that was looked for.
+    /// </summary>
+    public static ConstructorInfo RequiredConstructor(
+        Type declaring, BindingFlags flags, Type[] types, string surface, string? detail = null)
+        => declaring.GetConstructor(flags, binder: null, types: types, modifiers: null)
+           ?? throw new BcShapeGapException(
+               surface,
+               $"{declaring.Name}..ctor({TypeList(types)})",
+               detail ?? $"constructor not found — the runner constructs it to serve {surface}; BC's layout has moved");
+
+    /// <inheritdoc cref="RequiredConstructor(Type, BindingFlags, Type[], string, string?)"/>
+    public static ConstructorInfo RequiredConstructor(
+        Type declaring, Type[] types, string surface, string? detail = null)
+        => RequiredConstructor(declaring, AnyInstance, types, surface, detail);
+
+    /// <summary>
+    /// The nested type <paramref name="name"/> on <paramref name="declaring"/>, or a
+    /// <see cref="BcShapeGapException"/> naming it.
+    /// </summary>
+    public static Type RequiredNestedType(
+        Type declaring, string name, BindingFlags flags, string surface, string? detail = null)
+        => declaring.GetNestedType(name, flags)
+           ?? throw Gap(declaring, name, "nested type", flags, surface, detail);
+
+    private static BcShapeGapException Gap(
+        Type declaring, string name, string kind, BindingFlags flags, string surface, string? detail)
+        => new(surface,
+               $"{declaring.Name}.{name}",
+               detail ?? $"{kind} not found with {flags} — the runner reads it to serve {surface}; BC's layout has moved");
+
+    private static string TypeList(Type[] types)
+        => types.Length == 0 ? "" : string.Join(", ", Array.ConvertAll(types, t => t.Name));
 }
