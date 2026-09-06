@@ -23,9 +23,25 @@
 // served the same wrongly-ordered assembly out of one cache entry.
 //
 // The file names here are deliberately anti-correlated with the object IDs: Alpha.Codeunit.al
-// declares the HIGHER id (62242) and Zeta.Codeunit.al the lower (62241). So a fix that
-// accidentally sorted by object id, or one that left creation order in place, produces a
-// different answer than the one asserted — the test cannot pass by coincidence.
+// declares the HIGHER id (62242) and Zeta.Codeunit.al the lower (62241). So creation order,
+// file-name order and object-id order are three different answers here, and the test cannot
+// pass by coincidence whichever one the runner implements.
+//
+// #2801 UPDATE — the expected order changed, the claim did not. This file used to assert that
+// the answer was ordinal FILE order. That was the right observation about #2872's fix and the
+// wrong contract: sorting the compiler's inputs does not pin the output, because
+// Assembly.GetTypes() has no defined order either. Measured against a three-codeunit fixture
+// whose ordinal file order is 62295, 62290, 62285, GetTypes() returned 62295, 62285, 62290 —
+// neither file order nor id order — and on CI run 34016494342 the SuiteAbortOnTimeoutTests
+// fixture flipped again on a build that already carried #2872's sort. TestExecutor now orders
+// test codeunits by ascending AL object ID, which is the order a real BC test suite runs
+// (TestSuiteMgt.GetTestMethods walks the codeunit inventory in primary-key order; see
+// TestCodeunitExecutionOrderTests for the full citation). So the expectation below is
+// 62241 before 62242.
+//
+// What this file proves is unchanged and is now stronger: identical AL content must run in one
+// order regardless of how the files were created — and, since that order is no longer derived
+// from the file names, regardless of what they are called.
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -145,8 +161,8 @@ public sealed class AlObjectEmitOrderDeterminismTests : IDisposable
 
     /// <summary>
     /// Positive: identical AL content, opposite file-creation order, one execution order —
-    /// and it is the ordinal order of the source file paths (Alpha before Zeta), not the
-    /// order the files were created in and not the order of the object ids.
+    /// and it is ascending AL object ID (Zeta's 62241 before Alpha's 62242), not the order the
+    /// files were created in and not the ordinal order of their names (#2801).
     /// </summary>
     [SkippableFact]
     public void SameSources_DifferentFileCreationOrder_RunInTheSameOrder()
@@ -169,10 +185,10 @@ public sealed class AlObjectEmitOrderDeterminismTests : IDisposable
         Assert.Equal(2, orderA.Count);
         Assert.Equal(2, orderB.Count);
 
-        var expected = new[] { "Codeunit62242.AlphaOnly", "Codeunit62241.ZetaOnly" };
+        var expected = new[] { "Codeunit62241.ZetaOnly", "Codeunit62242.AlphaOnly" };
         Assert.True(orderA.SequenceEqual(expected),
-            "the bundle whose Zeta.Codeunit.al was created FIRST must still run Alpha's codeunit "
-            + "first — source-path ordinal order, not creation order. Got: ["
+            "the bundle whose Zeta.Codeunit.al was created FIRST must run codeunit 62241 before "
+            + "62242 — ascending object id, not creation order and not file-name order. Got: ["
             + string.Join(", ", orderA) + "]\n--- runner output ---\n" + outA);
         Assert.True(orderB.SequenceEqual(expected),
             "the bundle whose Alpha.Codeunit.al was created FIRST must run in the same order as "
