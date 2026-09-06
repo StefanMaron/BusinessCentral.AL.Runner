@@ -290,4 +290,142 @@ public sealed class ExpectationManifestWiringTests : IDisposable
 
         Assert.Contains("[expectations] no tests/expectations manifest found", output, StringComparison.Ordinal);
     }
+
+    // ── #3123: an entry that matches NO test ──────────────────────────────────────
+    //
+    // Every drift direction above is about a test the manifest MATCHED. An entry that
+    // matched nothing produced no diagnostic at all: Lookup returned null, the
+    // classifier took its no-entry branch, and the run's output was byte-comparable to
+    // a run with an empty manifest directory. One wrong letter untracked a declared gap.
+    //
+    // --expectations-require-match is the opt-in that turns that into a verdict. It has
+    // to be opt-in: the expectations directory is auto-probed and shared across every
+    // invocation in this repo, and an entry naming a corpus codeunit legitimately
+    // matches nothing in a run over a different bundle.
+
+    /// <summary>Writes a one-entry manifest into scratch and returns its directory.</summary>
+    private string OneEntryManifest(string name, string codeunitName, string method)
+    {
+        var dir = Path.Combine(_scratchRoot, name);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "known-gaps-fixture.json"), $$"""
+        [
+          {
+            "codeunitId": 60810,
+            "CodeunitName": "{{codeunitName}}",
+            "Method": "{{method}}",
+            "Mode": "expect-fail-known-gap",
+            "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3123"
+          }
+        ]
+        """);
+        return dir;
+    }
+
+    /// <summary>
+    /// The correct entry, with the audit on: the known-gap failure still reclassifies to
+    /// green AND the audit reports the scope it accounted for. This is the control that
+    /// keeps the two tests below from passing against an implementation that always
+    /// reports an unmatched entry.
+    /// </summary>
+    [SkippableFact]
+    public void RequireMatch_CorrectEntry_StaysGreen_AndSaysWhatItAccountedFor()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = OneEntryManifest("match-ok", "Expct Fixture Tests", "GreenPath_KnownGapDeclared");
+
+        var (output, exit) = RunRunner(
+            $"--expectations \"{dir}\" --expectations-require-match "
+            + $"--test GreenPath_KnownGapDeclared \"{SuitePath}\"");
+
+        AssertCount(output, "pass-known-gap:", 1);
+        Assert.Contains("all 1 entries matched a discovered test", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("UNMATCHED", output, StringComparison.Ordinal);
+        Assert.True(exit == 0, $"a matched entry must not fail the run. exit={exit}\n{output}");
+    }
+
+    /// <summary>
+    /// One letter missing from CodeunitName. Before #3123 this ran as a plain FAIL with
+    /// no mention of the entry anywhere; now it must name the entry, say the id was
+    /// loaded under a different name, and reach exit code 5.
+    /// </summary>
+    [SkippableFact]
+    public void RequireMatch_MisspelledCodeunitName_FailsTheRun_AndNamesTheCorrection()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = OneEntryManifest("match-name-typo", "Expct Fixture Test", "GreenPath_KnownGapDeclared");
+
+        var (output, exit) = RunRunner(
+            $"--expectations \"{dir}\" --expectations-require-match "
+            + $"--test GreenPath_KnownGapDeclared \"{SuitePath}\"");
+
+        Assert.Contains("UNMATCHED", output, StringComparison.Ordinal);
+        Assert.Contains("known-gaps-fixture.json", output, StringComparison.Ordinal);
+        Assert.Contains("Expct Fixture Test.GreenPath_KnownGapDeclared", output, StringComparison.Ordinal);
+        Assert.Contains("object id 60810 was loaded as \"Expct Fixture Tests\"", output, StringComparison.Ordinal);
+        Assert.True(exit == 5,
+            $"an entry that matches no test must fail with exit 5 under --expectations-require-match. "
+            + $"exit={exit}\n{output}");
+    }
+
+    /// <summary>
+    /// The same hole through the other field: a misspelled Method on a codeunit that IS
+    /// loaded. The diagnostic must list the methods that do exist, so the correction is
+    /// in the message rather than a source-tree hunt away.
+    /// </summary>
+    [SkippableFact]
+    public void RequireMatch_MisspelledMethod_FailsTheRun_AndListsTheRealMethods()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = OneEntryManifest("match-method-typo", "Expct Fixture Tests", "GreenPath_KnownGapDeclare");
+
+        var (output, exit) = RunRunner(
+            $"--expectations \"{dir}\" --expectations-require-match "
+            + $"--test GreenPath_KnownGapDeclared \"{SuitePath}\"");
+
+        Assert.Contains("declares no test method 'GreenPath_KnownGapDeclare'", output, StringComparison.Ordinal);
+        Assert.Contains("GreenPath_KnownGapDeclared", output, StringComparison.Ordinal);
+        Assert.True(exit == 5, $"expected exit 5, got {exit}\n{output}");
+    }
+
+    /// <summary>
+    /// WITHOUT the flag, the misspelled entry must behave exactly as it did before
+    /// #3123 — a plain failure, no audit output, exit 1. This pins the deliberate scope
+    /// choice: the audit is opt-in, so the shared auto-probed manifest cannot start
+    /// failing the runner-extras leg or AlRunner.Tests' own fixture runs.
+    /// </summary>
+    [SkippableFact]
+    public void WithoutRequireMatch_AMisspelledEntry_IsUnchanged()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = OneEntryManifest("match-no-flag", "Expct Fixture Test", "GreenPath_KnownGapDeclared");
+
+        var (output, exit) = RunRunner(
+            $"--expectations \"{dir}\" --test GreenPath_KnownGapDeclared \"{SuitePath}\"");
+
+        Assert.DoesNotContain("UNMATCHED", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("match audit", output, StringComparison.Ordinal);
+        AssertCount(output, "  fail:", 1);
+        Assert.True(exit == 1, $"expected the pre-#3123 behaviour, exit 1. exit={exit}\n{output}");
+    }
+
+    /// <summary>
+    /// The flag must not be satisfiable by having nothing to check. Pointed at a
+    /// directory with no entries it fails rather than reporting a vacuous match.
+    /// </summary>
+    [SkippableFact]
+    public void RequireMatch_AgainstAnEmptyManifest_FailsRatherThanPassingVacuously()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = Path.Combine(_scratchRoot, "match-empty");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "known-gaps-empty.json"), "[]");
+
+        var (output, exit) = RunRunner(
+            $"--expectations \"{dir}\" --expectations-require-match "
+            + $"--test GreenPath_PlainPass \"{SuitePath}\"");
+
+        Assert.Contains("declares 0 entries", output, StringComparison.Ordinal);
+        Assert.True(exit == 5, $"expected exit 5, got {exit}\n{output}");
+    }
 }

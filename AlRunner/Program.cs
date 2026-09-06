@@ -399,6 +399,19 @@ var extraPreprocessorSymbols = new List<string>();
 // directory activates classification, so ordinary runs outside this repo are
 // untouched.
 string? expectationsDirArg = null;
+// --expectations-require-match: opt-in assertion that THIS invocation is expected to
+// discover a test for every entry in the active expectations manifest, so an entry that
+// matches nothing is a failure (issue #3123, exit code 5).
+//
+// Opt-in, and it has to be. The expectations directory is auto-probed and shared by every
+// invocation in this repo: the corpus leg runs the three tests/al-language apps, while the
+// runner-extras leg, the --test Codeunit6020 xmlport slice and AlRunner.Tests' own fixture
+// bundles run against the SAME manifest, where those entries legitimately match nothing.
+// Anchoring on the entry's codeunitId instead of a flag was tried and rejected: AL object
+// ids are namespaced per app.json, so ids really are reused across bundles here (60820 is
+// a corpus test codeunit AND AlRunner.Tests/Fixtures/BcFloorSkip's "BC Floor Skip Future"),
+// which makes "id loaded under a different name" indistinguishable from a typo.
+bool expectationsRequireMatch = false;
 // --count-baseline PATH: opt-in test/app-group expected-count manifest (issue #1880;
 // see AlRunner/Infrastructure/CountBaseline.cs for the schema and rationale). Unlike
 // --expectations there is NO auto-probed default — a baseline built for a full-corpus
@@ -502,6 +515,7 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--per-suite") { bundledMode = false; continue; }
     if (args[i] == "--bundled") { bundledMode = true; continue; }
     if (args[i] == "--expectations" && i + 1 < args.Length) { expectationsDirArg = args[++i]; continue; }
+    if (args[i] == "--expectations-require-match") { expectationsRequireMatch = true; continue; }
     if (args[i] == "--count-baseline" && i + 1 < args.Length) { countBaselinePath = args[++i]; continue; }
     // #1821: the SAME --cache value also becomes the isolation root for every other
     // cache CacheRoots redirects (compiled-deps/workspace-deps/ncl-cecil/bc-symbols/
@@ -3924,6 +3938,72 @@ if (countBaseline != null)
     }
 }
 
+// ── Expectations match audit (issue #3123) ───────────────────────────────────────
+//
+// tests/expectations is loud in both directions for a test it MATCHED. An entry that
+// matched NOTHING was the hole: ExpectationManifest.Lookup returns null for a name it
+// does not hold, the classifier takes its no-entry branch, and one wrong letter in
+// CodeunitName or Method silently converts a declared, tracked gap into an undeclared
+// one — a red run indistinguishable from a gap nobody declared.
+//
+// Opt-in on purpose; see --expectations-require-match's declaration for why anchoring
+// on codeunitId instead would produce false positives on this repo's own fixtures.
+bool expectationsMatchFailure = false;
+if (expectationsRequireMatch)
+{
+    if (expectations == null)
+    {
+        // The flag asserts every entry matched. With no manifest active there are no
+        // entries to match, and reporting that as satisfied would be a vacuous green.
+        Console.Error.WriteLine(
+            "[expectations] --expectations-require-match was given but no expectations "
+            + "manifest is active — nothing to require a match against. Pass --expectations DIR, "
+            + "or drop the flag.");
+        expectationsMatchFailure = true;
+    }
+    else if (expectations.Entries.Count == 0)
+    {
+        Console.Error.WriteLine(
+            "[expectations] --expectations-require-match was given but the active manifest "
+            + "declares 0 entries — the flag would pass without checking anything. Check the "
+            + "--expectations path.");
+        expectationsMatchFailure = true;
+    }
+    else if (willResume)
+    {
+        // Same reasoning as --count-baseline above: this attempt ran a slice and hands
+        // the rest to a fresh process, so its discovery set is not the run's.
+        Console.Error.WriteLine(
+            "[expectations] match audit skipped: this attempt is resuming in a fresh process; "
+            + "the final attempt audits the whole run.");
+    }
+    else
+    {
+        var unmatched = expectations.FindUnmatchedEntries();
+        if (unmatched.Count > 0)
+        {
+            expectationsMatchFailure = true;
+            foreach (var u in unmatched)
+                Console.Error.WriteLine(
+                    $"[expectations] UNMATCHED: {u.Entry.SourceFile}: "
+                    + $"{u.Entry.CodeunitName}.{u.Entry.Method} ({u.Entry.Mode}) matched no test "
+                    + $"in this run — {u.Diagnostic}.");
+            Console.Error.WriteLine(
+                $"[expectations] {unmatched.Count} of {expectations.Entries.Count} entr"
+                + $"{(unmatched.Count == 1 ? "y" : "ies")} matched no test. An entry that matches "
+                + "nothing declares nothing: the test it names still fails as if undeclared. Fix "
+                + "the CodeunitName/Method, or remove the entry.");
+        }
+        else
+        {
+            // Never mute about its scope: a green audit says how much it accounted for.
+            Console.Error.WriteLine(
+                $"[expectations] match audit: all {expectations.Entries.Count} entries matched a "
+                + "discovered test.");
+        }
+    }
+}
+
 // Computed once regardless of --no-strict-exit: needed both as the process exit code
 // and as the "exitCode" field in --output-json, which reports the real outcome even
 // when the process itself exits 0 for JSON-only consumers.
@@ -3959,7 +4039,8 @@ int computedExitCode = 0;
         // "some tests failed". Below a compile failure, which is the more fundamental problem.
         : (execFail > 0 || carryIncomplete) ? 2  // bucket-level execution error, or a lost attempt
         : (failed + errored > 0 ? 1               // at least one test failed
-        : (countBaselineMismatch ? 4 : 0));      // #1880: suite's count didn't exactly match its baseline
+        : (countBaselineMismatch ? 4                    // #1880: suite's count didn't exactly match its baseline
+        : (expectationsMatchFailure ? 5 : 0)));  // #3123: an expectations entry matched no test
 }
 
 if (outputJson && willResume)
