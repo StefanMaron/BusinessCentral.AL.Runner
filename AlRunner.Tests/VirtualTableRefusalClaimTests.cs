@@ -336,7 +336,7 @@ public sealed class VirtualTableRefusalClaimTests
         // package or assembly it could not read, which PopulateAllObjVirtualTable then wrote
         // out as Guid.Empty -- indistinguishable from "this app does not own it".
         //
-        // 71 -> 75 (#3080): the Page Metadata and CodeUnit Metadata populators each
+        // +4 (#3080): the Page Metadata and CodeUnit Metadata populators each
         // gained the same two refusals, for the same invariant but not for the same reason.
         // Both columns used to fall through to NavValue.GetDefaultNavValue for a member name
         // the column's option string does not list, under a comment saying the case could not
@@ -359,13 +359,21 @@ public sealed class VirtualTableRefusalClaimTests
         // MetadataOptionColumnOrdinalTests pins all four messages.
         //
         // NOTE TO WHOEVER REBASES THIS NEXT: more than one open PR moves this number at a
-        // time -- as this rebase found: #3015 moved it to 72 on main while this branch was
-        // moving it to 75 from the same base of 71, and neither delta is the answer. Do NOT
-        // add your delta to whatever is on main -- run the test, read the "Actual:" value out
-        // of the failure message, and write that. An arithmetic guess here is how the
-        // assertion silently stopped meaning what it says once before.
+        // time, and this rebase is the case in point. #3015 and #3080 both branched from 71;
+        // #3015 merged first and wrote 72, this branch had written 75, and NEITHER running
+        // total survives the rebase. The two entries below it are therefore written as
+        // DELTAS (+1, +4) rather than as `71 -> n` -- a running total in a comment is a claim
+        // about what else had merged when it was written, which stops being true the moment
+        // somebody else's PR lands first.
+        //
+        // Do NOT add your delta to whatever is on main -- run the test, read the "Actual:"
+        // value out of the failure message, and write that. An arithmetic guess here is how
+        // the assertion silently stopped meaning what it says once before. (Here the two
+        // deltas happen to be disjoint and 71+1+4 does land on 76. That is a fact about these
+        // two changes, confirmed by the measurement afterwards, not a method for the next one:
+        // two PRs touching one populator can move the same throw.)
 
-        // 71 -> 72 (#3015): the AllObj populator gained one more. It resolves its columns by
+        // +1 (#3015): the AllObj populator gained one more. It resolves its columns by
         // field NUMBER rather than by name, and a number matching nothing was simply never
         // written — the row still inserted, the column kept BC's own default, and
         // `AllObj."App Runtime Package ID" <> PublishedApplication."Runtime Package ID"` then
@@ -379,7 +387,7 @@ public sealed class VirtualTableRefusalClaimTests
         // Per the note above: this number was READ OUT of the test's own failure message after
         // rebasing this branch's four #3080 refusals onto main's #3015 one, not arrived at by
         // adding 4 to 72 or 1 to 75.
-        Assert.Equal(999999, total);
+        Assert.Equal(76, total);
     }
 
 
