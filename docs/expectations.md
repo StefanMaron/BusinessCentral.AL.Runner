@@ -345,14 +345,26 @@ separate, ruleset-level fact.** It sits in `pr-gate.yml` because it meets that
 file's rule of thumb — a failure is a real defect in the pull request, it cannot
 fail for an environmental reason, and it is cheap. But as `pr-gate.yml`'s own
 header says, being in that file does not by itself make a job a required
-context: `main`'s ruleset currently requires exactly two, `All BC versions
-passed` and `Tests updated`, so `tools/ci-wait.py`'s `is_required()` answers
-`False` for this job and auto-merge ignores it. Adding it to the ruleset is an
-administrator action and is deliberately not claimed here. What this PR can do
-is put it on the side of the split whose jobs are meant to gate, next to
-`reject-ci-skip-directives` and `reject-bad-closing-references` — rather than in
-`pr-check.yml`, where #3116, #3112 and #3095 each merged with a job in a
-FAILURE state.
+context, and this one is not required yet, so `tools/ci-wait.py`'s
+`is_required()` answers `False` for it and auto-merge ignores it.
+
+Note what that does **not** mean. Measured against the live branch ruleset on
+2026-09-06, `main` requires **ten** contexts: `BC test matrix passed` (renamed
+from `All BC versions passed` by #3141), `Tests updated`, and the eight
+`pr-gate.yml` jobs — including `reject-ci-skip-directives` and
+`reject-bad-closing-references`, which **do** gate. So this job's non-required
+standing is not shared with its neighbours; after this lands it is the only job
+in `pr-gate.yml` that does not gate. That is a reason to promote it, not a
+precedent that excuses it. Promotion is a ruleset edit, an administrator action,
+deliberately not claimed here — the interim seam is
+`PENDING_REQUIRED_CONTEXTS` in `.github/scripts/check_required_contexts.py`,
+which lists this context so the guard analyses it like a required one while the
+drift comparison tolerates it in either state.
+
+What this PR can do is put it on the side of the split whose jobs are meant to
+gate, next to `reject-ci-skip-directives` and `reject-bad-closing-references` —
+rather than in `pr-check.yml`, where #3116, #3112 and #3095 each merged with a
+job in a FAILURE state.
 
 ### The two orderings, and which one this covers
 

@@ -76,13 +76,26 @@ it at the issue that actually tracks the remaining work, or by dropping the
 closing reference.
 
 "Blocking" here means the job goes red, not that the merge is refused. This job
-is not a required status check on `main` -- the ruleset requires only "All BC
-versions passed" and "Tests updated" -- so tools/ci-wait.py's is_required()
-answers False for it, auto-merge ignores it, and it cannot turn a ci-wait
-verdict red. It annotates, and a human reads the annotation. That is
-pre-existing and shared with the sibling closing-reference jobs in the same
-workflow; nothing in this script can change it, and making the job required is a
-separate decision for whoever owns the ruleset.
+is not a required status check on `main` yet, so tools/ci-wait.py's is_required()
+answers False for it, auto-merge ignores it, and it cannot turn a ci-wait verdict
+red. It annotates, and a human reads the annotation.
+
+That standing is NOT shared with the sibling jobs in this workflow, and an
+earlier revision of this docstring said it was, which had the argument exactly
+backwards. Measured against the live branch ruleset on 2026-09-06, `main`
+requires TEN contexts, not two -- "BC test matrix passed" (renamed from "All BC
+versions passed" by #3141), "Tests updated", and the eight pr-gate.yml jobs,
+among them "PR title/body must not contain a CI-skip directive" and "PR body
+closing references must be correct, both directions". Both of those DO gate. So
+once this lands, this job is the only job in pr-gate.yml that does not, which is
+an argument for promoting it rather than a precedent excusing it.
+
+That promotion is a ruleset edit, an administrator action, and deliberately not
+claimed here. The seam is PENDING_REQUIRED_CONTEXTS in
+.github/scripts/check_required_contexts.py: this context is listed there, so the
+guard analyses it exactly like a required one -- produced by a pull_request
+workflow, not cancellable on the head commit -- while the live drift comparison
+tolerates it in either state until the ruleset catches up.
 
 NOT blocking, and on purpose (`--report-closed-issues`):
 
