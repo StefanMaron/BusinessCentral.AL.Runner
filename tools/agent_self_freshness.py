@@ -88,6 +88,9 @@ import subprocess
 from dataclasses import dataclass, field
 
 _SHA_LINE = re.compile(r"^([0-9a-f]{40})\s+(\S+)$")
+# A remote NAME. git allows a lot here, but nothing that looks like a URL or a
+# path, which is the confusion worth catching (see assess).
+_REMOTE_NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 @dataclass
@@ -177,7 +180,18 @@ def _remedy(relpath: str) -> str:
 
 def assess(path: str, *, remote_check: bool = True, remote: str = "origin",
            branch: str = "main", runner=None, timeout: int = 20) -> Freshness:
-    """Whether the copy of `path` on disk is behind origin/<branch> on that file."""
+    """Whether the copy of `path` on disk is behind origin/<branch> on that file.
+
+    `remote` is a configured remote NAME, because the comparison is made against
+    `refs/remotes/<remote>/<branch>`. A URL would resolve no such ref and answer
+    "unknown", which dresses a caller's mistake up as a fact about the
+    environment -- so it is refused outright instead.
+    """
+    if not _REMOTE_NAME.match(remote):
+        raise ValueError(
+            f"remote must be a configured remote name, not {remote!r}: this "
+            "compares against refs/remotes/<remote>/<branch>, and a URL resolves "
+            "no such ref.")
     runner = runner or _default_runner
     ref = f"refs/remotes/{remote}/{branch}"
 

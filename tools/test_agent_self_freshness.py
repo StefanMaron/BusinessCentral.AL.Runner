@@ -193,6 +193,59 @@ try:
           r.base_confirmed == "unreachable", r.base_confirmed)
     check("...and the note is loud about it",
           any("could not confirm" in n.lower() for n in r.notes), r.notes)
+
+    # --- the one branch that JUSTIFIES spending an ls-remote -------------------
+    # refs/remotes/origin/main is shared by every worktree and is refreshed every
+    # few tens of minutes, so the local check catches days-scale drift on its own.
+    # The remote call earns its keep only here: the shared ref is itself behind,
+    # and the file moved inside that window. This is the only path on which the
+    # remote check turns "current" into a refusal, so it is the only one that
+    # decides whether the call is worth making at all.
+    base_before = git(work, "rev-parse", "refs/remotes/origin/main")
+    land_on_remote(tmp, remote, "tools/ci-wait.py", "# v4 -- landed minutes ago\n")
+    # Deliberately NOT fetched: local origin/main still points at v3.
+    r = asf.assess(os.path.join(work, "tools/ci-wait.py"), remote_check=True)
+    check("a local origin/main that is itself behind is fetched and re-judged",
+          r.base_confirmed == "refreshed", f"{r.base_confirmed} {r.notes}")
+    check("...and the answer flips from current to STALE",
+          r.state == "stale" and r.refuse is True, f"{r.state} {r.refuse}")
+    check("...and the ref actually moved",
+          git(work, "rev-parse", "refs/remotes/origin/main") != base_before)
+    check("...and the note names both ends of the fetch",
+          any(base_before[:8] in n for n in r.notes), r.notes)
+
+    # Same situation, but the fetch fails. Knowing we are behind and being unable
+    # to close the gap is a LOUD NOTE on the older ref's answer, never a refusal:
+    # a failed fetch is a network fact, not evidence about this checkout.
+    git(work, "merge", "--ff-only", "origin/main")
+    land_on_remote(tmp, remote, "tools/ci-wait.py", "# v5\n")
+
+    def fetch_fails(args, timeout=None):
+        if "fetch" in args:
+            return 128, "", "fatal: unable to access remote"
+        return asf._default_runner(args, timeout)
+
+    r = asf.assess(os.path.join(work, "tools/ci-wait.py"), remote_check=True,
+                   runner=asf.make_runner(fetch_fails))
+    check("a failed fetch off a known-behind ref does NOT refuse", r.refuse is False,
+          f"{r.state} {r.notes}")
+    check("...and records that the base is behind and unfetchable",
+          r.base_confirmed == "behind-unfetchable", r.base_confirmed)
+    check("...and says the check ran against the OLDER ref",
+          any("OLDER ref" in n for n in r.notes), r.notes)
+
+    # --- `remote` is a remote NAME, not a URL ---------------------------------
+    # A URL resolves no refs/remotes/<name>/main, so it would answer "unknown" --
+    # a caller error dressed up as an environment fact. Refuse the argument
+    # instead; nothing in this repository passes anything but the default.
+    for bad in ("https://github.com/o/r.git", "git@github.com:o/r.git", "a/b"):
+        try:
+            asf.assess(os.path.join(work, "tools/ci-wait.py"), remote=bad,
+                       remote_check=False)
+            check(f"a URL-shaped remote ({bad[:20]}) is refused", False, "no ValueError")
+        except ValueError as exc:
+            check(f"a URL-shaped remote ({bad[:20]}) is refused",
+                  "remote name" in str(exc), str(exc))
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 
