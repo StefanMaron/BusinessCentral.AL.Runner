@@ -512,6 +512,47 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The OTHER controls of a PRECOMPILED dependency page that declare the same
+    /// <c>SourceExpression</c> TEXT as <paramref name="controlId"/> — the siblings the AL
+    /// compiler collapsed onto one registered <c>&lt;Expression&gt;</c> (issue #3211).
+    ///
+    /// <para>A page that binds two controls to one page global gets ONE expression object,
+    /// named after whichever control the compiler reached first, and every other control
+    /// points at it through its own <c>DataColumnName</c>. On a page the runner compiled
+    /// itself that attribute is readable off the merged metadata
+    /// (<c>RunnerPageInstance.TryGetSourceExpression</c> uses it directly); on a page that
+    /// ships precompiled in a dependency .app it is not, because
+    /// <see cref="TryGetDependencyPageMetadataXml"/> reconstructs no control tree. What the
+    /// dependency DOES state, per control, is the AL binding text itself — the same field
+    /// <see cref="GetPageControlFieldMap"/> and the "Page Control Field" virtual table
+    /// already read — and the compiler's dedup key IS that text, so the siblings can be
+    /// named exactly rather than guessed.</para>
+    ///
+    /// <para>Naming a sibling asserts nothing on its own: the caller still only accepts a
+    /// sibling whose <c>Control{id}</c> key the page ACTUALLY registered, so a control whose
+    /// binding was never registered at all stays unresolved and still refuses loudly.
+    /// Comparison is case-insensitive because AL identifiers are, so two spellings of one
+    /// variable name are one binding.</para>
+    /// </summary>
+    internal static IReadOnlyList<int> DependencyControlsSharingSourceExpression(int pageId, int controlId)
+    {
+        var symbol = TryGetDependencyPageSymbol(pageId);
+        if (symbol?.Controls == null || symbol.Controls.Count == 0) return Array.Empty<int>();
+
+        string? text = null;
+        foreach (var control in symbol.Controls)
+            if (control.Id == controlId) { text = control.SourceExpression; break; }
+        if (string.IsNullOrWhiteSpace(text)) return Array.Empty<int>();
+
+        var siblings = new List<int>();
+        foreach (var control in symbol.Controls)
+            if (control.Id != controlId
+                && string.Equals(control.SourceExpression, text, StringComparison.OrdinalIgnoreCase))
+                siblings.Add(control.Id);
+        return siblings;
+    }
+
+    /// <summary>
     /// Every field control of a SOURCE-PARSED page, base plus matching pageextensions,
     /// for the "Page Control Field" (2000000192) virtual table. Same base+extension merge
     /// rule as <see cref="GetPageControlFieldMap"/> (only extensions of THIS page), same
