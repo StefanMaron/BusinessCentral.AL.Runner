@@ -256,6 +256,15 @@ first and, if one failed, read its log or take a second run by another route
 (`ci-verdicts.md` §3, §5). Do not reach for `--admin`: protection is working, the context
 genuinely is not satisfied.
 
+**Which checks gate is now a property of the file a job lives in** (#3165). Everything in
+`.github/workflows/pr-gate.yml` produces a required context and blocks; everything in
+`pr-check.yml` is advisory and cannot. Before the split all twelve guards lived in
+`pr-check.yml` and none of them gated, so #3116, #3112 and #3095 each merged with one in a
+`FAILURE` state, and a red closing-reference or CI-skip tick stopped nothing. `pr-gate.yml`
+carries no `concurrency` block, deliberately — that is the same #2726 rule applied to a
+workflow whose jobs ARE the required contexts. Do not read the gating list out of a document;
+ask `gh api .../rules/branches/main` and let the answer be the measurement.
+
 **Auto-merge drains the queue — but a drained queue is not a verified one.** The
 "branches must be up to date" protection rule was removed, so arming several PRs lets them
 merge in sequence without each waiting for a rebase. Use that: review on arrival, arm, move on.

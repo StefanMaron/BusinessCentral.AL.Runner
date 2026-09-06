@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tests for check_pr_check_triggers.sh -- #2159: pr-check.yml's
+# Tests for check_pr_check_triggers.sh -- #2159: the workflow's
 # reject-ci-skip-directives and reject-bad-closing-references jobs both read
 # the PR title/body, but the workflow's `pull_request` trigger did not
 # include `edited`, so editing a PR's title or body after those checks
@@ -10,7 +10,7 @@
 # workflow files, in both directions (a fixture missing 'edited' fails, one
 # missing an unrelated pre-existing type also fails, one with everything
 # present passes). It also runs the checker against the REAL
-# .github/workflows/pr-check.yml to prove that file currently satisfies it.
+# .github/workflows/pr-gate.yml to prove that file currently satisfies it.
 #
 # What this does NOT prove: that GitHub Actions actually reruns the two
 # guard jobs when a PR is edited post-hoc -- that is a claim about GitHub's
@@ -35,9 +35,11 @@ pass=0
 fail=0
 
 assert_exit() {
-  local desc="$1" expected_rc="$2" fixture_path="$3"
+  local desc="$1" expected_rc="$2" fixture_path="${3:-}"
   local rc
-  "$SCRIPT" "$fixture_path" >/dev/null 2>&1
+  # No path at all exercises the script's DEFAULT target, which is the whole
+  # point of one of the callers below.
+  "$SCRIPT" ${fixture_path:+"$fixture_path"} >/dev/null 2>&1
   rc=$?
   if [ "$rc" = "$expected_rc" ]; then
     echo "ok   - $desc"
@@ -132,10 +134,19 @@ assert_exit "'label' does not satisfy the requirement for 'labeled'" 1 "$label_n
 
 # --- The real workflow file this script exists to guard ---------------------
 
-assert_exit "the actual .github/workflows/pr-check.yml satisfies the check" 0 \
-  "$REPO_ROOT/.github/workflows/pr-check.yml"
+# pr-gate.yml, not pr-check.yml: #3165 moved the two jobs that read PR_TITLE and
+# PR_BODY there, because they now produce REQUIRED contexts and a required context
+# may not sit in a workflow that can cancel it on the same commit (#2726). The
+# 'edited' requirement moved with them. Asserting against pr-check.yml here would
+# still pass today and would be asserting nothing about the file that needs it.
+assert_exit "the actual .github/workflows/pr-gate.yml satisfies the check" 0 \
+  "$REPO_ROOT/.github/workflows/pr-gate.yml"
 
-# --- #2726: an explicit required-type list, so pr-check.yml and ------------
+# ...and the default target with no argument is that same file, so the workflow
+# step invoking the script bare is guarding the right one.
+assert_exit "the script's DEFAULT target satisfies the check" 0
+
+# --- #2726: an explicit required-type list, so pr-gate.yml and -------------
 # --- require-tests.yml can be guarded with the different lists each needs ---
 
 # require-tests.yml deliberately has NO 'edited' (nothing in it reads the PR

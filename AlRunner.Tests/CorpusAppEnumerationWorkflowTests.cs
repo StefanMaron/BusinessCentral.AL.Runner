@@ -129,7 +129,7 @@ public sealed class CorpusAppEnumerationWorkflowTests
         Assert.True(File.Exists(Path.Combine(RepoRoot, EnumerationScript)),
             $"{EnumerationScript} is referenced by bc-tests.yml but is not checked in.");
 
-        // pr-check.yml runs every scripts/tests/*.test.py; without this file the script's
+        // pr-gate.yml runs every scripts/tests/*.test.py; without this file the script's
         // own behaviour — including the loud empty-list failure above — is unasserted.
         Assert.True(File.Exists(Path.Combine(RepoRoot, "scripts", "tests", "corpus-app-dirs.test.py")),
             "scripts/tests/corpus-app-dirs.test.py is missing; the enumeration would be untested.");

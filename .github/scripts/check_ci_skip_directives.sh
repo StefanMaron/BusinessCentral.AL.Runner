@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Fails when a PR's title or body contains a literal CI-skip directive. See #2116.
 #
-# Extracted into its own script (out of pr-check.yml's inline `run:` block) so
-# this can be unit-tested directly -- pr-check.yml's job just calls it.
+# Extracted into its own script (out of the workflow's inline `run:` block) so
+# this can be unit-tested directly -- pr-gate.yml's job just calls it.
 #
 # This repo squash-merges. Measured rather than assumed (#2491):
 # `squash_merge_commit_message` is COMMIT_MESSAGES and

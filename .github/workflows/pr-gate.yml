@@ -1,0 +1,351 @@
+name: PR Gate
+
+# Every job in THIS file produces a REQUIRED status-check context. Every job in
+# pr-check.yml is advisory. That split is the whole point of the file existing
+# (#3165), because before it there was no way to tell which a guard was: all
+# twelve pr-check.yml jobs reported and none of them gated, and three pull
+# requests merged with one of them in a FAILURE state. An agent adding a guard
+# reasonably assumes a guard blocks.
+#
+#   Adding a job here does NOT by itself make it required. A required context is
+#   an entry in the branch ruleset, which only a repository administrator can
+#   add. The pairing is enforced from the code side by
+#   .github/scripts/check_required_contexts.py, which fails when a required (or
+#   pending) context is produced by no workflow, and when the ruleset and the
+#   two hardcoded lists disagree.
+#
+# Rule of thumb for which side a guard belongs on. It gates when a failure means
+# a real defect in the pull request, it cannot fail for an environmental reason,
+# and it is cheap. It stays advisory when it can go red for something the author
+# did not do -- the live-ruleset drift check talks to api.github.com, so it lives
+# in pr-check.yml and only the OFFLINE half of that guard gates from here.
+
+on:
+  pull_request:
+    branches: [main]
+    # 'edited' is load-bearing and #2159 is why: reject-ci-skip-directives and
+    # reject-bad-closing-references read the PR title and body, and neither is
+    # re-evaluated on an event type absent from this list. Without 'edited', a
+    # title or body change made after those two jobs already passed retriggers
+    # nothing, and the squash-merge commit carries text that was never checked.
+    # 'labeled'/'unlabeled' are kept for the same class of reason -- a label can
+    # change what a guard should conclude, and re-running these jobs is seconds.
+    # verify-trigger-list below fails CI if any of them disappears.
+    types: [opened, synchronize, reopened, labeled, unlabeled, edited]
+
+# NO `concurrency` BLOCK, DELIBERATELY. Do not add one.
+#
+# A branch ruleset satisfies a required status check from the newest check run
+# carrying that context name on the PR's head commit, and a `cancelled`
+# conclusion does not satisfy it. `cancel-in-progress: true` produces exactly
+# that whenever a second run enters the group -- and the pull_request types above
+# fire WITHOUT moving the head SHA, so the cancellation lands on the very commit
+# the ruleset is reading. That is #2726: on PR #2722 every context read SUCCESS,
+# tools/ci-wait.py reported GREEN, all eight BC legs passed, and the merge was
+# refused with nothing saying why.
+#
+# check_required_contexts.py names two acceptable remedies -- move the jobs into
+# a workflow producing no required context, or drop cancel-in-progress. The first
+# is not available here: these jobs ARE the required contexts. So: no
+# cancellation, and superseded runs are allowed to finish.
+#
+# The cost of that is real but small, and it is not the cost the cancel-in-progress
+# comment in pr-check.yml and test-matrix.yml argues about. That argument is about
+# an 8-leg BC matrix holding runner slots for many minutes while the queue is 40
+# deep. Every job below is plain Python or bash on ubuntu-latest and the whole
+# file measures about 3 seconds of actual work; a superseded run of it is usually
+# finished before its replacement has been assigned a runner.
+
+jobs:
+  reject-ci-skip-directives:
+    name: PR title/body must not contain a CI-skip directive
+    permissions:
+      contents: read
+      pull-requests: read   # gh pr view --json commits (#2491)
+    runs-on: ubuntu-latest
+    # #2116: this repo squash-merges, and GitHub's default squash commit
+    # message is "<title> (#N)" followed by the branch's commit messages (see
+    # .claude/rules/branch-and-pr.md). GitHub matches several skip-CI
+    # spellings ANYWHERE in a commit message, not just in a dedicated
+    # trailer -- so a directive appearing in the title, the body or a commit
+    # message, even just describing it in prose, lands in the merge commit and
+    # silently skips every workflow on that commit. This happened for real:
+    # #2115's own PR body explained sync-changelog-unreleased.yml's use of a
+    # skip directive in its own commit, and that explanation -- once squashed
+    # into 7a3c3535's commit message -- skipped the one required check on
+    # main, along with the sync workflow's own first run. No label bypasses
+    # this one -- unlike require-tests, there's no legitimate reason for a PR
+    # to actually ship a live skip directive, only to WRITE ABOUT one, which
+    # the escape hatch in check_ci_skip_directives.sh's failure message covers.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Collect the branch's commit messages
+        id: commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          msgs=$(bash .github/scripts/pr_commit_messages.sh \
+                   "${{ github.event.pull_request.number }}")
+          {
+            echo "messages<<PR_COMMITS_EOF"
+            printf '%s\n' "$msgs"
+            echo "PR_COMMITS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check PR title, body and commit messages for CI-skip directives
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_COMMITS: ${{ steps.commits.outputs.messages }}
+        run: bash .github/scripts/check_ci_skip_directives.sh
+
+  reject-bad-closing-references:
+    name: PR body closing references must be correct, both directions
+    permissions:
+      contents: read
+      pull-requests: read   # gh pr view --json commits (#2491)
+    runs-on: ubuntu-latest
+    # #2121 (missing) and #2128 (unintended). GitHub's closing-reference parser
+    # (Closes/Fixes/Resolves + #N, case-insensitive, optionally repo-prefixed)
+    # fires on that pattern ANYWHERE in the merge commit message, and does not
+    # understand surrounding prose -- negation, qualification, none of it changes
+    # what closes on merge. Two failure modes follow:
+    #
+    #   - Missing: the PR body has no closing reference at all, so the linked
+    #     issue never auto-closes and is left labeled in-progress forever.
+    #     Real instances: #2046, #1642, #1640.
+    #   - Unintended: a closing keyword sits next to an issue number the PR does
+    #     NOT intend to close, often written to say explicitly that it does not.
+    #     GitHub closes it anyway. PR #2127's body said "This does not close
+    #     #2125" and merge commit fe789a13 closed #2125 regardless; PR #2486's
+    #     COMMIT MESSAGE did the same to #2479 (#2491).
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Collect the branch's commit messages
+        id: commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          msgs=$(bash .github/scripts/pr_commit_messages.sh \
+                   "${{ github.event.pull_request.number }}")
+          {
+            echo "messages<<PR_COMMITS_EOF"
+            printf '%s\n' "$msgs"
+            echo "PR_COMMITS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check PR body and commit messages for correct closing references
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_COMMITS: ${{ steps.commits.outputs.messages }}
+        run: bash .github/scripts/check_closing_reference.sh
+
+  verify-trigger-list:
+    name: pull_request trigger lists must keep their load-bearing event types
+    runs-on: ubuntu-latest
+    # #2159: the two jobs above read PR_TITLE/PR_BODY, and a `pull_request`
+    # trigger only reruns a workflow on the event types it lists. This job is a
+    # self-referential guard: it fails CI if THIS workflow's trigger list ever
+    # drops 'edited' (or one of the other load-bearing types), whether that is a
+    # deliberate-looking edit or an accidental one made while touching the
+    # trigger line for something unrelated.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check this workflow's own pull_request trigger list
+        run: bash .github/scripts/check_pr_check_triggers.sh
+
+      # #2726: require-tests.yml produces the 'Tests updated' REQUIRED context,
+      # and 'labeled'/'unlabeled' are load-bearing THERE -- dropping them would
+      # silently break the docs-only / no-tests-needed bypass. It must NOT gain
+      # 'edited': that is the trigger that produced #2726, and nothing in that
+      # file reads the PR title or body.
+      - name: Check require-tests.yml keeps the trigger types its bypass needs
+        run: |
+          bash .github/scripts/check_pr_check_triggers.sh \
+            .github/workflows/require-tests.yml \
+            opened,synchronize,reopened,labeled,unlabeled
+          if grep -qE '(\[|,)[[:space:]]*edited[[:space:]]*(,|\])' \
+              <(grep -E '^[[:space:]]*types:[[:space:]]*\[' .github/workflows/require-tests.yml | head -n1); then
+            echo "::error::require-tests.yml must not trigger on 'edited' -- it produces the"
+            echo "::error::required 'Tests updated' context, and a same-SHA re-trigger there"
+            echo "::error::is exactly what blocked the merge in #2726."
+            exit 1
+          fi
+          echo "require-tests.yml does not trigger on 'edited'."
+
+  required-context-cancellation:
+    name: Required contexts must not be cancellable on the same commit
+    runs-on: ubuntu-latest
+    # The OFFLINE half of check_required_contexts.py: every required and pending
+    # context is produced by some pull_request workflow, none of them can be left
+    # `cancelled` on the head commit, and the two hardcoded lists agree with each
+    # other. All of that is a property of the files in this repository, so it is
+    # deterministic and safe to gate on.
+    #
+    # SKIP_RULESET_DRIFT_CHECK=1 stands down the one part that is not: the
+    # comparison against the LIVE branch ruleset, which needs api.github.com. A
+    # required context that can go red because a third-party API was briefly
+    # unreachable blocks every merge in the repository for a reason no author can
+    # act on, so that half runs in pr-check.yml's ruleset-drift job instead, where
+    # it reports without gating. The bypass PRINTS when it is set, and
+    # test_check_required_contexts.py asserts that at least one invocation
+    # somewhere runs with no bypass at all -- otherwise #2785 would be back.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check no required context can be left cancelled on the head commit
+        env:
+          SKIP_RULESET_DRIFT_CHECK: '1'
+        run: python3 .github/scripts/check_required_contexts.py
+
+  agent-mcp-tools:
+    name: Agent definitions must allowlist the MCP tools they document
+    runs-on: ubuntu-latest
+    # #2395: impl-agent.md carried a 50-line section headed "Reading BC's own
+    # code: use the `bc-decompiler` MCP server" while its own frontmatter
+    # `tools:` allowlist listed only the mcp__github__* tools. An explicit
+    # allowlist is exhaustive, so every mcp__bc-decompiler__* call returned
+    # "No such tool available". triager.md had the same pair of defects.
+    # Nothing announced it -- an implementation agent discovered it by calling
+    # a tool its own instructions told it to call.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check every agent definition allowlists the MCP tools it documents
+        run: python3 .github/scripts/check_agent_mcp_tools.py
+
+  tools-tests:
+    name: tools/ unit tests
+    runs-on: ubuntu-latest
+    # DISCOVERY, not a hand-maintained list of three named suites, and that is
+    # the fix rather than an implementation detail (#3165). A pull request
+    # touching only tools/ used to get BOTH required contexts green while nothing
+    # that gates ran a line of its tests: require-tests.yml reports success via
+    # "No AlRunner/ source changes -- test check skipped", and "All BC versions
+    # passed" covers AlRunner.Tests, which is C#. The only jobs that ran these
+    # suites were advisory. So for that class of change the gating set was empty
+    # -- and tools/ is where ci-wait.py lives, the tool every agent uses to decide
+    # a PR is green. PR #3167 measured 59 of 99 worktrees on one box running a
+    # version of it that reports a false GREEN, exit 0.
+    #
+    # It also closes the mirror gap: PR #3167 added tools/agent_self_freshness.py
+    # with a test file that no job ran, because adding a suite meant remembering
+    # to add a job. It then had to add a step by hand, which this job picks up for
+    # free -- discovery means a new tools/test_*.py gates the day it lands.
+    #
+    # That suite is the one with a non-obvious requirement, so it is worth naming
+    # here rather than leaving to be rediscovered: it builds throwaway git
+    # repositories (a bare remote, a checkout, and a commit landing on the remote
+    # after the checkout branched), because the question it asks is what git says
+    # about that relationship and a mocked answer would prove nothing. It sets
+    # user.name/user.email per throwaway repository, so it needs no global git
+    # identity on the runner -- unlike the .github/scripts/ job below, this one
+    # therefore does not configure one. Verified by running it under an empty
+    # GIT_CONFIG_GLOBAL.
+    #
+    # Ungated on changed paths, unlike scripts-tests below: the whole family takes
+    # about a second, and a change to something these suites import can break them
+    # without touching tools/ at all.
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run every tools/test_*.py
+        run: |
+          # Fails if any suite fails AND if the glob matched nothing -- an empty
+          # run reporting success is the "green tick meaning nothing ran" this
+          # job exists to prevent.
+          shopt -s nullglob
+          suites=(tools/test_*.py)
+          if [ ${#suites[@]} -eq 0 ]; then
+            echo "::error::no tools/test_*.py found -- this job would pass without running anything"
+            exit 1
+          fi
+          rc=0
+          for s in "${suites[@]}"; do
+            echo "=== $s"
+            python3 "$s" || rc=1
+          done
+          exit $rc
+
+  github-scripts-tests:
+    name: .github/scripts/ unit tests
+    runs-on: ubuntu-latest
+    # Replaces three jobs that each ran ONE suite and were gated on that suite's
+    # own file changing (release-workflow-script-tests, changelog-generator-tests,
+    # pe-signing-tests). Two problems with that shape: a new
+    # .github/scripts/test_* file ran nowhere until somebody added a job for it,
+    # and a change to a shared helper could break a suite whose own file had not
+    # changed, so the gate stood down exactly when it was needed.
+    #
+    # Every suite here is offline and the whole set measures about 2.5 seconds, so
+    # the change gate bought nothing worth this.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # test_generate_changelog.py drives git describe / git log
+
+      - name: Run every .github/scripts/test_*.py and test_*.sh
+        run: |
+          git config --global user.email "test@example.com"
+          git config --global user.name "Test"
+          shopt -s nullglob
+          suites=(.github/scripts/test_*.py .github/scripts/test_*.sh)
+          if [ ${#suites[@]} -eq 0 ]; then
+            echo "::error::no .github/scripts/test_* found -- this job would pass without running anything"
+            exit 1
+          fi
+          rc=0
+          for s in "${suites[@]}"; do
+            echo "=== $s"
+            case "$s" in
+              *.py) python3 "$s" || rc=1 ;;
+              *)    bash "$s"    || rc=1 ;;
+            esac
+          done
+          exit $rc
+
+  scripts-tests:
+    name: scripts/ unit tests
+    runs-on: ubuntu-latest
+    # scripts/tests/*.test.py existed and nothing ran them, so every assertion in
+    # them was decoration. Still gated inside the job on whether scripts/ changed,
+    # unlike its two siblings above: scripts/tests/ also holds server-mode-test.sh
+    # and server-reload-test.sh, which need a built runner and a BC artifact, so
+    # this one cannot simply run everything it finds.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check whether scripts/ changed
+        id: changed
+        run: |
+          BASE=${{ github.event.pull_request.base.sha }}
+          HEAD=${{ github.event.pull_request.head.sha }}
+          if git diff --name-only "$BASE"..."$HEAD" | grep -qE '^scripts/'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run every scripts/tests/*.test.py
+        if: steps.changed.outputs.run == 'true'
+        run: |
+          shopt -s nullglob
+          suites=(scripts/tests/*.test.py)
+          if [ ${#suites[@]} -eq 0 ]; then
+            echo "::error::no scripts/tests/*.test.py found"
+            exit 1
+          fi
+          rc=0
+          for s in "${suites[@]}"; do
+            echo "=== $s"
+            python3 "$s" || rc=1
+          done
+          exit $rc

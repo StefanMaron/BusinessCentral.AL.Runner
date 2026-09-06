@@ -33,10 +33,12 @@ than a verdict, because a partial read and a deliberate removal are indistinguis
 and the smaller set is the one that produces a false green (#3002).
 
 **A green names how many required contexts it accounted for**, and that number is worth
-reading. On this repository a real green reads `9/9` or `10/10` checks with
-`2/2 ruleset context(s) accounted for`. Every false green in #3002 named **one** check — that
-asymmetry is the only reason a human caught three wrong verdicts in one night, before the tool
-was taught to refuse them.
+reading — against the live ruleset, not against a number written here. Every false green in
+#3002 named **one** check, while the real greens that night named nine or ten; that asymmetry
+is the only reason a human caught three wrong verdicts, before the tool was taught to refuse
+them. The `N/N ruleset context(s)` figure moves whenever the ruleset does (#3165 raised it),
+so a green that accounts for fewer contexts than the ruleset requires is the signal, not any
+particular value of N.
 
 Where several runs of one workflow exist on one commit — normal for `require-tests.yml`, which
 has no `concurrency` block and triggers on `labeled`/`unlabeled` — the verdict comes from the
@@ -163,12 +165,36 @@ reporting green from a stale run has happened at least four times. Confirm the c
 SHA matches local `HEAD` — a mismatch means "not yet reported," not "green." Never report a
 PR as done while its CI is still running.
 
-`main`'s ruleset requires exactly two contexts: **`All BC versions passed`**
-(`.github/workflows/test-matrix.yml`) and **`Tests updated`** (`pr-check.yml`). The matrix legs
-report as `bc-tests / BC <ver> (required)` — the `(required)` there is part of the job's own
-name and does NOT make the leg a required context; only the aggregate gates. That is why a
-single-leg diagnostic run cannot clear the gate, and why a red leg still blocks through the
-aggregate.
+**Which contexts gate.** Two come from the big workflows: **`All BC versions passed`**
+(`.github/workflows/test-matrix.yml`) and **`Tests updated`**
+(`.github/workflows/require-tests.yml` — not `pr-check.yml`, which is where it used to live
+before #2726). The matrix legs report as `bc-tests / BC <ver> (required)` — the `(required)`
+there is part of the job's own name and does NOT make the leg a required context; only the
+aggregate gates. That is why a single-leg diagnostic run cannot clear the gate, and why a red
+leg still blocks through the aggregate.
+
+The rest come from **`.github/workflows/pr-gate.yml`**, one context per job. Everything in
+that file gates; everything in `pr-check.yml` is advisory and cannot block a merge. The split
+exists because it used to be invisible: all twelve `pr-check.yml` jobs reported without
+gating, and #3116, #3112 and #3095 each merged with one of them in a `FAILURE` state (#3165).
+So a red tick on `PR body closing references must be correct, both directions` now stops the
+merge, and a red tick on `Required-context list must match the live branch ruleset` does not
+— that one talks to `api.github.com`, and a required check that can go red because a
+third-party API was unreachable blocks every merge in the repository for something no author
+can fix.
+
+Do not read the exact list out of this file. Ask, and let the answer be the measurement:
+
+```bash
+gh api repos/StefanMaron/BusinessCentral.AL.Runner/rules/branches/main \
+  --jq '[.[]|select(.type=="required_status_checks")
+         |.parameters.required_status_checks[].context]'
+```
+
+`check_required_contexts.py` fails CI when that answer and the hardcoded lists disagree, so
+the two cannot rot apart silently — except for names it lists as `PENDING_REQUIRED_CONTEXTS`,
+which are contexts the ruleset is about to require and tolerates in either state while a
+by-hand ruleset edit catches up with a merged pull request.
 
 Wait in the **foreground** — `tools/ci-wait.py`, or `gh run watch <run-id>`. Never end a turn
 while CI you are responsible for is still running (`no-backgrounding-long-commands.md`).
