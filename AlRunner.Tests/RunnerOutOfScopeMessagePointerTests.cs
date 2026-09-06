@@ -35,22 +35,45 @@ public class RunnerOutOfScopeMessagePointerTests
         return count;
     }
 
+    // Each case states the text that must SURVIVE, rather than deriving it from the input with
+    // string surgery. The derived form could not express the semicolon and colon cases below —
+    // it cut on ". See" / ". see" literally — and a case whose expectation is computed from its
+    // own input cannot say which characters the normaliser is allowed to eat.
     [Theory]
     // The exact shape RunnerPageInstance and 12 other files used.
-    [InlineData("testpage-action — the page declares no OnAction trigger. See docs/scope.md")]
+    [InlineData("testpage-action — the page declares no OnAction trigger. See docs/scope.md",
+                "testpage-action — the page declares no OnAction trigger")]
     // Same, with the trailing full stop some sites wrote.
-    [InlineData("testpage-action — the page declares no OnAction trigger. See docs/scope.md.")]
+    [InlineData("testpage-action — the page declares no OnAction trigger. See docs/scope.md.",
+                "testpage-action — the page declares no OnAction trigger")]
     // Lower-case lead-in, and trailing whitespace.
-    [InlineData("email-smtp — sending mail needs a real SMTP server. see docs/scope.md   ")]
-    public void ReasonEndingInAScopePointerYieldsExactlyOnePointerInTheMessage(string reason)
+    [InlineData("email-smtp — sending mail needs a real SMTP server. see docs/scope.md   ",
+                "email-smtp — sending mail needs a real SMTP server")]
+    // SEMICOLON LEAD-IN. Not a stylistic variant added for thoroughness — it is the form ten
+    // live throw sites actually use (RecordPatches.ObjectSystemTable.cs ×6,
+    // RecordPatches.UserSystemTable.cs, RecordPatches.cs, plus the twelve Object Metadata
+    // refusals #2894 rewrote away from it). TrimTrailingDocPointer strips ';' via its
+    // hand-written TrimEnd('.', ',', ';', ':') set, and nothing pinned that: only the full-stop
+    // form above was covered, so the semicolon form's contract was asserted incidentally over in
+    // ObjectMetadataProviderRowProbeTests — a test whose subject is the populate-once memo — and
+    // that is the test which went red instead of this one.
+    [InlineData("object-system-table — data access has no in-memory provider; see docs/scope.md",
+                "object-system-table — data access has no in-memory provider")]
+    // Colon lead-in — same TrimEnd set, also in live use.
+    [InlineData("testpage-action — the page has no such action: see docs/scope.md",
+                "testpage-action — the page has no such action")]
+    public void ReasonEndingInAScopePointerYieldsExactlyOnePointerInTheMessage(
+        string reason, string expectedReason)
     {
         var ex = new RunnerOutOfScopeException("SomeApi.Method", reason);
 
+        // The reason's own content survives: only the pointer and its lead-in punctuation are
+        // dropped, never the sentence in front of them.
+        Assert.Equal(expectedReason, ex.Reason);
         Assert.Equal(1, CountOccurrences(ex.Message, "docs/scope.md"));
         Assert.EndsWith("— see docs/scope.md", ex.Message);
-        // The reason's own content survives: only the pointer is dropped, never the sentence
-        // in front of it.
-        Assert.Contains(reason.Split('—')[1].Trim().Split(". See")[0].Split(". see")[0], ex.Message);
+        Assert.Equal("out-of-scope: SomeApi.Method — " + expectedReason + " — see docs/scope.md",
+            ex.Message);
     }
 
     [Fact]
