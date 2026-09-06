@@ -127,7 +127,9 @@ a separate rule instead: every run writes a `<stage>.inuse-<pid>` claim on the s
 and a stage is deleted only when no live process claims it **and** nothing has used it for
 seven days. A directory whose name is not one the compiler writes is never touched. Set
 `AL_RUNNER_PKGDEDUP_MAX_AGE_DAYS` to change the threshold; anything unparseable or
-non-positive falls back to the default rather than being honoured. See
+non-positive falls back to the default rather than being honoured, and any positive value
+under one hour is raised to one hour — a stage still being staged into carries no claim yet,
+so a sub-minute threshold would delete it out from under the run that is writing it. See
 `AlRunner/Infrastructure/PkgDedupCache.cs`.
 
 ### Watch mode (live dashboard)

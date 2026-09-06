@@ -67,6 +67,30 @@
 //   that name with nothing else in the root to reclaim it — the same unbounded growth this
 //   class closes, reached through a sibling function rather than through the stage itself.
 //
+//   THE ROLLOUT WINDOW, AND HOW FAR IT ACTUALLY REACHES (#3038). A runner from a build that
+//   predates this file writes no claim, so condition 2 is vacuously satisfied for it and a
+//   new-build runner in another worktree can prune a stage such a process has just adopted.
+//   There is no way to retrofit a claim into an already-running process, so the window cannot
+//   be closed — only bounded, and the bound is condition 3. Reaching the failure needs a stage
+//   that NO new-build runner has touched for maxAge, because any new-build use stamps its
+//   mtime; on the default threshold that means a stage created a week ago and read only by
+//   claim-less builds since.
+//
+//   Measured on the reporting machine on 2026-09-06, hours after this file landed, with 114
+//   worktrees present: 140 built al-runner.dll, 120 of them claim-less, the newest of those
+//   built 08:36 against a merge at 08:37 — so no further claim-less binaries are being
+//   produced, and the population only shrinks. In the one shared root (TMPDIR is set here, so
+//   Path.GetTempPath() is not /tmp and /tmp/al-runner-pkgdedup does not exist at all): 180
+//   stage directories, oldest 1.28 days, ZERO past the threshold. Nothing in the cache was
+//   eligible for deletion at any point in the window, and the earliest date anything could
+//   become eligible was 2026-09-12 — by which a claim-less binary would have to have been
+//   both never rebuilt and continuously running for six days.
+//
+//   That bound is entirely condition 3's, which is why MinMaxAge exists: a mistyped
+//   AL_RUNNER_PKGDEDUP_MAX_AGE_DAYS used to be able to shrink it to under a second, and with
+//   both conditions vacuous at once the window would have been immediate rather than
+//   week-deep. The floor is the only part of this that was fixable, and it is fixed.
+//
 //   RESIDUAL RACE, stated rather than papered over: another process can pass
 //   `Directory.Exists(stage)` in the instant between this pass reading the markers and
 //   renaming the directory aside. It needs a stage nobody has used for seven days to be
@@ -340,7 +364,7 @@ internal static class PkgDedupCache
                 // into the marker table and counted nowhere.
                 if (idx > 0 && IsStageDirName(name[..idx]) && File.Exists(entry))
                 {
-                    var target = name[..idx];
+                    var target = name[..idx];   // already proven a stage name by the test above
                     if (!markers.TryGetValue(target, out var list)) markers[target] = list = new List<string>();
                     list.Add(entry);
                     continue;
