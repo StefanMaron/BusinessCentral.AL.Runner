@@ -56,6 +56,36 @@ public static class Log
     // `[expectations]`, `[reexec]` and `[dap]` notes above each describe. A severity tag is
     // never an internal diagnostic — if something is worth calling a warning, it is worth
     // the user seeing it.
+    //
+    // #3068 — READ THIS BEFORE ADDING A COMPONENT NAME TO THE LIST BELOW. The list is an
+    // EXACT, whole-tag, case-sensitive match: the lookahead requires `]` right after the
+    // word, so `[dep]` is exempt and `[deps]` is a different tag that is not (deliberately —
+    // see #2750). Two further properties of the pattern are easy to misread:
+    //
+    //   * the tag character class `[A-Za-z0-9._+]` has NO HYPHEN, so every hyphenated tag —
+    //     `[test-data]`, `[provision-gap]`, `[count-baseline]`, `[dep-load-fail]`, … — fails
+    //     the pattern and passes through whether or not anyone intended it. That is
+    //     load-bearing and pinned by LogUserFacingTagsTests; do not "tidy" the class.
+    //   * only the START of the value is examined, so a multi-line WriteLine is decided
+    //     entirely by its first line.
+    //
+    // The right lever for a line that must be seen is its TAG AT THE CALL SITE, not this
+    // list. #2750 established that going the other way (exempting `[deps]` to surface one
+    // corrupt-sidecar message) would have surfaced all of DependencyLoader's internals with
+    // it, and re-tagged the one line instead; #2210/#2221/#2239 established the mirror image
+    // for hiding a line, moving each behind an explicit `if (Log.Verbose)` at its own call
+    // site rather than touching this regex.
+    //
+    // Measured for #3068 on one healthy, fully-passing run of
+    // tests/runner-extras/precompiled-table-relation: this filter suppressed 843 lines —
+    // 379 `[RecordPatches]`, 371 `[Cecil]`, 65 `[Subscribers]`, 15 `[BcRuntime]`, plus a
+    // tail. That volume is the whole justification for the filter and must stay suppressed.
+    // In the same sweep, all three call sites in the codebase whose comment reads "Loud,
+    // never silent" — CompanyInitializer, RecordPatches.CompanySystemTable,
+    // RecordPatches.UserSystemTable — turned out to be silenced by this filter, along with
+    // `[PublishedApplication]`. They now use `[warn] <Component>: <message>`, the shape
+    // ProvisioningCheck and BcAppFallback already use, and LoudDiagnosisReachesTheUserTests
+    // reads those real call sites and pushes their real messages through this filter.
     private static readonly Regex ComponentTag =
         new(@"^\[(?!(?:layered|watch|provision|bc|dep|expectations|reexec|dap|warn)\])[A-Za-z][A-Za-z0-9._+]*\]",
             RegexOptions.Compiled);

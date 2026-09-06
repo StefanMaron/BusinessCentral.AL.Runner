@@ -73,11 +73,14 @@ public static partial class RecordPatches
         var source = ResolveSkeletonDataAccessSource();
         if (source == null)
         {
+            // #3068: `[warn]`, not `[CompanySystemTable]` — Log.cs suppresses component tags at
+            // default verbosity, which made "loud, never silent" untrue here for as long as this
+            // carried one. Same for the two sibling branches below.
             // Loud, never silent: without this row Company.Get(CompanyName()) fails for a
             // company every other surface reports as existing, and the failure surfaces
             // several layers up inside Base App code where it reads as a corpus bug.
             Console.Error.WriteLine(
-                "[CompanySystemTable] the skeleton session has no DataAccessSource yet, so the "
+                "[warn] CompanySystemTable: the skeleton session has no DataAccessSource yet, so the "
                 + "Company row (2000000006) was not seeded — Company.Get(CompanyName()) will fail. "
                 + "See AlRunner#2329.");
             return;
@@ -87,7 +90,7 @@ public static partial class RecordPatches
         if (companyName == null)
         {
             Console.Error.WriteLine(
-                "[CompanySystemTable] the skeleton NavCompany exposes no company name, so the "
+                "[warn] CompanySystemTable: the skeleton NavCompany exposes no company name, so the "
                 + "Company row (2000000006) was not seeded — Company.Get(CompanyName()) will fail. "
                 + "See AlRunner#2329.");
             return;
@@ -104,7 +107,7 @@ public static partial class RecordPatches
             if (inner.GetType().Name == "NavRecordAlreadyExistsException")
                 return; // already present — nothing to do, and not a failure.
             Console.Error.WriteLine(
-                $"[CompanySystemTable] could not seed the Company row (2000000006): "
+                $"[warn] CompanySystemTable: could not seed the Company row (2000000006): "
                 + $"{inner.GetType().Name}: {inner.Message} — Company.Get(CompanyName()) will fail. "
                 + "See AlRunner#2329.");
         }

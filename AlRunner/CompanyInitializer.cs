@@ -58,11 +58,20 @@ internal static class CompanyInitializer
         }
         catch (Exception ex)
         {
+            // #3068: tagged `[warn]`, NOT `[CompanyInitializer]`. Log.cs drops any line starting
+            // with a `[Component]` tag at default verbosity, so for as long as this said
+            // `[CompanyInitializer]` the comment below was false — the line only reached the
+            // user under --verbose. Measured on BC 27.3: company initialisation aborted on every
+            // run and the runner said nothing, so the reader saw only the downstream
+            // "<Setup Table> does not exist" failures and a `[test-data]` hint pointing at the
+            // wrong remedy. `[warn]` is exempt from that filter by design (Log.cs: "a severity
+            // tag is never an internal diagnostic"), and the exemption list does not have to
+            // grow a component at a time. Do not re-tag this with a component name.
             // Loud, never silent — see the KNOWN INCOMPLETE note above. Not fatal: the rows it
             // did insert stay, and a bundle that never reads the rest still runs correctly.
             var inner = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
             Console.Error.WriteLine(
-                $"[CompanyInitializer] codeunit 2 \"Company-Initialize\" did not complete: " +
+                $"[warn] CompanyInitializer: codeunit 2 \"Company-Initialize\" did not complete: " +
                 $"{inner.GetType().Name}: {inner.Message} — the company is PARTIALLY initialized; " +
                 $"setup tables it had not reached yet are missing, and AL that reads them will fail.");
         }
