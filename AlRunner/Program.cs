@@ -3549,7 +3549,9 @@ foreach (var bundle in bundles)
     if (!watchUi)
     {
         if (watchMode)
-            Console.WriteLine($"  [watch] re-emitted {rel} ({bundleEmit.TotalSeconds:F1}s) — running…");
+            // #2968: invariant, like every other elapsed time the runner prints.
+            Console.WriteLine(System.FormattableString.Invariant(
+                $"  [watch] re-emitted {rel} ({bundleEmit.TotalSeconds:F1}s) — running…"));
         else
             // #2746: the count used to be the whole line. `1 suite errors` names neither the
             // suite nor the reason, and nothing beside it in the running log ever did — the

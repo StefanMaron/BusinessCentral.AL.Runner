@@ -21,6 +21,7 @@ using System.IO;
 using System.Linq;
 using Spectre.Console;
 using Spectre.Console.Rendering;
+using static System.FormattableString;
 
 namespace AlRunner;
 
@@ -98,7 +99,11 @@ public static class WatchDashboard
 
         var lastRunPart = status == WatchStatus.Running
             ? "[grey]—[/]"
-            : $"[grey]last run {Markup.Escape(lastRun.ToString("HH:mm:ss"))} · {lastDuration.TotalSeconds:F1}s[/]";
+            // #2968, twice over. The `:F1` takes the ambient decimal separator, AND the ':'
+            // in a CUSTOM DateTime format string is the culture's TIME SEPARATOR rather than a
+            // literal — on da-DK "HH:mm:ss" renders as 14.05.03. Same trap AlDapSession
+            // already documents for its own wall-clock stamp.
+            : Invariant($"[grey]last run {Markup.Escape(lastRun.ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture))} · {lastDuration.TotalSeconds:F1}s[/]");
 
         var line = $"[bold]al-runner[/] [blue]{Markup.Escape(bundleName)}[/]  ·  {statusMarkup}  ·  {lastRunPart}";
         return new Panel(new Markup(line))

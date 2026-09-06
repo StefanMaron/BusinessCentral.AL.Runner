@@ -426,7 +426,8 @@ internal static class ParallelFanOut
             // tells the reader why the exit column says "killed".
             Console.Error.WriteLine(
                 $"jobs: shard {shard} (pid {p.Id}) wrote its results but did not exit within " +
-                $"{WorkerExitGrace.TotalSeconds:F0}s — killing its process tree and reporting the " +
+                System.FormattableString.Invariant($"{WorkerExitGrace.TotalSeconds:F0}s")
+                + " — killing its process tree and reporting the " +
                 "results it wrote (a foreground thread outliving Main; see issue #2704)");
             try { p.Kill(entireProcessTree: true); } catch { }
             p.WaitForExit(10_000);

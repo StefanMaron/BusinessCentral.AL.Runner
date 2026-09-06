@@ -54,6 +54,35 @@
 // StartTime is a fixed creation FILETIME and does not drift), with a 60 s tolerance so ordinary
 // drift cannot reach it either.
 //
+// WHAT THIS CLASS DELIBERATELY DOES *NOT* COVER (#2967)
+//
+// The list above named what ScratchDirs owns and said nothing about the rest, so eight further
+// runner-side temp sites sat outside it invisibly — two of them keyed on a NAME and then
+// truncating or deleting what was there, the same shape as #2586. Recording the exclusions is
+// the half that keeps the next remainder from being invisible too. Every site below has been
+// classified; add to this table when you add a temp site, or explain why it is owned here.
+//
+//   SAFELY SHARED BY CONTENT ADDRESS — must NOT become per-process, sharing is the point:
+//     al-runner-pkgdedup/<hash>/                 package-dedup staging (PkgDedupStaging)
+//     al-runner-systemapp-<len>-<mtime>.app      extracted SystemApp package (RecordPatches)
+//     alrunner-v2-win32-stubs/libwin32_stubs.so  the compiled Win32 shim (Win32Stubs)
+//   Each publishes with one rename now, so a reader sees the name absent or complete, never
+//   half-written; pkgdedup additionally validates a stage before reusing it, because its key
+//   addresses PATHS and the files behind them can be deleted. None is owner-tracked: they have
+//   no single owner by design and outliving their creator is what they are for.
+//
+//   PER-PROCESS, owner-marked here (converted from a name-only key by #2967):
+//     al-runner-query-symbols/<name>-<hash>-<nonce>/   PerProcessScratch, from BcCompiler
+//     al-runner-precompile/<name>-<hash>-<nonce>/      PerProcessScratch, from SiblingCompile
+//     al-runner-sibling-symbols/<leaf>-<hash>-<nonce>/ SiblingSymbolsDirectory (#2586)
+//
+//   DOCUMENTED TRADE-OFFS that stay unowned, each with the reason at its call site:
+//     bccompiler-dump/, gen_<name>.cs, <assembly>.dll   debug dumps behind an env flag; a
+//                                                       predictable path is their only purpose
+//                                                       and nothing ever reads them back
+//     al-runner-startup.log                             append-only, one line per runner start,
+//                                                       and it must survive a crashed process
+//
 // The sweep is synchronous and cheap in steady state: one directory enumeration (plus one per
 // al-runner-* container) when there is nothing stale. It only costs real time when there IS
 // garbage — which is precisely the situation the issue is about — and the first sweep on a

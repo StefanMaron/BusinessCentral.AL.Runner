@@ -90,6 +90,11 @@ public sealed class BcAssembler
         }
 
         var sourceList = sources.ToList();
+        // #2967 — SCRATCH-DIR CLASSIFICATION: a DOCUMENTED TRADE-OFF, same as the
+        // AL_RUNNER_DUMP_BC_ASM dump below. Off unless a developer sets DUMP_CS=1, and a
+        // predictable filename is the entire point of a debug dump. Two concurrent runs with
+        // the flag set overwrite each other; nothing reads these back, so no RESULT depends on
+        // which one wins.
         if (Environment.GetEnvironmentVariable("DUMP_CS") == "1")
             foreach (var s in sourceList)
                 File.WriteAllText(Path.Combine(Path.GetTempPath(), $"gen_{s.Name}.cs"), s.Code);
@@ -156,6 +161,7 @@ public sealed class BcAssembler
         {
             try
             {
+                // #2967: documented trade-off — see the DUMP_CS note at the top of this method.
                 var dumpPath = Path.Combine(Path.GetTempPath(), assemblyName + ".dll");
                 File.WriteAllBytes(dumpPath, bytes);
                 Console.Error.WriteLine($"[BcAssembler] dumped {assemblyName} → {dumpPath}");

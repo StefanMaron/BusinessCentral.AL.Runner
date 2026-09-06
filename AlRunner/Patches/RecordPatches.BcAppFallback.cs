@@ -559,16 +559,30 @@ public static partial class RecordPatches
             var suffix = asmInfo != null
                 ? $"{asmInfo.Length:x}-{asmInfo.LastWriteTimeUtc.Ticks:x}"
                 : Guid.NewGuid().ToString("N");
-            var tempPath = Path.Combine(Path.GetTempPath(), $"al-runner-systemapp-{suffix}.app");
-            if (!File.Exists(tempPath))
-            {
-                using var fs = File.Create(tempPath);
-                stream.CopyTo(fs);
-            }
+            // #2967 — SCRATCH-DIR CLASSIFICATION: deliberately SHARED and content-addressed
+            // (the suffix is the SystemApp DLL's length + mtime), so it must NOT become a
+            // per-process path: every runner on the machine reuses one 6 MB extraction.
+            //
+            // It was UNSAFE as written, though, and this was the one site matching the
+            // "reader sees a half-written file under a name that promises its content" shape.
+            // `File.Create(tempPath)` published the name at zero bytes and the copy then ran
+            // for ~6 MB, so any concurrent runner passing its own `File.Exists` check in that
+            // window skipped the write and registered a TRUNCATED .app. BC reports that as
+            // `AL1023: The package file ... is not valid`, attributed to the compilation
+            // rather than to the package, so it fails the whole run.
+            //
+            // Publishing through a private temp name and one rename closes the window without
+            // giving up the sharing. Zero-length is explicitly not usable, so a leftover from
+            // a build that predates this — or from a process killed between Create and the
+            // first write — is replaced rather than adopted forever.
+            var tempPath = AlRunner.Infrastructure.SharedTempFile.PublishAtomically(
+                Path.Combine(Path.GetTempPath(), $"al-runner-systemapp-{suffix}.app"),
+                fs => stream.CopyTo(fs));
 
             _systemAppTempPath = tempPath;
             AddBcAppPath(tempPath);
-            Console.Error.WriteLine($"[RecordPatches] BcAppFallback: registered SystemPackage → {Path.GetFileName(tempPath)} ({new FileInfo(tempPath).Length:N0} bytes)");
+            Console.Error.WriteLine(System.FormattableString.Invariant(
+                $"[RecordPatches] BcAppFallback: registered SystemPackage → {Path.GetFileName(tempPath)} ({new FileInfo(tempPath).Length:N0} bytes)"));
 
             EagerParseAllBcAppTables();
         }

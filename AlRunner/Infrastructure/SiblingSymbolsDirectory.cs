@@ -28,7 +28,11 @@ namespace AlRunner.Infrastructure;
 internal static class SiblingSymbolsDirectory
 {
     /// <summary>The parent holding every per-(bundle, process) directory. Also what
-    /// <see cref="PruneStale"/> walks.</summary>
+    /// <see cref="PruneStale"/> walks.
+    /// <para>#2967 — SCRATCH-DIR CLASSIFICATION: the ROOT is a shared container and nothing
+    /// more; it is never written to directly and never deleted as a unit. Every leaf below it
+    /// already carries the bundle hash and the process nonce (that is what #2586 fixed), so
+    /// there is nothing here for two runners to collide on.</para></summary>
     internal static string Root => Path.Combine(Path.GetTempPath(), "al-runner-sibling-symbols");
 
     /// <summary>

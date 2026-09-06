@@ -156,9 +156,20 @@ internal static partial class ProgramSupport
             Console.Error.WriteLine($"--precompile: {input} contains no src/*.al — nothing to compile");
             return 2;
         }
-        var tempDir = Path.Combine(Path.GetTempPath(), "al-runner-precompile",
-            Sanitize($"{manifest.Publisher}_{manifest.Name}_{manifest.Version}"));
-        Directory.CreateDirectory(tempDir);
+        // #2967 — SCRATCH-DIR CLASSIFICATION: this was UNSAFE and is now PER-PROCESS. The
+        // path used to be al-runner-precompile/<publisher>_<name>_<version>, keyed on the app
+        // identity alone: it deleted every *.al in the directory, wrote this app's sources,
+        // then compiled out of it. Two --precompile runs of the same app version race between
+        // the delete and the compile — and two worktrees sitting at the same version string is
+        // the normal case on this machine, not an edge case — so one run could compile a
+        // partial source set, or the other run's sources, and --precompile's whole purpose is
+        // producing a DLL that later bundles trust as a precompiled dependency.
+        //
+        // Exactly the shape #2586 fixed for al-runner-sibling-symbols. Nothing outside this
+        // process reads the directory, so the process component costs nothing and makes the
+        // delete safe by construction: a process can only ever clear its own directory.
+        var tempDir = AlRunner.Infrastructure.PerProcessScratch.Dir(
+            "al-runner-precompile", $"{manifest.Publisher}_{manifest.Name}_{manifest.Version}");
         foreach (var existing in Directory.EnumerateFiles(tempDir, "*.al"))
         {
             try { File.Delete(existing); } catch { }

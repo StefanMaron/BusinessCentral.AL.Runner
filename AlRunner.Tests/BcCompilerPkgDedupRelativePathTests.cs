@@ -112,14 +112,17 @@ public sealed class BcCompilerPkgDedupRelativePathTests : IDisposable
 
         foreach (var staged in stagedApps)
         {
-            var info = new FileInfo(staged);
-            Assert.True(
-                (info.Attributes & FileAttributes.ReparsePoint) == 0 || File.Exists(staged),
-                $"staged package '{staged}' is a dangling symlink (target does not resolve) — " +
-                "this is the exact corruption BC's package reader reports as AL1023.");
-
-            // Must be openable as a real zip-backed NAVX package — the same check
-            // BC's native reader effectively performs before accepting the package.
+            // #2967: this used to also assert `File.Exists(staged)` for a reparse point, which
+            // CANNOT FAIL and so proved nothing. Measured on .NET 8 / Linux against a symlink
+            // whose target was deleted: File.Exists, FileInfo.Exists and
+            // FileInfo.ResolveLinkTarget(returnFinalTarget: true) all report it as PRESENT —
+            // the link is itself a directory entry that exists — and only opening it raises.
+            // The open below is what was actually catching the dangling case all along, so the
+            // dead assertion is gone rather than left to look like a second net.
+            //
+            // Must be openable as a real zip-backed NAVX package — the same check BC's native
+            // reader effectively performs before accepting the package, and the same reason
+            // PkgDedupStaging.IsIntact opens rather than tests for existence.
             using var fs = File.OpenRead(staged);
             var bytes = new byte[fs.Length];
             fs.ReadExactly(bytes);

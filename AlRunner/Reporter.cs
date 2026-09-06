@@ -1,6 +1,7 @@
 // Reporter — aggregates per-test results into per-bucket and overall summaries,
 // and writes a JSON failure-classification file for follow-up parallel work.
 using System.Text.Json;
+using static System.FormattableString;
 
 namespace AlRunner;
 
@@ -208,10 +209,14 @@ public static class Reporter
                 + "errors below and re-run first.");
         }
         w.WriteLine($"Time:");
-        w.WriteLine($"  AL emit:     {emit.TotalSeconds:F1}s");
-        w.WriteLine($"  C# compile:  {comp.TotalSeconds:F1}s");
-        w.WriteLine($"  test run:    {run.TotalSeconds:F1}s");
-        w.WriteLine($"  total:       {(emit + comp + run).TotalSeconds:F1}s");
+        // Invariant($) throughout the numeric output below: #2968. An interpolated `:F1` or
+        // `:N0` formats with the AMBIENT culture, so a developer on a comma-decimal LANG read
+        // `total: 7,5s` while CI read `7.5s` — and the summary is machine-read (asserted
+        // literally in AlRunner.Tests, and the source of --output-json and the JUnit report).
+        w.WriteLine(Invariant($"  AL emit:     {emit.TotalSeconds:F1}s"));
+        w.WriteLine(Invariant($"  C# compile:  {comp.TotalSeconds:F1}s"));
+        w.WriteLine(Invariant($"  test run:    {run.TotalSeconds:F1}s"));
+        w.WriteLine(Invariant($"  total:       {(emit + comp + run).TotalSeconds:F1}s"));
         // #1936: `total:` above is only emit+compile+run — it does NOT include the
         // per-process fixed costs paid before any of those phases start (BC runtime
         // patch application, dependency/package-cache indexing, install-seed-dep
@@ -223,7 +228,7 @@ public static class Reporter
         // measure took" and "how long the process actually took", instead of only the
         // former pretending to be the latter.
         var wall = DateTime.Now - System.Diagnostics.Process.GetCurrentProcess().StartTime;
-        w.WriteLine($"  wall:        {wall.TotalSeconds:F1}s");
+        w.WriteLine(Invariant($"  wall:        {wall.TotalSeconds:F1}s"));
         // #2262: --test-data loads a table on first touch, so its outcome is only complete
         // once the run is. Under the eager policy this line was printed by the provisioner
         // itself, before any test ran; there is no such moment any more. Absent the flag
@@ -477,13 +482,13 @@ public static class Reporter
         foreach (var g in groups.Take(topN))
         {
             double pct = 100.0 * g.Count / totalFail;
-            w.WriteLine($"  {g.Count,6:N0}  {pct,5:F1}%  {g.Classification}");
+            w.WriteLine(Invariant($"  {g.Count,6:N0}  {pct,5:F1}%  {g.Classification}"));
         }
         if (groups.Count > topN)
         {
             int tailCount = groups.Skip(topN).Sum(g => g.Count);
             double tailPct = 100.0 * tailCount / totalFail;
-            w.WriteLine($"  {tailCount,6:N0}  {tailPct,5:F1}%  ... and {groups.Count - topN} more classifications");
+            w.WriteLine(Invariant($"  {tailCount,6:N0}  {tailPct,5:F1}%  ... and {groups.Count - topN} more classifications"));
         }
     }
 
