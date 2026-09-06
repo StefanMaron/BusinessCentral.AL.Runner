@@ -411,3 +411,94 @@ jobs:
             python3 "$s" || rc=1
           done
           exit $rc
+
+  expectation-gap-issue-consistency:
+    name: A PR closing a gap issue must not leave its known-gap entry behind
+    permissions:
+      contents: read
+      pull-requests: read   # gh pr view --json commits (#2491)
+    runs-on: ubuntu-latest
+    # #3089, and it belongs on THIS side of the split by the header's own rule of
+    # thumb: a failure means a real defect in the pull request, it cannot fail for
+    # an environmental reason -- this half makes no network call beyond reading
+    # the PR's own commit messages -- and it costs about a second. The ONLINE half
+    # of the same script, which looks up whether a linked issue has closed, is
+    # advisory and lives in pr-check.yml.
+    #
+    # tests/expectations/known-gaps-*.json entries declare a gap and link the OPEN
+    # issue tracking it. The manifest is already loud in both directions at RUN
+    # time -- a test that passes while an entry declares a known gap fails the run
+    # with "Test passed cleanly but manifest declares expect-fail-known-gap ...
+    # Remove the entry".
+    #
+    # The hole is the moment the two get out of step. A PR fixes the gap, closes
+    # the issue and forgets to delete the entry. Nothing in that PR is wrong on
+    # its own, so it merges green -- and the next run of main is red, on a commit
+    # whose author has moved on. That happened twice in one hour on 2026-09-05:
+    # #2795 closed by PR #2809 left an entry in
+    # known-gaps-testpage-boolean-spelling.json, and #2805 closed by PR #2825 left
+    # two in known-gaps-start-session-isolation.json (reported after the fact as
+    # #2844 and #2858).
+    #
+    # This job would NOT have caught either of those, and does not claim to. Both
+    # were the INVERSE ordering -- the entry arrived after the closing PR's own
+    # check had run, so there was nothing yet in the checkout to contradict. Both
+    # files were created by PR #2808's merge at 16:56:43Z; #2825 merged at
+    # 16:48:28Z, eight minutes earlier, and #2809's single PR Check ran at
+    # 16:29:20Z with strict_required_status_checks_policy=false on main, so the
+    # base moving re-triggered nothing. Replayed against the manifest as it stood
+    # at each PR's own check time, the script exits 0 for both. The inverse
+    # ordering is what the advisory sweep in pr-check.yml reports.
+    #
+    # What this DOES cover is the FORWARD ordering, which nothing checked before:
+    # the entry is already in the checkout when the closing PR is checked. Narrow
+    # on purpose -- THIS PR closes issue N and an entry links issue N. That is not
+    # a heuristic; the PR asserts the gap is fixed, the manifest asserts it is
+    # not, both are in the same diff, so the author is the person who can settle
+    # it.
+    #
+    # Adding it here does not by itself make it a required context -- see the
+    # header. It is in the file whose jobs are meant to gate, which is the half of
+    # that pairing this PR can actually do.
+    #
+    # Logic in check_expectation_gap_issues.py, extracted so it is unit-tested
+    # against synthetic manifests rather than provable only by merging a PR and
+    # watching main go red the next morning. Its suite is one of the
+    # .github/scripts/test_*.py that github-scripts-tests above runs.
+    steps:
+      - uses: actions/checkout@v6
+
+      # Same reasoning as reject-ci-skip-directives and
+      # reject-bad-closing-references (#2491): this repo's squash setting is
+      # squash_merge_commit_message=COMMIT_MESSAGES, so a closing keyword in a
+      # commit message closes the issue even though it never appears in the PR
+      # body. Asked of the API rather than reconstructed from git, and an empty
+      # answer is a failed fetch rather than an empty branch.
+      #
+      # Through the same pr_commit_messages.sh those two use, not a third inline
+      # copy of the fetch. #3198 extracted it for a reason this job shares
+      # exactly: a job in THIS file produces a required (here, pending-required)
+      # context, so an unretried transient API error blocks a merge for something
+      # the author did not do. The helper retries, and its empty-output-is-a-
+      # failed-fetch refusal is unit-tested in test_pr_commit_messages.sh instead
+      # of living in a `run:` block nothing can exercise.
+      - name: Collect the branch's commit messages
+        id: commits
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          msgs=$(bash .github/scripts/pr_commit_messages.sh \
+                   "${{ github.event.pull_request.number }}")
+          {
+            echo "messages<<PR_COMMITS_EOF"
+            printf '%s\n' "$msgs"
+            echo "PR_COMMITS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check no expect-fail-known-gap entry links an issue this PR closes
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_COMMITS: ${{ steps.commits.outputs.messages }}
+        run: python3 .github/scripts/check_expectation_gap_issues.py
