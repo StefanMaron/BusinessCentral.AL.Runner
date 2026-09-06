@@ -46,8 +46,27 @@ internal static partial class BcAppSymbolCache
     /// </summary>
     internal static IReadOnlyList<TableExtensionSymbol> GetTableExtensions(string appPath)
     {
-        var info = new System.IO.FileInfo(appPath);
-        var key = $"{System.IO.Path.GetFullPath(appPath)}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|v{CacheVersion}";
+        // Content, not a stat — issue #2846 case 2. This key used to read
+        //     $"{fullPath}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|v{CacheVersion}"
+        // while `Get` in the same class, over the same files, keyed the same question on
+        // ComputeAppContentHash. #1820 replaced the Length/LastWriteTimeUtc stat there for the
+        // reason #1815 recorded one layer over: CI re-downloads every platform and test-toolkit
+        // .app on every run, so the mtime is fresh even when the bytes are identical, and an
+        // mtime-keyed entry MISSes unconditionally regardless of content. GetTableExtensions
+        // never got that treatment, so a touched-but-unchanged package reparsed every
+        // tableextension in it — the whole of Base Application's SymbolReference.json, the same
+        // parse #2712 measured as worth 96 extensions and 47 test results when it went wrong.
+        //
+        // The second half is the invariant: two members of one class, describing one package,
+        // disagreeing about which byte state of it they had read. ComputeAppContentHash is
+        // memoized per full path (see its comment) and `Get` computes it for these same .app
+        // files anyway, so aligning costs a dictionary lookup and makes the table index and the
+        // table-extension index provably describe the same read.
+        //
+        // The full path stays in the key. It is what keeps two byte-identical packages in
+        // different directories from sharing an entry, and dropping it is not part of this
+        // change.
+        var key = $"{System.IO.Path.GetFullPath(appPath)}|hash:{ComputeAppContentHash(appPath)}|v{CacheVersion}";
         if (TableExtensionCache.TryGetValue(key, out var cached))
             return cached;
         var parsed = ParseTableExtensions(appPath);

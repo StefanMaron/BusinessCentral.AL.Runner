@@ -672,7 +672,8 @@ internal static partial class ProgramSupport
     /// or mtime is still not distinguished — the pre-#2754 exposure, now narrowed to packages
     /// the runner could not read at all. Closing it means not claiming a cache identity for such
     /// a run at all (a "do not cache this run" signal threaded out to the cache gate), which is
-    /// a wider change than this one and is tracked on #2846. It is not closed by anything
+    /// a wider change than this one and is tracked on #2954 (carried out of #2846 when its other
+    /// two cases were fixed). It is not closed by anything
     /// cheaper here: a per-run nonce would force a MISS, but it would also be a code path no
     /// test in this repo can construct, and an untestable branch is what this method exists to
     /// stop shipping.</para>

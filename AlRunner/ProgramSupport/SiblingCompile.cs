@@ -476,7 +476,77 @@ internal static partial class ProgramSupport
             // has no impl dependency of its own.
             var priorImplDirs = implDirs.ToList();
 
-            var implKey = ComputeSourceWorkspaceKey(new[] { implPath }, idByKey);
+            // Resolve this impl's OWN dependency closure (declared + the implicit
+            // Application/System roots from app.json) transitively, exactly like the main
+            // per-bundle compile does. This replaced the former all-.app
+            // SetPackageCacheFallback, which scanned EVERY package in the caches — 134 apps /
+            // 353MB in the RS Extensions dir → ~215s per impl. The Application closure pulls
+            // only BaseApp / System App / Business Foundation (≈5 apps), so the symbol compile
+            // is fast and identical in coverage (an app that uses BaseApp via namespace
+            // depends, implicitly, on Application — never on the whole marketplace).
+            //
+            // Computed BEFORE the workspace key, and reused for the symbol emit below. #2846: the key names a directory
+            // holding the impl's *.symbols.json, which is the compiler's view of its public
+            // surface AS COMPILED AGAINST these resolved packages' bytes — so the resolved
+            // winners are an INPUT to what lands there, and the key has to see them. Resolving
+            // here rather than inside the `!hadSymbols` branch is what makes that possible; the
+            // cold path does exactly the work it did before (the list is reused, not recomputed),
+            // and the warm path gains one DependencyResolver index build, which is a directory
+            // scan plus AppLoader.ReadManifest calls that are memoized per process AND answered
+            // from an on-disk index.
+            //
+            // ORIGINAL package cache dirs + the impl's .alpackages (NOT extendedCaches, which
+            // includes wsDir — wsDir has no valid .app yet at this point anyway). They carry the
+            // impl's vendored/declared deps (e.g. an ISV licensing app) AND the Microsoft
+            // platform `System` app whose symbols define the System.* / System.AI.* namespaces
+            // (e.g. the "Copilot Capability" enum). Without them the layered impl symbol-emit
+            // resolves against only the global --package-cache and fails where the standalone
+            // compile succeeds: "Dependency not found" for a vendored dep, or AL0185/AL0133
+            // "Copilot Capability is missing". The impl compiles fine on its own BECAUSE it uses
+            // these dirs; the layered impl-emit must too.
+            var implSymbolDirs = thisImplAlpackages.Concat(packageCacheDirs).Distinct().ToList();
+            // RESOLUTION set (#2178): the compile set above, PLUS the workspace dirs of the impls
+            // already built by this loop and their .alpackages. This is what lets an impl declare
+            // a dependency on ANOTHER impl in the same invocation — the synthetic .app the
+            // earlier iteration wrote lives only in its workspace dir, which is otherwise not
+            // visible until this whole function returns extendedCaches to the per-bundle compiles
+            // below.
+            //
+            // Deliberately kept SEPARATE from implSymbolDirs, which is what SetResolvedDeps hands
+            // to BC's own .app scanner: a synthetic workspace .app carries no
+            // SymbolReference.json and makes that scanner report AL1023 "package not valid" for
+            // the whole compilation. The compile-time half of an earlier impl travels through its
+            // *.symbols.json sidecar instead, via SetExtraSymbolDirs below — exactly the split
+            // the per-bundle compile in Main already uses (see the SetExtraSymbolDirs
+            // (layeredWorkspaceDirs) call sites).
+            var implResolveDirs = implSymbolDirs
+                .Concat(priorImplDirs)
+                .Concat(implAlpackagesDirs)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var implResolver = new DependencyResolver(implResolveDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
+
+            // The resolve is CAUGHT here, not allowed to escape, and rethrown below from inside
+            // the emit block's own try — where it threw before this moved. Two behaviours depend
+            // on that and neither is this change's to alter:
+            //
+            //   * a WARM workspace (hadSymbols) never resolved at all, so a dependency that has
+            //     since gone missing did not fail here; the per-bundle resolve reports it later,
+            //     with the message and exit code Program.cs's own handlers decide;
+            //   * a COLD one wrapped the failure in "[layered] Failed to emit symbols for impl
+            //     '<name>' from <path>: <reason>" (LayeredSourceChainTests pins that text).
+            //
+            // Letting a MissingDependencyException escape from here instead does produce a
+            // better message — Program.cs's #2095 handler renders ToDetailedMessage's
+            // provisioning-gap report, which the wrapper defeats — but that is an error-reporting
+            // change with its own blast radius across CLI and server mode, not part of a cache
+            // key fix. Filed as #2956, with both messages measured against the same fixture.
+            IReadOnlyList<(AppManifest Manifest, string AppPath)> implDeps = Array.Empty<(AppManifest, string)>();
+            string? implResolveFailure = null;
+            try { implDeps = implResolver.Resolve(implId.Dependencies); }
+            catch (Exception ex) { implResolveFailure = $"{ex.GetType().Name}: {ex.Message}"; }
+
+            var implKey = ComputeSourceWorkspaceKey(new[] { implPath }, idByKey, implDeps, implResolveFailure);
             var wsDir = Path.Combine(workspaceRoot, implKey[..12]);
             Directory.CreateDirectory(wsDir);
             if (!implDirs.Contains(wsDir, StringComparer.OrdinalIgnoreCase))
@@ -518,51 +588,18 @@ internal static partial class ProgramSupport
             {
                 try
                 {
-                    // Resolve the impl's OWN dependency closure (declared + the implicit
-                    // Application/System roots from app.json) transitively, exactly like the
-                    // main per-bundle compile does. This replaces the former all-.app
-                    // SetPackageCacheFallback, which scanned EVERY package in the caches —
-                    // 134 apps / 353MB in the RS Extensions dir → ~215s per impl. The
-                    // Application closure pulls only BaseApp / System App / Business
-                    // Foundation (≈5 apps), so the symbol compile is fast and identical in
-                    // coverage (an app that uses BaseApp via namespace depends, implicitly,
-                    // on Application — never on the whole marketplace).
-                    // ScopeCurrentAppIdentity sets _currentAppId to the impl so
+                    // implSymbolDirs / implResolveDirs / implResolver / implDeps are computed
+                    // ABOVE, before the workspace key — see the comment there (#2846). Reused
+                    // here rather than recomputed, so the cold path costs exactly what it did.
+                    // ScopeCurrentAppIdentity (below) sets _currentAppId to the impl so
                     // GetSharedReferences excludes the impl from its own specs (self-ref guard).
-                    // Include the impl bundle's OWN .alpackages in the resolver + symbol dirs —
-                    // the SAME dirs the main per-bundle compile uses (see the bundlePkgDirs path
-                    // in the compile loop). They carry the impl's vendored/declared deps (e.g.
-                    // an ISV licensing app) AND the Microsoft platform `System` app whose symbols
-                    // define the System.* / System.AI.* namespaces (e.g. the "Copilot Capability"
-                    // enum). Without them the layered impl symbol-emit resolves against only the
-                    // global --package-cache and fails where the standalone compile succeeds:
-                    // "Dependency not found" for a vendored dep, or AL0185/AL0133 "Copilot
-                    // Capability is missing". The impl compiles fine on its own BECAUSE it uses
-                    // these dirs; the layered impl-emit must too.
-                    // ORIGINAL package cache dirs + the impl's .alpackages (NOT extendedCaches,
-                    // which includes wsDir — wsDir has no valid .app yet at this point anyway).
-                    var implSymbolDirs = thisImplAlpackages.Concat(packageCacheDirs).Distinct().ToList();
-                    // RESOLUTION set (#2178): the compile set above, PLUS the workspace dirs of
-                    // the impls already built by this loop and their .alpackages. This is what
-                    // lets an impl declare a dependency on ANOTHER impl in the same invocation —
-                    // the synthetic .app the earlier iteration wrote lives only in its workspace
-                    // dir, which is otherwise not visible until this whole function returns
-                    // extendedCaches to the per-bundle compiles below.
                     //
-                    // Deliberately kept SEPARATE from implSymbolDirs, which is what
-                    // SetResolvedDeps hands to BC's own .app scanner: a synthetic workspace .app
-                    // carries no SymbolReference.json and makes that scanner report AL1023
-                    // "package not valid" for the whole compilation. The compile-time half of an
-                    // earlier impl travels through its *.symbols.json sidecar instead, via
-                    // SetExtraSymbolDirs below — exactly the split the per-bundle compile in Main
-                    // already uses (see the SetExtraSymbolDirs(layeredWorkspaceDirs) call sites).
-                    var implResolveDirs = implSymbolDirs
-                        .Concat(priorImplDirs)
-                        .Concat(implAlpackagesDirs)
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToList();
-                    var implResolver = new DependencyResolver(implResolveDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
-                    var implDeps = implResolver.Resolve(implId.Dependencies);
+                    // If the resolve failed, redo it so it throws HERE — inside this try, whose
+                    // catch produces the "[layered] Failed to emit symbols for impl …" message
+                    // this path has always produced. The retry only runs on a path that is about
+                    // to abort.
+                    if (implResolveFailure != null)
+                        implDeps = implResolver.Resolve(implId.Dependencies);
                     BcCompiler.SetResolvedDeps(implDeps, implSymbolDirs);
                     // AFTER SetResolvedDeps, which resets _extraSymbolDirs. Passing an empty
                     // list is not the same as not calling it at all — the previous impl's call
@@ -815,8 +852,38 @@ internal static partial class ProgramSupport
             // one depends on has necessarily been written by now — see the identical snapshot
             // in RunLayeredPrePass and #2178.
             var priorDepDirs = depDirs.ToList();
-            // Per-dep cache dir keyed on THIS dep's own sources + dep identities.
-            var depKey = ComputeSourceWorkspaceKey(new[] { dir }, sourceApps);
+            // Resolve THIS dep's own dependency closure (declared + transitive) against the
+            // dependent bundles' .alpackages + packageCacheDirs, then hand it to BcCompiler —
+            // exactly like RunLayeredPrePass and the main per-bundle compile. Without this, a
+            // source dep that extends a Base App object (e.g. a tableextension on "Item Journal
+            // Batch") cannot resolve its target → AL0247 → BC's converter NREs → crash. The
+            // resolver produces CONCRETE resolved manifests (real version + path) from the
+            // .alpackages closure, which is present on CI where packageCacheDirs is empty.
+            // NOT the all-packages SetPackageCacheFallback (scans every .app, hangs the corpus);
+            // Resolve pulls only this dep's declared closure (BaseApp / System App / …).
+            // #2178: resolve against the workspace dirs written for the source deps BUILT BEFORE
+            // this one as well, so a source dep may itself depend on another source dep. Those
+            // dirs are kept out of the set handed to SetResolvedDeps — BC's .app scanner reports
+            // AL1023 on a synthetic .app with no SymbolReference.json — and reach the compiler as
+            // *.symbols.json through SetExtraSymbolDirs instead.
+            //
+            // #2846: this used to run AFTER the workspace key, which meant the key never saw the
+            // resolved winners even though the *.symbols.json written into the keyed directory is
+            // the compiler's view of this dep's public surface as compiled against exactly those
+            // packages' bytes. It was already unconditional, so moving it above the key adds no
+            // work at all here.
+            var depResolveDirs = resolveDirs
+                .Concat(priorDepDirs)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var depResolver = new DependencyResolver(depResolveDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
+            var resolvedDepDeps = depResolver.Resolve(sid.Dependencies);
+
+            // Per-dep cache dir keyed on THIS dep's own sources + dep identities + the CONTENT
+            // of the packages that closure actually resolved to.
+            // null: this resolve is not caught — it throws past the key, exactly as it did
+            // before the move, so there is never a failure for the key to describe.
+            var depKey = ComputeSourceWorkspaceKey(new[] { dir }, sourceApps, resolvedDepDeps, resolutionFailure: null);
             var wsDir = Path.Combine(workspaceRoot, depKey[..12]);
             Directory.CreateDirectory(wsDir);
             if (!depDirs.Contains(wsDir, StringComparer.OrdinalIgnoreCase))
@@ -853,29 +920,10 @@ internal static partial class ProgramSupport
             // runtime-loadable but invisible to the compiler (AL0185). BcCompiler's
             // GetSharedReferences chains a JsonSymbolReferenceLoader over the workspace
             // dir to pick these up. Revived from main's DepCompiler / SymbolJson.
-            // Resolve THIS dep's own dependency closure (declared + transitive) against the
-            // dependent bundles' .alpackages + packageCacheDirs, then hand it to BcCompiler —
-            // exactly like RunLayeredPrePass and the main per-bundle compile. Without this, a
-            // source dep that extends a Base App object (e.g. a tableextension on "Item Journal
-            // Batch") cannot resolve its target → AL0247 → BC's converter NREs → crash. The
-            // resolver produces CONCRETE resolved manifests (real version + path) from the
-            // .alpackages closure, which is present on CI where packageCacheDirs is empty.
-            // NOT the all-packages SetPackageCacheFallback (scans every .app, hangs the corpus);
-            // Resolve pulls only this dep's declared closure (BaseApp / System App / …).
-            // ScopeCurrentAppIdentity sets _currentAppId so GetSharedReferences excludes the dep
-            // from its own specs (self-ref guard). Reset by the per-bundle SetResolvedDeps below.
-            // #2178: resolve against the workspace dirs written for the source deps BUILT
-            // BEFORE this one as well, so a source dep may itself depend on another source dep.
-            // As in RunLayeredPrePass, those dirs are kept out of the set handed to
-            // SetResolvedDeps — BC's .app scanner reports AL1023 on a synthetic .app with no
-            // SymbolReference.json — and reach the compiler as *.symbols.json through
-            // SetExtraSymbolDirs instead.
-            var depResolveDirs = resolveDirs
-                .Concat(priorDepDirs)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            var depResolver = new DependencyResolver(depResolveDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
-            var resolvedDepDeps = depResolver.Resolve(sid.Dependencies);
+            // depResolveDirs / depResolver / resolvedDepDeps are computed ABOVE, before the
+            // workspace key — see the comment there (#2846). ScopeCurrentAppIdentity (below)
+            // sets _currentAppId so GetSharedReferences excludes the dep from its own specs
+            // (self-ref guard). Reset by the per-bundle SetResolvedDeps below.
             BcCompiler.SetResolvedDeps(resolvedDepDeps, resolveDirs);
             // AFTER SetResolvedDeps, which resets _extraSymbolDirs.
             if (priorDepDirs.Count > 0)
@@ -954,9 +1002,31 @@ internal static partial class ProgramSupport
         return false;
     }
 
+    /// <summary>
+    /// The cache identity of one source app's synthesized workspace directory
+    /// (<c>workspace-deps/&lt;key[..12]&gt;</c>).
+    ///
+    /// <para><paramref name="resolvedDeps"/> is the closure the caller's
+    /// <see cref="DependencyResolver"/> actually produced for these dirs — NOT the declared
+    /// references, which are covered separately by the <c>dep:</c> lines. It is a required
+    /// parameter rather than an optional one on purpose: the directory holds a
+    /// <c>*.symbols.json</c> compiled against those packages, so a call site that could omit
+    /// them would be a call site that silently reintroduces #2846.</para>
+    ///
+    /// <para><paramref name="resolutionFailure"/> is for the one caller that CATCHES a
+    /// resolution failure to compute this key and rethrows it later from where it threw before
+    /// (RunLayeredPrePass). Passing the failure keys the directory on it, following
+    /// <c>GetOrderedDepIds</c>'s rule that an unresolvable closure is its own cache identity:
+    /// an empty list is indistinguishable from a bundle that genuinely has no dependencies, so
+    /// collapsing to "no deps" would let two different closures share a directory. Non-null and
+    /// a non-empty <paramref name="resolvedDeps"/> are mutually exclusive by construction; a
+    /// caller whose resolve simply throws past this point passes null.</para>
+    /// </summary>
     internal static string ComputeSourceWorkspaceKey(
         IReadOnlyList<string> sortedDirs,
-        IReadOnlyDictionary<string, AlRunner.Infrastructure.BundleIdentity> sourceApps)
+        IReadOnlyDictionary<string, AlRunner.Infrastructure.BundleIdentity> sourceApps,
+        IReadOnlyList<(AppManifest Manifest, string AppPath)> resolvedDeps,
+        string? resolutionFailure)
     {
         using var sha = System.Security.Cryptography.SHA256.Create();
         using var ms = new MemoryStream();
@@ -971,8 +1041,54 @@ internal static partial class ProgramSupport
         // explicit bc:<version> line was added (a content hash alone is identical across
         // every BC-version CI leg building the same commit, so without it all legs would
         // collide on one cache entry). v1 entries carried neither and must not be served.
-        WriteLine("schema:v2");
+        //
+        // v3 (issue #2846): the `depres:` lines below. v2 entries were written by a key that
+        // could not see the resolved packages, so a v2 directory's *.symbols.json may have been
+        // compiled against a different dependency surface than the one this run resolved —
+        // exactly the answer v3 exists to stop serving. v2 and v3 entries are therefore not
+        // interchangeable in either direction and the schema line has to move.
+        WriteLine("schema:v3");
         AlRunner.Infrastructure.RunnerFingerprint.WriteKeyLines(WriteLine);
+
+        // The RESOLVED dependency winners, by CONTENT — issue #2846, and the same substitution
+        // #2754/f3ca2b00 made for the AL-output key one layer over.
+        //
+        // The directory this key names holds two artifacts with DIFFERENT provenance:
+        //
+        //   <Pub>_<Name>_<Ver>.app          — InProcessAppPackager output, derived from the
+        //                                     source dir and its identity alone. The app:/dep:/
+        //                                     file: lines below cover it completely.
+        //   <Pub>_<Name>_<Ver>.symbols.json — the COMPILER's view of that app's public surface,
+        //   + .symbols.deps.json              produced by compiling it against the resolved
+        //                                     package closure.
+        //
+        // Only the declared dependency REFERENCES (id/publisher/name/version) were in the key,
+        // never the packages they actually resolved to. So replacing a third-party dependency
+        // with different bytes at the same declared version produced a HIT and served the
+        // previous symbols.json: the dependent bundle compiled against a public surface this
+        // run never saw, with an unchanged exit code and no failure anywhere. `bc:<version>`
+        // already covers the Microsoft platform case (it is the full four-part version), so the
+        // residue this closes is a non-Microsoft dependency at an unchanged declared version.
+        //
+        // Content, not a stat and not a path, for the reasons DependencyContentTerm states in
+        // full: `cp -p`, `rsync -a`, `tar -x` and CI cache restores all carry an mtime with the
+        // bytes, so equal mtimes across two directories is ordinary rather than a coincidence.
+        // Sharing DependencyContentTerm with the AL-output key is deliberate — it is the one
+        // place that decides what "the identity of a resolved package" means, including how a
+        // package that cannot be hashed degrades, so the two keys cannot drift apart on it.
+        //
+        // Cost: BcAppSymbolCache.ComputeAppContentHash memoizes per full path for the process,
+        // and a normal run hashes these same packages for the AL-output and bc-symbols keys
+        // anyway — so for the packages that reach both this is a dictionary lookup.
+        //
+        // Sorted so registration/resolution order — an artifact of directory scan order — cannot
+        // move the key.
+        if (resolutionFailure != null)
+            WriteLine($"depres-unresolved:{resolutionFailure}");
+        foreach (var term in resolvedDeps
+                     .Select(d => $"depres:{d.Manifest.AppId:N}:{d.Manifest.Publisher}:{d.Manifest.Name}:{d.Manifest.Version}:{DependencyContentTerm(d.AppPath)}")
+                     .OrderBy(t => t, StringComparer.Ordinal))
+            WriteLine(term);
 
         foreach (var dir in sortedDirs.OrderBy(d => d, StringComparer.OrdinalIgnoreCase))
         {
