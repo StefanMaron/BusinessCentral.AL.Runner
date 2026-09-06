@@ -158,8 +158,12 @@ internal class LiveNavTestPage : MockITestPage
     /// </summary>
     protected internal NavRecord RequireRecord(string what)
         => _tornDown ? throw MakeTestPageNotOpenException()
+        // The api carries no " — ": OutOfScopeMessage.TryParse cuts the api from the reason at
+        // the FIRST one, so an api that spells the separator itself makes the untyped recovery
+        // path report "TestPage page 60100" with "New() — testpage-modal-no-source-table — …"
+        // as the reason. Same defect #2945 fixed for Feature Key Modify (#2999).
         : _record ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-            $"TestPage page {_pageId} — {what}",
+            $"TestPage page {_pageId} ({what})",
             "testpage-modal-no-source-table — this page has no SourceTable, so there is no "
             + "record-backed rowset for this operation. Controls bound to page variables are "
             + "supported; row navigation, filtering, Insert/Modify and Rec-bound field access "
@@ -200,23 +204,25 @@ internal class LiveNavTestPage : MockITestPage
         if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
             Console.Out.WriteLine($"[MockTestPage.GetPart] controlId={controlId} pageId={_pageId} _page={(_page == null ? "null" : "set")} _page.Form={( _page?.Form == null ? "null" : _page.Form.GetType().FullName)}");
 
+        // BOTH branches are runner gaps, which is why one factory serves them. The second one
+        // reads like an AL-authoring error and is not: the AL compiler resolves a part by NAME
+        // and emits its control id, so an id that reaches here always named a real part on the
+        // real page. Finding no part for it means the runner's page metadata is incomplete.
         var definition = _page?.TryGetPartDefinition(controlId)
-            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            ?? throw TestPageShapeGap.Part(
                 $"TestPage part {controlId} (page {_pageId})",
-                "testpage-part — the runner could not resolve this control to a subpage part"
+                "the runner could not resolve this control to a subpage part"
                 + (_page == null
                     ? "; no AL page object was built for the hosting page, so its part definitions "
                       + "are unavailable — see AlPageMetadataRegistry"
-                    : "; the hosting page's metadata declares no part with this control id")
-                + ". See docs/scope.md");
+                    : "; the hosting page's metadata declares no part with this control id"));
 
         var partPageId = definition.PagePartID;
         if (_owner == null)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            throw TestPageShapeGap.Part(
                 $"TestPage part {controlId} → page {partPageId}",
-                "testpage-part — the hosting page was built without an ITreeObject owner, so "
-                + "the runner has nothing to construct the part's own page under. "
-                + "See docs/scope.md");
+                "the hosting page was built without an ITreeObject owner, so the runner has "
+                + "nothing to construct the part's own page under");
 
         var built = TestPageFactory.TryBuild(_owner, partPageId, out var why);
 
@@ -293,19 +299,15 @@ internal class LiveNavTestPage : MockITestPage
             adopted = fromHost != null;
             partPage = fromHost ?? TestPageFactory.TryBuildRecordless(_owner, partPageId);
             if (partPage == null)
-                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                throw TestPageShapeGap.Part(
                     $"TestPage part {controlId} → page {partPageId}",
-                    "testpage-part — the part's own page could not be driven live"
-                    + (why == null ? string.Empty : $" ({why})")
-                    + ". See docs/scope.md");
+                    PartNotLive(why));
         }
         else
         {
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            throw TestPageShapeGap.Part(
                 $"TestPage part {controlId} → page {partPageId}",
-                "testpage-part — the part's own page could not be driven live"
-                + (why == null ? string.Empty : $" ({why})")
-                + ". See docs/scope.md");
+                PartNotLive(why));
         }
 
         // The parent record is only needed to evaluate FIELD SubPageLink pairs (issue #2053).
@@ -518,25 +520,40 @@ internal class LiveNavTestPage : MockITestPage
     /// than filtering on no field: an unfiltered part shows other rows' children, which is a
     /// wrong answer, not a missing one.
     /// </summary>
+    /// <summary>
+    /// The detail both "could not be driven live" refusals report. They are ONE shape reached
+    /// down two branches — the recordless path and the fall-through — and they carried
+    /// byte-identical reason text written out twice, so the same gap could drift into claiming
+    /// two different things depending on which branch found it (#2999).
+    /// </summary>
+    private static string PartNotLive(string? why)
+        => "the part's own page could not be driven live" + (why == null ? string.Empty : $" ({why})");
+
     private static SubPageLinkEntry[] SubPageLinks(
         Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition definition, int partPageId)
     {
         var links = new List<SubPageLinkEntry>();
         foreach (var link in definition.SubFormLink ?? new List<Microsoft.Dynamics.Nav.Types.Metadata.FilterDefinition>())
         {
+            // Both of these are RUNNER gaps, not BC-shape gaps, and the distinction is measured
+            // rather than assumed: DependencyPageMetadataXml.EmitSubFormLinkXml DELIBERATELY
+            // writes FieldID 0 and a non-numeric FilterValue when it cannot resolve a field
+            // NAME to an id, precisely so these two refusals fire. The read succeeded; the
+            // answer is about the runner's own metadata reconstruction, which is the line
+            // BcShapeGapException draws (#2995).
             if (link.FieldID <= 0)
-                throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                throw TestPageShapeGap.PartLink(
                     $"TestPage part → page {partPageId} SubPageLink ({link.FilterType})",
-                    $"testpage-part-link — the part's own field this link constrains could not be resolved "
-                    + $"(FieldID {link.FieldID}, {link.FilterType} '{link.FilterValue}'). See docs/scope.md");
+                    $"the part's own field this link constrains could not be resolved "
+                    + $"(FieldID {link.FieldID}, {link.FilterType} '{link.FilterValue}')");
             switch (link.FilterType)
             {
                 case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FIELD:
                     if (!int.TryParse(link.FilterValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parentFieldNo))
-                        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                        throw TestPageShapeGap.PartLink(
                             $"TestPage part → page {partPageId} SubPageLink",
-                            $"testpage-part-link — a FIELD link's value must be the parent's field number, "
-                            + $"but this one is '{link.FilterValue}'. See docs/scope.md");
+                            $"a FIELD link's value must be the parent's field number, "
+                            + $"but this one is '{link.FilterValue}'");
                     links.Add(new SubPageLinkEntry(link.FieldID, link.FilterType, parentFieldNo, string.Empty));
                     break;
                 case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.CONST:
@@ -544,13 +561,22 @@ internal class LiveNavTestPage : MockITestPage
                     links.Add(new SubPageLinkEntry(link.FieldID, link.FilterType, 0, link.FilterValue ?? string.Empty));
                     break;
                 default:
-                    // FilterType has exactly FIELD/CONST/FILTER (Types.dll 27.5–28.x). A new
-                    // member in a future BC would land here: refuse by name rather than treat
+                    // A BC SHAPE GAP, not a scope claim and not a runner gap — the one site in
+                    // this file where the runner READ BC's own metadata and could not interpret
+                    // what it held (#2946/#2995). FilterType has exactly FIELD/CONST/FILTER:
+                    // measured on BC 28.1's Microsoft.Dynamics.Nav.Types.dll, and the runner's
+                    // own EmitSubFormLinkXml writes only those three spellings, so a fourth
+                    // value can ONLY have come from BC's compiled page metadata. That makes it a
+                    // property of which BC build is on disk — it could be true on one matrix leg
+                    // and false on another in the same run — which is exactly what may not be
+                    // declarable as an expected out-of-scope surface. Refuse rather than treat
                     // it as one of the three and filter wrongly.
-                    throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                        $"TestPage part → page {partPageId} SubPageLink ({link.FilterType})",
-                        $"testpage-part-link — SubPageLink kind {link.FilterType} is not one of FIELD/CONST/FILTER; "
-                        + $"this part links field {link.FieldID} by {link.FilterType} '{link.FilterValue}'. See docs/scope.md");
+                    throw new AlRunner.Infrastructure.BcShapeGapException(
+                        $"TestPage part → page {partPageId} SubPageLink",
+                        "Microsoft.Dynamics.Nav.Types.Metadata.FilterType",
+                        $"holds {link.FilterType}, which is not one of FIELD/CONST/FILTER; this part "
+                        + $"links field {link.FieldID} by {link.FilterType} '{link.FilterValue}', and "
+                        + "filtering it as any of the three would show the wrong rows rather than none");
             }
         }
         return links.ToArray();
@@ -1218,7 +1244,10 @@ internal class LiveNavTestPage : MockITestPage
         // alternatives — closing anyway hides that the page objected, and hanging is worse.
         if (_page != null && !_page.RaiseOnClosePage(_formResult))
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                $"TestPage page {_pageId} — OnQueryClosePage",
+                // No " — " in the api — see RequireRecord. The CLAIM is unchanged and stays a
+                // permanent scope boundary (#2999 lists it among the fourteen): BC leaves the
+                // page open awaiting a user, so a [TryFunction] reading false is BC's outcome.
+                $"TestPage page {_pageId} (OnQueryClosePage)",
                 "testpage-close-veto — the page's OnQueryClosePage returned false, which in BC "
                 + "leaves the page open awaiting the user. See docs/scope.md");
         FlushParts(); FlushRow(); _opened = false;
@@ -1288,16 +1317,16 @@ internal class LiveNavTestPage : MockITestPage
         // produced "The supplied field number '<hash>' cannot be found in the '<table>'
         // table" — a control-name hash reported as a missing field, blaming the table for
         // the runner's own inability to resolve the control. Say what actually happened.
-        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+        throw TestPageShapeGap.ControlBinding(
             $"TestPage control {id}",
-            "testpage-control-binding — this control is bound neither to a field of the page's "
+            "this control is bound neither to a field of the page's "
             + $"source table nor to a page variable the runner could resolve (table "
             + $"{_record?.MetaTable?.TableName ?? "?"}"
             + (_page == null
                 ? "; no AL page object was built for this page, so page-variable-bound controls "
                   + "cannot be resolved — see AlPageMetadataRegistry"
                 : "; the page object has no source expression for this control id")
-            + "). See docs/scope.md");
+            + ")");
     }
 
     // Every cursor move leaves the in-progress new row, so it must be persisted first —
@@ -1766,10 +1795,10 @@ internal static class TestPageOptionValue
     internal static NavValue Resolve(NavOption current, string value, string[]? captions, string context)
     {
         var metadata = current.NavOptionMetadata
-            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            ?? throw TestPageShapeGap.OptionValue(
                 context,
-                "testpage-option-value — the control is bound to an Option with no option "
-                + "metadata, so a value cannot be resolved by name. See docs/scope.md");
+                "the control is bound to an Option with no option metadata, so a value cannot "
+                + "be resolved by name");
 
         var options = Members(metadata);
         var ordinals = Ordinals(metadata);
@@ -2434,10 +2463,10 @@ internal sealed class LiveNavTestField : ITestField
     public void Lookup()
     {
         if (_page == null)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            throw TestPageShapeGap.Lookup(
                 $"TestPage lookup on field {_fieldNo}",
-                "testpage-lookup — no AL page object was built for this page, so its OnLookup "
-                + "trigger cannot be reached. See docs/scope.md");
+                "no AL page object was built for this page, so its OnLookup trigger cannot be "
+                + "reached");
 
         // BC's contract: the trigger writes the selection back and returns true; a false
         // return means the user cancelled and the field keeps its value.
@@ -2464,10 +2493,10 @@ internal sealed class LiveNavTestField : ITestField
     public void Drilldown()
     {
         if (_page == null)
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            throw TestPageShapeGap.DrillDown(
                 $"TestPage drilldown on field {_fieldNo}",
-                "testpage-drilldown — no AL page object was built for this page, so its "
-                + "OnDrillDown trigger cannot be reached. See docs/scope.md");
+                "no AL page object was built for this page, so its OnDrillDown trigger cannot "
+                + "be reached");
 
         _page.RaiseOnDrillDown(_controlId);
     }
