@@ -925,6 +925,23 @@ reached only when BC's own metadata is not the shape the runner reads:
   fields. A read that *succeeds* and says the field declares no trigger is a different outcome
   and stays a permanent refusal, because that lookup would come from a `TableRelation`.
 
+The **write** side of those same two backing fields refuses too
+([#3026](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3026)). Installing a
+table's AL `OnValidate` / `OnLookup` field trigger pokes
+`NCLMetaField.EventTriggerData.ValidateHandler` / `.LookupHandler`; if either cannot be
+resolved, the runner now names it and stops, instead of skipping the install and reporting the
+table as wired. The skip was the worse half of the pair: nothing was printed, the trigger never
+fired, and AL that depended on it *passed*. The same applies to the tableextension
+`OnBeforeValidate` / `OnAfterValidate` handler lists and to the types
+`BuildFieldTriggerHandler` wraps a trigger method in.
+
+The refusal is proportional — it fires only for a table and field the runner has a handler in
+hand for. A table that declares no field trigger still wires and reports success on such a
+build, because nothing was skipped for it. The two exceptions are
+`FieldTriggerHandlerAttribute` and `FieldTriggerType`, which are what the scan itself reads: on
+a build missing either, the runner cannot tell whether *any* table declares a trigger, so it
+refuses for every table rather than let the whole bundle's field triggers go quiet.
+
 ## Known gaps — in scope but not yet implemented
 
 These are not architectural limits. They can be fixed; report them at

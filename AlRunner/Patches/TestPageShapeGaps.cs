@@ -146,16 +146,17 @@
 //         to decide and is UNTOUCHED here. The test for this file allows either outcome for it
 //         and pins the two lookups exactly.
 //
-// ── A SIBLING DEFECT FOUND AND NOT FIXED HERE ────────────────────────────────────────────
+// ── A SIBLING DEFECT FOUND HERE, FIXED IN #3026 ──────────────────────────────────────────
 //   The (2b) site above refuses loudly when _fLookupHandlerBacking / _fValidateHandlerBacking
-//   could not be resolved. The WRITE path over the same two fields does the opposite:
-//   RecordPatches.NclMetaTableBuilder.cs guards every handler install with
+//   could not be resolved. The WRITE path over the same two fields used to do the opposite:
+//   RecordPatches.NclMetaTableBuilder.cs guarded every handler install with
 //   `&& _fValidateHandlerBacking != null` (and the lookup equivalent), so on a BC build whose
-//   layout moved the field trigger is SILENTLY NEVER INSTALLED and the AL that depends on it
-//   runs with no trigger at all — and WireFieldTriggerHandlers still returns true. Two code
+//   layout moved the field trigger was SILENTLY NEVER INSTALLED and the AL that depends on it
+//   ran with no trigger at all — and WireFieldTriggerHandlers still returned true. Two code
 //   paths over one piece of state, one refusing and one defaulting. Filed as #3026 rather than
-//   folded in, because it changes trigger INSTALLATION rather than refusal wording and needs
-//   its own RED → GREEN. Not reachable on 27.0–28.4, where both members resolve.
+//   folded in, because it changes trigger INSTALLATION rather than refusal wording and needed
+//   its own RED → GREEN; that fix is now in AlRunner/Patches/FieldTriggerShapeGaps.cs. Still
+//   not reachable on 27.0–28.4, where every member resolves.
 //
 // ── WHY THE DOC LINK MOVED ───────────────────────────────────────────────────────────────
 //   docs/limitations.md#testpage-shape-gaps, not docs/scope.md. scope.md documents permanent
