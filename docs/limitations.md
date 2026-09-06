@@ -475,6 +475,37 @@ the exact value will see different results.
 | `Commit()` | Commits current transaction | Establishes a rollback commit-point — see "Transaction semantics" above; not a no-op |
 | `FilterGroup(n)` | Scoped filter groups | Not tracked — `FilterGroup()` is a no-op; all filters apply to group 0 |
 
+### Permission-set assignment — answered from `Access Control`, and the session user is SUPER without a row
+
+<a id="permission-set-assignment"></a>
+
+Real BC answers "is this permission set assigned to this user" out of the session's permission
+cache (`NavSession.Permissions`), which is built from the tenant's permission tables in SQL. The
+runner has no SQL-backed tenant database — `NavUserPermissions.HasRole` and `GetRoles` both need
+`NavTenant.Database`, and populating a skeleton `NavTenant` is out of scope (it was measured
+breaking ~466 tests) — so `NavSession.Permissions` stays null.
+
+Rather than let every AL path through `NavUserAccountHelper.IsPermissionSetAssigned` NRE
+(AlRunner#3039 — it made a valid `User.Modify` fail from inside codeunit 9002's subscriber), the
+runner answers the question itself:
+
+| question | Real BC | al-runner |
+|---|---|---|
+| Is permission set X assigned to user U? | From the permission cache built out of `Access Control` and entitlements | From the `Access Control` (2000000053) rows the run holds — matching User Security ID, Role ID, App ID and Scope, with a blank Company Name meaning every company |
+| Is the session's own user SUPER? | Yes on a test tier, because provisioning wrote it a row | Yes — stated directly, consistent with `NavSession.HasExecutePermission*` → `true` and `MaximizePermissions` → no-op |
+| Does `Access Control` contain a row for the session user? | Yes | **No** |
+
+The last row is the divergence worth knowing about: the session user is SUPER, but nothing in
+`Access Control` says so, because the fact is stated in the runtime rather than seeded as a row.
+Any other user is answered purely from rows, in both directions — grant SUPER and `IsSuper`
+reads back true, grant something else and it reads back false. Whether the row should be seeded
+instead is AlRunner#3176.
+
+Entitlements are not modeled at all, so a permission set that a real tier would report as
+assigned *via an entitlement* rather than via `Access Control` reads as not assigned here.
+`NavUserAccountHelper.IsUserSuperInAllCompanies` still raises, because its body has no Ncl hop
+the runner can rewrite — AlRunner#3174.
+
 ### `Record "Time Zone"` — ids follow the HOST, so they are IANA ids on Linux
 
 <a id="time-zone-virtual-table"></a>

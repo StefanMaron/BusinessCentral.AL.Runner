@@ -133,8 +133,27 @@ public static partial class RecordPatches
         if (_mNavUserPermissionsGetEffectivePermissionForObject == null || _mNavRecordCreateErrorInfoData == null)
             return null;
 
+        // Session.Permissions is NULL on the skeleton session — it has a private setter only
+        // the real session bring-up calls, which is the same gap #3039 fixed one layer down in
+        // PermissionManagement.IsPermissionSetAssignedAsync (see
+        // RecordPatches.PermissionSetAssignment.cs). Invoking an INSTANCE method through
+        // reflection with a null target raises TargetException, and it would raise it from
+        // inside TryAddTestFieldAction — pre-empting the `throw NavTestFieldException` this
+        // whole file exists to stop being pre-empted, and reporting a null-target reflection
+        // failure where the test expects "… must have a value …".
+        //
+        // Skipped rather than answered, deliberately. The runner's skeleton session runs as
+        // SUPER, so the permission gate itself would pass — but this action is pure UI
+        // convenience with no headless observer (see the file header: the exception's message
+        // text is built separately and is unaffected), and every other unresolvable condition
+        // in this method already returns null. Skipping keeps the ONE observable thing — the
+        // real TestField error — correct, which answering could only put at risk.
+        var permissions = self.Session.Permissions;
+        if (permissions == null)
+            return null;
+
         var perm = (PermissionMask)_mNavUserPermissionsGetEffectivePermissionForObject.Invoke(
-            self.Session.Permissions, new object[] { self.Session.CompanyName, metaFormById.ApplicationObjectId })!;
+            permissions, new object[] { self.Session.CompanyName, metaFormById.ApplicationObjectId })!;
         if (!perm.HasFlag(PermissionMask.Read) && !perm.HasFlag(PermissionMask.Execute))
             return null;
 

@@ -1,0 +1,19 @@
+{
+  "id": "5b4e1f2a-7c93-4d16-8a0e-2f61c9d84b37",
+  "name": "Runner Extras - Permission Set Assignment",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3039: 'is this permission set assigned to this user' must be answered from state the runner has, instead of dereferencing the skeleton session's null permission cache.",
+  "description": "Runner-mechanism claim, not a claim about AL. That codeunit 153's IsSuper asks the platform whether SUPER is assigned, and that codeunit 9002 refuses to modify another user's row unless the caller can manage users, is plain BC and needs no corpus test. What this pins is the runner's own permission model. BC's PermissionManagement.IsPermissionSetAssignedAsync ends in session.Permissions.HasRole(...), and NavSession.Permissions is null on the skeleton session, so every AL path through NavUserAccountHelper.IsPermissionSetAssigned raised NavNCLDotNetInvokeException on a valid User.Modify. Populating Permissions for real is not available: NavUserPermissions.HasRole and GetRoles both need a SQL-backed NavTenant.Database, which BcRuntime documents as out of scope after measuring it break ~466 tests. So the runner answers from the Access Control table (2000000053), the same table real BC builds its permission cache from, plus exactly one stated fact - the skeleton session runs as SUPER, which is the position NavSession.HasExecutePermission* (true), VerifyExecutePermission (no-op) and MaximizePermissions (no-op) already ship. The four permission tests are the two-directional proof: no row means not SUPER, a SUPER row means SUPER, a row for a different role still means not SUPER.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65610,
+      "to": 65619
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "17.0",
+  "target": "Cloud"
+}
