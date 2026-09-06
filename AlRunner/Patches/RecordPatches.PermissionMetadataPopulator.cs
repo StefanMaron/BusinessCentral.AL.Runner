@@ -156,9 +156,7 @@ public static partial class RecordPatches
 
             if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_PERMMETA") == "1")
             {
-                var lookup = _tNavAppGroupPM!
-                    .GetProperty("PermissionSetGroupObjectMetadataSummaries",
-                        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!
+                var lookup = RequireBcProperty(_tNavAppGroupPM!, "PermissionSetGroupObjectMetadataSummaries")
                     .GetValue(baseGroup) as IEnumerable;
                 var lookupCount = 0;
                 if (lookup != null) foreach (var _ in lookup) lookupCount++;
@@ -226,11 +224,10 @@ public static partial class RecordPatches
     {
         var lazyField = _fPermissionSetLookup!;
         var lazyType = lazyField.FieldType;                       // LazyEx<Dictionary<NavCode, Summary>>
-        var dictType = lazyType.GetGenericArguments()[0];
+        var dictType = RequireBcLookupDictionaryType(lazyType);
         var dict = Activator.CreateInstance(dictType)!;
-        var add = dictType.GetMethod("Add")!;
-        var nameProp = _tSummary!.GetProperty("ObjectName",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var add = RequireBcMethod(dictType, "Add");
+        var nameProp = RequireBcProperty(_tSummary!, "ObjectName");
 
         foreach (var s in summaries)
         {
@@ -632,10 +629,10 @@ public static partial class RecordPatches
         SetProperty(mps, "Permissions", permissions);
 
         SetProperty(mps, "IncludedPermissionSets",
-            BuildIncludeList(_tMetaPermissionSet.GetProperty("IncludedPermissionSets")!.PropertyType,
+            BuildIncludeList(RequireBcProperty(_tMetaPermissionSet, "IncludedPermissionSets").PropertyType,
                 declaration.IncludedPermissionSets));
         SetProperty(mps, "ExcludedPermissionSets",
-            BuildIncludeList(_tMetaPermissionSet.GetProperty("ExcludedPermissionSets")!.PropertyType, null));
+            BuildIncludeList(RequireBcProperty(_tMetaPermissionSet, "ExcludedPermissionSets").PropertyType, null));
 
         return mps;
     }
@@ -693,6 +690,55 @@ public static partial class RecordPatches
         foreach (var (permissionSet, _, _) in EnumerateKnownPermissionSets())
             index.TryAdd(permissionSet.Name, permissionSet.Id);
         return _permissionSetIdByName = index;
+    }
+
+    // ── the reads that used to be guarded only by `!` (#3046) ───────────────────────────
+    //
+    // #3034 converted this file's 56 refusals of the retired convention, but its search shape
+    // was a `throw` of that exception type, and these five reads are not throw sites at
+    // all. `!` is a compiler annotation: it throws nothing, it hands a null onward, and the
+    // NullReferenceException lands at the first USE of that null — where nothing names the
+    // member that moved, and where NavMethodScope_AssertError swallows it and lets AL's
+    // asserterror pass on a read real BC performs fine.
+    //
+    // Each is a reflection resolution against BC's own Ncl / Types assemblies, so
+    // BcShapeGapException.cs's line puts all three on the "the read could not be performed"
+    // side, exactly like the 56.
+
+    /// <summary>
+    /// A property of a BC type this file reads by name. Looks with NonPublic as well as Public
+    /// deliberately: <see cref="SetProperty"/> WRITES these same members with those flags, and
+    /// a read narrower than the write would miss a member the write then finds.
+    /// </summary>
+    private static PropertyInfo RequireBcProperty(Type declaring, string propertyName)
+        => declaring.GetProperty(propertyName,
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+           ?? throw PermissionMetadataBcShapeGap(
+               $"{declaring.Name}.{propertyName}",
+               "property not found — BC's permission-set metadata inventory cannot be populated");
+
+    /// <summary>A method of a BC-shape-derived type this file invokes by name.</summary>
+    private static MethodInfo RequireBcMethod(Type declaring, string methodName)
+        => declaring.GetMethod(methodName)
+           ?? throw PermissionMetadataBcShapeGap(
+               $"{declaring.Name}.{methodName}",
+               "method not found — BC's permission-set metadata inventory cannot be populated");
+
+    /// <summary>
+    /// The dictionary type inside <c>NavAppGroup.permissionSetLookup</c>, which BC declares as
+    /// <c>LazyEx&lt;Dictionary&lt;NavCode, NavAppGroupObjectMetadataSummary&gt;&gt;</c>. Not a
+    /// null read — an IndexOutOfRangeException on a non-generic field type, swallowed by the
+    /// same seam and just as anonymous, so it gets the same treatment.
+    /// </summary>
+    private static Type RequireBcLookupDictionaryType(Type lazyType)
+    {
+        var args = lazyType.GetGenericArguments();
+        if (args.Length != 1)
+            throw PermissionMetadataBcShapeGap(
+                "NavAppGroup.permissionSetLookup",
+                $"is declared as {lazyType.Name}, not the one-argument LazyEx<T> whose T is the lookup dictionary"
+                + " — BC's permission-set metadata inventory cannot be populated");
+        return args[0];
     }
 
     private static void SetProperty(object target, string name, object? value)
