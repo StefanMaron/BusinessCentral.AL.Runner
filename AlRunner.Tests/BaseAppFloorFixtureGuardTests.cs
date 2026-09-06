@@ -1,4 +1,7 @@
+using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -39,10 +42,12 @@ namespace AlRunner.Tests;
 /// allowlist below fails, in the C#-written manifests the rule already covered AND in the
 /// checked-in fixture manifests it did not.
 ///
-/// Matching is on the JSON PROPERTY (<c>"application"</c> followed by a colon), never the
-/// bare word: several files quote <c>"application"</c> in a comment explaining that they
-/// deliberately do NOT declare it, and flagging those would train readers to ignore this
-/// test.
+/// Matching is on the JSON PROPERTY, never the bare word, and never on prose that merely
+/// spells the property: several files quote it in a comment explaining that they deliberately
+/// do NOT declare it, and flagging those would train readers to ignore this test. A raw-text
+/// regex could not draw that line and did flag one (#3064), so a .json file is now read as a
+/// parsed manifest and a .cs file is searched only inside its string literals — see
+/// <see cref="DeclaresBaseApplicationFloor(string, string)"/>.
 /// </summary>
 public sealed class BaseAppFloorFixtureGuardTests
 {
@@ -100,6 +105,99 @@ public sealed class BaseAppFloorFixtureGuardTests
         @"\\?""application\\?""\s*:", RegexOptions.Compiled);
 
     /// <summary>
+    /// True when <paramref name="path"/> DECLARES the Base Application floor.
+    /// </summary>
+    internal static bool DeclaresBaseApplicationFloor(string path) =>
+        DeclaresBaseApplicationFloor(path, File.ReadAllText(path));
+
+    /// <summary>
+    /// #3064 — the same question about content held in memory, dispatched on the file kind.
+    /// A <c>.json</c> file IS a manifest, so the property is read from the parsed document; a
+    /// <c>.cs</c> file only ever REACHES a manifest through a string literal, so only string
+    /// literals are searched.
+    ///
+    /// Before this, both were one raw-text regex over the whole file, which cannot tell a JSON
+    /// property from a comment quoting one. ServerAppVersionBumpTests.cs (PR #2908) failed the
+    /// BC 27.5 and 28.4 legs for a <c>//</c> comment written to record that the file complies
+    /// with this very rule — so the guard punished a file for explaining that it obeyed, and
+    /// the cheapest way back to green was to delete the explanation. The alternative, adding
+    /// the file to <see cref="AllowedSources"/>, would have recorded a violation that does not
+    /// exist, and an allowlist carrying entries for files that never violated anything is one
+    /// a reader stops trusting — which is the mechanism the rule depends on.
+    /// </summary>
+    internal static bool DeclaresBaseApplicationFloor(string fileName, string text) =>
+        Path.GetExtension(fileName).Equals(".json", StringComparison.OrdinalIgnoreCase)
+            ? ManifestDeclaresFloor(text)
+            : CSharpWritesFloor(text);
+
+    /// <summary>
+    /// A manifest declares the floor on exactly the terms the runner reads it. All three
+    /// readers — <c>Dependencies.ReadDependencies</c>, <c>InProcessAppPackager</c> and
+    /// <c>Provisioning</c> — do <c>root.TryGetProperty("application", …)</c> and gate on
+    /// <c>ValueKind == JsonValueKind.String</c> with a non-blank value, so a key of that name
+    /// nested in a <c>dependencies[]</c> entry, or a null one, synthesises no implicit
+    /// Microsoft/Application root and costs nothing. Matching the readers is what makes this a
+    /// guard against the COST rather than against a spelling.
+    ///
+    /// A manifest that will not parse falls back to the raw scan and over-reports. A guard that
+    /// answered "no violation" about content it could not read would be the exact failure this
+    /// class exists to prevent, so the fallback errs toward flagging.
+    /// </summary>
+    private static bool ManifestDeclaresFloor(string text)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            return doc.RootElement.ValueKind == JsonValueKind.Object
+                && doc.RootElement.TryGetProperty("application", out var v)
+                && v.ValueKind == JsonValueKind.String
+                && !string.IsNullOrWhiteSpace(v.GetString());
+        }
+        catch (JsonException)
+        {
+            return ApplicationProperty.IsMatch(text);
+        }
+    }
+
+    /// <summary>
+    /// A C# source writes the floor when the property appears inside a STRING LITERAL, the only
+    /// route by which text in a .cs file can end up in a manifest on disk. Roslyn is what draws
+    /// the line: the sibling guards in this project strip whole-line <c>//</c> comments by hand
+    /// (ScratchDirOwnershipGuardTests, FieldTriggerShapeGapCallSiteTests), which misses a
+    /// trailing comment and a <c>/* */</c> block, and a hand-rolled stripper would in turn have
+    /// to know not to cut at the <c>//</c> inside a URL literal. Tokenising asks the compiler
+    /// instead.
+    ///
+    /// <c>DescendantTokens()</c> does not descend into trivia, so comments — including XML doc
+    /// comments and <c>#if false</c> regions — contribute no tokens at all. Both
+    /// <c>Text</c> (the escaped form a manifest embedded in a C# literal uses,
+    /// <c>\"application\":</c>) and <c>ValueText</c> (the unescaped value) are checked, so
+    /// either spelling counts.
+    /// </summary>
+    private static bool CSharpWritesFloor(string text)
+    {
+        foreach (var token in CSharpSyntaxTree.ParseText(text).GetRoot().DescendantTokens())
+        {
+            if (!IsStringContent(token.Kind())) continue;
+            if (ApplicationProperty.IsMatch(token.Text) || ApplicationProperty.IsMatch(token.ValueText))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>Every token kind whose text is string CONTENT rather than code.</summary>
+    private static bool IsStringContent(SyntaxKind kind) => kind
+        is SyntaxKind.StringLiteralToken
+        or SyntaxKind.Utf8StringLiteralToken
+        or SyntaxKind.SingleLineRawStringLiteralToken
+        or SyntaxKind.MultiLineRawStringLiteralToken
+        or SyntaxKind.Utf8SingleLineRawStringLiteralToken
+        or SyntaxKind.Utf8MultiLineRawStringLiteralToken
+        or SyntaxKind.InterpolatedStringTextToken
+        or SyntaxKind.InterpolatedRawStringEndToken;
+
+    /// <summary>
     /// Checked-in fixture manifests permitted to declare the floor, with the reason. Each
     /// one has the FLOOR ITSELF as its subject: remove it and the fixture stops testing
     /// anything. Paths are relative to AlRunner.Tests/, with '/' separators.
@@ -146,7 +244,7 @@ public sealed class BaseAppFloorFixtureGuardTests
         var offenders = new List<string>();
         foreach (var path in FixtureManifestPaths())
         {
-            if (!ApplicationProperty.IsMatch(File.ReadAllText(path))) continue;
+            if (!DeclaresBaseApplicationFloor(path)) continue;
             var rel = Rel(path);
             if (!AllowedFixtures.ContainsKey(rel)) offenders.Add(rel);
         }
@@ -165,7 +263,7 @@ public sealed class BaseAppFloorFixtureGuardTests
         var offenders = new List<string>();
         foreach (var path in TestSourcePaths())
         {
-            if (!ApplicationProperty.IsMatch(File.ReadAllText(path))) continue;
+            if (!DeclaresBaseApplicationFloor(path)) continue;
             var rel = Rel(path);
             if (!AllowedSources.ContainsKey(rel)) offenders.Add(rel);
         }
@@ -190,14 +288,14 @@ public sealed class BaseAppFloorFixtureGuardTests
         foreach (var (rel, why) in AllowedFixtures)
         {
             var path = Path.Combine(TestsDir, rel.Replace('/', Path.DirectorySeparatorChar));
-            if (!File.Exists(path) || !ApplicationProperty.IsMatch(File.ReadAllText(path)))
+            if (!File.Exists(path) || !DeclaresBaseApplicationFloor(path))
                 stale.Add($"{rel} ({why})");
         }
 
         foreach (var (rel, why) in AllowedSources)
         {
             var path = Path.Combine(TestsDir, rel.Replace('/', Path.DirectorySeparatorChar));
-            if (!File.Exists(path) || !ApplicationProperty.IsMatch(File.ReadAllText(path)))
+            if (!File.Exists(path) || !DeclaresBaseApplicationFloor(path))
                 stale.Add($"{rel} ({why})");
         }
 
@@ -206,4 +304,193 @@ public sealed class BaseAppFloorFixtureGuardTests
             "Delete them — a stale entry silently permits the next fixture that takes the name:\n  "
             + string.Join("\n  ", stale));
     }
+
+    // ── #3064: what counts as DECLARING the floor, versus merely spelling it ──────────────
+    //
+    // These facts drive DeclaresBaseApplicationFloor directly, on synthetic content, because
+    // the two scanning facts above can only ever assert about the sources that happen to be
+    // checked in today — they cannot show what the matcher does with a shape nobody has
+    // written yet.
+    //
+    // The guard scans every .cs file in this project, THIS ONE INCLUDED. So the fixtures below
+    // must never spell the manifest key next to a colon in this source; they compose it from
+    // Key at runtime instead. Spelling it here would make this file an offender of the rule it
+    // enforces, and the only ways out would be adding it to AllowedSources — recording a
+    // violation that does not exist, which is exactly the degradation #3064 warns about — or
+    // deleting the tests.
+
+    private const string Key = "application";
+
+    /// <summary>
+    /// Expands a fixture's placeholders: <c>PROP</c> becomes the quoted manifest key,
+    /// <c>EPROP</c> the backslash-escaped form a manifest embedded in a C# string literal
+    /// uses. EPROP is substituted first, because PROP is a substring of it.
+    /// </summary>
+    private static string Sub(string template) => template
+        .Replace("EPROP", "\\\"" + Key + "\\\"")
+        .Replace("PROP", "\"" + Key + "\"");
+
+    /// <summary>
+    /// Anchors the placeholder trick against reality: <see cref="Sub"/> must produce the exact
+    /// spelling a genuine allowlisted manifest uses, and that manifest must still read as a
+    /// declaration. Without this, every fixture below could agree with a matcher that is wrong
+    /// about what a real app.json looks like.
+    /// </summary>
+    [Fact]
+    public void ThePlaceholderExpansion_MatchesARealAllowlistedManifest()
+    {
+        var real = Path.Combine(TestsDir, "Fixtures", "SubscriberScanAudit", "app.json");
+        Assert.True(File.Exists(real), $"{real} not found — was the fixture renamed?");
+
+        Assert.Contains(Sub("PROP"), File.ReadAllText(real), StringComparison.Ordinal);
+        Assert.True(DeclaresBaseApplicationFloor(real));
+    }
+
+    /// <summary>
+    /// #3064, the reported defect. A source that quotes the property while explaining that it
+    /// deliberately does NOT declare the floor is not a violation. The raw-text scan could not
+    /// tell the two apart, so ServerAppVersionBumpTests.cs (PR #2908) failed the BC 27.5 and
+    /// 28.4 legs for a <c>//</c> comment written to document compliance with this very rule,
+    /// and the cheapest way back to green was to delete the explanation.
+    /// </summary>
+    [Fact]
+    public void AProseCommentQuotingTheProperty_IsNotADeclaration()
+    {
+        var src = Sub(""""
+            public class Fixture
+            {
+                // No PROP: "1.0.0.0" here — the Base Application floor is not the subject.
+                /* Nor PROP: "27.0.0.0" in a block comment. */
+                /// <summary>Nor <c>PROP: "1.0.0.0"</c> in a doc comment.</summary>
+                public string Manifest() => "{ \"id\": \"a\", \"platform\": \"1.0.0.0\" }";
+            }
+            """");
+
+        Assert.False(DeclaresBaseApplicationFloor("Fixture.cs", src),
+            "a comment quoting the property declares no floor: nothing in this source reaches a "
+            + "manifest, so no runner subprocess loads the platform closure because of it.");
+    }
+
+    /// <summary>
+    /// The control that stops the fix above from being a weakening: the plain shape every
+    /// allowlisted source actually uses — a manifest embedded in a C# string literal with the
+    /// quotes escaped — must still read as a declaration. This one is green before AND after,
+    /// which is what makes the RED case believable rather than a matcher that returns false.
+    /// </summary>
+    [Fact]
+    public void AManifestInAStringLiteral_IsADeclaration()
+    {
+        var src = Sub(""""
+            public class Fixture
+            {
+                public string Manifest() => "{ \"id\": \"a\", EPROP: \"1.0.0.0\" }";
+            }
+            """");
+
+        Assert.True(DeclaresBaseApplicationFloor("Fixture.cs", src));
+    }
+
+    /// <summary>
+    /// ProvisionExplicitModesTests.cs's shape: the property is written in one literal and the
+    /// version concatenated on from a variable, so the key and its value never share a token.
+    /// </summary>
+    [Fact]
+    public void AManifestConcatenatedAcrossLiterals_IsADeclaration()
+    {
+        var src = Sub(""""
+            public class Fixture
+            {
+                public string Manifest(string major) => "{ EPROP: \"" + major + ".0.0.0\" }";
+            }
+            """");
+
+        Assert.True(DeclaresBaseApplicationFloor("Fixture.cs", src));
+    }
+
+    /// <summary>A raw string literal carries no escapes, so the key is spelled plainly.</summary>
+    [Fact]
+    public void AManifestInARawStringLiteral_IsADeclaration()
+    {
+        var src = Sub(""""
+            public class Fixture
+            {
+                public string Manifest() => """
+                    { "id": "a", PROP: "1.0.0.0" }
+                    """;
+            }
+            """");
+
+        Assert.True(DeclaresBaseApplicationFloor("Fixture.cs", src));
+    }
+
+    /// <summary>And an interpolated one, where the key sits in interpolated-text tokens.</summary>
+    [Fact]
+    public void AManifestBuiltByInterpolation_IsADeclaration()
+    {
+        var src = Sub(""""
+            public class Fixture
+            {
+                public string Manifest(string v) => $"{{ EPROP: \"{v}\" }}";
+            }
+            """");
+
+        Assert.True(DeclaresBaseApplicationFloor("Fixture.cs", src));
+    }
+
+    /// <summary>A source that writes only the platform floor declares no Base App floor.</summary>
+    [Fact]
+    public void ASourceWritingOnlyThePlatformFloor_IsNotADeclaration()
+    {
+        var src = """"
+            public class Fixture
+            {
+                public string Manifest() => "{ \"id\": \"a\", \"platform\": \"1.0.0.0\" }";
+            }
+            """";
+
+        Assert.False(DeclaresBaseApplicationFloor("Fixture.cs", src));
+    }
+
+    /// <summary>The checked-in-fixture half: a manifest that declares the floor at the root.</summary>
+    [Fact]
+    public void AFixtureManifestDeclaringTheFloor_IsADeclaration() =>
+        Assert.True(DeclaresBaseApplicationFloor("app.json",
+            Sub("""{ "id": "a", "platform": "1.0.0.0", PROP: "1.0.0.0" }""")));
+
+    /// <summary>And one that does not.</summary>
+    [Fact]
+    public void AFixtureManifestWithoutTheFloor_IsNotADeclaration() =>
+        Assert.False(DeclaresBaseApplicationFloor("app.json",
+            """{ "id": "a", "platform": "1.0.0.0", "dependencies": [] }"""));
+
+    /// <summary>
+    /// Nested, not root: all three readers of this property —
+    /// <c>Dependencies.ReadDependencies</c>, <c>InProcessAppPackager</c> and
+    /// <c>Provisioning</c> — call <c>root.TryGetProperty("application", …)</c>, so a key of
+    /// that name inside a <c>dependencies[]</c> entry injects no implicit Microsoft/Application
+    /// root and costs nothing. The raw-text scan called it a violation.
+    /// </summary>
+    [Fact]
+    public void TheKeyNestedInsideAnotherObject_IsNotTheTopLevelFloor() =>
+        Assert.False(DeclaresBaseApplicationFloor("app.json",
+            Sub("""{ "id": "a", "dependencies": [ { "name": "X", PROP: "1.0.0.0" } ] }""")));
+
+    /// <summary>
+    /// Same three readers gate on <c>ValueKind == JsonValueKind.String</c> and a non-blank
+    /// value, so a null floor synthesises no dependency either.
+    /// </summary>
+    [Fact]
+    public void ANullFloor_IsNotADeclaration() =>
+        Assert.False(DeclaresBaseApplicationFloor("app.json", Sub("""{ "id": "a", PROP: null }""")));
+
+    /// <summary>
+    /// A manifest that will not parse must not read as clean. The precision this fix buys comes
+    /// from understanding the file; on input the matcher does not understand, it falls back to
+    /// the raw scan and over-reports, because a guard answering "no violation" about content it
+    /// could not read is the exact failure mode this class exists to prevent.
+    /// </summary>
+    [Fact]
+    public void AnUnparseableManifest_FallsBackToTheRawScan_RatherThanReadingClean() =>
+        Assert.True(DeclaresBaseApplicationFloor("app.json",
+            Sub("""{ "id": "a", PROP: "1.0.0.0", }}}""")));
 }

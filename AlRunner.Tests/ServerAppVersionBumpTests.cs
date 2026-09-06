@@ -34,10 +34,11 @@ public sealed class ServerAppVersionBumpTests
         var root = TestScratch.Dir("al-runner-server-versionbump-" + suffix);
         Directory.CreateDirectory(root);
 
-        // No Base Application floor is declared below: it is not the subject here and costs
-        // ~70 s cold per invocation (.claude/rules/no-base-app-in-csharp-tests.md). Written
-        // without the literal property spelling because BaseAppFloorFixtureGuardTests scans
-        // this file as raw text and cannot tell a comment from a manifest key (see #3064).
+        // No "application": below — the Base Application floor is not the subject here and
+        // costs ~70 s cold per invocation (.claude/rules/no-base-app-in-csharp-tests.md).
+        // Spelling the property in prose is safe again as of #3064: the guard reads a .cs
+        // file's string literals, not its comments, so this sentence is also the end-to-end
+        // witness for that fix — reverting the guard to a raw-text scan turns this file red.
         File.WriteAllText(Path.Combine(root, "app.json"), $$"""
         {
           "id": "{{appId}}",
