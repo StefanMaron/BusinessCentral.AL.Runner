@@ -225,6 +225,94 @@ public static partial class RecordPatches
     private static string[]? _lastParsedSymbols;
     private static IReadOnlyList<NavCA.SyntaxNode> _lastParsedObjects = Array.Empty<NavCA.SyntaxNode>();
 
+    // #2588: a keyed cache BEHIND the single-slot memo above, so a tree survives
+    // ResetForReload and a --watch save re-parses only the files that actually moved.
+    //
+    // The single-slot memo solves "eight extractors, one file" (#1903). It cannot solve
+    // "one file edited, N-1 unchanged", because ResetForReload clears _sourceDirs and every
+    // parsed dictionary and the AddSourceDirs that follows walks the whole tree again — so
+    // every file misses the one slot and is re-parsed to service a one-file edit.
+    //
+    // Keyed on the CONTENT HASH, not the path and not the mtime. A git checkout, a formatter
+    // no-op or an editor autosave rewrites identical bytes, and none of those is a reason to
+    // re-parse; the same decision RadWorkspace.HashSourceTree already makes. The active
+    // preprocessor symbols are part of the key for the reason the single-slot memo documents
+    // above: #1900 was a parser that silently stopped seeing --define symbols, and a cache
+    // keyed on content alone would reintroduce it through a different door.
+    //
+    // Nothing here needs invalidating. The key IS the content, so a stale entry cannot be
+    // served — an edited file simply has a different key, and the entry for its previous
+    // content is unreachable rather than wrong. That is what makes this safe to survive a
+    // reload when the parsed dictionaries deliberately do not.
+    //
+    // Bounded by the total SOURCE bytes it has admitted, evicted in insertion order. A
+    // syntax tree is much larger than the text it came from, so the budget is a proxy, not
+    // an accounting — see DefaultTreeCacheSourceBudgetBytes for the measured ratio behind
+    // the default. AL_RUNNER_PARSE_TREE_CACHE_BYTES overrides it; 0 disables the cache
+    // entirely, which is the control the perf measurement uses.
+    /// <summary>
+    /// (content hash, active preprocessor symbols) — the pair that determines a parse.
+    /// Returns null when the cache is disabled, so a disabled cache costs no hashing.
+    /// </summary>
+    private static string? TreeCacheKey(string text, string[] symbols)
+    {
+        if (TreeCacheBudgetBytes() == 0) return null;
+        var hash = Convert.ToHexString(
+            System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(text)));
+        return symbols.Length == 0 ? hash : hash + "|" + string.Join(",", symbols);
+    }
+
+    private readonly record struct TreeCacheEntry(IReadOnlyList<NavCA.SyntaxNode> Objects, int SourceLength);
+
+    private static readonly Dictionary<string, TreeCacheEntry> _treeCache = new(StringComparer.Ordinal);
+    private static readonly Queue<string> _treeCacheOrder = new();
+    private static long _treeCacheSourceBytes;
+
+    /// <summary>
+    /// Number of times <see cref="ParseAlObjects"/> served the keyed tree cache instead of
+    /// building a tree. Exposed for the same reason <see cref="ParseObjectTextCallCount"/>
+    /// is: the proving test asserts counts, never durations.
+    /// </summary>
+    internal static int ParseTreeCacheHitCount { get; private set; }
+
+    /// <summary>Drop the keyed tree cache. Test-only seam; the cache is content-keyed and
+    /// never needs clearing for correctness.</summary>
+    internal static void ClearParseTreeCacheForTests()
+    {
+        _treeCache.Clear();
+        _treeCacheOrder.Clear();
+        _treeCacheSourceBytes = 0;
+    }
+
+    private const long DefaultTreeCacheSourceBudgetBytes = 8L * 1024 * 1024;
+
+    private static long TreeCacheBudgetBytes()
+    {
+        var raw = Environment.GetEnvironmentVariable("AL_RUNNER_PARSE_TREE_CACHE_BYTES");
+        return long.TryParse(raw, out var v) && v >= 0 ? v : DefaultTreeCacheSourceBudgetBytes;
+    }
+
+    private static void AdmitToTreeCache(string key, string text, IReadOnlyList<NavCA.SyntaxNode> objects)
+    {
+        var budget = TreeCacheBudgetBytes();
+        if (budget == 0) return;
+        if (text.Length > budget) return;   // one file larger than the whole budget
+
+        if (!_treeCache.TryAdd(key, new TreeCacheEntry(objects, text.Length))) return;
+        _treeCacheOrder.Enqueue(key);
+        _treeCacheSourceBytes += text.Length;
+
+        // Insertion-order eviction. The entry just admitted is never the one evicted, so a
+        // budget smaller than one file degrades to "cache the newest file" rather than to an
+        // empty cache that still pays the bookkeeping.
+        while (_treeCacheSourceBytes > budget && _treeCacheOrder.Count > 1)
+        {
+            var oldest = _treeCacheOrder.Dequeue();
+            if (_treeCache.Remove(oldest, out var evicted))
+                _treeCacheSourceBytes -= evicted.SourceLength;
+        }
+    }
+
     /// <summary>
     /// Number of times <see cref="ParseAlObjects"/> has actually built a syntax tree (a real
     /// <c>SyntaxTree.ParseObjectText</c> call), as opposed to serving the single-slot memo
@@ -257,6 +345,19 @@ public static partial class RecordPatches
             return _lastParsedObjects;
         }
 
+        // #2588: the keyed cache. Only consulted on a single-slot MISS, so the eight
+        // extractors running back-to-back over one file still cost one dictionary probe
+        // rather than eight hashes of the same text.
+        var cacheKey = TreeCacheKey(text, symbols);
+        if (cacheKey != null && _treeCache.TryGetValue(cacheKey, out var cached))
+        {
+            ParseTreeCacheHitCount++;
+            _lastParsedText = text;
+            _lastParsedSymbols = symbols;
+            _lastParsedObjects = cached.Objects;
+            return cached.Objects;
+        }
+
         try
         {
             ParseObjectTextCallCount++;
@@ -268,6 +369,7 @@ public static partial class RecordPatches
             _lastParsedText = text;
             _lastParsedSymbols = symbols;
             _lastParsedObjects = objects;
+            if (cacheKey != null) AdmitToTreeCache(cacheKey, text, objects);
             return objects;
         }
         catch
