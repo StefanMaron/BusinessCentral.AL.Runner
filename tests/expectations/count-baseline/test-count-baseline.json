@@ -33,6 +33,7 @@
         "navapp-moduleinfo-dep": { "tests": 0 },
         "navapp-moduleinfo-main": { "tests": 10 },
         "object-metadata-system-table": { "tests": 4 },
+        "object-system-table": { "tests": 5 },
         "page-enum-control-modal": { "tests": 4 },
         "pageext-action-dispatch": { "tests": 6 },
         "precompiled-table-relation": { "tests": 6 },
