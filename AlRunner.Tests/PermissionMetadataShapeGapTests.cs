@@ -189,6 +189,107 @@ public sealed class PermissionMetadataShapeGapTests
         "RecordPatches.PermissionMetadataPopulator.cs",
     };
 
+    // ══ 6. The three factories, and what AL can do with what they raise: nothing ══════════
+
+    public static TheoryData<string, string> Factories() => new()
+    {
+        { "AggregatePermissionSetBcShapeGap", "Aggregate Permission Set (virtual table 2000000167)" },
+        { "MetadataPermissionSetBcShapeGap",  "Metadata Permission Set (virtual table 2000000250)" },
+        { "PermissionMetadataBcShapeGap",     "Permission metadata (NavAppGroup permission-set inventory)" },
+    };
+
+    [Theory]
+    [MemberData(nameof(Factories))]
+    public void EachFactory_NamesItsSurfaceTheMemberAndTheShapeGapDoc(string factory, string surface)
+    {
+        var ex = Build(factory, "NavAppGroup.permissionSetLookup", "field not found — probe");
+
+        Assert.Equal(surface, ex.Surface);
+        Assert.Equal("NavAppGroup.permissionSetLookup", ex.Member);
+        Assert.StartsWith("bc-shape-gap: ", ex.Message, StringComparison.Ordinal);
+        Assert.Contains(surface, ex.Message, StringComparison.Ordinal);
+        Assert.Contains("NavAppGroup.permissionSetLookup", ex.Message, StringComparison.Ordinal);
+        // NOT docs/scope.md: a shape gap is not a scope claim.
+        Assert.EndsWith(" — see docs/limitations.md#bc-shape-gaps", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("docs/scope.md", ex.Message, StringComparison.Ordinal);
+    }
+
+    // The absorption defence: none of these may be recovered as an out-of-scope signal, so no
+    // expect-oos entry can ever declare a BC-layout regression on these tables as expected.
+    [Theory]
+    [MemberData(nameof(Factories))]
+    public void NeitherTheReporterNorTheManifest_MistakesOneForAnOutOfScopeRefusal(string factory, string surface)
+    {
+        var ex = Build(factory, "MetaPermissionSet.Access", "property not found — probe");
+
+        Assert.False(OutOfScopeMessage.TryParse(ex.Message, out _));
+        Assert.Null(OutOfScopeMessage.FromException(ex));
+        Assert.NotNull(BcShapeGapException.Find(ex));
+        _ = surface;
+    }
+
+    // ── The AL seams. This is the behaviour change the conversion is FOR. ──
+    // Before it these sites raised InvalidOperationException, which NavMethodScope_AssertError
+    // catches — so `asserterror <read of one of these tables>` passed while real BC, which reads
+    // the table fine, would have failed it.
+
+    [Theory]
+    [MemberData(nameof(Factories))]
+    public void AssertError_TearsThrough_ForEachPermissionSurface(string factory, string surface)
+    {
+        var ex = Assert.Throws<BcShapeGapException>(() => BcRuntime.NavMethodScope_AssertError(
+            null!, () => throw Build(factory, "NavAppGroup.BaseGroup", "static field not found — probe")));
+
+        Assert.Equal(surface, ex.Surface);
+    }
+
+    [Theory]
+    [MemberData(nameof(Factories))]
+    public void TryFunction_TearsThrough_ForEachPermissionSurface(string factory, string surface)
+    {
+        var ex = Assert.Throws<BcShapeGapException>(() => BcRuntime.NavApplicationObjectBase_TryInvoke(
+            null, () => throw Build(factory, "NavCode(int, string)", "constructor not found — probe")));
+
+        Assert.Equal(surface, ex.Surface);
+    }
+
+    // ── CONTROL ARMS ──
+    // Without these, "tears through" would be satisfied by seams that trapped nothing at all,
+    // and by an assertion that merely discriminated on exception type.
+
+    [Fact]
+    public void BothSeams_StillTrapAPermanentRefusal_SoTearThroughIsNotVacuous()
+    {
+        Assert.False(BcRuntime.NavApplicationObjectBase_TryInvoke(
+            null, () => throw new RunnerOutOfScopeException(
+                "NavEmail.Send", "email-smtp — no SMTP transport in the runner", "email")));
+
+        // asserterror returning normally IS its pass signal.
+        BcRuntime.NavMethodScope_AssertError(null!, () => throw new RunnerOutOfScopeException(
+            "NavEmail.Send", "email-smtp — no SMTP transport in the runner", "email"));
+    }
+
+    // The three refusals in this slice that were NOT converted keep the OLD contract, and that
+    // is the point of leaving them: "data access has no in-memory provider" is an answer about
+    // the RUNNER's own store wiring, so an expect-oos entry may still absorb it.
+    [Fact]
+    public void TheUnconvertedVirtualTableRefusals_AreStillAbsorbableOutOfScopeSignals()
+    {
+        var refusal = RecordPatches.MetadataPermissionSetShapeGap("data access has no in-memory provider");
+
+        Assert.IsType<RunnerOutOfScopeException>(refusal);
+        Assert.Null(BcShapeGapException.Find(refusal));
+        Assert.NotNull(OutOfScopeMessage.FromException(refusal));
+        Assert.StartsWith("not-yet-implemented", refusal.Reason, StringComparison.Ordinal);
+    }
+
+    private static BcShapeGapException Build(string factory, string member, string detail)
+    {
+        var m = typeof(RecordPatches).GetMethod(factory, BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException($"test setup: RecordPatches.{factory} not found");
+        return (BcShapeGapException)m.Invoke(null, new object?[] { member, detail })!;
+    }
+
     // ══ Plumbing ═════════════════════════════════════════════════════════════════════════
 
     private static object? Invoke(string name, params object?[] args)

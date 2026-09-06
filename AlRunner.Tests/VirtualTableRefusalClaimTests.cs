@@ -290,7 +290,13 @@ public sealed class VirtualTableRefusalClaimTests
         var total = CoveredFiles.Concat(SiblingFiles).Sum(file =>
         {
             var src = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Patches", file));
-            return Regex.Matches(src, @"throw (RecordPatches\.)?[A-Za-z]+ShapeGap\(").Count;
+            // The (?<!Bc) is load-bearing. #2994 added a SECOND convention whose factories also
+            // end in "ShapeGap" — AggregatePermissionSetBcShapeGap and friends — but those return
+            // BcShapeGapException, a different type with a different contract (it tears through
+            // asserterror and no expect-oos entry can absorb it). Counting both together would
+            // make this number mean nothing. This assertion is about the RunnerOutOfScopeException
+            // refusals #2945 corrected, so a *BcShapeGap( call is deliberately not one of them.
+            return Regex.Matches(src, @"throw (RecordPatches\.)?[A-Za-z]+(?<!Bc)ShapeGap\(").Count;
         });
 
         // 51 in the sixteen populators + 3 in RecordPatches.cs's dispatch chain + 4 in
