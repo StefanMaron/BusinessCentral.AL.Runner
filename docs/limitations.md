@@ -1281,6 +1281,16 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   [#3230](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3230). `Host Name`
   reports the machine the runner is on, the same host-derived answer BC's `DnsHelper.HostName`
   gives on a tier.
+
+  A third column is answered but should be read as a constant rather than as an observation:
+  **`Login Type` always reports `Windows`.** BC computes it as a direct `(int)` cast of
+  `session.Authenticator.AuthenticationMethod`, and the runner copies that cast. The skeleton
+  `NavUserAuthentication` is built with `RuntimeHelpers.GetUninitializedObject`
+  (`AlRunner/BcRuntime.cs`), so its `AuthenticationMethod` backing field stays at 0 — and
+  `NavClientCredentialType` runs `None = -1, Windows = 0, …`, so 0 is `Windows`, not `None`.
+  The populator's "cannot answer" guard (`ordinal < 0`) therefore never fires. There is no
+  authentication in the runner to observe, so this is a fixed skeleton artifact and not a
+  statement about how the session authenticated.
 - **FilterGroup** — `Rec.FilterGroup(n)` has no effect; filters always apply to group 0.
 - **Query aggregation** — a query column with `Method = Sum`/`Count`/`Average`/`Min`/`Max`
   does not aggregate or group rows; it silently returns each row's own unaggregated value.

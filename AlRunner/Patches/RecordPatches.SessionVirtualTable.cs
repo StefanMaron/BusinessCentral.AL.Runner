@@ -67,7 +67,15 @@
 //                      instant recorded at session construction IS that view.
 //     Login Type     ← BC's own expression, reproduced: the direct (int) cast of
 //                      session.Authenticator.AuthenticationMethod into field 18's option.
-//                      Guarded — see BuildSessionValue.
+//                      Guarded — see BuildSessionValue. Read it as a CONSTANT, not as an
+//                      observation: the skeleton NavUserAuthentication is built with
+//                      GetUninitializedObject (BcRuntime), so AuthenticationMethod's backing
+//                      field stays 0, and NavClientCredentialType runs None = -1, Windows = 0
+//                      — so 0 renders as Windows and the ordinal < 0 guard never fires. There
+//                      is no authentication here to observe. Recorded in docs/limitations.md
+//                      alongside Database Name and Application Name rather than presented as
+//                      an answered column, because a reader cannot tell the difference from
+//                      the row.
 //     Host Name      ← the machine hosting the session, which is what BC's DnsHelper.HostName
 //                      reports on a tier. Host-derived, exactly like the Time Zone provider's
 //                      ids, so the VALUE is a property of the machine and no test may assert
