@@ -65,9 +65,17 @@ public sealed class DependencyMetadataMemoInvalidationTests : IDisposable
     }
 
     // Ids process-wide unique among AlRunner.Tests statics (_bcAppPaths and both memos are
-    // process-global and nothing in the test host unregisters an .app), and outside every
-    // neighbouring file's block: DependencyPageMetadataXmlTests owns 881234xx and
-    // DependencyReportProcessingOnlyTests owns 881236xx, so this file uses 881235xx.
+    // process-global and nothing in the test host unregisters an .app).
+    //
+    // The block boundaries are NOT as tidy as an earlier version of this comment claimed
+    // (#2888): DependencyPageMetadataXmlTests spans 881234xx AND 881235xx (88123501-503,
+    // 88123520-521, 88123593-599), so this file does not own 881235xx — it owns the five
+    // literals below, which are disjoint from every one of those. Verified, and there is no
+    // live collision; the correction is here because a wrong statement about shared
+    // process-global state is exactly the kind of unchecked claim that produced the memo bug
+    // this file tests. DependencyReportProcessingOnlyTests owns 881236xx,
+    // TableRelationWhereFieldLinkTests 881237xx, BcAppRegistrationEpochInvalidationTests
+    // 881238xx.
     private const int UnrelatedPageId = 88123510;
     private const int LatePageId = 88123511;
     private const int ReloadPageId = 88123512;

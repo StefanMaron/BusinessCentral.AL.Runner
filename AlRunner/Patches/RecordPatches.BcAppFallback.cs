@@ -211,6 +211,15 @@ public static partial class RecordPatches
         // The explicit call in ResetForNewBundleReload stays — it also covers
         // AlReportMetadataRegistry.Clear(), this memo's OTHER input, which is not derived from
         // _bcAppPaths at all.
+        //
+        // The PAGE-side twin of this instance — EnsureRealPageMetadata's _pagesWithRealMetadata
+        // / _pagesRealMetadataFailed plus the _metaFormCache entry a failed load leaves behind
+        // — is deliberately NOT cleared here, and is tracked in #3011. Same asymmetry (shrink
+        // covered by ResetPageMetadataForReload, grow not), but it is latent rather than live:
+        // every EnsureRealPageMetadata caller is on the test-execution path, which runs after
+        // registration completes. And unlike this one line, the fix is not free — clearing
+        // _metaFormCache once per registered .app has a real blast radius, and #1957 requires
+        // the two sets and the NCLMetaForm instances they describe to be discarded together.
         NavReportSync.ResetMetadataCache();
         // Bumped LAST, and unconditionally: every cache keyed on the epoch must observe a
         // value it has not built against, and everything above must already be dropped when
