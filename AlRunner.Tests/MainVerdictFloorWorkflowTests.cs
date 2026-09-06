@@ -70,7 +70,7 @@ public sealed class MainVerdictFloorWorkflowTests
 
     private const string Floor = "main-verdict-floor.yml";
     private const string Gating = "test-matrix.yml";
-    private const string RequiredCheckJobName = "All BC versions passed";
+    private const string RequiredCheckJobName = "BC test matrix passed";
 
     /// <summary>
     /// Longest `main` Test Matrix run observed in the 100-run sample above, in minutes. The
@@ -131,7 +131,7 @@ public sealed class MainVerdictFloorWorkflowTests
     [Fact]
     public void Floor_NeverDeclaresTheRequiredAggregateCheck()
     {
-        // `All BC versions passed` is one of main's two required status checks. A second
+        // `BC test matrix passed` is one of main's two required status checks. A second
         // workflow reporting that context on the same head SHA makes `gh pr checks`
         // ambiguous about which run a verdict came from — the stale-verdict trap in
         // ci-verdicts.md section 2. Matches the job-name FORM so the file's comments may

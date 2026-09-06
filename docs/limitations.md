@@ -1039,7 +1039,7 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 <a id="runtime-shape-gaps"></a>
 
 - **Runtime shape gaps outside the virtual tables — the runner refuses rather than answering
-  a shape it cannot produce.** 12 further guards raise `RunnerOutOfScopeException` with the
+  a shape it cannot produce.** 13 further guards raise `RunnerOutOfScopeException` with the
   reason anchor `not-yet-implemented`, so an AL `[TryFunction]` cannot absorb one into `false`
   ([#2966](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2966)). The number
   counts refusal **call sites**, which is the rule the original nine were counted under; it is
@@ -1072,6 +1072,23 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
     each disagreement are the runner's own, so "which BC version produced this?" has no answer.
     Both used to leave `WireFieldTriggerHandlers` reporting the table as wired, so the trigger
     never fired and AL depending on it passed anyway.
+  - a **column of one of the runner's seeded system-table rows** that the table's own metatable
+    does not state, or that resolves to a value slot outside the row
+    (`AlRunner/Patches/SeededRowColumns.cs`,
+    [#3015](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3015)). Company
+    (2000000006), Published Application (2000000206) and Installed Application (2000000212) are
+    rows a real service tier writes before any AL runs — at company-create and publish time —
+    and the runner writes them from its own state instead. It used to hard-check exactly one
+    column per table and skip the rest, so a renamed column left BC's own default on a row that
+    was still inserted and still found by its key. `Runtime Package ID` is the one that matters
+    most, because it exists to be compared:
+    `Reten. Pol. Allowed Tbl. Impl.ModuleOwnsTable` tests
+    `AllObj."App Runtime Package ID" <> PublishedApplication."Runtime Package ID"`, and at its
+    default that declines for every app while BC logs a warning rather than raising. This is a
+    **run-level abort during install seeding**, not an attributable single-test failure —
+    seeding runs once per app group before any test does. Measured on every BC artifact cached
+    at the time (27.0, 27.3, 27.5, 28.1, 28.2, 28.4), all four tables state every column the
+    seeders ask for, so no supported version reaches this refusal.
 
   Real BC does all of these, so each is the runner failing to keep up rather than a surface BC
   also lacks — which is the test for whether a refusal may cite `docs/scope.md` at all.

@@ -225,6 +225,13 @@ that table is measurably empty, so a genuine bug against a populated table is ne
 as missing data. With `--test-data` already on, the line says instead why the table is still
 empty (refused, not in this backup, or empty in it).
 
+A failure reported as `The TestPage is not open.` gets the same treatment. That is BC's own
+message for a page whose row-load trigger raised an AL error — the page is torn down and the
+raised error's text never reaches AL, on a real service tier too — so the message names the
+symptom and not the cause. The runner prints the error it was reported in place of on a one-line
+`[testpage]` note under the failure. What AL sees is unchanged: `asserterror` and
+`GetLastErrorText` still read only BC's message.
+
 Environment variables: `AL_RUNNER_VERBOSE=1`, `AL_RUNNER_SHOW_PASS=1`, `AL_RUNNER_TRACE_NRE=1` (logs every first-chance NRE before AL `asserterror` swallows it), `AL_RUNNER_BCBAK` (path to the `bcbak` backup reader used by `--test-data`), `AL_RUNNER_ARTIFACTS_ROOT` (see below).
 
 `AL_RUNNER_ARTIFACTS_ROOT=DIR` moves the BC artifact cache off the home directory — useful when it has to sit on a different volume, or on a mounted path on a CI runner. `DIR` is the root the per-version subdirectories live under (default `~/.local/share/al-runner/artifacts`), so `--bc-version`, latest-in-cache defaulting and provisioning keep working. That is what makes it different from `--artifact-path`, which pins one version's engine directory and skips version selection entirely. A relative value is resolved against the current directory. The build reads it too, so a relocated cache stays buildable from source. Moving `$HOME` instead would relocate every other runner path (`~/.cache/al-runner`, `~/.bcartifacts.cache`, `~/.local/share/al-runner/symbols`) along with it.

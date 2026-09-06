@@ -32,6 +32,11 @@ A corpus test green on a real service tier beats, in this order, every one of:
 3. Microsoft's documentation,
 4. the name of a BC codeunit, or a comment naming one.
 
+**One qualifier on that ranking**, and it is not a footnote: the tier is patched. On a
+surface an unfaithful patch covers, a corpus result measures the patch, not BC — read
+"The tier is patched, so check before quoting it on a UI surface" below before resting a
+UI-side claim on a corpus result.
+
 ## The two incidents this rule is made of
 
 **#2144 — the container differential lost, and a self-inflicted failure got classified
@@ -64,6 +69,22 @@ runner does not do it yet, and `Issue` tracks the work. (An earlier version of t
 never to declare a known gap for a test green upstream; that was wrong and contradicted
 `docs/expectations.md`.) An entry is honest when it says that. It is dishonest when it
 converts a live question, or a self-inflicted regression, into settled classification.
+
+## The tier is patched, so check before quoting it on a UI surface
+
+The corpus CI boots a Linux BC image that installs ~30 numbered patches into BC's own
+assemblies at startup. Most are faithful. One that is not turns a corpus result on that
+surface into a measurement of the patch, and the green direction is the one nobody notices —
+a test asserting "nothing happens" records the patch as BC behaviour. That is not
+hypothetical: Patch #21 no-opped `NavOpenTaskPageAction.ShowForm` and blinded every route
+that opens a page through an action (#2986). It has since been fixed and the surface
+re-measured open on all eight legs, so it is a verdict again.
+
+Before resting a UI-side claim on a corpus result, read `src/StartupHook/StartupHook.cs` in
+`StefanMaron/MsDyn365Bc.On.Linux` for the surface you are asking about.
+`docs/upstream-corpus-workflow.md` § "What the corpus tier can and cannot adjudicate" has the
+worked case, what remains out of reach, and the `SingleInstance`-probe technique for an
+observable a rollback would otherwise destroy.
 
 ## When no verdict is available
 

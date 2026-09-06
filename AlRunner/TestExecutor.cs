@@ -97,10 +97,11 @@ public sealed record TestResult(string Codeunit, string Method, TestOutcome Outc
                                 // zero AL locals" is represented (AlValueCapture.Collect()
                                 // never returns null).
                                 IReadOnlyList<Infrastructure.AlCapturedValue>? CapturedValues = null,
-                                // #2240: an ADDITIONAL one-line explanation shown next to the
-                                // failure, never instead of it. Non-null only when the runner has
-                                // EVIDENCE that the failure is about a table with no rows in it —
-                                // see Infrastructure.MissingTestDataDiagnosis for why a text
+                                // #2240 / #3189: an ADDITIONAL one-line explanation shown next to
+                                // the failure, never instead of it. Non-null only when the runner
+                                // has typed EVIDENCE — a table with no rows in it, or the AL error
+                                // a TestPage teardown was reported in place of. See
+                                // Infrastructure.FailureDiagnosis, and each half for why a text
                                 // pattern alone is not evidence. Message, FullException,
                                 // AlCallStack, Outcome and Exception are all untouched by it.
                                 string? Diagnosis = null,
@@ -717,7 +718,7 @@ public sealed class TestExecutor
                 var ctorResult = new TestResult(t.Name, "<ctor>", TestOutcome.Error,
                     Unwrap(ex).Message, ex.ToString(), TimeSpan.Zero,
                     Exception: Unwrap(ex), InsideTestProc: false,
-                    Diagnosis: AlRunner.Infrastructure.MissingTestDataDiagnosis.Explain(Unwrap(ex)));
+                    Diagnosis: AlRunner.Infrastructure.FailureDiagnosis.Explain(Unwrap(ex)));
                 results.Add(ctorResult);
                 onTestComplete?.Invoke(ctorResult);
                 continue;
@@ -807,7 +808,7 @@ public sealed class TestExecutor
                             var ctorResult = new TestResult(t.Name, m.Name, TestOutcome.Error,
                                 Unwrap(ex).Message, ex.ToString(), TimeSpan.Zero,
                                 null, displayName, Unwrap(ex), InsideTestProc: false,
-                                Diagnosis: AlRunner.Infrastructure.MissingTestDataDiagnosis.Explain(Unwrap(ex)));
+                                Diagnosis: AlRunner.Infrastructure.FailureDiagnosis.Explain(Unwrap(ex)));
                             results.Add(ctorResult);
                             onTestComplete?.Invoke(ctorResult);
                             continue;
@@ -1342,7 +1343,7 @@ public sealed class TestExecutor
                 // the codeunit/test boundary that follows restores the install baseline over it,
                 // so a diagnosis derived after the fact would describe a different database than
                 // the one the test actually failed against.
-                Diagnosis: AlRunner.Infrastructure.MissingTestDataDiagnosis.Explain(inner));
+                Diagnosis: AlRunner.Infrastructure.FailureDiagnosis.Explain(inner));
         }
         catch (Exception ex)
         {
@@ -1352,7 +1353,7 @@ public sealed class TestExecutor
             return new TestResult(codeunit, m.Name, TestOutcome.Error,
                 ex.Message, ex.ToString(), sw.Elapsed, alStack, displayName,
                 ex,
-                Diagnosis: AlRunner.Infrastructure.MissingTestDataDiagnosis.Explain(ex));
+                Diagnosis: AlRunner.Infrastructure.FailureDiagnosis.Explain(ex));
         }
         finally
         {

@@ -3,9 +3,11 @@ name: Require Tests
 # This job used to live in pr-check.yml. It was moved out for #2726, and the move
 # is the whole fix -- the job body below is unchanged.
 #
-# "Tests updated" is one of the two contexts the `main` branch ruleset requires
-# (the others are "All BC versions passed" from test-matrix.yml, and one per job
-# in pr-gate.yml since #3165). pr-check.yml used to trigger on 'edited',
+# "Tests updated" is one of the contexts the `main` branch ruleset requires -- ten
+# of them once #3141 and #3165 are both reflected in the ruleset: this one,
+# "BC test matrix passed" from test-matrix.yml, and one per job in pr-gate.yml.
+# (It said "one of the two" until #3141; that was true when the other was
+# "All BC versions passed" and nothing else gated.) pr-check.yml used to trigger on 'edited',
 # 'labeled' and 'unlabeled' -- event types that fire
 # WITHOUT changing the head SHA -- while also declaring cancel-in-progress: true.
 # Editing a PR body, or labelling a PR right after opening it (both routine, both

@@ -40,7 +40,7 @@ name: MS bucket (nightly)
 # ─── IT GATES NOTHING ───────────────────────────────────────────────────────────────────────
 #
 # No push, no pull_request. Not a required check, not in any branch ruleset. `main`'s gate is
-# and stays "All BC versions passed" (test-matrix.yml). Nothing here should ever be "made
+# and stays "BC test matrix passed" (test-matrix.yml). Nothing here should ever be "made
 # green" by working around it — if it is red for a reason that is NOT the known blocker, that
 # is the signal, and the fix belongs where the defect is.
 #

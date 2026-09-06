@@ -212,8 +212,14 @@ nowhere** — bring the closure list back for approval.
 
 Merge when **all of**:
 
-1. All 8 required legs green **on the PR's current head SHA**. `gh pr checks` reports the
-   newest *completed* run, which can predate the last push — confirm the SHA.
+1. Every required context green **on the PR's current head SHA**. `gh pr checks` reports
+   the newest *completed* run, which can predate the last push — confirm the SHA.
+   **Do not count legs.** Since #3141 a pull request runs three BC legs
+   (`.github/pr-bc-versions.txt`: 27.0, 27.5, 28.4), not eight, so a bar phrased as "all 8
+   legs green" would refuse a legitimate PR or send you hunting for legs that do not exist.
+   The legs are not required contexts anyway — the aggregate `BC test matrix passed` is, and
+   it fails when any leg of whatever matrix ran fails. The other five versions run on
+   `main` via `main-verdict-floor.yml`, not on the PR.
 2. `git merge-tree --write-tree --messages origin/main origin/<branch>` is clean.
    `mergeStateStatus: CLEAN` only covers textual conflicts.
 3. The proving test exists. If the claim is about BC's behavior, that test is upstream and

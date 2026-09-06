@@ -995,9 +995,13 @@ public sealed class FieldTriggerShapeGapCallSiteTests : IDisposable
 
         var total = runnerShapeGapSites + installGapSites;
 
-        Assert.Equal(9, runnerShapeGapSites);
+        // 9 -> 10 / 12 -> 13 (#3015): SeededRowColumns.ThrowIfAnyColumnCouldNotBeWritten. One
+        // call site, not three, because the Company, Published Application and Installed
+        // Application seeders all build their rows through it. Both numbers were READ OUT of
+        // this test's own failure message, not arrived at by arithmetic.
+        Assert.Equal(10, runnerShapeGapSites);
         Assert.Equal(3, installGapSites);
-        Assert.Equal(12, total);
+        Assert.Equal(13, total);
 
         var limitations = File.ReadAllText(Path.Combine(RepoRoot, "docs", "limitations.md"));
         Assert.Contains($"{total} further guards raise `RunnerOutOfScopeException`", limitations,

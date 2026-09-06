@@ -1,0 +1,24 @@
+{
+  "id": "0a5c9f31-6d24-4f8b-9a17-2c8b4e77d310",
+  "name": "Runner Tests Fixture - Masked Trigger Error Diagnosis",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3189: an AL error a page trigger raised is reported to AL as BC's own \"The TestPage is not open.\", and the runner must still name the error it converted.",
+  "description": "Runner-mechanism fixture. The AL-visible message is BC's, measured upstream (#2656), and this fixture pins that it does not change. What it proves is the runner's OWN reporting: the converted error is named in the failure's diagnosis line, and only when there is one to name. Declares no application floor: everything it needs is its own.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 70540,
+      "to": 70559
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

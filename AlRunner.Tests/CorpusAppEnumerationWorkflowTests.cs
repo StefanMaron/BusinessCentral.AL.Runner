@@ -17,7 +17,7 @@
 // #2984: every one of them fails against the pre-#2984 workflow.
 //
 // What is NOT asserted here, deliberately: which BC legs run, and what reports the two
-// required contexts. `main`'s ruleset requires exactly `All BC versions passed` and
+// required contexts. `main`'s ruleset requires exactly `BC test matrix passed` and
 // `Tests updated`; the per-leg `(required)` text is part of a job's own NAME and makes no
 // leg a required context. AlRunner.Tests/BcLegRerunWorkflowTests.cs owns that property and
 // nothing here may duplicate or weaken it.

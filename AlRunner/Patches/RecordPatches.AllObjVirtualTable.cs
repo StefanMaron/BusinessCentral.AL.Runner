@@ -87,6 +87,10 @@ public static partial class RecordPatches
     private const int AllObjFieldAppRuntimePackageId = 61;
 
     private static bool _aovReflectionReady;
+    // #3015 — AllObj's own columns, checked once per process. Separate from
+    // _aovReflectionReady on purpose: that flag guards work driven by ANY populator's
+    // metatable, this one guards a question that can only be asked of AllObj's.
+    private static bool _aovColumnsChecked;
     // Shared by AllObj, Report Metadata and Report Layout List; see SystemPopulatedValues.
     private static SystemPopulatedValues? _aovSystemValues;
     private static ConstructorInfo? _aovCtorReadOnlyBuffer;    // ReadOnlyRecordBuffer(NCLMetaApplicationObject, NavValue[])
@@ -117,6 +121,7 @@ public static partial class RecordPatches
     /// </summary>
     private static void PopulateAllObjVirtualTable(object dataAccess, NCLMetaTable allObjMetaTable)
     {
+        EnsureAllObjColumnsExist(allObjMetaTable);
         EnsureAllObjReflection(allObjMetaTable);
         EnsureDataAccessProviderReflection(dataAccess);
 
@@ -546,11 +551,30 @@ public static partial class RecordPatches
         return new string(buf[..n]);
     }
 
-    private static void EnsureAllObjReflection(NCLMetaTable allObjMetaTable)
+    /// <summary>
+    /// Bind the shared runtime-engine reflection every virtual-table populator uses. Despite
+    /// the "AllObj" in the name this is NOT AllObj-specific and NOT AllObj-only: eighteen
+    /// populators call it and seventeen of them hand it their OWN metatable — Windows Language,
+    /// Time Zone, Feature Key, Codeunit Metadata and the rest. Only
+    /// <see cref="PopulateAllObjVirtualTable"/> passes AllObj's.
+    ///
+    /// So <paramref name="anyMetaTable"/> is used for exactly one thing: reaching the Ncl
+    /// assembly it was loaded from. Nothing here may read its table id, its fields or its
+    /// options, and NOTHING THAT VALIDATES A PARTICULAR TABLE'S SHAPE BELONGS IN THIS METHOD.
+    /// #3015 put AllObj's field-number check here and it refused Windows Language (2000000045)
+    /// for not having AllObj's columns — a loud WRONG refusal on a surface that works, which is
+    /// the same defect class as the silent wrong answer that change exists to remove. Worse, it
+    /// threw before <c>_aovReflectionReady</c> was set, so which populator reached this method
+    /// first decided whether the process worked at all; six of eight CI legs passed on that
+    /// ordering luck. The check now lives in
+    /// <see cref="EnsureAllObjColumnsExist(NCLMetaTable)"/>, called from the one site that
+    /// holds the genuine metatable.
+    /// </summary>
+    private static void EnsureAllObjReflection(NCLMetaTable anyMetaTable)
     {
         if (_aovReflectionReady) return;
 
-        var nclAsm = allObjMetaTable.GetType().Assembly;
+        var nclAsm = anyMetaTable.GetType().Assembly;
         const string rt = "Microsoft.Dynamics.Nav.Runtime.";
 
         _aovSystemValues = SystemPopulatedValues.Bind(nclAsm);
@@ -602,5 +626,73 @@ public static partial class RecordPatches
             ?? throw new InvalidOperationException("NavValue.GetDefaultNavValue(INavValueMetadata,bool) not found");
 
         _aovReflectionReady = true;
+    }
+
+    /// <summary>
+    /// The same defect class as AlRunner#3015, at the one seeder that resolves its columns by
+    /// field NUMBER rather than by name. <see cref="InsertAllObjRow"/> switches on
+    /// <c>field.FieldNo</c> while walking the metatable, so a number that matches nothing is
+    /// simply never written: the row still inserts, the column keeps BC's own default, and the
+    /// ownership comparison
+    /// <c>AllObj."App Runtime Package ID" &lt;&gt; PublishedApplication."Runtime Package ID"</c>
+    /// then declines for every app while BC logs a warning rather than raising.
+    ///
+    /// That is not hypothetical here — #3004 shipped 6/7 for the two package columns, which are
+    /// 60/61, and the stamp silently did nothing. It was found by checking, not by a failure.
+    ///
+    /// CALLED FROM <see cref="PopulateAllObjVirtualTable"/> AND NOWHERE ELSE — that is the one
+    /// call site holding the genuine AllObj metatable. The first version of this lived in
+    /// <see cref="EnsureAllObjReflection"/>, whose parameter is named for AllObj and is not
+    /// AllObj for seventeen of its eighteen callers; it duly refused Windows Language
+    /// (2000000045) for not declaring AllObj's columns. The table-id check below exists so that
+    /// a future re-wiring says "wrong table" instead of inventing a shape gap in a table that
+    /// has none.
+    ///
+    /// Checked once per process, never per row: AllObj is seeded one row per known AL object,
+    /// thousands of them, and a per-row check would be paid thousands of times over to answer a
+    /// question about the table.
+    /// </summary>
+    private static void EnsureAllObjColumnsExist(NCLMetaTable allObjMetaTable)
+    {
+        if (_aovColumnsChecked) return;
+
+        // A claim about the RUNNER's own wiring, not about BC's metadata, so it is deliberately
+        // not an AllObjShapeGap: a shape gap says "this BC artifact is not the shape we were
+        // written against", which would be a lie about whatever table was actually passed.
+        if (allObjMetaTable.TableId != AllObjVirtualTableId)
+            throw new InvalidOperationException(
+                $"EnsureAllObjColumnsExist was handed table {allObjMetaTable.TableId} "
+                + $"'{allObjMetaTable.TableName}', not AllObj ({AllObjVirtualTableId}). It may only "
+                + "be called from PopulateAllObjVirtualTable — see AlRunner#3015.");
+
+        var byNo = new HashSet<int>();
+        foreach (var f in GetAllFields(allObjMetaTable) ?? Enumerable.Empty<NCLMetaField>())
+            byNo.Add(f.FieldNo);
+
+        var required = new (int No, string Name)[]
+        {
+            (AllObjFieldObjectType, "Object Type"),
+            (AllObjFieldObjectId, "Object ID"),
+            (AllObjFieldObjectName, "Object Name"),
+            (AllObjFieldAppPackageId, "App Package ID"),
+            (AllObjFieldAppRuntimePackageId, "App Runtime Package ID"),
+        };
+        var missing = required.Where(r => !byNo.Contains(r.No)).ToList();
+        if (missing.Count == 0)
+        {
+            // Set AFTER the work, never before it, so a refusal keeps refusing rather than
+            // latching a "checked" that was never reached.
+            _aovColumnsChecked = true;
+            return;
+        }
+
+        throw AllObjShapeGap(
+            "AllObj metatable has no field "
+            + string.Join(", ", missing.Select(m => $"{m.No} (\"{m.Name}\")"))
+            + " — every AllObj row would be written with BC's own default in that column and "
+            + "every later read would look correct; module-ownership checks would then decline "
+            + $"for every app without raising [tableId={allObjMetaTable.TableId} "
+            + $"name='{allObjMetaTable.TableName}' "
+            + $"fields={string.Join("/", byNo.OrderBy(n => n))}] — see AlRunner#3015");
     }
 }

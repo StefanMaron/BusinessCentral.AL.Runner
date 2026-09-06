@@ -271,7 +271,7 @@ def live_ruleset_contexts(branch: str = "main") -> tuple[str, ...] | None:
     active. That is why it is the right endpoint and /rulesets/<id> is not:
     there is no ruleset id to get wrong. Measured 2026-09-05, it answers 200
     even unauthenticated on this public repo, and reports exactly
-    ["All BC versions passed", "Tests updated"] carrying ruleset_id 15001420.
+    ["BC test matrix passed", "Tests updated"] carrying ruleset_id 15001420.
     """
     payload = live_ruleset_payload(branch)
     if payload is None:
@@ -369,9 +369,15 @@ def resolve_required_contexts(branch: str = "main", fetch=None):
 # ruleset if you do want to name an id.
 #
 # Names containing "(required)" are the bc-tests matrix legs. They are not
-# ruleset contexts themselves, but "All BC versions passed" fails when any of
+# ruleset contexts themselves, but "BC test matrix passed" fails when any of
 # them does, so a cancelled leg blocks just as surely.
-RULESET_CONTEXTS = ("All BC versions passed", "Tests updated")
+#
+# Renamed from "All BC versions passed" by #3141: a pull request now runs three of the
+# eight BC versions (.github/pr-bc-versions.txt), so the old name claimed more than the
+# run had measured. This tuple and DEFAULT_REQUIRED_CONTEXTS in
+# .github/scripts/check_required_contexts.py must stay identical to each other AND to the
+# live ruleset — that guard fails on drift in either direction (#2785).
+RULESET_CONTEXTS = ("BC test matrix passed", "Tests updated")
 
 NOT_FAILURES = ("success", "neutral", "skipped")
 

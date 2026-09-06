@@ -123,7 +123,17 @@ import yaml
 # Measured 2026-09-05: exactly these two, matched by context NAME only (the
 # ruleset entries carry no integration_id), which is why a required job may move
 # between workflow files as long as its `name:` is unchanged.
-DEFAULT_REQUIRED_CONTEXTS = ["All BC versions passed", "Tests updated"]
+#
+# Renamed from "All BC versions passed" by #3141, together with the branch ruleset.
+# The pull-request matrix now runs three of the eight BC versions, so the old name
+# asserted something the run had not measured. Renaming a required status check is a
+# two-sided edit that cannot be atomic: this file (plus tools/ci-wait.py and the job's
+# `name:` in test-matrix.yml) moves in a pull request, the ruleset moves in the GitHub
+# UI, and between the two this guard reports drift. That red is expected and advisory —
+# pr-check.yml produces no required context — but the merge itself is blocked until the
+# ruleset carries the new name, because until then the PR waits on a context no workflow
+# reports any more.
+DEFAULT_REQUIRED_CONTEXTS = ["BC test matrix passed", "Tests updated"]
 
 # Contexts this repository INTENDS the branch ruleset to require, but which it
 # does not require yet (#3165). Everything in pr-gate.yml is here.

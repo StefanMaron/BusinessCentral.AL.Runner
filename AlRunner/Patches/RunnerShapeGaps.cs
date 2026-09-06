@@ -240,4 +240,21 @@ internal static class RunnerShapeGap
     /// <summary>The runner could not construct the report object to run it.</summary>
     internal static RunnerOutOfScopeException ReportConstruction(string api, string detail)
         => Build(api, "report-construction", detail, RuntimeDoc);
+
+    /// <summary>
+    /// A column one of the runner's seeded system-table rows is built from is not a field of
+    /// that table's metatable, or resolves outside the row (#3015). Company (2000000006),
+    /// Published Application (2000000206) and Installed Application (2000000212) are rows a
+    /// real service tier writes before any AL runs; the runner writes them from its own state.
+    /// A column it cannot write used to be skipped, leaving BC's own default on a row that was
+    /// still inserted and still found by its key.
+    ///
+    /// This is `not-yet-implemented` rather than a `bc-shape-gap:`, deliberately. The read
+    /// SUCCEEDED — the metatable was there and answered, it simply states no field of that
+    /// name — and BcShapeGapException.cs's own "DO NOT RAISE IT" list names exactly that case
+    /// ("a metatable genuinely has no field 3") as an answer about the artifact rather than a
+    /// failed read of BC's layout.
+    /// </summary>
+    internal static RunnerOutOfScopeException SeededSystemTableRow(string api, string detail)
+        => Build(api, "seeded-system-table-row", detail, RuntimeDoc);
 }

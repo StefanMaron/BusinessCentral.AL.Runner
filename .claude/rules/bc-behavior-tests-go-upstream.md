@@ -39,14 +39,15 @@ Step 3 is the one that is never optional. Full detail, including escape hatches:
 3. **Open a pull request into
    [`StefanMaron/BusinessCentral.AL.Language.Tests`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests).**
    Mandatory — a test only becomes part of the corpus by merging into that repo's `master`. The
-   orchestrator merges it, not the authoring agent, once both BC legs are green.
+   orchestrator merges it, not the authoring agent, once the corpus's eight required BC
+   legs — one per version — are green. Eight OnPrem legs run alongside without gating.
 4. **After that PR merges, bump the submodule pin** in this repo, folded into the fix PR
    (`al-language-submodule.md` — a pin bump cannot be its own PR, it is red by construction).
 5. **Then merge the runner change here**, showing the corpus test going RED → GREEN against the
    new pin.
 
 **No local BC container** is not a blocker — open the corpus PR and let its CI adjudicate (step
-2). **No verdict available at all** (corpus CI broken, both BC legs failing for unrelated
+2). **No verdict available at all** (corpus CI broken, the BC legs failing for unrelated
 reasons, behaviour not expressible in the corpus) — you may not substitute a runner-local
 BC-behaviour test to unblock yourself; say so plainly and land the runner fix with whatever
 runner-specific coverage is legitimately available, recording the missing upstream test as

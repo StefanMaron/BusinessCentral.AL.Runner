@@ -46,7 +46,7 @@ LEGS = ["bc-tests / BC 27.0 (required)", "bc-tests / BC 28.3 (required)"]
 
 def green_set(**kw):
     runs = [run(n, "success") for n in LEGS]
-    runs.append(run("All BC versions passed", "success"))
+    runs.append(run("BC test matrix passed", "success"))
     runs.append(run("Tests updated", "success"))
     runs.append(run("scripts/ unit tests", "success"))
     return runs
@@ -119,15 +119,15 @@ check("a cancellation mid-run is not called a block yet", v.code is None, f"(cod
 # --- the required contexts that are NOT named '(required)' must be waited on
 # --- and judged: reporting GREEN while 'Tests updated' is red was possible
 runs = [run(n, "success") for n in LEGS]
-runs.append(run("All BC versions passed", "success"))
+runs.append(run("BC test matrix passed", "success"))
 runs.append(run("Tests updated", "failure"))
 v = cw.classify(runs)
 check("a failing 'Tests updated' is not reported green", v.code == 1, f"(code={v.code})")
 
 runs = [run(n, "success") for n in LEGS]
-runs.append(run("All BC versions passed", None, status="queued"))
+runs.append(run("BC test matrix passed", None, status="queued"))
 v = cw.classify(runs)
-check("a queued 'All BC versions passed' keeps the verdict pending",
+check("a queued 'BC test matrix passed' keeps the verdict pending",
       v.code is None, f"(code={v.code})")
 
 # --- #2807: a required context ABSENT from the rollup is not evidence of
@@ -138,7 +138,7 @@ check("a queued 'All BC versions passed' keeps the verdict pending",
 # --- no longer decide it -- the workflow-run list for the commit is what says
 # --- whether anything is still coming.
 runs = [run(n, "success") for n in LEGS]
-runs.append(run("All BC versions passed", "success"))
+runs.append(run("BC test matrix passed", "success"))
 v = cw.classify(runs)
 check("a required context absent from the rollup is pending, not green, "
       "when nothing says whether it is still coming",
@@ -148,11 +148,11 @@ check("a required context absent from the rollup is pending, not green, "
 # --- context rather than leaving it unreported. Measured, because a proposal to
 # --- treat `skipped` as "no verdict yet" would break the documented
 # --- 'docs-only' / 'no-tests-needed' bypass: four merged PRs carry
-# --- 'Tests updated' = skipped on their head SHA with 'All BC versions passed'
+# --- 'Tests updated' = skipped on their head SHA with 'BC test matrix passed'
 # --- = success -- #2759 (451c757b), #2749 (8717aec3), #2717 (dbd3a1a2) and
 # --- #2668 (3d1e9792). GitHub's ruleset accepted every one of them.
 runs = [run(n, "success") for n in LEGS]
-runs.append(run("All BC versions passed", "success"))
+runs.append(run("BC test matrix passed", "success"))
 runs.append(run("Tests updated", "skipped"))
 v = cw.classify(runs)
 check("a skipped required context is not a failure", v.code == 0, f"(code={v.code}) {v.lines}")
@@ -169,7 +169,7 @@ check("...and a skipped required context counts as reported, not as still-pendin
 # --- one and the PR merged. Scanning every entry instead of the newest per
 # --- name reported that merged PR as FAILED.
 runs = [run(n, "success") for n in LEGS]
-runs.append(run("All BC versions passed", "success"))
+runs.append(run("BC test matrix passed", "success"))
 runs.append(run("Tests updated", "failure", cid=101297899468))
 runs.append(run("Tests updated", "skipped", cid=101297995090))
 v = cw.classify(runs)
@@ -179,7 +179,7 @@ check("a failure superseded by a newer skipped run is GREEN, not FAILED",
 # ...and the reverse ordering is still a failure, so this is not just ignoring
 # every failure that shares a name with something.
 runs = [run(n, "success") for n in LEGS]
-runs.append(run("All BC versions passed", "success"))
+runs.append(run("BC test matrix passed", "success"))
 runs.append(run("Tests updated", "skipped", cid=101297899468))
 runs.append(run("Tests updated", "failure", cid=101297995090))
 v = cw.classify(runs)
@@ -187,7 +187,7 @@ check("...but a failure that IS the newest entry still fails", v.code == 1, f"(c
 
 # --- an older cancelled entry must not hold the pool 'incomplete' forever
 runs = [run(n, "success") for n in LEGS]
-runs.append(run("All BC versions passed", "success"))
+runs.append(run("BC test matrix passed", "success"))
 runs.append(run("Tests updated", "cancelled", cid=10))
 runs.append(run("Tests updated", "success", cid=20))
 v = cw.classify(runs)
@@ -203,7 +203,7 @@ check("an empty rollup is pending, not green", v.code is None, f"(code={v.code})
 # ===========================================================================
 # Real shape, PR #2793 head 50551f4c, measured seconds after the push: the only
 # check run on the commit was "Tests updated" (8s), every bc-tests leg was still
-# pending and "All BC versions passed" was not in the rollup at all. classify()
+# pending and "BC test matrix passed" was not in the rollup at all. classify()
 # built a pool of ONE, found it complete and clean, and returned GREEN saying
 # "all 1 required checks passed".
 JUST_PUSHED = [run("Tests updated", "success")]
@@ -218,7 +218,7 @@ ALL_DONE_RUNS = [{"id": 33964656436, "name": "Test Matrix", "status": "completed
                   "conclusion": "success"}]
 
 v = cw.classify(JUST_PUSHED, workflow_runs=QUEUED_RUNS)
-check("a rollup missing 'All BC versions passed' while its run is queued is NOT green",
+check("a rollup missing 'BC test matrix passed' while its run is queued is NOT green",
       v.code is None, f"(code={v.code}) {v.lines}")
 
 v = cw.classify(JUST_PUSHED, workflow_runs=[])
@@ -238,7 +238,7 @@ v = cw.classify(JUST_PUSHED, workflow_runs=ALL_DONE_RUNS)
 check("a required context still absent once every workflow run completed is BLOCKED",
       v.code == 4, f"(code={v.code}) {v.lines}")
 check("...and names the context that never reported",
-      any("All BC versions passed" in l for l in v.lines), v.lines)
+      any("BC test matrix passed" in l for l in v.lines), v.lines)
 check("...and does not claim anything failed",
       not any("failed" in l.lower() for l in v.lines), v.lines)
 
@@ -251,7 +251,7 @@ check("...and does not claim anything failed",
 #
 # Note 'Tests updated' is `skipped` here and that is NOT the defect: a skipped
 # required context satisfies the ruleset (see the merged-PR measurement above).
-# The single missing context is 'All BC versions passed'.
+# The single missing context is 'BC test matrix passed'.
 PR2868 = [run(n, "success") for n in [
     "Agent definitions must allowlist the MCP tools they document",
     "CHANGELOG generator tests",
@@ -274,14 +274,14 @@ v = cw.classify(PR2868, workflow_runs=PR2868_RUNS)
 check("PR #2868's real rollup is NOT green while Test Matrix is still queued",
       v.code is None, f"(code={v.code}) {v.lines}")
 check("...and the progress line names the context that has not reported",
-      "All BC versions passed" in v.progress, v.progress)
+      "BC test matrix passed" in v.progress, v.progress)
 
 # ...and the ordinary green case is unaffected once both contexts are present.
 v = cw.classify(green_set(), workflow_runs=ALL_DONE_RUNS)
 check("a complete rollup with both ruleset contexts is still GREEN",
       v.code == 0, f"(code={v.code}) {v.lines}")
 check("...and says which ruleset contexts it actually confirmed",
-      any("All BC versions passed" in l and "Tests updated" in l for l in v.lines), v.lines)
+      any("BC test matrix passed" in l and "Tests updated" in l for l in v.lines), v.lines)
 
 
 # ===========================================================================
@@ -299,7 +299,7 @@ check("...and says which ruleset contexts it actually confirmed",
 # workflow run id 1 while QUEUED_RUNS has run 33964656436 queued. The control is
 # now run against a finished run list, where the only thing left to vary is the
 # context set. The "still in flight" question gets its own section further down.
-v = cw.classify(green_set(), contexts=("All BC versions passed", "Tests updated",
+v = cw.classify(green_set(), contexts=("BC test matrix passed", "Tests updated",
                                        "Provenance attested"),
                 workflow_runs=ALL_DONE_RUNS)
 check("a context newly added to the ruleset is NOT reported green",
@@ -309,14 +309,14 @@ check("...and, with every workflow run finished, reads as BLOCKED rather than pe
 check("...and names the context nothing reported",
       any("Provenance attested" in l for l in v.lines), v.lines)
 
-v = cw.classify(green_set(), contexts=("All BC versions passed", "Tests updated"),
+v = cw.classify(green_set(), contexts=("BC test matrix passed", "Tests updated"),
                 workflow_runs=ALL_DONE_RUNS)
 check("...while the same rollup and run list with the known context set is green",
       v.code == 0, f"(code={v.code}) {v.lines}")
 
 # ...and the pending path for a newly-required context is still reachable, when
 # the run list says something is genuinely still coming.
-v = cw.classify(green_set(), contexts=("All BC versions passed", "Tests updated",
+v = cw.classify(green_set(), contexts=("BC test matrix passed", "Tests updated",
                                        "Provenance attested"),
                 workflow_runs=QUEUED_RUNS)
 check("a context newly added to the ruleset keeps the verdict pending "
@@ -333,7 +333,7 @@ BRANCH_RULES = [
     {"type": "required_status_checks",
      "parameters": {"strict_required_status_checks_policy": False,
                     "do_not_enforce_on_create": False,
-                    "required_status_checks": [{"context": "All BC versions passed"},
+                    "required_status_checks": [{"context": "BC test matrix passed"},
                                                {"context": "Tests updated"}]},
      "ruleset_source_type": "Repository",
      "ruleset_source": "StefanMaron/BusinessCentral.AL.Runner",
@@ -341,7 +341,7 @@ BRANCH_RULES = [
 ]
 check("the required contexts are read out of the live branch-rules payload",
       cw.contexts_from_branch_rules(BRANCH_RULES)
-      == ("All BC versions passed", "Tests updated"),
+      == ("BC test matrix passed", "Tests updated"),
       str(cw.contexts_from_branch_rules(BRANCH_RULES)))
 
 # The trap from #2785: ruleset 15039643 is disabled and carries no
@@ -383,7 +383,7 @@ def cr(name, conclusion, wf_run, check_id, status="completed"):
 
 def two_run_set(old_conclusion, new_conclusion):
     runs = [cr(n, "success", NEW_RUN, 101303055000 + i) for i, n in enumerate(LEGS)]
-    runs.append(cr("All BC versions passed", "success", NEW_RUN, 101303055107))
+    runs.append(cr("BC test matrix passed", "success", NEW_RUN, 101303055107))
     # the OLDER run's job started later, so it carries the HIGHER check-run id
     runs.append(cr("Tests updated", old_conclusion, OLD_RUN, 101303131614))
     runs.append(cr("Tests updated", new_conclusion, NEW_RUN, 101303055037))
@@ -445,7 +445,7 @@ check("...and a details_url with no run segment reads as unknown, not as 0",
 
 # Within ONE workflow run a re-run attempt still wins on check-run id.
 runs = [cr(n, "success", NEW_RUN, 101303055000 + i) for i, n in enumerate(LEGS)]
-runs.append(cr("All BC versions passed", "success", NEW_RUN, 101303055107))
+runs.append(cr("BC test matrix passed", "success", NEW_RUN, 101303055107))
 runs.append(cr("Tests updated", "failure", NEW_RUN, 101303055037))
 runs.append(cr("Tests updated", "success", NEW_RUN, 101303099999))
 v = cw.classify(runs, workflow_runs=ALL_DONE_RUNS)
@@ -462,7 +462,7 @@ check("inside one workflow run the newer check-run id still wins",
 # it knows -- so the wording has to say that it is not the whole list yet.
 runs = [cr(LEGS[0], "failure", NEW_RUN, 101303055001),
         cr(LEGS[1], None, NEW_RUN, 101303055002, status="in_progress"),
-        cr("All BC versions passed", None, NEW_RUN, 101303055107, status="queued"),
+        cr("BC test matrix passed", None, NEW_RUN, 101303055107, status="queued"),
         cr("Tests updated", "success", NEW_RUN, 101303055037)]
 v = cw.classify(runs, workflow_runs=QUEUED_RUNS)
 check("a failure while others are still running is still a FAILED verdict",
@@ -479,7 +479,7 @@ check("...and warns the failing list can still grow",
 # bc-tests legs had not created a check run at all -- so the honest arithmetic
 # says 1 and the truth was 8.
 runs = [cr(LEGS[0], "failure", NEW_RUN, 101303055001),
-        cr("All BC versions passed", None, NEW_RUN, 101303055107, status="queued"),
+        cr("BC test matrix passed", None, NEW_RUN, 101303055107, status="queued"),
         cr("Tests updated", "success", NEW_RUN, 101303055037)]
 v = cw.classify(runs, workflow_runs=QUEUED_RUNS)
 check("the unreported count is stated as a LOWER bound, not an exact number",
@@ -490,7 +490,7 @@ check("...and the caveat says a leg with no check run yet is not counted at all"
 # When everything HAS reported the caveat must not be printed, or it is noise.
 runs = [cr(LEGS[0], "failure", NEW_RUN, 101303055001),
         cr(LEGS[1], "success", NEW_RUN, 101303055002),
-        cr("All BC versions passed", "failure", NEW_RUN, 101303055107),
+        cr("BC test matrix passed", "failure", NEW_RUN, 101303055107),
         cr("Tests updated", "success", NEW_RUN, 101303055037)]
 v = cw.classify(runs, workflow_runs=ALL_DONE_RUNS)
 check("a complete rollup's failing list carries no 'still to come' caveat",
@@ -518,7 +518,7 @@ TM_RUN, RT_RUN_OLD, RT_RUN_NEW = 33964656436, 33983248257, 33983299999
 
 def present_but_stale_rollup():
     runs = [cr(n, "success", TM_RUN, 101303055000 + i) for i, n in enumerate(LEGS)]
-    runs.append(cr("All BC versions passed", "success", TM_RUN, 101303055107))
+    runs.append(cr("BC test matrix passed", "success", TM_RUN, 101303055107))
     runs.append(cr("Tests updated", "success", RT_RUN_OLD, 101352123189))
     return runs
 
@@ -638,14 +638,14 @@ check("...and is BLOCKED once no newer run of that workflow is coming",
 #   GET /actions/runs?head_sha=95c16b20a500f638fbbe7eeb14f78545c22f92ee
 #
 # Test Matrix run 34002828792 has RUN-LEVEL conclusion `cancelled`, and its
-# aggregate job "All BC versions passed" concluded `failure` -- the aggregate
+# aggregate job "BC test matrix passed" concluded `failure` -- the aggregate
 # runs `if: always()` over `needs` that were killed, so a cancelled run reports
 # a FAILING required context. Seven of its eight legs are `cancelled`; leg 27.3
 # had already finished `success`.
 #
 # Test Matrix run 34004261321 replaced it and was green throughout, but its
 # aggregate job starts LAST, so for several minutes the newest check run named
-# "All BC versions passed" on this commit was the failure from the run that had
+# "BC test matrix passed" on this commit was the failure from the run that had
 # been abandoned. classify() put it in `bad` and returned exit 1 -- and `bad`
 # short-circuits BEFORE the in-flight guard, which is why the guard that exists
 # for exactly this shape never got consulted.
@@ -660,7 +660,7 @@ PR3010_LEGS = ["bc-tests / BC 27.0.38460.53934 (required)",
 
 def pr3010_rollup(with_live_legs: bool = False):
     """The rollup while the live Test Matrix run's aggregate job had not started."""
-    runs = [cr("All BC versions passed", "failure", PR3010_TM_CANCELLED, 101405801410)]
+    runs = [cr("BC test matrix passed", "failure", PR3010_TM_CANCELLED, 101405801410)]
     for i, n in enumerate(PR3010_LEGS):
         runs.append(cr(n, "cancelled", PR3010_TM_CANCELLED, 101404706127 + i))
     runs.append(cr("bc-tests / BC 27.3.44313.53909 (required)", "success",
@@ -708,7 +708,7 @@ v = cw.classify(pr3010_rollup(), workflow_runs=PR3010_WF_NO_REPLACEMENT)
 check("#3010: a cancelled Test Matrix run with no replacement is BLOCKED, not FAILED",
       v.code == 4, f"(code={v.code}) {v.lines}")
 check("...and names the required context it is blocked on",
-      any("All BC versions passed" in l for l in v.lines), v.lines)
+      any("BC test matrix passed" in l for l in v.lines), v.lines)
 check("...and never tells the caller something failed",
       not any("failed" in l.lower() for l in v.lines), v.lines)
 
@@ -724,7 +724,7 @@ v = cw.classify(pr3010_rollup(), workflow_runs=PR3010_WF_GENUINE)
 check("a failing required context from a run that was NOT cancelled is still FAILED",
       v.code == 1, f"(code={v.code}) {v.lines}")
 check("...and still offers the failing job for the log fetch",
-      (v.log_target or {}).get("name") == "All BC versions passed", str(v.log_target))
+      (v.log_target or {}).get("name") == "BC test matrix passed", str(v.log_target))
 
 # ---------------------------------------------------------------------------
 # #2971 / #2842, the GREEN direction. Recorded from
@@ -732,7 +732,7 @@ check("...and still offers the failing job for the log fetch",
 #   GET /actions/runs?head_sha=47f30db4d37415378f227b62e9f6d38433166f17
 #
 # All three workflow runs were created within one second of the push
-# (00:09:25-26Z), so "All BC versions passed" was always COMING. Exhaustively:
+# (00:09:25-26Z), so "BC test matrix passed" was always COMING. Exhaustively:
 # with the real two-context ruleset this rollup cannot produce a 1-count green
 # under post-#2882 code -- either the context is in the rollup (pool >= 2) or it
 # is `missing` and the Test Matrix run is in flight, so `final is not True` and
@@ -768,7 +768,7 @@ check("#3002: a NARROWED required-context set is refused, not answered",
 check("...and it is undetermined (3), not a failure and not a block",
       v.code == 3, f"(code={v.code}) {v.lines}")
 check("...and says which required context went missing from the set",
-      any("All BC versions passed" in l for l in v.lines), v.lines)
+      any("BC test matrix passed" in l for l in v.lines), v.lines)
 check("...and never prints the false-green line",
       not any("all 1 required checks passed" in l for l in v.lines), v.lines)
 
@@ -798,7 +798,7 @@ RECORDED_BRANCH_RULES = [
     {"type": "required_status_checks", "ruleset_id": 15001420, "parameters": {
         "strict_required_status_checks_policy": False,
         "do_not_enforce_on_create": False,
-        "required_status_checks": [{"context": "All BC versions passed"},
+        "required_status_checks": [{"context": "BC test matrix passed"},
                                    {"context": "Tests updated"}]}},
 ]
 DEGRADED_BRANCH_RULES = [
@@ -819,7 +819,7 @@ check("a ruleset read that drops a known required context is DEGRADED",
 check("...and the degraded set is never handed on as the required set",
       sorted(ctx) == sorted(cw.RULESET_CONTEXTS), f"{ctx}")
 check("...and the note names the context that went missing",
-      any("All BC versions passed" in n for n in notes), notes)
+      any("BC test matrix passed" in n for n in notes), notes)
 
 ctx, status, notes = cw.resolve_required_contexts(fetch=lambda b: None)
 check("an UNREADABLE ruleset falls back to the full built-in set, never a subset",
@@ -828,12 +828,12 @@ check("an UNREADABLE ruleset falls back to the full built-in set, never a subset
 
 EXTRA = RECORDED_BRANCH_RULES[:3] + [
     {"type": "required_status_checks", "ruleset_id": 15001420, "parameters": {
-        "required_status_checks": [{"context": "All BC versions passed"},
+        "required_status_checks": [{"context": "BC test matrix passed"},
                                    {"context": "Tests updated"},
                                    {"context": "Some new gate"}]}}]
 ctx, status, notes = cw.resolve_required_contexts(fetch=lambda b: EXTRA)
 check("a context ADDED in the UI is picked up and waited for",
-      sorted(ctx) == ["All BC versions passed", "Some new gate", "Tests updated"]
+      sorted(ctx) == ["BC test matrix passed", "Some new gate", "Tests updated"]
       and status == "live", f"{ctx} {status}")
 
 
@@ -868,7 +868,7 @@ def absorbed_failure_set(failing_name):
     """Required contexts all green; `failing_name` red on the live run, with a
     cancelled sibling entry left behind by a superseded run of that workflow."""
     runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
-    runs.append(cr("All BC versions passed", "success", MATRIX_RUN, 101499731123))
+    runs.append(cr("BC test matrix passed", "success", MATRIX_RUN, 101499731123))
     runs.append(cr("Tests updated", "success", REQ_RUN, 101496768931))
     # the cancelled leftover, and a genuinely failing NEWEST entry for one name
     runs.append(cr(failing_name, "cancelled", KILLED_PR_CHECK, 101496919780))
@@ -897,7 +897,7 @@ check("...and points at the workflow run that produced the failure",
 # The mirror, so this is not just "never say harmless": a cancelled entry that a
 # newer run really did re-report as SUCCESS is still explained as harmless.
 runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
-runs.append(cr("All BC versions passed", "success", MATRIX_RUN, 101499731123))
+runs.append(cr("BC test matrix passed", "success", MATRIX_RUN, 101499731123))
 runs.append(cr("Tests updated", "success", REQ_RUN, 101496768931))
 runs.append(cr("scripts/ unit tests", "cancelled", KILLED_PR_CHECK, 101496919785))
 runs.append(cr("scripts/ unit tests", "success", LIVE_PR_CHECK, 101496925213))
@@ -924,7 +924,7 @@ check("...and never describes that failure as harmless",
 # A failure inside a run that IS cancelled at the run level stays discountable --
 # that is the deliberate #3002 trade-off, and narrowing it is not this fix.
 runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
-runs.append(cr("All BC versions passed", "success", MATRIX_RUN, 101499731123))
+runs.append(cr("BC test matrix passed", "success", MATRIX_RUN, 101499731123))
 runs.append(cr("Tests updated", "success", REQ_RUN, 101496768931))
 runs.append(cr("scripts/ unit tests", "failure", KILLED_PR_CHECK, 101496919785))
 v = cw.classify(runs, workflow_runs=C6377B30_RUNS)
@@ -940,7 +940,7 @@ check("...and is not announced as a real failing check",
 # exit-4 advice ("a cancelled run has no failure log to overwrite") is wrong for
 # exactly this entry: it has one, and `gh run rerun` destroys it permanently.
 runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
-runs.append(cr("All BC versions passed", "success", MATRIX_RUN, 101499731123))
+runs.append(cr("BC test matrix passed", "success", MATRIX_RUN, 101499731123))
 runs.append(cr("Tests updated", "failure", KILLED_PR_CHECK, 101496919511))
 v = cw.classify(runs, workflow_runs=C6377B30_RUNS)
 check("a required failure inside a CANCELLED run is blocked, not failed",
@@ -954,7 +954,7 @@ check("...and says what it actually concluded, not just 'cancelled'",
 # ...and the plain case keeps the unqualified advice, or the warning above would
 # just be noise on every cancellation.
 runs = [cr(n, "success", MATRIX_RUN, 101496852900 + i) for i, n in enumerate(LEGS)]
-runs.append(cr("All BC versions passed", "success", MATRIX_RUN, 101499731123))
+runs.append(cr("BC test matrix passed", "success", MATRIX_RUN, 101499731123))
 runs.append(cr("Tests updated", "cancelled", KILLED_PR_CHECK, 101496919511))
 v = cw.classify(runs, workflow_runs=C6377B30_RUNS)
 check("a genuinely cancelled required context is blocked with no such warning",
