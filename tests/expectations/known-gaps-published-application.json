@@ -1,0 +1,18 @@
+[
+  {
+    "codeunitId": 61201,
+    "CodeunitName": "Test Published App Sys Table",
+    "Method": "PublishedApplication_ThisApp_PackageIdIsItsRuntimePackageId",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3066",
+    "Note": "A freshly published app must carry ONE GUID in both 'Package ID' and 'Runtime Package ID'. The runner seeds two different ones, so the assertion reads Expected:<{B0A969E5-...}> Actual:<{D4CD04AF-...}>. Tracked in #3066, which records that a real service tier contradicts the runner on exactly this and on the Installed FlowField below. Six other tests in this codeunit pass, including PublishedApplication_TwoApps_DoNotShareEitherPackageId -- so the seeder is producing distinct identities per app, just not the equal pair BC produces. Arrived with the pin bump in AlRunner#3061, which is the first pin to contain the tests/al-language-onprem app at all, and reproduces on unmodified main at that pin."
+  },
+  {
+    "codeunitId": 61201,
+    "CodeunitName": "Test Published App Sys Table",
+    "Method": "PublishedApplication_CalcFields_Installed_IsTrueForThisApp",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3066",
+    "Note": "The 'Installed' FlowField on 'Published Application' reads false for the very app whose tests are running. Same root and same issue as the package-id entry beside it: there is no installed-app registry behind the FlowField to calculate from (see also #2961). Arrived with the pin bump in AlRunner#3061 and reproduces on unmodified main at that pin."
+  }
+]

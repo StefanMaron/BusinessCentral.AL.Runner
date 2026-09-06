@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60405,
+    "CodeunitName": "Test Module Owns Own Table",
+    "Method": "AppCanRegisterItsOwnTableOnTheAllowedList",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3049",
+    "Note": "Retention Policy AddAllowedTable refuses a table the CALLING app owns: the assertion reads 'AddAllowedTable must accept a table owned by the calling app'. The sibling negative in the same codeunit, AppCannotRegisterATableItDoesNotOwn, passes -- so the ownership check answers no for everything rather than being absent. Tracked in #3049. Green on real BC 27.0 through 28.4. Arrived with the pin bump in AlRunner#3061. Confirmed failing on CI: run 34026591322's BC 27.3 leg reports it red once the entry is absent, and run 34025479051 reclassified it on every leg with the entry present."
+  }
+]

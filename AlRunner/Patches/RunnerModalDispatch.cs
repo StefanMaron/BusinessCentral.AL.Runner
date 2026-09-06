@@ -68,15 +68,27 @@ public static class RunnerModalDispatch
         var showDialog = type.GetMethod("ShowDialog", BindingFlags.NonPublic | BindingFlags.Instance)
             ?? throw new InvalidOperationException(
                 "NavTestExecution.ShowDialog not found — Ncl shape changed; do not commit");
-        object? result;
+        object? result = null;
         try
         {
             result = Invoke(showDialog, testExecution, new object?[] { handle });
+
+            // The step a real client performs between "the user pressed OK" and "the form is
+            // gone", and the one this dispatch used to skip entirely: ask the page whether it
+            // may close, which is the ONLY thing that raises OnQueryClosePage. BC's
+            // NavForm.CloseForm raises OnClosePage and nothing else, so a page doing its work
+            // in OnQueryClosePage — the ordinary "Manage X" shape, where the trigger writes a
+            // caller-supplied record copy back on OK — lost that write silently. See #3050.
+            if (opened && !TryQueryCloseForm(form!, result)) result = null;
         }
         finally
         {
             // Close only what this method opened, and only through BC's own CloseForm, so the
             // form leaves the company's registry exactly the way BC would have left it.
+            //
+            // FormResult.None stays deliberate: passing the handler's real result would also
+            // turn on CloseFormAsync's StoreSaveValues(..., persistData: true), a second
+            // behaviour change nothing here has measured.
             if (opened) TryCloseForm(form!, result: null);
         }
 
@@ -132,6 +144,13 @@ public static class RunnerModalDispatch
         try
         {
             Invoke(showForm, testExecution, new object?[] { handle });
+
+            // Same missing step as the modal path (#3050). ShowForm returns nothing, so there
+            // is no handler result to forward here — and BC does not need one: measured on
+            // real BC 28.4.53241.0 (corpus "MQC Tests", codeunit 60276, arm g), a
+            // [PageHandler]-driven Page.Run raises OnQueryClosePage with CloseAction OK and
+            // then OnClosePage. A trapped page is the test's to close, so it is left alone.
+            if (opened && !trapped) TryQueryCloseForm(form!, NonModalCloseResult(form!));
         }
         finally
         {
@@ -225,6 +244,64 @@ public static class RunnerModalDispatch
         if (openForm == null) return false;
         Invoke(openForm, form, Array.Empty<object?>());
         return true;
+    }
+
+    /// <summary>
+    /// Raise the page's OnQueryClosePage through BC's own NavForm.QueryCloseForm, which is the
+    /// only method that raises it (NavForm.CloseForm raises OnClosePage alone).
+    ///
+    /// Returns whether the page allowed the close. A page whose OnQueryClosePage returns false
+    /// makes BC's QueryCloseFormAsync throw NavFormCloseNotAllowedException; measured on real
+    /// BC 28.4.53241.0, that veto does NOT reach the test as an error — the page still closes
+    /// and RunModal() reports Action::None instead of what the handler chose. Answering false
+    /// here reproduces exactly that: the caller drops the handler's result, so the FormResult.None
+    /// BC already pushed on formResultStack is what the calling AL reads back.
+    ///
+    /// Anything else the trigger raises — an Error() in AL, most of all — propagates untouched.
+    /// </summary>
+    private static bool TryQueryCloseForm(object form, object? result)
+    {
+        var queryCloseForm = form.GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .FirstOrDefault(m => m.Name == "QueryCloseForm"
+                                 && m.GetParameters().Length == 1
+                                 && m.GetParameters()[0].ParameterType == typeof(int))
+            ?? throw new InvalidOperationException(
+                "NavForm.QueryCloseForm(int) not found — Ncl shape changed; do not commit");
+
+        int closeActionValue;
+        try { closeActionValue = Convert.ToInt32(result, System.Globalization.CultureInfo.InvariantCulture); }
+        catch (Exception ex) when (ex is InvalidCastException or FormatException or OverflowException)
+        {
+            // No usable result means no defensible CloseAction to raise the trigger with, and
+            // inventing one would be worse than the gap: skip and let CloseForm run.
+            return true;
+        }
+
+        try
+        {
+            Invoke(queryCloseForm, form, new object?[] { closeActionValue });
+            return true;
+        }
+        catch (Exception ex) when (ex.GetType().Name == "NavFormCloseNotAllowedException")
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// The CloseAction BC's own client uses for a NON-modal page it closes on a
+    /// [PageHandler]'s behalf: FormResult.OK, measured on real BC 28.4.53241.0 (corpus "MQC
+    /// Tests" arm g). Read off the FormResult enum BC's own CloseForm declares rather than
+    /// hardcoding 1, so a renumbering in a future Ncl cannot silently change which action the
+    /// trigger sees.
+    /// </summary>
+    private static object? NonModalCloseResult(object form)
+    {
+        var closeForm = form.GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            .FirstOrDefault(m => m.Name == "CloseForm" && m.GetParameters().Length == 1);
+        var formResultType = closeForm?.GetParameters()[0].ParameterType;
+        if (formResultType == null || !formResultType.IsEnum) return null;
+        return Enum.TryParse(formResultType, "OK", out var ok) ? ok : null;
     }
 
     private static void TryCloseForm(object form, object? result)

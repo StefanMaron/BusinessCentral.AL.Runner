@@ -1021,8 +1021,13 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   Real BC drives every one of these, so each is the runner failing to keep up rather than a
   surface BC also lacks — which is the test for whether a refusal may cite `docs/scope.md` at
   all. Eight further refusals in those same two files genuinely are permanent and keep their
-  `docs/scope.md` citation: a page with no `SourceTable`, an `OnQueryClosePage` veto, a lookup
-  that could only come from a `TableRelation`, and the AL-authoring errors real BC also raises.
+  `docs/scope.md` citation: a page with no `SourceTable`, an `OnQueryClosePage` veto on the
+  explicit `TestPage.Close()` path, a lookup that could only come from a `TableRelation`, and
+  the AL-authoring errors real BC also raises. The veto refusal is scoped to that path: a page
+  the PLATFORM closes for a `[ModalPageHandler]` / `[PageHandler]` reproduces what a real
+  service tier does with a veto instead — no error reaches the test, `OnClosePage` still fires,
+  and `RunModal()` reports `Action::None`
+  ([#3050](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3050)).
 
 <a id="virtual-table-shape-gaps"></a>
 

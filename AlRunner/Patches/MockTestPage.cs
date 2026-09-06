@@ -391,9 +391,24 @@ internal class LiveNavTestPage : MockITestPage
     // that opened the page. The mock answers a constant OK, so a handler that cancelled was
     // indistinguishable from one that confirmed — every AL `if RunModal() = Action::OK`
     // took the OK branch regardless.
-    private FormResult _formResult = FormResult.OK;
+    private FormResult? _invokedFormResult;
 
     public override FormResult FormResult => _formResult;
+
+    /// <summary>
+    /// How the page was closed: what a built-in action recorded, or — when the handler
+    /// invoked nothing at all — what the platform substitutes for it.
+    ///
+    /// The substitute is MODE-DEPENDENT and the two halves cannot be derived from one another.
+    /// Measured on real BC 28.4.53241.0 (corpus "MQC Tests", codeunit 60276, arms b and e): a
+    /// handler that returns without invoking anything leaves a plain modal reporting OK and a
+    /// LookupMode(true) modal reporting LookupCancel — so OnQueryClosePage sees OK on the one
+    /// and LookupCancel on the other, and RunModal() returns the same. A flat OK default made
+    /// every unattended lookup read as a confirmed pick.
+    /// </summary>
+    private FormResult _formResult
+        => _invokedFormResult
+           ?? (_page?.LookupMode == true ? FormResult.LookupCancel : FormResult.OK);
 
     /// <summary>
     /// The page's built-in OK/Cancel/LookupOK actions. Invoking one records how the page was
@@ -454,7 +469,7 @@ internal class LiveNavTestPage : MockITestPage
         /// </summary>
         public void Invoke()
         {
-            _page._formResult = _result;
+            _page._invokedFormResult = _result;
             if (_result is FormResult.Cancel or FormResult.LookupCancel)
                 _page.DiscardPendingNewRow();
             else

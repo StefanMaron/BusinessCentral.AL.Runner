@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60490,
+    "CodeunitName": "Test Tbl Evt Async Sub Error",
+    "Method": "TableEventSubscriberInAnotherApp_ErrorReachesTheCaller",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2932",
+    "Note": "The System Application's OnBeforeInsertEvent subscriber on 'Retention Policy Setup' (3901) must refuse a table that is not on the allowed list, and its Error() must reach the caller. It does not: the asserterror sees no error at all ('An error was expected inside an ASSERTERROR statement'), so the write the subscriber exists to refuse goes through. Same root as #2932 -- TABLE-event subscribers declared in an already-compiled app. The positive control in the same codeunit, TableEventSubscriberInAnotherApp_TemporaryInsertIsNotRefused, passes. Green on real BC 27.0 through 28.4. Arrived with the pin bump in AlRunner#3061. Confirmed failing on CI: run 34026591322's BC 27.3 leg reports it red once the entry is absent, and run 34025479051 reclassified it on every leg with the entry present."
+  }
+]

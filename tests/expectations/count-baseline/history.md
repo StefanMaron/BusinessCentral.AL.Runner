@@ -628,3 +628,44 @@ column a SubPageLink constrains, and run 33997895349 answered `NEWREC` where it 
 the page's OnNewRecord had not yet run for that line. Both are now asserted at the measured
 value. The runner change in this PR follows those measurements rather than the other way
 round.
+
+The al-language number moves 2610 -> 2645 with the submodule pin bump to corpus `0309cec6`,
+which takes seven corpus merges rather than one. Eight of the thirty-five are codeunit 60276
+"MQC Tests" (corpus PR #186), pinning the close lifecycle of a page the platform closes for a
+`[ModalPageHandler]` / `[PageHandler]` -- the upstream half of issue #3050, whose runner fix is
+folded into this same PR. 2645 is measured from an actual run against the new pin, not counted
+off the source. appGroups is unchanged at 1. The other twenty-seven arrived because the
+maintainer's pin sat at `9ba6f581` while six further corpus PRs merged on top of it, and a pin
+only moves forward as a whole; all twenty-seven pass on all eight CI legs.
+
+The same bump is the first pin to contain the `tests/al-language-onprem` app at all -- which
+`scripts/corpus-app-dirs.py` enumerates automatically, so it began executing 19 tests nothing
+had declared for. A suite line appears for it here at **19**, and two of its tests get entries:
+codeunit 61201 "Test Published App Sys Table",
+`PublishedApplication_ThisApp_PackageIdIsItsRuntimePackageId` and
+`PublishedApplication_CalcFields_Installed_IsTrueForThisApp` -> #3066, which already records
+that a real service tier contradicts the runner on both. Seven other tests in that codeunit
+pass, and the pair fails identically on every one of the eight legs. `--count-baseline` accepted
+the new suite with no line at all, so the line is added deliberately rather than because the
+gate demanded it: a suite the baseline does not name is a suite whose disappearance the gate
+cannot notice.
+
+Worth recording, because it cost two CI rounds. Three known-gap entries were added here first
+on the strength of a local run: codeunit 60455 "TPARO Tests" (5 tests), 60405
+`AppCanRegisterItsOwnTableOnTheAllowedList`, and 60490
+`TableEventSubscriberInAnotherApp_ErrorReachesTheCaller`. The matrix split them in two:
+
+- **60455 does not fail on CI at all.** The manifest's drift guard said so directly -- "Test
+  passed cleanly but manifest declares expect-fail-known-gap" on the 27.0, 27.3 and 28.1 legs of
+  run 34026008142 -- and the entry is gone. Those five failed only on this developer box, whose
+  BC artifact is 28.1.49838.53910 against the matrix's 28.1.49838.54308.
+- **60405 and 60490 do fail on CI**, and their entries stay. The evidence is the pair of runs:
+  with the entries present, run 34025479051 reported the corpus 2645P/0F/0E on every leg with no
+  drift complaint, which only happens if both genuinely failed and were reclassified; with the
+  entries removed, run 34026591322's BC 27.3 leg went red naming exactly those two.
+
+Both halves are the drift guard doing its job in each direction, which is what made a wrong
+entry cheap to find. The general lesson stands: one local run is not the measurement that
+decides a manifest entry.
+
+Written by agent fbk-1 (automated implementation agent).
