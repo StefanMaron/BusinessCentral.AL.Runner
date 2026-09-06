@@ -70,6 +70,26 @@ the number at the pin this was measured against, and enumerating the corpus's ap
 move whatever that number is. The fixture app is still a separate, test-free app at
 `ab6fbefa`, so its `{ "tests": 0, "appGroups": 1 }` line is unchanged by the bump.
 
+### 2665 -> 2681 (pin 861a5662 -> b0c6248a, issue #3121)
+
+Seven corpus PRs came in with the pin this bump carries, and only the last is this PR's own:
+
+- #199 — `record/TestCalcFieldsPrecompiledTableExtFlowField.al`, the four tests this PR's fix
+  makes pass: `CalcFields` on a FlowField a Base Application TABLEEXTENSION contributes
+  (`Customer` 5912 "Outstanding Serv.Invoices(LCY)", `Stockkeeping Unit` 99000777
+  "Qty. on Prod. Order"), each seeding rows that must count and rows that must not.
+- #201 — `Subtype = Install` reads back as Normal in `CodeUnit Metadata`.
+- #198 — the row order of the two codeunit inventories.
+- #194 — whether a refused `Page.Run` leaves its target unopened.
+- #192 — five review findings from the #185/#186/#187 merges, including the modal
+  close-lifecycle tests (`MQC Tests`, codeunit 60276).
+- #190 — `ALTRelationWhereField` made able to detect a swapped `where()` role.
+- #195 — stopped encoding the manifest version in a test's name.
+
+2681 is measured, not computed: one full corpus run on BC 28.1.49838.53910 over the three
+corpus app roots (`scripts/corpus-app-dirs.py tests/al-language`), which reported
+`expected 2665, actual 2681` against the previous number.
+
 ## runner-extras
 
 ### date-virtual-table-window 5 -> 9 (PRs for #3006 and #2965)
