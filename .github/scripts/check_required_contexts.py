@@ -185,16 +185,18 @@ DEFAULT_REQUIRED_CONTEXTS = [
 # hole in the #2785 check for as long as it lasts.
 #
 # #3244 also said what refills it -- "only while a new gating job is landing" --
-# and that is the case for BOTH entries below. Each names a blocking job that
-# pr-gate.yml already produces and the `main` ruleset does not require yet, so
-# each is listed for exactly as long as that is true, and each comes out in the
-# same pass that adds its name to the ruleset.
+# and that is the case for ALL THREE entries below. Each names a blocking job
+# that pr-gate.yml already produces and the `main` ruleset does not require yet,
+# so each is listed for exactly as long as that is true, and each comes out in
+# the same pass that adds its name to the ruleset.
 #
-# Two entries, not one, and that is deliberate: #3255 and #3089 landed their
-# gating jobs independently, and dropping either name while its job blocks would
-# reopen precisely the #2785 hole this file exists to close -- a context the
-# ruleset requires that nothing here analyses. Merging these two refills by
-# keeping only one side is the mistake to avoid.
+# Three entries, not one, and that is deliberate: #3255, #3089 and #3288 landed
+# their gating jobs independently, and dropping any one of those names while its
+# job blocks would reopen precisely the #2785 hole this file exists to close -- a
+# context the ruleset requires that nothing here analyses. Merging these refills
+# by keeping only one side is the mistake to avoid, and it is a live one: this
+# list has now been refilled by three separate pull requests that could not see
+# each other, and each rebase presents exactly that conflict.
 PENDING_REQUIRED_CONTEXTS: list[str] = [
     # #3255's gate. pr-gate.yml's require-corpus-linkage job produces this
     # context. Analysed here exactly like a required one -- produced by a
@@ -214,6 +216,13 @@ PENDING_REQUIRED_CONTEXTS: list[str] = [
     # workflow, not cancellable on the head commit -- which is the whole point of
     # the seam.
     "A PR closing a gap issue must not leave its known-gap entry behind",
+    # #3288's gate. pr-gate.yml's require-forward-corpus-pin job produces this
+    # context, which refuses a pull request whose tests/al-language pin is not a
+    # descendant of the base branch's. Same discipline as the two above, and for
+    # the same #3002 reason: listed here so it is ANALYSED like a required one,
+    # deliberately NOT promoted into DEFAULT_REQUIRED_CONTEXTS or into
+    # ci-wait.py's RULESET_CONTEXTS until the ruleset actually requires it.
+    "The corpus pin must not move backward",
 ]
 
 REPO = "StefanMaron/BusinessCentral.AL.Runner"

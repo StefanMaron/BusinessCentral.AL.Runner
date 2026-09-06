@@ -207,6 +207,73 @@ jobs:
           CHANGED_FILES: ${{ steps.changed.outputs.files }}
         run: bash .github/scripts/check_corpus_linkage.sh
 
+  require-forward-corpus-pin:
+    name: The corpus pin must not move backward
+    runs-on: ubuntu-latest
+    # #3288. The corpus is this project's ratchet: every behaviour pinned in
+    # tests/al-language "is validated on real BC on every push and can never
+    # silently regress afterwards" (.claude/skills/autonomous-cycle). Nothing
+    # enforced the second half. A pull request whose pin is BEHIND main's passes
+    # every required context, and merging it un-pins corpus suites a real service
+    # tier has already adjudicated -- silently, because those suites do not fail,
+    # they stop existing, and the next green run reports success over a smaller
+    # set.
+    #
+    # Caught for real on PR #3181, green and CLEAN while about to drop corpus
+    # #199 and #201. That PR did nothing wrong: it bumped the pin forward from
+    # the main that existed when it was written, and main's pin advanced
+    # afterwards. It is a merge-order accident, which is why it needs a guard
+    # rather than a rule -- and it gets likelier as more agents run in parallel.
+    #
+    # It gates, so by the rule of thumb at the top of this file it must not be
+    # able to fail for an environmental reason. Two things make that true, and
+    # both are load-bearing:
+    #
+    #   * The whole job is offline apart from the checkout. No api.github.com.
+    #   * The corpus history is fetched BEFORE the comparison, and the script
+    #     refuses to answer (exit 3) rather than guess when it is missing. That
+    #     matters more than it sounds: in a shallow clone with both pins present
+    #     as objects, `git merge-base --is-ancestor` returns a clean exit 1 for a
+    #     pin that IS a forward bump -- byte-for-byte the signal a real backward
+    #     pin produces. A guard reading the exit code alone would tell every
+    #     author their PR moves the pin backward, forever.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Both endpoints of the comparison must be present as superproject
+          # commits, so the full history is needed here for the same reason the
+          # corpus-linkage job above needs it.
+          fetch-depth: 0
+          submodules: true
+
+      - name: Fetch the corpus history the comparison needs
+        # actions/checkout applies its fetch-depth to submodules too, and a
+        # shallow corpus clone is exactly the state in which merge-base lies (see
+        # above). Unshallowing here is what turns "cannot determine" into a real
+        # verdict. It is deliberately tolerant of failure: if this step cannot
+        # complete, the guard reports CANNOT-DETERMINE with a message about the
+        # checkout rather than a false accusation about the pin.
+        continue-on-error: true
+        run: |
+          set -x
+          git -C tests/al-language fetch --unshallow origin 2>/dev/null \
+            || git -C tests/al-language fetch --depth=2147483647 origin 2>/dev/null \
+            || git -C tests/al-language fetch origin '+refs/heads/*:refs/remotes/origin/*'
+
+      - name: Compare this PR's corpus pin against the base branch's
+        # BOTH endpoints come from the event payload, never the checked-out HEAD.
+        # That is #3261's lesson, and it bites harder here than it does for a file
+        # diff: actions/checkout leaves refs/pull/N/merge checked out, whose tree
+        # carries the MERGED pin -- git resolves a gitlink conflict toward the
+        # newer commit -- so reading the pin from HEAD would read something that
+        # is not this PR's pin at all, and the guard would pass on precisely the
+        # case it exists to catch. check_corpus_pin_forward.sh refuses a symbolic
+        # ref outright rather than resolving one.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash .github/scripts/check_corpus_pin_forward.sh
+
   verify-trigger-list:
     name: pull_request trigger lists must keep their load-bearing event types
     runs-on: ubuntu-latest
