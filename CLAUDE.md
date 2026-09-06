@@ -136,9 +136,40 @@ negative, not an error you will notice; an agent burned several calls on it befo
 
 ```bash
 command grep -E "pattern" file     # bypasses the function
-rg "pattern"                       # or just use ripgrep
+rg --hidden "pattern"              # ripgrep, but see below: --hidden is not optional here
 python3 - <<'EOF' ... EOF          # or do the scan in python, which also batches
 ```
 
 **Never conclude "nothing matches" from a bare `grep -E` in this repo.** Re-run it with
 `command grep` before believing an empty result.
+
+**3b. `rg` skips dot-directories, and in THIS repo that hides everything that governs you.**
+
+Both obvious tools have a silent-false-negative mode, for different reasons, and they look
+identical from the outside:
+
+| tool | failure | looks like |
+|---|---|---|
+| `grep -E` (the shell function) | rejects the flag, exits **0**, prints nothing | no matches |
+| `rg` without `--hidden` | skips dot-directories entirely | no matches |
+
+This bites harder here than in most repos, because nearly everything that governs agent
+behaviour lives under `.claude/` — `rules/`, `skills/`, `agents/`, `hooks/`, `commands/`. So
+"where is this instruction written down?" is exactly the search that comes back empty while
+being wrong. Measured while correcting a false claim in two `SKILL.md` files: `rg "clean
+status" .` found **nothing**, with the phrase sitting in two files the command never opened.
+
+```bash
+rg --hidden "pattern"                          # required for .claude/**
+rg --hidden --glob '!.git' "pattern"           # ...and again when .git makes it noisy
+```
+
+**Never conclude "this text is not in the repo" from one tool alone.** Confirm an empty
+result with the other one before believing it.
+
+One more empty-looking answer that is not: **`mise` prints a banner on stdout**, so
+`x=$(gh ... )` captures `mise ~/.config/mise/config.toml tools: gh@2.100.0` alongside — or
+instead of — the value you wanted. It has now corrupted a `$(...)` capture, a `preflight`
+health check, and a PR-existence guard that reported "a PR already exists" when none did.
+Filter to the shape you expect (`| command grep -E '^[0-9]+$'`) rather than testing whether
+the capture is non-empty.
