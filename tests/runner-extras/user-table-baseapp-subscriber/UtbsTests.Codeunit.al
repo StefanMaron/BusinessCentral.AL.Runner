@@ -49,7 +49,7 @@
 // precondition the two raising tests rest on, asserted separately so that if the runner ever
 // stops presenting itself as SaaS the failure names that cause instead of looking like a
 // subscriber-dispatch regression.
-codeunit 65631 "UTBS Tests"
+codeunit 65641 "UTBS Tests"
 {
     Subtype = Test;
     TestPermissions = Disabled;

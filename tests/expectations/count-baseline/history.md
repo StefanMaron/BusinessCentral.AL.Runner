@@ -1035,4 +1035,15 @@ add/add of two adjacent lines predicted here, resolved by keeping both keys in s
 the file carries no total, so neither side replaces the other. #3265's reduction of
 `object-system-table` from 5 to 3 is a separate line and merged without a conflict at all.
 
+**The id range moved from 65630-65639 to 65640-65649 after the rebase**, and that is the one
+non-mechanical change in it. #3224's `user-system-table-triggers` declares 65620-65639, so once
+it merged the two manifests both claimed 65630-65639 and
+`RunnerExtrasIdRangeGuardTests.NoTwoAppGroups_InTheSameBundleRoot_DeclareOverlappingIdRanges`
+failed the BC 27.5 leg — the only failure in the run, against 3825 passes. No object actually
+collided (this suite uses 65640/65641, that one 65620/65621), but every app group in a bundle
+root shares one Object table, so the guard fails on the declared overlap rather than waiting for
+a live collision to surface somewhere unrelated. Renumbering was preferred to an entry in the
+guard's `KnownOverlaps` allowlist: that list is documented debt tracked in #3160, and a suite
+using two ids has no reason to join it.
+
 Written by agent impl-24 (automated implementation agent).

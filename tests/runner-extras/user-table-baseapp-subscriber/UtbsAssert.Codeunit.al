@@ -1,5 +1,5 @@
 // Standalone Assert — this suite does not import from tests/al-language.
-codeunit 65630 "UTBS Assert"
+codeunit 65640 "UTBS Assert"
 {
     procedure AreEqual(Expected: Variant; Actual: Variant; Msg: Text)
     begin
