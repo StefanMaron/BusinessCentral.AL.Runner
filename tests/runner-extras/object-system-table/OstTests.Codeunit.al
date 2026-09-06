@@ -9,10 +9,10 @@
 //   A service tier has since measured the table. Corpus codeunit 61202,
 //   tests/al-language-onprem/record/TestObjectSystemTable.al
 //   (StefanMaron/BusinessCentral.AL.Language.Tests#197), reads 2000000001 from a Target = OnPrem
-//   app and finds it present, readable and EMPTY — on the BC OnPrem legs 27.0, 27.3, 28.0, 28.1,
-//   28.2, 28.3 and 28.4. Its centerpiece carries a control arm reading the populated sibling
-//   "Object Metadata" in the same session, so "empty" cannot be an unreadable table misreported
-//   as an empty one.
+//   app and finds it present, readable and EMPTY — on every BC OnPrem leg that executed it,
+//   seven of the corpus's eight. Its centerpiece carries a control arm reading the populated
+//   sibling "Object Metadata" in the same session, so "empty" cannot be an unreadable table
+//   misreported as an empty one.
 //
 //   THAT CLAIM IS NOT REPEATED HERE. "The legacy Object registry holds no rows" is plain BC
 //   behaviour and belongs upstream, where a tier adjudicates it every time the corpus runs

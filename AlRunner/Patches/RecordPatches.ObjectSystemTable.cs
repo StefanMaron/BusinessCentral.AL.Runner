@@ -25,10 +25,10 @@
 //   The measurement. Corpus tests/al-language-onprem/record/TestObjectSystemTable.al
 //   (codeunit 61202, corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#197, merged as
 //   c04b236) asks a real service tier, from a Target = OnPrem app, what this table holds. It
-//   ran on the BC OnPrem legs 27.0, 27.3, 28.0, 28.1, 28.2, 28.3 and 28.4 and passed on every
-//   one of them. (The 28.4-generation eighth leg, 27.5, failed before executing anything: its
-//   app publish came back HTTP 401/422 and all three OnPrem codeunits reported no result at
-//   all — an infrastructure failure on that leg, not a verdict.)
+//   passed on every BC OnPrem leg that executed it — seven of the corpus's eight. (The eighth,
+//   27.5, failed before executing anything: its app publish came back HTTP 401/422 and all
+//   three OnPrem codeunits reported no result at all — an infrastructure failure on that leg,
+//   not a verdict.)
 //
 //   Its centerpiece, Object_HoldsNoRows_WhileObjectMetadataDoes, carries a CONTROL ARM for the
 //   obvious objection: it reads the populated sibling "Object Metadata" first, in the same

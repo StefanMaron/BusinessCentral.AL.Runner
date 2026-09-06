@@ -873,10 +873,10 @@ nothing, because the target table is empty. A declared relation is not evidence 
 is populated.
 
 That test reads 2000000001 from a `Target = OnPrem` app and asserts the table is present,
-readable and **empty**. It passed on the BC OnPrem legs 27.0, 27.3, 28.0, 28.1, 28.2, 28.3 and
-28.4. The eighth OnPrem leg, 27.5, never executed it — its app publish returned HTTP 401/422 and
-all three OnPrem codeunits reported no result at all — so it is an infrastructure failure and not
-a dissent. Its centerpiece carries a **control arm** reading the populated sibling `Object
+readable and **empty**. It passed on every BC OnPrem leg that executed it — seven of the
+corpus's eight. The eighth, 27.5, never executed it: its app publish returned HTTP 401/422 and
+all three OnPrem codeunits reported no result at all, so that leg is an infrastructure failure
+and not a dissent. Its centerpiece carries a **control arm** reading the populated sibling `Object
 Metadata` in the same session, so "empty" cannot be an unreadable table misreported as an empty
 one; that arm passes here too. **issue #3071** removed the projection.
 
