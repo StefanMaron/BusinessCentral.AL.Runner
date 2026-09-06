@@ -601,6 +601,52 @@ public static partial class RecordPatches
             binder: null, types: new[] { tNavValueMetadata, typeof(bool) }, modifiers: null)
             ?? throw new InvalidOperationException("NavValue.GetDefaultNavValue(INavValueMetadata,bool) not found");
 
+        EnsureAllObjColumnsExist(allObjMetaTable);
+
         _aovReflectionReady = true;
+    }
+
+    /// <summary>
+    /// The same defect class as AlRunner#3015, at the one seeder that resolves its columns by
+    /// field NUMBER rather than by name. <see cref="InsertAllObjRow"/> switches on
+    /// <c>field.FieldNo</c> while walking the metatable, so a number that matches nothing is
+    /// simply never written: the row still inserts, the column keeps BC's own default, and the
+    /// ownership comparison
+    /// <c>AllObj."App Runtime Package ID" &lt;&gt; PublishedApplication."Runtime Package ID"</c>
+    /// then declines for every app while BC logs a warning rather than raising.
+    ///
+    /// That is not hypothetical here — #3004 shipped 6/7 for the two package columns, which are
+    /// 60/61, and the stamp silently did nothing. It was found by checking, not by a failure.
+    ///
+    /// Checked once per process off the same metatable <see cref="EnsureAllObjReflection"/>
+    /// already holds, never per row: AllObj is seeded one row per known AL object, thousands of
+    /// them, and a per-row check would be paid thousands of times to answer a question about
+    /// the table.
+    /// </summary>
+    private static void EnsureAllObjColumnsExist(NCLMetaTable allObjMetaTable)
+    {
+        var byNo = new HashSet<int>();
+        foreach (var f in GetAllFields(allObjMetaTable) ?? Enumerable.Empty<NCLMetaField>())
+            byNo.Add(f.FieldNo);
+
+        var required = new (int No, string Name)[]
+        {
+            (AllObjFieldObjectType, "Object Type"),
+            (AllObjFieldObjectId, "Object ID"),
+            (AllObjFieldObjectName, "Object Name"),
+            (AllObjFieldAppPackageId, "App Package ID"),
+            (AllObjFieldAppRuntimePackageId, "App Runtime Package ID"),
+        };
+        var missing = required.Where(r => !byNo.Contains(r.No)).ToList();
+        if (missing.Count == 0) return;
+
+        throw AllObjShapeGap(
+            "AllObj metatable has no field "
+            + string.Join(", ", missing.Select(m => $"{m.No} (\"{m.Name}\")"))
+            + " — every AllObj row would be written with BC's own default in that column and "
+            + "every later read would look correct; module-ownership checks would then decline "
+            + $"for every app without raising [tableId={allObjMetaTable.TableId} "
+            + $"name='{allObjMetaTable.TableName}' "
+            + $"fields={string.Join("/", byNo.OrderBy(n => n))}] — see AlRunner#3015");
     }
 }
