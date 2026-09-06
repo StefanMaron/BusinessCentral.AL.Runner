@@ -377,7 +377,18 @@ def resolve_required_contexts(branch: str = "main", fetch=None):
 # run had measured. This tuple and DEFAULT_REQUIRED_CONTEXTS in
 # .github/scripts/check_required_contexts.py must stay identical to each other AND to the
 # live ruleset — that guard fails on drift in either direction (#2785).
-RULESET_CONTEXTS = ("BC test matrix passed", "Tests updated")
+RULESET_CONTEXTS = (
+    "BC test matrix passed",
+    "Tests updated",
+    "PR title/body must not contain a CI-skip directive",
+    "PR body closing references must be correct, both directions",
+    "pull_request trigger lists must keep their load-bearing event types",
+    "Required contexts must not be cancellable on the same commit",
+    "Agent definitions must allowlist the MCP tools they document",
+    "tools/ unit tests",
+    ".github/scripts/ unit tests",
+    "scripts/ unit tests",
+)
 
 NOT_FAILURES = ("success", "neutral", "skipped")
 
@@ -787,6 +798,39 @@ def classify(runs: list[dict],
                 "whose check run does not exist yet is not in it at all. Do not scope",
                 "a diagnosis to these names until every check has reported; re-run",
                 "this tool, or read `gh pr checks` once the run finishes.",
+            ]
+        if inflight:
+            # #2922. The verdict stays exit 1 -- a failure is a verdict, and
+            # holding every genuinely-red PR back for a queued run costs real
+            # time on the common case. But the reader is now TOLD that a newer
+            # run of the same workflow is in flight on this commit, because the
+            # conclusion above is not necessarily the one a ruleset will end up
+            # reading.
+            #
+            # The concrete sequence, from #2922: require-tests.yml produces the
+            # required `Tests updated` context, carries no `concurrency` block
+            # (#2726) and triggers on 'labeled'. A `no-tests-needed` label
+            # applied mid-wait starts a second run on the same SHA; the first
+            # run's `failure` is what the rollup still shows, and the second
+            # reports `skipped`, satisfying the ruleset. Reporting the failure
+            # was right; reporting it without this caveat sent the reader to a
+            # log that had already been overtaken.
+            #
+            # Only the annotation is new. superseding_runs() already computed
+            # these pairs for the guards below -- the failure branch
+            # short-circuits ahead of them, so it was discarding information it
+            # already held.
+            lines += [
+                "",
+                "CAVEAT: a newer run of the same workflow is still in flight on this",
+                "commit, so the conclusion above may be overturned before a ruleset",
+                "reads it:",
+            ]
+            lines += [f"  {c}: superseded by workflow run {w}" for c, w in inflight]
+            lines += [
+                "Re-run this tool once that run finishes before treating the failure",
+                "above as final. Do NOT `gh run rerun` the failing run -- that destroys",
+                "its log permanently (.claude/rules/ci-verdicts.md).",
             ]
         return Verdict(1, lines, log_target=bad[0], progress=progress)
 
