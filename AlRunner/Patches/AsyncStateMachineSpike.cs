@@ -187,8 +187,12 @@ public static partial class BcRuntime
 
         var sharedDict = ctor.Invoke(new object?[] { _skeletonSharedObjectContainer });
 
-        var mSet = treeType.GetMethod("SetReferenceTarget",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)!;
+        var mSet = BcShape.RequiredMethod(
+            treeType, "SetReferenceTarget",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            "RecordRef (shared record-reference materialisation)",
+            "TreeHandler.SetReferenceTarget",
+            "the RecordRef's shared reference target cannot be installed");
         mSet.Invoke(tree, new object?[] { sharedDict });
         return sharedDict;
     }

@@ -96,8 +96,12 @@ public static partial class BcRuntime
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
                 null, Type.EmptyTypes, null);
         if (_mTreeSetReferenceTarget == null)
-            _mTreeSetReferenceTarget = tree.GetType().GetMethod("SetReferenceTarget",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            _mTreeSetReferenceTarget = AlRunner.Infrastructure.BcShape.FindMethod(
+                tree.GetType(), "SetReferenceTarget",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                "RecordRef (shared record-reference materialisation)",
+                "TreeHandler.SetReferenceTarget",
+                "the RecordRef's shared reference target cannot be installed");
 
         var existing = _mTreeGetReferenceTarget?.Invoke(tree, null);
         if (existing != null) return existing;
@@ -287,8 +291,12 @@ public static partial class BcRuntime
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
                 null, Type.EmptyTypes, null);
         if (_mTreeSetReferenceTarget == null)
-            _mTreeSetReferenceTarget = tree.GetType().GetMethod("SetReferenceTarget",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            _mTreeSetReferenceTarget = AlRunner.Infrastructure.BcShape.FindMethod(
+                tree.GetType(), "SetReferenceTarget",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                "RecordRef (shared record-reference materialisation)",
+                "TreeHandler.SetReferenceTarget",
+                "the RecordRef's shared reference target cannot be installed");
         var existing = _mTreeGetReferenceTarget?.Invoke(tree, null);
         if (existing != null) return existing;
 
@@ -496,8 +504,12 @@ public static partial class BcRuntime
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
                 null, Type.EmptyTypes, null);
         if (_mTreeSetReferenceTarget == null)
-            _mTreeSetReferenceTarget = tree.GetType().GetMethod("SetReferenceTarget",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            _mTreeSetReferenceTarget = AlRunner.Infrastructure.BcShape.FindMethod(
+                tree.GetType(), "SetReferenceTarget",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                "RecordRef (shared record-reference materialisation)",
+                "TreeHandler.SetReferenceTarget",
+                "the RecordRef's shared reference target cannot be installed");
         var existing = _mTreeGetReferenceTarget?.Invoke(tree, null);
         if (existing != null) return existing;
 
@@ -540,8 +552,12 @@ public static partial class BcRuntime
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
                 null, Type.EmptyTypes, null);
         if (_mTreeSetReferenceTarget == null)
-            _mTreeSetReferenceTarget = tree.GetType().GetMethod("SetReferenceTarget",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            _mTreeSetReferenceTarget = AlRunner.Infrastructure.BcShape.FindMethod(
+                tree.GetType(), "SetReferenceTarget",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                "RecordRef (shared record-reference materialisation)",
+                "TreeHandler.SetReferenceTarget",
+                "the RecordRef's shared reference target cannot be installed");
         var existing = _mTreeGetReferenceTarget?.Invoke(tree, null);
         if (existing != null) return existing;
 
@@ -581,8 +597,12 @@ public static partial class BcRuntime
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
                 null, Type.EmptyTypes, null);
         if (_mTreeSetReferenceTarget == null)
-            _mTreeSetReferenceTarget = tree.GetType().GetMethod("SetReferenceTarget",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            _mTreeSetReferenceTarget = AlRunner.Infrastructure.BcShape.FindMethod(
+                tree.GetType(), "SetReferenceTarget",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                "RecordRef (shared record-reference materialisation)",
+                "TreeHandler.SetReferenceTarget",
+                "the RecordRef's shared reference target cannot be installed");
         var existing = _mTreeGetReferenceTarget?.Invoke(tree, null);
         if (existing != null) return existing;
 
@@ -621,8 +641,12 @@ public static partial class BcRuntime
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
                 null, Type.EmptyTypes, null);
         if (_mTreeSetReferenceTarget == null)
-            _mTreeSetReferenceTarget = tree.GetType().GetMethod("SetReferenceTarget",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            _mTreeSetReferenceTarget = AlRunner.Infrastructure.BcShape.FindMethod(
+                tree.GetType(), "SetReferenceTarget",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+                "RecordRef (shared record-reference materialisation)",
+                "TreeHandler.SetReferenceTarget",
+                "the RecordRef's shared reference target cannot be installed");
         var existing = _mTreeGetReferenceTarget?.Invoke(tree, null);
         if (existing != null) return existing;
 

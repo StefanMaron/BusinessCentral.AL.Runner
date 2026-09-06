@@ -63,6 +63,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -1002,7 +1003,15 @@ public static partial class RecordPatches
     /// <summary>Invoke BC's FilterExpression.Evaluate(NavValue, ISortingRulesProvider) by reflection.</summary>
     private static bool EvaluateFilterExpression(object expr, object navValue, object? sortingRules)
     {
-        _mFilterExprEvaluate ??= _tFilterExpr!.GetMethod("Evaluate", BindingFlags.Public | BindingFlags.Instance)
+        // BcShape.FindMethod, not Type.GetMethod(name, flags): a second Evaluate raises
+        // AmbiguousMatchException, which NavMethodScope_AssertError absorbs, so an AL
+        // `asserterror` over a filtered query would PASS on a filter real BC applies (#3069).
+        // Absence still answers null and still hits the InvalidOperationException below —
+        // that half is #3051's, and is deliberately untouched here.
+        _mFilterExprEvaluate ??= BcShape.FindMethod(
+                _tFilterExpr!, "Evaluate", BindingFlags.Public | BindingFlags.Instance,
+                "Query filtering (WHERE evaluation)", "FilterExpression.Evaluate",
+                "the query's filter expression cannot be evaluated")
             ?? throw new InvalidOperationException("FilterExpression.Evaluate(NavValue, ISortingRulesProvider) not found");
         return (bool)_mFilterExprEvaluate.Invoke(expr, new[] { navValue, sortingRules })!;
     }

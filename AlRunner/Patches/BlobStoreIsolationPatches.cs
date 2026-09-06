@@ -68,6 +68,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -261,8 +262,12 @@ public static class BlobStoreIsolationPatches
         if (ReferenceEquals(workTableBuffer, storedTableBuffer)) return;
 
         var mrbType = mutableRecordBuffer.GetType();
-        _mGetChangedFieldValue ??= mrbType.GetMethod("GetChangedFieldValue",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        _mGetChangedFieldValue ??= BcShape.FindMethod(
+            mrbType, "GetChangedFieldValue",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            "BLOB store isolation (per-record buffered BLOB writes)",
+            "MutableRecordBuffer.GetChangedFieldValue",
+            "a buffered BLOB write cannot be read back");
         if (_mGetChangedFieldValue == null) return;
 
         var metaTable = mrbType.GetProperty("MetaTable", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
