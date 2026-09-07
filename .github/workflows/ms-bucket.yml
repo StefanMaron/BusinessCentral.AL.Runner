@@ -53,7 +53,12 @@ name: MS bucket (manual)
 #   * both --package-cache directories;
 #   * AL_RUNNER_EMIT_TIMEOUT_SEC far above the 120 s default (Tests-ERM's emit alone is
 #     minutes);
-#   * a private --cache root, never the shared default.
+#   * a private --cache root, never the shared default;
+#   * --test-timeout, from the `test-timeout` input, default 300 s. The watchdog is wall
+#     clock, and the runner's own 60 s default is a developer-box number that aborts
+#     legitimate tests here (#3431). Do NOT remove the watchdog to fix that: it is what turns
+#     an unbounded loop into a diagnosable abort instead of a job grinding to the 360-minute
+#     ceiling.
 #
 # Reading the number — two known ways it can be wrong until their fixes land, both surfaced
 # verbatim in the summary by scripts/ms-bucket-summary.py:
@@ -141,6 +146,13 @@ on:
         type: boolean
         required: false
         default: true
+      test-timeout:
+        description: >-
+          Per-test watchdog in seconds (--test-timeout). The runner's 60 s default is a
+          developer-box number and cuts legitimate tests off on a hosted runner (#3431).
+        type: number
+        required: false
+        default: 300
   workflow_dispatch:
     inputs:
       bucket:
@@ -189,6 +201,14 @@ on:
         type: boolean
         required: false
         default: true
+      test-timeout:
+        description: >-
+          Per-test watchdog in seconds (--test-timeout). The runner's own 60 s default is a
+          developer-box number and aborts legitimate tests on a hosted runner (#3431). Lower
+          it only to reproduce a specific abort.
+        type: number
+        required: false
+        default: 300
 
 permissions:
   contents: read
@@ -412,10 +432,24 @@ jobs:
           BC_VERSION: ${{ steps.bc.outputs.version }}
           WITH_TEST_DATA: ${{ inputs.test-data }}
           READER: ${{ steps.reader.outputs.tag }}
+          # Handed to --test-timeout on the argument array below. Do NOT rename this to
+          # AL_RUNNER_TEST_TIMEOUT_SEC, which the runner reads by itself: under that name,
+          # dropping the flag would leave the timeout working and MsBucketWorkflowTests could
+          # no longer tell.
+          TEST_TIMEOUT_SEC: ${{ inputs.test-timeout }}
         run: |
           set +e
           mapfile -t BUCKET_LIST < "$RUNNER_TEMP/buckets.txt"
           total=${#BUCKET_LIST[@]}
+          # Fails once, up front, before provisioning. The runner rejects a bad value itself
+          # -- the flag's value is quoted on the array, so an empty one arrives as an empty
+          # argument and Program.cs exits 2 rather than swallowing the next flag -- but it
+          # does so only after this job has paid provisioning and each bucket's setup, once
+          # per invocation.
+          if ! printf '%s' "$TEST_TIMEOUT_SEC" | grep -Eq '^[1-9][0-9]*$'; then
+            echo "::error::test-timeout must be a positive whole number of seconds, got '$TEST_TIMEOUT_SEC'"
+            exit 1
+          fi
           bak="$HOME/.al-runner/test-data/$BC_VERSION/BusinessCentral-W1.bak"
           # cwd OUTSIDE the checkout: the runner auto-probes ./tests/expectations from cwd as
           # a fallback (ExpectationsDirectoryResolution.cs), and the corpus manifest has no
@@ -433,6 +467,7 @@ jobs:
                    --package-cache "$HOME/.al-runner/platform-apps"
                    --package-cache "$HOME/.al-runner/test-apps"
                    --cache "$RUNNER_TEMP/al-runner-cache"
+                   --test-timeout "$TEST_TIMEOUT_SEC"
                    --output-junit "$out/junit.xml"
                    --out "$out/results.json"
                    --quiet )

@@ -69,6 +69,24 @@ internal static class WorkflowBlockScalar
     }
 }
 
+internal static class WorkflowStep
+{
+    /// <summary>
+    /// One named step's text, from its <c>- name:</c> line to the next step's. Assertions
+    /// about ORDER need this: <c>ms-bucket.yml</c> has two <c>for bucket in …</c> loops, so an
+    /// index taken over the whole file answers a question about the FETCH loop while reading
+    /// like a question about the run loop.
+    /// </summary>
+    internal static string BodyOf(string code, string stepName)
+    {
+        const string marker = "      - name: ";
+        var start = code.IndexOf(marker + stepName, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"no step named \"{stepName}\" in the workflow");
+        var next = code.IndexOf(marker, start + marker.Length, StringComparison.Ordinal);
+        return next < 0 ? code[start..] : code[start..next];
+    }
+}
+
 public sealed class MsSurfaceWorkflowTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -122,20 +140,9 @@ public sealed class MsSurfaceWorkflowTests
     private static string CodeOnly(string text) =>
         string.Join('\n', text.Split('\n').Where(l => !l.TrimStart().StartsWith('#')));
 
-    /// <summary>
-    /// One named step's text, from its <c>- name:</c> line to the next step's. Assertions
-    /// about ORDER need this: <c>ms-bucket.yml</c> has two <c>for bucket in …</c> loops, so an
-    /// index taken over the whole file answers a question about the FETCH loop while reading
-    /// like a question about the run loop.
-    /// </summary>
-    private static string StepBody(string code, string stepName)
-    {
-        const string marker = "      - name: ";
-        var start = code.IndexOf(marker + stepName, StringComparison.Ordinal);
-        Assert.True(start >= 0, $"no step named \"{stepName}\" in the workflow");
-        var next = code.IndexOf(marker, start + marker.Length, StringComparison.Ordinal);
-        return next < 0 ? code[start..] : code[start..next];
-    }
+    /// <summary>See <see cref="WorkflowStep.BodyOf"/>; MsBucketWorkflowTests slices the same
+    /// run step for the per-test timeout, so the slicer is shared rather than spelled twice.</summary>
+    private static string StepBody(string code, string stepName) => WorkflowStep.BodyOf(code, stepName);
 
     private static IReadOnlyList<string> SurfaceBuckets() =>
         WorkflowBlockScalar.Of(CodeOnly(Read(SurfaceWorkflow)), "buckets");
@@ -275,9 +282,34 @@ public sealed class MsSurfaceWorkflowTests
                  {
                      "--package-cache", "READER_TAG", "--test-data-company",
                      "CRONUS International Ltd_", "AL_RUNNER_EMIT_TIMEOUT_SEC",
-                     "provision-bc", "al-runner",
+                     "provision-bc", "al-runner", "--test-timeout",
                  })
             Assert.DoesNotContain(owned, code, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// #3431: the surface ran with the runner's 60 s wall-clock default per-test watchdog on a
+    /// hosted runner, so tests that finish comfortably inside it locally were cut off.
+    ///
+    /// The surface owns the POLICY knob and ms-bucket.yml owns putting it on the command line.
+    /// So two things: the value is PASSED THROUGH rather than re-spelled — a hardcoded number
+    /// here would silently stop tracking an override — and the two files' defaults are equal,
+    /// so a dispatch that leaves the field untouched measures under the same watchdog as the
+    /// nightly, which passes nothing at all. Without that equality the three callers drift and
+    /// their numbers stop being comparable, which is the one property this measurement needs.
+    /// </summary>
+    [Fact]
+    public void SurfaceWorkflow_PassesThePerTestTimeoutThrough_AtTheSameDefault()
+    {
+        Assert.Contains("test-timeout: ${{ inputs.test-timeout }}",
+            CodeOnly(Read(SurfaceWorkflow)), StringComparison.Ordinal);
+
+        var surface = WorkflowInputDefaults.Of(Read(SurfaceWorkflow), "test-timeout");
+        var bucket = WorkflowInputDefaults.Of(Read(BucketWorkflow), "test-timeout");
+
+        Assert.Single(surface);
+        Assert.NotEmpty(bucket);
+        Assert.Equal(bucket.Distinct(StringComparer.Ordinal).Single(), surface[0]);
     }
 
     // ---- what the surface needs from ms-bucket.yml -------------------------------------
