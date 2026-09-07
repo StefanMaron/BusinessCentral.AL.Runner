@@ -18,11 +18,12 @@ namespace AlRunner.Tests;
 /// real runner against a synthetic bundle, without depending on the submodule pin having moved
 /// yet (that corpus PR had not merged when this test was written).
 ///
-/// It pins the two things the runner-side fix actually owns and the corpus cannot see:
-/// that the session's commit behaviour is CONSULTED at all, and that the error the Error
-/// branch raises carries BC's own <c>Lang.CommitProhibited</c> text rather than a runner
-/// paraphrase (the reflection route in ALDatabasePatches.BuildCommitProhibited can silently
-/// degrade to a fallback string, which no AL assertion upstream would notice).
+/// The AL assertions below are all plain BC-behaviour claims already green upstream; what
+/// they buy is coverage while the pin has not moved, which is a temporary justification and
+/// not a claim that the corpus cannot see them. The Lang-resource half of that question —
+/// whether the Error branch really resolved BC's resource or fell back — is NOT decidable
+/// from AL, because the fallback string is byte-identical to the resource; it is settled
+/// in-process by CommitProhibitedMessageTests instead.
 ///
 /// No Library Assert / Base Application dependency (no "application" in the fixture's
 /// app.json — see .claude/rules/no-base-app-in-csharp-tests.md): each test raises its own

@@ -88,8 +88,8 @@ public static class ALDatabasePatches
 
     /// <summary>
     /// The current session's <c>CommitBehavior</c> as its enum member name, or <c>null</c>
-    /// when there is no session (install/upgrade paths run before one exists) — treated as
-    /// <c>Ok</c>, which is what a fresh NavSession carries.
+    /// when there is no session — treated as <c>Ok</c>, which is what a fresh NavSession
+    /// carries.
     ///
     /// Read by name rather than by value: the enum is
     /// <c>Microsoft.Dynamics.Nav.Types.CommitBehavior</c>, and comparing names survives a
@@ -98,13 +98,23 @@ public static class ALDatabasePatches
     /// </summary>
     private static string? CurrentCommitBehaviorName()
     {
+        // A null session is an ANSWER about the runner's own state, not about BC's layout:
+        // install/upgrade paths run before one exists, and a fresh NavSession carries Ok. So
+        // it is not a shape gap (BcShapeGapException.cs draws that line explicitly).
         var session = BcRuntime.SkeletonSession;
         if (session == null) return null;
+
+        // A MISSING property is the other case, and it must not silently degrade to Ok —
+        // that is the very defect this method exists to fix, reinstated with nothing said.
         _commitBehaviorProp ??= session.GetType().GetProperty("CommitBehavior",
             System.Reflection.BindingFlags.Instance
             | System.Reflection.BindingFlags.Public
-            | System.Reflection.BindingFlags.NonPublic);
-        return _commitBehaviorProp?.GetValue(session)?.ToString();
+            | System.Reflection.BindingFlags.NonPublic)
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                "ALDatabase.ALCommit", "NavSession.CommitBehavior",
+                "property not found, so [CommitBehavior(...)] cannot be honored and every "
+                + "Commit() would silently behave as CommitBehavior::Ok");
+        return _commitBehaviorProp.GetValue(session)?.ToString();
     }
 
     private static System.Reflection.PropertyInfo? _commitBehaviorProp;
@@ -117,7 +127,7 @@ public static class ALDatabasePatches
     /// Lang lives in Microsoft.Dynamics.Nav.Language.dll, which the runner does not
     /// reference directly.
     /// </summary>
-    private static Exception BuildCommitProhibited()
+    internal static Exception BuildCommitProhibited()
     {
         // Fallback is BC 28.4's own en-US text, measured on a service tier; used only if the
         // resource cannot be read.
