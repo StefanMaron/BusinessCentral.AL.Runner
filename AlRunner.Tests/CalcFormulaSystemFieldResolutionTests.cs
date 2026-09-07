@@ -24,7 +24,17 @@
 //
 // The invariant that matters is "resolver set == materialised set": resolving a name to an id
 // the built NCLMetaTable does not carry would fault inside NCL instead of refusing loudly
-// here, which is why SystemRowVersion is deliberately NOT in the set.
+// here.
+//
+// #3307 — that invariant is about IDS, not about which array a name lives in, and this file
+// used to conflate the two. SystemRowVersion was asserted here as deliberately unresolvable,
+// on the reading that it is a sixth system field at id 2000000005 the runner does not
+// materialise. Both halves were wrong: the AL compiler synthesizes it at field id 0 with
+// metadata name `timestamp`, and no field 2000000005 exists anywhere in BC. Since
+// BuildNCLMetaTable already materialises id 0 as the synthetic `timestamp` column, resolving
+// SystemRowVersion to 0 SATISFIES the invariant — the built table does carry that id. It stays
+// out of SystemParsedFields because that array is what gets APPENDED, and appending id 0 a
+// second time would corrupt the field layout. Resolvable, not appended.
 
 using System.Reflection;
 using AlRunner.Patches;
@@ -90,13 +100,62 @@ public class CalcFormulaSystemFieldResolutionTests
         }
     }
 
-    /// SystemRowVersion is NOT materialised onto a built table, so it must NOT resolve —
-    /// answering an id NCL has no MetaField for is worse than refusing.
+    /// #3307 — SystemRowVersion resolves, and it resolves to field id 0.
+    ///
+    /// It used to be asserted here as deliberately UNRESOLVABLE, on the reading that it was a
+    /// sixth system field at id 2000000005 that the runner does not materialise. That reading
+    /// was wrong in both halves. Microsoft's AL compiler synthesizes it at field id 0 with
+    /// metadata name `timestamp` — SynthesizedFieldHelper.AppendSystemFields in
+    /// Microsoft.Dynamics.Nav.CodeAnalysis:
+    ///
+    ///     if (runtimeVersionOrCurrent >= RuntimeVersion.Fall2022)
+    ///         builder.Add(SynthesizedFieldSymbol.Create(
+    ///             owner, 0, "SystemRowVersion", NavCorLib.BigIntegerType, "timestamp"));
+    ///
+    /// and there is no field 2000000005 anywhere: NCL's NCLMetaTable.SetSystemFields switches
+    /// on 2000000000-2000000004 with no 2000000005 case, and NCL carries no SystemRowVersion
+    /// string at all.
+    ///
+    /// So the resolver-set == materialised-set invariant is SATISFIED by resolving it, not by
+    /// refusing it: BuildNCLMetaTable already puts id 0 in the MetaField[] as the synthetic
+    /// `timestamp` column, so id 0 is a field the built table genuinely carries.
     [Fact]
-    public void SystemRowVersion_DoesNotResolve()
+    public void SystemRowVersion_ResolvesToFieldZero()
     {
-        Assert.False(TryResolve(TableWithoutSystemFields(), "SystemRowVersion", out _));
+        Assert.True(TryResolve(TableWithoutSystemFields(), "SystemRowVersion", out var resolved));
+        Assert.Equal(0, resolved.FieldId);
+        Assert.Equal("SystemRowVersion", resolved.FieldName);
+        Assert.Equal("BigInteger", resolved.TypeName);
+    }
+
+    /// It resolves case-insensitively, like every other field name in a CalcFormula.
+    [Fact]
+    public void SystemRowVersion_ResolvesCaseInsensitively()
+    {
+        Assert.True(TryResolve(TableWithoutSystemFields(), "SYSTEMROWVERSION", out var resolved));
+        Assert.Equal(0, resolved.FieldId);
+    }
+
+    /// It must NOT be in SystemParsedFields, and that is a live constraint rather than
+    /// bookkeeping: BuildNCLMetaTable APPENDS that array to a MetaField[] that already opens
+    /// with the synthetic `timestamp` column at id 0. Adding SystemRowVersion there would put
+    /// id 0 in the array twice and corrupt the field layout R2R-precompiled BC code holds
+    /// offsets for. Resolvable, not appended.
+    [Fact]
+    public void SystemRowVersion_IsNotAppendedToTheMaterialisedSet()
+    {
         Assert.DoesNotContain(SystemParsedFields(), f => f.FieldName == "SystemRowVersion");
+        Assert.DoesNotContain(SystemParsedFields(), f => f.FieldId == 0);
+    }
+
+    /// `timestamp` is the field's METADATA name, not an AL identifier, so a CalcFormula may
+    /// not name it. Only the AL-visible spelling resolves. Without this, "resolve field 0 by
+    /// name" could be satisfied by opening the door to both spellings, which would accept AL
+    /// the real compiler rejects.
+    [Fact]
+    public void MetadataNameTimestamp_DoesNotResolve()
+    {
+        Assert.False(TryResolve(TableWithoutSystemFields(), "timestamp", out _));
     }
 
     [Theory]

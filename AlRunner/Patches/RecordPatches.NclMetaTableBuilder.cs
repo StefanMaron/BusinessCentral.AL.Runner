@@ -1025,8 +1025,14 @@ public static partial class RecordPatches
     /// a name to an id the built NCLMetaTable does not carry faults inside NCL instead of
     /// refusing loudly here (#3178).</para>
     ///
-    /// <para><c>timestamp</c> (id 0) is deliberately not here. It is a synthetic column the
-    /// runner adds for RecordRef access, not a field AL can name in a formula.</para>
+    /// <para><c>SystemRowVersion</c> is deliberately not here, and that is NOT because the
+    /// runner refuses it — see <see cref="SystemRowVersionParsedField"/>. It is not in THIS
+    /// array because this array is what <c>BuildNCLMetaTable</c> APPENDS, and the field it
+    /// names is already in the MetaField[] under its other name: BC gives it id 0, the same
+    /// id as the synthetic <c>timestamp</c> column. Appending it here would put id 0 in the
+    /// array twice and corrupt the field layout R2R-precompiled BC code holds offsets for.
+    /// It is resolvable but not appended, which is why the two sets are now read through
+    /// separate members rather than through this one.</para>
     /// </summary>
     private static readonly ParsedField[] SystemParsedFields = new[]
     {
@@ -1036,6 +1042,49 @@ public static partial class RecordPatches
         new ParsedField(2000000003, "SystemModifiedAt", "DateTime", 0),
         new ParsedField(2000000004, "SystemModifiedBy", "Guid",     0),
     };
+
+    /// <summary>
+    /// BC's SIXTH system field, which is not shaped like the other five and must not be
+    /// filed with them (#3307).
+    ///
+    /// <para>Microsoft's AL compiler synthesizes it at <b>field id 0</b> with metadata name
+    /// <c>timestamp</c>, not in the 2000000000-2000000004 block —
+    /// <c>SynthesizedFieldHelper.AppendSystemFields</c> in
+    /// <c>Microsoft.Dynamics.Nav.CodeAnalysis</c>, verbatim:</para>
+    ///
+    /// <code>
+    /// if (runtimeVersionOrCurrent >= RuntimeVersion.Fall2022)
+    ///     builder.Add(SynthesizedFieldSymbol.Create(
+    ///         owner, 0, "SystemRowVersion", NavCorLib.BigIntegerType, "timestamp"));
+    /// </code>
+    ///
+    /// <para>Confirmed twice in the same assembly: <c>XmlPortMetadataEmitter.GetFieldName</c>
+    /// special-cases exactly the pair <c>(Id == 0, Name == "SystemRowVersion",
+    /// MetadataName == "timestamp")</c>, alongside the SystemId pair, to emit the metadata
+    /// name rather than the AL name. BC's RUNTIME confirms the negative half: NCL's
+    /// <c>NCLMetaTable.SetSystemFields</c> switches on field numbers 2000000000-2000000004
+    /// and has no 2000000005 case at all, and NCL contains no <c>SystemRowVersion</c> string.
+    /// So the id in this field's name is 0, and there is no field 2000000005 anywhere.</para>
+    ///
+    /// <para>The runner already materialises id 0 on every built metatable (the
+    /// <c>timestampParsed</c> column in <c>BuildNCLMetaTable</c>) and already stamps it with
+    /// a strictly increasing rowversion on Insert and Modify (<c>RowVersionPatches</c>), so
+    /// plain AL reading <c>Rec.SystemRowVersion</c>, filtering on it, or asking
+    /// <c>FieldNo(SystemRowVersion)</c> has always worked. What did NOT work is naming it in
+    /// a <b>CalcFormula</b> or a <b>TableRelation</b>, because those go through
+    /// <see cref="TryResolveTableFieldByName"/>, which only ever saw the column under the
+    /// name <c>timestamp</c>. The AL author writes <c>SystemRowVersion</c>, so the lookup
+    /// missed and the formula was refused (CalcFormula, loudly since #3279) or the relation
+    /// silently dropped (TableRelation) — the two halves of #3307.</para>
+    ///
+    /// <para>The type is BigInteger, matching both <c>NavCorLib.BigIntegerType</c> above and
+    /// the <c>timestampParsed</c> column the runner builds, so resolving to id 0 answers a
+    /// MetaField that is genuinely there and genuinely that type. This is the one system
+    /// field whose resolution does NOT extend the materialised set — it names a column the
+    /// set already contains.</para>
+    /// </summary>
+    private static readonly ParsedField SystemRowVersionParsedField =
+        new ParsedField(0, "SystemRowVersion", "BigInteger", 0);
 
     /// <summary>
     /// Resolve a field NAME that a CalcFormula or a TableRelation states, on
@@ -1072,11 +1121,23 @@ public static partial class RecordPatches
     }
 
     /// <summary>Every field a formula on <paramref name="table"/> may name: the table's own,
-    /// its tableextensions', and the system fields. Materialise it once when a caller resolves
+    /// its tableextensions', the five appended system fields, and
+    /// <see cref="SystemRowVersionParsedField"/>. Materialise it once when a caller resolves
     /// several names against one table — <see cref="GetAllFieldsIncludingExtensions"/> builds a
-    /// HashSet on each call whenever the table carries extension fields.</summary>
+    /// HashSet on each call whenever the table carries extension fields.
+    ///
+    /// <para>The invariant this has to keep is "every name resolvable here maps to an id the
+    /// built NCLMetaTable carries" — resolving to an id that is NOT there faults inside NCL
+    /// instead of refusing loudly (#3178). SystemRowVersion satisfies it through the
+    /// <c>timestamp</c> column at id 0 rather than through <see cref="SystemParsedFields"/>,
+    /// which is why it is concatenated separately and NOT added to that array (#3307).
+    /// <c>timestamp</c> itself stays unresolvable by that name: BC's AL surface calls the
+    /// field SystemRowVersion, and <c>timestamp</c> is its metadata name, not an AL
+    /// identifier a formula may use.</para></summary>
     private static IEnumerable<ParsedField> ResolvableFields(ParsedTable table)
-        => GetAllFieldsIncludingExtensions(table).Concat(SystemParsedFields);
+        => GetAllFieldsIncludingExtensions(table)
+            .Concat(SystemParsedFields)
+            .Append(SystemRowVersionParsedField);
 
     /// <summary>
     /// Build the <c>MetaCalcFormula</c> for one FlowField.

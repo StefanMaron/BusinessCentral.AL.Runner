@@ -1020,7 +1020,26 @@ public static class FlowFieldPatches
             if (tableId != 0)
                 srcTable = ResolveTableById(tableId);
 
-            if (srcTable != null && fieldId != 0)
+            // #3307 — `fieldId != 0` used to guard this lookup, reading id 0 as "this formula
+            // names no source field" (true for count/exist, which carry no source field). That
+            // sentinel was safe only while nothing could NAME field 0, and SystemRowVersion
+            // can: Microsoft's AL compiler synthesizes it at field id 0 with metadata name
+            // `timestamp` (SynthesizedFieldHelper.AppendSystemFields), not in the
+            // 2000000000-2000000004 block. So `max("T".SystemRowVersion where(...))` arrived
+            // here with fieldId == 0, skipped the lookup, left srcFieldColumn at -1, and the
+            // aggregate branch below was never entered — the FlowField answered
+            // TypedDefaultForField, i.e. 0, for every row set. Silent and plausible: a
+            // rowversion of 0 reads like "not yet stamped" rather than like a bug.
+            //
+            // The right discriminator is the CalculationMethod, which BC already carries and
+            // which says exactly what the sentinel was standing in for: Count and Exist have
+            // no source field, every other method has one. Asking the metatable for field 0 on
+            // a Count formula would otherwise resolve the timestamp column and make
+            // srcFieldColumn >= 0, but the aggregate branch below tests the method too, so
+            // that would be inert — gating here keeps the "no source field" fact where BC
+            // states it rather than inferring it from an id.
+            bool formulaHasSourceField = !Equals(calcMethod, _cmCount) && !Equals(calcMethod, _cmExist);
+            if (srcTable != null && formulaHasSourceField)
             {
                 try
                 {
