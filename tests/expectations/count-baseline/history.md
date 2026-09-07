@@ -95,6 +95,61 @@ number, reported `expected 2665, actual 2681`; the run after merging `main` repo
 count-baseline line at all with 2681 in place, 2700 tests over the three roots, exit 0. CI
 agreed on every leg of run 34046877973 — no leg printed a count-baseline message.
 
+### 2689 -> 2757, and onprem 19 -> 25 (pin 7394c15 -> c3531ec)
+
+The pin advances to consume StefanMaron/BusinessCentral.AL.Language.Tests#204, which pins that a
+user's SUPER status is backed by an Access Control row — the fix in this PR. Corpus history in
+this range is linear, so ten other merged corpus PRs come with it. Every one of them needed a
+runner fix or needed nothing, and all of those fixes are now on `main`:
+
+| corpus PR | what it pins | runner gap | state |
+|---|---|---|---|
+| #197 | what the legacy Object (2000000001) table holds, OnPrem app | #3071 | merged, PR #3265 |
+| #206 | what a `Database::<Object>` const in a `where()` clause resolves to | — | needs nothing |
+| #204 | a user's SUPER status is backed by an Access Control row | **#3176** | **this PR** |
+| #203 | what a list page's built-in View and Edit actions do | — | needs nothing |
+| #207 | a tableextension-contributed TableRelation is enforced by Validate | #3177 | merged, PR #3197 |
+| #209 | a second control over one page binding resolves | — | needs nothing |
+| #210 | what the Session virtual table (2000000009) holds | #2940 | merged, PR #3234 |
+| #211 | what an action's RunPageLink does to its RunObject target | — | needs nothing |
+| #208 | a tableextension adds keys and field properties, not just columns | #3216 | merged, PR #3257 |
+| #212 | whether AL short-circuits and/or | — | needs nothing |
+| #215 | the SecretText runtime surface | — | needs nothing (16/16 measured) |
+
+`c3531ec` is deliberately NOT the corpus tip, which is `0bda9d6`. Walking forward past it, the
+next commit that needs a runner fix nobody has written is `b1fdb6d` (corpus #216, a CalcFormula
+and a TableRelation naming a system field). Measured at the tip against this branch's build:
+**19 failures**, in three clusters, each already tracked by an open runner issue:
+
+| corpus PR | failing codeunit | tests | open issue holding it |
+|---|---|---|---|
+| #216 | Codeunit60818 | 5 | #3178 — a CalcFormula over a system field never builds |
+| #217 | Codeunit60823 | 4 | #3263 — a CalcFormula never resolves a tableextension field |
+| #218 | Codeunit60338 | 9 | #3284 — the FormResult for a handler that invokes nothing is OK, not Cancel |
+
+Corpus #219 and #220 pass and need nothing; they are held back only because they sit behind
+#216 in a linear history. So `c3531ec` is the newest commit all of whose predecessors are
+satisfied, per the third case in `.claude/rules/al-language-submodule.md`, and #3178, #3263 and
+#3284 hold the remainder. All three stay open after this PR merges.
+
+Both numbers are MEASURED, by a run of this branch's build at the new pin on BC 28.1, not
+computed: three roots, `Tests: 2782 total, pass: 2782, fail: 0`, exit 0 — and exit 0 is itself
+the count-baseline check passing, since `--count-baseline` exits 4 on a mismatch in either
+direction. 2757 cloud + 25 OnPrem + 0 internals-fixture = 2782.
+
+Counted independently per file as a cross-check, with AL comments, string literals and
+preprocessor-disabled code excluded: the same 2757 and 25. That per-file method reproduces the
+outgoing pin's 2689 exactly as well. The gap between a raw source count and what a run reports
+is exactly 2 tests, behind `session/TestFinalCoverage.al`'s `#if BC143PLUS`, which is never
+defined — the corpus's only preprocessor-disabled block, unchanged across this range.
+
+The OnPrem suite moves because #197 added `record/TestObjectSystemTable.al` (6 tests) to the
+OnPrem app — the legacy Object table is `Scope = OnPrem`, so the test could not live in the
+cloud app.
+
+No per-version override is needed: the range adds no preprocessor version guards, so `default`
+is correct for every leg. Measured on BC 28.1; the other seven legs are CI's word.
+
 ## runner-extras
 
 ### object-metadata-system-table 4 -> 6 (PR for #2771)
@@ -137,6 +192,41 @@ the four assert something the group's name does not suggest and the reason is wo
   the runtime consequence of the refusal's claim, not its wording.
 
 Measured by running the group, not computed: `9P/0F/0E across 9 tests`, cold and warm.
+
+### navapp-moduleinfo-main 10 -> 15 (#2960 / PR #3225)
+
+Five tests added to an existing app group, so no new group line and no app-group count change.
+The group has no `absentOn`, so the same +5 lands on every BC version. Re-measured against
+`origin/main` at 216c481c (corpus pin c3531ec6), the 28.x endpoint is 344 -> 349 and the 27.x
+one 333 -> 338.
+
+Those two endpoints are the least durable thing in this entry and have now been rewritten five
+times (301/312, then 305/316, then 321/332, then 319/330, now 344/333) without this group's own
+number ever changing. They move whenever ANY other group's count moves, which on a busy branch is
+every few merges. Read the endpoints off `test-count-baseline.json` at whatever base you are
+on; the durable fact is +5 on every BC version, and `--count-baseline` is what enforces the
+sum rather than this paragraph.
+
+Three came with the by-id `NavApp.GetModuleInfo` fix, which the two stack-walk patches did not
+cover — the boolean/statement not-found arms and the derived PackageId. Two more came out of
+the review of that PR and are worth naming, because neither is about the reported bug:
+
+- `ModuleInfo_ForOneApp_AgreesOnPackageIdAcrossEntryPoints` — real BC has ONE module-info
+  implementation (`ALGetCurrentModuleInfo` and `ALGetCallerModuleInfo` both forward into
+  `ALGetModuleInfo`), so AL asking about one app three ways cannot get three answers. The
+  runner patches the entry points independently, so fixing only the by-id one made this bundle
+  report two different PackageIds for ITSELF. The test fails against that state and is what
+  holds the five sites on one shared constructor.
+- `GetModuleInfo_ByEmptyGuid_RefusesLoudlyInsteadOfAnsweringNotInstalled` — folding the
+  source-compiled polyfill onto the shared implementation changed first-party AL behaviour:
+  the old private copy answered plain `false` for `Guid.Empty`, which BC never does on that
+  branch. Now it refuses loudly.
+
+Measured by running the group, not computed. The whole suite under `--count-baseline` on BC
+28.1, re-run on the tree rebased onto 216c481c: `349 total / 349 pass / 0 fail / 0 error`,
+exit 0. The 27.x endpoint is that figure less the eleven tests in the five `absentOn`
+groups, and is not locally measurable here — a self-built runner compiles against Ncl 28.x —
+so CI measures it.
 
 ## Migrated log (everything above 2026-09-05, verbatim)
 
@@ -961,50 +1051,127 @@ pin bump is involved.
 
 Written by agent impl-24 (automated implementation agent).
 
-## al-language 2681 -> 2807, al-language-onprem 19 -> 25 — corpus pin b0c6248a -> 5684b36d (#218 and 16 others)
+## al-language 2681 → 2689 — corpus pin `b0c6248a` → `7394c15f` (#3057, corpus #202)
 
-The pin advanced to consume StefanMaron/BusinessCentral.AL.Language.Tests#218, the upstream half
-of #3283 / #3284 / #3131 (which built-in OK/Cancel each dialog page type has, and what
-`RunModal()` reports when a `[ModalPageHandler]` invokes nothing). Corpus history is linear, so
-sixteen other merged corpus PRs came with it:
++8 tests, all in the `tests/al-language` app, from the three corpus commits between the two
+pins. `git -C tests/al-language diff --name-only b0c6248a..7394c15f` touches nothing outside
+that app, so `runner-extras` (330), `appGroups` (1), `al-language-internals-fixture` (0) and
+`al-language-onprem` (19) are `main`'s values, untouched.
 
-| corpus PR | what it pins |
-|---|---|
-| #196 | the ordinal Page Metadata reports for a PageType its column does not name |
-| #197 | what the legacy Object (2000000001) table holds |
-| #200 | a refusal raised in a table subscriber below a control write |
-| #202 | what an error raised in OnQueryClosePage does |
-| #203 | what a list page's built-in View and Edit actions do |
-| #204 | a user's SUPER status is backed by an Access Control row |
-| #206 | what a `Database::<Object>` const in a `where()` clause resolves to |
-| #207 | a tableextension-contributed TableRelation is enforced by Validate |
-| #208 | a tableextension adds keys and field properties, not just columns |
-| #209 | a second control over one page binding resolves |
-| #210 | what the Session virtual table (2000000009) holds for the reading session |
-| #211 | what an action's RunPageLink does to its RunObject target |
-| #212 | whether AL short-circuits `and`/`or` |
-| #215 | the SecretText runtime surface |
-| #216 | a CalcFormula and a TableRelation that name a system field |
-| #219 | the SessionSettings surface |
-| #218 | the dialog page types' built-in OK/Cancel and unattended close (this PR's own upstream test) |
+Where the 8 come from, counted per file rather than inferred from the totals:
 
-**2807 and 25 are the numbers the guard itself reported**, not totals computed from the old
-counts plus a count of added tests. Measured by running all three corpus apps — the shape
-`.github/workflows/bc-tests.yml` uses, enumerated by `scripts/corpus-app-dirs.py` — with
-`--count-baseline`; the run printed
+| corpus commit | corpus PR | file | `[Test]` delta |
+|---|---|---|---|
+| `cd824ef` | #196 | `record/TestPageMetadataVirtualTable.al` | 3 → 4 (+1) |
+| `def7430` | #200 | `handlers/TestPageSubscriberRefusal_Tests.al` | new, +3 |
+| `7394c15` | #202 | `handlers/TestPageQueryCloseError_Tests.al` | new, +4 |
+
+**Why the bump is folded into this PR and not its own.** Of those 8, exactly 2 are red without
+this PR's fix, and both are #202's — the two arms that assert an AL error raised inside
+`OnQueryClosePage` arrives as BC's own unhandled-message refusal. Measured, not predicted: a
+build of `main` (`d6776eeb`) run against the corpus at `7394c15f` gives 2689 tests, 2687 pass,
+2 fail, and the two are `ErrorInQueryClosePage_ArrivesAsAnUnhandledMessage` and
+`ErrorInQueryClosePage_TestPageClose_ArrivesAsAnUnhandledMessage`. The same corpus on this
+branch is 2689/2689. So the bump alone would be red by construction and belongs here.
+
+The other 6 already pass on `main` — the runner fixes for corpus #196 and #200 merged as #3128
+and #3180 earlier, ahead of their pin. An earlier draft of this PR predicted 5 failures at this
+pin, attributing four more to corpus #199 and one to #196; those were measured before #3128 and
+#3180 merged, and all five are now green.
+
+**2689 is measured at this head, not carried forward.** The prediction in the PR body was also
+2689, but it was made against a different `main` and was re-run rather than copied.
+
+Written by agent impl-4 (automated implementation agent).
+
+## runner-extras 330 → 335 — `user-table-baseapp-subscriber` (#2381)
+
++5 tests in one new `tests/runner-extras/user-table-baseapp-subscriber` suite (id range
+65640-65649). No corpus pin moves and no other group changes; `al-language` (2689),
+`appGroups` (1), `al-language-internals-fixture` (0) and `al-language-onprem` (19) are
+untouched.
+
+**Why the entry is here at all.** The README says per-bump rationale goes in this file and
+never as a prose line in `test-count-baseline.json`. The first version of this PR bumped the
+JSON with no entry here at all, which is the thing that rule exists to stop.
+
+**330 is measured off `main`**, not carried over — it is the sum of the 58 group entries in
+`main`'s own `test-count-baseline.json`, re-read after this branch was rebased onto `d6776eeb`,
+and 335 is the sum of the 59 entries here. `runner-extras` moved five times while this PR was
+open, so every number computed earlier was already stale: earlier drafts of this entry said
+`304 -> 309`, `314 -> 319` and `332 -> 337`. The last of those was stale within eight minutes,
+because #3265 landed and took `object-system-table` from 5 to 3. Re-measure both ends from the
+file rather than copying either number forward:
 
 ```
-[count-baseline] GROWTH: suite 'al-language' tests count: expected 2681, actual 2807 (BC 28.1)
-[count-baseline] GROWTH: suite 'al-language-onprem' tests count: expected 19, actual 25 (BC 28.1)
+python3 -c "import json;g=json.load(open('tests/expectations/count-baseline/test-count-baseline.json'))['suites']['runner-extras']['groups'];print(len(g),sum(v['tests'] for v in g.values()))"
 ```
 
-and 2807 / 25 are those two `actual`s. `al-language-internals-fixture` (0) and every
-`appGroups` count are unchanged.
+**This suite is the AL-level regression coverage for #2979, not a new fix.** #2381 reported that
+Base App table-trigger subscribers on the User system table never fire; the report was accurate,
+and commit `8ef72629` (#2979) fixed it by observing the `ValueTask` a precompiled async
+subscriber returns. #2979 shipped one C# unit test and a known-gap deletion — nothing exercised
+the fixed path from AL against a real Microsoft subscriber. Two of the five tests raise through
+Base Application codeunit 418 "User Management"; the other three are controls (a supported
+licence type must still insert and modify cleanly, and SaaS is asserted separately as the
+precondition both raising tests rest on), so a build that refused every User write cannot pass
+this suite.
 
-Nine tests from the newly-pulled-in corpus PRs FAIL against this pin and are deliberately left
-undeclared here — no known-gap entry is added by this PR, because each already has an open
-runner PR fixing it rather than classifying it: 60677 (#202) is PR #3181, 60818 (#216) is
-PR #3289, 60827 (#207) is PR #3197 / #3289, 60889 (#204) is PR #3287. Codeunit 60338, this PR's
-own upstream test, is 13/13 green.
+**Interaction with #3224, now settled.** That PR added `user-system-table-triggers` to the same
+file and merged first; #3257, #3180, #3101 and #3265 also moved `runner-extras`, and the corpus
+count reached 2689 via #3101's bump to 2681 and #3057's pin move to `7394c15f`. This branch is rebased onto all of it. The conflict was the
+add/add of two adjacent lines predicted here, resolved by keeping both keys in sorted order —
+`user-system-table-triggers` (10) and `user-table-baseapp-subscriber` (5) are distinct keys and
+the file carries no total, so neither side replaces the other. #3265's reduction of
+`object-system-table` from 5 to 3 is a separate line and merged without a conflict at all.
 
-Written by agent fbk-1 (automated implementation agent).
+**The id range moved from 65630-65639 to 65640-65649 after the rebase**, and that is the one
+non-mechanical change in it. #3224's `user-system-table-triggers` declares 65620-65639, so once
+it merged the two manifests both claimed 65630-65639 and
+`RunnerExtrasIdRangeGuardTests.NoTwoAppGroups_InTheSameBundleRoot_DeclareOverlappingIdRanges`
+failed the BC 27.5 leg — the only failure in the run, against 3825 passes. No object actually
+collided (this suite uses 65640/65641, that one 65620/65621), but every app group in a bundle
+root shares one Object table, so the guard fails on the declared overlap rather than waiting for
+a live collision to surface somewhere unrelated. Renumbering was preferred to an entry in the
+guard's `KnownOverlaps` allowlist: that list is documented debt tracked in #3160, and a suite
+using two ids has no reason to join it.
+
+Written by agent impl-24 (automated implementation agent).
+
+## 2026-09-07 — corpus pin c3531ec6 → 2cba52d4 (al-language 2757 → 2814, al-language-onprem unchanged at 25)
+
+Bumped by the fix PR for #3263, #3178 and #3279. The pin has to move to the corpus tip because
+that is where both of this PR's own corpus tests live: #216 (six tests pinning a CalcFormula
+and a TableRelation that name a system field) and #217 (seven tests pinning a CalcFormula that
+names a tableextension field, codeunit 60823). Corpus history in this range is linear, so
+neither can be taken without the corpus commits merged before them; that is where the other 50
+al-language tests come from, not from anything this PR wrote. The from-values are against `main`
+as it stands when this merges (pin c3531ec6, al-language 2757): earlier drafts of this entry
+quoted b0c6248a / 2681 / onprem 19 → 25, which was this branch's own merge base and another PR's
+onprem move — `main` reached 25 without this PR, and it stays 25.
+
+Thirteen of the newly-arrived tests failed on the runner for reasons unrelated to this fix.
+Four of those families resolved while this PR sat in review, as their own pull requests merged:
+codeunit 60677 (an error raised in OnQueryClosePage, corpus #202) with #3181, codeunit 60827 (a
+source-parsed tableextension's TableRelation not enforced by Validate, corpus #207) with #3197,
+and codeunit 60889 (Access Control backing the session user's SUPER status, corpus #204) with
+#3287. None of them was ever declared here.
+
+The ninth-and-last family IS declared, in
+`tests/expectations/known-gaps-testpage-builtin-actions.json`: codeunit 60338's nine tests on
+the dialog page types' built-in OK/Cancel (corpus #218), five against #3283 (which built-in a
+PageType offers) and four against #3284 (the FormResult substituted for an unattended close).
+Both are open and both are fixed by PR #3285. The declaration exists ONLY to break a cycle
+through the corpus pin: #3285 needs this PR's CalcFormula/TableRelation fix for corpus codeunits
+60818, 60823 and 60827, and this PR needs #3285's fix for these nine. This PR merges first with
+them declared; #3285 merges second and deletes that file. Nothing in this PR touches TestPage
+built-in actions.
+
+Two families that arrived failing WERE declared here for a while, and went green mid-review as
+#3234 (the Session virtual table, #2940) and #3265 (the legacy Object registry, #3071) merged.
+The manifest caught that itself: a test that passes under an `expect-fail-known-gap` entry
+fails the run with "remove the entry", so the staleness was corrected rather than shipped.
+
+`runner-extras` is untouched by this PR.
+
+Written by agent fbk-2 (automated implementation agent).

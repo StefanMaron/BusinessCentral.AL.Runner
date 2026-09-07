@@ -16,12 +16,21 @@
 //
 // WHAT THIS FILE ASSERTS
 //   #3051 converted the 73 lookups that read BC's OWN internals to BcShape.Property/Method/
-//   Field/Constructor, which raise a BcShapeGapException naming Declaring.Member. 61 sites
+//   Field/Constructor, which raise a BcShapeGapException naming Declaring.Member. 63 sites
 //   remain, and every one of them is here on purpose — they are not BC-layout reads:
 //
 //     RunnerOwnMember  the receiver is `typeof(<a runner type>)`. `nameof` or not, this asks
 //                      the runner about the runner. Microsoft cannot move it, and a rename
-//                      inside this repository is a compile-time or a same-PR question. 36.
+//                      inside this repository is a compile-time or a same-PR question. 38.
+//                      36 → 38 in the #2960 install-trigger PR: two more Cecil helper
+//                      resolutions in NclCecilRewrite.Dispatch.cs, one per newly-patched Ncl
+//                      method — `NavAppModuleInfoPatches.ALNavApp_GetCurrentModuleInfo` for
+//                      the by-id `ALGetModuleInfo` overload (#2961), and
+//                      `BcRuntime.ALSession_ALStartSessionAsyncImpl` for
+//                      `ALSession.ALStartSessionAsyncImpl` (#3220). Both are
+//                      `typeof(<runner type>).GetMethod(nameof(<runner method>))!` beside
+//                      twenty existing ones in the same file, so both are the category's own
+//                      shape rather than a new kind of read.
 //     Bcl              the receiver is a BCL type — object.MemberwiseClone, Guid.NewGuid,
 //                      string.Empty, InvalidOperationException(string), Task.FromResult. The
 //                      .NET surface does not move under a BC update. 7.
@@ -94,7 +103,7 @@ public sealed class BcInternalsNullForgivingGuardTests
 
     private static readonly Dictionary<Cat, int> Expected = new()
     {
-        [Cat.RunnerOwnMember] = 36,
+        [Cat.RunnerOwnMember] = 38,
         [Cat.Bcl] = 7,
         [Cat.FrameworkTuple] = 8,
         [Cat.Listed] = 10,

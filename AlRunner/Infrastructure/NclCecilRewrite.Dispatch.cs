@@ -688,6 +688,21 @@ public static partial class NclCecilRewrite
                     ReplaceBodyWithHelper(asm.MainModule, mCurrent, h);
                 }
 
+                // The BY-ID overload. Unpatched it raises "No installed extension was found
+                // with ID '<guid>'" for EVERY id, because BC resolves it against an app group
+                // the runner does not have — so NavApp.VersionInstalled answered for nothing,
+                // including the System Application's own id (#2961). The helper answers from
+                // the loaded-app closure and keeps BC's not-found arms intact.
+                var mById = alNavAppModuleType.Methods.FirstOrDefault(x =>
+                    x.Name == "ALGetModuleInfo" && x.Parameters.Count == 3 && x.IsStatic);
+                if (mById != null)
+                {
+                    var h = typeof(AlRunner.Patches.NavAppModuleInfoPatches).GetMethod(
+                        nameof(AlRunner.Patches.NavAppModuleInfoPatches.ALNavApp_GetModuleInfo),
+                        BindingFlags.Public | BindingFlags.Static)!;
+                    ReplaceBodyWithHelper(asm.MainModule, mById, h);
+                }
+
                 var mCaller = alNavAppModuleType.Methods.FirstOrDefault(x =>
                     x.Name == "ALGetCallerModuleInfo" && x.Parameters.Count == 2 && x.IsStatic);
                 if (mCaller != null)
@@ -696,6 +711,33 @@ public static partial class NclCecilRewrite
                         nameof(AlRunner.Patches.NavAppModuleInfoPatches.ALNavApp_GetCallerModuleInfo),
                         BindingFlags.Public | BindingFlags.Static)!;
                     ReplaceBodyWithHelper(asm.MainModule, mCaller, h);
+                }
+            }
+        }
+
+        // ── ALSession.ALStartSessionAsyncImpl → BcRuntime.ALSession_ALStartSessionAsyncImpl ──
+        //
+        // The single seam every ALStartSession / ALStartSessionAsync overload in Ncl forwards
+        // into. Source-compiled AL already reaches the runner's StartSession model through
+        // BcAssembler's polyfill redirect; precompiled AL (Base App, System App, ISV DLLs)
+        // called Ncl's real body, which opens a second NavSession and asks SQL for the
+        // database version — "Value cannot be null. (Parameter 'database')" on the skeleton.
+        // Patching the impl rather than the seven public overloads keeps ONE model of
+        // StartSession, so a precompiled and a source-compiled caller cannot diverge.
+        // See BcRuntime.ALSession_ALStartSessionAsyncImpl for the measurement (#2960).
+        {
+            var alSessionType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ALSession");
+            if (alSessionType != null)
+            {
+                var mImpl = alSessionType.Methods.FirstOrDefault(x =>
+                    x.Name == "ALStartSessionAsyncImpl" && x.Parameters.Count == 8 && x.IsStatic);
+                if (mImpl != null)
+                {
+                    var h = typeof(AlRunner.BcRuntime).GetMethod(
+                        nameof(AlRunner.BcRuntime.ALSession_ALStartSessionAsyncImpl),
+                        BindingFlags.Public | BindingFlags.Static)!;
+                    ReplaceBodyWithHelper(asm.MainModule, mImpl, h);
+                    Console.Error.WriteLine("[Cecil] Rewrote ALSession.ALStartSessionAsyncImpl → BcRuntime.AlRunnerStartSession (inline-synchronous session model, precompiled callers included)");
                 }
             }
         }

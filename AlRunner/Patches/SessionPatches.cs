@@ -374,6 +374,100 @@ public static partial class BcRuntime
         return new System.InvalidOperationException(msg);
     }
 
+    /// <summary>
+    /// Cecil patch target: <c>ALSession.ALStartSessionAsyncImpl</c> — the ONE seam every
+    /// <c>ALStartSession</c> / <c>ALStartSessionAsync</c> overload in Ncl funnels into
+    /// (each public overload's whole body is a forwarding call to it).
+    ///
+    /// <para><see cref="AlRunnerStartSession"/> above says it is "the replacement entry point
+    /// for every ALSession.ALStartSession overload", and for SOURCE-COMPILED AL it is:
+    /// BcAssembler's polyfill rewrites those call sites textually. PRECOMPILED AL —
+    /// Base Application, System Application, any ISV DLL — calls Ncl directly, so it reached
+    /// BC's real body instead, which opens a second NavSession and asks SQL for the database
+    /// version:</para>
+    ///
+    /// <code>
+    ///   ArgumentNullException: Value cannot be null. (Parameter 'database')
+    ///      at NavSqlConnectionScope.Create(NavSession, NavDatabase, ...)
+    ///      at NavSqlDatabaseProperties.ReadDatabaseVersionNo()
+    ///      at NavSession.Open()
+    ///      at ALSession.ALStartSessionAsyncImpl(...)
+    ///      at Codeunit8705.UpdateFeatureUptakeStatus(..., performWriteTransactionsInASeparateSession, ...)
+    /// </code>
+    ///
+    /// <para>That is BC's own feature-telemetry uptake logging, reached from an ordinary
+    /// Base App install trigger — nothing the test author wrote. Found by letting install
+    /// triggers run past their first await (#2960).</para>
+    ///
+    /// <para>Routing it to the same helper the source-compiled path already uses means one
+    /// model of StartSession, not two: the #2805 TestIsolation guard, the session-id
+    /// allocation and the TrapError semantics are all decided in exactly one place, so a
+    /// precompiled caller and a source-compiled caller cannot observe different behaviour.
+    /// The <c>invokeRunAsync</c> delegate BC threads through is not needed — the helper
+    /// dispatches the target codeunit inline itself — and <c>session</c> is not either: the
+    /// helper works from the skeleton session, which is the only session there is here.</para>
+    ///
+    /// <para>Returns an already-completed <see cref="System.Threading.Tasks.ValueTask{T}"/>,
+    /// which is faithful for this runtime: the runner drives AL synchronously, and BC's own
+    /// callers await the result before reading <c>sessionId</c>.</para>
+    ///
+    /// <para>SCOPE AUDIT — two things BC's body does that this one does not
+    /// (.claude/rules/loud-failures.md asks for each to be named rather than left implicit):</para>
+    ///
+    /// <para>1. <c>timeout</c> IS DROPPED, and it is not purely decorative in BC. BC turns it
+    /// into a <c>NavCancellationTokenSource</c> that cancels the background session, and
+    /// validates it first — <c>timeoutTs.TotalMilliseconds &gt; int.MaxValue</c> raises
+    /// <c>NavNCLArgumentOutOfRangeException</c> (<c>Lang.TooLargeTimeoutALStartSession</c>).
+    /// Neither half has anything to act on here: the worker is dispatched INLINE and
+    /// synchronously, so there is no concurrent execution for a timeout to cancel and no
+    /// duration over which one could elapse. A cancellation that can never fire is not a
+    /// silent default — it is the absence of the thing being cancelled. The validation arm is
+    /// the part that is genuinely unimplemented: AL passing an absurd timeout gets no error
+    /// here where BC raises one. That is an argument-validation divergence on a value the
+    /// runner then ignores, not a wrong ANSWER to anything AL can observe about the session,
+    /// so it is recorded rather than converted into a refusal that would break every ordinary
+    /// caller passing a sane timeout. Tracked as <b>#3291</b>, which stays open after this
+    /// merges — the divergence is real and is not fixed here.</para>
+    ///
+    /// <para>2. BC REFUSES StartSession outright during an install or upgrade. Its body has,
+    /// before any of the work above:</para>
+    ///
+    /// <code>
+    ///   if (session.AppInstallationContext != null || session.AppUpgradeContext != null)
+    ///   {
+    ///       // trace: "StartSession ignored due to ongoing installation/upgrade
+    ///       //         to avoid inconsistent data in case of rollback"
+    ///       return false;
+    ///   }
+    /// </code>
+    ///
+    /// <para>That is not reproduced here, and it is worth being precise about why rather than
+    /// claiming equivalence. The runner has no <c>AppInstallationContext</c> — its install pass
+    /// is its own mechanism and never populates BC's field — so the guard has nothing to read
+    /// even if it were copied in, and it would be dead code that looked like coverage. The
+    /// consequence is real and observable: the very call this patch was written for
+    /// (<c>Codeunit8705.UpdateFeatureUptakeStatus</c>, reached from a Base App install trigger)
+    /// runs its worker here where a real tier would skip it and return false. Modelling the
+    /// install context faithfully is a separate piece of work; it is filed as <b>#3292</b>
+    /// rather than guessed at, because "run the worker" and "skip the worker" are different
+    /// answers to an AL-visible question and picking one by assumption is what
+    /// .claude/rules/no-assumption-fixes.md rules out. #3292 stays open after this merges, and
+    /// it is related to #3268 (install-trigger ordering) by the same missing state: the runner's
+    /// install pass does not record that an install is in progress, which is what both would
+    /// read.</para>
+    /// </summary>
+    public static System.Threading.Tasks.ValueTask<bool> ALSession_ALStartSessionAsyncImpl(
+        Microsoft.Dynamics.Nav.Runtime.NavSession session,
+        Microsoft.Dynamics.Nav.Types.DataError errorLevel,
+        Microsoft.Dynamics.Nav.Runtime.ByRef<int> sessionId,
+        int objectId,
+        string companyName,
+        Microsoft.Dynamics.Nav.Runtime.NavRecord record,
+        Microsoft.Dynamics.Nav.Runtime.NavDuration timeout,
+        object invokeRunAsync)
+        => new System.Threading.Tasks.ValueTask<bool>(
+            AlRunnerStartSession(errorLevel, sessionId, objectId, companyName, record));
+
     public static bool AlRunnerStartSession(
         Microsoft.Dynamics.Nav.Types.DataError errorLevel,
         Microsoft.Dynamics.Nav.Runtime.ByRef<int> sessionId,
@@ -466,14 +560,33 @@ public static partial class BcRuntime
             var trigger = ResolveOnRunTrigger(cuType);
             if (trigger != null)
             {
-                // The `record` arg is deliberately still null: BC's record-carrying
-                // StartSession overloads hand the worker a row, and this replacement has never
-                // passed it on. That is a separate defect (NavRecord does implement
-                // INavRecordHandle, so it is a drop rather than a type limitation) and it needs
-                // its own worker fixture that reads Rec — tracked separately, not widened into
-                // this fix.
+                // The caller's `record` IS passed on. It used to be hardcoded null, which was a
+                // drop rather than a type limitation (NavRecord implements INavRecordHandle),
+                // and it is why Codeunit8705.OnRunAsync NREs on a null Rec the moment install
+                // triggers are allowed to run to completion (#2960).
+                //
+                // #2751 is still open and this does NOT resolve it. What that issue asks is a
+                // question about BC that no service tier has been asked here: does the worker
+                // see a COPY of the row taken at StartSession time, or a fresh read in the new
+                // session? BC's own ALStartSessionAsyncImpl does `record.CloneRecord(newSession)`
+                // into a second session, so on a real tier the two can differ.
+                //
+                // `null` is not the conservative answer while that is unsettled, which is the
+                // reason this line changed rather than waiting:
+                //   * null is a value BC never produces on this path at all — every
+                //     record-carrying overload passes a row — so it is not "one of the two
+                //     candidate semantics", it is a third answer that is wrong under both;
+                //   * under BOTH candidate semantics the worker sees a row with these field
+                //     values, which is all any AL written against the platform contract can
+                //     rely on;
+                //   * the runner dispatches the worker INLINE in the calling session, so the
+                //     copy-vs-fresh-read distinction has no observable consequence here — #2751
+                //     says as much itself.
+                // Settling it needs an upstream corpus test with a worker that reports what it
+                // saw in Rec, plus `--isolation disabled` coverage (#2826). That belongs to
+                // #2751, and I have commented there rather than silently closing it.
                 var result = trigger.GetParameters().Length == 1
-                    ? trigger.Invoke(instance, new object?[] { null })
+                    ? trigger.Invoke(instance, new object?[] { record })
                     : trigger.Invoke(instance, null);
                 AwaitIfTask(result);
             }

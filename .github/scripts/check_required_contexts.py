@@ -177,24 +177,52 @@ DEFAULT_REQUIRED_CONTEXTS = [
 # is outstanding -- ci-wait.py reads the LIVE ruleset first and only falls back
 # to its built-in tuple when that read fails, loudly -- so the promotion is
 # tidying, not a race.
-# Empty, and that is the finished state, not an oversight: the `main` ruleset
-# requires all ten names in DEFAULT_REQUIRED_CONTEXTS above, so nothing is
-# waiting to be gated (#3199, measured 2026-09-06). Keeping the list empty is
-# what makes the live drift comparison in resolve_contexts() EXACT again --
-# every pending name is a name the comparison deliberately tolerates in either
-# state, so a non-empty list is a hole in the #2785 check for as long as it
-# lasts. Refill it only while a new gating job is landing, and empty it in the
-# same pass that adds the name to the ruleset.
-# Refilled for #3255: pr-gate.yml's require-corpus-linkage job produces this
-# context, and the `main` ruleset does not require it yet. It is analysed here
-# exactly like a required one -- produced by a pull_request workflow, and not
-# cancellable on the head commit -- while the live drift comparison tolerates it
-# in either state, which is what lets the code half land before the by-hand
-# ruleset edit. Empty this list again in the same pass that adds the name to the
-# ruleset and promotes it into DEFAULT_REQUIRED_CONTEXTS above and into
-# RULESET_CONTEXTS in tools/ci-wait.py.
+# Empty is this list's RESTING state, not the only legal one. The `main` ruleset
+# requires all ten names in DEFAULT_REQUIRED_CONTEXTS above, so nothing that
+# already gates is waiting here (#3199, measured 2026-09-06), and #3244 emptied
+# it for a reason: every pending name is a name the live drift comparison in
+# resolve_contexts() deliberately tolerates in EITHER state, so each entry is a
+# hole in the #2785 check for as long as it lasts.
+#
+# #3244 also said what refills it -- "only while a new gating job is landing" --
+# and that is the case for ALL THREE entries below. Each names a blocking job
+# that pr-gate.yml already produces and the `main` ruleset does not require yet,
+# so each is listed for exactly as long as that is true, and each comes out in
+# the same pass that adds its name to the ruleset.
+#
+# Three entries, not one, and that is deliberate: #3255, #3089 and #3288 landed
+# their gating jobs independently, and dropping any one of those names while its
+# job blocks would reopen precisely the #2785 hole this file exists to close -- a
+# context the ruleset requires that nothing here analyses. Merging these refills
+# by keeping only one side is the mistake to avoid, and it is a live one: this
+# list has now been refilled by three separate pull requests that could not see
+# each other, and each rebase presents exactly that conflict.
 PENDING_REQUIRED_CONTEXTS: list[str] = [
+    # #3255's gate. pr-gate.yml's require-corpus-linkage job produces this
+    # context. Analysed here exactly like a required one -- produced by a
+    # pull_request workflow, and not cancellable on the head commit -- while the
+    # live drift comparison tolerates it in either state, which is what lets the
+    # code half land before the by-hand ruleset edit. Promote it into
+    # DEFAULT_REQUIRED_CONTEXTS above and into RULESET_CONTEXTS in
+    # tools/ci-wait.py in the same pass that adds it to the ruleset.
     "AL-observable changes must declare corpus linkage",
+    # #3089's gate. Deliberately NOT promoted into DEFAULT_REQUIRED_CONTEXTS or
+    # into tools/ci-wait.py's RULESET_CONTEXTS: the live ruleset does not require
+    # this name yet, and ci-wait.py treats RULESET_CONTEXTS as a FLOOR, returning
+    # exit 3 UNDETERMINED whenever the live ruleset is a subset of it (#3002). So
+    # promoting early would stop every agent's CI wait in this repository from
+    # returning a verdict until a maintainer edited the ruleset by hand. Listed
+    # here it is still ANALYSED like a required one -- produced by a pull_request
+    # workflow, not cancellable on the head commit -- which is the whole point of
+    # the seam.
+    "A PR closing a gap issue must not leave its known-gap entry behind",
+    # #3288's gate. pr-gate.yml's require-forward-corpus-pin job produces this
+    # context, which refuses a pull request whose tests/al-language pin is not a
+    # descendant of the base branch's. Same discipline as the two above, and for
+    # the same #3002 reason: listed here so it is ANALYSED like a required one,
+    # deliberately NOT promoted into DEFAULT_REQUIRED_CONTEXTS or into
+    # ci-wait.py's RULESET_CONTEXTS until the ruleset actually requires it.
+    "The corpus pin must not move backward",
 ]
 
 REPO = "StefanMaron/BusinessCentral.AL.Runner"

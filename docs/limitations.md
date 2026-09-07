@@ -542,7 +542,7 @@ the exact value will see different results.
 | `Commit()` | Commits current transaction | Establishes a rollback commit-point — see "Transaction semantics" above; not a no-op |
 | `FilterGroup(n)` | Scoped filter groups | Not tracked — `FilterGroup()` is a no-op; all filters apply to group 0 |
 
-### Permission-set assignment — answered from `Access Control`, and the session user is SUPER without a row
+### Permission-set assignment — answered from `Access Control`, including the session user's own SUPER row
 
 <a id="permission-set-assignment"></a>
 
@@ -559,14 +559,25 @@ runner answers the question itself:
 | question | Real BC | al-runner |
 |---|---|---|
 | Is permission set X assigned to user U? | From the permission cache built out of `Access Control` and entitlements | From the `Access Control` (2000000053) rows the run holds — matching User Security ID, Role ID, App ID and Scope, with a blank Company Name meaning every company |
-| Is the session's own user SUPER? | Yes on a test tier, because provisioning wrote it a row | Yes — stated directly, consistent with `NavSession.HasExecutePermission*` → `true` and `MaximizePermissions` → no-op |
-| Does `Access Control` contain a row for the session user? | Yes | **No** |
+| Is the session's own user SUPER? | Yes on a test tier, because provisioning wrote it a row | Yes — and, since AlRunner#3176, for the same reason: a seeded row |
+| Does `Access Control` contain a row for the session user? | Yes | Yes — seeded alongside the User row, before the install baseline is captured |
 
-The last row is the divergence worth knowing about: the session user is SUPER, but nothing in
-`Access Control` says so, because the fact is stated in the runtime rather than seeded as a row.
+The row in `Access Control` used to be missing while `IsSuper(UserSecurityId())` answered true,
+because the SUPER fact was stated in the runtime rather than seeded. A real service tier settled
+that: corpus codeunit 60889 `SessionUserIsSuper_AndAccessControlHoldsTheRowThatSaysSo` (upstream
+PR #204, green on all eight required BC legs) asserts that the permission answer and the
+permission table are two views of one fact. `RecordPatches.AccessControlSeed.cs` now seeds one
+all-companies SUPER row for the session user, so AL that READS the table finds the assignment
+that AL asking `IsSuper` is told about.
+
+The stated fact is still in `IsPermissionSetAssignedCore`, and deliberately so: a bundle whose
+closure carries no `Access Control` metatable cannot hold the seeded row, and `IsSuper` must
+still answer true for it or codeunit 9002 refuses a `User.Modify` every real BC test tier
+allows. The seed makes the table agree wherever the table exists; the stated fact is the floor
+where it does not.
+
 Any other user is answered purely from rows, in both directions — grant SUPER and `IsSuper`
-reads back true, grant something else and it reads back false. Whether the row should be seeded
-instead is AlRunner#3176.
+reads back true, grant something else and it reads back false.
 
 Entitlements are not modeled at all, so a permission set that a real tier would report as
 assigned *via an entitlement* rather than via `Access Control` reads as not assigned here.
@@ -1273,6 +1284,19 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   service tier does with a veto instead — no error reaches the test, `OnClosePage` still fires,
   and `RunModal()` reports `Action::None`
   ([#3050](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3050)).
+
+  A ninth refusal joins them on the same surface, this one on **both** close paths. An
+  `OnQueryClosePage` that raises an AL *error* — as opposed to vetoing — is shown by BC's own
+  client-side close handler as a **message**, after which the close is refused and the page
+  stays open. The runner reproduces the message half through BC's own
+  `NavTestExecution.TestHandleMessage` (`AlRunner/Patches/RunnerFormCloseHandler.cs`), so with
+  no `[MessageHandler]` declared the test sees BC's `Unhandled UI: Message …` refusal, exactly
+  as a service tier produces it. With a `[MessageHandler]` declared the handler consumes the
+  text and control returns to a page real BC has left open, which the runner has no model for;
+  it raises `RunnerOutOfScopeException` with reason `testpage-close-refused-after-message`
+  rather than force the page shut and report a close BC did not perform
+  ([#3057](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3057),
+  [#3179](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3179)).
 
 <a id="virtual-table-shape-gaps"></a>
 

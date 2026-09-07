@@ -697,11 +697,41 @@ public static class FlowFieldPatches
             var formula = _pNclMetaFieldCalculationFormula!.GetValue(fieldObj);
             if (formula == null
                 || (_fCalcFormulaEmpty != null && ReferenceEquals(formula, _fCalcFormulaEmpty.GetValue(null))))
+            {
+                // #3263: BC's own refusal is right only when the AL genuinely declares no
+                // formula. When the runner is the one that could not resolve a name the AL
+                // DOES declare, "You must define a CalcFormula" sends the author to a correct
+                // declaration; say what was unresolvable instead.
+                ThrowIfCalcFormulaReferenceUnresolved(fieldObj);
                 throw BuildCalcFieldsRefusal(fieldObj, errorNumber: 18023430, "MustDefineFormula",
                     "You must define a CalcFormula for the {0} FlowField in the {1} table.");
+            }
 
             flowFields.Add(fieldObj);
         }
+    }
+
+    /// <summary>
+    /// Refuse, naming the reference the runner could not resolve, when
+    /// <c>RecordPatches.BuildMetaCalcFormula</c> recorded one for this FlowField (#3263).
+    ///
+    /// <para>A <see cref="RunnerOutOfScopeException"/> with a <c>not-yet-implemented</c> reason,
+    /// the same channel <c>RecordPatches.ThrowIfColumnHasNoSource</c> uses: real BC resolves
+    /// these names, so the gap is the runner's, and the refusal must not be trapped into
+    /// <c>false</c> for an AL [TryFunction] as a permanently out-of-scope surface would be.</para>
+    /// </summary>
+    private static void ThrowIfCalcFormulaReferenceUnresolved(object fieldObj)
+    {
+        if (fieldObj is not NCLMetaField field) return;
+        if (field.Parent is not NCLMetaTable parent) return;
+        if (!RecordPatches.TryGetUnresolvedCalcFormulaReference(parent.TableId, field.FieldNo, out var reason))
+            return;
+
+        throw new RunnerOutOfScopeException(
+            $"CalcFields(\"{field.FieldName}\") on table {parent.TableId} \"{parent.TableName}\"",
+            "not-yet-implemented — calcformula-reference-unresolved — the FlowField declares a "
+            + $"CalcFormula, but {reason}, so no formula was built; calculating it would answer "
+            + "with fewer filters than the AL declares");
     }
 
     /// <summary>

@@ -73,8 +73,16 @@
 //
 // scripts/check-collection-weights.py is the loud guard that replaces "someone reads it by
 // hand": run against the same trx/unit-tests.trx the occupancy report already parses, it
-// fails CI when a collection above 2x UnmeasuredWeightSeconds is absent from this table —
-// the exact shape of both misses above. It deliberately does NOT flag drift on entries
+// reports a collection absent from this table above 2x UnmeasuredWeightSeconds and FAILS CI
+// above the --fail-threshold bc-tests.yml passes it, 75s = 2.5x (the script's own
+// DEFAULT_FAIL_MULTIPLE is 3x, but nothing in this repository runs it without the flag)
+// — the exact shape of both misses above. #3103 split those two bands apart: the
+// single failing line used to sit at 2x, which is summed wall clock on a shared runner, so
+// SuiteAbortOnTimeoutTests measured 59.4s on one PR's run and 63.7s on another's and turned
+// a required check red on a PR that had never touched it. Both bands are now scaled by how
+// slow the leg itself ran, measured from the entries in THIS table (see that script's
+// header). The "record the observed MAXIMUM" rule below is unaffected — it was always about
+// dispatch order, not about satisfying the gate. It deliberately does NOT flag drift on entries
 // that already exist (see its own header for why: the same class's summed duration varies
 // materially by BC leg, and a percentage-drift check on top of that would be a noisy gate
 // nobody trusts). Re-measure existing entries with scripts/trx-occupancy.py by hand when
@@ -109,6 +117,22 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
     public static readonly IReadOnlyDictionary<string, int> MeasuredWeightSeconds =
         new Dictionary<string, int>(StringComparer.Ordinal)
         {
+            // #3262: 8 tests, most spawning a real runner subprocess, several of them twice
+            // (a cold write then a warm read from a fresh server process, so the in-process
+            // module cache cannot answer instead of the disk). Absent from this table on its
+            // first CI run: measured 64.2s on the BC 28.4 leg, one leg only, which is the
+            // ceiling of that claim rather than a settled figure.
+            //
+            // Recorded at 64, rounded down. The reason is #2175's dispatch-order rule, NOT
+            // the freshness gate: check-collection-weights.py only inspects collections
+            // ABSENT from this table, so once a key is present no recorded value can make
+            // that gate fire on it. What a too-low value would cost is dispatch order --
+            // record something near UnmeasuredWeightSeconds (30) and the collection is
+            // scheduled as if it were still absent, which is the #1887 tail this table
+            // exists to prevent. 64 is far enough above 30 that rounding down cannot do
+            // that. That is also the real reason the two 60.9s entries below carry their
+            // observed maximum: their LOW end across legs approaches 30, not 60.
+            ["AlOutputCacheDoNotCacheTests"] = 64,
             // perf/boot-overhead: added with the on-disk install-baseline tier. Measured
             // 125.6s on the first CI run of that branch (BC 28.4 leg), where it was absent
             // from this table, fell back to UnmeasuredWeightSeconds and was dispatched at

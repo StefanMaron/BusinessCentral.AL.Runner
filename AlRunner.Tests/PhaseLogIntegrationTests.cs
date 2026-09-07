@@ -471,13 +471,36 @@ public sealed class PhaseLogIntegrationTests : IDisposable
                          // (always fresh, never cached) Install triggers.
                          "install-seed-reset-per-test", "install-seed-reset-for-new-bundle",
                          "install-seed-set-test-assembly", "install-seed-dep-company-baseline",
-                         "install-seed-run-own-install-triggers", "install-seed-capture-baseline",
+                         "install-seed-run-own-install-triggers",
+                         // #3176 — the Access Control SUPER row that backs the session user's
+                         // IsSuper answer. Named here so deleting the mark fails, and because
+                         // its position between the User row and the baseline capture is the
+                         // load-bearing part: seeded after the capture it would survive only
+                         // until the first codeunit boundary restored the store.
+                         "install-seed-access-control-row",
+                         "install-seed-capture-baseline",
                          "codeunit-scan",
                          "event-subscriber-inject", "codeunit-reset", "codeunit-instantiate",
                          "resolve-display-name", "run-test-methods", "codeunit-dispose",
                      })
                 Assert.True(stages.ContainsKey(required),
                     $"app stage '{required}' missing: {string.Join(", ", stages.Keys)}");
+
+            // #3176 — the ORDER of the install-seed marks, measured from a real run rather
+            // than read off the source text. PhaseLog keeps stage timings "in the order the
+            // stages were first entered" (PhaseLog.Stages) and serialises them in that order,
+            // so the property order of this object IS the runtime call sequence. Both edges
+            // the Access Control seed depends on are load-bearing, and neither is observable
+            // from a source-position comparison — a source check passes just as happily when
+            // the two calls sit in different methods, or on branches that never both run.
+            var order = s.EnumerateObject().Select(p => p.Name).ToList();
+            //   after the per-bundle reset: the reset clears the seed latch, so a seed entered
+            //   before it is discarded and bundles 2..N silently run without the SUPER row.
+            AssertStageOrder(order, "install-seed-reset-for-new-bundle", "install-seed-access-control-row");
+            //   before the baseline capture: a row added after the capture is not part of the
+            //   baseline each test is restored to, so it survives only until the first
+            //   codeunit boundary restores the store.
+            AssertStageOrder(order, "install-seed-access-control-row", "install-seed-capture-baseline");
 
             var runMs = app.GetProperty("run_ms").GetInt64();
             var staged = stages.Values.Sum();
@@ -495,6 +518,24 @@ public sealed class PhaseLogIntegrationTests : IDisposable
                 $"{unattributed}ms of app run_ms is attributed to nothing "
                 + $"(run_ms {runMs}ms, stages {staged}ms) — add a stage mark: {app}");
         }
+    }
+
+    /// <summary>
+    /// Asserts one stage was entered before another, against the emitted first-entry order.
+    /// This is the runtime call sequence, not a position in a source file: a mark that moves
+    /// to a different method, or onto a branch that does not run, changes this verdict, and a
+    /// method reordered in the file does not.
+    /// </summary>
+    private static void AssertStageOrder(List<string> order, string first, string second)
+    {
+        var a = order.IndexOf(first);
+        var b = order.IndexOf(second);
+        Assert.True(a >= 0, $"stage '{first}' missing from the ordered breakdown: {string.Join(" -> ", order)}");
+        Assert.True(b >= 0, $"stage '{second}' missing from the ordered breakdown: {string.Join(" -> ", order)}");
+        Assert.True(a < b,
+            $"'{first}' must be entered before '{second}', but the run entered them the other "
+            + $"way round. PhaseLog records stages in first-entry order, so this is the actual "
+            + $"call sequence. Got: {string.Join(" -> ", order)}");
     }
 
     private static int CountOccurrences(string haystack, string needle)

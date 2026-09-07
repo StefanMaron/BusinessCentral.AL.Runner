@@ -49,11 +49,25 @@
 //   disagree about which pages exist.
 //
 // COLUMNS NOT IMPLEMENTED
-//   Everything outside Id/Name/Caption/SourceTable/PageType/Editable/InsertAllowed/
-//   ModifyAllowed/DeleteAllowed/SourceTableTemporary/CardPageID (API*, DataCaptionExpr.,
-//   DelayedInsert, …) gets BC's own NavValue.GetDefaultNavValue for that column's type —
-//   the same "declares none of them" default a real row carries for a page that states
-//   nothing about them.
+//   Twenty of the table's 32 columns are answered here. Eleven come off PageMetaRow
+//   (Id/Name/Caption/SourceTable/PageType/Editable/InsertAllowed/ModifyAllowed/
+//   DeleteAllowed/SourceTableTemporary/CardPageID); the nine <SourceObject> ones
+//   (SourceTableView/DelayedInsert/ShowFilter/MultipleNewLines/SaveValues/AutoSplitKey/
+//   DataCaptionFields/LinksAllowed/PopulateAllFields) were added by #3063 and are read from
+//   BC's OWN parsed page metadata — see RecordPatches.PageMetadataSourceObject.cs, which is
+//   also where the refusal policy for them lives.
+//
+//   The remaining twelve still get BC's own NavValue.GetDefaultNavValue for the column's
+//   type — the same "declares none of them" default a real row carries for a page that
+//   states nothing about them. They are DataCaptionExpr., RefreshOnActivate, APIPublisher,
+//   APIGroup, APIVersion, EntitySetName, EntityName, ChangeTrackingAllowed, AppID,
+//   InherentPermissions, InherentEntitlements and Namespace. Unlike the nine above, none of
+//   these has a value sitting parsed and unused in the process today: the API* / Entity* /
+//   DataCaptionExpr. / RefreshOnActivate / ChangeTrackingAllowed group is <Properties>-level
+//   rather than <SourceObject>-level and is not carried on either row source, and the last
+//   four are computed by BC from an app-identity and permission-mask surface the runner does
+//   not populate at all. Each is therefore a separate piece of work, not a fall-through this
+//   file could close by widening its switch.
 //
 // PRECOMPILED-DLL RESPECT
 //   Runtime-engine types only (VirtualDataProvider, NCLMetaTable, NavValue,
@@ -134,13 +148,26 @@ public static partial class RecordPatches
         foreach (var row in EnumerateKnownPageMetadata())
         {
             if (!done.TryAdd(row.Id, 0)) continue;
+
+            // One lazy slot per ROW, shared by that row's nine <SourceObject> columns (#3063).
+            // The read behind it loads the page's real metadata through BC's own
+            // LoadMetadata(); nine columns asking independently would ask nine times for an
+            // answer that cannot differ between them. Lazy rather than eager because most
+            // rows are never asked for any of the nine, and a page whose metadata will not
+            // load must refuse only when something actually reads one of its columns — not
+            // take the whole table's population down with it.
+            PageSourceObjectInfo? sourceObject = null;
+            PageSourceObjectInfo SourceObjectFor(PageMetaRow r) => sourceObject ??= GetPageSourceObject(r.Id);
+
             InsertVirtualRow(provider, metaTable,
                 new object[] { PageMetadataVirtualTableId, row.Id, 0, 0 },
-                field => BuildPageMetadataValue(field, row, pageTypeOrdinals));
+                field => BuildPageMetadataValue(field, row, pageTypeOrdinals, SourceObjectFor));
         }
     }
 
-    private static object? BuildPageMetadataValue(NCLMetaField field, PageMetaRow row, Dictionary<string, int> pageTypeOrdinals)
+    private static object? BuildPageMetadataValue(
+        NCLMetaField field, PageMetaRow row, Dictionary<string, int> pageTypeOrdinals,
+        Func<PageMetaRow, PageSourceObjectInfo> SourceObjectFor)
     {
         object? Text(string s) => _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, s ?? string.Empty });
 
@@ -173,6 +200,36 @@ public static partial class RecordPatches
                 return NavBoolean(row.DeleteAllowed);
             case "sourcetabletemporary":
                 return NavBoolean(row.SourceTableTemporary);
+
+            // The nine <SourceObject> columns (#3063). Read from BC's own parsed page
+            // metadata — the same MetaSourceObjectDefinition BC's real PageDataProvider reads
+            // them off — so a source-compiled page and a page from a dependency .app cannot
+            // answer differently. See RecordPatches.PageMetadataSourceObject.cs, which also
+            // states which of them refuses rather than defaulting and why.
+            //
+            // Resolved lazily and ONCE per row build, not per column: the read reaches
+            // EnsureRealPageMetadata, which loads the page's real metadata through BC's own
+            // LoadMetadata() on first use. Nine columns of one row would otherwise ask nine
+            // times for an answer that cannot change between them.
+            case "sourcetableview":
+                return Text(SourceObjectFor(row).SourceTableView);
+            case "delayedinsert":
+                return NavBoolean(SourceObjectFor(row).DelayedInsert);
+            case "showfilter":
+                return NavBoolean(SourceObjectFor(row).ShowFilter);
+            case "multiplenewlines":
+                return NavBoolean(SourceObjectFor(row).MultipleNewLines);
+            case "savevalues":
+                return NavBoolean(SourceObjectFor(row).SaveValues);
+            case "autosplitkey":
+                return NavBoolean(SourceObjectFor(row).AutoSplitKey);
+            case "datacaptionfields":
+                return Text(SourceObjectFor(row).DataCaptionFields);
+            case "linksallowed":
+                return NavBoolean(SourceObjectFor(row).LinksAllowed);
+            case "populateallfields":
+                return NavBoolean(SourceObjectFor(row).PopulateAllFields);
+
             default:
                 return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
         }
