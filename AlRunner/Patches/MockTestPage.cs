@@ -9,6 +9,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
@@ -3015,36 +3016,120 @@ internal static class TestPageBooleanValue
 }
 
 /// <summary>
-/// Date values as a page-variable TestPage control sees them (issue #2054).
+/// The Date / DateTime / Time a TestPage control was handed, as a typed NavValue (#3384).
 ///
-/// A <c>Date</c> global is not a <c>NavStringValue</c>, so <c>NavTestField.ALSetValue</c> (the
-/// real, precompiled BC method the AL compiler emits for every <c>SetValue(&lt;Date&gt;)</c>
-/// call) round-trips it through OUR OWN <see cref="PageVariableTestField.FieldType"/> (now
-/// correctly answering <c>NavType.Date</c> — see that property's doc comment) and OUR OWN
-/// <c>ValueToString</c> before it ever reaches <see cref="ITestField.Value"/>'s setter. Both
-/// ends of that round trip are code this runner owns: <c>ValueToString</c> for this class is
-/// the generic <c>Convert.ToString(value, CultureInfo.InvariantCulture)</c>, which — once
-/// FieldType stops lying about the type — is handed a plain <c>DateTime</c>
-/// (<c>NavDate.ClientObject</c>) and renders it via .NET's InvariantCulture general date/time
-/// pattern (e.g. "12/31/2026 00:00:00"). <see cref="Resolve"/> only needs to invert THAT exact
-/// spelling, the same way <see cref="TestPageBooleanValue"/> only needs to invert "True"/"False".
+/// <para>AL's TestPage surface is string-typed for every control, so a temporal value reaches a
+/// control as text by two routes and both end here. A typed AL argument
+/// (<c>SetValue(&lt;Date&gt;)</c>) is rendered to text by BC's own <c>NavTestField.ALSetValue</c>
+/// through <see cref="ITestField.ValueToString"/> before the control ever sees it; text the test
+/// wrote itself (<c>SetValue(Format(D))</c>, <c>SetValue('2026-01-15')</c>) arrives unchanged.</para>
+///
+/// <para>Step two is BC's own client-side evaluator rather than a reimplementation of it, which
+/// is what makes the spellings accepted here the spellings a real service tier accepts.</para>
 /// </summary>
-internal static class TestPageDateValue
+internal static class TestPageTemporalValue
 {
-    internal static NavValue Resolve(string value, string context)
+    /// <summary>
+    /// Interpret <paramref name="value"/> as <paramref name="type"/>, or answer false and leave
+    /// the caller on its normal <c>NavText</c> path — where BC raises its own refusal, which is
+    /// the message a test asserting a rejected value is written against.
+    /// </summary>
+    internal static bool TryResolve(NavType type, string value, out NavValue? resolved)
     {
-        if (!DateTime.TryParse(value, CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.None, out var parsed))
-            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                context,
-                $"testpage-date-value — '{value}' is not the round-trip spelling TestPage "
-                + "SetValue(Date) itself produces (InvariantCulture general date/time format). "
-                + "See docs/scope.md");
+        resolved = null;
+        if (type is not (NavType.Date or NavType.DateTime or NavType.Time)) return false;
 
-        // NavDate.Create requires DateTimeKind.Local (its private ctor throws
-        // NavNCLDateInvalidException otherwise) — DateTime.Parse without an explicit style
-        // always returns Unspecified, so it must be stamped before handing it back.
-        return NavDate.Create(DateTime.SpecifyKind(parsed, DateTimeKind.Local));
+        // First: the spelling this runner's OWN ValueToString produces for a typed argument —
+        // Convert.ToString(<DateTime>, InvariantCulture), i.e. "MM/dd/yyyy HH:mm:ss". BC's
+        // evaluator cannot read it because BC's own client never emits it: a Date renders there
+        // as a date, and a Time carries no date at all. A Time arrives with NavTime's base date
+        // attached ("01/02/0001 14:30:00"), which is why the Time arm reads TimeOfDay.
+        if (DateTime.TryParseExact(value, "MM/dd/yyyy HH:mm:ss", CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var roundTrip))
+        {
+            // Create requires DateTimeKind.Local on all three — the ctors throw
+            // NavNCLDateInvalidException otherwise, and TryParseExact answers Unspecified.
+            resolved = type switch
+            {
+                NavType.Date => NavDate.Create(
+                    DateTime.SpecifyKind(roundTrip.Date, DateTimeKind.Local)),
+                NavType.DateTime => NavDateTime.Create(
+                    DateTime.SpecifyKind(roundTrip, DateTimeKind.Local)),
+                _ => NavTime.Create(DateTime.SpecifyKind(
+                    NavTimeBaseDate.Add(roundTrip.TimeOfDay), DateTimeKind.Local)),
+            };
+            return resolved != null;
+        }
+
+        return TryEvaluateThroughBc(type, value, out resolved);
+    }
+
+    // NavTime's ClientObject is a DateTime on BC's own base date; Create rejects anything else.
+    private static readonly DateTime NavTimeBaseDate = new DateTime(1, 1, 2);
+
+    private static bool _lookupDone;
+    private static System.Reflection.MethodInfo? _getEvaluator;
+    private static System.Reflection.MethodInfo? _evaluate;
+    private static object? _trapError;
+    private static Type? _navNclType;
+
+    private static bool TryEvaluateThroughBc(NavType type, string value, out NavValue? resolved)
+    {
+        resolved = null;
+        if (!TryBindEvaluator()) return false;
+
+        var member = type switch
+        {
+            NavType.Date => "NavDate",
+            NavType.DateTime => "NavDateTime",
+            _ => "NavTime",
+        };
+        if (!Enum.IsDefined(_navNclType!, member)) return false;
+
+        var evaluator = _getEvaluator!.Invoke(null, new[] { Enum.Parse(_navNclType!, member) });
+        if (evaluator == null) return false;
+
+        // DataError.TrapError, not ThrowError: a spelling BC cannot read has to come back as
+        // "no" so the caller keeps its NavText path, where BC raises the refusal AL is written
+        // against. Throwing from here would replace that message with this one.
+        var args = new object?[] { BcRuntime.SkeletonSession, _trapError, null, null, value, 0 };
+        bool ok;
+        try { ok = (bool)_evaluate!.Invoke(evaluator, args)!; }
+        catch (System.Reflection.TargetInvocationException) { return false; }
+        catch (System.ArgumentException) { return false; }
+
+        if (!ok) return false;
+        resolved = args[2] as NavValue;
+        return resolved != null;
+    }
+
+    private static bool TryBindEvaluator()
+    {
+        if (_lookupDone) return _evaluate != null;
+        _lookupDone = true;
+
+        var ncl = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
+        var evaluatorType = ncl?.GetType("Microsoft.Dynamics.Nav.Runtime.NavValueEvaluator");
+        _navNclType = ncl?.GetType("Microsoft.Dynamics.Nav.Runtime.NavNclType");
+        var dataErrorType = typeof(Microsoft.Dynamics.Nav.Types.DataError);
+        if (evaluatorType == null || _navNclType == null || dataErrorType == null
+            || !_navNclType.IsEnum || !dataErrorType.IsEnum || !Enum.IsDefined(dataErrorType, "TrapError"))
+            return false;
+
+        const System.Reflection.BindingFlags Any =
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+            | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance;
+
+        _getEvaluator = evaluatorType.GetMethod(
+            "GetEvaluator", Any, null, new[] { _navNclType }, null);
+        var evaluate = evaluatorType.GetMethod("Evaluate", Any);
+        if (_getEvaluator == null || evaluate == null || evaluate.GetParameters().Length != 6)
+            return false;
+
+        _trapError = Enum.Parse(dataErrorType, "TrapError");
+        _evaluate = evaluate;
+        return true;
     }
 }
 
@@ -3139,12 +3224,20 @@ internal sealed class LiveNavTestField : ITestField
         // ALValidateAsync then rejected with "The value 'True' can't be evaluated into
         // type Boolean" — the same shape of bug TestPageBooleanValue already fixed for
         // PageVariableTestField.
+        //
+        // #3384 — Date/DateTime/Time needed the same kind of arm. Without one this fell through
+        // to ToNavValue for every temporal control, so the typed value BC's ALSetValue had just
+        // rendered to text was validated as a NavText and refused, and text the test wrote
+        // itself was refused the same way — including the ISO spelling BC's own message
+        // recommends. See TestPageTemporalValue.
         var navValue = CurrentOption() is { } option
             ? TestPageOptionValue.Resolve(option, value, OptionCaptions(),
                 $"TestPage SetValue (field {_fieldNo})")
             : FieldType == NavType.Boolean
                 ? TestPageBooleanValue.Resolve(value, Caption)
-                : ALCompiler.ToNavValue(value);
+                : TestPageTemporalValue.TryResolve(FieldType, value, out var temporal)
+                    ? temporal!
+                    : ALCompiler.ToNavValue(value);
 
         // MinValue/MaxValue (#2495): measured against real BC (28.1/28.4), a bounded field's
         // MinValue/MaxValue is enforced on a TestPage control WRITE, but NOT on Rec.Validate
@@ -3424,7 +3517,12 @@ internal sealed class PageVariableTestField : ITestField
                 $"TestPage SetValue (control {_controlId})"),
             NavBoolean => TestPageBooleanValue.Resolve(value, Caption),
             NavCode current => new NavCode(current.MaxLength, value),
-            NavDate => TestPageDateValue.Resolve(value, $"TestPage SetValue (control {_controlId})"),
+            // #3384: NavDate was the only temporal arm here and accepted only the round-trip
+            // spelling, throwing out-of-scope for text BC reads happily. NavDateTime and NavTime
+            // had no arm at all, so a typed argument reached the page's own generated setter as
+            // a NavText and threw InvalidCastException.
+            NavDate or NavDateTime or NavTime when
+                TestPageTemporalValue.TryResolve(FieldType, value, out var temporal) => temporal!,
             _ => ALCompiler.ToNavValue(value),
         };
 
@@ -3456,6 +3554,10 @@ internal sealed class PageVariableTestField : ITestField
         NavBoolean => NavType.Boolean,
         NavCode => NavType.Code,
         NavDate => NavType.Date,
+        // #3384: without these two the control claimed Text, so BC's ALSetValue picked Text
+        // metadata for a DateTime/Time argument before ToBoundValue ever saw it.
+        NavDateTime => NavType.DateTime,
+        NavTime => NavType.Time,
         // #2634/#2534's fix: a Decimal-typed page-global control has to answer NavType.Decimal
         // here too, the same as an Option/Boolean/Code/Date global already does above -- this
         // FieldType is what NavTestField.ALSetValue (BC's own precompiled dispatch) uses to pick
