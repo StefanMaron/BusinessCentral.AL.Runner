@@ -1,5 +1,6 @@
 using System;
 using System.Reflection;
+using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 
 namespace AlRunner.Patches;
@@ -24,7 +25,7 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     internal bool? RaiseOnFindRecord(string which)
     {
-        if (!DeclaresRowsetTrigger("OnFindRecord")) return null;
+        if (!DeclaresRowsetTrigger("OnFindRecord", new[] { typeof(NavText) })) return null;
         var result = InvokeRecordTrigger("OnFindRecord", new[] { typeof(NavText) },
             new object[] { new NavText(which) });
         return result as bool? ?? throw NotDispatched("OnFindRecord", "RaiseOnFindRecordAsync(NavText)", result);
@@ -43,7 +44,7 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     internal int? RaiseOnNextRecord(int steps)
     {
-        if (!DeclaresRowsetTrigger("OnNextRecord")) return null;
+        if (!DeclaresRowsetTrigger("OnNextRecord", new[] { typeof(int) })) return null;
         var result = InvokeRecordTrigger("OnNextRecord", new[] { typeof(int), typeof(int) },
             new object[] { steps, 0 });
         return result as int? ?? throw NotDispatched("OnNextRecord", "RaiseOnNextRecordAsync(int,int)", result);
@@ -53,8 +54,7 @@ internal sealed partial class RunnerPageInstance
     /// The page declared the trigger and the invocation produced no value, so its rowset went
     /// unconsulted. Answering from the SourceTable instead is the defect this file fixes,
     /// reappearing silently on whichever BC version changed the shape
-    /// <see cref="InvokeRecordTrigger"/> resolves — the signatures were read off Ncl.dll on 28.1
-    /// only, so the other seven supported versions are unverified by construction.
+    /// <see cref="InvokeRecordTrigger"/> resolves.
     /// </summary>
     private Exception NotDispatched(string trigger, string bcMember, object? result)
         => new AlRunner.Infrastructure.RunnerOutOfScopeException(
@@ -76,14 +76,20 @@ internal sealed partial class RunnerPageInstance
     /// that answers FALSE here for a page that does declare the trigger (#3447), which is why
     /// this asks the compiled class — see docs/page-rowset-triggers.md.</para>
     /// </summary>
-    private bool DeclaresRowsetTrigger(string trigger)
+    private bool DeclaresRowsetTrigger(string trigger, Type[] types)
     {
         const BindingFlags Declared = BindingFlags.Public | BindingFlags.NonPublic
                                     | BindingFlags.Instance | BindingFlags.DeclaredOnly;
 
         for (var t = _form?.GetType(); t != null && t != typeof(NavForm); t = t.BaseType)
-            if (t.GetMethod(trigger, Declared) != null || t.GetMethod(trigger + "Async", Declared) != null)
-                return true;
+            foreach (var name in new[] { trigger, trigger + "Async" })
+                if (BcShape.FindMethod(t, name, Declared,
+                        surface: "page rowset triggers", member: $"{t.Name}.{name}",
+                        detail: "the runner asks whether this page overrode the trigger, and two "
+                              + "declarations of one name on one type leave no way to say which "
+                              + "body serves the rowset — see docs/page-rowset-triggers.md",
+                        types: types) != null)
+                    return true;
 
         return false;
     }

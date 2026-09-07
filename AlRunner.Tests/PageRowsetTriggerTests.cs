@@ -8,22 +8,18 @@
 // a temporary record carries filters, current key and sort direction while keeping the buffer's
 // own rows.
 //
-// This suite exists for the three things that verdict does NOT cover, all properties of the
+// This suite exists for the two things that verdict does NOT cover, both properties of the
 // RUNNER's dispatch (MockTestPage's six navigation sites -> RunnerPageInstance.RaiseOnFindRecord
 // / RaiseOnNextRecord) rather than of BC:
 //
-//   1. The submodule pin is behind that corpus commit, so nothing in this repository runs
-//      codeunit 60679 yet. A regression in our own dispatch should fail loudly HERE rather than
-//      wait for the pin.
-//
-//   2. WHICH Which/Steps values the runner passes. The corpus cannot pin this and deliberately
+//   1. WHICH Which/Steps values the runner passes. The corpus cannot pin this and deliberately
 //      does not: a real client anchors with '=><' or '=<' and walks with OnNextRecord(±1),
 //      caching rows, so how many times it calls a trigger is a client-side detail. The runner
 //      has no viewport, so it maps one navigation to one trigger call — '-', '+', +1, -1 — and
 //      that mapping is what a regression would change first. docs/page-rowset-triggers.md has
 //      the measured client trace and why the two differ.
 //
-//   3. THE NEGATIVE DIRECTION, which is the half that can break silently. OnFindRecord and
+//   2. THE NEGATIVE DIRECTION, which is the half that can break silently. OnFindRecord and
 //      OnNextRecord are virtuals on NavForm whose BASE bodies are the platform find and the
 //      platform step, so a declaration check that merely resolved the method name would fire on
 //      every page in existence and route every ordinary page through a trigger it never wrote.
