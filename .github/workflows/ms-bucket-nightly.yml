@@ -132,6 +132,12 @@ jobs:
     # and the surface's would come to differ, which would make their numbers incomparable —
     # exactly the failure this whole file exists to avoid.
     #
+    # Company normalization is NOT passed either, for the same reason and one more: the
+    # nightly is the trend line, and every point on it so far was measured against the
+    # un-normalized restore. Inheriting ms-bucket.yml's OFF default keeps the series
+    # comparable with itself; the prepared-company number is a surface dispatch, not a
+    # silent change of what the nightly measures (#3450).
+    #
     # bc-version is left EMPTY on purpose: ms-bucket.yml resolves that to the newest prefix in
     # .github/bc-versions.txt, which is the version the matrix marks required. Pinning a
     # version here is the thing this nightly must not do.

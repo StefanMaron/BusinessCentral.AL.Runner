@@ -114,6 +114,58 @@ internal static class BashArrayLiteral
     }
 }
 
+internal static class BashConditionalAppend
+{
+    /// <summary>
+    /// Every <c>name+=( … )</c> in a script, paired with the condition of the nearest
+    /// <c>if …; then</c> above it — parenthesis-matched for the same reason
+    /// <see cref="BashArrayLiteral.Of"/> is: a flag named in a comment, an <c>echo</c> or an
+    /// input's own description is not the claim "the runner is invoked with it".
+    ///
+    /// A SWITCH cannot be asserted with <see cref="BashArrayLiteral.Of"/> at all. It carries no
+    /// value, so it has to be appended under a condition rather than sit in the unconditional
+    /// literal — and that literal is precisely what <c>Of</c> reads and a conditional append is
+    /// precisely what it excludes. Pairing the append with its guard is what makes "turning the
+    /// input on is what puts the flag on the command line" a falsifiable claim rather than a
+    /// substring search that a comment would satisfy.
+    /// </summary>
+    internal static IReadOnlyList<(string Condition, string Body)> Of(string script, string name)
+    {
+        var found = new List<(string, string)>();
+        var marker = name + "+=(";
+        for (var open = script.IndexOf(marker, StringComparison.Ordinal); open >= 0;
+             open = script.IndexOf(marker, open + marker.Length, StringComparison.Ordinal))
+        {
+            var i = open + marker.Length - 1;    // at the '('
+            var depth = 0;
+            var body = string.Empty;
+            for (var j = i; j < script.Length; j++)
+            {
+                if (script[j] == '(') depth++;
+                else if (script[j] == ')' && --depth == 0) { body = script[(i + 1)..j]; break; }
+            }
+            found.Add((ConditionAbove(script, open), body.Trim()));
+        }
+        return found;
+    }
+
+    /// <summary>The nearest <c>if …; then</c> line above <paramref name="index"/>, stripped to
+    /// its condition. Empty when there is none, so an unconditional append is distinguishable
+    /// from a guarded one instead of both reading the same.</summary>
+    private static string ConditionAbove(string script, int index)
+    {
+        var lines = script[..index].Replace("\r\n", "\n").Split('\n');
+        for (var k = lines.Length - 1; k >= 0; k--)
+        {
+            var line = lines[k].Trim();
+            if (!line.StartsWith("if ", StringComparison.Ordinal)) continue;
+            var then = line.LastIndexOf("; then", StringComparison.Ordinal);
+            return (then < 0 ? line[3..] : line[3..then]).Trim();
+        }
+        return string.Empty;
+    }
+}
+
 public sealed class MsBucketWorkflowTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -223,6 +275,40 @@ public sealed class MsBucketWorkflowTests
         Assert.DoesNotContain("echo", array, StringComparison.Ordinal);
         Assert.DoesNotContain("--test-data-company", array, StringComparison.Ordinal);
         Assert.Equal(string.Empty, BashArrayLiteral.Of(script, "nosuch"));
+    }
+
+    [Fact]
+    public void BashConditionalAppend_PairsEachAppendWithItsGuard_AndIgnoresProseNamingTheFlag()
+    {
+        const string script = """
+            # --test-data-normalize-company belongs in a comment and must not count as an append.
+            echo "would run with --test-data-normalize-company"
+            args=( "$BUNDLE" --cache "$C" )
+            if [ "$WITH_TEST_DATA" = "true" ]; then
+              args+=( "--test-data=$bak" --test-data-company "CRONUS International Ltd_" )
+              if [ "$NORMALIZE_COMPANY" = "true" ]; then
+                args+=( --test-data-normalize-company )
+              fi
+            fi
+            """;
+
+        var appends = BashConditionalAppend.Of(script, "args");
+        Assert.Equal(2, appends.Count);
+        Assert.Equal("[ \"$WITH_TEST_DATA\" = \"true\" ]", appends[0].Condition);
+        Assert.Contains("--test-data-company", appends[0].Body, StringComparison.Ordinal);
+        Assert.Equal("[ \"$NORMALIZE_COMPANY\" = \"true\" ]", appends[1].Condition);
+        Assert.Equal("--test-data-normalize-company", appends[1].Body);
+
+        // The comment and the echo name the same flag and are not appends; the unconditional
+        // literal is a different claim again and holds neither flag.
+        Assert.DoesNotContain(appends, a => a.Body.Contains("echo", StringComparison.Ordinal));
+        Assert.DoesNotContain("--test-data-normalize-company", BashArrayLiteral.Of(script, "args"),
+            StringComparison.Ordinal);
+        Assert.Empty(BashConditionalAppend.Of(script, "nosuch"));
+
+        // An append with no `if` above it reports an empty condition rather than borrowing one.
+        Assert.Equal(string.Empty,
+            Assert.Single(BashConditionalAppend.Of("args+=( --quiet )", "args")).Condition);
     }
 
     // ---- wired to the real files ------------------------------------------------------
@@ -504,6 +590,99 @@ public sealed class MsBucketWorkflowTests
         // And the thing it inherits is real: ms-bucket.yml declares the input with a default,
         // so "passes nothing" means 300 s, not nothing.
         Assert.NotEmpty(WorkflowInputDefaults.Of(Read(Path.Combine("workflows", Workflow)), "test-timeout"));
+    }
+
+    // ---- company normalization (#3450, the flag from #2730) ----------------------------
+
+    /// <summary>
+    /// #3450: <c>--test-data-normalize-company</c> shipped on the runner (#2730) with no way
+    /// for any workflow to pass it, so the comparison it was built for could not be run in CI.
+    ///
+    /// The claim is that the flag ARRIVES, which is four separate links — checking any one of
+    /// them alone passes on the defect this exists to catch:
+    ///
+    ///   1. the INPUT reaches a shell variable, so a caller's override goes somewhere;
+    ///   2. the variable GUARDS an append, so the input is what decides;
+    ///   3. the APPENDED text is the flag the runner's own parser accepts, spelled from
+    ///      <see cref="TestDataNormalization.FlagName"/> rather than typed a second time, and
+    ///      carries no value — <c>--test-data-normalize-company false</c> would leave
+    ///      <c>false</c> as a positional argument, which Program.cs adds to the bundle list;
+    ///   4. that array is what the runner is invoked with.
+    ///
+    /// And the negative that keeps every recorded number valid: the flag is NOT in the
+    /// unconditional <c>args=( … )</c> literal. There it would be on for every caller,
+    /// including the nightly, and the input's <c>false</c> default would be decorative.
+    /// </summary>
+    [Fact]
+    public void MsBucketWorkflow_PutsCompanyNormalizationOnTheRunnersArgumentArray_OnlyWhenAskedTo()
+    {
+        var code = CodeOnly(Read(Path.Combine("workflows", Workflow)));
+        var runStep = WorkflowStep.BodyOf(code, "Run the bucket(s)");
+
+        Assert.Contains("NORMALIZE_COMPANY: ${{ inputs.normalize-company }}", runStep,
+            StringComparison.Ordinal);
+
+        var appends = BashConditionalAppend.Of(runStep, "args");
+        var normalize = Assert.Single(appends.Where(
+            a => a.Body.Contains(TestDataNormalization.FlagName, StringComparison.Ordinal)));
+
+        Assert.Equal(TestDataNormalization.FlagName, normalize.Body);
+        Assert.Equal("[ \"$NORMALIZE_COMPANY\" = \"true\" ]", normalize.Condition);
+
+        Assert.DoesNotContain(TestDataNormalization.FlagName,
+            BashArrayLiteral.Of(runStep, "args"), StringComparison.Ordinal);
+
+        Assert.Contains("/al-runner\" \"${args[@]}\"", runStep, StringComparison.Ordinal);
+
+        // Nested inside the --test-data block, not beside it. The rule rewrites rows on their
+        // way out of the backup, so with --test-data off the flag changes nothing while the
+        // runner still prints "company normalization ON" — a line that reads like data was
+        // prepared when none was restored.
+        var testData = runStep.IndexOf("if [ \"$WITH_TEST_DATA\" = \"true\" ]; then",
+            StringComparison.Ordinal);
+        var switchIndex = runStep.IndexOf("if [ \"$NORMALIZE_COMPANY\" = \"true\" ]; then",
+            StringComparison.Ordinal);
+        Assert.True(testData >= 0 && switchIndex > testData,
+            "the normalization switch must sit inside the --test-data block, not before it");
+        Assert.True(switchIndex < runStep.IndexOf("\"${args[@]}\"", StringComparison.Ordinal),
+            "the switch must be appended before the runner is invoked");
+    }
+
+    /// <summary>
+    /// The default is OFF on BOTH trigger blocks, and it is the same word on each. Every
+    /// pass/fail number recorded in this repository — the running-ms-test-buckets skill's
+    /// 259/595 for Tests-SMB, #3416's corpus counts, the full-surface runs — was measured
+    /// against the un-normalized restore. A default of <c>true</c> would make all of them
+    /// uncomparable and nothing would announce it; a default on only one trigger would make
+    /// the two spellings disagree, which is the same failure one dispatch at a time.
+    /// </summary>
+    [Fact]
+    public void MsBucketWorkflow_DefaultsCompanyNormalizationOff_OnBothTriggers()
+    {
+        var defaults = WorkflowInputDefaults.Of(
+            Read(Path.Combine("workflows", Workflow)), "normalize-company");
+
+        Assert.Equal(2, defaults.Count);
+        Assert.Equal(new[] { "false", "false" }, defaults);
+    }
+
+    /// <summary>
+    /// The nightly inherits the OFF default by passing nothing. It is the trend line, and every
+    /// point on it so far was measured un-normalized — a second spelling here is both how two
+    /// configurations drift apart (#1976, one input down) and how a series quietly stops being
+    /// comparable with itself.
+    /// </summary>
+    [Fact]
+    public void NightlyWorkflow_InheritsCompanyNormalization_RatherThanSpellingItAgain()
+    {
+        var code = CodeOnly(Read(Path.Combine("workflows", Nightly)));
+
+        Assert.DoesNotContain("normalize-company", code, StringComparison.Ordinal);
+        Assert.Contains("uses: ./.github/workflows/ms-bucket.yml", code, StringComparison.Ordinal);
+        // And what it inherits is real: ms-bucket.yml declares the input with a default, so
+        // "passes nothing" means OFF rather than an empty string.
+        Assert.NotEmpty(WorkflowInputDefaults.Of(
+            Read(Path.Combine("workflows", Workflow)), "normalize-company"));
     }
 
     [Fact]

@@ -59,6 +59,10 @@ name: MS bucket (manual)
 #     legitimate tests here (#3431). Do NOT remove the watchdog to fix that: it is what turns
 #     an unbounded loop into a diagnosable abort instead of a job grinding to the 360-minute
 #     ceiling.
+#   * --test-data-normalize-company, from the `normalize-company` input, default OFF (#3450).
+#     Leave the default off: every number recorded in this repository was measured against the
+#     un-normalized restore, so turning it on by default would make all of them uncomparable
+#     without announcing it.
 #
 # Reading the number — two known ways it can be wrong until their fixes land, both surfaced
 # verbatim in the summary by scripts/ms-bucket-summary.py:
@@ -153,6 +157,14 @@ on:
         type: number
         required: false
         default: 300
+      normalize-company:
+        description: >-
+          Prepare the restored company the way Microsoft prepares its own test company
+          (--test-data-normalize-company, #2730). Off by default: every number in this
+          repository was measured without it, so the two are not comparable.
+        type: boolean
+        required: false
+        default: false
   workflow_dispatch:
     inputs:
       bucket:
@@ -209,6 +221,15 @@ on:
         type: number
         required: false
         default: 300
+      normalize-company:
+        description: >-
+          Blank General Ledger Setup."Additional Reporting Currency" on the restored company,
+          so it matches what Microsoft's own test company has
+          (--test-data-normalize-company, #2730). Turn it on to measure the prepared-company
+          number; leave it off to stay comparable with every number recorded so far.
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -437,6 +458,11 @@ jobs:
           # dropping the flag would leave the timeout working and MsBucketWorkflowTests could
           # no longer tell.
           TEST_TIMEOUT_SEC: ${{ inputs.test-timeout }}
+          # Appended as a bare switch below when it is "true". It carries no value on purpose:
+          # --test-data-normalize-company takes none, so `--test-data-normalize-company false`
+          # would leave `false` as a positional argument and the runner would read it as a
+          # bundle directory (Program.cs's flag loop falls through to bundles.Add).
+          NORMALIZE_COMPANY: ${{ inputs.normalize-company }}
         run: |
           set +e
           mapfile -t BUCKET_LIST < "$RUNNER_TEMP/buckets.txt"
@@ -475,6 +501,13 @@ jobs:
               # SQL form of the company name: trailing underscore. With a period the run fails
               # loudly and lists both companies.
               args+=( "--test-data=$bak" --test-data-company "CRONUS International Ltd_" )
+              # Nested rather than a sibling: the flag rewrites rows on their way out of the
+              # backup, so without --test-data it changes nothing while still printing
+              # "company normalization ON", which reads like data was prepared when none was
+              # restored.
+              if [ "$NORMALIZE_COMPANY" = "true" ]; then
+                args+=( --test-data-normalize-company )
+              fi
             fi
             echo "::group::[$i/$total] $bucket"
             start=$SECONDS
