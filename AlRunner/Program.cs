@@ -4491,6 +4491,19 @@ return strictExitCode ? computedExitCode : 0;
             {
                 packageCacheDirs = RunLayeredPrePass(bundleList, packageCacheDirs, workspaceScratch);
             }
+            // #2956: the same #2095 special case the CLI path applies, which server mode
+            // never had — a missing/too-old package reported as "LAYERED-PREPASS-FAIL:
+            // Dependency not found: …" told a protocol caller strictly less than a CLI
+            // caller got for the identical gap on the identical bundle. Exit 2 to match
+            // the CLI's provisioning-gap code, not 3 ("compilation error").
+            catch (Exception ex) when (ex is AlRunner.Infrastructure.IDependencyProvisioningDiagnostic diag)
+            {
+                var bcVer = AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString();
+                return new List<ServerRunResult>
+                {
+                    ServerRunResult.Failure(2, "<inter-bundle-deps>", diag.ToDetailedMessage(bcVer), new())
+                };
+            }
             catch (Exception ex)
             {
                 // Loud per-bundle failure below (dep resolution during the per-bundle
@@ -4506,6 +4519,15 @@ return strictExitCode ? computedExitCode : 0;
         try
         {
             packageCacheDirs = BuildSiblingSourceDeps(bundleList, packageCacheDirs, workspaceScratch);
+        }
+        // Same #2956 provisioning-gap special case as the layered pre-pass above.
+        catch (Exception ex) when (ex is AlRunner.Infrastructure.IDependencyProvisioningDiagnostic diag)
+        {
+            var bcVer = AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString();
+            return new List<ServerRunResult>
+            {
+                ServerRunResult.Failure(2, "<sibling-source-deps>", diag.ToDetailedMessage(bcVer), new())
+            };
         }
         catch (Exception ex)
         {
