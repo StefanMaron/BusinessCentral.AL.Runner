@@ -10,12 +10,12 @@
 // in the absent client's place, and realising it at the outermost AL trigger's return rather
 // than at the event.
 //
-// Three arms drive the same bundle in one run, and the pair is what carries the claim: the
-// control page differs from the Update page in exactly one respect, the absence of the
-// CurrPage.Update call. An implementation that refreshed after every SetValue would pass the
-// first arm and fail the second, and one that refreshed at the event rather than at the
-// trigger's return would fail the ORDER assertion while still passing a bare "the value
-// changed" check — which is why the trace is asserted as an exact string.
+// The control page differs from the Update page in exactly one respect, the absence of the
+// CurrPage.Update call, and that pairing is what carries the claim: an implementation that
+// refreshed after every SetValue would pass the first arm and fail the control, and one that
+// refreshed at the event rather than at the trigger's return would fail the ORDER assertion
+// while still passing a bare "the value changed" check — which is why the trace is asserted as
+// an exact string.
 //
 // The fixture declares no "application", per .claude/rules/no-base-app-in-csharp-tests.md.
 
@@ -57,12 +57,13 @@ public sealed class CurrPageUpdateRefreshTests : IDisposable
         // Each arm is a [Test] procedure asserting inside AL, so a green run IS the claim.
         // The exit code alone would not distinguish "passed" from "discovered nothing", hence
         // the explicit pass/fail counts below.
-        Assert.True(output.Contains("pass:        4"),
-            $"expected all four arms to pass; exit={exit}\n{output}");
+        Assert.True(output.Contains("pass:        5"),
+            $"expected all five arms to pass; exit={exit}\n{output}");
         Assert.DoesNotContain("fail:        1", output);
         Assert.DoesNotContain("fail:        2", output);
         Assert.DoesNotContain("fail:        3", output);
         Assert.DoesNotContain("fail:        4", output);
+        Assert.DoesNotContain("fail:        5", output);
     }
 
     private void WriteBundle()
@@ -125,6 +126,24 @@ public sealed class CurrPageUpdateRefreshTests : IDisposable
                         }
                     }
                 }
+                actions
+                {
+                    area(Processing)
+                    {
+                        // The PART asking to be updated. BC propagates the request to the HOST's
+                        // form as well, where no trigger of the host's own is running -- the
+                        // shape the depth-0 drop exists for.
+                        action(PartUpdate)
+                        {
+                            ApplicationArea = All;
+                            trigger OnAction()
+                            begin
+                                CurrPage.Update(false);
+                            end;
+                        }
+                    }
+                }
+
                 trigger OnOpenPage()
                 begin
                     Rec.Reset();
@@ -332,10 +351,7 @@ public sealed class CurrPageUpdateRefreshTests : IDisposable
                 // Honest about what it does NOT prove: it still passes with the
                 // `_triggerDepth == 0` drop removed, because those internal raisers carry
                 // RecordSaved WITHOUT Update and the flag filter already rejects them. The
-                // case that reaches the drop is a PART's CurrPage.Update propagating to its
-                // HOST - measured once across the whole corpus, stack recorded in
-                // docs/testpage-currpage-update.md - and it needs a host/part pair this
-                // fixture does not have.
+                // drop is pinned by the arm below instead.
                 [Test]
                 procedure ARequestArmedOutsideATrigger_DoesNotFireOnTheNextTrigger()
                 var
@@ -353,6 +369,34 @@ public sealed class CurrPageUpdateRefreshTests : IDisposable
 
                     Check('ValidateBegin;ValidateEnd;', Trace.Get(),
                         'no refresh leaked from the New() that preceded this trigger');
+                end;
+
+                // The arm that pins the depth-0 drop, and the ONE shape that reaches it:
+                // measured across the whole corpus, a request arrives at a page with no trigger
+                // of its own running only when a PART calls CurrPage.Update and BC propagates it
+                // to the HOST (stack in docs/testpage-currpage-update.md).
+                //
+                // The host here calls CurrPage.Update nowhere, so a HostAGCR after the later,
+                // unrelated SetValue can only be a request the part armed and the host carried.
+                // Removing `if (_triggerDepth == 0) return;` turns this RED with
+                // 'ValidateBegin;ValidateEnd;HostAGCR;'.
+                [Test]
+                procedure APartsCurrPageUpdate_DoesNotRefreshTheHostOnItsNextTrigger()
+                var
+                    Row: Record "CPU Row";
+                    Card: TestPage "CPU Card Plain";
+                begin
+                    Seed(Row, 'E');
+                    Card.OpenEdit();
+                    Card.GoToRecord(Row);
+
+                    Card.Facts.PartUpdate.Invoke();
+                    Trace.Reset();
+
+                    Card.Amount.SetValue(50);
+
+                    Check('ValidateBegin;ValidateEnd;', Trace.Get(),
+                        'the host must not refresh on a request the part armed');
                 end;
 
                 [Test]

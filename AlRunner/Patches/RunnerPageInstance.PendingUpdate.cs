@@ -48,15 +48,30 @@ internal sealed partial class RunnerPageInstance
             // reproducing whatever BC does for a page whose OnAfterGetCurrRecord calls
             // CurrPage.Update on itself. Nothing measures that shape.
             if (_realisingUpdate) return;
-            // A request with NO OWNING TRIGGER is dropped rather than carried. BC's own
-            // NavForm internals raise this event from paths the TestPage layer drives
-            // directly — NewRecordAsync and the SaveRecordAsync inside it, reached from
-            // MockTestPage without any AL trigger on the stack. Arming there would leave the
-            // flag set with nothing to consume it, and the refresh would then fire at the end
-            // of the NEXT, unrelated trigger: an OnAfterGetCurrRecord attributed to a
-            // CurrPage.Update that some earlier operation made. Requiring an owning trigger is
-            // what keeps the realisation attributable to the call that armed it.
-            if (_triggerDepth == 0) return;
+            // A request with NO OWNING TRIGGER is dropped rather than carried. The shape that
+            // reaches this is a PART calling CurrPage.Update: BC propagates the request to the
+            // HOST's form as well, and the host has no trigger of its own running, so its
+            // _triggerDepth is 0. Carried, that flag would fire at the end of the NEXT,
+            // unrelated host trigger — an OnAfterGetCurrRecord attributed to a CurrPage.Update
+            // the host never made. Realising it immediately would be the propagation behaviour
+            // under UpdateParent above, which nothing measures, so it is left undone.
+            //
+            // AlRunner.Tests/CurrPageUpdateRefreshTests's part-action arm reproduces it and
+            // goes RED with this line removed.
+            if (_triggerDepth == 0)
+            {
+                // Console.Error, not Console.Out: the other AL_RUNNER_TRACE_PAGE_METADATA
+                // writers in this class fire at page-BUILD time, outside a test. This one fires
+                // while a test is running, where the runner captures stdout per test and only
+                // replays it for a FAILING test — measured, a Console.Out line here is
+                // swallowed on a passing run, which is exactly when you want to see it.
+                if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
+                    Console.Error.WriteLine(
+                        $"[RunnerPageInstance] page {_pageId}: CurrPage.Update request dropped — "
+                        + "no AL trigger of this page's own is running (see "
+                        + "docs/testpage-currpage-update.md)");
+                return;
+            }
             _updateRequested = true;
         };
     }

@@ -70,30 +70,29 @@ Two things follow, and both are why the fix takes the shape it does:
   the host's does not; throwing would turn a partial answer into no answer for every such page.
   Unmeasured.
 - **A request that reaches a page with no trigger of its own on the stack.** This is the same
-  divergence as `UpdateParent`, arriving by the other route, and it is measured rather than
-  hypothetical. Instrumenting the subscriber and running the whole corpus plus
-  `tests/runner-extras` produces exactly one hit, with this stack:
-
-  ```
-  NavForm.UpdateCoreAsync
-  NavForm.Update()
-  Page60805.DeleteRow_a45_OnAction        <- the PART's action calls CurrPage.Update()
-  ```
-
-  and the subscriber that fires belongs to page **60806**, the HOST
-  (`tests/al-language/.../handlers/TestPageTempPart_*`). A trigger running on the part's
-  `RunnerPageInstance` calls `CurrPage.Update()`, and BC propagates the request to the host's
-  form as well — where `_triggerDepth` is 0, because the host has no trigger of its own
-  running.
+  divergence as `UpdateParent`, arriving by the other route. A **part** calls `CurrPage.Update`
+  and BC propagates the request to its **host**'s form as well; the host has no trigger of its
+  own running, so its `_triggerDepth` is 0.
 
   Such a request is dropped. Carrying it is the one clearly wrong option: the flag would
   survive to the end of the next, unrelated host trigger and raise an `OnAfterGetCurrRecord`
-  there, attributed to a `CurrPage.Update` that some earlier operation made. Realising it
-  immediately would be the faithful alternative, but that is the propagation behaviour above,
-  which nothing has measured — so it is left undone rather than guessed at.
+  there, attributed to a `CurrPage.Update` the host never made. Realising it immediately would
+  be the faithful alternative, but that is the propagation behaviour above, which nothing has
+  measured — so it is left undone rather than guessed at.
+
+  `AlRunner.Tests/CurrPageUpdateRefreshTests`'s part-action arm reproduces this deterministically
+  and goes RED (`ValidateBegin;ValidateEnd;HostAGCR;`) with the drop removed. It was first seen
+  in a corpus run, on the host/part pair in
+  `tests/al-language/.../handlers/TestPageTempPart_*` (pages 60805 and 60806) — but whether the
+  host has subscribed by the moment the part fires depends on the host having run a trigger
+  first, so that sighting is **not** a repeatable count and the C# arm is what pins the
+  behaviour.
 
   `RunnerPageInstance.TryRaiseExtensionOnlyAction` needs nothing here: it is `static` and runs
   only where no page instance could be built at all, so there is no subscription and no flag.
+
+  Set `AL_RUNNER_TRACE_PAGE_METADATA=1` to have each drop name its page id on stderr.
+
 - **A `CurrPage.Update` issued from inside the refresh itself.** The subscriber drops a request
   raised while a refresh is running. Realising it would arm the flag again from inside the
   refresh and refresh again without bound — a hang. No measurement covers that shape.
