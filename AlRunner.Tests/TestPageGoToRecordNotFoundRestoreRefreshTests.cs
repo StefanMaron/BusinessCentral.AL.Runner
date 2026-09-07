@@ -32,14 +32,23 @@ public sealed class TestPageGoToRecordNotFoundRestoreRefreshTests
         return File.ReadAllText(path);
     }
 
+    // The scan body FindRowFromTableFieldValues runs. Since #3312 the method itself is a
+    // one-line delegation: FindRowFromControlFieldValue needs the same scan started from the
+    // CURRENT row rather than from the top, so the body moved into a shared
+    // FindRowFromFieldValues that both entry points call with a start policy. The not-found
+    // restore this class pins lives in that shared body, unchanged and still reached by
+    // FindRowFromTableFieldValues -- so this locator follows it rather than asserting the
+    // body sits inline under the public signature, which is a detail #2537 never claimed.
     private static string FindRowFromTableFieldValuesBody(string source)
     {
-        var start = source.IndexOf("public override bool FindRowFromTableFieldValues(int[] fieldNos, object[] values, bool forward)", StringComparison.Ordinal);
-        Assert.True(start >= 0, "could not locate FindRowFromTableFieldValues in MockTestPage.cs");
+        var start = source.IndexOf("private bool FindRowFromFieldValues(int[] fieldNos, object[] values, bool forward, bool startFromCurrentRow)", StringComparison.Ordinal);
+        Assert.True(start >= 0, "could not locate FindRowFromFieldValues in MockTestPage.cs");
 
         // Take a generous window past the signature -- enough to contain the whole method
-        // body without needing a real brace-matcher for a test this narrow.
-        var window = source.Substring(start, Math.Min(4000, source.Length - start));
+        // body without needing a real brace-matcher for a test this narrow. Widened with
+        // #3312, which added the start-policy commentary ahead of the scan; 4000 stopped
+        // short of the not-found restore this class is actually about.
+        var window = source.Substring(start, Math.Min(9000, source.Length - start));
         return window;
     }
 

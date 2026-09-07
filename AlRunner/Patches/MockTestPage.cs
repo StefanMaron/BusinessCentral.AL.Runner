@@ -2125,11 +2125,43 @@ internal class LiveNavTestPage : MockITestPage
     public override object[] GetTableFieldValues(int[] fieldIds)
         => fieldIds.Select(fieldNo => ReadClientObject(fieldNo) ?? string.Empty).ToArray();
 
-    // The only ITestPage entry point that genuinely receives a CONTROL id.
+    /// <summary>
+    /// The only ITestPage entry point that genuinely receives a CONTROL id — and, unlike
+    /// <see cref="FindRowFromTableFieldValues"/>, the one whose caller has ALREADY positioned
+    /// the cursor where the search must begin. That is why it does not simply forward.
+    ///
+    /// <para>BC's <c>NavTestPageBase.InternalFindRowFromControlFieldValue</c> drives all three
+    /// of FindFirstField/FindNextField/FindPreviousField, and it makes the initial move
+    /// itself before calling in here:</para>
+    /// <code>
+    /// switch (initialMove) {
+    ///   case InitialMove.First:    TestPage.MoveFirst(); break;
+    ///   case InitialMove.Next:     if (!TestPage.MoveNext())     return false; break;
+    ///   case InitialMove.Previous: if (!TestPage.MovePrevious()) return false; break;
+    /// }
+    /// return TestPage.FindRowFromControlFieldValue(fieldNo, value, initialMove != InitialMove.Previous);
+    /// </code>
+    /// <para>So the position on entry IS the argument: for FindNextField it is one row past
+    /// the last match, for FindPreviousField one row before it. Re-seeking to the first (or
+    /// last) row here discards it, and both members then answer the row FindFirstField
+    /// already returned — FindNextField never advances and FindPreviousField never goes back
+    /// (issue #3312).</para>
+    ///
+    /// <para>The sibling path is genuinely different and stays as it was:
+    /// <c>InternalFindRowFromTableFieldValues</c> — which is what GoToKey and GoToRecord
+    /// reach — calls <c>TestPage.MoveFirst()</c> unconditionally before its own
+    /// <c>FindRowFromTableFieldValues</c>, so for THAT caller "scan the whole rowset" and
+    /// "resume from the cursor" are the same answer. Verified against
+    /// Microsoft.Dynamics.Nav.Ncl.dll.</para>
+    /// </summary>
     public override bool FindRowFromControlFieldValue(int controlId, object value, bool forward)
-        => FindRowFromTableFieldValues(new[] { ControlIdToTableFieldNo(controlId) }, new[] { value }, forward);
+        => FindRowFromFieldValues(new[] { ControlIdToTableFieldNo(controlId) }, new[] { value }, forward,
+            startFromCurrentRow: true);
 
     public override bool FindRowFromTableFieldValues(int[] fieldNos, object[] values, bool forward)
+        => FindRowFromFieldValues(fieldNos, values, forward, startFromCurrentRow: false);
+
+    private bool FindRowFromFieldValues(int[] fieldNos, object[] values, bool forward, bool startFromCurrentRow)
     {
         if (fieldNos.Length != values.Length) return false;
 
@@ -2160,12 +2192,22 @@ internal class LiveNavTestPage : MockITestPage
             }
         }
 
-        // Scan the WHOLE rowset, always starting from the first (or last, when searching
-        // backward) row — never from wherever the page happens to be positioned. `forward`
-        // is a direction, not "resume from the cursor": BC's client locates the requested
-        // row anywhere in the rowset. Starting at the current row silently failed to find
-        // any row BEHIND the cursor, so navigating C -> A returned false even though A is
-        // on the page (tests/runner-extras/testpage-gotorecord GoToRecord_MovesBetweenRows).
+        // Where the scan STARTS is the caller's decision, not the direction's.
+        //
+        // startFromCurrentRow: false (FindRowFromTableFieldValues — GoToKey, GoToRecord) scans
+        // the WHOLE rowset from the first (or last, when searching backward) row, never from
+        // wherever the page happens to be positioned. `forward` is then a direction, not
+        // "resume from the cursor": BC's client locates the requested row anywhere in the
+        // rowset. Starting at the current row silently failed to find any row BEHIND the
+        // cursor, so navigating C -> A returned false even though A is on the page
+        // (tests/runner-extras/testpage-gotorecord GoToRecord_MovesBetweenRows). BC agrees
+        // for this caller by construction: InternalFindRowFromTableFieldValues calls
+        // TestPage.MoveFirst() itself before reaching here.
+        //
+        // startFromCurrentRow: true (FindRowFromControlFieldValue — FindFirstField and
+        // friends) resumes from the cursor, because BC's InternalFindRowFromControlFieldValue
+        // already made the MoveNext()/MovePrevious() that says where to begin. See that
+        // method's own doc comment above for the decompiled shape (issue #3312).
         //
         // Issue #2677: the scan below runs Loaded(true) — and so this page's own
         // OnAfterGetRecord — for every intermediate row it passes through before landing on
@@ -2176,7 +2218,14 @@ internal class LiveNavTestPage : MockITestPage
         _suppressPartRefreshDuringScan = true;
         try
         {
-            var hasRow = forward ? MoveFirst() : MoveLast();
+            // startFromCurrentRow: the caller positioned the cursor and that position is the
+            // search's starting point (see FindRowFromControlFieldValue). "Current row" means
+            // the row the record is actually standing on — an unpositioned record has no such
+            // row, so it falls back to the end the direction starts from, which is also what
+            // BC's InitialMove.First arm produces after its MoveFirst().
+            var hasRow = startFromCurrentRow && hasCurrent
+                ? true
+                : forward ? MoveFirst() : MoveLast();
 
             while (hasRow)
             {
