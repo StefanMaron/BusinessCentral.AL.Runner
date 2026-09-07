@@ -94,15 +94,22 @@
 //   session user — under SUPER, "D365 BASIC" is superseded, not assigned, and answering `true`
 //   there would be exactly the silent fake .claude/rules/loud-failures.md forbids.
 //
-// KNOWN DIVERGENCE, DELIBERATE
-//   Because the SUPER fact is stated rather than seeded, the runner's Access Control table does
-//   NOT contain a row for the session user, while `IsSuper(UserSecurityId())` answers true. On
-//   a real tier those agree. Seeding the row instead was considered and rejected for this
-//   change: RecordPatches.UserSystemTable.cs's header records a deliberate decision not to seed
-//   Access Control alongside the User row, and a seed would alter table state for every test in
-//   every bundle, whereas stating the fact here can only change an answer that throws today.
-//   AlRunner#3176 tracks the seed as the alternative, and docs/limitations.md records the
-//   divergence. AlRunner#3174 tracks the one reader this fix cannot reach:
+// THE DIVERGENCE THIS USED TO CARRY IS GONE (#3176)
+//   This header used to record a deliberate divergence: because the SUPER fact was stated rather
+//   than seeded, the Access Control table held NO row for the session user while
+//   `IsSuper(UserSecurityId())` answered true, and AlRunner#3176 tracked seeding the row as the
+//   alternative. A real service tier has since settled it — corpus codeunit 60889
+//   `SessionUserIsSuper_AndAccessControlHoldsTheRowThatSaysSo` (upstream PR #204) asserts that
+//   the two are views of one fact and is green on all eight required BC legs — so
+//   RecordPatches.AccessControlSeed.cs now seeds that row and the table agrees.
+//
+//   THE STATED FACT BELOW IS STILL LOAD-BEARING AND MUST NOT BE DELETED AS REDUNDANT. It is
+//   reached whenever the seeded row cannot exist or cannot be found: a bundle whose closure
+//   carries no Access Control metatable at all, and a bundle whose install code refuses the
+//   seed. IsSuper must answer true in both, or codeunit 9002 refuses a `User.Modify` that every
+//   real BC test tier allows. The Access-Control arm is checked FIRST, so wherever the row does
+//   exist it — not this fact — is what answers.
+//   AlRunner#3174 tracks the one reader this fix cannot reach:
 //   NavUserAccountHelper.IsUserSuperInAllCompanies is `Session.Permissions.IsSuperForAllCompanies`
 //   with no Ncl hop in it at all, so no rewrite of Ncl can answer it.
 //
