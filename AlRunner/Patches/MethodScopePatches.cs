@@ -9,8 +9,10 @@
 // without touching the (non-existent) transaction layer.
 //
 // Recursion guard: a [ThreadStatic] depth counter is incremented in the ctor and
-// decremented in the Dispose(bool) hook. When depth exceeds MaxRecursionDepth,
+// decremented in the Dispose(bool) hook. When depth exceeds MaxRecursionDepth --
+// BC's own NavMethodScope.MaxStackDepth, read out of the loaded Ncl -- a
 // NavNCLDialogException is thrown so AL `asserterror` can trap it.
+// docs/recursion-depth.md has the per-version values and the headroom measurement.
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using AlRunner.Infrastructure;
@@ -20,7 +22,63 @@ namespace AlRunner;
 public static partial class BcRuntime
 {
     [ThreadStatic] private static int _navMethodScopeDepth;
-    private const int MaxRecursionDepth = 500;
+
+    // ── The recursion ceiling is BC's own MaxStackDepth, read out of the loaded Ncl ──────
+    //
+    // BC's NavMethodScope..ctor throws once StackDepth exceeds the private const
+    // MaxStackDepth on that same type, so the faithful ceiling is whatever the loaded
+    // build says — not a number we choose. See docs/recursion-depth.md for the measured
+    // per-version values, the stack-headroom measurement, and why the fallback exists.
+    private const int FallbackMaxRecursionDepth = 1000;
+
+    private static int _maxRecursionDepth = FallbackMaxRecursionDepth;
+
+    /// <summary>The recursion ceiling in force, i.e. BC's own <c>NavMethodScope.MaxStackDepth</c>
+    /// when it could be read from the loaded Ncl. Test seam.</summary>
+    internal static int MaxRecursionDepth => Volatile.Read(ref _maxRecursionDepth);
+
+    /// <summary>True when <see cref="MaxRecursionDepth"/> came from the loaded Ncl rather than
+    /// from <see cref="FallbackMaxRecursionDepth"/>. Test seam: a fallback that goes unnoticed is
+    /// how the stale 500 survived, so the tests assert the value was actually resolved.</summary>
+    internal static bool MaxRecursionDepthResolvedFromNcl { get; private set; }
+
+    /// <summary>
+    /// Reads <c>NavMethodScope.MaxStackDepth</c> out of the loaded Ncl and adopts it as the
+    /// recursion ceiling. <paramref name="navMethodScopeType"/> is the loaded NavMethodScope.
+    /// </summary>
+    /// <remarks>
+    /// MaxStackDepth is a <c>const</c>, so it has no storage and <c>GetValue</c> alone would not
+    /// do — the value lives in metadata and comes back via <c>GetRawConstantValue</c>. A const is
+    /// also inlined into the ctor's IL at BC's compile time, so the field and the number the real
+    /// ctor compares against are guaranteed to agree for the build we loaded.
+    ///
+    /// Anything unexpected (field gone, renamed, no longer Int32, non-positive) leaves the
+    /// fallback in place rather than throwing: the ceiling is a guard rail, and failing the whole
+    /// run because it could not be read would be a worse outcome than running with the value that
+    /// every supported build agrees on. <c>MaxRecursionDepthResolvedFromNcl</c> records which
+    /// happened, and NavMethodScopeRecursionCeilingTests fails if a supported build stops matching the fallback.
+    /// </remarks>
+    internal static void ResolveMaxRecursionDepth(Type? navMethodScopeType)
+    {
+        MaxRecursionDepthResolvedFromNcl = false;
+        Volatile.Write(ref _maxRecursionDepth, FallbackMaxRecursionDepth);
+        if (navMethodScopeType == null) return;
+
+        try
+        {
+            var f = navMethodScopeType.GetField(
+                "MaxStackDepth", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static);
+            if (f is not { IsLiteral: true } || f.FieldType != typeof(int)) return;
+            if (f.GetRawConstantValue() is not int v || v <= 0) return;
+
+            Volatile.Write(ref _maxRecursionDepth, v);
+            MaxRecursionDepthResolvedFromNcl = true;
+        }
+        catch
+        {
+            // Keep the fallback; see the remarks above.
+        }
+    }
 
     // ── GetMethodScopeFlags, resolved once per concrete scope type ───────────────────────
     //

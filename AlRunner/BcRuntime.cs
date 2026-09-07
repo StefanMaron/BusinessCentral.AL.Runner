@@ -1526,6 +1526,9 @@ public static partial class BcRuntime
             _fMsStackDepth = msType.GetField("<StackDepth>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance);
             _fMsTopLevelAppObj = msType.GetField("<TopLevelApplicationObject>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance);
         }
+        // Adopt BC's own recursion ceiling (NavMethodScope.MaxStackDepth) for this build,
+        // so the guard in NavMethodScopeCtorReplacement refuses where real BC refuses (#3405).
+        ResolveMaxRecursionDepth(msType);
         if (sessType != null)
             _fSessCurrentScope = sessType.GetField("<CurrentMethodScope>k__BackingField", BindingFlags.NonPublic | BindingFlags.Instance);
         if (treeHandlerType != null)
