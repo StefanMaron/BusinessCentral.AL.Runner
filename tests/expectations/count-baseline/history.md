@@ -1458,13 +1458,47 @@ pin and the count in one commit, and its own step is already recorded by that PR
 
 Written by agent stma-auto-11 (automated implementation agent).
 
-## `9ee6bbcd` -> `69ae7598`, al-language 2977 -> 3008 (+31)
+### 2977 -> 2978 (pin 9ee6bbcd -> e6a0a0cd, catch-up bump)
 
-Folded into PR #3379, the runner fix for #3373. Five corpus commits:
+One upstream commit, [#262](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/262),
+which fixes corpus issue #261: three test codeunits shared one `SingleInstance` cache fixture
+that latches on first read, so they passed or failed depending on execution order once harness
+commit `26d88ffc` stopped giving each codeunit a fresh session. The fix gives each test codeunit
+its own fixture codeunit and adds a `.github/` script that fails the corpus build when one
+`SingleInstance` codeunit is instantiated from more than one test codeunit.
+
+The net +1 is a split, not new coverage of a new surface:
+
+| | test |
+|---|---|
+| removed | `Codeunit60600.TestCodeunit_SingleInstance_DoesNotLeakAcrossTests` |
+| added | `Codeunit60600.TestCodeunit_SingleInstance_SurvivesACodeunitBoundary` |
+| added | `Codeunit60600.TestCodeunit_NonSingleInstance_DoesNotSurviveACodeunitBoundary` |
+
+**2978 is the number the guard itself reported**, not one computed by adding 1 to 2977.
+Measured on BC 28.1.49838.53910 on a real 3-bundle run: with the pin moved and the baseline
+still at 2977 the run exited 4 with
+`GROWTH: suite 'al-language' tests count: expected 2977, actual 2978 (BC 28.1)`, and 2978 is
+that `actual`. Re-run after the bump: **3007 tests total, 3007 pass, 0 fail, exit 0**, of which
+`al-language-onprem` contributes 29 and `al-language-internals-fixture` 0 — both unchanged and
+neither reporting a mismatch.
+
+**No newly-failing test, so no expectations entry moved.** The classification split is
+unchanged across the bump: 3 `pass-oos`, 11 `pass-known-gap`, 1 `pass-divergence`, and
+`--expectations-require-match` reported no unmatched entry in either direction.
+
+This is a **catch-up** bump per `.claude/rules/al-language-submodule.md`: #262 is a corpus-side
+fixture fix needing no runner change, so a bump alone is green rather than red by construction.
+
+Written by agent stma-auto-22 (automated implementation agent).
+
+### 3008 -> pin e6a0a0c -> 69ae7598 (al-language 2978 -> 3008, +30)
+
+Folded into PR #3379, the runner fix for #3373. Four corpus commits on top of `e6a0a0c`,
+which `main` had already pinned:
 
 | corpus PR | tests | disposition here |
 |---|---|---|
-| #262 `e6a0a0c` | SingleInstance cache fixtures | pass |
 | #264 `29042fc` | AllObjWithCaption "Object Subtype" | 4 declared `expect-fail-known-gap` -> #2326 |
 | #254 `920a7be` | Permission Set table (2000000004) | pass, once runner PR #3360 is on `main` |
 | #260 `c9b5cc8` | Record Link table | 10 declared `expect-fail-known-gap` -> #3378 |
@@ -1473,7 +1507,10 @@ Folded into PR #3379, the runner fix for #3373. Five corpus commits:
 The two known-gap sets each live in a file of their own,
 `known-gaps-allobj-subtype-corpus264.json` and `known-gaps-record-link-table.json`, so the PRs
 that implement those surfaces (#3391 and #3381) can delete a whole file rather than edit around
-other entries. Both issues stay OPEN after this lands.
+other entries. The first is deliberately separate from the existing
+`known-gaps-allobj-subtype.json`, which records the SAME issue (#2326) reached by a different
+route -- Base Application's `TestField` on the Profile Card -- and which #3391 also removes.
+Both issues stay OPEN after this lands.
 
 #254's seven tests are deliberately NOT declared. They need runner PR #3360, which was merging
 into `main` separately while this was written; declaring them would have converted a
