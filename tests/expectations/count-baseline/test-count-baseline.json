@@ -39,7 +39,7 @@
         "page-enum-control-modal": { "tests": 4 },
         "pageext-action-dispatch": { "tests": 6 },
         "permission-set-assignment": { "tests": 6 },
-        "precompiled-table-relation": { "tests": 6 },
+        "precompiled-table-relation": { "tests": 10 },
         "precompiled-tableext-keys": { "tests": 6 },
         "published-application-system-table": { "tests": 7 },
         "query-join-aggregation-oos": { "tests": 4 },
@@ -64,6 +64,7 @@
         "testpage-promoted-actionref": { "tests": 14 },
         "testpage-trigger-inject-timing": { "tests": 2 },
         "user-system-table-triggers": { "tests": 10 },
+        "user-table-baseapp-subscriber": { "tests": 5 },
         "windows-language-license-stub": { "tests": 4 },
         "xasm-event-dispatch-dep": { "tests": 1 },
         "xasm-event-dispatch-main": { "tests": 1 }

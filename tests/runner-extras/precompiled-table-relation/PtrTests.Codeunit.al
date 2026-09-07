@@ -172,4 +172,110 @@ codeunit 61401 "PTR Tests"
             '"My Item"."User ID" declares ValidateTableRelation = false, so an unmatched value ' +
             'must be accepted — the fix must read that property, not just TableRelation');
     end;
+
+    // ------------------------------------------------------------------------------------------
+    // #3177 — the same property, on a field a precompiled TABLEEXTENSION contributes.
+    //
+    // Everything above reads a field declared by the Base Application TABLE itself, which #2528
+    // fixed. TryParseTableExtensionSymbol is an intentional copy of that loop and never got the
+    // change, so a field a tableextension adds reached the metadata with no relation at all. The
+    // C# tests in AlRunner.Tests/BcAppSymbolCacheTableExtRelationTests.cs assert the parsed
+    // SYMBOL; these assert that the parsed symbol actually reaches FieldRef.Relation and the
+    // platform's relation check, which is the part nothing else covers.
+    //
+    // Measured from the BC 28.1 package rather than assumed:
+    //   * tableextension 6450 "Serv. Customer" targets Customer and declares
+    //     field(5900; "Service Zone Code"; Code[10]) { TableRelation = "Service Zone"; }
+    //   * table 5957 is "Service Zone".
+    //   * that field carries NO OnValidate trigger and NO ValidateTableRelation — read out of
+    //     Microsoft's own src/Service/Sales/Customer/ServCustomer.TableExt.al — so the relation
+    //     check is the only thing in the platform that can raise on it. A Validate test here
+    //     cannot pass for some other reason.
+    //   * field 5930 "Combine Service Shipments" is the other Normal-class field the same
+    //     tableextension adds, and it declares no TableRelation.
+    // ------------------------------------------------------------------------------------------
+
+    [Test]
+    procedure FieldRefRelation_PrecompiledTableExtensionField_AnswersTheRelatedTableId()
+    var
+        RecRef: RecordRef;
+        FieldRef: FieldRef;
+        Cust: Record Customer;
+    begin
+        RecRef.Open(Database::Customer);
+        FieldRef := RecRef.Field(Cust.FieldNo("Service Zone Code"));
+
+        // Concrete id: table 5957 is "Service Zone". Before #3177 this answered 0 — the
+        // tableextension field-parse loop never read the TableRelation property at all — so a
+        // non-zero check would already discriminate, but the id is asserted because a
+        // reconstruction that attached SOME arbitrary relation would pass that and fail this.
+        Assert.AreEqual(
+            Database::"Service Zone", FieldRef.Relation,
+            'Customer."Service Zone Code" (field 5900) is contributed by tableextension 6450 ' +
+            '"Serv. Customer" with TableRelation = "Service Zone", so FieldRef.Relation must ' +
+            'answer table 5957 — it answered 0 before issue #3177');
+    end;
+
+    [Test]
+    procedure FieldRefRelation_PrecompiledTableExtensionFieldWithNoRelation_AnswersZero()
+    var
+        RecRef: RecordRef;
+        FieldRef: FieldRef;
+        Cust: Record Customer;
+    begin
+        // The negative direction, on the SAME tableextension: 5930 "Combine Service Shipments"
+        // is Normal-class and declares no TableRelation, so it must stay 0. Without it, a reader
+        // that attached a relation to every extension field would pass the test above.
+        RecRef.Open(Database::Customer);
+        FieldRef := RecRef.Field(Cust.FieldNo("Combine Service Shipments"));
+
+        Assert.AreEqual(
+            0, FieldRef.Relation,
+            'Customer."Combine Service Shipments" (field 5930, same tableextension 6450) ' +
+            'declares no TableRelation, so FieldRef.Relation must be 0');
+    end;
+
+    [Test]
+    procedure Validate_PrecompiledTableExtensionRelationField_UnmatchedValue_RaisesBcsOwnError()
+    var
+        Cust: Record Customer;
+    begin
+        Cust.Init();
+        Cust."No." := 'PTR-C-3';
+
+        asserterror Cust.Validate("Service Zone Code", 'PTRNOZONE');
+
+        // BC's own message. The field has no OnValidate of its own, so the relation check is the
+        // only thing that can raise here — which is what makes this prove the relation reached
+        // the platform rather than merely reaching FieldRef.Relation.
+        Assert.IsTrue(
+            StrPos(GetLastErrorText(), 'cannot be found in the related table') > 0,
+            'Validate against a non-existent Service Zone must raise BC''s own relation error; got: '
+            + GetLastErrorText());
+        Assert.IsTrue(
+            StrPos(GetLastErrorText(), 'Service Zone') > 0,
+            'the error must name the related table (Service Zone); got: ' + GetLastErrorText());
+    end;
+
+    [Test]
+    procedure Validate_PrecompiledTableExtensionRelationField_MatchedValue_IsAccepted()
+    var
+        Cust: Record Customer;
+        ServiceZone: Record "Service Zone";
+    begin
+        // Positive direction: a relation that refused everything would pass the test above and
+        // fail this one.
+        if not ServiceZone.Get('PTRZONE') then begin
+            ServiceZone.Init();
+            ServiceZone.Code := 'PTRZONE';
+            ServiceZone.Insert();
+        end;
+
+        Cust.Init();
+        Cust."No." := 'PTR-C-4';
+        Cust.Validate("Service Zone Code", 'PTRZONE');
+
+        Assert.AreEqual('PTRZONE', Cust."Service Zone Code",
+            'a Service Zone row that exists must be accepted and stored');
+    end;
 }

@@ -393,6 +393,35 @@ RULESET_CONTEXTS = (
 NOT_FAILURES = ("success", "neutral", "skipped")
 
 
+def has_concluded(r: dict) -> bool:
+    """Has this check run / workflow run finished? Read the CONCLUSION first.
+
+    `status == "completed"` is the obvious test and it is not sufficient. GitHub
+    can leave a run at `status=in_progress` while it already carries a
+    `conclusion` and a `completed_at`, and it is the conclusion the branch
+    ruleset acts on. Measured on PR #3234's head (#3294):
+
+        name=PR body closing references must be correct, both directions
+        id=101566184213  status=in_progress  conclusion=success
+        completed_at=2026-09-06T22:01:46Z
+
+    `gh pr view --json statusCheckRollup` rendered that entry as plain SUCCESS
+    and the merge was available, while this tool -- counting on `status` --
+    reported "12/13 complete, 0 failing" across four calls over roughly 40
+    minutes and never reached a verdict. The poll cannot terminate, because
+    nothing about that run is ever going to change.
+
+    A non-null conclusion is GitHub's own statement that the run is over, so it
+    is the primary signal and `status` only breaks the tie when there is none.
+    This never resolves an unknown toward green: a run with no conclusion is
+    still unfinished here, which is what keeps every in-flight guard below
+    working.
+    """
+    if r.get("conclusion") is not None:
+        return True
+    return r.get("status") == "completed"
+
+
 def is_required(name: str | None, contexts: tuple[str, ...] = RULESET_CONTEXTS) -> bool:
     name = name or ""
     return "required" in name or name in contexts
@@ -488,7 +517,7 @@ def rollup_is_final(workflow_runs: list[dict] | None) -> bool | None:
         # Nothing registered for the commit yet. The push is seconds old and the
         # rollup is at its emptiest, which is precisely when it lies best.
         return False
-    return all(w.get("status") == "completed" for w in workflow_runs)
+    return all(has_concluded(w) for w in workflow_runs)
 
 
 def superseding_runs(newest: dict[str, dict],
@@ -526,7 +555,7 @@ def superseding_runs(newest: dict[str, dict],
     """
     if not workflow_runs:
         return []
-    pending = [w for w in workflow_runs if w.get("status") != "completed"]
+    pending = [w for w in workflow_runs if not has_concluded(w)]
     if not pending:
         return []
     by_id = {w.get("id"): w for w in workflow_runs}
@@ -611,7 +640,7 @@ def supersession(newest: dict[str, dict],
     latest_pending_of_workflow: dict[object, int] = {}
     for w in workflow_runs:
         wid = w.get("id")
-        if not isinstance(wid, int) or w.get("status") == "completed":
+        if not isinstance(wid, int) or has_concluded(w):
             continue
         name = w.get("name")
         if wid > latest_pending_of_workflow.get(name, -1):
@@ -743,7 +772,7 @@ def classify(runs: list[dict],
         newest[n] = r
 
     pool = [r for n, r in newest.items() if is_required(n, contexts)] or list(newest.values())
-    done = [r for r in pool if r.get("status") == "completed"]
+    done = [r for r in pool if has_concluded(r)]
     # A superseded name is excluded from `bad` outright. `bad` short-circuits
     # ahead of every in-flight guard below -- deliberately, since a failure is a
     # verdict -- so a guard placed after it never gets consulted, which is
@@ -757,6 +786,20 @@ def classify(runs: list[dict],
     inflight = superseding_runs(newest, contexts, workflow_runs)
 
     progress = f"{len(done)}/{len(pool)} complete, {len(bad)} failing"
+    # NAME what is still outstanding, do not just count it (#3294). "12/13
+    # complete" says how many and never which, so a reader watching a poll that
+    # will not terminate has no way to tell a leg that is legitimately still
+    # running from the one entry that is wedged. Finding that name by hand --
+    # the check-runs API filtered on status, not on conclusion, since the run
+    # HAS a conclusion -- is what turned a one-line diagnosis into a 40-minute
+    # one. Capped, because a fresh push leaves every leg outstanding and the
+    # full roster would bury the counts it is meant to annotate.
+    waiting = sorted((r.get("name") or "?") for r in pool if not has_concluded(r))
+    if waiting:
+        shown = ", ".join(waiting[:6])
+        if len(waiting) > 6:
+            shown += f", +{len(waiting) - 6} more"
+        progress += f"; waiting on: {shown}"
     if missing:
         progress += (f", {len(missing)} ruleset context(s) not in the rollup yet: "
                      + ", ".join(missing))
@@ -894,7 +937,7 @@ def classify(runs: list[dict],
     # absorb in the first place.
     undiscounted = sorted(
         (r for r in newest.values()
-         if r.get("status") == "completed"
+         if has_concluded(r)
          and r.get("conclusion") not in NOT_FAILURES
          and r.get("conclusion") != "cancelled"
          and discount_reason(r.get("name") or "", superseded, killed) is None),
@@ -1040,9 +1083,28 @@ def main() -> int:
     # and #3002's false GREEN is still on disk in most of this box's worktrees
     # (#3020). A refusal here is exit 3 -- undetermined, never a verdict.
     if _freshness is None:
-        print("note: could not establish whether this copy of ci-wait.py is current "
-              "-- tools/agent_self_freshness.py could not be imported. Answering "
-              "anyway; nothing has checked that this copy carries the latest fixes.")
+        # REFUSE, do not answer (#3295). This used to print the note below and
+        # judge the PR anyway -- so the one condition under which the running
+        # copy is MOST likely to be unusual, a copy sitting somewhere with no
+        # tools/ beside it, was exactly the condition under which nothing
+        # checked it. A note is not a refusal, and this one went to stdout next
+        # to the verdict, where a caller reading the exit code never saw it.
+        #
+        # Exit 3 for the same reason the narrowed-context path below uses it:
+        # this is "no verdict could be established", which is what 3 already
+        # means to every caller. It is not a new failure mode being invented --
+        # it is the existing one being reached honestly.
+        print("REFUSING to judge PR #%s: could not establish whether this copy of "
+              "ci-wait.py is current -- tools/agent_self_freshness.py could not be "
+              "imported alongside it." % args.pr)
+        print("This is NOT a verdict -- nothing was asked of GitHub.")
+        print("")
+        print("Run this tool from a checkout of the repository, where tools/ has "
+              "both files in it. To judge a PR with origin/main's copy rather "
+              "than your worktree's, use a worktree or a full checkout of "
+              "origin/main -- a lone file copied out of the tree cannot check "
+              "its own freshness, which is the whole point of the check.")
+        return 3
     else:
         # Both halves, not just this file. The verdict logic lives here, but the
         # freshness rule itself lives in the sibling module, and a stale copy of

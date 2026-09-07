@@ -117,6 +117,14 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
     public static readonly IReadOnlyDictionary<string, int> MeasuredWeightSeconds =
         new Dictionary<string, int>(StringComparer.Ordinal)
         {
+            // #3262: 8 tests, most spawning a real runner subprocess, several of them twice
+            // (a cold write then a warm read from a fresh server process, so the in-process
+            // module cache cannot answer instead of the disk). Absent from this table on its
+            // first CI run: measured 64.2s on the BC 28.4 leg, which tripped
+            // check-collection-weights.py. Rounded down per the gate's own instruction; at
+            // 64.2s it sits far enough above the 60s freshness threshold that rounding down
+            // does not leave it back on the fallback the way a 60.9s entry would.
+            ["AlOutputCacheDoNotCacheTests"] = 64,
             // perf/boot-overhead: added with the on-disk install-baseline tier. Measured
             // 125.6s on the first CI run of that branch (BC 28.4 leg), where it was absent
             // from this table, fell back to UnmeasuredWeightSeconds and was dispatched at
