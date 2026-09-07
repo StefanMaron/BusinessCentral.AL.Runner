@@ -1,68 +1,21 @@
-// BlobStoreIsolationPatches — keeps a database-backed row's BLOB out of the
-// record variable that inserted it, without disturbing the temporary-table shape.
+// BlobStoreIsolationPatches — keeps a database-backed row's BLOB out of the record variable
+// that inserted it, without disturbing the temporary-table shape.
 //
-// ── The divergence this exists for (issue #1751) ─────────────────────────────
+// Two contracts, not one, and a blanket fix breaks the other half: on real BC a BLOB written
+// with CreateOutStream and no following Modify() is invisible to a database-backed row, and
+// visible through a `temporary` one. Corpus 60940 "Test Blob Uncomm Isolation" pins both,
+// green on BC 27.5 and 28.3; corpus 60944 "Test Blob Rename Isolation" pins the Rename
+// boundary, which is not symmetric with Insert/Modify. Issues #1751 and #1765.
 //
-// Both halves below are measured against a real service tier by corpus codeunit
-// 60940 "Test Blob Uncomm Isolation", green on BC 27.5 and 28.3:
+// The runner leaks the database case because every table is backed by Ncl's
+// TempTableDataProvider — the same code real BC runs for `temporary` records — so it inherits
+// the temporary contract. The fix is three Cecil prepends: Insert latches whether the provider
+// is database-backed, CloneBlobs deep-copies the stored row's BLOBs when it is, and
+// ModifyAllTrees marks a renamed temporary row's carried-over BLOB as ineligible for
+// CalcFields reload. Prepends, not replacements, so Ncl's own bodies still run.
 //
-//   * Database-backed record — a BLOB written through CreateOutStream with NO
-//     following Modify() is invisible to the stored row. A second Record instance
-//     that Get()s the row reads it empty, and a re-Get() on the writing instance
-//     discards the write.
-//
-//   * `temporary` record — the very same write IS visible through the store.
-//     Get() reads the unpersisted bytes straight back, and so does a second
-//     variable sharing the buffer via Copy(..., true).
-//
-// The corpus file was originally written asserting isolation for BOTH shapes;
-// real BC rejected exactly the two temporary assertions and passed every control.
-// So this is not a BC bug we may normalise away — it is two different contracts,
-// and a blanket copy at the store boundary would fix one by breaking the other.
-//
-// ── Why the runner leaks the database case ───────────────────────────────────
-//
-// Every table in the runner is backed by Ncl's TempTableDataProvider (see
-// RecordPatches.NavDataAccessSource_GetDataAccessForTable). That provider is the
-// same code real BC runs for `temporary` records, so the runner inherits the
-// temporary contract for database-backed tables too. Concretely, in Ncl:
-//
-//   TempTableDataProvider.Insert
-//     items = recordBuffer.ToArray()                  // BLOB copied BY REFERENCE
-//     new TempTableRecordBuffer(metaTable, items)
-//     value.CloneBlobs(recordBuffer)                  // clones ONLY dirty BLOBs
-//   DataAccess.InsertAsync
-//     CreateNewBufferFromOutputBufferTransferBlobValuesFromOldRecord
-//       newBuffer[i] = oldRecord.GetChangedFieldValue(i)   // SAME object again
-//
-// A BLOB that carried no value at Insert is not dirty, so CloneBlobs skips it and
-// the stored row keeps the record's own NavBLOB — which the record then goes on
-// using. `Content.CreateOutStream(o); o.WriteText(...)` mutates that one object
-// and the stored row changes with it. On real BC this only ever happens for
-// temporary records, because a database-backed row lives in SQL and there is no
-// shared object to mutate.
-//
-// ── The fix ──────────────────────────────────────────────────────────────────
-//
-// Give the store its own NavBLOB at Insert, but ONLY for the providers that stand
-// in for SQL. Two Cecil prepends (see NclCecilRewrite):
-//
-//   1. TempTableDataProvider.Insert  → OnBeforeStoreInsert(provider) records, for
-//      the duration of this insert, whether the provider is database-backed.
-//   2. TempTableRecordBuffer.CloneBlobs → DetachStoredBlobs(stored) deep-copies
-//      every NavBLOB the stored row holds, so it shares none with the record.
-//
-// Prepends, not replacements: Ncl's own CloneBlobs body still runs afterwards and
-// re-clones the dirty BLOBs exactly as before, so the write-before-Insert shape is
-// untouched. For a temporary provider the flag is false, nothing is detached, and
-// the aliasing real BC exhibits is preserved verbatim.
-//
-// Modify() needs no equivalent. TempTableDataProvider.Modify itself constructs no
-// NavBLOB; the construction is in TempTableDataProvider.ModifyAllTrees, which Modify
-// calls and is its only caller — and it stores
-// `new NavBLOB(navBLOB.GetBytes(), useContentInstance: true)`, a distinct NavBLOB.
-// So a second uncommitted write after Modify() does not reach the row. Verified by
-// probe before this patch was written, and pinned by 60940's committed controls.
+// derivation, per-leg corpus results and the rejected value-keyed attempt:
+// docs/blob-store-isolation.md
 using System.Collections.Generic;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -80,17 +33,12 @@ public static class BlobStoreIsolationPatches
     private static readonly ConditionalWeakTable<object, object> _databaseBackedProviders = new();
     private static readonly object _sentinel = new();
 
-    // Set by the TempTableDataProvider.Insert prepend and read by the CloneBlobs
-    // prepend, so it is never reset — which is safe only because CloneBlobs has
-    // exactly ONE call site in the whole of Ncl: TempTableDataProvider.Insert, called
-    // synchronously. Nothing else can observe a stale value, and every insert sets it
-    // afresh. That is measured, not assumed — the call sites were counted by scanning
-    // Microsoft.Dynamics.Nav.Ncl.dll (28.1) with Cecil, not read off a decompile.
-    //
-    // The whole patch's correctness rests on that count, so re-check it if a future BC
-    // version changes shape: a second CloneBlobs caller outside Insert would read a
-    // flag left over from an unrelated insert. Thread-static rather than static so
-    // concurrent sessions cannot see each other's latch either.
+    // Never reset, which is safe only because CloneBlobs has exactly ONE call site in Ncl:
+    // TempTableDataProvider.Insert, called synchronously (counted with Cecil over Ncl.dll 28.1
+    // — docs/blob-store-isolation.md#the-cloneblobs-call-count). The whole patch rests on that
+    // count: RE-CHECK IT if a future BC version changes shape, because a second CloneBlobs
+    // caller outside Insert would read a flag left over from an unrelated insert. Thread-static
+    // so concurrent sessions cannot see each other's latch either.
     [ThreadStatic] private static bool _currentInsertIsDatabaseBacked;
 
     private static MethodInfo? _mNavBlobDeepCopy;
@@ -134,19 +82,17 @@ public static class BlobStoreIsolationPatches
         => provider != null && _databaseBackedProviders.TryGetValue(provider, out _);
 
     /// <summary>
-    /// Cecil prepend on TempTableRecordBuffer.CloneBlobs. For a database-backed
-    /// table, replaces every NavBLOB in the freshly stored row with a deep copy, so
-    /// the row shares no BLOB object with the record variable that inserted it.
+    /// Cecil prepend on TempTableRecordBuffer.CloneBlobs. For a database-backed table,
+    /// replaces every NavBLOB in the freshly stored row with a deep copy, so the row shares no
+    /// BLOB object with the record variable that inserted it.
     ///
-    /// Observable equivalence: the copy holds exactly the bytes the record's BLOB
-    /// held at Insert, so every read of the stored row answers as before. What
-    /// changes is only what real BC also refuses to do — later in-memory writes on
-    /// the inserting record no longer reach the row without Modify(). Corpus 60940
-    /// pins both directions.
+    /// <para>Observably equivalent: the copy holds exactly the bytes the record's BLOB held at
+    /// Insert, so every read of the stored row answers as before. What changes is only what
+    /// real BC also refuses to do — later in-memory writes on the inserting record no longer
+    /// reach the row without Modify(). Corpus 60940 pins both directions.</para>
     ///
-    /// Scanning values rather than metadata (`stored[i] is NavBLOB`) is deliberate:
-    /// only BLOB fields ever hold a NavBLOB, and it avoids depending on the shape of
-    /// NCLMetaTable.BlobFields.
+    /// <para>Scanning values rather than metadata (`stored[i] is NavBLOB`) is deliberate: only
+    /// BLOB fields ever hold a NavBLOB, and it avoids depending on NCLMetaTable.BlobFields.</para>
     /// </summary>
     public static void DetachStoredBlobs(TempTableRecordBuffer? stored)
     {
@@ -165,89 +111,27 @@ public static class BlobStoreIsolationPatches
         }
     }
 
-    // ── Rename store-aliasing boundary for `temporary` records (issue #1765) ────
+    // Rename boundary for `temporary` records (#1765). Corpus 60944 measures that a BLOB
+    // committed with Modify() BEFORE a Rename() is LOST on real BC — CalcFields() after Get()
+    // on the renamed row reads HasValue() = false — while the same sequence without the Rename
+    // round-trips. Ncl's own store faithfully keeps those bytes, so the runner would otherwise
+    // reload them; this table marks the (row, field index) pairs FlowFieldPatches.LoadBlobField
+    // must treat as not-found, reproducing BC's measured result.
     //
-    // Follow-up measurement to #1751/60940: does Rename() have the same BLOB
-    // store-aliasing boundary as Insert()/Modify()? Corpus 60944 "Test Blob Rename
-    // Isolation" (green on BC 27.5 and 28.3) answers NO, and the shape is not
-    // symmetric with Insert/Modify at all:
+    // Keyed by the ROW object (workTableBuffer), never by the NavBLOB value: Get()'s Find()-based
+    // read materialises a different NavBLOB instance than TryGetValue returns, so a value-keyed
+    // marker misses a path. The row object is stable — it is the same TempTableRecordBuffer Ncl
+    // adds to the tree and returns back out.
     //
-    //   * Database-backed record — Rename() re-persists the record variable's whole
-    //     current buffer under the new key (proven by the scalar-field control:
-    //     an uncommitted plain-Text write also survives a Rename). A BLOB committed
-    //     earlier with Modify() survives an unrelated Rename() intact — expected,
-    //     needs no patch, and the runner already matches it via Ncl's own
-    //     TempTableDataProvider.Modify (Rename routes through the very same method
-    //     with primaryKeyChanged=true — see ModifyAllTrees below).
-    //
-    //   * `temporary` record — an uncommitted write (never Modify()'d) still leaks
-    //     through a Rename, unsurprising and already covered by the temporary half
-    //     of #1751's aliasing. But a BLOB that WAS committed with Modify() BEFORE
-    //     the Rename() call is LOST — CalcFields() after Get() on the renamed row
-    //     reads HasValue() = false, even though the exact same Insert→write→Modify
-    //     sequence WITHOUT the Rename() round-trips correctly (60940's temporary
-    //     positive control). Measured, not assumed: this is the one genuine surprise
-    //     of 60944, identical on both BC versions.
-    //
-    // ── Why the runner does not reproduce the loss on its own ───────────────────
-    //
-    // TempTableDataProvider.Modify is also what Rename() calls (RecordImplementation
-    // .RenameRecordAsync builds a rekeyed buffer and calls dataAccess.ModifyAsync,
-    // same as a plain Modify). Its private ModifyAllTrees only replaces a BLOB field
-    // in the row being stored when Ncl's own dirty-tracking calls that field
-    // "changed" (`GetChangedFieldValue(j) != null && navBLOB.IsDirty`) — for a
-    // Rename that does not touch the BLOB, it is not dirty, so the row keeps
-    // whatever NavBLOB object the pre-rename baseline already held. For a
-    // `temporary` table that object legitimately still carries the bytes Modify()
-    // persisted — Ncl's own store faithfully keeps them. Our own
-    // FlowFieldPatches.LoadBlobField (added for #1724) then finds that row by
-    // primary key on the next CalcFields() and loads it — correctly, by our own
-    // read of Ncl's state, but NOT what real BC's temporary-table blob JIT-load
-    // does once a Rename has run. Real BC's mechanism is closed; the measured
-    // *result* is what corpus 60944 pins, and this patch reproduces the result.
-    //
-    // ── The fix ──────────────────────────────────────────────────────────────────
-    //
-    // A third Cecil prepend, on the SAME TempTableDataProvider.ModifyAllTrees that
-    // #1751's comment above already names as Modify's real BLOB-write path. When,
-    // for a NON-database-backed (temporary) provider, this call is a rename
-    // (`workTableBuffer` is a fresh buffer, not the same object as the removed
-    // `storedTableBuffer`) AND a BLOB field is NOT dirty on this call (it is
-    // carrying over a value from before the rename, not a fresh write), that FIELD
-    // INDEX on the *row* (`workTableBuffer`, the object Ncl adds to the AVL tree) is
-    // marked as ineligible for FlowFieldPatches.LoadBlobField's by-primary-key
-    // reload fallback.
-    //
-    // Keyed by the row object, not the NavBLOB value object: a first attempt marked
-    // the NavBLOB instance itself, but Get()'s own Find()-based read materialises a
-    // DIFFERENT NavBLOB instance for `parentBuffer.ReadOnlyBuffer` than the one
-    // TempTableDataProvider.TryGetValue returns from the tree directly (same bytes,
-    // different object identity) — so a value-keyed marker silently failed to catch
-    // the one path (LoadBlobField's Step 1, sizing the JIT-load placeholder from
-    // `original.ALLength`) that made ALHasValue true regardless of whether Step 4's
-    // byte-copy ran. The *row* object, in contrast, is verified stable: it is
-    // literally the same `TempTableRecordBuffer` `list[k].Add(workTableBuffer)`
-    // inserts into the tree and `TryGetValue` returns back out.
-    //
-    // A future successful Modify() calls this same method again with a fresh
-    // `workTableBuffer`/`storedTableBuffer` pair (Ncl always constructs a new
-    // TempTableRecordBuffer per Modify — see TempTableDataProvider.Modify above),
-    // so the OLD row object holding the marker is simply never looked up again;
-    // ConditionalWeakTable lets it be collected once nothing else references it.
-    //
-    // Scoped to non-database-backed providers only: the database-backed shape
-    // (test3/Blob_CommittedWrite_Rename_SecondInstanceGet_ReadsWrittenBytes) must
-    // keep working — and does, because MarkDatabaseBacked() (see above) means
-    // _databaseBackedProviders.TryGetValue succeeds for it and this method never
-    // marks anything for that provider.
+    // derivation, the per-leg 60944 results and the rejected value-keyed attempt:
+    // docs/blob-store-isolation.md#rename
     private static readonly ConditionalWeakTable<object, HashSet<int>> _rowsWithUnloadableBlobFields = new();
 
     /// <summary>
-    /// Cecil prepend on TempTableDataProvider.ModifyAllTrees (`this`, mutableRecordBuffer,
-    /// workTableBuffer, storedTableBuffer — the trailing `primaryKeyChanged bool` is not
-    /// forwarded; renames are detected via `workTableBuffer` being a distinct object from
-    /// `storedTableBuffer`, which Ncl's own Modify() guarantees is true if and only if
-    /// primaryKeyChanged was true — see TempTableDataProvider.Modify's two branches).
+    /// Cecil prepend on TempTableDataProvider.ModifyAllTrees. The trailing `primaryKeyChanged
+    /// bool` is deliberately not forwarded: a rename is detected by `workTableBuffer` being a
+    /// distinct object from `storedTableBuffer`, which Ncl's Modify() guarantees is equivalent
+    /// (docs/blob-store-isolation.md#the-rename-fix).
     /// </summary>
     public static void OnModifyAllTrees(
         object? provider, object? mutableRecordBuffer, object? workTableBuffer, object? storedTableBuffer)
@@ -291,12 +175,9 @@ public static class BlobStoreIsolationPatches
                 ?.GetValue(field);
             if (fieldNclType is not NavNclType.NavBlob) continue;
 
-            // Mirror Ncl's OWN predicate for "this call writes the BLOB" exactly
-            // (TempTableDataProvider.ModifyAllTrees: `navBLOB != null && navBLOB.IsDirty`).
-            // GetChangedFieldValue(j) being non-null is NOT enough on its own — a
-            // Rename's rekeyed buffer carries a non-null NavBLOB for every field
-            // (built via `recordBuffer.ToArray()`), but that object's OWN IsDirty flag
-            // is false unless this call is the one that actually wrote new bytes.
+            // Mirror Ncl's OWN predicate exactly (`navBLOB != null && navBLOB.IsDirty`).
+            // Non-null is NOT enough: a Rename's rekeyed buffer carries a non-null NavBLOB for
+            // every field, dirty only where this call wrote bytes.
             var changedBlob = _mGetChangedFieldValue.Invoke(mutableRecordBuffer, new object[] { j }) as NavBLOB;
             if (changedBlob != null && changedBlob.IsDirty) continue;
 
@@ -310,14 +191,11 @@ public static class BlobStoreIsolationPatches
     private static MethodInfo? _mGetChangedFieldValue;
 
     /// <summary>
-    /// Read by FlowFieldPatches.LoadBlobField before it reloads a temporary record's
-    /// BLOB field by primary key on CalcFields(). A marked (row, field index) pair
-    /// must be treated as not-found — matching real BC losing that value after a
-    /// Rename (60944) — rather than faithfully reloading what Ncl's own store still
-    /// (correctly, by its own rules) holds. <paramref name="storedRow"/> is the
-    /// TempTableRecordBuffer TryGetValue returned, NOT the BLOB value itself — see
-    /// the comment above OnModifyAllTrees for why value-object identity does not
-    /// work for this check.
+    /// Read by FlowFieldPatches.LoadBlobField before it reloads a temporary record's BLOB field
+    /// by primary key on CalcFields(). A marked (row, field index) pair is treated as not-found,
+    /// matching real BC losing that value after a Rename (corpus 60944).
+    /// <paramref name="storedRow"/> is the TempTableRecordBuffer TryGetValue returned, NOT the
+    /// BLOB value — value-object identity does not work here (see OnModifyAllTrees above).
     /// </summary>
     public static bool IsFieldIneligibleForCalcFieldsReload(object? storedRow, int fieldIdx)
         => storedRow != null

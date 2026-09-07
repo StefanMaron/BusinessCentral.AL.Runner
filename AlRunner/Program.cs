@@ -1156,6 +1156,14 @@ if (bcVersionArg == null && artifactPathArg == null)
                     Console.Error.WriteLine(ProgramSupport.CdnMinorProvisionNotice(
                         engineVersion.ToString(), engineMajorMinor));
                     break;
+                case "cdn-exact-undetermined":
+                case "cdn-minor-undetermined":
+                    // #2981: the CDN could not be asked, so the tier was HELD rather than
+                    // demoted. Immediate like its "cdn-*" siblings above and for the same
+                    // reason — a download is about to start and this is the only signal of it.
+                    Console.Error.WriteLine(ProgramSupport.UndeterminedProbeNotice(
+                        engineVersion.ToString(), bcVersionArg ?? engineVersion.ToString()));
+                    break;
                 case "major-fallback-offline":
                     // No network step is coming (--no-auto-provision, or the rare case where
                     // engineVersion resolved but auto-provisioning is off) — this can only speak

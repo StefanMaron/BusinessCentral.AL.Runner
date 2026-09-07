@@ -1,0 +1,194 @@
+How .alpackages/*.app and .deps-bin/*.dll in this folder were produced
+========================================================================
+
+These two binary fixtures make "RMI Precompiled MaxIteration Dep" (report
+65801, table 65800) load as a genuinely Tier-1 precompiled dependency
+(DependencyLoader.LoadOne: <bucketRoot>/.deps-bin/<Publisher>_<Name>_<Version>.dll)
+with NO AL source reachable at metadata time -- the exact shape a real
+precompiled MS/ISV .app has, without needing an external Base Application.
+
+The .app half MUST carry a real SymbolReference.json (not just src/*.al),
+because the surface under test is RecordPatches.TryBuildDependencyReportMetadata,
+which reconstructs the report's runtime metadata FROM that file. An .app with
+only src/*.al (what `al-runner --emit-app` writes) sends the report down
+NavReportSync's stub path instead and proves nothing about this fix -- that is
+the sibling suite report-precompiled-dep-metadata's surface, not this one.
+
+IMPORTANT: the dep's AL source must NEVER live inside this suite folder (or
+any other runner-extras suite folder) -- a flat-bundle suite's compile step
+scans *.al recursively under its own root, so source sitting next to these
+fixtures would get swept into the MAIN app's own compile, the report would get
+REAL emit-captured metadata, and the defect would be unreachable. Keep the dep
+source external (a scratch dir, NOT under tests/), regenerate there, then copy
+only the two binary artifacts back here.
+
+Dep app.json (place in a scratch dir, e.g. /tmp/rmi-dep/). "application" and
+"platform" are required: the report's dataitems are over the Integer virtual
+table, which the AL compiler cannot resolve without them (error AL0185 "Table
+'Integer' is missing"). This is a runner-extras AL fixture, not an
+AlRunner.Tests C# fixture, so .claude/rules/no-base-app-in-csharp-tests.md
+does not apply -- and the dep is compiled once, offline, into the committed
+DLL, so the floor is never paid at test time.
+
+  {
+    "id": "b7c8d9e0-1f2a-4b3c-8d4e-5f6a7b8c9d02",
+    "name": "RMI Precompiled MaxIteration Dep",
+    "publisher": "AL Runner Fixtures",
+    "version": "1.0.0.0",
+    "dependencies": [],
+    "idRanges": [ { "from": 65800, "to": 65819 } ],
+    "runtime": "17.0",
+    "target": "Cloud",
+    "features": [],
+    "application": "28.0.0.0",
+    "platform": "28.0.0.0"
+  }
+
+Dep AL source (same scratch dir):
+
+  table 65800 "RMI Counter"
+  {
+      DataClassification = ToBeClassified;
+      fields
+      {
+          field(1; "Entry No."; Integer) { }
+          field(2; "Loop Name"; Code[20]) { }
+      }
+      keys { key(PK; "Entry No.") { Clustered = true; } }
+  }
+
+  report 65801 "RMI MaxIteration Report"
+  {
+      ProcessingOnly = true;
+      UseRequestPage = false;
+
+      dataset
+      {
+          dataitem(BoundedByMaxIteration; "Integer")
+          {
+              DataItemTableView = sorting(Number);
+              MaxIteration = 1;
+
+              trigger OnAfterGetRecord()
+              var
+                  Counter: Record "RMI Counter";
+              begin
+                  Counter.Init();
+                  Counter."Entry No." := NextEntryNo();
+                  Counter."Loop Name" := 'MAXITER';
+                  Counter.Insert();
+              end;
+          }
+
+          dataitem(BoundedByFilter; "Integer")
+          {
+              DataItemTableView = sorting(Number) where(Number = filter(1 .. 3));
+
+              trigger OnAfterGetRecord()
+              var
+                  Counter: Record "RMI Counter";
+              begin
+                  Counter.Init();
+                  Counter."Entry No." := NextEntryNo();
+                  Counter."Loop Name" := 'FILTER';
+                  Counter.Insert();
+              end;
+          }
+      }
+
+      local procedure NextEntryNo(): Integer
+      var
+          Counter: Record "RMI Counter";
+      begin
+          if Counter.FindLast() then
+              exit(Counter."Entry No." + 1);
+          exit(1);
+      end;
+  }
+
+The two dataitems are deliberately asymmetric. BoundedByMaxIteration states a
+sorting and NOTHING that restricts rows, so MaxIteration is the only thing
+that can stop it -- which is what makes its count a measurement of the
+property rather than of the filter. BoundedByFilter states the opposite and
+holds the negative direction: a fix that clamped every dataitem to one
+iteration would satisfy the first assertion and break this one.
+
+Regenerate, from the repo root (AlRunner already built, -c Release):
+
+  # 1. Produce the raw compiled DLL (Tier-1 target) by running the dep as a
+  #    normal bundle once (bundled Emit+Compile writes a cache entry) and
+  #    copying the cached DLL out.
+  ./AlRunner/bin/Release/net8.0/al-runner --bc-version 28.1 --verbose \
+      --package-cache "$HOME/.al-runner/platform-apps" /tmp/rmi-dep
+  # -> prints "[cache] WROTE key=<KEY> path=~/.cache/al-runner/al-out/<KEY>.dll"
+  cp ~/.cache/al-runner/al-out/<KEY>.dll \
+     "tests/runner-extras/report-dep-maxiteration/.deps-bin/AL_Runner_Fixtures_RMI_Precompiled_MaxIteration_Dep_1.0.0.0.dll"
+
+  # 2. Produce the .alpackages symbol package by hand -- a NAVX-header zip of
+  #    NavxManifest.xml + SymbolReference.json + [Content_Types].xml, matching
+  #    what a real BC compile produces. The script is the same shape as the one
+  #    in tests/runner-extras/testpage-precompiled-dep-control/REGENERATE-FIXTURES.txt;
+  #    only symbol_reference differs. Its Reports entry is:
+  #
+  #      "Reports": [{
+  #          "Id": 65801, "Name": "RMI MaxIteration Report",
+  #          "ReferenceSourceFileName": "MaxIterReport.Report.al",
+  #          "Properties": [
+  #              {"Name": "ProcessingOnly", "Value": "1"},
+  #              {"Name": "UseRequestPage", "Value": "0"},
+  #          ],
+  #          "DataItems": [
+  #              {"Id": 1, "Name": "BoundedByMaxIteration",
+  #               "RelatedTable": "#8874ed3a064342479ced7a7002f7135d#Integer",
+  #               "Properties": [
+  #                   {"Name": "DataItemTableView", "Value": "sorting(Number)"},
+  #                   {"Name": "MaxIteration", "Value": "1"}]},
+  #              {"Id": 2, "Name": "BoundedByFilter",
+  #               "RelatedTable": "#8874ed3a064342479ced7a7002f7135d#Integer",
+  #               "Properties": [
+  #                   {"Name": "DataItemTableView",
+  #                    "Value": "sorting(Number) where(Number = filter(1 .. 3))"}]},
+  #          ],
+  #      }]
+  #
+  #    NO Platform/Runtime attributes on <App> and NO top-level "RuntimeVersion"
+  #    in SymbolReference.json -- see the sibling suite's file for why (#2124):
+  #    a real value there makes BC 27.0's compiler refuse EVERY OTHER dependency
+  #    .app in the same combined runner-extras run with AL1153.
+  python3 /tmp/rmi-dep/build_symbol_app.py /tmp/rmi-dep/out/dep-symbols.app
+  cp /tmp/rmi-dep/out/dep-symbols.app \
+     tests/runner-extras/report-dep-maxiteration/.alpackages/AL_Runner_Fixtures_RMI_Precompiled_MaxIteration_Dep_1.0.0.0.app
+
+WHERE THE SYMBOL SHAPE CAME FROM
+-----------------------------------
+Not invented. It mirrors, element for element, what Base Application 28.1's
+own SymbolReference.json states for report 20 "Calc. and Post VAT Settlement"
+-- read straight out of Microsoft_Base Application_28.1.49838.53910.app while
+diagnosing #3370:
+
+  'Close VAT Entries' | tbl: #<guid>#Integer
+                      | props: {'DataItemTableView': 'sorting(Number)',
+                                'MaxIteration': '1'}
+
+MaxIteration sits in the dataitem's own Properties array beside
+DataItemTableView, and the Integer virtual table arrives module-qualified as
+"#<appId>#Integer", which CollectReportDataItems strips through
+StripModuleQualifier. Report 402 "Purchase Document - Test"'s CopyLoop dataitem
+is identical in shape.
+
+Verify (must be RED without the BcAppSymbolCache/DependencyReportMetadata fix,
+GREEN with it):
+
+  ./AlRunner/bin/Release/net8.0/al-runner --bc-version 28.1 --strict \
+      --package-cache "$HOME/.al-runner/platform-apps" \
+      tests/runner-extras/report-dep-maxiteration
+
+RED prints the exact defect, not a timeout:
+
+  FAIL Codeunit65281.MaxIterationDataItem_OfPrecompiledDepReport_RunsExactlyOnce
+       Assert.AreEqual failed. Expected:<1> Actual:<101001>
+
+101,001 is the Integer virtual-table window, IntegerWindowMin = -1000 through
+IntegerWindowMaxDefault = 100000 inclusive. Asserting the count rather than a
+duration is deliberate: a duration assertion would be flaky and would pass on
+a fast box with the defect present.

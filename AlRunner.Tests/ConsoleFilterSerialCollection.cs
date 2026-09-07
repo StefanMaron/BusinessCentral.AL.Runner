@@ -19,19 +19,25 @@
 // Tests that spawn the real runner as a SUBPROCESS do NOT need to join this collection:
 // each subprocess gets its own Console and its own Log statics.
 //
-// WHAT THIS DOES NOT COVER — read this before assuming the hole is closed.
-// Every class that calls Log.Install() is in here, and that is the whole of it. The race
-// described above needs neither Log.Install() nor Log.Verbose: two classes swapping
-// Console.Out/Console.Error is enough on its own. These swap and are NOT in this collection —
-// AlCallStackCaptureNoFallbackTests, HotPathHookCostTests, PhaseLogTests, WatchSourceTests
-// (no collection at all) and ProvisionGapLogTests (in RecordPatchesSerialCollection, because
-// ProvisionGapLog is process-global state; a class cannot be in two collections, so it cannot
-// simply join this one). Tracked in #2913, with the options.
+// WHAT THIS COVERS, since #2913 closed the hole this note used to describe.
+// Every test class that swaps Console.Out/Console.Error is now fenced, not just the ones that
+// call Log.Install() — the race needs neither Log.Install() nor Log.Verbose, so the six classes
+// this note previously listed as uncovered (AlCallStackCaptureNoFallbackTests,
+// CacheKeyUnhashableDependencyTests, HotPathHookCostTests, InstallTriggerAsyncObservationTests,
+// PhaseLogTests, WatchSourceTests) joined this collection.
 //
-// The consequence for anything added HERE: a class that needs another serial collection must
-// NOT swap the console as well — it would be a sixth perpetrator of the same race rather than
-// a smaller one. CorruptSidecarGapSummaryTests (CorruptSidecarLoudnessTests.cs) is the worked
-// example: it needs RecordPatchesSerialCollection, so it takes the stderr noise instead.
+// ConsoleSwapIsolationGuardTests is what keeps it closed: it fails the build when a test class
+// swaps the console without carrying a [Collection] whose definition sets
+// DisableParallelization = true. It is not this collection specifically — any non-parallelizable
+// collection satisfies it, because what a swapper needs is exclusive scheduling and not one
+// particular name. That is how a class needing a different serial collection for an unrelated
+// reason stays correct: ProvisionGapLogTests is in RecordPatchesSerialCollection for
+// ProvisionGapLog's process-global state, cannot also be in this one, and is already safe.
+//
+// So a class that needs another serial collection should join THAT one and keep its swap; the
+// older advice here — drop the swap rather than become "a sixth perpetrator" — was a workaround
+// for the missing guard and no longer applies. Dropping a swap that only silences noise is still
+// the better change where it applies, just not a requirement.
 using Xunit;
 
 namespace AlRunner.Tests;

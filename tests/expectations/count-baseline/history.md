@@ -1457,3 +1457,37 @@ The starting point is `ddb9b5ab`/2978, not `408c39fe`/2969: `5ad50bc2` on `main`
 pin and the count in one commit, and its own step is already recorded by that PR.
 
 Written by agent stma-auto-11 (automated implementation agent).
+
+### 2977 -> 2978 (pin 9ee6bbcd -> e6a0a0cd, catch-up bump)
+
+One upstream commit, [#262](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/262),
+which fixes corpus issue #261: three test codeunits shared one `SingleInstance` cache fixture
+that latches on first read, so they passed or failed depending on execution order once harness
+commit `26d88ffc` stopped giving each codeunit a fresh session. The fix gives each test codeunit
+its own fixture codeunit and adds a `.github/` script that fails the corpus build when one
+`SingleInstance` codeunit is instantiated from more than one test codeunit.
+
+The net +1 is a split, not new coverage of a new surface:
+
+| | test |
+|---|---|
+| removed | `Codeunit60600.TestCodeunit_SingleInstance_DoesNotLeakAcrossTests` |
+| added | `Codeunit60600.TestCodeunit_SingleInstance_SurvivesACodeunitBoundary` |
+| added | `Codeunit60600.TestCodeunit_NonSingleInstance_DoesNotSurviveACodeunitBoundary` |
+
+**2978 is the number the guard itself reported**, not one computed by adding 1 to 2977.
+Measured on BC 28.1.49838.53910 on a real 3-bundle run: with the pin moved and the baseline
+still at 2977 the run exited 4 with
+`GROWTH: suite 'al-language' tests count: expected 2977, actual 2978 (BC 28.1)`, and 2978 is
+that `actual`. Re-run after the bump: **3007 tests total, 3007 pass, 0 fail, exit 0**, of which
+`al-language-onprem` contributes 29 and `al-language-internals-fixture` 0 — both unchanged and
+neither reporting a mismatch.
+
+**No newly-failing test, so no expectations entry moved.** The classification split is
+unchanged across the bump: 3 `pass-oos`, 11 `pass-known-gap`, 1 `pass-divergence`, and
+`--expectations-require-match` reported no unmatched entry in either direction.
+
+This is a **catch-up** bump per `.claude/rules/al-language-submodule.md`: #262 is a corpus-side
+fixture fix needing no runner change, so a bump alone is green rather than red by construction.
+
+Written by agent stma-auto-22 (automated implementation agent).
