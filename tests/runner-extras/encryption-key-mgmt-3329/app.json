@@ -1,0 +1,19 @@
+{
+  "id": "6f3a9d21-8c47-4b0e-9a15-2f7d4c8b1e33",
+  "name": "Runner Extras - Encryption Key Management",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3329: the tenant encryption KEY-MANAGEMENT surface (CREATEKEY / DELETEKEY / EXPORTKEY / IMPORTKEY) used to raise a bare ArgumentException from NavSqlTenantProperties..ctor. target=OnPrem is required -- see the description.",
+  "description": "These tests do not live in the al-language corpus, and both reasons were measured. (1) THE CORPUS TIER CANNOT ADJUDICATE THIS SURFACE, because it is patched over. StefanMaron/MsDyn365Bc.On.Linux's StartupHook Patch #26 replaces TenantEncryptionProviderFactory.GetTenantEncryptionProvider with TenantFakeEncryptionProxy, whose CreateKey, DeleteKey, ImportKey and ExportKey are no-ops returning null, whose get_IsKeyCreated and get_IsKeyPresent are hardcoded true, and whose Encrypt/Decrypt are a byte XOR plus Base64 rather than RSA. So on that tier DeleteEncryptionKey() does nothing and EncryptionEnabled() answers true regardless -- every assertion these tests make would measure the patch rather than BC, which is exactly what .claude/rules/ask-the-corpus-before-claiming-bc-behavior.md's patched-tier clause says not to rest a claim on. The corpus already records this from the other side: session/TestIsolatedStorage.al removed its Encrypt/Decrypt round-trip assertion naming Patch #26 as the reason. (2) SCOPE. The corpus app targets Cloud, and the AL compiler refuses ExportEncryptionKey, ImportEncryptionKey and Cryptography Management's EnableEncryption/DisableEncryption there with 'error AL0296: ... has scope OnPrem and cannot be used for Cloud development' -- the same wall that put tests/runner-extras/http-egress-boundary-oos here. CreateEncryptionKey, DeleteEncryptionKey, EncryptionEnabled and EncryptionKeyExists do compile for Cloud, so scope alone would leave a quarter of the surface expressible; reason (1) is what rules that quarter out too. One further note on the runner side: it starts each session with a key already present, unlike a fresh BC tenant, so every test below normalises the starting state explicitly instead of assuming it. That divergence is tracked separately in issue #3346.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65750,
+      "to": 65759
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}

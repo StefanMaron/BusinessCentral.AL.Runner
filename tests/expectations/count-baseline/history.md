@@ -236,51 +236,50 @@ commits after it unpinned keeps the gap honest.
 
 Written by agent stma-auto-1 (automated implementation agent).
 
-## 2026-09-07 — corpus pin `0bbe376` → `ddb9b5ab` (al-language 2915 → 2978)
+## 2026-09-07 — corpus pin `408c39fe` → `ddb9b5ab` (al-language 2969 → 2978)
 
-Eleven commits, and eleven is the minimum, not a choice. This bump exists to consume corpus
-#241 (`ddb9b5ab`, codeunit 60291 `"Test Permissions Mock Lifecyc"`), the upstream half of
-**#3343**. #241 is the corpus **tip**, and corpus history here is linear, so there is no
-prefix that contains it and stops short of the ten commits under it: #229, #230, #231, #232,
-#233, #235, #236, #239, #240, #242. The entry above stopped deliberately at `0bbe376`, the
-last commit before the TestFilter wall; this one crosses that wall because it has to.
+Two commits. This bump exists to consume corpus
+[#241](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/241) (`ddb9b5ab`,
+codeunit 60291 `"Test Permissions Mock Lifecyc"`), the upstream half of **#3343**. `ddb9b5ab`
+is corpus `master`'s tip; corpus history is linear, so corpus #242 (`21e2fed`, partial
+records) comes along with it and there is no earlier commit that contains #241.
 
-2978 is measured, not computed — a full corpus run on this branch at this pin, BC 28.1,
-`--package-cache <platform-apps> --package-cache <test-apps>`: **3007 total across the three
-corpus apps**, of which `al-language` is 2978, `al-language-internals-fixture` 0 and
-`al-language-onprem` 29 (unchanged — nothing in the eleven touches that app). `runner-extras`
-is untouched. The +63 is those eleven commits; corpus #241's own contribution is 3 of it.
+The starting point is `408c39fe`/2969, not `0bbe376`/2915: the entry above records
+`0bbe376` → `408c39fe` (+54) from #3345, which merged while this branch was open. This branch
+merged `main` and rebuilt its number from that base rather than carrying its own first draft
+(`0bbe376` → `ddb9b5ab`, +63) forward, which would have double-counted #3345's step.
 
-**One `default`, not per-version entries, and that was checked rather than assumed.** The only
-preprocessor gate anywhere in `0bbe376..ddb9b5ab` is a single `#if BC27PLUS` in
-`handlers/TestReportSaveAsPdfContent.al`, and `BC27PLUS` is defined on all eight versions the
-matrix knows. So the count is uniform across legs, the same way 2915 was.
+`al-language` 2969 → **2978** (+9), measured on a real 3-bundle run on BC 28.1 with the
+workflow's own cache paths, not computed: **3007 tests total** across the three corpus apps, of
+which `al-language-onprem` contributes 29 and `al-language-internals-fixture` 0 — both
+unchanged, since neither of the two commits touches those apps. `runner-extras` is untouched.
+Corpus #241's own contribution is 3 of the +9; corpus #242's is 6.
 
-### What is declared, and what is deliberately left red
+One `default` rather than per-version entries, checked rather than assumed: neither of the two
+commits carries a preprocessor gate at all, and the run reports the same 3007/2978 on BC 27.0,
+27.5 and 28.4.
 
-Twelve tests failed on the first run at this pin. Four clusters, and they are not the same
-kind of thing:
+### The four tests corpus #242 brings, and why they are declared
 
-| cluster | tests | disposition |
-|---|---|---|
-| cu 60775 partial records (corpus #242) | 4 | **declared** `expect-fail-known-gap` → #3358 |
-| cu 60774 `Report_SaveAs_Pdf_ReturnValueAgreesWithTheBytesInTheStream` (corpus #239) | 1 | **declared** `expect-oos`, reason `report-rendering-external` |
-| cu 60350 TestFilter (corpus #229) | 5 | **left red** — owned by #3316 / PR #3356 |
-| cu 60793 page background task (corpus #240) | 2 | **left red** — owned by #3342 / PR #3345 |
+Codeunit 60775 `"Test Record Partial Load"` measures the half of partial records nothing
+covered: which fields BC silently ADDS to a `SetLoadFields` request, and what reading an
+omitted field does. Four of its tests fail here, and every one fails on its **precondition** —
+the arrange step establishing that a field is not loaded — rather than on the behaviour it is
+about. `Record.AreFieldsLoaded` answers true for every field, always: the runner loads whole
+rows and has no partial load set.
 
-The split is the one rule that matters for a known-gap entry: it may only name an issue that
-stays **open** after the declaring PR merges. #3358 does. #3316 and #3342 do not — both have a
-review-ready PR that closes them — so declaring against either would create an entry that goes
-stale the moment that PR lands, which is exactly the drift `docs/expectations.md` makes loud in
-the other direction. Those seven stay red and this PR is sequenced after both.
+Declared `expect-fail-known-gap` in `known-gaps-record-partial-load.json` against **#3358**,
+which stays open after this PR merges. Note what is NOT broken: reading an omitted field yields
+its real stored value here, which is what BC does too — `SetLoadFields` is a performance hint,
+never a data filter — so this is a reporting gap, not a data-correctness one.
 
-The `expect-oos` entry is not a gap at all: RDLC rendering needs an external renderer and is
-permanently out of scope (`docs/scope.md` §3.5.1). Corpus #239 is the second test to reach
-`ReportResultSetProcessorFactory.GetRdlcResultSetProcessor`; it sits beside the entry that was
-already there for cu 60878.
+Nothing else in this file is this PR's to move. The 60774 `expect-oos` entry for corpus #239's
+SaveAs(Pdf) content test and the five 60350 TestFilter `expect-fail-known-gap` entries against
+#3316 both arrived on `main` with #3345 and are left exactly as that PR wrote them; this
+branch's own duplicate of the first was dropped in favour of `main`'s during the merge.
 
-After the five declarations, the run reports **3007 total, 3000 pass (4 `pass-oos`,
-15 `pass-known-gap`), 7 fail**, and `--expectations-require-match` audits **all 20 entries
+After the declarations the run reports **3007 total, 3007 pass (4 `pass-oos`,
+20 `pass-known-gap`), 0 fail**, and `--expectations-require-match` audits **all 25 entries
 matched a discovered test**.
 
 Written by agent fbk-1 (automated implementation agent).
@@ -1347,3 +1346,62 @@ picks up its own +4 with that later bump. Growth is the expected direction; this
 catch the count going down.
 
 Written by agent stma-auto-3 (automated implementation agent).
+
+## 2026-09-07 — `runner-extras` new app group `encryption-key-mgmt-3329` (+10, #3329)
+
+New group, one line under `groups`, no `absentOn`. Its `app.json` declares
+`"platform": "27.0.0.0"` / `"application": "27.0.0.0"` and it compiles and runs on every leg,
+which is measured rather than assumed: the BC 27.0 leg of job `101668243177` discovered and
+passed all ten of `Codeunit65750` before exiting 4 on the missing baseline entry.
+
+The group proves the tenant encryption key ledger that #3329 adds — `CREATEKEY`, `DELETEKEY`,
+`EXPORTKEY` and `IMPORTKEY` used to raise a bare `ArgumentException` out of
+`NavSqlTenantProperties..ctor`, taking all 32 tests of MS's `Tests-Cash Flow` `Codeunit135203`
+with them. Ten tests and not fewer because each closes a distinct hole: the reported path
+(`Codeunit 1266 DisableEncryption`), the reverse (`EnableEncryption` restoring a working key),
+and eight refusals and invariants that a create/delete pair alone would not catch — a create
+over an existing key, an export with no key, an import with a wrong password, a missing file,
+a different key over a stored one, the `DecryptTenantData` invariant that keeps a
+`SetEncrypted` isolated-storage value readable after the key is deleted, the
+`EncryptPendingData` round trip that puts it back, and a new key refusing to decrypt the old
+key's ciphertext. Every negative one names the message it expects, because a bare `asserterror`
+is satisfied by the very `ArgumentException` the fix removes.
+
+Totals are derived, so what this adds up to depends on the leg. Measured off this branch's
+file:
+
+| leg | declared runner-extras groups / total before | after |
+|---|---|---|
+| BC 27.0 / 27.3 / 27.5 | 55 / 340 | 56 / 350 |
+| BC 28.0 / 28.1 / 28.4 | 60 / 351 | 61 / 361 |
+
+The two lines differ because five groups carry `absentOn` for the 27.x legs; the +10 is the
+same on both. Nothing else in this file is this PR's to move: `al-language` stays at 2887 and
+the corpus pin is untouched, because #3329's proving tests are deliberately not upstream — the
+corpus tier patches this exact surface out (bc-linux StartupHook Patch #26), so a result there
+would measure the patch rather than BC. Growth is the expected direction here.
+
+Written by agent coord-1 (automated implementation agent).
+
+## 2026-09-07 — corpus pin `0bbe376` → `408c39fe` (al-language 2915 → 2969)
+
+The bump this repository needs for the fix in #3342: corpus PR
+[#240](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/240) adds the
+two page-background-task temporary-write tests that prove it, and corpus history is linear,
+so nine other merged PRs come along with it. `408c39fe` **is** corpus `master`'s tip, so
+there is no earlier commit that contains #240 — the "pin the newest commit whose
+predecessors are all satisfied" option in `al-language-submodule.md` does not exist here.
+
+The four issues #3304 named as holding this bump back — #3283, #3284, #3178, #3263 — are all
+**closed** now, so the 18 failures it measured are gone.
+
+`al-language` 2915 → **2969** (+54), measured on a real 3-bundle run on BC 28.1, not computed:
+2998 tests total across the three corpus apps, of which `al-language-onprem` contributes 29
+and `al-language-internals-fixture` 0 — both unchanged. Growth is the expected direction.
+
+The starting point is `0bbe376`/2915, not `17b015ef`/2887: this branch was cut before #3349
+merged, and its first draft of this entry named `17b015ef` accordingly. #3349's own entry
+above already records `17b015ef` → `0bbe376` (+28), so naming `17b015ef` here a second time
+would double-count it. Only this PR's step belongs here.
+
+Written by agent fbk-2 (automated implementation agent).

@@ -6,7 +6,7 @@
     "Mode": "expect-oos",
     "Reason": "report-rendering-external",
     "Doc": "docs/scope.md#report-rendering",
-    "Note": "RDLC rendering needs an external renderer and is permanently out of scope (docs/scope.md \u00a73.5.1). ReportResultSetProcessorFactory.GetRdlcResultSetProcessor is Cecil-rewritten to throw the documented 'out-of-scope: <api> \u2014 report-rendering-external \u2014 \u2026' message; expect-oos matches that message convention as of #1743. The upstream test asserts a BC-on-Linux platform limitation, not Cloud SaaS behaviour \u2014 real BC SaaS renders RDLC."
+    "Note": "RDLC rendering needs an external renderer and is permanently out of scope (docs/scope.md §3.5.1). ReportResultSetProcessorFactory.GetRdlcResultSetProcessor is Cecil-rewritten to throw the documented 'out-of-scope: <api> — report-rendering-external — …' message; expect-oos matches that message convention as of #1743. The upstream test asserts a BC-on-Linux platform limitation, not Cloud SaaS behaviour — real BC SaaS renders RDLC."
   },
   {
     "codeunitId": 60774,
@@ -15,6 +15,6 @@
     "Mode": "expect-oos",
     "Reason": "report-rendering-external",
     "Doc": "docs/scope.md#report-rendering",
-    "Note": "Second corpus test on the same permanently-out-of-scope surface as the entry above, arriving with this PR's pin bump to ddb9b5ab (StefanMaron/BusinessCentral.AL.Language.Tests#239). It reads the SaveAs(Pdf) blob back instead of trusting the boolean, so it reaches ReportResultSetProcessorFactory.GetRdlcResultSetProcessor -- Cecil-rewritten to raise the documented 'out-of-scope: <api> - report-rendering-external - ...' message. RDLC rendering needs an external renderer (docs/scope.md 3.5.1). Not a gap and not tracked by an issue: expect-oos is the terminal classification for this surface. #3322 is about supplying libSkiaSharp/harfbuzz to bc-linux so the UPSTREAM tier can render; it does not change the runner's answer here."
+    "Note": "Pulled in by this PR's submodule pin bump (corpus 6c36255, PR #239), NOT caused by it: corpus history is linear, so 408c39fe -- the commit carrying #240, which this PR's fix makes pass -- cannot be taken without it. Same permanently-out-of-scope surface as the sibling entry above: the test calls Report.SaveAs(..., ReportFormat::Pdf, ...), which reaches ReportResultSetProcessorFactory.GetRdlcResultSetProcessor, Cecil-rewritten to throw the documented 'out-of-scope: <api> - report-rendering-external - ...' message. RDLC rendering needs an external renderer (docs/scope.md 3.5.1); this is a declaration of a documented scope boundary, not a gap classification."
   }
 ]
