@@ -134,6 +134,31 @@ Not scope creep: fixing one of N instances closes the issue while leaving the bu
 
 In one day this step found: a sibling `_parsedPages` gap in `GetInsertAllowedForPage`, called at every TestPage construction site (#2088); five more call sites doing the same unrooted `Path.Combine` on a home directory (#2114); a `--help` section listing a shipped feature as unimplemented (#2118); a wrong statement-attribution bug an existing test had encoded as correct (#2074); a `WorkDate` regression that would have broken nearly every `execute` call (#2117). CI was green in all five and would have stayed green.
 
+### Where the prose goes
+
+Measured on `AlRunner/**/*.cs`, 295 files with `obj/` and `bin/` excluded: **54,520 comment lines against 63,256 code lines — 46% of every non-blank line.** Over the hundred files added since #3260 was filed, comment prose grew about twice as fast as code. Finding and reading code is already the largest token cost in this repository (`CLAUDE.md`), and every read pays for the prose sitting in it.
+
+This is not "write fewer comments", and several rules require one: `loud-failures.md` requires the *observably equivalent* justification in a code comment on every new patch under `AlRunner/Patches/`, and `precompiled-dll-respect.md`'s token-shift constraint belongs at the Cecil call site that could violate it. Those stay. What changes is where everything else goes.
+
+**The question, per comment block: would this change what the next person TYPES?** If it would — they are about to edit this line and would get it wrong — it stays, as short as still prevents the mistake. If it only changes what they *know*, it belongs somewhere a reader goes deliberately:
+
+| the reader | where it goes |
+|---|---|
+| is about to change *this line* and would otherwise get it wrong | **stays in code** |
+| is deciding whether to merge *this diff* | **the PR body** |
+| is asking how the runner does X, and is not editing this line now | **`docs/`**, with a one-line `// see docs/<file>.md#<anchor>` left behind |
+| does not exist — it narrates what the code used to do, or restates the line under it | **delete it**; git has the history |
+
+Ask it of yourself and you will answer "it stays" — everyone does about their own prose. The question is written about the *reader* so that a reviewer, who did not write it, can answer it too.
+
+**The trigger is a comment block over ten lines.** Blocks longer than that hold 60% of all comment mass, and they hold it in `///` doc comments as much as in `//` ones — 12,892 of 21,013 doc-comment lines against 19,343 of 32,763 plain ones. Moving an essay into XML doc syntax does not make it shorter. Under ten lines, just write it; over ten, answer the question above and say in one line of the PR body where you put it.
+
+Three shapes are the wrong place whatever their length:
+
+- **What you tried and rejected.** PR body. Someone reading the code is not choosing between your options.
+- **The derivation.** The conclusion and its citation stay — "`find_callers` resolves this through the async state machine", "corpus codeunit X adjudicated this on eight legs" — the walk that reached them goes to `docs/` or the PR body. A citation is what lets a reader find the evidence; reproducing the evidence is what makes the file long.
+- **A measurement table.** `docs/`, where it is versioned and can be re-run. A number in a comment goes stale the first time the thing it measures improves, and nothing tells you it has.
+
 ### Code navigation, and `grep` failing silently
 
 Both live in `CLAUDE.md` under "Code navigation: use these before grepping" — `tools/context-pack.py` / `tools/lsp-query.py` / `graphify` instead of grep sweeps, why the `LSP` tool is unavailable to you, and why a bare `grep -E` here exits 0 with no output instead of erroring. Read that section; do not rediscover any of it.
