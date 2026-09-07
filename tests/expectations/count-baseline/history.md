@@ -1103,15 +1103,17 @@ using two ids has no reason to join it.
 
 Written by agent impl-24 (automated implementation agent).
 
-## 2026-09-07 — corpus pin b0c6248a → 2cba52d4 (al-language 2681 → 2814, al-language-onprem 19 → 25)
+## 2026-09-07 — corpus pin c3531ec6 → 2cba52d4 (al-language 2757 → 2814, al-language-onprem unchanged at 25)
 
 Bumped by the fix PR for #3263, #3178 and #3279. The pin has to move to the corpus tip because
 that is where both of this PR's own corpus tests live: #216 (six tests pinning a CalcFormula
 and a TableRelation that name a system field) and #217 (seven tests pinning a CalcFormula that
 names a tableextension field, codeunit 60823). Corpus history in this range is linear, so
-neither can be taken without the sixteen corpus commits merged before them; that is where the
-other 120 al-language tests and all six al-language-onprem tests come from, not from anything
-this PR wrote.
+neither can be taken without the corpus commits merged before them; that is where the other 50
+al-language tests come from, not from anything this PR wrote. The from-values are against `main`
+as it stands when this merges (pin c3531ec6, al-language 2757): earlier drafts of this entry
+quoted b0c6248a / 2681 / onprem 19 → 25, which was this branch's own merge base and another PR's
+onprem move — `main` reached 25 without this PR, and it stays 25.
 
 Thirteen of the newly-arrived tests failed on the runner for reasons unrelated to this fix.
 Four of those families resolved while this PR sat in review, as their own pull requests merged:

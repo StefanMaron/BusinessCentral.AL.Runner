@@ -1124,8 +1124,6 @@ public static partial class RecordPatches
         }
 
         // Resolve source field (for Sum/Lookup/Average/Min/Max)
-        // Materialised once each: the helper allocates a HashSet whenever the table carries
-        // extension fields, and the where-arm loop below would otherwise pay for that per arm.
         // Materialised once each: ResolvableFields walks the extension index, which builds a
         // HashSet whenever the table carries extension fields, and the where-arm loop below
         // would otherwise pay for that per arm.
