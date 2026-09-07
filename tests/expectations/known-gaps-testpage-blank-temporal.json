@@ -53,6 +53,6 @@
     "Method": "TestPageField_AssertEquals_BlankDateTimeVariable_IsRefusedByAPopulatedControl",
     "Mode": "expect-fail-known-gap",
     "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2361",
-    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #267 (7153eb5), which added this test. The same #2361 gap as the five entries above, reached through a TYPED AssertEquals argument: the refusal names Expected = '01/01/0001 00:00:00' where BC names ''. Declared in THIS file rather than a new one, so the drift guard sees one declaration per test. Tracked as #2361, which is open and is NOT closed by this PR; open PR #3410 fixes it and removes this entry."
+    "Note": "Pulled in by PR #3445's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 cannot be taken without #267 (7153eb5), which added this test. The same #2361 gap as the six entries above, reached through a TYPED AssertEquals argument: the refusal names Expected = '01/01/0001 00:00:00' where BC names ''. Declared in THIS file rather than a new one, so the drift guard sees one declaration per test. Tracked as #2361, which is open and is NOT closed by that PR; open PR #3410 fixes it and removes this entry."
   }
 ]

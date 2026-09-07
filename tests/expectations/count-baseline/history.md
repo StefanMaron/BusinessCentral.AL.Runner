@@ -1634,7 +1634,7 @@ Written by the fbk-1 agent.
 
 ## 3026 → 3057 — pin `8678dc28` → `ccc10f12` (page platform trigger events, #3436 / PR #3445)
 
-Five corpus commits, 31 tests. `ccc10f12` is this PR's own upstream half
+Six corpus commits, 31 tests. `ccc10f12` is this PR's own upstream half
 (`StefanMaron/BusinessCentral.AL.Language.Tests`#274, nine tests pinning BC's implicit page
 trigger events); corpus history is linear, so it cannot be taken without #267, #266, #268,
 #269 and #271 sitting under it.
@@ -1646,7 +1646,7 @@ of those issues already has its own open fix PR whose merge deletes the entry:
 - `known-gaps-testpage-draft-line.json` — #266's five `ONRC Tests`, issue #3029, open PR #3414.
   The runner raises a page's `OnNewRecord` a different number of times than BC for a draft
   line (`EnterNewRowLine` and the promotion both call `TryNewRecord`).
-- `known-gaps-session-company-information.json` — #268's and #269's four
+- `known-gaps-session-company-information.json` — #269's four
   `Test Session Comp Info Close`, issue #2382, open PR #3413.
   `NavUserAccountHelper.GetEffectivePermissionForObject` throws `NullReferenceException` on the
   skeleton session, whose `Permissions` is null; three of the four reach it through Company

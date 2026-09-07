@@ -5,7 +5,7 @@
     "Method": "EffectivePermissions_SuperSession_HoldsTheFourDataRightsButNotExecute",
     "Mode": "expect-fail-known-gap",
     "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2382",
-    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #268 (9bb602a) and #269 (c5b8123), which added this test. NavUserAccountHelper.GetEffectivePermissionForObject throws NullReferenceException on the skeleton session, whose Permissions is null. The test asks the question directly. Tracked as #2382, which is open and is NOT closed by this PR; open PR #3413 fixes it and removes this entry."
+    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #269 (c5b8123), which added this test. NavUserAccountHelper.GetEffectivePermissionForObject throws NullReferenceException on the skeleton session, whose Permissions is null. The test asks the question directly. Tracked as #2382, which is open and is NOT closed by this PR; open PR #3413 fixes it and removes this entry."
   },
   {
     "codeunitId": 60702,
@@ -13,7 +13,7 @@
     "Method": "CompanyInformation_OpenEdit_OpensAndExposesItsSource",
     "Mode": "expect-fail-known-gap",
     "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2382",
-    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #268 (9bb602a) and #269 (c5b8123), which added this test. NavUserAccountHelper.GetEffectivePermissionForObject throws NullReferenceException on the skeleton session, whose Permissions is null. Reached through Company Information page 1's OnOpenPage -> Monitor Sensitive Field. Tracked as #2382, which is open and is NOT closed by this PR; open PR #3413 fixes it and removes this entry."
+    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #269 (c5b8123), which added this test. NavUserAccountHelper.GetEffectivePermissionForObject throws NullReferenceException on the skeleton session, whose Permissions is null. Reached through Company Information page 1's OnOpenPage -> Monitor Sensitive Field. Tracked as #2382, which is open and is NOT closed by this PR; open PR #3413 fixes it and removes this entry."
   },
   {
     "codeunitId": 60702,
@@ -21,7 +21,7 @@
     "Method": "CompanyInformation_Close_TierUnchanged_ClosesWithoutError",
     "Mode": "expect-fail-known-gap",
     "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2382",
-    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #268 (9bb602a) and #269 (c5b8123), which added this test. NavUserAccountHelper.GetEffectivePermissionForObject throws NullReferenceException on the skeleton session, whose Permissions is null. Reached through Company Information page 1's OnOpenPage -> Monitor Sensitive Field. Tracked as #2382, which is open and is NOT closed by this PR; open PR #3413 fixes it and removes this entry."
+    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #269 (c5b8123), which added this test. NavUserAccountHelper.GetEffectivePermissionForObject throws NullReferenceException on the skeleton session, whose Permissions is null. Reached through Company Information page 1's OnOpenPage -> Monitor Sensitive Field. Tracked as #2382, which is open and is NOT closed by this PR; open PR #3413 fixes it and removes this entry."
   },
   {
     "codeunitId": 60702,
@@ -29,6 +29,6 @@
     "Method": "CompanyInformation_Close_TierChangedUnderneath_RaisesUnsupportedExperience",
     "Mode": "expect-fail-known-gap",
     "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2382",
-    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #268 (9bb602a) and #269 (c5b8123), which added this test. NavUserAccountHelper.GetEffectivePermissionForObject throws NullReferenceException on the skeleton session, whose Permissions is null. Reached through Company Information page 1's OnOpenPage -> Monitor Sensitive Field. Tracked as #2382, which is open and is NOT closed by this PR; open PR #3413 fixes it and removes this entry."
+    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #269 (c5b8123), which added this test. NavUserAccountHelper.GetEffectivePermissionForObject throws NullReferenceException on the skeleton session, whose Permissions is null. Reached through Company Information page 1's OnOpenPage -> Monitor Sensitive Field. Tracked as #2382, which is open and is NOT closed by this PR; open PR #3413 fixes it and removes this entry."
   }
 ]
