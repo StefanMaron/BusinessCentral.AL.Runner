@@ -353,26 +353,14 @@ public static class TenantStoragePatches
         }
     }
 
-    /// <summary>The exception a crypto failure raises out of an ALSystemEncryption entry point.
-    ///
-    /// TYPE is BC's own, and is what AL and any `catch` clause key on:
-    /// <c>ALSystemEncryption.TryInvoke</c> catches <see cref="CryptographicException"/> and
-    /// throws <c>NavUnknownEncryptionException</c>. The rewrite replaces the body that
-    /// contained TryInvoke, so reproducing its mapping is what keeps that contract.
-    ///
-    /// MESSAGE is the runner's, deliberately, and says so by naming the API. BC pairs the type
-    /// with <c>Lang.MSGREUNKNOWN</c> and that string is not reachable from this process —
-    /// measured, not assumed. Microsoft.Dynamics.Nav.Core (which holds the sibling
-    /// SystemEncryptionDecryptBadDataError that RsaEncryptionProviderBase.Decrypt would use) is
-    /// absent from AppDomain.CurrentDomain entirely, because every caller above it is
-    /// rewritten; and the loaded Ncl exposes no Microsoft.Dynamics.Nav.Common.Language.Lang
-    /// type and no MSGREUNKNOWN key in any of its 61 resource blobs — ILSpy synthesises that
-    /// name from a resource lookup. Fabricating BC-looking text would be the silent fake here,
-    /// so the message names the runner API and carries the specific cause instead. The other
-    /// five refusals on this surface DO carry BC's own text, because those exception types
-    /// (NavEncryptionCreatedException, NavEncryptionNotCreatedException,
-    /// NavEncryptionExistingKeyImportException, NavEncryptionInvalidKeyFileException,
-    /// NavNCLFileNotFoundException) build it themselves.</summary>
+    /// <summary>BC's <c>ALSystemEncryption.TryInvoke</c> catches
+    /// <see cref="CryptographicException"/> and throws
+    /// <c>NavUnknownEncryptionException(Lang.MSGREUNKNOWN, inner)</c>, whose text is
+    /// "Unknown error". Same type here — that is what AL and any `catch` clause key on — but a
+    /// DELIBERATE divergence on the message, which names the API instead, because "Unknown
+    /// error" identifies no surface and loud-failures.md asks a refusal to.
+    /// <c>NewKey_CannotDecryptOldCiphertext</c> in tests/runner-extras/encryption-key-mgmt-3329
+    /// pins the divergence.</summary>
     private static Exception AsBcCryptoFailure(string api, Exception inner)
         => new NavUnknownEncryptionException($"{api}: {inner.Message}", inner);
 

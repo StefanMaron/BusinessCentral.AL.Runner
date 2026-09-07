@@ -19,6 +19,7 @@
         "depapp-dictionary-dep": { "tests": 0 },
         "depapp-dictionary-main": { "tests": 4 },
         "document-service-session-seed": { "tests": 2 },
+        "encryption-key-mgmt-3329": { "tests": 10 },
         "esm-xapp": { "tests": 1 },
         "esm-xapp-table": { "tests": 0 },
         "field-virtual-table-item-tracking": { "tests": 4, "absentOn": ["27.0", "27.3", "27.5"] },
