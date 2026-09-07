@@ -3157,9 +3157,18 @@ internal static class TestPageTemporalValue
             {
                 _getEvaluator = evaluatorType.GetMethod(
                     "GetEvaluator", Any, null, new[] { _navNclType }, null);
-                // Overload-count guard: GetMethod(name, flags) throws AmbiguousMatchException the
-                // moment a build adds a second Evaluate, which is caught below and reported.
-                var evaluate = evaluatorType.GetMethod("Evaluate", Any);
+                // BcShape.FindMethod, not GetMethod(name, flags): the latter throws a bare
+                // AmbiguousMatchException naming no member the moment BC ships a second
+                // Evaluate, and NavMethodScope_AssertError rethrows only BcShapeGapException —
+                // so under an AL asserterror that one would be ABSORBED and the asserterror
+                // would pass (#3069). The signature cannot be pinned here because four of the
+                // six parameter types are internal to Ncl, so this resolves by name and refuses
+                // a second declaration by name, which is the outcome the ambiguity guard wants.
+                var evaluate = AlRunner.Infrastructure.BcShape.FindMethod(
+                    evaluatorType, "Evaluate", Any,
+                    "TestPage SetValue on a Date/DateTime/Time control",
+                    "NavValueEvaluator.Evaluate",
+                    "the runner reads a control's typed date through BC's own value evaluator");
 
                 if (_getEvaluator == null) why = "NavValueEvaluator.GetEvaluator(NavNclType) not found";
                 else if (evaluate == null) why = "NavValueEvaluator.Evaluate not found";
