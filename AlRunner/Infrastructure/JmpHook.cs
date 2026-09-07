@@ -132,6 +132,92 @@ internal static class JmpHook
     /// <summary>Clears the orphan audit (test seam).</summary>
     public static void ResetOrphanAudit() { _orphaned.Clear(); _redundant.Clear(); }
 
+    // ── #3281: InstallIndirect's guards, as a pure decision ──────────────────────────
+    //
+    // InstallIndirect used to consult NEITHER guard Apply has. It called
+    // RuntimeHelpers.PrepareMethod and went straight to patching the indirection cell, so:
+    //
+    //   * the documented default ("Cecil-only on EVERY runtime, JmpHooks OFF" — see
+    //     ComputeDisabled above) did not hold for any of its three call sites, and
+    //     AL_RUNNER_NO_JMPHOOK=1 could not turn one off; and
+    //   * a method already owned by a Cecil IL rewrite got a second, native owner — the
+    //     "coexistence double-dispatch" the CecilOwned registry exists to prevent.
+    //
+    // Both applied at once to RecordImplementation.CalcFieldsAsync/2 and /3. Their bodies are
+    // Cecil-rewritten (NclCecilRewrite.Records.cs) AND their keys are in CecilOwned, under a
+    // comment saying the keys are there "so FlowFieldPatches.Register's JmpHook.Apply fallback
+    // becomes a no-op" — but Register tries InstallIndirect FIRST and only falls back to Apply
+    // when it returns false, so the guarded path was unreachable and the registration was inert
+    // for exactly the two methods it names.
+    //
+    // The decision is a pure function of the same two inputs Apply branches on, so the guard is
+    // unit-testable without patching native memory — same approach as PageRoundedRegionSize.
+    public enum IndirectInstallDecision
+    {
+        /// <summary>Patch the indirection cell.</summary>
+        Install,
+        /// <summary>The JmpHook layer is off (the shipped default on every runtime).</summary>
+        SkipDisabled,
+        /// <summary>A Cecil IL rewrite already owns this method's body.</summary>
+        SkipCecilOwned,
+    }
+
+    /// <summary>
+    /// Whether an indirect install should proceed. Mirrors <see cref="Apply"/>'s branch order:
+    /// the disabled check runs first, so a target that is both disabled and Cecil-owned reports
+    /// <see cref="IndirectInstallDecision.SkipDisabled"/> — matching how Apply attributes the
+    /// same situation, so the two mechanisms cannot drift on the reason they give.
+    /// </summary>
+    public static IndirectInstallDecision ClassifyIndirectInstall(
+        MethodBase original, bool jmpHookDisabled, bool cecilOwnsTarget)
+    {
+        if (jmpHookDisabled) return IndirectInstallDecision.SkipDisabled;
+        if (cecilOwnsTarget) return IndirectInstallDecision.SkipCecilOwned;
+        return IndirectInstallDecision.Install;
+    }
+
+    /// <summary>
+    /// What <see cref="InstallIndirect"/> returns for a decision. Every decision reports
+    /// <c>true</c> — "handled, do not fall back". Its callers spell the fallback
+    /// <c>if (!InstallIndirect(...)) Apply(...)</c>, where <c>false</c> means "this precode
+    /// shape was not patchable, try the other mechanism". Returning <c>false</c> for a
+    /// deliberate skip would hand the refused install straight to <see cref="Apply"/>.
+    /// </summary>
+    public static bool IndirectInstallReportsHandled(IndirectInstallDecision decision) => true;
+
+    /// <summary>
+    /// Files a skipped indirect install into the same audit buckets <see cref="Apply"/> uses, so
+    /// <c>AL_RUNNER_HOOK_AUDIT=1</c> can see it. Before #3281 InstallIndirect recorded nothing:
+    /// on the reproducer bundle both CalcFieldsAsync overloads appeared in NEITHER audit list
+    /// while the runner was patching both, which is the blind spot that let the double ownership
+    /// sit unnoticed. Cecil-owned ⇒ redundant (provably inert, safe to delete); anything else
+    /// ⇒ orphaned (a patch that is supposed to act and silently does not).
+    /// </summary>
+    public static void RecordIndirectInstallSkip(
+        IndirectInstallDecision decision, MethodBase original, string label)
+    {
+        if (decision == IndirectInstallDecision.Install) return;
+        string key;
+        try { key = NclCecilRewrite.Key(original); } catch { key = "<unresolvable-key>"; }
+        var entry = $"{label}  [{key}]";
+        if (decision == IndirectInstallDecision.SkipCecilOwned || NclCecilRewrite.CecilOwned.Contains(key))
+            _redundant.TryAdd(entry, 0);
+        else
+            _orphaned.TryAdd(entry, 0);
+    }
+
+    /// <summary>
+    /// Whether a Cecil IL rewrite owns this method's body. Never throws: an unresolvable key is
+    /// answered "not owned", which is the conservative side for the disabled-layer default
+    /// (the run is Cecil-only anyway) and keeps a reflection quirk from turning into a crash
+    /// inside patch install.
+    /// </summary>
+    private static bool NclCecilRewriteOwns(MethodBase original)
+    {
+        try { return NclCecilRewrite.CecilOwned.Contains(NclCecilRewrite.Key(original)); }
+        catch { return false; }
+    }
+
     private static readonly bool _audit =
         Environment.GetEnvironmentVariable("AL_RUNNER_HOOK_AUDIT") == "1";
 
@@ -281,6 +367,24 @@ internal static class JmpHook
     /// </returns>
     public static bool InstallIndirect(MethodBase original, MethodInfo replacement, string label)
     {
+        // #3281 — the two guards Apply has, which this entry point used to skip entirely.
+        // Without them InstallIndirect wrote a native precode patch on top of a Cecil-rewritten
+        // body, on a runtime where the whole JmpHook layer is supposed to be off. See
+        // ClassifyIndirectInstall for the full reasoning and for why a skip returns TRUE.
+        var decision = ClassifyIndirectInstall(original, _disabled,
+            NclCecilRewriteOwns(original));
+        if (decision != IndirectInstallDecision.Install)
+        {
+            LastAttempt = label;
+            RecordIndirectInstallSkip(decision, original, label);
+            if (_trace)
+                TraceLine($"[JmpHook.InstallIndirect] SKIP ({decision}) {label}");
+            // TRUE, not false: the caller's `if (!InstallIndirect(...)) Apply(...)` reads false
+            // as "that precode shape was unpatchable, try the other mechanism", which would
+            // route the very install this guard just refused straight into Apply.
+            return true;
+        }
+
         RuntimeHelpers.PrepareMethod(original.MethodHandle);
         RuntimeHelpers.PrepareMethod(replacement.MethodHandle);
 
