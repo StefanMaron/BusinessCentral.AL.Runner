@@ -768,7 +768,18 @@ internal sealed partial class RunnerPageInstance
     {
         if (_form is not NavForm form) return false;
 
-        if (IsLiteralFalse(ControlDefinition(controlId)?.Visible)) return true;
+        // A part control is NOT a ControlDefinition — the AL compiler emits it as an
+        // InfopartPageDefinition reached through MetadataHelper.InfoPartDefinitions, so
+        // ControlDefinition answers null for one and the own-Visible read below silently
+        // skipped every part (issue #3313). Both element kinds derive from
+        // UIElementDefinition, which is where Visible lives, so asking the part collection
+        // as a fallback is one property read on the same declared property, not a second
+        // rule. The ancestor walk beneath is already element-kind agnostic: it walks up from
+        // an id, and a part nested inside a group whose Visible is the literal false is
+        // eliminated for exactly the reason a field there is.
+        var ownVisible = ControlDefinition(controlId)?.Visible
+            ?? TryGetPartDefinition(controlId)?.Visible;
+        if (IsLiteralFalse(ownVisible)) return true;
 
         var helper = form.MetadataHelper;
         var currentId = controlId;
@@ -816,6 +827,29 @@ internal sealed partial class RunnerPageInstance
     // rather than inheriting a freeze from a measurement that was not about it.
     internal bool ActionVisible(int actionId)
         => EvaluateProperty(ActionDefinition(actionId)?.Visible, "Visible", actionId, atOpen: false);
+
+    /// <summary>
+    /// Whether <paramref name="controlId"/> names a control this page DECLARES at all — the
+    /// question "is this id in the page's control-id space", asked of the page's own merged
+    /// metadata rather than of any binding the runner did or did not manage to resolve.
+    ///
+    /// <para>It exists to keep two different answers apart at <c>LiveNavTestPage.GetField</c>
+    /// (issue #3313), which used to give both the same runner-gap refusal:</para>
+    /// <list type="bullet">
+    /// <item>the id names a real control here and the runner could not resolve its binding —
+    /// a genuine runner gap, and still a <c>RunnerOutOfScopeException</c>;</item>
+    /// <item>the id names no control here at all — BC's OWN refusal, and the runner must
+    /// raise BC's own <c>NavTestFieldNotFoundException</c> instead of classifying documented
+    /// BC behaviour as an unimplemented runner surface.</item>
+    /// </list>
+    ///
+    /// <para>A control's id is compiler-generated per compilation and lives in its own id
+    /// space; a table field number is not in it. That is what makes the second case reachable
+    /// from ordinary AL — <c>GetField(Rec.FieldNo(X))</c> confuses the two spaces — and it is
+    /// what corpus codeunit 60346 measures.</para>
+    /// </summary>
+    internal bool DeclaresControl(int controlId)
+        => _form is NavForm form && form.MetadataHelper.TryGetControlDefinitionById(controlId, out _);
 
     private Microsoft.Dynamics.Nav.Types.Metadata.ControlDefinition? ControlDefinition(int controlId)
         => _form is NavForm form && form.MetadataHelper.TryGetControlDefinitionById(controlId, out var d) ? d : null;
