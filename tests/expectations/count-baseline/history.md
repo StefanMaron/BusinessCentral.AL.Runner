@@ -95,40 +95,60 @@ number, reported `expected 2665, actual 2681`; the run after merging `main` repo
 count-baseline line at all with 2681 in place, 2700 tests over the three roots, exit 0. CI
 agreed on every leg of run 34046877973 — no leg printed a count-baseline message.
 
-### 2681 -> 2757, and onprem 19 -> 25 (pin b0c6248 -> c3531ec)
+### 2689 -> 2757, and onprem 19 -> 25 (pin 7394c15 -> c3531ec)
 
-The pin advanced to consume StefanMaron/BusinessCentral.AL.Language.Tests#215, which pins the
-`SecretText` runtime surface — the immediate reason for the bump. Corpus history in this range
-is linear, so thirteen other merged corpus PRs came with it:
+The pin advances to consume StefanMaron/BusinessCentral.AL.Language.Tests#204, which pins that a
+user's SUPER status is backed by an Access Control row — the fix in this PR. Corpus history in
+this range is linear, so ten other merged corpus PRs come with it. Every one of them needed a
+runner fix or needed nothing, and all of those fixes are now on `main`:
 
-| corpus PR | what it pins |
-|---|---|
-| #196 | the ordinal Page Metadata reports for a PageType its column does not name |
-| #197 | what the legacy Object (2000000001) table holds on a real tier (OnPrem app) |
-| #199 | CalcFields on FlowFields a tableextension contributes |
-| #200 | a refusal raised in a table subscriber below a control write |
-| #202 | what an error raised in OnQueryClosePage does |
-| #203 | what a list page's built-in View and Edit actions do |
-| #204 | a user's SUPER status is backed by an Access Control row |
-| #206 | what a `Database::<Object>` const in a `where()` clause resolves to |
-| #207 | a tableextension-contributed TableRelation is enforced by Validate |
-| #208 | a tableextension adds keys and field properties, not just columns |
-| #209 | a second control over one page binding resolves |
-| #210 | what the Session virtual table (2000000009) holds for the reading session |
-| #211 | what an action's RunPageLink does to its RunObject target |
-| #215 | the SecretText runtime surface (this PR's own reason for bumping) |
+| corpus PR | what it pins | runner gap | state |
+|---|---|---|---|
+| #197 | what the legacy Object (2000000001) table holds, OnPrem app | #3071 | merged, PR #3265 |
+| #206 | what a `Database::<Object>` const in a `where()` clause resolves to | — | needs nothing |
+| #204 | a user's SUPER status is backed by an Access Control row | **#3176** | **this PR** |
+| #203 | what a list page's built-in View and Edit actions do | — | needs nothing |
+| #207 | a tableextension-contributed TableRelation is enforced by Validate | #3177 | merged, PR #3197 |
+| #209 | a second control over one page binding resolves | — | needs nothing |
+| #210 | what the Session virtual table (2000000009) holds | #2940 | merged, PR #3234 |
+| #211 | what an action's RunPageLink does to its RunObject target | — | needs nothing |
+| #208 | a tableextension adds keys and field properties, not just columns | #3216 | merged, PR #3257 |
+| #212 | whether AL short-circuits and/or | — | needs nothing |
+| #215 | the SecretText runtime surface | — | needs nothing (16/16 measured) |
 
-Both numbers are measured, not computed, on BC 28.1 against this PR's own build: the cloud app
-root reported `Tests: 2757 total` and the OnPrem root `Tests: 25 total`, and with the two
-numbers written in, `--count-baseline` printed no message on either root. The
-`al-language-internals-fixture` root stays at 0.
+`c3531ec` is deliberately NOT the corpus tip, which is `0bda9d6`. Walking forward past it, the
+next commit that needs a runner fix nobody has written is `b1fdb6d` (corpus #216, a CalcFormula
+and a TableRelation naming a system field). Measured at the tip against this branch's build:
+**19 failures**, in three clusters, each already tracked by an open runner issue:
 
-The OnPrem suite moves for the first time in a while because #197 added
-`record/TestObjectSystemTable.al` (6 tests) to the OnPrem app — the legacy Object table is
-`Scope = OnPrem`, so the test could not live in the cloud app.
+| corpus PR | failing codeunit | tests | open issue holding it |
+|---|---|---|---|
+| #216 | Codeunit60818 | 5 | #3178 — a CalcFormula over a system field never builds |
+| #217 | Codeunit60823 | 4 | #3263 — a CalcFormula never resolves a tableextension field |
+| #218 | Codeunit60338 | 9 | #3284 — the FormResult for a handler that invokes nothing is OK, not Cancel |
 
-No per-version override is needed: the range adds no preprocessor version guards, so
-`default` is correct for every leg. Measured on one BC version; the other seven are CI's word.
+Corpus #219 and #220 pass and need nothing; they are held back only because they sit behind
+#216 in a linear history. So `c3531ec` is the newest commit all of whose predecessors are
+satisfied, per the third case in `.claude/rules/al-language-submodule.md`, and #3178, #3263 and
+#3284 hold the remainder. All three stay open after this PR merges.
+
+Both numbers are MEASURED, by a run of this branch's build at the new pin on BC 28.1, not
+computed: three roots, `Tests: 2782 total, pass: 2782, fail: 0`, exit 0 — and exit 0 is itself
+the count-baseline check passing, since `--count-baseline` exits 4 on a mismatch in either
+direction. 2757 cloud + 25 OnPrem + 0 internals-fixture = 2782.
+
+Counted independently per file as a cross-check, with AL comments, string literals and
+preprocessor-disabled code excluded: the same 2757 and 25. That per-file method reproduces the
+outgoing pin's 2689 exactly as well. The gap between a raw source count and what a run reports
+is exactly 2 tests, behind `session/TestFinalCoverage.al`'s `#if BC143PLUS`, which is never
+defined — the corpus's only preprocessor-disabled block, unchanged across this range.
+
+The OnPrem suite moves because #197 added `record/TestObjectSystemTable.al` (6 tests) to the
+OnPrem app — the legacy Object table is `Scope = OnPrem`, so the test could not live in the
+cloud app.
+
+No per-version override is needed: the range adds no preprocessor version guards, so `default`
+is correct for every leg. Measured on BC 28.1; the other seven legs are CI's word.
 
 ## runner-extras
 

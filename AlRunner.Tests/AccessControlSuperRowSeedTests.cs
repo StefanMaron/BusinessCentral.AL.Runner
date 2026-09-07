@@ -25,14 +25,22 @@
 //        bundle of a multi-bundle run and silently skips every bundle after it — the row is then
 //        absent in bundles 2..N while the latch claims it was seeded.
 //
-//   Both are read out of TestExecutor.cs's source. That is deliberate: the ordering is a property
-//   of the call sequence, and asserting it from the source is exact and costs no runner spawn,
-//   where driving it through a fixture would spawn the runner (~6-70s per invocation, see
-//   .claude/rules/no-base-app-in-csharp-tests.md) to observe the same three statements.
+//   HOW STRONG THESE ARE, EXACTLY. The tests below read TestExecutor.cs as TEXT and compare
+//   `IndexOf` offsets. That is a claim about where the calls sit in one source file, which is a
+//   PROXY for the call sequence and not the call sequence itself: it happens to be sound today
+//   because all three calls are unconditional straight-line statements inside TestExecutor.Run,
+//   but it would keep passing if a call moved into another method that runs later, and it would
+//   start failing if a method were reordered in the file without any behaviour changing. So they
+//   are cheap regression guards on the call sites — they cost no runner spawn (~6-70s per
+//   invocation, see .claude/rules/no-base-app-in-csharp-tests.md) — and they are deliberately
+//   NOT the proof of the ordering.
 //
-//   The PhaseLog mark itself is separately required by PhaseLogIntegrationTests, which runs the
-//   real runner — so "the stage actually executes" is pinned by a live run over there, and the
-//   order it executes in is pinned here.
+//   THE ORDERING ITSELF IS PROVED AT RUNTIME, in PhaseLogIntegrationTests, which drives the real
+//   runner and reads the emitted PhaseLog stage breakdown. PhaseLog records stages "in the order
+//   the stages were first entered", so the property order of the emitted `stages` object is the
+//   actual call sequence; `AssertStageOrder` there pins
+//   install-seed-reset-for-new-bundle -> install-seed-access-control-row -> install-seed-capture-baseline
+//   on a live run. That is where a genuine cross-method ordering regression is caught.
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -69,6 +77,10 @@ public sealed class AccessControlSuperRowSeedTests
     /// ORDERING, EDGE 1: after the User row seed. The Access Control row's "User Security ID"
     /// relates to User."User Security ID", so seeding it first writes a row whose relation target
     /// does not exist.
+    /// <para>
+    /// Checks SOURCE POSITION in TestExecutor.cs, not the executed order — see the file header.
+    /// The runtime order is pinned by PhaseLogIntegrationTests over a live run.
+    /// </para>
     /// </summary>
     [Fact]
     public void AccessControlSeed_RunsAfterTheUserRowSeed()
@@ -83,7 +95,8 @@ public sealed class AccessControlSuperRowSeedTests
             userSeed < acSeed,
             "the Access Control SUPER row must be seeded AFTER the User row: its \"User Security ID\" "
             + "relates to User.\"User Security ID\", which holds no row until the User seed has run. "
-            + $"Found the User seed at offset {userSeed} and the Access Control seed at {acSeed}. "
+            + $"Found the User seed at source offset {userSeed} and the Access Control seed at {acSeed} "
+            + "(source position in TestExecutor.cs, a proxy for the call order). "
             + "See AlRunner#3176.");
     }
 
@@ -92,6 +105,12 @@ public sealed class AccessControlSuperRowSeedTests
     /// lives only until the first codeunit boundary restores the store to the baseline. A run
     /// with the seed on the wrong side of this line is GREEN on a single-test invocation and RED
     /// on a full one, which is the worst shape a regression can take.
+    /// <para>
+    /// Checks SOURCE POSITION in TestExecutor.cs, not the executed order — see the file header.
+    /// PhaseLogIntegrationTests asserts
+    /// install-seed-access-control-row -> install-seed-capture-baseline on a live run, which is
+    /// what actually rules this regression out.
+    /// </para>
     /// </summary>
     [Fact]
     public void AccessControlSeed_RunsBeforeTheInstallBaselineIsCaptured()
@@ -106,13 +125,22 @@ public sealed class AccessControlSuperRowSeedTests
             acSeed < capture,
             "the Access Control SUPER row must be seeded BEFORE CaptureInstallBaseline(), or it is not "
             + "part of the baseline each test is restored to and survives only until the first codeunit "
-            + $"boundary. Found the seed at offset {acSeed} and the capture at {capture}. See AlRunner#3176.");
+            + $"boundary. Found the seed at source offset {acSeed} and the capture at {capture} (source "
+            + "position in TestExecutor.cs, a proxy for the call order; PhaseLogIntegrationTests "
+            + "pins the executed order). See AlRunner#3176.");
     }
 
     /// <summary>
     /// The per-bundle latch is cleared for each new bundle. Without this the first bundle of a
     /// multi-bundle run is seeded and every bundle after it is silently skipped, while
     /// <c>AccessControlRowSeededForThisBundle</c> still reads true.
+    /// <para>
+    /// The "reset is called at all" half is a real claim about TestExecutor.cs. The
+    /// reset-before-seed half compares SOURCE POSITION across two call sites ~200 lines apart —
+    /// a proxy, not the executed order, and the weakest check in this file. The live-run
+    /// equivalent is PhaseLogIntegrationTests asserting
+    /// install-seed-reset-for-new-bundle -> install-seed-access-control-row.
+    /// </para>
     /// </summary>
     [Fact]
     public void AccessControlSeed_LatchIsResetForEachNewBundle()
@@ -128,7 +156,9 @@ public sealed class AccessControlSuperRowSeedTests
         Assert.True(
             reset < seed,
             "the latch reset must come before the seed in the per-bundle sequence, or the reset clears a "
-            + $"latch the seed has just set. Reset at {reset}, seed at {seed}.");
+            + $"latch the seed has just set. Reset at source offset {reset}, seed at {seed} (source "
+            + "position in TestExecutor.cs, a proxy for the call order; PhaseLogIntegrationTests "
+            + "pins the executed order).");
     }
 
     /// <summary>
