@@ -40,11 +40,63 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    # #2890: a pull request that changes documentation only does not spend a BC
+    # matrix on it. The decision is measured from the diff, never from a label —
+    # the docs-only label is an author's assertion, and require-tests.yml already
+    # honours that one for its own gate. Only pull requests are classified; a push
+    # to main always runs the full matrix, because main-verdict-floor.yml reads a
+    # cheap docs-only success as "this SHA has a conclusive verdict" and would then
+    # never establish the eight-leg one a superseded run was cancelled out of.
+    #
+    # What a docs-only pull request gives up: the unit tests that read .md files
+    # (BcMatrixDocumentationDriftTests, ProseRelocationPointerTests,
+    # AgentWorktreePathCollisionGuardTests) run on the merge commit's push, not on
+    # the pull request. A drift they catch surfaces as a red main, not a red PR.
+    name: Classify the change
+    runs-on: ubuntu-latest
+    outputs:
+      docs-only: ${{ steps.classify.outputs.docs-only }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Decide whether this pull request changes documentation only
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "docs-only=false" >> "$GITHUB_OUTPUT"
+            echo "Event is '$EVENT_NAME', not pull_request: the full matrix runs whatever changed."
+            exit 0
+          fi
+          # pr_changed_files.sh refuses an empty diff and the merge-ref endpoint trap;
+          # either refusal means the measurement is broken, and a broken measurement
+          # runs the matrix rather than skipping it.
+          if ! files=$(bash .github/scripts/pr_changed_files.sh); then
+            echo "docs-only=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::could not measure this pull request's diff; running the full matrix."
+            exit 0
+          fi
+          printf '%s\n' "$files"
+          printf '%s\n' "$files" | python3 .github/scripts/docs_only.py >> "$GITHUB_OUTPUT"
+
   bc-tests:
     # The matrix itself lives in bc-tests.yml so the release path (publish.yml)
     # runs THESE steps rather than a hand-maintained copy of them. That copy
     # drifted four times and failed two releases — see issue #1976 and the
     # comment at the top of bc-tests.yml.
+    #
+    # Skipped on a docs-only pull request (#2890). The `if:` is on THIS job and
+    # deliberately not on all-tests below: the aggregate is the required context,
+    # and it has to report on every path — see its comment.
+    needs: [changes]
+    if: needs.changes.outputs.docs-only != 'true'
     uses: ./.github/workflows/bc-tests.yml
 
   all-tests:
@@ -65,12 +117,28 @@ jobs:
     # release (publish.yml, which calls the same reusable matrix). The step below prints
     # which versions actually gated, so the run itself says what the name deliberately
     # does not.
-    needs: [bc-tests]
+    #
+    # On a docs-only pull request (#2890) bc-tests is skipped and this job still
+    # runs, under `if: always()`, and reports success with a message saying why.
+    # That is the whole trick: a `paths-ignore` on the workflow would leave the
+    # required context unreported and the pull request BLOCKED forever (#2726).
+    needs: [changes, bc-tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Check required jobs succeeded
         run: |
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "Could not classify the change (result: ${{ needs.changes.result }})."
+            echo "Nothing below is a verdict on the matrix — open the 'Classify the change' job."
+            exit 1
+          fi
+          if [ "${{ needs.changes.outputs.docs-only }}" = "true" ] && [ "${{ needs.bc-tests.result }}" = "skipped" ]; then
+            echo "The BC test matrix was not run: this pull request changes documentation only (#2890)."
+            echo "Every changed path ends in .md, so the runner and Business Central are unaffected."
+            echo "The full matrix runs on the merge commit's push to main."
+            exit 0
+          fi
           # A called workflow's result is failure when any of its jobs fail, EXCEPT
           # jobs marked continue-on-error — which is how bc-tests.yml keeps the
           # informational tier available (see its resolve-versions step for why
