@@ -2915,6 +2915,66 @@ internal static class TestPageNumericValue
             : null;
 }
 
+/// <summary>
+/// How a BLANK temporal control renders: the empty string, for Date, Time and DateTime alike.
+///
+/// <para>Issue #2361. The runner fell through to <c>Convert.ToString(ObjectValue)</c>, which
+/// renders the underlying <c>DateTime</c> and so answered <c>01/01/0001 00:00:00</c> where real
+/// BC answers <c>''</c> — the same string for all three types, because all three wrap one
+/// <c>DateTime</c> (see below). Microsoft's own <c>UserCardTest.GenerateWebServiceKeyNoExpires</c>
+/// asserts <c>AssertEquals('')</c> on page 9807's blank <c>WebServiceExpiryDate</c>.</para>
+///
+/// <para><b>The rule is read out of BC, not inferred.</b> Each of BC's three temporal formatters
+/// opens with the identical guard — <c>NavDateFormatter</c>, <c>NavTimeFormatter</c> and
+/// <c>NavDateTimeFormatter.FormatWithFormatNumber</c> in <c>Ncl.dll</c>, all three:</para>
+/// <code>
+///   if (navX.IsZeroOrEmpty) return string.Empty;
+/// </code>
+/// <para>and <c>NavDateTimeValue.IsZeroOrEmpty</c> — the base class of all of <c>NavDate</c>,
+/// <c>NavTime</c> and <c>NavDateTime</c> — is <c>Value == NavDateTimeHelper.DateTimeUndefined</c>,
+/// where <c>DateTimeUndefined</c> is <c>default(DateTime)</c>. So the predicate below is BC's
+/// own, spelled the same way.</para>
+///
+/// <para><b>Why <c>default(DateTime)</c> is never a legitimate value to suppress.</b> BC's
+/// smallest representable Date is <c>DateTimeMinimum</c> = <c>0001-01-02</c>, one day after the
+/// CLR minimum, and its C/SIDE encoding maps 0 to undefined and 1 to that minimum. A real
+/// temporal therefore cannot BE <c>default(DateTime)</c>, so blanking it loses nothing —
+/// which is what lets the populated half of the corpus suite keep passing.</para>
+///
+/// <para>Read through by BOTH <see cref="LiveNavTestField"/> (Rec-bound) and
+/// <see cref="PageVariableTestField"/> (page-global), the same pairing
+/// <see cref="TestPageBooleanValue"/> and <see cref="TestPageOptionValue"/> already use, so
+/// neither binding shape can drift from the other — the corpus suite asserts both.</para>
+///
+/// <para><b>Interaction with the WRITE side (#3384 / PR #3394), which lands in this same
+/// file.</b> That change reads a typed <c>SetValue</c> argument back through the spelling
+/// <c>ValueToString</c> produces. This one changes that spelling for a BLANK temporal only,
+/// from <c>01/01/0001 00:00:00</c> to <c>""</c> — and an empty string is not a value its
+/// round-trip branch is meant to parse, so it declines and falls through to BC's own evaluator,
+/// which is the correct outcome: writing a blank temporal is a separate question from rendering
+/// one, and neither change should silently answer the other's. Named
+/// <c>TestPageBlankTemporalValue</c> rather than <c>TestPageTemporalValue</c> so the two helpers
+/// can coexist in this file whichever merges first.</para>
+///
+/// <para>It must also be what <c>ValueToString</c> answers, for the reason spelled out in
+/// <see cref="TestPageBooleanValue"/>: <c>NavTestField.ALAssertEquals</c> converts the EXPECTED
+/// value through <c>ValueToString</c> and compares it ORDINALLY against the getter, so moving
+/// the getter alone would leave <c>AssertEquals('')</c> failing — which is a distinct test in
+/// the corpus suite and was failing in exactly that way before this fix.</para>
+/// </summary>
+internal static class TestPageBlankTemporalValue
+{
+    /// <summary>The stored NavValue's rendering — <c>""</c> when blank, otherwise null to let
+    /// the caller's existing chain render it.</summary>
+    internal static string? Format(NavValue? navValue)
+        => navValue is NavDateTimeValue t && t.IsZeroOrEmpty ? string.Empty : null;
+
+    /// <summary>The same rule for an already-unwrapped CLR value, as ValueToString sees it —
+    /// <c>ClientObject</c> on all three types hands back the bare <c>DateTime</c>.</summary>
+    internal static string? FormatObject(object? value)
+        => value is DateTime dt && dt == default ? string.Empty : null;
+}
+
 internal static class TestPageBooleanValue
 {
     /// <summary>
@@ -3279,6 +3339,8 @@ internal sealed class LiveNavTestField : ITestField
                ?? TestPageNumericValue.Format(_record.GetFieldValue(_fieldNo) as NavValue)
                // #2795: "Yes"/"No", not Convert.ToString's "True"/"False".
                ?? TestPageBooleanValue.Format(_record.GetFieldValue(_fieldNo) as NavValue)
+               // #2361: a blank Date/Time/DateTime is '', not the rendered CLR minimum.
+               ?? TestPageBlankTemporalValue.Format(_record.GetFieldValue(_fieldNo) as NavValue)
                ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
                ?? string.Empty;
         // appendRefreshSuffix: true — a Rec-bound control stages a row edit, and real BC's
@@ -3480,6 +3542,8 @@ internal sealed class LiveNavTestField : ITestField
            // ordinally against the control's Value, so this has to answer with the same word the
            // getter above does or AssertEquals(<Boolean>) can never match.
            ?? TestPageBooleanValue.FormatObject(value)
+           // #2361: same reason, for a blank temporal — AssertEquals('') is its own corpus test.
+           ?? TestPageBlankTemporalValue.FormatObject(value)
            ?? Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
 
     // AL that walks an option set (building a picker, asserting the members a field offers) got
@@ -3557,6 +3621,9 @@ internal sealed class PageVariableTestField : ITestField
                ?? TestPageNumericValue.Format(RunnerPageInstance.GetValue(_expression))
                // #2795: the page-global half of the same rule — see TestPageBooleanValue.Format.
                ?? TestPageBooleanValue.Format(RunnerPageInstance.GetValue(_expression))
+               // #2361: the page-global half of the blank-temporal rule — see the Rec-bound
+               // sibling. Base Application page 9807 binds WebServiceExpiryDate this way.
+               ?? TestPageBlankTemporalValue.Format(RunnerPageInstance.GetValue(_expression))
                ?? Convert.ToString(ObjectValue, CultureInfo.InvariantCulture)
                ?? string.Empty;
         // appendRefreshSuffix: false — a page-global control stages no row edit, so there is
@@ -3715,6 +3782,8 @@ internal sealed class PageVariableTestField : ITestField
                CurrentOption() is { } option ? _page.TryGetOptionCaptions(_controlId, option) : null)
            // #2795: the page-global half of the same rule — see the Rec-bound sibling above.
            ?? TestPageBooleanValue.FormatObject(value)
+           // #2361: the page-global half of the blank-temporal rule.
+           ?? TestPageBlankTemporalValue.FormatObject(value)
            ?? Convert.ToString(value, CultureInfo.InvariantCulture) ?? string.Empty;
     public string GetOption(int index)
         => CurrentOption() is { } option
