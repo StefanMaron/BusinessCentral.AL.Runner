@@ -281,6 +281,50 @@ evidence a diagnosis needs, and section 5's flake-evidence standard needs a seco
 run, not the same one overwritten in place. See "Getting a second run of the same commit"
 under section 5 for how to get one without this.
 
+### An empty log fetch is a refusal, not an empty log
+
+Both recipes above can print **nothing at all** for a job whose log is thousands of lines,
+and neither says "refused" anywhere a caller reading stdout will see it. This is the same
+family as the `grep -E` and `rg --hidden` traps in `CLAUDE.md`: a failure that looks like a
+result. It matters more here than an inconvenience, because the instinct an empty log
+provokes is to re-run and see — the one thing section 3 exists to forbid.
+
+They fail on **different** jobs, so neither alone is a fallback for the other:
+
+| recipe | empty when | how it looks |
+|---|---|---|
+| `gh run view --log-failed` | the job has no step whose conclusion is `failure` — a `cancelled` job, or one whose failing step was cancelled | **exit 0**, zero bytes: indistinguishable from success on an empty log |
+| `gh api .../jobs/<id>/logs` | the log carries terminal escape sequences, which BC logs do routinely | exit 1, zero bytes on **stdout**, the reason only on stderr |
+
+Measured 2026-09-07 against `gh` 2.98.0, on two jobs of the same repository:
+
+```
+job 101602519097 (BC 28.4, failure)   --log-failed 875921 B   api 0 B   api+flag 709372 B
+job 101605637617 (Smoke, cancelled)   --log-failed      0 B   api 0 B   api+flag  26388 B
+```
+
+So when one comes back empty, try the other before concluding anything:
+
+```bash
+gh api repos/<owner>/<repo>/actions/runs/<run-id>/jobs \
+  --jq '.jobs[]|select(.conclusion=="failure" or .conclusion=="cancelled")|"\(.id) \(.name)"'
+gh api repos/<owner>/<repo>/actions/jobs/<job-id>/logs --allow-escape-sequences
+```
+
+`--allow-escape-sequences` is not optional on the API form. Without it `gh` writes nothing to
+stdout and puts `the response contains terminal escape sequences` on stderr, so a `$(...)`
+capture or a pipe sees an empty log and no error at all.
+
+`tools/ci-wait.py` does this for you on exit 1 — it tries `--log-failed`, falls through to the
+API form, and when both come back empty says so rather than pointing you back at the command
+that just returned nothing (#3309). What it prints when it has no log is a statement that both
+were refused, never that the job has none.
+
+The cost of not knowing this was a wrong diagnosis, not a lost minute: diagnosing PR #3305's
+red 28.4 leg, an empty `--log-failed` was read as "the log is not available yet" and the PR was
+handed back with a guessed hypothesis instead of the failing test name, which was in the log
+the whole time.
+
 ### "Cancelled" does not mean "no log to lose"
 
 This rule used to exempt cancelled runs outright, on the reasoning that a cancelled run never

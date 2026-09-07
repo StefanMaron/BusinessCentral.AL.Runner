@@ -238,7 +238,11 @@ failed" as "only BC 27.0 is affected" started a version-specific investigation o
 turned out to be eight failing legs.
 
 **Never `gh run rerun` a failed job** — it destroys the log permanently. Read
-`--log-failed` first, then push a new commit.
+`--log-failed` first, then push a new commit. An **empty** `--log-failed` is a
+refusal rather than an empty log — the job's failing step was cancelled, so
+there is no `failure` step to print; fetch it with
+`gh api repos/<o>/<r>/actions/jobs/<id>/logs --allow-escape-sequences` instead
+of concluding there is nothing to read (`.claude/rules/ci-verdicts.md` §3).
 
 **A CANCELLED check blocks the merge, with everything green and nothing saying why.**
 A ruleset satisfies a required check from the *newest* check run carrying that context name on

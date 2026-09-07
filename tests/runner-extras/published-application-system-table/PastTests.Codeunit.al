@@ -118,11 +118,10 @@ codeunit 65572 "PAST Tests"
         // silently discarded, and stamping a DIFFERENT id on the 2000000212 row would leave
         // Installed false with the row present — neither is visible from the upstream test.
         //
-        // "Tenant Visible" and "PerTenant Or Installed" are deliberately NOT asserted here.
-        // They are Lookup FlowFields over "NAV App Extra" (2000000157), which System.app ships
-        // as a VIRTUAL table, so there is no row for the runner to seed the way there is for
-        // 2000000212, and no service tier has been asked what it reports for them (#3072).
-        // An unmeasured pin is exactly what #3066 had to undo.
+        // "Tenant Visible" and "PerTenant Or Installed" have their own two tests below, added
+        // by #3072. They are Lookup FlowFields over "NAV App Extra" (2000000157), a VIRTUAL
+        // table with no row to seed, so the runner answers them through a provider instead -
+        // and the tier's own answer is asked upstream in corpus PR #228, not pinned here.
         NavApp.GetCurrentModuleInfo(Mi);
         PublishedApplication.SetRange(ID, Mi.Id());
         PublishedApplication.FindFirst();
@@ -144,6 +143,99 @@ codeunit 65572 "PAST Tests"
         Assert.IsFalse(
             InstalledApplication.Get(CreateGuid(), ''),
             'Installed Application must not answer for a runtime package id nothing was seeded under.');
+    end;
+
+    [Test]
+    procedure TenantVisibleAndPerTenantOrInstalledReadTrueThroughNavAppExtra()
+    var
+        PublishedApplication: Record "Published Application";
+        Mi: ModuleInfo;
+    begin
+        // THE RUNNER-SIDE HALF of upstream's two "NAV App Extra" FlowField tests (#3072,
+        // corpus PR #228). Upstream asserts the observable on a real tier; this asserts that
+        // the runner reaches the same answer through the mechanism BC uses, which upstream
+        // cannot see.
+        //
+        //   field(30; "Tenant Visible";         Lookup("NAV App Extra"."Tenant Visible"         WHERE(...)))
+        //   field(31; "PerTenant Or Installed"; Lookup("NAV App Extra"."PerTenant Or Installed" WHERE(...)))
+        //
+        // "NAV App Extra" (2000000157) is a VIRTUAL table - System.app ships it under
+        // src/Virtual Tables/ and Ncl's own NavAppExtraDataProvider computes every row from
+        // the session's app metadata. So there is no row to seed the way there is for
+        // Installed Application (2000000212); the runner answers by providing the rows the
+        // way BC's provider would.
+        //
+        // WHY TRUE AND NOT FALSE IS THE ASSERTION. Both columns are Boolean, so an
+        // implementation that computes NOTHING reads false, and so does one that computes
+        // "no". Pinning false would pass against either, which is exactly how the Installed
+        // FlowField's wrong reading survived until #3066 measured it. True can only come from
+        // a computation.
+        NavApp.GetCurrentModuleInfo(Mi);
+        PublishedApplication.SetRange(ID, Mi.Id());
+        Assert.IsTrue(PublishedApplication.FindFirst(), 'The bundle under test must have a Published Application row.');
+
+        PublishedApplication.CalcFields("Tenant Visible", "PerTenant Or Installed");
+        Assert.IsTrue(PublishedApplication."Tenant Visible",
+            'Tenant Visible must compute true through NAV App Extra for an app this session loaded.');
+        Assert.IsTrue(PublishedApplication."PerTenant Or Installed",
+            'PerTenant Or Installed must compute true through NAV App Extra for an app this session loaded.');
+    end;
+
+    [Test]
+    procedure NavAppExtraAnswersPerRuntimePackageIdRatherThanForEverything()
+    var
+        PublishedApplication: Record "Published Application";
+        NavAppExtra: Record "NAV App Extra";
+        Mi: ModuleInfo;
+        Rpid: Guid;
+        SeededCount: Integer;
+    begin
+        // The negative half, and what stops "answer true to everything" passing the test
+        // above. NAV App Extra is keyed on "Runtime Package ID": a row exists for each app
+        // this session loaded and carries THAT app's package id, and an id nobody loaded has
+        // no row at all. A provider that returned one row for every key, or answered a
+        // constant, fails here.
+        NavApp.GetCurrentModuleInfo(Mi);
+        PublishedApplication.SetRange(ID, Mi.Id());
+        PublishedApplication.FindFirst();
+        Rpid := PublishedApplication."Runtime Package ID";
+
+        Assert.IsTrue(NavAppExtra.Get(Rpid),
+            'NAV App Extra must have a row for an app this session loaded.');
+        Assert.AreEqual(PublishedApplication."Package ID", NavAppExtra."Package ID",
+            'The NAV App Extra row must carry the same package id as the published row, not a second value.');
+        Assert.IsTrue(NavAppExtra."Tenant Visible", 'The row itself must carry Tenant Visible true, not just the FlowField.');
+        Assert.IsTrue(NavAppExtra."PerTenant Or Installed", 'The row itself must carry PerTenant Or Installed true.');
+
+        Assert.IsFalse(NavAppExtra.Get(CreateGuid()),
+            'NAV App Extra must not answer for a runtime package id nothing was loaded under.');
+
+        // EVERY app the runner listed as published must have its own row here, checked row by
+        // row rather than by comparing two counts. Two equal counts prove nothing when both
+        // are 1, and they would also be satisfied by a table carrying the right NUMBER of
+        // rows under the wrong keys - which is the state that makes some apps read true and
+        // others false, from a table that looks the right size.
+        Clear(PublishedApplication);
+        PublishedApplication.FindSet();
+        repeat
+            Clear(NavAppExtra);
+            Assert.IsTrue(
+                NavAppExtra.Get(PublishedApplication."Runtime Package ID"),
+                'Every published app needs its own NAV App Extra row, or that app reads false.');
+            Assert.AreEqual(
+                PublishedApplication."Package ID", NavAppExtra."Package ID",
+                'Each row must carry its own app''s package id, not another app''s.');
+            Assert.IsTrue(NavAppExtra."Tenant Visible", 'Every published app must read visible.');
+            Assert.IsTrue(NavAppExtra."PerTenant Or Installed", 'Every published app must read per-tenant or installed.');
+            SeededCount += 1;
+        until PublishedApplication.Next() = 0;
+
+        // And nothing EXTRA: a row the runner cannot name a published app for would answer
+        // true for an id no Published Application row carries.
+        Clear(NavAppExtra);
+        Assert.AreEqual(SeededCount, NavAppExtra.Count(),
+            'NAV App Extra must carry exactly one row per published app - no more.');
+        Assert.IsTrue(SeededCount > 0, 'The loop above must have checked at least one app.');
     end;
 
     [Test]
