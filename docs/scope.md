@@ -222,7 +222,7 @@ invokes `OnInitReport` → `OnPreReport` → per-DataItem `OnPreDataItem` / `OnP
 
 | API | Reason |
 |---|---|
-| `Debugger.Attach`, `Break`, `StepInto`, etc. | No debug loop. See `docs/limitations.md#no-debugger-infrastructure`. |
+| `Debugger.Attach`, `Break`, `StepInto`, etc. | No debug loop. See `docs/limitations.md#no-debugger-infrastructure--and-bc-itself-has-retired-most-of-the-debugger-api`. |
 
 ### §3.13. NavQuery — RETIRED, NavQuery is in scope <a id="navquery"></a>
 
@@ -238,7 +238,7 @@ The section is kept as a pointer rather than deleted, because refusals raised by
 executor used to cite it and a reader may still arrive here. What remains is a **gap**, not a
 boundary: aggregation ([#2137](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2137))
 and the join sub-shapes the executor cannot take yet — see
-`docs/limitations.md#query-shape-gaps`. Both are tracked work, and the refusals now say so
+`docs/limitations.md#query--joins-aggregation-and-dataset-export-work`. Both are tracked work, and the refusals now say so
 with the `not-yet-implemented` anchor
 ([#2966](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2966)).
 
