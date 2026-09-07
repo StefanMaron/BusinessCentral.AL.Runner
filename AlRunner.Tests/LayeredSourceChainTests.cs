@@ -24,6 +24,8 @@ namespace AlRunner.Tests;
 ///     'LSC Chain Middle' ...: Dependency not found: AL Runner/LSC Chain Base v1.0.0.0
 ///     ... Searched: &lt;platform-apps&gt;, &lt;test-apps&gt;
 /// </code>
+/// (that COMPILE-FAIL rendering is itself #2956, fixed since — a genuinely missing
+/// dependency now reports the provisioning-gap report instead.)
 /// naming an app the runner had written itself one line earlier.
 ///
 /// Two apps was the deepest shape with coverage, and two apps never exercises it: the one
@@ -358,6 +360,15 @@ public class LayeredSourceChainTests
     /// search set is only correct if it stops widening at "what actually exists"; a fix
     /// that made resolution succeed unconditionally would turn this into a green run
     /// with a silently missing dependency.
+    ///
+    /// <para>#2956 changed HOW that failure is rendered, not whether it happens. The
+    /// short one-liner ("Dependency not found: …") these two used to assert was the
+    /// symptom of the wrapper defeating #2095's report; what surfaces now is
+    /// MissingDependencyException.ToDetailedMessage, which names the same missing app in
+    /// the "Missing:" line. The claim under test — absent dependency still fails, and
+    /// says which one — is unchanged; only the string carrying it moved. See
+    /// LayeredPrePassProvisioningReportingTests for the tests that pin the new
+    /// rendering itself.</para>
     /// </summary>
     [SkippableFact]
     public void LayeredPrePass_BaseAppAbsent_FailsNamingTheMissingDependency()
@@ -378,7 +389,7 @@ public class LayeredSourceChainTests
 
         Assert.NotEqual(0, exit);
         Assert.Contains("LSC Chain Base", output);
-        Assert.Contains("Dependency not found", output);
+        Assert.Contains("Missing: AL Runner/LSC Chain Base v1.0.0.0", output);
     }
 
     [SkippableFact]
@@ -404,6 +415,6 @@ public class LayeredSourceChainTests
         var allErrorText = string.Join(" | ", compileErrors.EnumerateArray()
             .SelectMany(g => g.GetProperty("errors").EnumerateArray().Select(e => e.GetString())));
         Assert.Contains("LSC Chain Base", allErrorText);
-        Assert.Contains("Dependency not found", allErrorText);
+        Assert.Contains("Missing: AL Runner/LSC Chain Base v1.0.0.0", allErrorText);
     }
 }

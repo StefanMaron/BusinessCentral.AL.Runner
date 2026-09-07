@@ -497,8 +497,16 @@ internal static class TestDataProvisioner
     /// the way it would on real BC with the row present, and a load-on-read design gets that
     /// case silently wrong.
     ///
-    /// Never throws. A table this build cannot rebuild is reported and left empty — the same
-    /// per-table refusal the eager policy had, just reported at the moment of the touch.
+    /// A table this build cannot rebuild is reported and left empty — the same per-table
+    /// refusal the eager policy had, just reported at the moment of the touch.
+    ///
+    /// ONE exception is deliberately allowed to escape, and it is not a data problem:
+    /// TestDataNormalizationException, raised when a --test-data-normalize-company rule names a
+    /// field the restored rows do not carry (#2730). Catching it here would leave the table
+    /// un-normalized while the run went on to report "normalization ON", which is a wrong
+    /// NUMBER rather than a missing table — the run has to stop. Every other failure is
+    /// per-table and is caught below. This summary used to say "never throws"; it was written
+    /// before the rule set existed and the two had drifted apart.
     /// </summary>
     private static void LoadOnDemand(object source, int tableId)
     {
@@ -605,8 +613,14 @@ internal static class TestDataProvisioner
                 $"table '{entry.TableName}': the reader's JSON could not be parsed ({ex.Message})");
         }
 
+        // #2730: normalize BEFORE the rows become NavValues. This one point covers both the
+        // rows that land in the live store and the `pristineRows` handed to AppendBaselineTable,
+        // so a value cannot be normalized in the store and un-normalized in the snapshot that
+        // replaces it at the next test boundary. A no-op unless --test-data-normalize-company.
+        var toHydrate = TestDataNormalization.Apply(entry.AlTableId.Value, entry.TableName, rows);
+
         return RecordPatches.HydrateTestDataTable(
-            entry.AlTableId.Value, entry.TableName, rows, intoSource, out metaTable, out pristineRows);
+            entry.AlTableId.Value, entry.TableName, toHydrate, intoSource, out metaTable, out pristineRows);
     }
 
     /// <summary>

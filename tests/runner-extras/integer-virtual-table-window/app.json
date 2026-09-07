@@ -1,0 +1,19 @@
+{
+  "id": "3d7c9e25-4b18-4f6a-9c13-2e5b8a0f7d41",
+  "name": "Runner Extras - Integer Virtual Table Window",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issues #2350 and #3376: the Integer system virtual table (2000000026) is computed on demand on the service tier, where IntegerDataProvider clamps every request to [-1000000000..1000000000]. The runner materialises a far smaller window and, until now, answered a request reaching past it with however many rows it happened to hold. This suite pins the runner-specific half: a request past the window throws RunnerOutOfScopeException naming the bound and the window, on every request path, instead of returning a short answer.",
+  "description": "What the Integer table itself answers - that Number 0 and negatives are real rows, that a range filter yields every value in order, that an inverted range matches nothing - is plain BC behaviour and is covered upstream in the al-language corpus (Test Integer Virtual Table, codeunit 60368). This suite deliberately asserts none of that. It asserts only what exists because this is the runner: that the materialised window is not a silent truncation. The default window is -1000..100000 (AL_RUNNER_INTEGER_WINDOW_MAX raises the upper edge), so a filter naming 250000 is past it while staying far inside the +-1e9 bound a service tier would apply.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 64590,
+      "to": 64599
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
