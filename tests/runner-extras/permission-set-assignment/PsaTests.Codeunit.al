@@ -207,10 +207,20 @@ codeunit 65612 "PSA Tests"
     end;
 
     // The positive direction of the same boundary, and the guard against a blanket refusal:
-    // the SESSION'S OWN user is answered, with every direct permission granted, because the
-    // runner's session is SUPER. Without this, "always throw" would pass the test above.
+    // the SESSION'S OWN user is ANSWERED rather than refused. Without this, "always throw"
+    // would pass the test above.
+    //
+    // The runner-specific claim is the one asserted here -- WHICH user gets an answer -- and it
+    // is deliberately all that is asserted. What the mask itself contains on a Table Data object
+    // is plain BC behaviour, so it is pinned upstream where a real service tier adjudicates it,
+    // by corpus codeunit 60702's EffectivePermissions_SuperSession_HoldsTheFourDataRightsButNotExecute
+    // (StefanMaron/BusinessCentral.AL.Language.Tests#269, green and verified executed on all
+    // eight required BC legs). This test previously restated those values locally and asserted
+    // direct Execute = 1 on table data, which is exactly what that upstream measurement says BC
+    // does NOT answer -- a runner-local BC claim inheriting the runner's own error as its
+    // expectation, which .claude/rules/bc-behavior-tests-go-upstream.md exists to prevent.
     [Test]
-    procedure EffectivePermissionsForTheSessionUser_AnswersAllFiveDirectPermissions()
+    procedure EffectivePermissionsForTheSessionUser_IsAnsweredNotRefused()
     var
         EffectivePermissionsMgt: Codeunit "Effective Permissions Mgt.";
         Perm: Record Permission;
@@ -220,19 +230,15 @@ codeunit 65612 "PSA Tests"
           Perm, UserSecurityId(), CopyStr(CompanyName(), 1, 50),
           Perm."Object Type"::"Table Data", DATABASE::"Access Control");
 
+        // Read stands in for "an answer came back at all": it is the one bit that is Yes for a
+        // SUPER session on table data under BOTH the old and the corrected mask, so this asserts
+        // the refusal boundary without re-deciding the BC question settled upstream.
+        //
         // Compared as the option's ORDINAL on both sides. PSA Assert compares Format()ed
         // Variants, and an option LITERAL formats as its number while an option FIELD formats
         // as its caption -- so Format(::Yes) is '1' and Format(the field) is 'Yes', and the
         // two never match however correct the value is.
         Ordinal := Perm."Read Permission";
-        Assert.AreEqual(1, Ordinal, 'the session user has direct Read');
-        Ordinal := Perm."Insert Permission";
-        Assert.AreEqual(1, Ordinal, 'the session user has direct Insert');
-        Ordinal := Perm."Modify Permission";
-        Assert.AreEqual(1, Ordinal, 'the session user has direct Modify');
-        Ordinal := Perm."Delete Permission";
-        Assert.AreEqual(1, Ordinal, 'the session user has direct Delete');
-        Ordinal := Perm."Execute Permission";
-        Assert.AreEqual(1, Ordinal, 'the session user has direct Execute');
+        Assert.AreEqual(1, Ordinal, 'the session user is answered, with direct Read granted');
     end;
 }

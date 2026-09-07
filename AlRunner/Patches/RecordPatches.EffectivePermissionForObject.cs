@@ -54,8 +54,11 @@
 //   NavUserPermissions moves the NRE rather than removing it.
 //
 // WHAT IT ANSWERS, AND WHY THAT IS NOT A NEW CLAIM
-//   `PermissionMask.MaxDirect` (0x1F = Read|Insert|Modify|Delete|Execute) for the session's own
-//   user, which is the mask a SUPER user holds on every object.
+//   For the session's own user, the mask a SUPER user holds on an object of that KIND:
+//   Read|Insert|Modify|Delete on table data, `PermissionMask.MaxDirect` (which adds Execute) on
+//   everything else. Execute gates executable objects, so table data has no Execute right for
+//   even a SUPER session to hold — real BC reports 0 there, measured on eight legs. See
+//   EffectiveMaskFor's remarks for the corpus test that settles it.
 //
 //   That the skeleton session runs as SUPER is not decided here. It is the position this runner
 //   already ships, and every one of these would have to be reversed with it:
@@ -71,10 +74,11 @@
 //       RecordPatches.AccessControlSeed.cs seeds the Access Control row that says so — pinned
 //       upstream by corpus codeunit 60889, green on all eight required BC legs.
 //
-//   Answering anything less than MaxDirect here would make the runner contradict itself: a
-//   record write that VerifyPermissions waves through would be reported by
-//   GetEffectivePermissionForObject as not permitted. MaxDirect is the mask that agrees with
-//   the rest of the runner, and it is what a real BC test tier's SUPER user measures too.
+//   Withholding any of the four DATA rights would make the runner contradict itself: a record
+//   write that VerifyPermissions waves through would be reported by
+//   GetEffectivePermissionForObject as not permitted. Execute is not one of the four and is not
+//   a data operation, so withholding it on table data creates no such contradiction — it is what
+//   a real BC tier answers.
 //
 //   Indirect* bits are deliberately NOT set. They are strictly weaker than their direct
 //   counterparts — "may do this only through another object" — so a user already holding the
@@ -126,9 +130,27 @@ public static partial class RecordPatches
                 + $"state, so what user {userSecurityId} may do to object {objectId} cannot be "
                 + "answered; only the session's own user can. See docs/scope.md");
 
-        // The runner's session is SUPER, so its direct mask on every object is BC's own
-        // MaxDirect (Read|Insert|Modify|Delete|Execute). Stated once, here; see the header for
-        // the four sibling rewrites that already depend on it.
-        return PermissionMask.MaxDirect;
+        // The runner's session is SUPER, so it holds every right the OBJECT KIND has to give.
+        // Execute is not one of them on table data: see EffectiveMaskFor.
+        return EffectiveMaskFor(objectId.ObjectType);
     }
+
+    /// <summary>
+    /// The mask a SUPER session holds on an object of <paramref name="objectType"/>.
+    /// </summary>
+    /// <remarks>
+    /// Execute gates <em>executable</em> objects, so a table-data object has no Execute right for
+    /// even a SUPER session to hold, and real BC reports Permission option <c>" "</c> (0) rather
+    /// than Yes for it. That is measured, not reasoned: corpus codeunit 60702's
+    /// <c>EffectivePermissions_SuperSession_HoldsTheFourDataRightsButNotExecute</c> asks this
+    /// exact call about <c>"Table Data"</c> on table 79 and passed on all eight required BC legs
+    /// of StefanMaron/BusinessCentral.AL.Language.Tests#269, verified as actually executed rather
+    /// than carried by a green tick. Returning MaxDirect here contradicted that on every leg.
+    ///
+    /// Indirect* bits stay unset — strictly weaker than the direct bits already granted.
+    /// </remarks>
+    private static PermissionMask EffectiveMaskFor(ObjectType objectType)
+        => objectType is ObjectType.TableData or ObjectType.LimitedUsageTableData
+            ? PermissionMask.Read | PermissionMask.Insert | PermissionMask.Modify | PermissionMask.Delete
+            : PermissionMask.MaxDirect;
 }
