@@ -236,6 +236,55 @@ commits after it unpinned keeps the gap honest.
 
 Written by agent stma-auto-1 (automated implementation agent).
 
+## 2026-09-07 — corpus pin `0bbe376` → `ddb9b5ab` (al-language 2915 → 2978)
+
+Eleven commits, and eleven is the minimum, not a choice. This bump exists to consume corpus
+#241 (`ddb9b5ab`, codeunit 60291 `"Test Permissions Mock Lifecyc"`), the upstream half of
+**#3343**. #241 is the corpus **tip**, and corpus history here is linear, so there is no
+prefix that contains it and stops short of the ten commits under it: #229, #230, #231, #232,
+#233, #235, #236, #239, #240, #242. The entry above stopped deliberately at `0bbe376`, the
+last commit before the TestFilter wall; this one crosses that wall because it has to.
+
+2978 is measured, not computed — a full corpus run on this branch at this pin, BC 28.1,
+`--package-cache <platform-apps> --package-cache <test-apps>`: **3007 total across the three
+corpus apps**, of which `al-language` is 2978, `al-language-internals-fixture` 0 and
+`al-language-onprem` 29 (unchanged — nothing in the eleven touches that app). `runner-extras`
+is untouched. The +63 is those eleven commits; corpus #241's own contribution is 3 of it.
+
+**One `default`, not per-version entries, and that was checked rather than assumed.** The only
+preprocessor gate anywhere in `0bbe376..ddb9b5ab` is a single `#if BC27PLUS` in
+`handlers/TestReportSaveAsPdfContent.al`, and `BC27PLUS` is defined on all eight versions the
+matrix knows. So the count is uniform across legs, the same way 2915 was.
+
+### What is declared, and what is deliberately left red
+
+Twelve tests failed on the first run at this pin. Four clusters, and they are not the same
+kind of thing:
+
+| cluster | tests | disposition |
+|---|---|---|
+| cu 60775 partial records (corpus #242) | 4 | **declared** `expect-fail-known-gap` → #3358 |
+| cu 60774 `Report_SaveAs_Pdf_ReturnValueAgreesWithTheBytesInTheStream` (corpus #239) | 1 | **declared** `expect-oos`, reason `report-rendering-external` |
+| cu 60350 TestFilter (corpus #229) | 5 | **left red** — owned by #3316 / PR #3356 |
+| cu 60793 page background task (corpus #240) | 2 | **left red** — owned by #3342 / PR #3345 |
+
+The split is the one rule that matters for a known-gap entry: it may only name an issue that
+stays **open** after the declaring PR merges. #3358 does. #3316 and #3342 do not — both have a
+review-ready PR that closes them — so declaring against either would create an entry that goes
+stale the moment that PR lands, which is exactly the drift `docs/expectations.md` makes loud in
+the other direction. Those seven stay red and this PR is sequenced after both.
+
+The `expect-oos` entry is not a gap at all: RDLC rendering needs an external renderer and is
+permanently out of scope (`docs/scope.md` §3.5.1). Corpus #239 is the second test to reach
+`ReportResultSetProcessorFactory.GetRdlcResultSetProcessor`; it sits beside the entry that was
+already there for cu 60878.
+
+After the five declarations, the run reports **3007 total, 3000 pass (4 `pass-oos`,
+15 `pass-known-gap`), 7 fail**, and `--expectations-require-match` audits **all 20 entries
+matched a discovered test**.
+
+Written by agent fbk-1 (automated implementation agent).
+
 ## runner-extras
 
 ### object-metadata-system-table 4 -> 6 (PR for #2771)

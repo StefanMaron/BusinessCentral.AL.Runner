@@ -1,0 +1,34 @@
+[
+  {
+    "codeunitId": 60775,
+    "CodeunitName": "Test Record Partial Load",
+    "Method": "PartialLoad_SetLoadFieldsNoArgs_ResetsToFullLoad",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3358",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to ddb9b5ab to consume StefanMaron/BusinessCentral.AL.Language.Tests#241 (the upstream half of #3343), and corpus master had meanwhile merged ten other PRs on top of the previous pin -- corpus history is linear, so #241 cannot be taken without them. Record.AreFieldsLoaded answers true for every field, always: the runner loads whole rows and has no partial load set, so each of these four fails on its PRECONDITION (the arrange step establishing that a field is not loaded), not on the behaviour it is about. Note what is NOT broken: reading an omitted field yields its real stored value here, which is what BC does too -- SetLoadFields is a performance hint, never a data filter. Tracked as #3358, which is open and is NOT closed by this PR; the fix for it removes this file."
+  },
+  {
+    "codeunitId": 60775,
+    "CodeunitName": "Test Record Partial Load",
+    "Method": "PartialLoad_ReadOmittedField_JitLoadsRealValue",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3358",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to ddb9b5ab to consume StefanMaron/BusinessCentral.AL.Language.Tests#241 (the upstream half of #3343), and corpus master had meanwhile merged ten other PRs on top of the previous pin -- corpus history is linear, so #241 cannot be taken without them. Record.AreFieldsLoaded answers true for every field, always: the runner loads whole rows and has no partial load set, so each of these four fails on its PRECONDITION (the arrange step establishing that a field is not loaded), not on the behaviour it is about. Note what is NOT broken: reading an omitted field yields its real stored value here, which is what BC does too -- SetLoadFields is a performance hint, never a data filter. Tracked as #3358, which is open and is NOT closed by this PR; the fix for it removes this file."
+  },
+  {
+    "codeunitId": 60775,
+    "CodeunitName": "Test Record Partial Load",
+    "Method": "PartialLoad_CurrentKeyFields_AreForceLoaded",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3358",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to ddb9b5ab to consume StefanMaron/BusinessCentral.AL.Language.Tests#241 (the upstream half of #3343), and corpus master had meanwhile merged ten other PRs on top of the previous pin -- corpus history is linear, so #241 cannot be taken without them. Record.AreFieldsLoaded answers true for every field, always: the runner loads whole rows and has no partial load set, so each of these four fails on its PRECONDITION (the arrange step establishing that a field is not loaded), not on the behaviour it is about. Note what is NOT broken: reading an omitted field yields its real stored value here, which is what BC does too -- SetLoadFields is a performance hint, never a data filter. Tracked as #3358, which is open and is NOT closed by this PR; the fix for it removes this file."
+  },
+  {
+    "codeunitId": 60775,
+    "CodeunitName": "Test Record Partial Load",
+    "Method": "PartialLoad_FilteredFields_AreForceLoaded",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3358",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to ddb9b5ab to consume StefanMaron/BusinessCentral.AL.Language.Tests#241 (the upstream half of #3343), and corpus master had meanwhile merged ten other PRs on top of the previous pin -- corpus history is linear, so #241 cannot be taken without them. Record.AreFieldsLoaded answers true for every field, always: the runner loads whole rows and has no partial load set, so each of these four fails on its PRECONDITION (the arrange step establishing that a field is not loaded), not on the behaviour it is about. Note what is NOT broken: reading an omitted field yields its real stored value here, which is what BC does too -- SetLoadFields is a performance hint, never a data filter. Tracked as #3358, which is open and is NOT closed by this PR; the fix for it removes this file."
+  }
+]
