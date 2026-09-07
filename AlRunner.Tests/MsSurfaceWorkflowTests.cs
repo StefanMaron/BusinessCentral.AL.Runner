@@ -122,6 +122,21 @@ public sealed class MsSurfaceWorkflowTests
     private static string CodeOnly(string text) =>
         string.Join('\n', text.Split('\n').Where(l => !l.TrimStart().StartsWith('#')));
 
+    /// <summary>
+    /// One named step's text, from its <c>- name:</c> line to the next step's. Assertions
+    /// about ORDER need this: <c>ms-bucket.yml</c> has two <c>for bucket in …</c> loops, so an
+    /// index taken over the whole file answers a question about the FETCH loop while reading
+    /// like a question about the run loop.
+    /// </summary>
+    private static string StepBody(string code, string stepName)
+    {
+        const string marker = "      - name: ";
+        var start = code.IndexOf(marker + stepName, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"no step named \"{stepName}\" in the workflow");
+        var next = code.IndexOf(marker, start + marker.Length, StringComparison.Ordinal);
+        return next < 0 ? code[start..] : code[start..next];
+    }
+
     private static IReadOnlyList<string> SurfaceBuckets() =>
         WorkflowBlockScalar.Of(CodeOnly(Read(SurfaceWorkflow)), "buckets");
 
@@ -324,33 +339,52 @@ public sealed class MsSurfaceWorkflowTests
 
     /// <summary>
     /// Each bucket's numbers reach the job summary and the run's annotations BEFORE the next
-    /// bucket starts, and the combined total comes after the loop. This is what makes a single
-    /// job safe at a 360-minute ceiling that cannot be raised: a design whose failure mode is
-    /// "the job was killed, so you get nothing" is the argument for sharding, and reporting as
-    /// it goes removes it far more cheaply than a matrix does.
+    /// bucket starts. This is the property the whole single-job design rests on: a hosted job
+    /// cannot run past 360 minutes and that ceiling cannot be raised, so "the job was killed,
+    /// so you get nothing" must not be the failure mode. Reporting as it goes removes it far
+    /// more cheaply than sharding does.
     ///
-    /// Asserted as an ORDER, because that is the actual claim — a summary step placed after the
-    /// loop would contain all the same strings and report nothing until the end.
+    /// The assertion is that the reporting call sits INSIDE the loop — between the `for` and
+    /// its `done` — not merely somewhere after the loop began. An earlier version of this test
+    /// compared indices against the loop's START, and a reviewer showed it passing on the exact
+    /// regression it claims to catch: reporting moved into a second loop after `done`, which
+    /// reports everything at the end and nothing during the run. `done` is also after the
+    /// loop's start, so that arrangement satisfied the old comparison with 24 green tests.
+    ///
+    /// Two loops named `for bucket in "${BUCKET_LIST[@]}"` exist in the file — the fetch step
+    /// has one too, and it comes FIRST — so this reads indices inside the run step's own body
+    /// rather than over the whole file. The old version did not, which made it weaker still
+    /// than the paragraph above admits: it was satisfied by anything after the FETCH loop.
     /// </summary>
     [Fact]
     public void BucketWorkflow_ReportsEachBucketBeforeTheNextOneStarts()
     {
         var code = CodeOnly(Read(BucketWorkflow));
+        var runStep = StepBody(code, "Run the bucket(s)");
 
-        var loop = code.IndexOf("for bucket in \"${BUCKET_LIST[@]}\"", StringComparison.Ordinal);
-        var perBucket = code.IndexOf("ms-bucket-summary.py", StringComparison.Ordinal);
+        var loop = runStep.IndexOf("for bucket in \"${BUCKET_LIST[@]}\"", StringComparison.Ordinal);
+        Assert.True(loop >= 0, "the bucket loop is gone from the run step");
+        var done = runStep.IndexOf("\n          done", loop, StringComparison.Ordinal);
+        Assert.True(done > loop, "the bucket loop in the run step never closes");
+
+        var perBucket = runStep.IndexOf("ms-bucket-summary.py", StringComparison.Ordinal);
+        Assert.True(perBucket > loop && perBucket < done,
+            "ms-bucket-summary.py must be called INSIDE the bucket loop, between `for` and "
+            + "`done`. After `done` it reports every bucket only once the whole run has "
+            + "finished, so a job killed at the 360-minute ceiling carries away every number "
+            + "it had already measured — the failure mode this design exists to avoid.");
+
+        // The combined total is the opposite: once, after the loop, in its own step.
         var combined = code.IndexOf("ms-bucket-total.py", StringComparison.Ordinal);
+        Assert.True(combined > code.IndexOf(runStep, StringComparison.Ordinal) + runStep.Length,
+            "the combined total belongs after the run step, not inside it");
+        Assert.DoesNotContain("ms-bucket-total.py", runStep, StringComparison.Ordinal);
 
-        Assert.True(loop >= 0, "the bucket loop is gone");
-        Assert.True(perBucket > loop,
-            "ms-bucket-summary.py must run INSIDE the loop, so a killed job still carries every "
-            + "finished bucket's numbers");
-        Assert.True(combined > perBucket, "the combined total comes after the per-bucket summaries");
         // The per-bucket append target, and the live annotation that survives a step the
         // runner never got to finalise — a step summary is written out when its step ENDS, and
         // here the whole run is one step.
-        Assert.Contains("--step-summary \"$GITHUB_STEP_SUMMARY\"", code, StringComparison.Ordinal);
-        Assert.Contains("--notice", code, StringComparison.Ordinal);
+        Assert.Contains("--step-summary \"$GITHUB_STEP_SUMMARY\"", runStep, StringComparison.Ordinal);
+        Assert.Contains("--notice", runStep, StringComparison.Ordinal);
         Assert.Contains("::notice title=",
             File.ReadAllText(Path.Combine(RepoRoot, "scripts", "ms-bucket-summary.py")),
             StringComparison.Ordinal);

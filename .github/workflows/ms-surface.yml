@@ -11,23 +11,17 @@ name: MS surface (manual)
 #
 # ─── ONE JOB, NOT A MATRIX ───────────────────────────────────────────────────────────────────
 #
-# The surface is ~90 minutes of execution at the measured 142 ms/test, so call it 2.5-3.3 hours
-# on a hosted 4-vCPU runner plus provisioning paid once. ms-bucket.yml's timeout-minutes is 360
-# — the hosted maximum, which cannot be raised — so one runner fits with real margin.
+# The surface is ~3 hours on a hosted runner and ms-bucket.yml's timeout-minutes is 360, the
+# hosted maximum, so one runner fits. Sharding it six ways was designed and rejected: it buys
+# about two hours and costs six queue slots and six provisionings out of an Actions queue that
+# is per-ACCOUNT and shared with the corpus repository and with every open PR's CI. The full
+# argument is in #3409.
 #
-# Sharding six ways was designed and rejected. It would take roughly 3 hours down to 1, and cost
-# six queue slots, six provisionings (.github/actions/provision-bc has no actions/cache, so
-# every job re-downloads and rebuilds — 10-15 minutes each) and three pieces of machinery to
-# maintain. GitHub Actions concurrency is per-ACCOUNT and shared with the corpus repository and
-# with every open PR's own CI, so those five extra runners are taken from work that gates
-# merges. For a manually dispatched measurement that trade is not worth it.
-#
-# What made a single job tempting to shard was its failure mode: hit the 360-minute ceiling and
-# you get nothing. That is removed rather than traded around — every bucket's numbers go to the
-# job summary AND out as a workflow annotation the moment that bucket finishes, and the results
-# artifact is uploaded with if: always(). A run killed at the ceiling still hands over every
-# bucket that completed. Incremental reporting is much cheaper than a matrix, and it is the
-# reason one job is safe here.
+# What made sharding tempting was this job's failure mode — hit the ceiling and you get
+# nothing. That is removed rather than traded around: every bucket's numbers go to the job
+# summary AND out as a workflow annotation the moment that bucket finishes, and the results
+# artifact uploads with if: always(). A run killed at the ceiling still hands over every bucket
+# that completed. AlRunner.Tests/MsSurfaceWorkflowTests.cs holds that property in place.
 #
 # ─── WHAT IT REUSES ──────────────────────────────────────────────────────────────────────────
 #
@@ -102,9 +96,13 @@ jobs:
       expected-tests: 40530
       bc-version: ${{ inputs.bc-version }}
       test-data: ${{ inputs.test-data }}
-      # Ordered biggest first: Tests-ERM and Tests-SCM are 44% of the surface between them, and
-      # if anything is going to be lost to the 360-minute ceiling it should be the small tail,
-      # not the two buckets everything else is compared against.
+      # Tests-ERM (9,496) and Tests-SCM (8,524) lead deliberately: 44% of the 40,530 between
+      # them, measured on the 28.1.49838.53507 artifact (#3409), so if anything is lost to the
+      # 360-minute ceiling it should not be the two buckets everything else is compared
+      # against. The remaining 30 are in #3409's grouping order and are NOT ranked by size —
+      # per-bucket counts for them were never measured, so no ordering claim is made about
+      # them. The combined-total table reports each bucket's wall time, which is what a future
+      # ordering should be based on.
       buckets: |
         Tests-ERM
         Tests-SCM

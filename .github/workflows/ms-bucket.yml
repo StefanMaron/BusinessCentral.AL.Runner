@@ -20,8 +20,7 @@ name: MS bucket (manual)
 #   Each bucket's numbers are written to the job summary and emitted as a workflow
 #   annotation BEFORE the next bucket starts. A hosted job cannot run longer than 360
 #   minutes and that ceiling cannot be raised, so a long list must not have "the job was
-#   killed, so you get nothing" as its failure mode. Reporting as it goes is what makes one
-#   job safe here, and it is far cheaper than sharding across six.
+#   killed, so you get nothing" as its failure mode.
 #
 # This is a VERIFICATION NET, not a gate:
 #   * `on: workflow_dispatch` only. No push, no pull_request, no schedule. A 9,500-test
@@ -167,6 +166,14 @@ on:
         type: string
         required: false
         default: ''
+      expected-tests:
+        description: >-
+          How many tests this set of buckets is expected to hold; 0 = do not compare. Set it on
+          a partial-surface dispatch too — without it the shortfall warning is off, and a bundle
+          lost to COMPILE FAIL vanishes from the totals rather than failing them (#2715).
+        type: number
+        required: false
+        default: 0
       bc-version:
         description: >-
           BC build: a full four-part build (28.4.53241.54318) or a prefix (28.4) resolved to

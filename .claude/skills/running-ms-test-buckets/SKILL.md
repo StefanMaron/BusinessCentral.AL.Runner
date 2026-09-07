@@ -5,8 +5,15 @@ description: Run Microsoft's BaseApp test buckets through AL Runner to find real
 
 # Running Microsoft's BaseApp test buckets
 
-Microsoft ships 33 test buckets inside the BC artifact — about **40,550 tests** — and they run
-through AL Runner as ordinary bundles, with no container. That makes them the largest supply of
+Microsoft ships **34 `Tests-*` buckets** inside the BC artifact, 32 of them non-empty, holding
+**40,530 `[Test]` methods** — counted per bucket on the 28.1.49838.53507 platform artifact
+(#3409). They run through AL Runner as ordinary bundles, with no container.
+
+Older notes in this repository say "about 40,550", and three of them stay that way on purpose:
+`ParallelFanOut.cs` and the two `ParallelFanOut*TimeoutTests` describe one specific past run
+("a 40,550-test run down to 14,856"), and rewriting a recorded measurement to match a later
+count would falsify it. 40,530 is the counted figure for the artifact; 40,550 is what that run
+totalled. That makes them the largest supply of
 real, un-guessed work available: every failure is a concrete difference between the runner and
 what Microsoft's own tests expect.
 
