@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60411,
+    "CodeunitName": "SVM Tests",
+    "Method": "SetValue_WithTheSameValue_DoesNotRunOnModify",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3055",
+    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #271 (2a89f13), which added this test. A TestPage SetValue writing back the value the field already held runs OnModify once in the runner; real BC does not run it at all. Tracked as #3055, which is open and is NOT closed by this PR; open PR #3427 fixes it and removes this entry."
+  }
+]

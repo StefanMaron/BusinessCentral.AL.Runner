@@ -16,6 +16,8 @@
 //
 // Split like ReleaseTestParityTests: WorkflowTriggers.TriggersOf is a pure function proven
 // on constructed text; the rest wires it (and the marker checks) to the real files on disk.
+using System.Globalization;
+using AlRunner.Infrastructure;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -53,6 +55,170 @@ internal static class WorkflowTriggers
     }
 }
 
+internal static class WorkflowInputDefaults
+{
+    /// <summary>
+    /// Every <c>default:</c> declared for an input of the given name, one entry per
+    /// declaration — a workflow that offers both <c>workflow_call</c> and
+    /// <c>workflow_dispatch</c> declares its inputs twice, and an input added to only one of
+    /// them resolves to the empty string on the other trigger. Empty when the input is absent,
+    /// so callers must assert a COUNT before comparing values.
+    /// </summary>
+    internal static IReadOnlyList<string> Of(string workflowText, string inputName)
+    {
+        var lines = workflowText.Replace("\r\n", "\n").Split('\n');
+        var found = new List<string>();
+        var keyIndent = -1;
+        foreach (var raw in lines)
+        {
+            var line = raw.TrimEnd();
+            if (line.Length == 0) continue;
+            var trimmed = line.TrimStart();
+            if (trimmed.StartsWith('#')) continue;
+            var indent = line.Length - trimmed.Length;
+
+            if (keyIndent < 0)
+            {
+                if (trimmed == inputName + ":") keyIndent = indent;
+                continue;
+            }
+            if (indent <= keyIndent) { keyIndent = trimmed == inputName + ":" ? indent : -1; continue; }
+            if (trimmed.StartsWith("default:", StringComparison.Ordinal))
+                found.Add(trimmed["default:".Length..].Trim());
+        }
+        return found;
+    }
+}
+
+internal static class BashArrayLiteral
+{
+    /// <summary>
+    /// The inside of EVERY bash array literal <c>name=( … )</c> in the script, newline-joined
+    /// and parenthesis-matched rather than terminated by a string. An assertion about what the
+    /// runner is invoked WITH has to be scoped to the arrays it is invoked with — a flag named
+    /// in a comment, an <c>echo</c>, or a sibling <c>args+=(</c> guarded by an <c>if</c> is not
+    /// the same claim. Empty when there is no such literal.
+    ///
+    /// It reads every literal, not the first, because a NEGATIVE reading is load-bearing here:
+    /// "the flag must not be in the unconditional array" is what keeps the input's <c>false</c>
+    /// default from being decorative. A first-match reader supports a positive claim perfectly
+    /// well — #3443 asserted <c>--test-timeout</c> IS present and was right — but scoped to a
+    /// subset it silently PERMITS what a negative claim forbids everywhere else. Reviewed on
+    /// #3453: keeping the conditional append exactly as shipped and adding a second literal,
+    /// <c>args=( "${args[@]}" --test-data-normalize-company )</c>, turns the flag on for every
+    /// caller including the nightly and left the whole pinned suite green.
+    /// </summary>
+    internal static string Of(string script, string name)
+    {
+        var marker = name + "=(";
+        var bodies = new List<string>();
+        for (var open = script.IndexOf(marker, StringComparison.Ordinal); open >= 0;
+             open = script.IndexOf(marker, open + marker.Length, StringComparison.Ordinal))
+        {
+            // `MY_args=(` is a different array from `args=(`, and matching it would let a
+            // negative assertion fail on text it does not govern.
+            if (open > 0 && (char.IsLetterOrDigit(script[open - 1]) || script[open - 1] == '_'))
+                continue;
+            var i = open + name.Length + 1;      // at the '('
+            var depth = 0;
+            for (var j = i; j < script.Length; j++)
+            {
+                if (script[j] == '(') depth++;
+                else if (script[j] == ')' && --depth == 0) { bodies.Add(script[(i + 1)..j]); break; }
+            }
+            // An unbalanced literal contributes nothing — the caller's assertion says so.
+        }
+        return string.Join('\n', bodies);
+    }
+}
+
+internal static class BashIfBlock
+{
+    /// <summary>
+    /// The body of <c>if &lt;condition&gt;; then … fi</c>, up to the <c>fi</c> that closes it
+    /// rather than the first one seen, so a nested <c>if</c> does not end the block early.
+    /// Empty when no such block exists.
+    ///
+    /// An index comparison is NOT this claim. <c>Assert.True(inner &gt; outer)</c> is satisfied
+    /// by text sitting after the block's closing <c>fi</c>, so it pins ORDER and reads like it
+    /// pins NESTING — reviewed on #3453, where moving the append out of the block with its
+    /// guard and body unchanged left the suite green.
+    /// </summary>
+    internal static string BodyOf(string script, string condition)
+    {
+        var lines = script.Replace("\r\n", "\n").Split('\n');
+        var opener = "if " + condition + "; then";
+        var start = -1;
+        var depth = 0;
+        var body = new List<string>();
+        for (var k = 0; k < lines.Length; k++)
+        {
+            var line = lines[k].Trim();
+            if (start < 0)
+            {
+                if (line == opener) { start = k; depth = 1; }
+                continue;
+            }
+            if (line.StartsWith("if ", StringComparison.Ordinal)) depth++;
+            else if (line == "fi" && --depth == 0) return string.Join('\n', body);
+            body.Add(lines[k]);
+        }
+        return string.Empty;                 // absent, or never closed
+    }
+}
+
+internal static class BashConditionalAppend
+{
+    /// <summary>
+    /// Every <c>name+=( … )</c> in a script, paired with the condition of the nearest
+    /// <c>if …; then</c> above it — parenthesis-matched for the same reason
+    /// <see cref="BashArrayLiteral.Of"/> is: a flag named in a comment, an <c>echo</c> or an
+    /// input's own description is not the claim "the runner is invoked with it".
+    ///
+    /// A SWITCH cannot be asserted with <see cref="BashArrayLiteral.Of"/> at all. It carries no
+    /// value, so it has to be appended under a condition rather than sit in the unconditional
+    /// literal — and that literal is precisely what <c>Of</c> reads and a conditional append is
+    /// precisely what it excludes. Pairing the append with its guard is what makes "turning the
+    /// input on is what puts the flag on the command line" a falsifiable claim rather than a
+    /// substring search that a comment would satisfy.
+    /// </summary>
+    internal static IReadOnlyList<(string Condition, string Body)> Of(string script, string name)
+    {
+        var found = new List<(string, string)>();
+        var marker = name + "+=(";
+        for (var open = script.IndexOf(marker, StringComparison.Ordinal); open >= 0;
+             open = script.IndexOf(marker, open + marker.Length, StringComparison.Ordinal))
+        {
+            var i = open + marker.Length - 1;    // at the '('
+            var depth = 0;
+            var body = string.Empty;
+            for (var j = i; j < script.Length; j++)
+            {
+                if (script[j] == '(') depth++;
+                else if (script[j] == ')' && --depth == 0) { body = script[(i + 1)..j]; break; }
+            }
+            found.Add((ConditionAbove(script, open), body.Trim()));
+        }
+        return found;
+    }
+
+    /// <summary>The nearest <c>if …; then</c> line above <paramref name="index"/>, stripped to
+    /// its condition. Empty when there is none, so an unconditional append is distinguishable
+    /// from a guarded one instead of both reading the same.</summary>
+    private static string ConditionAbove(string script, int index)
+    {
+        var lines = script[..index].Replace("\r\n", "\n").Split('\n');
+        for (var k = lines.Length - 1; k >= 0; k--)
+        {
+            var line = lines[k].Trim();
+            if (!line.StartsWith("if ", StringComparison.Ordinal)) continue;
+            var then = line.LastIndexOf("; then", StringComparison.Ordinal);
+            return (then < 0 ? line[3..] : line[3..then]).Trim();
+        }
+        return string.Empty;
+    }
+}
+
 public sealed class MsBucketWorkflowTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -65,6 +231,14 @@ public sealed class MsBucketWorkflowTests
     private const string SharedMatrix = "bc-tests.yml";
     private const string ProvisionAction = "actions/provision-bc/action.yml";
     private const string ProvisionMarker = "uses: ./.github/actions/provision-bc";
+
+    /// <summary>
+    /// The per-test watchdog these workflows run with, in seconds (#3431). A constant, so
+    /// changing the number is a deliberate edit here with a reason, rather than a value that
+    /// drifted. 300 covers the hosted runner's slowdown and still catches the unbounded-loop
+    /// class the watchdog exists for: #3374's MaxIteration loops finished at no timeout at all.
+    /// </summary>
+    private const int WorkflowTestTimeoutSeconds = 300;
 
     private static string Read(string relative)
     {
@@ -106,6 +280,146 @@ public sealed class MsBucketWorkflowTests
         Assert.Empty(WorkflowTriggers.TriggersOf("name: X\njobs:\n  run:\n    runs-on: ubuntu-latest\n"));
         Assert.Equal(new[] { "workflow_dispatch" },
             WorkflowTriggers.TriggersOf("on:\n  # push: would be wrong here\n  workflow_dispatch:\n"));
+    }
+
+    [Fact]
+    public void InputDefaults_FindsEveryDeclarationOfOneInput_AndNothingElses()
+    {
+        const string wf = """
+            on:
+              workflow_call:
+                inputs:
+                  test-timeout:
+                    type: number
+                    default: 300
+                  test-data:
+                    type: boolean
+                    default: true
+              workflow_dispatch:
+                inputs:
+                  test-timeout:
+                    description: >-
+                      Two declarations of one input is normal, and they can disagree.
+                    type: number
+                    default: 120
+            """;
+
+        Assert.Equal(new[] { "300", "120" }, WorkflowInputDefaults.Of(wf, "test-timeout"));
+        Assert.Equal(new[] { "true" }, WorkflowInputDefaults.Of(wf, "test-data"));
+        Assert.Empty(WorkflowInputDefaults.Of(wf, "bc-version"));
+    }
+
+    [Fact]
+    public void BashArrayLiteral_ReadsOnlyTheArraysOwnContents()
+    {
+        const string script = """
+            echo "--test-timeout is not set here"
+            args=( "$BUNDLE"
+                   --cache "$C"
+                   --test-timeout "$T" )
+            if [ "$X" = "true" ]; then
+              args+=( --test-data-company "CRONUS International Ltd_" )
+            fi
+            """;
+
+        var array = BashArrayLiteral.Of(script, "args");
+        Assert.Contains("--test-timeout \"$T\"", array, StringComparison.Ordinal);
+        // The echo above it and the conditional append below it are NOT the array.
+        Assert.DoesNotContain("echo", array, StringComparison.Ordinal);
+        Assert.DoesNotContain("--test-data-company", array, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, BashArrayLiteral.Of(script, "nosuch"));
+    }
+
+    /// <summary>
+    /// The property a NEGATIVE assertion needs and a first-match reader cannot give it: every
+    /// literal is read, so "this flag is in no unconditional array" covers all of them. The
+    /// second literal below is the reviewer's break on #3453 — the conditional append left
+    /// exactly as shipped, plus one more <c>args=( … )</c> that turns the flag on for everyone.
+    /// </summary>
+    [Fact]
+    public void BashArrayLiteral_ReadsEveryLiteral_NotOnlyTheFirst()
+    {
+        const string script = """
+            args=( "$BUNDLE" --cache "$C" )
+            if [ "$NORMALIZE_COMPANY" = "true" ]; then
+              args+=( --test-data-normalize-company )
+            fi
+            args=( "${args[@]}" --test-data-normalize-company )
+            """;
+
+        var all = BashArrayLiteral.Of(script, "args");
+        Assert.Contains("--cache \"$C\"", all, StringComparison.Ordinal);
+        Assert.Contains("--test-data-normalize-company", all, StringComparison.Ordinal);
+        // The conditional append is still NOT a literal — that separation is what makes the
+        // shipped workflow's own assertion mean something.
+        Assert.Single(BashConditionalAppend.Of(script, "args"));
+
+        // A different array whose name merely ends in the one asked for is not this array.
+        Assert.Equal("--quiet", BashArrayLiteral.Of("MY_args=( --loud )\nargs=( --quiet )", "args").Trim());
+    }
+
+    /// <summary>
+    /// <see cref="BashIfBlock.BodyOf"/> ends at the <c>fi</c> that closes the block it was
+    /// asked for, not the first one it meets, and text after that <c>fi</c> is outside. That
+    /// second half is the whole point: an index comparison would call it inside.
+    /// </summary>
+    [Fact]
+    public void BashIfBlock_EndsAtItsOwnFi_AndExcludesWhatFollows()
+    {
+        const string script = """
+            if [ "$WITH_TEST_DATA" = "true" ]; then
+              args+=( --test-data-company "CRONUS International Ltd_" )
+              if [ "$NORMALIZE_COMPANY" = "true" ]; then
+                args+=( --test-data-normalize-company )
+              fi
+            fi
+            args+=( --after-the-block )
+            """;
+
+        var body = BashIfBlock.BodyOf(script, "[ \"$WITH_TEST_DATA\" = \"true\" ]");
+        Assert.Contains("--test-data-normalize-company", body, StringComparison.Ordinal);
+        Assert.Contains("--test-data-company", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("--after-the-block", body, StringComparison.Ordinal);
+
+        // The inner block is addressable on its own terms, and an absent condition is empty
+        // rather than "everything from here on".
+        Assert.Equal("args+=( --test-data-normalize-company )",
+            BashIfBlock.BodyOf(script, "[ \"$NORMALIZE_COMPANY\" = \"true\" ]").Trim());
+        Assert.Equal(string.Empty, BashIfBlock.BodyOf(script, "[ \"$NOPE\" = \"true\" ]"));
+    }
+
+    [Fact]
+    public void BashConditionalAppend_PairsEachAppendWithItsGuard_AndIgnoresProseNamingTheFlag()
+    {
+        const string script = """
+            # --test-data-normalize-company belongs in a comment and must not count as an append.
+            echo "would run with --test-data-normalize-company"
+            args=( "$BUNDLE" --cache "$C" )
+            if [ "$WITH_TEST_DATA" = "true" ]; then
+              args+=( "--test-data=$bak" --test-data-company "CRONUS International Ltd_" )
+              if [ "$NORMALIZE_COMPANY" = "true" ]; then
+                args+=( --test-data-normalize-company )
+              fi
+            fi
+            """;
+
+        var appends = BashConditionalAppend.Of(script, "args");
+        Assert.Equal(2, appends.Count);
+        Assert.Equal("[ \"$WITH_TEST_DATA\" = \"true\" ]", appends[0].Condition);
+        Assert.Contains("--test-data-company", appends[0].Body, StringComparison.Ordinal);
+        Assert.Equal("[ \"$NORMALIZE_COMPANY\" = \"true\" ]", appends[1].Condition);
+        Assert.Equal("--test-data-normalize-company", appends[1].Body);
+
+        // The comment and the echo name the same flag and are not appends; the unconditional
+        // literal is a different claim again and holds neither flag.
+        Assert.DoesNotContain(appends, a => a.Body.Contains("echo", StringComparison.Ordinal));
+        Assert.DoesNotContain("--test-data-normalize-company", BashArrayLiteral.Of(script, "args"),
+            StringComparison.Ordinal);
+        Assert.Empty(BashConditionalAppend.Of(script, "nosuch"));
+
+        // An append with no `if` above it reports an empty condition rather than borrowing one.
+        Assert.Equal(string.Empty,
+            Assert.Single(BashConditionalAppend.Of("args+=( --quiet )", "args")).Condition);
     }
 
     // ---- wired to the real files ------------------------------------------------------
@@ -292,6 +606,200 @@ public sealed class MsBucketWorkflowTests
         Assert.DoesNotContain("gh release view", code, StringComparison.Ordinal);
         // The download still uses the tag, so pinning cannot silently stop pinning.
         Assert.Contains("gh release download \"$tag\"", code, StringComparison.Ordinal);
+    }
+
+    // ---- the per-test watchdog (#3431) -------------------------------------------------
+
+    /// <summary>
+    /// #3431: the workflow set no timeout at all, so the runner's 60 s wall-clock default
+    /// applied on a hosted runner and aborted tests that finish comfortably inside it locally.
+    ///
+    /// Three links, asserted separately, because checking any one of them alone passes on the
+    /// defect this test exists to catch:
+    ///
+    ///   1. the INPUT reaches a shell variable. Bound to a literal instead, the input would be
+    ///      decorative and a caller's override would go nowhere.
+    ///   2. that variable is INSIDE the runner's argument array — not in a comment, an
+    ///      <c>echo</c>, or the conditional <c>args+=( … )</c> that a false <c>test-data</c>
+    ///      skips. This is the link that fails when the flag is dropped while the input stays,
+    ///      which is precisely the "a check that cannot fail" shape: an input that exists and
+    ///      reaches nothing.
+    ///   3. that array is what the runner is invoked with.
+    ///
+    /// The shell variable is deliberately NOT called <c>AL_RUNNER_TEST_TIMEOUT_SEC</c>, which
+    /// the runner reads on its own: under that name link 2 could be deleted and the timeout
+    /// would still apply, so nothing here could tell the difference. That the flag itself
+    /// works is <c>TestTimeoutFlagTests</c>'s claim, proven against the runner; this file's
+    /// claim is only that the workflow supplies it.
+    /// </summary>
+    [Fact]
+    public void MsBucketWorkflow_PutsThePerTestTimeoutOnTheRunnersArgumentArray()
+    {
+        var code = CodeOnly(Read(Path.Combine("workflows", Workflow)));
+        var runStep = WorkflowStep.BodyOf(code, "Run the bucket(s)");
+
+        Assert.Contains("TEST_TIMEOUT_SEC: ${{ inputs.test-timeout }}", runStep, StringComparison.Ordinal);
+
+        var args = BashArrayLiteral.Of(runStep, "args");
+        Assert.False(string.IsNullOrWhiteSpace(args),
+            "the runner's `args=( … )` array is gone from the \"Run the bucket(s)\" step");
+        Assert.Contains("--test-timeout \"$TEST_TIMEOUT_SEC\"", args, StringComparison.Ordinal);
+
+        Assert.Contains("/al-runner\" \"${args[@]}\"", runStep, StringComparison.Ordinal);
+
+        // The guard fails the job once, up front. The runner rejects a bad value itself, but
+        // only after provisioning and each bucket's setup have been paid, once per
+        // invocation. Both halves: the guard is there, and it runs BEFORE the bucket loop.
+        var guard = runStep.IndexOf("::error::test-timeout must be a positive whole number",
+            StringComparison.Ordinal);
+        Assert.True(guard >= 0, "the empty/non-numeric test-timeout guard is gone");
+        Assert.True(guard < runStep.IndexOf("for bucket in \"${BUCKET_LIST[@]}\"", StringComparison.Ordinal),
+            "the test-timeout guard must run before the bucket loop, not inside it");
+    }
+
+    /// <summary>
+    /// The default has to be declared on BOTH trigger blocks and has to be the same number.
+    /// On <c>workflow_call</c> only, a manual dispatch resolves <c>inputs.test-timeout</c> to
+    /// the empty string and the guard above fails the job; on <c>workflow_dispatch</c> only,
+    /// ms-surface.yml and the nightly get nothing. Either way the run is wrong, and a PR check
+    /// is a far cheaper place to find that than a three-hour dispatch.
+    ///
+    /// It is compared against the runner's OWN default rather than a second copy of 60, so the
+    /// relationship stays true if that default ever moves.
+    /// </summary>
+    [Fact]
+    public void MsBucketWorkflow_DefaultsThePerTestTimeoutAboveTheRunnersOwn()
+    {
+        var defaults = WorkflowInputDefaults.Of(Read(Path.Combine("workflows", Workflow)), "test-timeout");
+
+        Assert.Equal(2, defaults.Count);
+        Assert.Single(defaults.Distinct(StringComparer.Ordinal));
+
+        Assert.True(int.TryParse(defaults[0], NumberStyles.None, CultureInfo.InvariantCulture, out var seconds),
+            $"test-timeout's default must be a whole number of seconds, not '{defaults[0]}'");
+        Assert.Equal(WorkflowTestTimeoutSeconds, seconds);
+        Assert.True(seconds > ParallelFanOut.DefaultTestTimeoutSec,
+            $"the workflow's per-test timeout ({seconds}s) must exceed the runner's own default "
+            + $"({ParallelFanOut.DefaultTestTimeoutSec}s) — at or below it the input changes nothing "
+            + "and #3431 is back");
+    }
+
+    /// <summary>
+    /// The nightly runs on the same hosted runner as every other caller, so it wants the same
+    /// watchdog — and gets it by passing nothing and inheriting ms-bucket.yml's default. A
+    /// second spelling of the number here is how the nightly's configuration and the surface's
+    /// would come to differ, which makes their numbers incomparable: the same failure mode as
+    /// the provisioning copy that drifted four times (#1976), one input down.
+    /// </summary>
+    [Fact]
+    public void NightlyWorkflow_InheritsThePerTestTimeout_RatherThanSpellingItAgain()
+    {
+        var code = CodeOnly(Read(Path.Combine("workflows", Nightly)));
+
+        Assert.DoesNotContain("test-timeout", code, StringComparison.Ordinal);
+        Assert.Contains("uses: ./.github/workflows/ms-bucket.yml", code, StringComparison.Ordinal);
+        // And the thing it inherits is real: ms-bucket.yml declares the input with a default,
+        // so "passes nothing" means 300 s, not nothing.
+        Assert.NotEmpty(WorkflowInputDefaults.Of(Read(Path.Combine("workflows", Workflow)), "test-timeout"));
+    }
+
+    // ---- company normalization (#3450, the flag from #2730) ----------------------------
+
+    /// <summary>
+    /// #3450: <c>--test-data-normalize-company</c> shipped on the runner (#2730) with no way
+    /// for any workflow to pass it, so the comparison it was built for could not be run in CI.
+    ///
+    /// The claim is that the flag ARRIVES, which is four separate links — checking any one of
+    /// them alone passes on the defect this exists to catch:
+    ///
+    ///   1. the INPUT reaches a shell variable, so a caller's override goes somewhere;
+    ///   2. the variable GUARDS an append, so the input is what decides;
+    ///   3. the APPENDED text is the flag the runner's own parser accepts, spelled from
+    ///      <see cref="TestDataNormalization.FlagName"/> rather than typed a second time, and
+    ///      carries no value — <c>--test-data-normalize-company false</c> would leave
+    ///      <c>false</c> as a positional argument, which Program.cs adds to the bundle list;
+    ///   4. that array is what the runner is invoked with.
+    ///
+    /// And the negative that keeps every recorded number valid: the flag is NOT in the
+    /// unconditional <c>args=( … )</c> literal. There it would be on for every caller,
+    /// including the nightly, and the input's <c>false</c> default would be decorative.
+    /// </summary>
+    [Fact]
+    public void MsBucketWorkflow_PutsCompanyNormalizationOnTheRunnersArgumentArray_OnlyWhenAskedTo()
+    {
+        var code = CodeOnly(Read(Path.Combine("workflows", Workflow)));
+        var runStep = WorkflowStep.BodyOf(code, "Run the bucket(s)");
+
+        Assert.Contains("NORMALIZE_COMPANY: ${{ inputs.normalize-company }}", runStep,
+            StringComparison.Ordinal);
+
+        var appends = BashConditionalAppend.Of(runStep, "args");
+        var normalize = Assert.Single(appends.Where(
+            a => a.Body.Contains(TestDataNormalization.FlagName, StringComparison.Ordinal)));
+
+        Assert.Equal(TestDataNormalization.FlagName, normalize.Body);
+        Assert.Equal("[ \"$NORMALIZE_COMPANY\" = \"true\" ]", normalize.Condition);
+
+        // In NO unconditional literal — BashArrayLiteral.Of reads every `args=( … )` in the
+        // step, because this negative claim is what keeps the input's false default from being
+        // decorative and a claim scoped to one literal permits the flag in the next one.
+        Assert.DoesNotContain(TestDataNormalization.FlagName,
+            BashArrayLiteral.Of(runStep, "args"), StringComparison.Ordinal);
+
+        Assert.Contains("/al-runner\" \"${args[@]}\"", runStep, StringComparison.Ordinal);
+
+        // Nested INSIDE the --test-data block, which is a containment claim and not an
+        // ordering one: the rule rewrites rows on their way out of the backup, so outside the
+        // block the flag changes nothing while the runner still prints "company normalization
+        // ON" — a line that reads like data was prepared when none was restored.
+        var withTestData = BashIfBlock.BodyOf(runStep, "[ \"$WITH_TEST_DATA\" = \"true\" ]");
+        Assert.False(string.IsNullOrWhiteSpace(withTestData),
+            "the --test-data block is gone from the \"Run the bucket(s)\" step");
+        Assert.Contains(TestDataNormalization.FlagName, withTestData, StringComparison.Ordinal);
+        Assert.Equal(TestDataNormalization.FlagName,
+            Assert.Single(BashConditionalAppend.Of(withTestData, "args")
+                .Where(a => a.Body.Contains(TestDataNormalization.FlagName, StringComparison.Ordinal))).Body);
+
+        Assert.True(runStep.IndexOf("if [ \"$WITH_TEST_DATA\" = \"true\" ]; then", StringComparison.Ordinal)
+                < runStep.IndexOf("\"${args[@]}\"", StringComparison.Ordinal),
+            "the switch must be appended before the runner is invoked");
+    }
+
+    /// <summary>
+    /// The default is OFF on BOTH trigger blocks, and it is the same word on each. Every
+    /// pass/fail number recorded in this repository — the running-ms-test-buckets skill's
+    /// 259/595 for Tests-SMB, #3416's corpus counts, the full-surface runs — was measured
+    /// against the un-normalized restore. A default of <c>true</c> would make all of them
+    /// uncomparable and nothing would announce it; a default on only one trigger would make
+    /// the two spellings disagree, which is the same failure one dispatch at a time.
+    /// </summary>
+    [Fact]
+    public void MsBucketWorkflow_DefaultsCompanyNormalizationOff_OnBothTriggers()
+    {
+        var defaults = WorkflowInputDefaults.Of(
+            Read(Path.Combine("workflows", Workflow)), "normalize-company");
+
+        Assert.Equal(2, defaults.Count);
+        Assert.Equal(new[] { "false", "false" }, defaults);
+    }
+
+    /// <summary>
+    /// The nightly inherits the OFF default by passing nothing. It is the trend line, and every
+    /// point on it so far was measured un-normalized — a second spelling here is both how two
+    /// configurations drift apart (#1976, one input down) and how a series quietly stops being
+    /// comparable with itself.
+    /// </summary>
+    [Fact]
+    public void NightlyWorkflow_InheritsCompanyNormalization_RatherThanSpellingItAgain()
+    {
+        var code = CodeOnly(Read(Path.Combine("workflows", Nightly)));
+
+        Assert.DoesNotContain("normalize-company", code, StringComparison.Ordinal);
+        Assert.Contains("uses: ./.github/workflows/ms-bucket.yml", code, StringComparison.Ordinal);
+        // And what it inherits is real: ms-bucket.yml declares the input with a default, so
+        // "passes nothing" means OFF rather than an empty string.
+        Assert.NotEmpty(WorkflowInputDefaults.Of(
+            Read(Path.Combine("workflows", Workflow)), "normalize-company"));
     }
 
     [Fact]

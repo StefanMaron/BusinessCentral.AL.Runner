@@ -94,6 +94,14 @@ Tests-SMB has no ACY-sensitive assertion; #2730's clusters are in Tests-ERM. Do 
 flat Tests-SMB row as the flag not working — the run reported `1 of 1 row(s) changed (was
 'EUR')` in both cases.
 
+**To measure it across the surface, dispatch `ms-surface.yml` with `normalize-company: true`**
+(#3450). It hands the switch down to `ms-bucket.yml`, which appends
+`--test-data-normalize-company` to the runner's argument array. The input defaults to **false**
+on every path — `ms-surface.yml`, `ms-bucket.yml`'s two trigger blocks, and the nightly, which
+passes nothing and inherits it — so a run that leaves the field alone is still comparable with
+every number here. The nightly deliberately never turns it on: it is the trend line, and each
+point on it was measured un-normalized.
+
 #### The triage rule
 
 When a Microsoft bucket test fails, ask **"is this a data-recipe failure?" before treating it

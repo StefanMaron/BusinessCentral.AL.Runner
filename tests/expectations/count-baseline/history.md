@@ -1586,3 +1586,115 @@ revision of this branch carried are gone, and neither was deleted on a guess:
   the "remove the entry" direction.
 
 Written by the fbk-1 agent.
+
+## 2026-09-07 — corpus pin `69ae7598` → `8678dc2` (al-language 3008 → 3026)
+
+The pin advanced to consume StefanMaron/BusinessCentral.AL.Language.Tests#263, the upstream
+half of #3384 (a TestPage control could not be written with a Date, DateTime or Time in any
+spelling). Corpus history is linear, so the two merged corpus PRs sitting between the old pin
+and #263 came with it, and both contribute tests:
+
+| corpus PR | commit | what it pins | tests |
+|---|---|---|---|
+| #265 | `98eec27` | how far the Integer virtual table reaches, and that an open filter is answered | +3 |
+| #270 | `ce2c3af` | the AL call-depth ceiling, from both sides | +5 |
+| #263 | `8678dc2` | what a TestPage control does with a Date, DateTime or Time (this PR's own upstream test) | +10 |
+
+**3026 is the number the guard itself reported**, not one computed from the old total plus a
+count of added tests (#2803). Measured on BC 28.1.49838.53910; with the bump in place the run
+is 3055/3055 across the three corpus app groups, and re-running against a deliberately wrong
+baseline prints
+`DROP: suite 'al-language' tests count: expected 9999, actual 3026 (BC 28.1)` and exits 4 — so
+the guard is ARMED here rather than silently skipping, and 3026 is its own `actual`.
+
+**Read the suite counts, not the run total.** `--count-baseline` is per suite, and the run
+total 3055 is `al-language` 3026 + `al-language-onprem` 29 + `al-language-internals-fixture` 0.
+Passing the single parent path `tests/al-language` instead of the three app directories CI
+passes (`scripts/corpus-app-dirs.py`) folds all three into one suite called `al-language`, which
+reports 3055 against a 3026 baseline and looks like a 29-test growth that is not there. That
+cost a wrong number on the way to this entry; the invocation to copy is the one in
+`bc-tests.yml`, both `--package-cache` arguments included.
+
+`appGroups` for `al-language` stays **1** for the same reason: it reads 3 under the folded
+invocation and 1 under CI's, and nothing in these three commits adds an app.
+
+Three of the newly-pulled-in tests do not pass yet, both declared `expect-fail-known-gap`
+against issues that stay OPEN after this PR merges:
+
+- `known-gaps-integer-virtual-table.json` — #265's two reach tests, issue #3438. The Integer
+  table is materialised over `[-1000..100000]` while real BC serves `[-1e9..1e9]`. Since #3393
+  the request is refused loudly instead of truncated silently, which is what closed #2350; the
+  remaining reach is #3438 and was filed for this bump.
+- `known-gaps-codeunit-recursion-depth.json` — #270's `RecursionDepth_JustInsideTheCeiling_Completes`,
+  issue #3405. The runner's guard throws at 500 frames where BC's ceiling is 1000, so only the
+  arm sitting between the two ceilings fails; #270's other four pass, which is what identifies
+  the cause.
+
+Written by the fbk-1 agent.
+
+## 3026 → 3057 — pin `8678dc28` → `ccc10f12` (page platform trigger events, #3436 / PR #3445)
+
+Six corpus commits, 31 tests. `ccc10f12` is this PR's own upstream half
+(`StefanMaron/BusinessCentral.AL.Language.Tests`#274, nine tests pinning BC's implicit page
+trigger events); corpus history is linear, so it cannot be taken without #267, #266, #268,
+#269 and #271 sitting under it.
+
+Thirteen of the newly-pulled-in tests do not pass yet. Every one is declared
+`expect-fail-known-gap` against an issue that stays OPEN after this PR merges, and every one
+of those issues already has its own open fix PR whose merge deletes the entry:
+
+- `known-gaps-testpage-draft-line.json` — #266's five `ONRC Tests`, issue #3029, open PR #3414.
+  The runner raises a page's `OnNewRecord` a different number of times than BC for a draft
+  line (`EnterNewRowLine` and the promotion both call `TryNewRecord`).
+- `known-gaps-session-company-information.json` — #269's four
+  `Test Session Comp Info Close`, issue #2382, open PR #3413.
+  `NavUserAccountHelper.GetEffectivePermissionForObject` throws `NullReferenceException` on the
+  skeleton session, whose `Permissions` is null; three of the four reach it through Company
+  Information page 1's `OnOpenPage`.
+- `known-gaps-testpage-samevalue-setvalue.json` — #271's `SetValue_WithTheSameValue_DoesNotRunOnModify`,
+  issue #3055, open PR #3427. A same-value write runs `OnModify` once where BC runs it not at all.
+- `known-gaps-testpage-blank-temporal.json` — #267's
+  `TestPageField_AssertEquals_BlankDateTimeVariable_IsRefusedByAPopulatedControl`, issue #2361,
+  open PR #3410. **Appended to the existing file**, not given one of its own: the drift guard
+  treats a second declaration of the same test as an error, and five siblings of this gap were
+  already declared there.
+- `known-gaps-page-trigger-events.json` — two of #274's own nine, issues #3440 and #3441. These
+  are not the gap this PR fixes: the events now fire and reach their subscriber. They are two
+  separate defects the fix made observable for the first time — a stale `xRec` after a
+  page-driven save, and a page-driven insert deferred until every control is written instead of
+  committing on the key. Both were filed with the corpus test named as their proving test.
+
+The other seven newly-pulled-in tests pass, and nothing that passed before regressed:
+3044 pass / 13 fail, against 3026 pass / 0 fail at the old pin.
+
+Written by the fbk-2 agent.
+
+### 3057 -> 3071 (pin ccc10f12 -> ec8a9c23, PR #3452)
+
+The pin advanced to consume StefanMaron/BusinessCentral.AL.Language.Tests#276, the upstream
+half of #3449 (`[CommitBehavior(...)]` must change what `Commit()` does). Corpus history is
+linear, so one other merged corpus PR came with it:
+
+| corpus PR | commit | what it pins |
+|---|---|---|
+| #275 | `6c6a1d12` | `OnFindRecord`/`OnNextRecord` decide which rows the client walks |
+| #276 | `ec8a9c23` | `CommitBehavior::Ignore` makes `Commit()` a no-op; `::Error` makes it raise |
+
+3071 is the `--count-baseline` guard's own printed `actual` on a full three-app run at the new
+pin, not a computed figure: `expected 3057, actual 3071 (BC 28.1)`.
+
+#276's five all pass with this PR's fix, which is the RED -> GREEN this PR exists to show.
+
+One known-gap file is added, for #275's five:
+
+- `known-gaps-page-find-record.json` — the five `ALT Page Find Record Tests` (codeunit 60679),
+  issue #3439, open PR #3448. A page declaring `OnFindRecord`/`OnNextRecord` serves its own
+  rowset on real BC; the runner never dispatches those triggers and walks the table instead,
+  so the TestPage lands on a different row (`Expected:<L0007> Actual:<L0008>` and siblings).
+  Not caused by this PR and not fixed by it — #3439 stays open after it merges, and #3448
+  removes this file.
+
+Nothing that passed before regressed: 3095 pass / 5 fail, against 3057 pass / 0 fail at the
+old pin. All five failures are the #275 tests declared above.
+
+Written by the fbk-1 agent.
