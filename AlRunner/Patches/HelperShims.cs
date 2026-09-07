@@ -80,6 +80,12 @@ public static partial class BcRuntime
         ReturnEmptyNavTextList_2Args(object? a, object? b)
         => Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavText>.Default;
 
+    // #3328: the family starts at 1, not 2. A no-op replacement for a ZERO-parameter
+    // instance method still forwards one IL arg slot — `this` — so it needs a 1-argument
+    // shim. Without this one, NavDialog.ALUpdateAsync() was given ReturnValueTask2 and the
+    // emitted body pushed one value into a two-parameter call: invalid IL, rejected by the
+    // JIT on first execution, which broke every AL `Dialog.Update()` call.
+    [MethodImpl(MethodImplOptions.NoInlining)] public static System.Threading.Tasks.ValueTask ReturnValueTask1(object? a) => default;
     [MethodImpl(MethodImplOptions.NoInlining)] public static System.Threading.Tasks.ValueTask ReturnValueTask2(object? a, object? b) => default;
     [MethodImpl(MethodImplOptions.NoInlining)] public static System.Threading.Tasks.ValueTask ReturnValueTask3(object? a, object? b, object? c) => default;
     [MethodImpl(MethodImplOptions.NoInlining)] public static System.Threading.Tasks.ValueTask ReturnValueTask4(object? a, object? b, object? c, object? d) => default;
