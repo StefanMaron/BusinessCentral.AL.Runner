@@ -164,13 +164,35 @@ public sealed class CalcFormulaUnresolvedRefusalTests : IDisposable
                 keys { key(PK; "No.") { Clustered = true; } }
             }
             """);
-        RecordPatches.AddSourceDir(srcDir);
-
         var skeleton = AlRunner.BcRuntime.SkeletonNCLMetadata;
         Assert.NotNull(skeleton);
 
-        var parent = RecordPatches.NCLMetadata_GetMetaTableById(skeleton!, ParentTableId, false, 0);
-        Assert.NotNull(parent);
+        // Registered and built up to three times, because `_parsedTables` and the metatable
+        // cache are process-wide: xunit runs collections in parallel, and a class in another
+        // collection calling RecordPatches.ResetForReload can land between the parse and the
+        // build, leaving a table with none of this file's fields on it
+        // (RecordPatchesSerialCollection's own header documents that race as a stopgap, and
+        // #1712 tracks removing the shared statics). Re-registering and rebuilding is the
+        // whole recovery: EnsureTableInMetadataCache rebuilds from `_parsedTables` rather than
+        // handing back the cached instance.
+        NCLMetaTable? parent = null;
+        for (var attempt = 1; attempt <= 3; attempt++)
+        {
+            RecordPatches.AddSourceDir(srcDir);
+            parent = RecordPatches.EnsureTableInMetadataCache(ParentTableId)
+                     ?? RecordPatches.NCLMetadata_GetMetaTableById(skeleton!, ParentTableId, false, 0);
+            if (parent != null
+                && parent.TryGetFieldByNo(ResolvableFlowFieldId, out _)
+                && parent.TryGetFieldByNo(UnresolvableFlowFieldId, out _))
+                return parent;
+        }
+
+        Assert.Fail(
+            $"table {ParentTableId} did not come back carrying both FlowFields after three "
+            + "register-and-rebuild attempts; it has field(s): "
+            + (parent == null
+                ? "<no metatable at all>"
+                : string.Join(", ", parent.Fields.Select(f => $"{f.FieldNo} {f.FieldName}"))));
         return parent!;
     }
 
