@@ -66,12 +66,16 @@
 //   on all eight OnPrem legs, 27.0 through 28.4. There WAS something behind it — a table the
 //   runner had simply never seeded.
 //
-//   Still deliberately NOT filled: "Tenant Visible" and "PerTenant Or Installed" are
+//   Not filled HERE, and correctly so: "Tenant Visible" and "PerTenant Or Installed" are
 //   Lookup FlowFields over "NAV App Extra" (2000000157), which is a VIRTUAL table (System.app
-//   ships it under src/Virtual Tables/), so there is no row for the runner to insert the way
-//   there is for 2000000212. They keep reading as the Boolean default here. What a real tier
-//   reports for them is unmeasured, and is tracked as #3072 rather than asserted from a
-//   reading — which is the mistake this file's own header records two of.
+//   ships it under src/Virtual Tables/), so there is no row to insert into 2000000206 the way
+//   there is for 2000000212. They are answered by a PROVIDER for 2000000157 instead — see
+//   RecordPatches.NavAppExtraVirtualTable.cs (#3072), which builds its rows from this same
+//   loaded-module list and these same AppPackageIdentity values so the two tables cannot
+//   disagree about which app a runtime package id names. Until that provider existed both
+//   columns read the Boolean default for every app, which is the runner saying "no app is
+//   visible to this tenant" — the same false-is-unfalsifiable shape a real tier had already
+//   contradicted for Installed above.
 //
 //   Every other column keeps NCLMetaField.EmptyValue, BC's own per-field default — nothing is
 //   invented. Fields are located by NAME off the metatable at runtime, so a BC metadata change

@@ -74,6 +74,7 @@ public sealed class VirtualTableRefusalClaimTests
         "RecordPatches.FieldVirtualTable.cs",
         "RecordPatches.IntegerVirtualTable.cs",
         "RecordPatches.MetadataPermissionSetVirtualTable.cs",
+        "RecordPatches.NavAppExtraVirtualTable.cs",
         "RecordPatches.PageControlFieldVirtualTable.cs",
         "RecordPatches.PageMetadataVirtualTable.cs",
         "RecordPatches.ReportLayoutListVirtualTable.cs",
@@ -114,6 +115,7 @@ public sealed class VirtualTableRefusalClaimTests
         new object[] { "FieldVirtualShapeGap",           "Field (virtual table 2000000041)",                    "field-virtual-table",                     GapDoc },
         new object[] { "IntegerShapeGap",                "Integer (virtual table 2000000026)",                  "integer-virtual-table",                   GapDoc },
         new object[] { "MetadataPermissionSetShapeGap",  "Metadata Permission Set (virtual table 2000000250)",  "metadata-permission-set-virtual-table",   GapDoc },
+        new object[] { "NavAppExtraShapeGap",            "NAV App Extra (virtual table 2000000157)",            "nav-app-extra-virtual-table",             GapDoc },
         new object[] { "PageControlFieldShapeGap",       "Page Control Field (virtual table 2000000192)",       "page-control-field-virtual-table",        GapDoc },
         new object[] { "PageMetadataShapeGap",           "Page Metadata (virtual table 2000000138)",            "page-metadata-virtual-table",             GapDoc },
         new object[] { "ReportDataItemsShapeGap",        "Report Data Items (virtual table 2000000203)",        "report-data-items-virtual-table",         GapDoc },
@@ -401,7 +403,19 @@ public sealed class VirtualTableRefusalClaimTests
         // Actual: 82") after rebasing this branch onto main with #3128 merged, not arrived at by
         // adding 6 to 76. The branch had previously written 78 against a base of 72; that running
         // total did not survive the rebase, which is exactly what the note above predicts.
-        Assert.Equal(82, total);
+        // +3 (#3072): the NAV App Extra (2000000157) populator joined with two refusals of its
+        // own, plus the third in RecordPatches.cs's dispatch chain. Its file was added to
+        // CoveredFiles in the same change -- worth noting because adding the file is what makes
+        // two of the three countable at all: a populator absent from that list is not covered
+        // by the whole-file guard above either, so it could construct the refusal directly and
+        // cite docs/scope.md with nothing objecting. The refusal that matters is the one for an
+        // empty row set: an empty 2000000157 makes both of Published Application's Lookup
+        // FlowFields read false for every app, so answering empty is a wrong answer, not a
+        // missing one.
+        //
+        // Per the note above: 85 was READ OUT of this test's own failure message
+        // ("Expected: 82, Actual: 85"), not arrived at by adding 3 to 82.
+        Assert.Equal(85, total);
     }
 
 

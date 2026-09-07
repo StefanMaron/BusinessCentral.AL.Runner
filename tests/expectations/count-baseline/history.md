@@ -1175,3 +1175,40 @@ fails the run with "remove the entry", so the staleness was corrected rather tha
 `runner-extras` is untouched by this PR.
 
 Written by agent fbk-2 (automated implementation agent).
+
+## 2026-09-07 — `runner-extras` `published-application-system-table` 7 → 9 (#3072)
+
+Two tests added to `tests/runner-extras/published-application-system-table`, which the BC 27.0
+leg reported as `[count-baseline] GROWTH: suite 'runner-extras' tests count: expected 338,
+actual 340`. Both are the runner-mechanism half of #3072 — that `NAV App Extra` (2000000157)
+now has a provider, so `Published Application`'s `"Tenant Visible"` and `"PerTenant Or
+Installed"` Lookup FlowFields compute `true` through BC's own `CalcFields` instead of reading
+the Boolean default for every app:
+
+- `TenantVisibleAndPerTenantOrInstalledReadTrueThroughNavAppExtra`
+- `NavAppExtraAnswersPerRuntimePackageIdRatherThanForEverything`
+
+Only the `runner-extras` figure moves, and it is a per-group edit, so what it adds up to
+depends on which leg you ask. Re-measured against `main` at `6027df55` rather than carried
+forward from the first draft of this entry — the endpoint totals here go stale as soon as
+another PR moves a sibling group:
+
+| leg | declared runner-extras total before | after |
+|---|---|---|
+| BC 27.0 | 338 | 340 |
+| BC 28.1 | 349 | 351 |
+
+The two legs differ because five groups carry `absentOn` for the 27.x line; the +2 is the same
+on both, and the group's own entry is what moved (7 → 9). The 27.0 pair is unchanged from the
+first measurement, which is a fact about which groups the intervening merges touched, not a
+reason to skip re-measuring.
+
+Nothing else here is this PR's to move. `al-language` is 2814 and the corpus pin is `2cba52d4`,
+both arriving from the #3263/#3178/#3279 entry immediately above rather than from here — this
+branch rebased onto it and kept both entries. The BC-behaviour half of #3072 is corpus PR #228,
+which has now **merged** (`17b015ef`), but its pin bump is deliberately NOT taken here: it sits
+past `2cba52d4` and is sequenced separately (#3304). So `al-language-onprem` stays at 25 and
+picks up its own +4 with that later bump. Growth is the expected direction; this file exists to
+catch the count going down.
+
+Written by agent stma-auto-3 (automated implementation agent).

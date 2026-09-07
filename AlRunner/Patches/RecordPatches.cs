@@ -2305,6 +2305,33 @@ public static partial class RecordPatches
                 return windowsLanguageDa;
             }
 
+            // ── NAV App Extra (2000000157) ───────────────────────────────────────────────
+            // Virtual on the service tier too (NavAppExtraDataProvider computes one row per
+            // app from the session's app metadata). An empty store made Published
+            // Application's "Tenant Visible" and "PerTenant Or Installed" Lookup FlowFields
+            // read FALSE for every app — the runner answering "no app is visible to this
+            // tenant", which is a wrong answer and not a missing one, and the same
+            // Boolean-default shape a real tier already contradicted once for the Installed
+            // FlowField next door (#3066). BC's own provider is tried first; the fallback
+            // builds the rows from the same loaded-module list and the same
+            // AppPackageIdentity values as the Published Application seeder, so the two
+            // tables cannot disagree about which app a runtime package id names.
+            // See RecordPatches.NavAppExtraVirtualTable.cs (#3072).
+            if (IsNavAppExtraVirtualTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var navAppExtraDa))
+                {
+                    var createdNavAppExtra = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    navAppExtraDa = perTable.GetOrAdd(tableId, createdNavAppExtra);
+                }
+                var navAppExtraSession = _fDasSession?.GetValue(self)
+                    ?? throw NavAppExtraShapeGap(
+                        "DataAccessSource has no skeleton session, so BC's own "
+                        + "NavAppExtraDataProvider cannot be constructed");
+                PopulateNavAppExtraVirtualTable(navAppExtraDa, table, navAppExtraSession);
+                return navAppExtraDa;
+            }
+
             // ── CodeUnit Metadata (2000000137) ───────────────────────────────────────────
             // Virtual on the service tier too (CodeUnitDataProvider computes one row per
             // codeunit from NCLMetadata). An empty store makes every lookup answer "no such
