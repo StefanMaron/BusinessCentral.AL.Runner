@@ -227,7 +227,7 @@ There is no `tests/bucket-*` tree and no single global ID range — that layout 
 
 Inside the right range, a **duplicate** ID collides with `error AL0264`. Grepping your own checkout only catches collisions against `main`, not IDs another agent has claimed on an in-flight branch — also check open PRs / other agents' branches for the same suite where feasible, and be prepared to renumber.
 
-**Forbidden:** shipping a real *implementation* of a System Application codeunit inside the runner — AL the runner emits, or C# under `AlRunner/Patches/` standing in for the SA codeunit's body, re-creating SA behavior (Image, File Mgt., Crypto, Email, …). Auto-generated blank shells for dependency objects are fine and expected. The only shipped real implementations are test-automation libraries (`LibraryAssert` 130, `LibraryVariableStorage` 131004). If the AL under test really needs SA behavior, file a runner-gap issue.
+**Forbidden:** shipping a real *implementation* of a System Application codeunit inside the runner — AL the runner emits, or C# under `AlRunner/Patches/` standing in for the SA codeunit's body, re-creating SA behavior (Image, File Mgt., Crypto, Email, …). Dependency code runs as Microsoft's own precompiled DLLs, and the runner ships no AL stubs or C# mocks of any BC codeunit — the test-automation libraries (`Library Assert` 130002, `Library - Variable Storage`, `Any`, …) come from Microsoft's precompiled test-toolkit apps too (the `AlRunner/stubs/` set was deleted at #1654; `docs/limitations.md` § "What the runner ships"). If the AL under test really needs SA behavior, file a runner-gap issue.
 
 ### Where does the proving test go?
 
