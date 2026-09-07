@@ -240,7 +240,11 @@ public static partial class BcRuntime
     /// </summary>
     private static void ReportOosTrappedByTryFunction(AlRunner.Infrastructure.RunnerOutOfScopeException oos)
     {
-        if (!_oosTrapReported.TryAdd($"{oos.Api} {oos.Reason}", 0)) return;
+        // The separator is an escape, NOT a literal NUL byte. Written literally it made this
+        // file read as binary to file(1) and to ripgrep, which then SKIPPED it silently --
+        // so a search for the classification logic below came back empty rather than wrong
+        // (the CLAUDE.md false-negative family). Same key, same behaviour, searchable file.
+        if (!_oosTrapReported.TryAdd($"{oos.Api}\0{oos.Reason}", 0)) return;
         Console.Error.WriteLine(
             $"[oos-in-try] {oos.Api} — {oos.Reason} — reached inside an AL [TryFunction]; " +
             $"returning false, which is what real BC does in an environment that also lacks " +

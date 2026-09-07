@@ -121,12 +121,24 @@ internal static class RunnerFormCloseHandler
         // is the same boundary MockTestPage.Close already names for an OnQueryClosePage veto
         // (#2999) — the runner has no model for a page that refuses to close and keeps running.
         // Throwing says so; returning false would let the caller force the page shut and report
-        // a close BC did not perform. Tracked in #3179.
+        // a close BC did not perform.
+        //
+        // The reason MUST start "not-yet-implemented", and the prefix is load-bearing rather
+        // than cosmetic: ApplicationObjectBasePatches.IsPermanentOutOfScope classifies by that
+        // string prefix, and anything else is treated as PERMANENTLY out of scope, which an AL
+        // [TryFunction] then swallows into `false`. This surface is in scope and tracked open in
+        // #3179, so swallowing it would turn the gap into a green test that lies
+        // (.claude/rules/loud-failures.md). It read "testpage-close-refused-after-message …"
+        // until #3179 — the same defect #2966 was filed for, on a site created after that sweep.
+        // docs/limitations.md, not docs/scope.md, for the same reason: this is a gap, not a
+        // permanent boundary.
         throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             "TestPage page close (OnQueryClosePage)",
-            "testpage-close-refused-after-message — OnQueryClosePage raised an error, a "
-            + "[MessageHandler] consumed it, and BC then leaves the page OPEN. The runner has no "
-            + "model for a page that outlives its own close. See docs/scope.md");
+            "not-yet-implemented — testpage-close-refused-after-message: OnQueryClosePage raised "
+            + "an error, a [MessageHandler] consumed it, and BC then leaves the page OPEN. The "
+            + "runner has no model for a page that outlives its own close. "
+            + "See docs/limitations.md#testpage-shape-gaps",
+            "todo");
     }
 
     private static bool IsNavBaseException(Exception ex)
