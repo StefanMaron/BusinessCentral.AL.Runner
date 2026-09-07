@@ -1113,14 +1113,22 @@ neither can be taken without the sixteen corpus commits merged before them; that
 other 120 al-language tests and all six al-language-onprem tests come from, not from anything
 this PR wrote.
 
-Thirteen of the newly-arrived tests fail on the runner for reasons unrelated to this fix and
-are deliberately NOT declared here: each has a pull request in flight, and declaring a gap that
-another PR is about to close would only have to be undone. Nine (codeunit 60338, the dialog
-page types' built-in OK/Cancel, corpus #218) belong to PR #3285; two (codeunit 60677, an error
-raised in OnQueryClosePage, corpus #202) to PR #3181; one (codeunit 60827, a source-parsed
-tableextension's TableRelation not enforced by Validate, corpus #207) to PR #3197, filed as
-#3286 from this branch before that was known; and one (codeunit 60889, Access Control backing
-the session user's SUPER status, corpus #204) to PR #3287.
+Thirteen of the newly-arrived tests failed on the runner for reasons unrelated to this fix.
+Four of those families resolved while this PR sat in review, as their own pull requests merged:
+codeunit 60677 (an error raised in OnQueryClosePage, corpus #202) with #3181, codeunit 60827 (a
+source-parsed tableextension's TableRelation not enforced by Validate, corpus #207) with #3197,
+and codeunit 60889 (Access Control backing the session user's SUPER status, corpus #204) with
+#3287. None of them was ever declared here.
+
+The ninth-and-last family IS declared, in
+`tests/expectations/known-gaps-testpage-builtin-actions.json`: codeunit 60338's nine tests on
+the dialog page types' built-in OK/Cancel (corpus #218), five against #3283 (which built-in a
+PageType offers) and four against #3284 (the FormResult substituted for an unattended close).
+Both are open and both are fixed by PR #3285. The declaration exists ONLY to break a cycle
+through the corpus pin: #3285 needs this PR's CalcFormula/TableRelation fix for corpus codeunits
+60818, 60823 and 60827, and this PR needs #3285's fix for these nine. This PR merges first with
+them declared; #3285 merges second and deletes that file. Nothing in this PR touches TestPage
+built-in actions.
 
 Two families that arrived failing WERE declared here for a while, and went green mid-review as
 #3234 (the Session virtual table, #2940) and #3265 (the legacy Object registry, #3071) merged.
