@@ -688,6 +688,70 @@ reflection), so the runner cannot disagree with the service tier about any of it
 
 ---
 
+### `Record Integer` — a filter reaching past the materialised window is refused, not truncated
+
+<a id="integer-virtual-table"></a>
+
+The `Integer` system virtual table (2000000026) is computed per request on the service
+tier by `IntegerDataProvider`, a `RangeBasedComputedDataProvider`. It is **not** unbounded
+there either. Decompiled from `Microsoft.Dynamics.Nav.Ncl` and byte-identical in 27.0 and
+28.4, both of its entry points open the same way:
+
+```csharp
+// GetValuesWithinRangeForKeyField, and CountValuesWithinRange
+if (range.GetInclusiveIntegerBounds(-1000000000, 1000000000, out var low, out var high))
+```
+
+So real BC clamps every request to **[-1,000,000,000 .. 1,000,000,000]**, and serves a
+filter with an open bound as exactly that range rather than refusing it —
+`Range.GetInclusiveIntegerBounds` substitutes its `minimum` for an open low bound and its
+`maximum` for an open high one.
+
+2,000,000,001 rows is not something the runner can materialise into an in-memory store.
+What it does instead:
+
+- The window **[-1000 .. 100000]** (101,001 rows) is materialised eagerly when the table
+  is first handed out. Unlike `Record Date` there is no lazy narrowing and nothing to
+  widen: the window is fixed for the run.
+- A filter that **closes** a bound outside that window raises
+  `RunnerOutOfScopeException`, naming the bound asked for and the window. It never
+  answers a wider request with fewer rows. `SetRange(Number, 1, 250000)` is refused
+  rather than answered with 100,000 rows, because the 150,000 rows in between are rows a
+  service tier would have returned.
+- The refusal covers all **four** request paths a `Record Integer` read can take, since
+  each carries a different request type and no single guard sees them all:
+
+  | AL | `DataAccess` method | request type |
+  |---|---|---|
+  | `Find` / `FindSet` / `FindFirst` / `FindLast` | `InnerFindAsync` | `FindCacheRequest` |
+  | `Count` | `CountAsync` | `CountCacheRequest` |
+  | `IsEmpty` | `ExistsAsync` | `ExistsCacheRequest` |
+  | `Get(Number)` | `InternalTryGetByPrimaryKeyAsync` | `PrimaryKeyCacheRequest` |
+
+  Before #2350 none of the four was guarded, although the source file's own header had
+  described the guard as existing for a full release — the identifier it named appeared
+  exactly once in the repository, in that comment.
+
+The one case the window does not cover is an **unbounded** filter, and the runner
+deliberately serves it rather than refusing it: `dataitem(Number; Integer)` with no upper
+bound is a standard idiom, and 18 of the Base Application's 658 reports drive one, bounded
+by `MaxIteration` rather than by the filter. Real BC serves that shape too, from its own
+±1e9 bound. So the divergence is a **row count, not a refusal**: an unbounded enumeration
+yields 101,001 rows here against 2,000,000,001 on a service tier. Code that iterates an
+unbounded `Integer` range to the end stops at the window edge instead of at 1,000,000,000.
+
+`AL_RUNNER_INTEGER_WINDOW_MAX` raises the upper edge for a one-off run, and
+`AL_RUNNER_INTEGER_WINDOW_MIN` lowers the lower one. Both only ever **widen** the window:
+a `MIN` above the default, or a non-positive `MAX`, is ignored rather than narrowing the
+materialised set and refusing reads that work today.
+
+The lower edge was a hard constant until #2350. That was invisible while nothing compared a
+request against either edge, and became a dead end the moment the guard started refusing —
+a filter naming -250000 was refused with a message telling the reader to raise
+`AL_RUNNER_INTEGER_WINDOW_MAX`, which cannot widen the edge that rejected it.
+
+---
+
 ### `Record "Windows Language"` — the license and installed-resource columns are chosen values
 
 <a id="windows-language-virtual-table"></a>
@@ -1317,6 +1381,11 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   ([#2945](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2945)). Time Zone
   and Windows Language have documented *divergences* as well — see their own sections above —
   and those are answers the runner gives on purpose, not refusals.
+
+  `Date` and `Integer` refuse for a second, different reason on top of that one: both are
+  computed per request on the service tier over a range too large to materialise, so a filter
+  reaching past the window each one materialises is refused rather than answered short. See
+  [`Record Date`](#date-virtual-table) and [`Record Integer`](#integer-virtual-table).
 - **`Session` (2000000009) answers one row — the reading session — and two of its columns are
   blank.** That single row is not a runner simplification: BC's own `SessionDataProvider`
   returns `new ReadOnlyRecordBuffer[1]` unconditionally, with `My Session` a constant `true`,
