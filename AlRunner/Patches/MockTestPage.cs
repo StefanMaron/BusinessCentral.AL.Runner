@@ -3103,33 +3103,68 @@ internal static class TestPageTemporalValue
         return resolved != null;
     }
 
+    // Bound by reflection because NavValueEvaluator and NavNclType are internal to Ncl.dll. The
+    // shape was read off the 28.1 and 28.4 decompiles; if a BC build moves it, the binding must
+    // FAIL LOUDLY rather than quietly, because failing quietly is invisible: the typed-argument
+    // arms keep working through the round-trip branch above and only the text spellings revert
+    // to the pre-#3384 refusal. That is a silent downgrade of the kind loud-failures.md exists
+    // to prevent, so it gets one line on stderr, once — not a throw, because declining still
+    // leaves BC's own refusal as the observable outcome rather than a wrong value.
     private static bool TryBindEvaluator()
     {
         if (_lookupDone) return _evaluate != null;
         _lookupDone = true;
 
-        var ncl = AppDomain.CurrentDomain.GetAssemblies()
-            .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
-        var evaluatorType = ncl?.GetType("Microsoft.Dynamics.Nav.Runtime.NavValueEvaluator");
-        _navNclType = ncl?.GetType("Microsoft.Dynamics.Nav.Runtime.NavNclType");
-        var dataErrorType = typeof(Microsoft.Dynamics.Nav.Types.DataError);
-        if (evaluatorType == null || _navNclType == null || dataErrorType == null
-            || !_navNclType.IsEnum || !dataErrorType.IsEnum || !Enum.IsDefined(dataErrorType, "TrapError"))
-            return false;
+        string? why = null;
+        try
+        {
+            var ncl = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
+            var evaluatorType = ncl?.GetType("Microsoft.Dynamics.Nav.Runtime.NavValueEvaluator");
+            _navNclType = ncl?.GetType("Microsoft.Dynamics.Nav.Runtime.NavNclType");
+            var dataErrorType = typeof(Microsoft.Dynamics.Nav.Types.DataError);
 
-        const System.Reflection.BindingFlags Any =
-            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
-            | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance;
+            const System.Reflection.BindingFlags Any =
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic
+                | System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance;
 
-        _getEvaluator = evaluatorType.GetMethod(
-            "GetEvaluator", Any, null, new[] { _navNclType }, null);
-        var evaluate = evaluatorType.GetMethod("Evaluate", Any);
-        if (_getEvaluator == null || evaluate == null || evaluate.GetParameters().Length != 6)
-            return false;
+            if (ncl == null) why = "Microsoft.Dynamics.Nav.Ncl is not loaded";
+            else if (evaluatorType == null) why = "NavValueEvaluator not found";
+            else if (_navNclType is not { IsEnum: true }) why = "NavNclType not found, or not an enum";
+            else if (!Enum.IsDefined(dataErrorType, "TrapError")) why = "DataError.TrapError not found";
+            else
+            {
+                _getEvaluator = evaluatorType.GetMethod(
+                    "GetEvaluator", Any, null, new[] { _navNclType }, null);
+                // Overload-count guard: GetMethod(name, flags) throws AmbiguousMatchException the
+                // moment a build adds a second Evaluate, which is caught below and reported.
+                var evaluate = evaluatorType.GetMethod("Evaluate", Any);
 
-        _trapError = Enum.Parse(dataErrorType, "TrapError");
-        _evaluate = evaluate;
-        return true;
+                if (_getEvaluator == null) why = "NavValueEvaluator.GetEvaluator(NavNclType) not found";
+                else if (evaluate == null) why = "NavValueEvaluator.Evaluate not found";
+                else if (evaluate.GetParameters().Length != 6)
+                    why = $"NavValueEvaluator.Evaluate takes {evaluate.GetParameters().Length} "
+                        + "parameters, expected 6";
+                else
+                {
+                    _trapError = Enum.Parse(dataErrorType, "TrapError");
+                    _evaluate = evaluate;
+                    return true;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            why = $"{ex.GetType().Name}: {ex.Message}";
+        }
+
+        Console.Error.WriteLine(
+            "[MockTestPage] WARN: could not bind BC's own NavValueEvaluator — " + why + ". "
+            + "TestPage SetValue on a Date/DateTime/Time control still accepts a typed AL "
+            + "argument, but text spellings (Format() output, 'yyyy-mm-dd', 'w') will be "
+            + "refused by BC as they were before #3384.");
+        _evaluate = null;
+        return false;
     }
 }
 
