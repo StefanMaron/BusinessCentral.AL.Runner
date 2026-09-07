@@ -25,7 +25,7 @@
 //        "+Feature;-Feature" string, empty by default and therefore a no-op.
 //     3. ApplyECSConfigurationFiltering — runs only when a feature sets IsConfiguredByECS AND
 //        ServerUserSettings.Instance.CopilotApiServicesEnabled is true. It calls an external
-//        Copilot ECS service, which is permanently out of scope (docs/scope.md#http).
+//        Copilot ECS service, which is permanently out of scope (docs/scope.md#external-http).
 //
 //   So the whole gap was the missing route. Rebuilding the list here would be a second,
 //   drifting copy of a list BC already owns — and inserting one hardcoded row to steer a single

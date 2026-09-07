@@ -3,17 +3,13 @@
 // hook on Microsoft.Dynamics.Nav.Ncl.dll's NavMethodScope.StmtHit(int) — see
 // NclCecilRewrite.RewriteStmtHit — and turns the result into a Cobertura XML report.
 //
-// StmtHit already maintains NavMethodScope.StatementNumber (decompiled and confirmed;
-// see the #1922 investigation notes), which AlCallStackCapture depends on for AL
-// stack-trace "line L". The Cecil rewrite PREPENDS the hook call before StmtHit's
-// existing body — it does not replace or touch that assignment — so stack traces are
-// unaffected whether or not --coverage is passed.
+// The rewrite PREPENDS the hook — it never replaces or touches StmtHit's own body, which
+// maintains NavMethodScope.StatementNumber that AlCallStackCapture reads for stack-trace
+// "line L". Keep it a prepend.
 //
-// Counters are only recorded when Enabled is set (by --coverage); the hook call itself
-// is unconditional in the rewritten IL (so the cached, rewritten Ncl.dll is identical
-// whether or not a given run passes --coverage), but OnStmtHit no-ops immediately when
-// Enabled is false. Observable behaviour on the default path — test results, timing,
-// output — is therefore unchanged.
+// The hook call is unconditional in the rewritten IL, so the cached Ncl.dll is identical
+// whether or not a run passes --coverage; OnStmtHit no-ops immediately when Enabled is false.
+// Observable behaviour on the default path is unchanged.
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 
@@ -102,18 +98,12 @@ public static class AlCoverageTracker
     /// without boxing the int. Must stay side-effect-free beyond counting: it runs on
     /// every AL statement of every test, coverage or not.
     ///
-    /// Also feeds AlCurrentStatement (#2117) UNCONDITIONALLY — i.e. before the Enabled
-    /// check below, not gated by it. That tracker answers "which AL statement is
-    /// executing right now" for RunnerClientCallback's Message() capture, which (unlike
-    /// coverage/capturedValues) has no request-side opt-in — see AlCurrentStatement's
-    /// and AlMessageCapture's doc comments for why session.CurrentMethodScope could not
-    /// answer that question and this hook's own scope argument can.
+    /// Feeds AlCurrentStatement (#2117) UNCONDITIONALLY — before the Enabled check, not gated
+    /// by it: Message() capture has no request-side opt-in.
     ///
-    /// Also feeds AlValueCapture.OnStmtHit (#2074) — the per-execution half of
-    /// --capture-values, SELF-gated by AlValueCapture.Enabled (a separate flag from this
-    /// class's own Enabled), so a coverage:false/captureValues:true request still gets
-    /// per-statement value diffing, and a plain corpus run (neither flag set) pays only
-    /// the volatile-bool check inside that method.
+    /// Feeds AlValueCapture.OnStmtHit (#2074), SELF-gated by AlValueCapture.Enabled — a separate
+    /// flag from this class's, so captureValues works without coverage and a run with neither
+    /// pays only a volatile-bool check.
     /// </summary>
     public static void OnStmtHit(NavMethodScope scope, int currentStatementNumber)
     {
@@ -248,27 +238,13 @@ public static class AlCoverageTracker
     /// Distinct scope Types that have recorded at least one hit since the last
     /// <see cref="Reset"/> — i.e. scopes genuinely invoked in the CURRENT run.
     ///
-    /// #2042's <see cref="CollectStatementTable"/> scans exactly this set instead of
-    /// every SourceSpans-carrying type currently loaded in the process (which is what
-    /// <see cref="Collect"/> does), because a warm <c>--server</c> process is not the
-    /// single-generation world <c>Collect</c> was built for: <c>RunBundleForServer</c>
-    /// calls <c>Assembly.Load(assemblyBytes)</c> again on EVERY request that isn't a
-    /// cross-bundle-dedup reuse — including a pure AL-output cache HIT with
-    /// byte-identical content — so re-running the SAME bundle N times against one warm
-    /// server leaves N distinct Assembly generations resident (assemblies are never
-    /// unloaded). Scanning "every loaded assembly" after <see cref="Reset"/> then
-    /// reports the SAME AL statement once per generation: the CURRENT generation with
-    /// its real hit count, plus one ghost entry per STALE generation showing 0 (its
-    /// Type is still reflectable; Reset() only cleared the dictionary, not the type
-    /// itself) — reproduced empirically by sending an identical `coverage:true`
-    /// `runTests` request twice to one warm server and observing duplicate
-    /// {id, line} entries, one live and one phantom-zero, per statement. Restricting
-    /// to _hits' own keys sidesteps this entirely: a stale generation's Type recorded
-    /// zero hits THIS run (Reset() cleared it and nothing in this run touched it), so
-    /// it is simply absent from the key set — no "which generation is live" logic
-    /// needed. <see cref="Collect"/> (--coverage, CLI-only) does not need this fix: a
-    /// CLI invocation is one short-lived process, so exactly one generation ever
-    /// exists there.
+    /// <para><see cref="CollectStatementTable"/> scans this set rather than every loaded
+    /// SourceSpans-carrying type (what <see cref="Collect"/> does), because a warm
+    /// <c>--server</c> process holds N Assembly generations of the same bundle — assemblies are
+    /// never unloaded — and a stale generation's Type is still reflectable after
+    /// <see cref="Reset"/>, so the whole-process scan emits a phantom hits:0 twin of every live
+    /// statement. Keying off _hits sidesteps it: a stale Type recorded nothing this run, so it
+    /// is simply absent. <see cref="Collect"/> is CLI-only and single-generation (#2042).</para>
     /// </summary>
     private static IReadOnlyCollection<Type> GetHitTrackedTypes() =>
         _hits.Keys.Select(k => k.ScopeType).Distinct().ToArray();
@@ -311,28 +287,15 @@ public static class AlCoverageTracker
         return result;
     }
 
-    // Shared by CollectStatementTable AND CollectPerTestStatementTable (#2135) —
-    // originally two independent copies of this exact chain (SourceSpans attribute,
-    // EncodedSpans, ParseObjectTypeAndId, the id==0 guard, the sourceMap lookup,
-    // GetAlName), which is exactly the kind of duplication that drifts: a future fix
-    // to how any of those five steps resolves would silently reach only whichever
-    // copy got edited. Consolidated into one helper instead of leaving the aggregate
-    // path's inline version as-is. [NavName] on the scope class itself is the AL
-    // procedure/trigger/test method name — the SAME attribute AlValueCapture reads
-    // off scope FIELDS for local names, here read off the TYPE instead (both are
-    // MemberInfo — see AlNavNameReflection). Confirmed via BCCOMPILER_DUMP_CS=1:
-    // `[NavName("Run")] private sealed class Run_Scope__... : NavMethodScope<...>`.
+    // The one resolution chain, shared by CollectStatementTable and
+    // CollectPerTestStatementTable (#2135) — keep it that way; it was two copies, and a fix to
+    // any of its five steps reached only whichever copy got edited. [NavName] on the scope CLASS
+    // is the AL procedure/trigger/test name (the same attribute AlValueCapture reads off scope
+    // FIELDS for local names; both are MemberInfo — see AlNavNameReflection).
     //
-    // CollectPerTestStatementTable additionally MEMOIZES this per scope Type across
-    // every test whose bucket touched it — the file/scope/position identity of a
-    // given (Type, statementId) pair does not vary per test, only the hit count
-    // does, so re-running this chain once per (type, test) pair the way
-    // CollectStatementTable's single-pass loop does (once per type, since
-    // GetHitTrackedTypes() already de-duplicates) would be wasted repeat work
-    // across a suite with many tests hitting the SAME codeunit. Null means "not a
-    // coverable, mapped AL scope" (framework type, or owning object outside
-    // sourceMap) — CollectPerTestStatementTable's memo caches null too, so a miss
-    // is not re-attempted per test either.
+    // Null means "not a coverable, mapped AL scope" — a framework type, or an owning object
+    // outside sourceMap. CollectPerTestStatementTable memoizes per scope Type, nulls included,
+    // because the (Type, statementId) identity does not vary per test and only the hit count does.
     private static (string FilePath, string ScopeName, long[] Spans)? ResolveScopeInfo(
         Type type, IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
     {
@@ -364,24 +327,12 @@ public static class AlCoverageTracker
     /// dictionary <see cref="CollectStatementTable"/> uses, so `perTestCoverage:true`
     /// works independently of `coverage:true` (and vice versa).
     ///
-    /// A test with an EMPTY entry (declared but recorded zero hits — e.g. every
-    /// statement it touched belonged to a scope Type outside <paramref
-    /// name="sourceMap"/>, such as a framework codeunit) is OMITTED from the
-    /// returned dictionary entirely, matching the "positive list of what a test
-    /// touched" shape: a mutation-testing consumer wants "which tests could possibly
-    /// kill this mutant", and a test that touched nothing mappable can never answer
-    /// yes for any mutant — recording it as `[]` would only cost the caller a
-    /// pointless lookup.
-    ///
-    /// This is a NARROWER membership than <see cref="CollectStatementTable"/>'s own
-    /// list, deliberately: that one walks every instrumented statement (via <see
-    /// cref="AlCoverageInstrumentedStatements"/>) and emits a hits:0 record for ones
-    /// no test ever hit, because "instrumented but never covered" is a fact its
-    /// callers need. This method never emits a hits:0 record for anything — a
-    /// statement absent from a given test's list means "this test didn't execute
-    /// it", not "it wasn't instrumented"; a caller that needs to tell those two
-    /// apart has to cross-reference <see cref="CollectStatementTable"/>'s own
-    /// output (i.e. request `coverage:true` alongside `perTestCoverage:true`).
+    /// <para>A test that recorded zero mappable hits is OMITTED entirely, not returned as
+    /// `[]`. This is a positive list of what each test touched, and deliberately NARROWER than
+    /// <see cref="CollectStatementTable"/>, which does emit hits:0 for instrumented-but-uncovered
+    /// statements. So an absent statement here means "this test did not execute it", NOT "it was
+    /// not instrumented" — a caller needing to tell those apart must request `coverage:true`
+    /// alongside `perTestCoverage:true`.</para>
     /// </summary>
     public static Dictionary<string, List<AlStatementRecord>> CollectPerTestStatementTable(
         IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
