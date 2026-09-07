@@ -305,6 +305,8 @@ Two things about the verdicts it produces, because both change what "stop" means
    - `.mcp.json` changes need a **session restart**, so "configured" and "usable right now" are
      different states and only the second is worth anything. Preflight establishes the second by
      speaking MCP to the server directly; a session still has to restart before it can call it.
+     How to install and register the server, and why a context needs provisioned artifacts
+     first, is in `CLAUDE.md` § "Code navigation" (2c) — this step verifies, it does not install.
 
    Each probe also validates its own fixture against the working tree first, so a renamed symbol
    reports as "this check's probe drifted" rather than as a broken language server.

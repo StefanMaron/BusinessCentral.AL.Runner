@@ -192,6 +192,32 @@ Every patch is numbered and carries a header saying what it replaces and why.
 On a failing leg the workflow dumps the container log, where `[StartupHook]
 Patch #` lines name every patch installed and every time one of them fired.
 
+The families below answer with the **harness's** value, not BC's, so a green
+corpus leg on them is a measurement of the patch (read from that file on
+2026-09-07; the file is the authority when the two disagree):
+
+| API family | patch | what the tier answers |
+|---|---|---|
+| Windows identity: `ALDatabase.ALSid(string)` | #17 | an FNV-1a hash of the user name as `S-1-5-21-…-1001`; stock BC has no such mapping on that host |
+| Windows principal: `WindowsPrincipal.IsInRole`, `NTAccount`/`SecurityIdentifier.Translate` | `src/stubs/WindowsPrincipalStub` | `IsInRole` is `true` for every role; `Translate` returns `this` |
+| Service account: `NavEnvironment` static ctor, `ServiceAccount`/`ServiceAccountName` | #2 | a constructor that never touches `WindowsIdentity`, and hooked properties |
+| Report rendering: `CustomReportingServiceClient` | #19 | a no-op factory — RDLC rendering never reaches a Reporting Service |
+| Side services and their watchdog | #18, #20 | `SetupSideServices` no-op; `EnsureAlive` silenced |
+| Encryption: server-instance RSA provider, tenant encryption provider | #7, #7b, #26 | bypassed; the tenant-encryption path behind `ENCRYPT`/`DECRYPT`, `IsolatedStorage(Encrypted=true)` and codeunits 1266/1279 resolves to the harness's key |
+| Topology: `IServiceTopology.IsServiceRunningInLocalEnvironment` | #9 | forced `false` |
+| Azure AD: `AzureADGraphQuery..ctor`, `GraphQuery.GetTenantDetail` | #22, #22b | no-op / bypassed |
+| Crash reporting: Watson | #13 | handler stripped |
+
+For most of the corpus this is irrelevant — the AL-language surface it covers
+goes nowhere near these — but a test asserting identity, report rendering,
+encryption key resolution or environment topology is asserting the patch. This
+matters in the other direction too: **"the bc-linux container passes it" is not
+evidence of a runner gap** on any of these families. A Microsoft test bucket
+that passes on the container because `ALSid` answers a fabricated SID, or
+because an RDLC render went through a no-op renderer, says nothing about what
+the runner should answer (#2314; the `ALSid` case is the 65-test cluster in
+#2312).
+
 ### When a rollback would destroy the observable
 
 An error unwinding a transaction discards its uncommitted rows, so a log table
