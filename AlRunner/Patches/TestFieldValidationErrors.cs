@@ -101,6 +101,17 @@ internal sealed class TestFieldValidationErrors
     private readonly List<string> _errors = new();
     private long _lastUsedId;
 
+    /// <summary>
+    /// The PAGE-level ledger this control reports into as well as its own, when the control
+    /// belongs to a live page. See <see cref="TestPageValidationErrors"/> for why both exist
+    /// and what BC does with each (#3009).
+    /// </summary>
+    private readonly TestPageValidationErrors? _page;
+
+    internal TestFieldValidationErrors() { }
+
+    internal TestFieldValidationErrors(TestPageValidationErrors? page) { _page = page; }
+
     /// <summary>How many refusals this control has recorded. BC's <c>ValidationErrorCount</c>.</summary>
     internal int Count => _errors.Count;
 
@@ -129,7 +140,16 @@ internal sealed class TestFieldValidationErrors
     /// "Validation error for Field: …" wrapper — that is composed one layer out.
     /// </summary>
     internal void Record(string message, bool appendRefreshSuffix)
-        => _errors.Add((message ?? string.Empty) + (appendRefreshSuffix ? RefreshSuffix : string.Empty));
+    {
+        var stored = (message ?? string.Empty) + (appendRefreshSuffix ? RefreshSuffix : string.Empty);
+        _errors.Add(stored);
+        // The same refusal is ALSO the page's, and it is stored with the same text — real BC
+        // has one client-side error list per page and the field's view of it is a filter, not
+        // a separate list (#3009). Feeding both here rather than at the call sites is what
+        // keeps them from drifting: every route that records a control refusal goes through
+        // this method.
+        _page?.Record(stored);
+    }
 
     /// <summary>
     /// The recorded error at a ZERO-based index, marking its id used.
@@ -193,4 +213,83 @@ internal sealed class TestFieldValidationErrors
             Record(ex.Message, appendRefreshSuffix);
         }
     }
+}
+
+/// <summary>
+/// Per-PAGE ledger of the validation errors a TestPage's controls produced, exposed through
+/// <see cref="Microsoft.Dynamics.Nav.Types.Data.ITestPage"/>'s <c>ValidationErrorCount</c> /
+/// <c>GetValidationError</c> members — the pair AL's <c>TestPage.ValidationErrorCount()</c>
+/// and <c>TestPage.GetValidationError(Index)</c> read (#3009).
+///
+/// <para>WHY THIS IS SEPARATE FROM THE FIELD LEDGER. BC reads BOTH around every control write.
+/// <c>NavTestField.CheckError</c> (unmodified Ncl.dll, 28.1) is:</para>
+/// <code>
+///     int num = parent.ALValidationErrorCount();          // the PAGE, before the write
+///     T result = operation();
+///     if (testField.MaxValidationErrorId &gt; lastUsedValidationErrorId)
+///         throw ... testField.Name ...;                   // the FIELD branch, checked first
+///     int num2 = num - (validationErrorCount - testField.ValidationErrorCount);
+///     if (parent.ALValidationErrorCount() &gt; num2)
+///         throw ... parent.Name, parent.ALGetValidationError();
+/// </code>
+/// <para>The field branch is checked first and wins whenever the written control recorded the
+/// refusal itself, so feeding this ledger alongside the field's never changes which exception
+/// a refused write raises. What it changes is what AL can READ afterwards: the page pair was
+/// hardcoded to <c>0</c> / <c>""</c>, so a count real BC reports as 1 came back 0 and the
+/// message came back empty.</para>
+///
+/// <para>THE RANGE CHECK IS NOT THE FIELD'S. This is the one place the two ledgers genuinely
+/// differ, and it is a real BC asymmetry rather than a tidy-up. Both AL boundaries subtract 1
+/// and translate an out-of-range read, but they catch DIFFERENT exception types (unmodified
+/// Ncl.dll, 28.1, read with the decompiler rather than inferred):</para>
+/// <code>
+///     NavTestField.ALGetValidationError(index)     catch (IndexOutOfRangeException)
+///     NavTestPageBase.ALGetValidationError(index)  catch (ArgumentOutOfRangeException)
+/// </code>
+/// <para>LINQ's <c>ElementAt</c> — the call BC's own client makes — raises the ARGUMENT
+/// flavour. So on the FIELD that catch is dead and an out-of-range read escapes as a raw CLR
+/// exception (measured, corpus run 34002487601; see <see cref="TestFieldValidationErrors.Get"/>),
+/// while on the PAGE it is live and the read becomes a <c>NavNCLIndexOutOfBoundsException</c>.
+/// <c>ElementAt</c> here is therefore the call that reproduces BC's page-side chain rather than
+/// merely producing a similar outcome.</para>
+///
+/// <para>WHAT PROVES WHICH, stated precisely because it is easy to overclaim. Corpus
+/// <c>TestPart_GetValidationError_ErrorsOnIndexZero</c> asserts
+/// <c>GetLastErrorText() &lt;&gt; ''</c>, so it pins that index 0 is OUT of the 1-based range —
+/// which is the off-by-one that matters and the assertion a 0-based ledger fails. It does NOT
+/// discriminate the two exception flavours: probed here, an <c>IndexOutOfRangeException</c>
+/// implementation also passes it, because the runner surfaces that as a trappable AL error too.
+/// The flavour is pinned instead by <c>TestPageValidationErrorsTests</c> on the C# side, against
+/// the decompiled catch above.</para>
+/// </summary>
+internal sealed class TestPageValidationErrors
+{
+    private readonly List<string> _errors = new();
+
+    /// <summary>How many refusals this page has recorded. BC's <c>ITestPage.ValidationErrorCount</c>.</summary>
+    internal int Count => _errors.Count;
+
+    /// <summary>
+    /// Record a refusal already formatted exactly as the control stored it — including the
+    /// refresh suffix when the control's binding earns one. The page does not re-derive the
+    /// text: real BC keeps one list and the control's is a view onto it, so re-deriving would
+    /// be the one way the two could disagree.
+    /// </summary>
+    internal void Record(string storedMessage) => _errors.Add(storedMessage ?? string.Empty);
+
+    /// <summary>
+    /// The recorded error at a ZERO-based index (BC's AL boundary has already subtracted 1).
+    /// <para>Deliberately <see cref="Enumerable.ElementAt{TSource}(IEnumerable{TSource}, int)"/>
+    /// and not <c>_errors[index]</c>: it is the call BC's own client makes, and it raises
+    /// <see cref="ArgumentOutOfRangeException"/> — the type
+    /// <c>NavTestPageBase.ALGetValidationError(int)</c> catches and turns into a
+    /// <c>NavNCLIndexOutOfBoundsException</c>. Unlike the field ledger's identical-looking
+    /// call, that catch is LIVE here, which is what makes an out-of-range page read trappable
+    /// from AL. See this class's summary.</para>
+    /// <para>No id is consumed. The page pair has no <c>LastUsedValidationErrorId</c> /
+    /// <c>MaxValidationErrorId</c> on <see cref="Microsoft.Dynamics.Nav.Types.Data.ITestPage"/>
+    /// at all — the "is there something new since the snapshot" test BC runs against the field
+    /// ledger has no page-level counterpart, so there is nothing for a read to mark used.</para>
+    /// </summary>
+    internal string Get(int index) => _errors.ElementAt(index);
 }
