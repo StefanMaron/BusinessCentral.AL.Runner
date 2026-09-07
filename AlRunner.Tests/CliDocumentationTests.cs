@@ -293,6 +293,10 @@ public sealed class CliDocumentationTests
         // Base/System Application file entirely, not just an extra flag on the same w1
         // download — so it belongs here by this list's own "which code path" test.
         "--country",
+        // Issue #2730: --test-data-normalize-company changes the VALUES the run executes
+        // against, so two runs differing only by this flag produce different pass/fail counts.
+        // That is squarely "what gets executed", not "how the result is reported".
+        "--test-data-normalize-company",
     };
 
     /// <summary>Negative: an unknown documentation flag must not be silently accepted.</summary>

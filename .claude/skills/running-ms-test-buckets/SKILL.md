@@ -72,6 +72,28 @@ until someone replicates the preparation blueprint.
 failures first. Chasing the recipe to reach 100% green is the *very end* of the work, once
 nothing else is left.
 
+**One piece of the recipe now exists as an opt-in flag: `--test-data-normalize-company`.** It
+rewrites named, measured fields of the restored company towards the DemoTool one; today the
+rule set is a single field, `General Ledger Setup."Additional Reporting Currency" := ''`.
+
+**It is off by default and every number below was measured without it.** Turning it on changes
+which company the tests run against, so a normalized run's counts are not comparable with any
+recorded here — including the 259/595 Tests-SMB figures. The run says so itself: with the flag
+on, the summary prints every rule, what it changed and from which value, and names the rules
+that never fired.
+
+Measured on this box (BC 28.1, `--test-data`, one bucket, everything else identical):
+
+| | without the flag | with it |
+|---|---|---|
+| Tests-SMB (1,028 discovered) | 727 pass / 286 fail / 15 error | **727 / 286 / 15 — no change** |
+| Tests-ERM `Codeunit134157` in isolation | 3 pass / 3 fail | **6 pass / 0 fail** |
+
+So the flag pays where the ACY is actually load-bearing and costs nothing where it is not.
+Tests-SMB has no ACY-sensitive assertion; #2730's clusters are in Tests-ERM. Do not read the
+flat Tests-SMB row as the flag not working — the run reported `1 of 1 row(s) changed (was
+'EUR')` in both cases.
+
 #### The triage rule
 
 When a Microsoft bucket test fails, ask **"is this a data-recipe failure?" before treating it

@@ -237,6 +237,13 @@ public static class Reporter
         var testData = AlRunner.TestDataProvisioner.LastSummary;
         if (testData != null)
             w.WriteLine(testData.Describe());
+        // #2730: printed whenever --test-data-normalize-company is on, INCLUDING when no rule
+        // fired. A normalization that happens silently is a measurement trap — someone compares
+        // a normalized run against a recorded un-normalized one and reads it as the runner
+        // having improved. Null (nothing printed) when the flag is off.
+        var normalization = AlRunner.Infrastructure.TestDataNormalization.Describe();
+        if (normalization != null)
+            w.WriteLine(normalization);
         // A dependency no loader tier can serve is reported once, per bundle, on stderr at
         // dependency-resolution time — then the run spends minutes compiling and says nothing
         // more about it. Measured on npcore: four such blocks at ~20s, 212s of emit and compile,
