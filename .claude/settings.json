@@ -7,6 +7,10 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/prefer-code-navigation.py\""
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/shared-scratchpad-guard.py\""
           }
         ]
       }

@@ -61,6 +61,33 @@ Read it: `gh issue view <N> --repo StefanMaron/BusinessCentral.AL.Runner`.
 
 ## Step 3 — Implement (strict TDD)
 
+### The session scratchpad is SHARED — namespace before you write to it
+
+The scratchpad directory in your prompt looks per-agent and is not: every agent of
+this session gets the same one. Measured 2026-09-07 in one session's scratchpad —
+**200 entries, one of them namespaced.** It has published PRs #2973/#2974/#3181
+carrying another agent's body and a wrong `Closes #N`, buried a bug report inside a
+closed issue (#3073), and made a full-corpus run silently omit the tests it was
+measuring (#2980). Those are wrong answers in the shape of results, not tidiness.
+
+Get a private path rather than remembering to invent one:
+
+```bash
+p=$(tools/agent_scratchpad.py path pr-body.md --agent-id <AGENT-ID>)
+gh pr create --title "..." --body-file "$p"
+
+tools/agent_scratchpad.py dir --agent-id <AGENT-ID>       # clone corpora in here
+tools/agent_scratchpad.py check <path> --agent-id <AGENT-ID>   # exit 1 if shared
+```
+
+Never stage a PR body, clone a corpus, or write a probe bundle at a bare path in
+the scratchpad root — `body.md`, `corpus/`, `probe/` are the exact names that have
+already collided. `docs/agent-scratchpad.md` has the incident list.
+
+**And after `gh pr create`/`gh pr edit`, re-read what you published:**
+`gh pr view <N> --json closingIssuesReferences` must list exactly the issues you
+meant. That is what caught #3181 before it merged.
+
 ### Isolate your working tree first
 
 If you were not handed an isolated checkout, run `git status --short` on the tree you were given before touching git. Uncommitted changes you did not make mean another agent is mid-edit there — do **not** `git checkout -b`, you will either drag their work onto your branch or yank the tree out from under them. Take a worktree instead.
