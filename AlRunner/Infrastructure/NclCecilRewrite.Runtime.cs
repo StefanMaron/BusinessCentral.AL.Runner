@@ -1088,6 +1088,31 @@ public static partial class NclCecilRewrite
                 H(recordPatches, "DataAccess_DateWindowGuardForExists"),
                 argSlots: 2); // `this` — the DataAccess — and the exists request
 
+            // ── Permission Set system table (2000000004), all three non-find paths (#3344) ──
+            // 2000000004 is served from permission-set metadata on a real tier, and BC
+            // recomputes it per request. The find side is handled in the
+            // DataAccess_IsManagedFindRequest branch; these three cover Count(), IsEmpty()
+            // and Get(). The Get guard is deliberately the odd one out: BC's own
+            // MetadataPermissionSetDataProvider.TryGetByPrimaryKey resolves a Role ID WITHOUT
+            // consulting Assignable, while its GetAllItems filters on it, so a keyed Get()
+            // finds a non-assignable permission set that walking the table does not list —
+            // measured on a real BC 28.4 container and pinned upstream by corpus codeunit
+            // 60291. For every other table each of these is one int comparison and returns.
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "CountAsync", "CountCacheRequest"),
+                H(recordPatches, "DataAccess_PermissionSetSystemTableGuardForCount"),
+                argSlots: 2); // `this` — the DataAccess — and the count request
+
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "ExistsAsync", "ExistsCacheRequest"),
+                H(recordPatches, "DataAccess_PermissionSetSystemTableGuardForExists"),
+                argSlots: 2); // `this` — the DataAccess — and the exists request
+
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "DataAccess", "InternalTryGetByPrimaryKeyAsync", "PrimaryKeyCacheRequest"),
+                H(recordPatches, "DataAccess_PermissionSetSystemTableGuardForGet"),
+                argSlots: 2); // `this` — the DataAccess — and the primary-key request
+
             // ── DataAccess.ExistsAsync — virtual Field table (2000000041), the FOURTH path ────
             // Record.IsEmpty() does not take the count path. RecordImplementation.IsEmptyAsync
             // calls its own ExistsAsync, which builds an ExistsCacheRequest and reaches
