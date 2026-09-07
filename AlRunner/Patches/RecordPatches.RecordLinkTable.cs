@@ -136,18 +136,29 @@ public static partial class RecordPatches
     /// delete overload, and it reuses the rollback path's already-proven helpers.</summary>
     private static void ReplaceRecordLinkRows(object provider, RecordLinkColumns columns, List<NavValue[]> rows)
     {
+        NoteRecordLinkWrite();
         ClearProviderInPlace(provider);
         InsertRows(provider, columns.Meta, rows.ToArray());
     }
+
+    /// <summary>Take the pre-write image of the Record Link table before this store touches it.
+    /// The store writes through <see cref="InsertRows"/> / <see cref="ClearProviderInPlace"/>,
+    /// which are the ROLLBACK path's own helpers and therefore deliberately do not notify it —
+    /// so without this call an <c>asserterror</c> after <c>Rec.AddLink(...)</c> would leave the
+    /// link row behind while an AL <c>Insert</c> into the same table rolls back, which is two
+    /// writers of one table disagreeing about one invariant.</summary>
+    private static void NoteRecordLinkWrite() => NoteTransactionWriteForTable(RecordLinkTableId);
 
     private static byte[]? SlotBytes(NavValue[] row, NCLMetaField field)
     {
         var idx = field.FieldIndex;
         if (idx < 0 || idx >= row.Length) return null;
         var v = row[idx];
+        // A slot with no value is genuinely "no RecordId", and belongs to no record. Anything
+        // else is BC's own encoding of a stored RecordId and is left to throw: a value that
+        // will not serialise would otherwise silently read as "not this record's links".
         if (v == null || v.IsNull) return null;
-        try { return v.GetBytes(); }
-        catch { return null; }
+        return v.GetBytes();
     }
 
     private static bool RowBelongsTo(NavValue[] row, RecordLinkColumns columns, byte[] parentKey)
@@ -161,17 +172,14 @@ public static partial class RecordPatches
     private static byte[]? ParentKeyBytes(object? record, RecordLinkColumns columns)
     {
         if (record is not NavRecord rec) return null;
-        var value = NavValue.CreateNavValueFromObject(columns.RecordId, rec.ALRecordId);
-        try { return value.GetBytes(); }
-        catch { return null; }
+        return NavValue.CreateNavValueFromObject(columns.RecordId, rec.ALRecordId).GetBytes();
     }
 
     private static int ReadLinkId(NavValue[] row, RecordLinkColumns columns)
     {
         var idx = columns.LinkId.FieldIndex;
         if (idx < 0 || idx >= row.Length || row[idx] == null) return 0;
-        try { return (int)row[idx].ToDecimal(); }
-        catch { return 0; }
+        return (int)row[idx].ToDecimal();
     }
 
     private static string ReadText(NavValue[] row, NCLMetaField field)
@@ -223,14 +231,28 @@ public static partial class RecordPatches
 
     internal static int RecordLinkStore_Add(object? record, string url, string description)
     {
-        var store = GetRecordLinkStore(create: true);
-        if (store == null) return 0;
-        var (provider, columns) = store.Value;
+        // Loud, never silent (loud-failures.md): BC's AddLink returns the Link ID of the row it
+        // created, and AL tests `LinkId > 0` for success — so a 0 here is a fake success that
+        // the caller cannot distinguish from a real one. The old dictionary store's own comment
+        // said as much. Every branch below that cannot produce a row raises instead.
+        var store = GetRecordLinkStore(create: true)
+            ?? throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                "Record.AddLink",
+                $"the Record Link table ({RecordLinkTableId}) has no in-memory store on this "
+                + "session — the skeleton exposes no DataAccessSource, or its metatable did not build",
+                "record-link");
+        var (provider, columns) = store;
 
-        if (record is not NavRecord rec) return 0;
+        if (record is not NavRecord rec)
+            throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                "Record.AddLink",
+                $"a link was added to a {record?.GetType().Name ?? "null"}, which carries no RecordId "
+                + "to own it",
+                "record-link");
         var parentValue = NavValue.CreateNavValueFromObject(columns.RecordId, rec.ALRecordId);
 
         var nextId = NextRecordLinkId(columns);
+        NoteRecordLinkWrite();
         InsertRows(provider, columns.Meta,
             new[] { BuildRecordLinkRow(columns, nextId, parentValue, url, description) });
         return nextId;
@@ -302,6 +324,7 @@ public static partial class RecordPatches
                 columns, NextRecordLinkId(columns), dstValue,
                 ReadText(r, columns.Url1), ReadText(r, columns.Description)))
             .ToArray();
+        NoteRecordLinkWrite();
         InsertRows(provider, columns.Meta, built);
     }
 
@@ -351,13 +374,8 @@ public static partial class RecordPatches
     /// byte round-trip rather than re-derived.</summary>
     private static int RecordIdTableNo(NavValue value)
     {
-        try
-        {
-            var bytes = value.GetBytes();
-            return NavRecordId.CreateFromBytes(bytes, 0, bytes.Length).TableNo;
-        }
-        catch { /* a value that is not a RecordId simply owns no table */ }
-        return 0;
+        var bytes = value.GetBytes();
+        return NavRecordId.CreateFromBytes(bytes, 0, bytes.Length).TableNo;
     }
 
     /// <summary>The session's user, for the Record Link row's provenance column. Read off the
