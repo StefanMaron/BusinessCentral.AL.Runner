@@ -93,24 +93,77 @@ internal static class WorkflowInputDefaults
 internal static class BashArrayLiteral
 {
     /// <summary>
-    /// The inside of a bash array literal <c>name=( … )</c>, matched by counting parentheses
-    /// rather than by looking for a terminator string. An assertion about what the runner is
-    /// invoked WITH has to be scoped to the array it is invoked with — a flag mentioned in a
-    /// comment, an <c>echo</c>, or a sibling <c>args+=(</c> guarded by an <c>if</c> is not the
-    /// same claim. Empty when the array is absent.
+    /// The inside of EVERY bash array literal <c>name=( … )</c> in the script, newline-joined
+    /// and parenthesis-matched rather than terminated by a string. An assertion about what the
+    /// runner is invoked WITH has to be scoped to the arrays it is invoked with — a flag named
+    /// in a comment, an <c>echo</c>, or a sibling <c>args+=(</c> guarded by an <c>if</c> is not
+    /// the same claim. Empty when there is no such literal.
+    ///
+    /// It reads every literal, not the first, because a NEGATIVE reading is load-bearing here:
+    /// "the flag must not be in the unconditional array" is what keeps the input's <c>false</c>
+    /// default from being decorative. A first-match reader supports a positive claim perfectly
+    /// well — #3443 asserted <c>--test-timeout</c> IS present and was right — but scoped to a
+    /// subset it silently PERMITS what a negative claim forbids everywhere else. Reviewed on
+    /// #3453: keeping the conditional append exactly as shipped and adding a second literal,
+    /// <c>args=( "${args[@]}" --test-data-normalize-company )</c>, turns the flag on for every
+    /// caller including the nightly and left the whole pinned suite green.
     /// </summary>
     internal static string Of(string script, string name)
     {
-        var open = script.IndexOf(name + "=(", StringComparison.Ordinal);
-        if (open < 0) return string.Empty;
-        var i = open + name.Length + 1;      // at the '('
-        var depth = 0;
-        for (var j = i; j < script.Length; j++)
+        var marker = name + "=(";
+        var bodies = new List<string>();
+        for (var open = script.IndexOf(marker, StringComparison.Ordinal); open >= 0;
+             open = script.IndexOf(marker, open + marker.Length, StringComparison.Ordinal))
         {
-            if (script[j] == '(') depth++;
-            else if (script[j] == ')' && --depth == 0) return script[(i + 1)..j];
+            // `MY_args=(` is a different array from `args=(`, and matching it would let a
+            // negative assertion fail on text it does not govern.
+            if (open > 0 && (char.IsLetterOrDigit(script[open - 1]) || script[open - 1] == '_'))
+                continue;
+            var i = open + name.Length + 1;      // at the '('
+            var depth = 0;
+            for (var j = i; j < script.Length; j++)
+            {
+                if (script[j] == '(') depth++;
+                else if (script[j] == ')' && --depth == 0) { bodies.Add(script[(i + 1)..j]); break; }
+            }
+            // An unbalanced literal contributes nothing — the caller's assertion says so.
         }
-        return string.Empty;                 // unbalanced — the caller's assertion says so
+        return string.Join('\n', bodies);
+    }
+}
+
+internal static class BashIfBlock
+{
+    /// <summary>
+    /// The body of <c>if &lt;condition&gt;; then … fi</c>, up to the <c>fi</c> that closes it
+    /// rather than the first one seen, so a nested <c>if</c> does not end the block early.
+    /// Empty when no such block exists.
+    ///
+    /// An index comparison is NOT this claim. <c>Assert.True(inner &gt; outer)</c> is satisfied
+    /// by text sitting after the block's closing <c>fi</c>, so it pins ORDER and reads like it
+    /// pins NESTING — reviewed on #3453, where moving the append out of the block with its
+    /// guard and body unchanged left the suite green.
+    /// </summary>
+    internal static string BodyOf(string script, string condition)
+    {
+        var lines = script.Replace("\r\n", "\n").Split('\n');
+        var opener = "if " + condition + "; then";
+        var start = -1;
+        var depth = 0;
+        var body = new List<string>();
+        for (var k = 0; k < lines.Length; k++)
+        {
+            var line = lines[k].Trim();
+            if (start < 0)
+            {
+                if (line == opener) { start = k; depth = 1; }
+                continue;
+            }
+            if (line.StartsWith("if ", StringComparison.Ordinal)) depth++;
+            else if (line == "fi" && --depth == 0) return string.Join('\n', body);
+            body.Add(lines[k]);
+        }
+        return string.Empty;                 // absent, or never closed
     }
 }
 
@@ -275,6 +328,64 @@ public sealed class MsBucketWorkflowTests
         Assert.DoesNotContain("echo", array, StringComparison.Ordinal);
         Assert.DoesNotContain("--test-data-company", array, StringComparison.Ordinal);
         Assert.Equal(string.Empty, BashArrayLiteral.Of(script, "nosuch"));
+    }
+
+    /// <summary>
+    /// The property a NEGATIVE assertion needs and a first-match reader cannot give it: every
+    /// literal is read, so "this flag is in no unconditional array" covers all of them. The
+    /// second literal below is the reviewer's break on #3453 — the conditional append left
+    /// exactly as shipped, plus one more <c>args=( … )</c> that turns the flag on for everyone.
+    /// </summary>
+    [Fact]
+    public void BashArrayLiteral_ReadsEveryLiteral_NotOnlyTheFirst()
+    {
+        const string script = """
+            args=( "$BUNDLE" --cache "$C" )
+            if [ "$NORMALIZE_COMPANY" = "true" ]; then
+              args+=( --test-data-normalize-company )
+            fi
+            args=( "${args[@]}" --test-data-normalize-company )
+            """;
+
+        var all = BashArrayLiteral.Of(script, "args");
+        Assert.Contains("--cache \"$C\"", all, StringComparison.Ordinal);
+        Assert.Contains("--test-data-normalize-company", all, StringComparison.Ordinal);
+        // The conditional append is still NOT a literal — that separation is what makes the
+        // shipped workflow's own assertion mean something.
+        Assert.Single(BashConditionalAppend.Of(script, "args"));
+
+        // A different array whose name merely ends in the one asked for is not this array.
+        Assert.Equal("--quiet", BashArrayLiteral.Of("MY_args=( --loud )\nargs=( --quiet )", "args").Trim());
+    }
+
+    /// <summary>
+    /// <see cref="BashIfBlock.BodyOf"/> ends at the <c>fi</c> that closes the block it was
+    /// asked for, not the first one it meets, and text after that <c>fi</c> is outside. That
+    /// second half is the whole point: an index comparison would call it inside.
+    /// </summary>
+    [Fact]
+    public void BashIfBlock_EndsAtItsOwnFi_AndExcludesWhatFollows()
+    {
+        const string script = """
+            if [ "$WITH_TEST_DATA" = "true" ]; then
+              args+=( --test-data-company "CRONUS International Ltd_" )
+              if [ "$NORMALIZE_COMPANY" = "true" ]; then
+                args+=( --test-data-normalize-company )
+              fi
+            fi
+            args+=( --after-the-block )
+            """;
+
+        var body = BashIfBlock.BodyOf(script, "[ \"$WITH_TEST_DATA\" = \"true\" ]");
+        Assert.Contains("--test-data-normalize-company", body, StringComparison.Ordinal);
+        Assert.Contains("--test-data-company", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("--after-the-block", body, StringComparison.Ordinal);
+
+        // The inner block is addressable on its own terms, and an absent condition is empty
+        // rather than "everything from here on".
+        Assert.Equal("args+=( --test-data-normalize-company )",
+            BashIfBlock.BodyOf(script, "[ \"$NORMALIZE_COMPANY\" = \"true\" ]").Trim());
+        Assert.Equal(string.Empty, BashIfBlock.BodyOf(script, "[ \"$NOPE\" = \"true\" ]"));
     }
 
     [Fact]
@@ -629,22 +740,28 @@ public sealed class MsBucketWorkflowTests
         Assert.Equal(TestDataNormalization.FlagName, normalize.Body);
         Assert.Equal("[ \"$NORMALIZE_COMPANY\" = \"true\" ]", normalize.Condition);
 
+        // In NO unconditional literal — BashArrayLiteral.Of reads every `args=( … )` in the
+        // step, because this negative claim is what keeps the input's false default from being
+        // decorative and a claim scoped to one literal permits the flag in the next one.
         Assert.DoesNotContain(TestDataNormalization.FlagName,
             BashArrayLiteral.Of(runStep, "args"), StringComparison.Ordinal);
 
         Assert.Contains("/al-runner\" \"${args[@]}\"", runStep, StringComparison.Ordinal);
 
-        // Nested inside the --test-data block, not beside it. The rule rewrites rows on their
-        // way out of the backup, so with --test-data off the flag changes nothing while the
-        // runner still prints "company normalization ON" — a line that reads like data was
-        // prepared when none was restored.
-        var testData = runStep.IndexOf("if [ \"$WITH_TEST_DATA\" = \"true\" ]; then",
-            StringComparison.Ordinal);
-        var switchIndex = runStep.IndexOf("if [ \"$NORMALIZE_COMPANY\" = \"true\" ]; then",
-            StringComparison.Ordinal);
-        Assert.True(testData >= 0 && switchIndex > testData,
-            "the normalization switch must sit inside the --test-data block, not before it");
-        Assert.True(switchIndex < runStep.IndexOf("\"${args[@]}\"", StringComparison.Ordinal),
+        // Nested INSIDE the --test-data block, which is a containment claim and not an
+        // ordering one: the rule rewrites rows on their way out of the backup, so outside the
+        // block the flag changes nothing while the runner still prints "company normalization
+        // ON" — a line that reads like data was prepared when none was restored.
+        var withTestData = BashIfBlock.BodyOf(runStep, "[ \"$WITH_TEST_DATA\" = \"true\" ]");
+        Assert.False(string.IsNullOrWhiteSpace(withTestData),
+            "the --test-data block is gone from the \"Run the bucket(s)\" step");
+        Assert.Contains(TestDataNormalization.FlagName, withTestData, StringComparison.Ordinal);
+        Assert.Equal(TestDataNormalization.FlagName,
+            Assert.Single(BashConditionalAppend.Of(withTestData, "args")
+                .Where(a => a.Body.Contains(TestDataNormalization.FlagName, StringComparison.Ordinal))).Body);
+
+        Assert.True(runStep.IndexOf("if [ \"$WITH_TEST_DATA\" = \"true\" ]; then", StringComparison.Ordinal)
+                < runStep.IndexOf("\"${args[@]}\"", StringComparison.Ordinal),
             "the switch must be appended before the runner is invoked");
     }
 
