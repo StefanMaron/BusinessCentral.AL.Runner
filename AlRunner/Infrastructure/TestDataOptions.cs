@@ -68,8 +68,8 @@ internal static class TestDataOptions
     /// artifact cache".</summary>
     internal static string? ExplicitBackupPath { get; set; }
 
-    /// <summary>Company to hydrate. Null means "the first company the backup reports", which
-    /// is logged at hydration time — a stated choice, not a guess about which company matters.</summary>
+    /// <summary>Company to hydrate. Null is only usable on a backup holding exactly one
+    /// company: ResolveCompany refuses to pick when there are several (#2290).</summary>
     internal static string? CompanyOverride { get; set; }
 
     private static string? _cachedIdentity;

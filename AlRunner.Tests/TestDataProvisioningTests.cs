@@ -109,6 +109,76 @@ public sealed class TestDataProvisioningTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// #2730's half of the same regression, and the reason it is HERE rather than beside the
+    /// rest of the normalization tests: a normalized run and an un-normalized one must not
+    /// share an install-baseline cache entry either. Getting that wrong is worse than the
+    /// --test-data case it mirrors, because it is durable — a cache populated by one arm serves
+    /// the other silently, across runs, and every number measured afterwards is wrong with
+    /// nothing indicating it.
+    ///
+    /// Like its sibling above, this goes through TestExecutor.CurrentInstallBaselineCacheKey().
+    /// That is the whole point. TestDataNormalizationTests asserts that BuildCacheIdentity is
+    /// injective in its normalization argument, which is a claim about a pure function and
+    /// stays true even if the CALL SITE stops passing one. Measured: replacing the fourth
+    /// argument at TestDataOptions.cs's CacheIdentity() with a "" literal left that test — and
+    /// all 210 tests matching InstallBaseline|CacheKey|CacheIdentity|TestData — green. Only
+    /// driving the live CacheIdentity() catches it.
+    /// </summary>
+    [Fact]
+    public void NormalizedRun_AndUnnormalizedRun_DoNotShareAnInstallBaselineCacheKey()
+    {
+        var dir = Directory.CreateTempSubdirectory("al-runner-normalize-cachekey");
+        var previousEnv = Environment.GetEnvironmentVariable(BackupReaderTool.ExecutableEnvVar);
+        try
+        {
+            var fakeReader = Path.Combine(dir.FullName, "bcbak");
+            File.WriteAllBytes(fakeReader, new byte[] { 0x7f, 0x45, 0x4c, 0x46 });
+            var backup = Path.Combine(dir.FullName, "BusinessCentral-W1.bak");
+            File.WriteAllBytes(backup, new byte[256]);
+            Environment.SetEnvironmentVariable(BackupReaderTool.ExecutableEnvVar, fakeReader);
+            BackupReaderTool.ResetForTests();
+
+            void ArmTestData()
+            {
+                // ResetForTests() first: CacheIdentity() memoises into _cachedIdentity, so a
+                // second read after flipping the normalization flag would return the first
+                // answer and this test would pass for the wrong reason.
+                TestDataOptions.ResetForTests();
+                TestDataOptions.Enabled = true;
+                TestDataOptions.ExplicitBackupPath = backup;
+                TestDataOptions.CompanyOverride = "CRONUS International Ltd_";
+            }
+
+            TestDataNormalization.ResetForTests();
+            ArmTestData();
+            var unnormalized = TestExecutor.CurrentInstallBaselineCacheKey();
+
+            ArmTestData();
+            TestDataNormalization.Enabled = true;
+            var normalized = TestExecutor.CurrentInstallBaselineCacheKey();
+
+            Assert.NotEqual(unnormalized, normalized);
+            // Both still carry --test-data's own marker. The normalization term goes INSIDE
+            // BuildCacheIdentity's hashed payload, so the two keys differ in the `td<hash>`
+            // segment rather than by one being a prefix of the other — but neither may have
+            // LOST the test-data identity, which is what this asserts.
+            Assert.Contains("td", unnormalized, StringComparison.Ordinal);
+            Assert.Contains("td", normalized, StringComparison.Ordinal);
+
+            // And the difference must survive into the DISK key, which is a different function.
+            Assert.NotEqual(
+                InstallBaselineDiskCache.BuildKeyText(unnormalized, 1),
+                InstallBaselineDiskCache.BuildKeyText(normalized, 1));
+        }
+        finally
+        {
+            TestDataNormalization.ResetForTests();
+            Environment.SetEnvironmentVariable(BackupReaderTool.ExecutableEnvVar, previousEnv);
+            dir.Delete(recursive: true);
+        }
+    }
+
     [Fact]
     public void CacheIdentity_ChangesWithTheBackup_TheCompany_AndTheReaderBuild()
     {

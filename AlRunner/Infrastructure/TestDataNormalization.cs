@@ -1,20 +1,11 @@
 // TestDataNormalization — the opt-in `--test-data-normalize-company` rule set (issue #2730).
 //
 // WHAT IT IS FOR
-//   `--test-data` restores the sandbox artifact's BusinessCentral-W1.bak. Microsoft does not
-//   build the company its BaseApp test buckets run against that way: it generates one from
-//   scratch with the legacy DemoTool at pipeline time (#3429). The two companies differ, and
-//   the differences are not runner defects — they are a different, also-valid BC configuration.
-//   This file narrows named, measured differences so a bucket runs against something closer to
-//   the company its assertions were written for.
-//
-//   The first rule is General Ledger Setup."Additional Reporting Currency". Microsoft's is
-//   blank by construction (`<AdditionalCurrency/>` is empty in all 25 DemoDataConfig.xml files
-//   and CreateGeneralLedgerSetup only writes the field when it is non-empty); the restored
-//   backup's is EUR, which is what Contoso codeunit 5627 produces on a GBP LCY. Given an ACY,
-//   BC's residual rule correctly writes an extra G/L Entry, so every Microsoft test that counts
-//   G/L Entries after a posting sees one more than it expects. The runner is not wrong anywhere
-//   in that chain — the company is.
+//   `--test-data` restores the demo backup as shipped; Microsoft generates the company its
+//   BaseApp tests run against with the legacy DemoTool instead. This file narrows named,
+//   measured differences between the two. Which fields differ, and why the ACY one costs
+//   tests: docs/limitations.md § "Which company --test-data presents", and #3429 for the
+//   derivation.
 //
 // WHY OPT-IN, AND WHY IT MUST STAY OPT-IN
 //   Every pass/fail number recorded in this repository was measured against the un-normalized
