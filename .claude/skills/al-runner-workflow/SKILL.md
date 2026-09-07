@@ -66,7 +66,7 @@ Once detected, here is which tool covers which operation:
 | Open a PR | `gh pr create` | `mcp__github__create_pull_request` |
 | Label a PR | `gh pr edit --add-label` | `mcp__github__update_pull_request` |
 | **Edit a PR body** | `tools/pr-body.py <N> --replace OLD NEW` (never a hand-rolled fetch/modify/upload — see `.claude/rules/branch-and-pr.md`) | `mcp__github__update_pull_request` after reading the body back, with the same care |
-| Read failing CI logs | `gh run view --log-failed` | `mcp__github__get_job_logs` (`failed_only: true`, `return_content: true`) |
+| Read failing CI logs | `gh run view --log-failed` — **empty output is a refusal, not an empty log**; see `.claude/rules/ci-verdicts.md` §3 | `mcp__github__get_job_logs` (`failed_only: true`, `return_content: true`) |
 | Search for duplicates | `gh issue list --search` | `mcp__github__search_issues` |
 
 Any agent definition granting `Bash` for GitHub work must also grant the
