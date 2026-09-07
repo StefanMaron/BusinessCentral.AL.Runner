@@ -769,6 +769,24 @@ public static class ArtifactDownloader
     // PREFIX); this answers "does this exact version exist at all".
     // -----------------------------------------------------------------------
     public static bool VersionExists(string version, Action<string>? log = null)
+        => ProbeVersion(version, log).IsPublished;
+
+    /// <summary>
+    /// Three-state form of <see cref="VersionExists"/> — issue #2981. The bool above cannot
+    /// distinguish "the CDN answered 404" from "the probe never got an answer", and
+    /// <see cref="AlRunner.Infrastructure.BcArtifacts.ResolveProvisionTargetCore"/> reads the
+    /// bool as the first, so a five-second network blip walked a user down to the
+    /// KNOWN-DEGRADED major-fallback tier. Retries once before answering
+    /// <see cref="CdnProbeResult.Undetermined"/>, because the fault reported in #2981 was
+    /// intermittent (4 of 15 connects black-holed while curl succeeded 5/5 moments later).
+    ///
+    /// <see cref="VersionExists"/> stays for the callers that genuinely only want a yes/no and
+    /// are not making a tier decision off it.
+    /// </summary>
+    public static CdnProbeResult ProbeVersion(string version, Action<string>? log = null)
+        => ProbeWithRetry(() => ProbeVersionOnce(version, log));
+
+    private static CdnProbeResult ProbeVersionOnce(string version, Action<string>? log)
     {
         var logf = L(log);
         var url = $"{CdnBase}/{version}/platform";
@@ -776,28 +794,35 @@ public static class ArtifactDownloader
         {
             using var http = ArtifactHttpClient.Create(log: logf);
             using var resp = http.Send(new HttpRequestMessage(HttpMethod.Head, url));
-            return resp.IsSuccessStatusCode;
+            // A response is the only thing that licenses a statement about what Microsoft has
+            // published — the rule NetworkDiagnosis was built around in #2926.
+            return resp.IsSuccessStatusCode ? CdnProbeResult.Published : CdnProbeResult.NotPublished;
         }
         catch (Exception ex)
         {
-            // Issue #2926. Two things wrong here, and the second is the one that bites.
-            //
-            // Only HttpRequestException was caught, so a timeout escaped as an unhandled
-            // exception from a method whose whole contract is "answer true or false".
-            //
-            // And `false` here does not mean what the caller reads it as.
-            // BcArtifacts.ResolveProvisionTargetCore treats false as "this exact build is not
-            // published" and walks down to the major-fallback tier, whose own comment calls
-            // that "the one genuinely degraded outcome" — so a five-second network blip gets
-            // reported to the user as Microsoft having withdrawn the build. The signature
-            // cannot carry the third state without changing that contract (tracked separately),
-            // so the log at least has to stop asserting something that was never established.
-            NetworkDiagnosis.Describe(ex, $"BC {version}", url).WriteTo(logf);
-            logf($"       Could not determine whether BC {version} is published. Treating it as " +
-                 "unavailable and falling back; that is a consequence of the failure above, not " +
-                 "evidence the build was withdrawn.");
-            return false;
+            // Issue #2926 caught the exception here (only HttpRequestException was caught
+            // before, so a timeout escaped a method whose contract is "answer true or false")
+            // and stopped the log claiming the build was withdrawn. Issue #2981 stops the
+            // RETURN VALUE claiming it: the failure is reported as its own state, carrying the
+            // kind #2926 already computes, so the tier resolver can decline to demote on it.
+            var report = NetworkDiagnosis.Describe(ex, $"BC {version}", url);
+            report.WriteTo(logf);
+            return CdnProbeResult.Undetermined(report.Kind);
         }
+    }
+
+    /// <summary>
+    /// Retry an inconclusive probe once, then take whatever the second attempt says. Internal
+    /// seam so #2981's retry is testable without a network: the delegate is the whole probe.
+    ///
+    /// Only <see cref="CdnProbeResult.IsUndetermined"/> is retried. A 404 is a fact and
+    /// re-asking would double the cost of the ordinary withdrawn-build path for nothing, and a
+    /// 200 needs no confirmation.
+    /// </summary>
+    public static CdnProbeResult ProbeWithRetry(Func<CdnProbeResult> probe)
+    {
+        var first = probe();
+        return first.IsUndetermined ? probe() : first;
     }
 
     // -----------------------------------------------------------------------
@@ -805,6 +830,23 @@ public static class ArtifactDownloader
     // Microsoft's public index. Returns null when nothing matches.
     // -----------------------------------------------------------------------
     public static string? ResolveVersion(string prefix, Action<string>? log = null)
+        => ProbeVersionPrefix(prefix, log).Version;
+
+    /// <summary>
+    /// Three-state form of <see cref="ResolveVersion"/> — issue #2981, the same defect one
+    /// tier down. A <c>null</c> return meant both "the index was read and nothing matched the
+    /// prefix" and "the index was never fetched", and
+    /// <see cref="AlRunner.Infrastructure.BcArtifacts.ResolveProvisionTargetCore"/> read it as
+    /// the first, demoting to the KNOWN-DEGRADED major-fallback tier on an unanswered
+    /// question. Retries once for the same reason <see cref="ProbeVersion"/> does.
+    /// </summary>
+    public static CdnPrefixResult ProbeVersionPrefix(string prefix, Action<string>? log = null)
+    {
+        var first = ResolvePrefixOnce(prefix, log);
+        return first.IsUndetermined ? ResolvePrefixOnce(prefix, log) : first;
+    }
+
+    private static CdnPrefixResult ResolvePrefixOnce(string prefix, Action<string>? log)
     {
         var logf = L(log);
         var indexUrl = $"{CdnBase}/indexes/w1.json";
@@ -817,9 +859,11 @@ public static class ArtifactDownloader
             // Issue #2926: this used to print "Error fetching index: One or more errors
             // occurred. (A task was canceled.)" — an AggregateException's ToString, which names
             // neither what failed nor where. NetworkDiagnosis unwraps it and reports the
-            // observation.
-            NetworkDiagnosis.Describe(ex, $"the BC version index (prefix '{prefix}')", indexUrl).WriteTo(logf);
-            return null;
+            // observation. #2981: and the return value now says the index was never read,
+            // rather than reporting it as read-and-empty.
+            var report = NetworkDiagnosis.Describe(ex, $"the BC version index (prefix '{prefix}')", indexUrl);
+            report.WriteTo(logf);
+            return CdnPrefixResult.Undetermined(report.Kind);
         }
 
         var searchPrefix = prefix + ".";
@@ -835,7 +879,7 @@ public static class ArtifactDownloader
             idx = end + 1;
         }
 
-        if (versions.Count == 0) { logf($"No versions found for prefix '{prefix}'"); return null; }
+        if (versions.Count == 0) { logf($"No versions found for prefix '{prefix}'"); return CdnPrefixResult.NoMatch; }
 
         versions.Sort((a, b) =>
         {
@@ -851,7 +895,7 @@ public static class ArtifactDownloader
 
         var resolved = versions.Last();
         logf($"Resolved: {prefix} -> {resolved}");
-        return resolved;
+        return CdnPrefixResult.Resolved(resolved);
     }
 
     // ----------------------------- ZIP helpers -----------------------------

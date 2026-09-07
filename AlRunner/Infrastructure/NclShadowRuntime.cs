@@ -216,6 +216,10 @@ public static class NclShadowRuntime
         Directory.CreateDirectory(shadowRoot);
         var tempDir = Path.Combine(shadowRoot, $"{key}.building.{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
+        // Where the publish actually landed. Normally shadowDir; tempDir when a locked
+        // source defeated every rename attempt (#3364) — the re-exec then runs from the
+        // temp dir this once rather than from a path that was never created.
+        var publishedDir = shadowDir;
         try
         {
             MirrorInstallDirectory(origFull, tempDir, entrySource);
@@ -233,19 +237,20 @@ public static class NclShadowRuntime
             // shadowDir that isn't complete.
             File.WriteAllText(Path.Combine(tempDir, MarkerFileName), origFull);
 
-            PublishShadowDir(tempDir, shadowDir, origFull);
+            publishedDir = PublishShadowDir(tempDir, shadowDir, origFull);
         }
         finally
         {
             // Belt-and-braces cleanup if something above threw for an unrelated reason
             // (e.g. RewriteInPlace failing), or PublishShadowDir already consumed/moved
             // tempDir away — don't leave a half-built temp dir behind.
-            try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
+            if (!string.Equals(publishedDir, tempDir, StringComparison.OrdinalIgnoreCase))
+                try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
         }
 
-        PruneStaleShadowDirs(shadowRoot, shadowDir, keepNewest: 4);
+        PruneStaleShadowDirs(shadowRoot, publishedDir, keepNewest: 4);
 
-        return shadowDll;
+        return Path.Combine(publishedDir, EntryDllName);
     }
 
     // #2489: the issue's own field observation of "incomplete published dir" listed
@@ -335,24 +340,73 @@ public static class NclShadowRuntime
     ///    normal file writes always have for concurrent readers: an already-open handle
     ///    keeps seeing the old bytes/inode, and a fresh open after the write sees the new
     ///    ones — nobody's path resolution ever goes missing.
+    /// 4. <b>The source directory is locked</b> (#3364) — Windows refuses to rename a
+    ///    directory while any process holds an open handle to any file inside it, and an
+    ///    on-access AV scanner's plain <c>FileShare.Read</c> handle on the ~50 MB
+    ///    <c>Microsoft.Dynamics.Nav.Ncl.dll</c> this method has just written is enough.
+    ///    That raises <c>IOException</c> naming the SOURCE path, with
+    ///    <paramref name="shadowDir"/> still absent — the case the old
+    ///    <c>when (Directory.Exists(shadowDir))</c> filter could not match, so it escaped
+    ///    all the way out of <c>Main</c> and killed the process before any test ran. The
+    ///    lock is transient, so this retries with backoff, exactly as
+    ///    <c>NclCecilRewrite.AtomicReplace</c> already does for the file-level rename of
+    ///    the same bytes one layer down.
     /// </summary>
-    internal static void PublishShadowDir(string tempDir, string shadowDir, string origFull)
+    /// <returns>The directory the caller should exec from, and it always exists and is
+    /// complete: <paramref name="shadowDir"/> normally, or <paramref name="tempDir"/> when
+    /// a sustained source-side lock defeated every publish attempt and the temp dir is
+    /// itself complete. Returning a directory rather than <c>void</c> is what stops the
+    /// exhausted path handing back a path that was never created (the caller would re-exec
+    /// into it and die with "The application to execute does not exist").</returns>
+    /// <exception cref="IOException">Every attempt was exhausted AND
+    /// <paramref name="tempDir"/> is itself incomplete, so neither directory is
+    /// exec-able (#3371). The message names both directories, which required file is
+    /// missing, and the rename's own last exception, which is also the
+    /// <see cref="Exception.InnerException"/>.</exception>
+    /// <param name="move">Test seam for the rename; production passes null and gets
+    /// <see cref="Directory.Move"/>. A real file lock only blocks a rename on Windows,
+    /// so the retry behaviour is untestable on the Linux CI legs without it.</param>
+    /// <param name="sleep">Test seam for the backoff delay, so a test that never lets the
+    /// move succeed costs no wall time.</param>
+    internal static string PublishShadowDir(
+        string tempDir, string shadowDir, string origFull,
+        Action<string, string>? move = null, Action<int>? sleep = null)
     {
+        move ??= Directory.Move;
+        sleep ??= System.Threading.Thread.Sleep;
         const int maxAttempts = 20;
+        // #3371: the rename's exception is the ONLY thing that separates a transient
+        // scanner handle (retrying clears it) from a cause that never will — a
+        // cross-volume rename, PathTooLongException, a full disk, a permission problem on
+        // the shadow root. Discarding it and then asserting "source locked, or sustained
+        // contention" in the exhaustion message named a cause that was never measured, and
+        // sent the operator after antivirus when the answer was the disk or the path.
+        // Keep the LAST one: on a condition that changes mid-retry, what it settled into
+        // is what the operator has to act on.
+        Exception? lastMoveFailure = null;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             if (!Directory.Exists(shadowDir))
             {
                 try
                 {
-                    Directory.Move(tempDir, shadowDir);
-                    return;
+                    move(tempDir, shadowDir);
+                    return shadowDir;
                 }
-                catch (IOException) when (Directory.Exists(shadowDir))
+                catch (IOException ex) { lastMoveFailure = ex; }
+                catch (UnauthorizedAccessException ex) { lastMoveFailure = ex; }
+
+                if (!Directory.Exists(shadowDir))
                 {
-                    // A sibling published between our Exists check and our Move —
-                    // fall through to the adopt/self-heal logic below.
+                    // Nothing to adopt or heal — the destination is still absent, so the
+                    // refusal came from the SOURCE side (case 4 above). Back off and try
+                    // the rename again rather than falling into the heal logic, which has
+                    // no directory to heal.
+                    if (attempt < maxAttempts) sleep(Math.Min(attempt * 100, 500));
+                    continue;
                 }
+                // A sibling published between our Exists check and our Move —
+                // fall through to the adopt/self-heal logic below.
             }
 
             if (IsShadowDirComplete(shadowDir, origFull))
@@ -360,7 +414,7 @@ public static class NclShadowRuntime
                 // Lost the race, but to a COMPLETE, content-equivalent directory (only
                 // ever produced by this same rename-into-place path) — adopt it.
                 try { Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
-                return;
+                return shadowDir;
             }
 
             // shadowDir exists but is incomplete — heal in place (see the doc comment
@@ -396,18 +450,75 @@ public static class NclShadowRuntime
             {
                 Console.Error.WriteLine($"[reexec] Self-healed incomplete shadow dir at {shadowDir} in place");
                 try { Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
-                return;
+                return shadowDir;
             }
             // Still incomplete (a transient per-file collision above, or a sibling
             // racing the same heal) — loop around and retry.
         }
 
-        // Exhausted retries under sustained contention — leave tempDir for the finally
-        // block in EnsureShadowDir to clean up, and let the caller rebuild next call
-        // rather than publish something we can no longer prove is complete.
-        Console.Error.WriteLine(
-            $"[reexec] WARN: could not publish shadow dir at {shadowDir} after {maxAttempts} attempts " +
-            "under contention — will retry on the next invocation");
+        // Exhausted every attempt. Our own tempDir is normally complete (the marker went in
+        // last, before this method was called), so run from it in place rather than
+        // returning a path that was never created: the caller re-execs into whatever comes
+        // back, and a missing directory there means "The application to execute does not
+        // exist" and no tests at all. Cost of the fallback is one .building.* dir that
+        // PruneStaleShadowDirs deliberately never reaps (#2512) — accepted for a path only a
+        // sustained lock or sustained contention reaches, and the next invocation
+        // republishes normally. The check below is what makes that "normally" a fact rather
+        // than an assumption; #3371 is what happens when it comes back false.
+        // #3371: report what was actually caught, never a cause we assumed. `null` here is
+        // the contention route — every attempt found shadowDir already present and the
+        // heal never completed, so no move was ever attempted and there is no exception to
+        // name; saying "no rename was attempted" is itself the distinguishing fact.
+        var cause = lastMoveFailure != null
+            ? $"last failure: {lastMoveFailure.GetType().Name}: {lastMoveFailure.Message}"
+            : "no rename was attempted — the destination existed on every attempt and the in-place heal never completed";
+
+        if (IsShadowDirComplete(tempDir, origFull))
+        {
+            Console.Error.WriteLine(
+                $"[reexec] WARN: could not publish shadow dir at {shadowDir} after {maxAttempts} attempts " +
+                $"({cause}) — running from {tempDir} this once");
+            return tempDir;
+        }
+
+        // #3371: every attempt is spent AND our own tempDir just failed the completeness
+        // check, so neither directory is usable — shadowDir is either absent (the
+        // source-lock route never created it) or incomplete (the loop only exits here
+        // having failed to heal it). Returning either one hands the caller a path it will
+        // pass straight to `dotnet exec`: an absent one dies with "The application to
+        // execute does not exist" (#3364's third symptom), and an incomplete one is
+        // refused by hostfxr for the missing manifest. A fallback whose validity the
+        // condition above it just disproved is a silent failure with extra steps, so this
+        // throws and names the state instead (.claude/rules/loud-failures.md).
+        var missing = string.Join(", ", MissingRequiredNames(tempDir, origFull));
+        throw new IOException(
+            $"Could not publish the Ncl shadow runtime dir at {shadowDir} after {maxAttempts} attempts, " +
+            $"and the build at {tempDir} is itself incomplete (missing: {missing}) — " +
+            $"neither directory can be exec'd, so there is nothing to re-exec into ({cause})",
+            lastMoveFailure);
+    }
+
+    /// <summary>The required names <see cref="IsShadowDirComplete"/> did not find, so an
+    /// error can say WHICH file is missing rather than only that something was. Same
+    /// definition of "required" as that method, read from the same two lists.</summary>
+    private static IEnumerable<string> MissingRequiredNames(string dir, string origFull)
+    {
+        if (!Directory.Exists(dir)) { yield return "(the directory itself)"; yield break; }
+        foreach (var name in new[] { EntryDllName, NclFileName }.Concat(RequiredManifestNames))
+            if (!File.Exists(Path.Combine(dir, name))) yield return name;
+
+        var marker = Path.Combine(dir, MarkerFileName);
+        if (!File.Exists(marker)) yield return MarkerFileName;
+        else
+        {
+            string? recorded = null;
+            try { recorded = File.ReadAllText(marker); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            // Byte-for-byte, exactly as IsShadowDirComplete compares it — a diagnostic
+            // that judged the marker more loosely than the check it is explaining would
+            // report "nothing missing" for a dir that check had just rejected.
+            if (recorded != origFull)
+                yield return $"{MarkerFileName} (records '{recorded}', expected '{origFull}')";
+        }
     }
 
     /// <summary>

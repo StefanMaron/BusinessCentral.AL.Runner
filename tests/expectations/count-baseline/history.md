@@ -1405,3 +1405,55 @@ above already records `17b015ef` → `0bbe376` (+28), so naming `17b015ef` here 
 would double-count it. Only this PR's step belongs here.
 
 Written by agent fbk-2 (automated implementation agent).
+
+## 2026-09-07 — corpus pin `ddb9b5ab` → `9ee6bbc` (al-language 2978 → 2977)
+
+**The count goes DOWN, which is the unusual part.** A pin bump almost always grows the
+count, so this entry exists mainly to say why this one shrinks: corpus PR
+[#250](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/250) **deletes
+codeunit 60878 "Test Report SaveAs Pdf"** — the whole file, carrying its single `[Test]`.
+Upstream's rationale is that 60878 asserted only that `Report.SaveAs(..., ReportFormat::Pdf,
+...)` returns false, which is true on the Linux tier (RDLC stubbed) and false on a Windows
+tier that renders, so it was red on Windows by construction. Codeunit 60774 "Test Report
+SaveAs Pdf Body" asserts a strict superset — it branches on the same return value and
+additionally reads the blob back, requiring an empty stream on false and a `%PDF-` signature
+on true. No coverage is lost; one test is.
+
+This is a **catch-up** bump (`al-language-submodule.md`): every fix these four commits need
+had already merged, so nothing here is folded into a runner fix. Corpus history is linear, so
+all four come as a prefix:
+
+| corpus PR | what it changes | effect on the count |
+|---|---|---|
+| [#250](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/250) | deletes cu 60878, superseded by cu 60774 | **−1** |
+| [#251](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/251) | `.github/workflows/` only — nightly artifact type | ±0 |
+| [#252](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/252) | rewrites one existing assertion in `TestMediaPngImport.al` (dimensions, not byte length) | ±0 |
+| [#253](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/253) | `.github/` scripts and workflows, plus comments only in `TestIsolatedStorage.al` | ±0 |
+
+**2977 is the number the guard itself reported**, not one computed by subtracting 1 from 2978.
+Measured on BC 28.1.49838.53910 on a real 3-bundle run: with the pin moved and the baseline
+still at 2978 the run exited 4 with
+`DROP: suite 'al-language' tests count: expected 2978, actual 2977 (BC 28.1)`, and 2977 is that
+`actual`. Re-run after the bump: **3006 tests total, 3006 pass, 0 fail, exit 0**, of which
+`al-language-onprem` contributes 29 and `al-language-internals-fixture` 0 — both unchanged, and
+neither reported a mismatch.
+
+The guard is symmetric in practice, not just in the README: running the **old** pin against
+this PR's 2977 exits 1 with
+`GROWTH: suite 'al-language' tests count: expected 2977, actual 2978 (BC 28.1)`. So the
+decrease is attributable to these four commits and to nothing else in the tree.
+
+**One entry in `tests/expectations/` had to go with it**, and it is not optional — the run
+cannot be green without it. `oos-reports.json` declared an `expect-oos` for
+`Test Report SaveAs Pdf.SaveAsPdf_RdlcLayout_ReturnsFalseWithLastErrorTextOnLinux` (cu 60878).
+With that codeunit deleted upstream, `--expectations-require-match` reports
+`UNMATCHED: ... matched no test in this run — no codeunit named "Test Report SaveAs Pdf"
+(id 60878) was loaded in this run`, which is exit 5. The sibling entry for cu 60774 stays and
+still matches (`PASS (oos)`), so the same permanently-out-of-scope surface
+(`docs/scope.md#report-rendering`) remains declared — the deleted entry was the redundant half,
+exactly as upstream's supersession implies. Expectation entries now: 24, all matched.
+
+The starting point is `ddb9b5ab`/2978, not `408c39fe`/2969: `5ad50bc2` on `main` moved both the
+pin and the count in one commit, and its own step is already recorded by that PR.
+
+Written by agent stma-auto-11 (automated implementation agent).

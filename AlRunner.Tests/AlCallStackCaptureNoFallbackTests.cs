@@ -30,6 +30,11 @@ namespace AlRunner.Tests;
 /// run in parallel) — split across two classes this raced for real (observed locally:
 /// the wiring test's own seed clobbered the fallback test's seed mid-assertion).
 /// </summary>
+// Swaps the process-wide Console.Error/Out to capture what the code under test writes.
+// xunit runs collections in parallel, so without this the swap races every other class
+// doing the same and a line lands in the wrong sink (#2913; ConsoleSwapIsolationGuardTests
+// enforces it).
+[Collection(ConsoleFilterSerialCollection.Name)]
 public class AlCallStackCaptureNoFallbackTests
 {
     private static FieldInfo GetPrivateStatic(string name)

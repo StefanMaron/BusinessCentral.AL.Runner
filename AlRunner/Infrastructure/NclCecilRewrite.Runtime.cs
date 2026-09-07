@@ -1743,6 +1743,14 @@ public static partial class NclCecilRewrite
                 body.MaxStackSize = 0;
                 Console.Error.WriteLine("[Cecil] Replaced DataItemIterator.SetLoadFieldsBasedOnMetadata → no-op (partial records disabled; full field load)");
             }
+            // RecordImplementation.AreFieldsLoaded(IEnumerable<NCLMetaField>) — report the
+            // load set from TableState.FieldLoadInfo (which BC maintains) rather than from the
+            // fetched buffer, which the runner's TempTableDataProvider always returns fully
+            // loaded. #3358; rationale in RecordPatches.PartialLoad.cs. The no-op above stays
+            // correct: the runner still loads every field, and this only changes the report.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "RecordImplementation", "AreFieldsLoaded", "IEnumerable`1"),
+                H(recordPatches, "RecordImplementation_AreFieldsLoaded"));
             // ExecutePermissionsValidatedEx get/set consult
             // session.Database.PermissionSetupMonitor (null on skeleton). Permissions are
             // static in the runner — plain backing-field semantics are equivalent.
