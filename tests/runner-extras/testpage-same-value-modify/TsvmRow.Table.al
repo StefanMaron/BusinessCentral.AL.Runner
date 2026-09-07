@@ -2,7 +2,7 @@
 /// deliberately: a counter field on this row would be written by OnModify itself, making it a
 /// genuinely changed field and destroying the very condition -- "no field value on this row
 /// differs from the one it was loaded with" -- that the suite exists to measure.
-table 65761 "Tsvm Row"
+table 65781 "Tsvm Row"
 {
     DataClassification = CustomerContent;
 

@@ -16,7 +16,7 @@
 ///
 /// Every assertion is a concrete integer. None of them passes against an implementation that
 /// never fires OnModify, and none passes against one that fires it per assignment.
-codeunit 65764 "Tsvm Tests"
+codeunit 65784 "Tsvm Tests"
 {
     Subtype = Test;
     TestPermissions = Disabled;

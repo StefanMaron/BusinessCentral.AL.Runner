@@ -1,5 +1,5 @@
 /// Out-of-row tally. Has no OnModify of its own, so Bump's own Modify cannot recurse.
-table 65762 "Tsvm Trace"
+table 65782 "Tsvm Trace"
 {
     DataClassification = CustomerContent;
 
