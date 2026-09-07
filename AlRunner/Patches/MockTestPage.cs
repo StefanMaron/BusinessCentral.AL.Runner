@@ -229,6 +229,10 @@ internal class LiveNavTestPage : MockITestPage
 
     internal NavRecord? Record => _record;
 
+    // The page object a SUBCLASS needs: LiveNavTestPart re-positions a linked part through the
+    // host page's own OnFindRecord (issue #3439), and _page itself is private.
+    private protected RunnerPageInstance? PageInstance => _page;
+
     /// <summary>
     /// The record this operation genuinely needs, or a loud, named refusal instead of an NRE
     /// when the page has none (issue #2007: a page with no SourceTable — the StandardDialog
@@ -1856,7 +1860,8 @@ internal class LiveNavTestPage : MockITestPage
     {
         var record = RequireRecord("MoveFirst()");
         FlushParts(); FlushRow(); LeaveNewRowLine();
-        var found = record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
+        var found = _page?.RaiseOnFindRecord("-")
+                    ?? record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
         if (!found) EnterNewRowLine(record);
         return Loaded(found);
     }
@@ -1899,7 +1904,8 @@ internal class LiveNavTestPage : MockITestPage
     {
         var record = RequireRecord("MoveLast()");
         FlushParts(); FlushRow(); LeaveNewRowLine();
-        var found = record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult();
+        var found = _page?.RaiseOnFindRecord("+")
+                    ?? record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult();
         if (!found) EnterNewRowLine(record);
         return Loaded(found);
     }
@@ -1919,7 +1925,7 @@ internal class LiveNavTestPage : MockITestPage
         // blank buffer EnterNewRowLine installed.
         if (_onNewRowLine) { LeaveNewRowLine(); return false; }
 
-        if (record.ALNextAsync().GetAwaiter().GetResult() != 0) return Loaded(true);
+        if (StepRow(record, 1) != 0) return Loaded(true);
         return EnterNewRowLine(record);
     }
 
@@ -1934,7 +1940,7 @@ internal class LiveNavTestPage : MockITestPage
         // Init()ed row that is not in the table.
         if (_onNewRowLine) { LeaveNewRowLine(); return Loaded(true); }
 
-        return Loaded(record.ALNextAsync(-1).GetAwaiter().GetResult() != 0);
+        return Loaded(StepRow(record, -1) != 0);
     }
 
     /// <summary>
@@ -1951,8 +1957,20 @@ internal class LiveNavTestPage : MockITestPage
         var record = RequireRecord("MoveNext()");
         FlushParts(); FlushRow();
         if (_onNewRowLine) { LeaveNewRowLine(); return false; }
-        return Loaded(record.ALNextAsync().GetAwaiter().GetResult() != 0);
+        return Loaded(StepRow(record, 1) != 0);
     }
+
+    /// <summary>
+    /// Move one row along the rowset THE PAGE presents: its own OnNextRecord when it declares
+    /// one, and the platform step otherwise (issue #3439).
+    ///
+    /// A page that serves its rows from somewhere other than its SourceTable — a temporary
+    /// buffer above all — answers here with rows the record has never held, so stepping the
+    /// record directly walks a different set from the one the page shows.
+    /// </summary>
+    private int StepRow(NavRecord record, int steps)
+        => _page?.RaiseOnNextRecord(steps)
+           ?? record.ALNextAsync(steps).GetAwaiter().GetResult();
 
     /// <summary>
     /// Whether this page shows the implicit new-row line: the trailing blank row an editable,
@@ -3855,7 +3873,8 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
         if (Record is not { } record) return;
         ApplyLink();
         AbandonNewRowLine();
-        var found = record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
+        var found = PageInstance?.RaiseOnFindRecord("-")
+                    ?? record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
         Loaded(found);
         if (!found) EnterNewRowLine(record);
     }

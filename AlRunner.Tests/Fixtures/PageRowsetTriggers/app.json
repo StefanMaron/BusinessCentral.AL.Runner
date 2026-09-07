@@ -1,0 +1,12 @@
+{
+  "id": "6d1f4b83-2c07-4a95-9e6b-31f8a0d7c452",
+  "name": "Runner Tests Fixture - Page Rowset Triggers",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3439: TestPage navigation must go through the page's own OnFindRecord/OnNextRecord when it declares them, and through the platform when it does not.",
+  "description": "Runner-mechanism fixture. What BC does is settled upstream by corpus codeunits 60679 and 60680 (StefanMaron/BusinessCentral.AL.Language.Tests#275), measured on a real 28.4 service tier; this fixture pins the runner's OWN dispatch so a regression fails loudly here without the submodule pin having to be bumped first, and pins the two arms the corpus cannot reach: which Which/Steps values the runner passes, and that a page declaring NEITHER trigger raises neither. Declares no application floor: everything it needs is its own.",
+  "dependencies": [],
+  "platform": "1.0.0.0",
+  "idRanges": [ { "from": 70640, "to": 70659 } ],
+  "runtime": "14.0"
+}
