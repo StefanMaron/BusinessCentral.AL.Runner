@@ -1539,3 +1539,28 @@ which the run matched (`match audit: all 19 entries matched a discovered test`) 
 `--expectations-require-match`.
 
 Written by agent fbk-2 (automated implementation agent).
+
+### 2993 -> 3004 (pin 920a7bed -> c9b5cc83, PR #3381)
+
+The pin advances by exactly one corpus commit, `c9b5cc83` — corpus
+[#260](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/260), the upstream
+half of [#3378](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3378) (the
+Record Link table and the AL link surface are one store). `git -C tests/al-language diff --stat
+920a7bed..c9b5cc83` is two files and nothing else: `record/ALTLinkHost.Table.al` and
+`record/TestRecordLinkTable.al` (codeunit 60777, eleven `RecordLink*` tests).
+
+This is the **fold** case, not a catch-up bump: the eleven tests fail without this PR's runner
+fix, so the bump belongs in the fix PR and would be red on its own. Measured on this pin at BC
+28.1.49838.53910, `--test RecordLink`, on the corpus app: **10 of 11 fail** under the packed
+`2.10.0-local.5ad50bc2` tool (a `main` commit predating this branch) and **11 of 11 pass** under
+this branch's build.
+
+`c9b5cc83` is deliberately not corpus `master`'s tip. The next commit, `69ae759` (corpus #259),
+belongs to a different open runner PR, so pinning past `c9b5cc83` would pull in tests whose
+fix has not landed — "pin the newest commit whose predecessors are all satisfied".
+
+**3004 is the guard's own printed `actual`**, not `2993 + 11`. The three-app run reported
+`al-language` 3004 with `al-language-onprem` at 29 and `al-language-internals-fixture` at 0,
+both unchanged.
+
+Written by agent fbk-2 (automated implementation agent).
