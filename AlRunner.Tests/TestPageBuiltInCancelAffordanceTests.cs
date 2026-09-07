@@ -38,25 +38,39 @@ public sealed class TestPageBuiltInCancelAffordanceTests
     public void NonLookupPageMeasuredWithoutDialogChrome_OffersNoPlainCancel(string pageType)
         => Assert.False(LiveNavTestPage.OffersBuiltInAction(FormResult.Cancel, lookupMode: false, pageType));
 
-    // INFERRED, NOT MEASURED — kept separate from the rows above on purpose, so a later reader
-    // cannot mistake these for service-tier facts. No corpus test drives Cancel() on any of
-    // these three page types; they are refused because FormState.RunModal is assigned in exactly
-    // two UI builders (NavigatePageBuilder, StandardDialogBuilder) and none of them is one.
+    // MEASURED SINCE #3283, and this is where #3131's two questions were answered. Corpus
+    // codeunit 60338 "TBA Tests" drives Cancel() on both page types on a real service tier:
+    // NavigatePage refuses it (arm e) and ConfirmationDialog refuses it (arm g).
     //
-    // ConfirmationDialog is the row to watch, and it is the reason this test exists separately:
-    // its NAME suggests OK/Cancel chrome, it moves from permissive to REFUSING here, and
-    // refusing is the riskier direction — a wrong refusal breaks AL that works on real BC,
-    // whereas a wrong permission only fails to reproduce a BC error. It is drawn from the same
-    // builder fact that was judged too thin to act on for NavigatePage (which keeps its
-    // permissive answer below). #3131 tracks getting both measured upstream; if BC turns out to
-    // offer Cancel on a ConfirmationDialog, THIS is the test that has to change, not the one
-    // above.
+    // NavigatePage is the row that MOVED. It used to answer permissively here, on the inference
+    // that FormState.RunModal is assigned in exactly two UI builders (NavigatePageBuilder,
+    // StandardDialogBuilder) and both therefore carry OK/Cancel chrome. BC disagrees: a
+    // NavigatePage's chrome is Back/Next/Finish, so it has an OK and no Cancel — see
+    // NonLookupNavigatePage_OffersPlainOk below for the half that stayed. The
+    // ConfirmationDialog inference held.
     [Theory]
+    [InlineData("NavigatePage")]
     [InlineData("ConfirmationDialog")]
+    public void NonLookupPageMeasuredWithoutCancelChrome_OffersNoPlainCancel(string pageType)
+        => Assert.False(LiveNavTestPage.OffersBuiltInAction(FormResult.Cancel, lookupMode: false, pageType));
+
+    // STILL INFERRED, NOT MEASURED — kept separate from the rows above on purpose, so a later
+    // reader cannot mistake these for service-tier facts. No corpus test drives Cancel() on
+    // either; they are refused because they are not one of the page types a service tier has
+    // shown a Cancel on, and nothing suggests they carry dialog chrome.
+    [Theory]
     [InlineData("ListPlus")]
     [InlineData("Document")]
     public void NonLookupPageInferredWithoutDialogChrome_OffersNoPlainCancel_Unmeasured(string pageType)
         => Assert.False(LiveNavTestPage.OffersBuiltInAction(FormResult.Cancel, lookupMode: false, pageType));
+
+    // MEASURED, and the row this fix exists for (#3283). A PromptDialog HAS a plain Cancel —
+    // whether or not it declares systemaction(Cancel), and whatever its PromptMode, because
+    // PromptDialogBuilder.BeginBuildActionBar adds a form-level Cancel exit action
+    // unconditionally. Corpus 60338 arms a and b.
+    [Fact]
+    public void NonLookupPromptDialogPage_OffersPlainCancel()
+        => Assert.True(LiveNavTestPage.OffersBuiltInAction(FormResult.Cancel, lookupMode: false, "PromptDialog"));
 
     // The other half, and what stops the rule above from being "Cancel never resolves": a page
     // built by a dialog builder DOES offer it. StandardDialog is measured — every green
@@ -65,33 +79,69 @@ public sealed class TestPageBuiltInCancelAffordanceTests
     public void NonLookupStandardDialogPage_OffersPlainCancel()
         => Assert.True(LiveNavTestPage.OffersBuiltInAction(FormResult.Cancel, lookupMode: false, "StandardDialog"));
 
-    // INFERRED, NOT MEASURED, and the permissive direction of the same builder fact: NavigatePage
-    // keeps the answer it already had rather than gaining a refusal. Its chrome is
-    // Back/Next/Finish/Cancel rather than OK/Cancel, so BC may well answer differently here --
-    // #3131, same issue as the refusing inference above.
+    // The half of NavigatePage that a service tier DID confirm (corpus 60338 arm f): it offers
+    // plain OK. That is what keeps the refusal above from being read as "a NavigatePage has no
+    // built-ins at all".
     [Fact]
-    public void NonLookupNavigatePage_OffersPlainCancel_Unmeasured()
-        => Assert.True(LiveNavTestPage.OffersBuiltInAction(FormResult.Cancel, lookupMode: false, "NavigatePage"));
+    public void NonLookupNavigatePage_OffersPlainOk()
+        => Assert.True(LiveNavTestPage.OffersBuiltInAction(FormResult.OK, lookupMode: false, "NavigatePage"));
 
     // PageType comes from AL source or from a dependency's SymbolReference.json, neither of
     // which normalises case, so the comparison may not be ordinal-exact.
     [Theory]
     [InlineData("standarddialog")]
     [InlineData("STANDARDDIALOG")]
-    [InlineData("navigatepage")]
+    [InlineData("promptdialog")]
+    [InlineData("PROMPTDIALOG")]
     public void DialogPageTypeMatchIsCaseInsensitive(string pageType)
         => Assert.True(LiveNavTestPage.OffersBuiltInAction(FormResult.Cancel, lookupMode: false, pageType));
 
-    // Cancel is the ONLY built-in that gained a condition. Plain OK is offered by every
-    // non-lookup page whatever its type — the corpus's PlainModal_HandlerOk arm runs on the
-    // same Worksheet page the first test refuses Cancel on, and it is green upstream. A fix
-    // that gated both would have broken it.
+    // Plain OK is offered by nearly every non-lookup page — the corpus's PlainModal_HandlerOk
+    // arm runs on the same Worksheet page the first test refuses Cancel on, and it is green
+    // upstream. The two exceptions are below; a fix that gated OK the way Cancel is gated would
+    // have broken this row.
     [Theory]
     [InlineData("Worksheet")]
     [InlineData("Card")]
     [InlineData("StandardDialog")]
-    public void NonLookupPage_AlwaysOffersPlainOk(string pageType)
+    [InlineData("PromptDialog")]
+    public void NonLookupPage_OffersPlainOk(string pageType)
         => Assert.True(LiveNavTestPage.OffersBuiltInAction(FormResult.OK, lookupMode: false, pageType));
+
+    // EXCEPTION 1, MEASURED (corpus 60338 arm h): a ConfirmationDialog's chrome is Yes/No, so it
+    // has neither built-in. This is the direction that used to answer a silent wrong OK —
+    // OK().Invoke() closed the page here and raises on BC.
+    [Fact]
+    public void NonLookupConfirmationDialog_OffersNoPlainOk()
+        => Assert.False(LiveNavTestPage.OffersBuiltInAction(FormResult.OK, lookupMode: false, "ConfirmationDialog"));
+
+    // EXCEPTION 2, MEASURED (corpus 60338 arms c and d), and the only row in this file that is
+    // not a function of PageType alone: declaring systemaction(OK) REPLACES the built-in OK
+    // rather than adding one, because PromptDialogBuilder.BuildPromptActions creates the
+    // ExitAction only on its else-branch. Undeclared, the same page offers OK — which is what
+    // makes this a statement about the declaration and not about PromptDialog.
+    [Fact]
+    public void PromptDialogDeclaringSystemActionOk_OffersNoPlainOk()
+    {
+        Assert.False(LiveNavTestPage.OffersBuiltInAction(
+            FormResult.OK, lookupMode: false, "PromptDialog", declaresSystemActionOk: true));
+        Assert.True(LiveNavTestPage.OffersBuiltInAction(
+            FormResult.OK, lookupMode: false, "PromptDialog", declaresSystemActionOk: false));
+    }
+
+    // ...and the declaration is inert everywhere else: it is a PromptDialog-builder fact, not a
+    // general one. Cancel on the same page is unaffected too (arm a drives Cancel() on a page
+    // that declares all three system actions).
+    [Fact]
+    public void DeclaringSystemActionOk_ChangesNothingOnOtherPageTypesOrOnCancel()
+    {
+        Assert.True(LiveNavTestPage.OffersBuiltInAction(
+            FormResult.OK, lookupMode: false, "StandardDialog", declaresSystemActionOk: true));
+        Assert.True(LiveNavTestPage.OffersBuiltInAction(
+            FormResult.OK, lookupMode: false, "Card", declaresSystemActionOk: true));
+        Assert.True(LiveNavTestPage.OffersBuiltInAction(
+            FormResult.Cancel, lookupMode: false, "PromptDialog", declaresSystemActionOk: true));
+    }
 
     // A lookup page must answer NULL for plain Cancel even when it IS a dialog, so BC's
     // FindBuiltInAction(Cancel, LookupCancel) falls through to LookupCancel — which is how
@@ -168,22 +218,68 @@ public sealed class TestPageBuiltInCancelAffordanceTests
     // the unknown case — and so a future edit that widened it to "any dialog-ish name" fails
     // here rather than silently in the corpus.
     //
-    // Two of these rows are NOT service-tier facts, and the table cannot show that by itself:
-    // NavigatePage (true) and ConfirmationDialog (false) are both inferred from the UI-builder
-    // fact and tracked by #3131 — see the two *_Unmeasured tests above, which are where those
-    // two claims are pinned with their provenance attached. StandardDialog/Card/List/Worksheet
-    // are measured upstream; ListPlus/Document/API/"" ride on the same inference as
-    // ConfirmationDialog but are not surprising members of the no-chrome set.
+    // Every row except ListPlus/Document/API/"" is a service-tier fact now: StandardDialog,
+    // Card, List and Worksheet from #3059/#3152, PromptDialog, NavigatePage and
+    // ConfirmationDialog from #3283 (corpus 60338 arms a, b, e, g). The four remaining rows ride
+    // on the inference that a page type nobody has shown a Cancel on does not have one; they are
+    // not surprising members of the no-chrome set.
     [Theory]
-    [InlineData("StandardDialog", true)]
-    [InlineData("NavigatePage", true)]        // inferred, #3131
+    [InlineData("StandardDialog", true)]      // measured
+    [InlineData("PromptDialog", true)]        // measured, #3283
     [InlineData(null, true)]
-    [InlineData("ConfirmationDialog", false)] // inferred, #3131 — the riskier direction
+    [InlineData("NavigatePage", false)]       // measured, #3283 — was an inferred true
+    [InlineData("ConfirmationDialog", false)] // measured, #3283
     [InlineData("Card", false)]
     [InlineData("List", false)]
     [InlineData("Worksheet", false)]
     [InlineData("API", false)]
     [InlineData("", false)]
-    public void HasDialogCancelAffordance_IsExactlyTheTwoDialogBuilderPageTypes(string? pageType, bool expected)
+    public void HasDialogCancelAffordance_IsExactlyTheMeasuredDialogPageTypes(string? pageType, bool expected)
         => Assert.Equal(expected, LiveNavTestPage.HasDialogCancelAffordance(pageType));
+
+    // The OK predicate on its own, the same way. It is nearly-always-true, and the point of the
+    // table is that the two false rows do not follow the Cancel table: PromptDialog is true for
+    // Cancel and false here once it declares one, ConfirmationDialog is false for both, and
+    // NavigatePage is false for Cancel and true here.
+    [Theory]
+    [InlineData("StandardDialog", false, true)]
+    [InlineData("NavigatePage", false, true)]        // measured, #3283
+    [InlineData("Worksheet", false, true)]
+    [InlineData("Card", false, true)]
+    [InlineData(null, false, true)]
+    [InlineData(null, true, true)]                   // unknown page: stays permissive either way
+    [InlineData("PromptDialog", false, true)]        // measured, #3283
+    [InlineData("PromptDialog", true, false)]        // measured, #3283
+    [InlineData("ConfirmationDialog", false, false)] // measured, #3283
+    [InlineData("ConfirmationDialog", true, false)]
+    public void HasPlainOkAffordance_RefusesOnlyConfirmationDialogAndADeclaringPromptDialog(
+        string? pageType, bool declaresSystemActionOk, bool expected)
+        => Assert.Equal(expected, LiveNavTestPage.HasPlainOkAffordance(pageType, declaresSystemActionOk));
+
+    // #3284, and a table the Cancel one cannot predict: what a NON-lookup page reports when the
+    // handler invoked nothing. ConfirmationDialog reports Cancel while having no built-in Cancel
+    // to invoke; NavigatePage reports OK while having none either. Measured in corpus 60338 arms
+    // i-l, with the Worksheet row from "MQC Tests" (60276) arm b.
+    [Theory]
+    [InlineData("StandardDialog", FormResult.Cancel)]
+    [InlineData("PromptDialog", FormResult.Cancel)]
+    [InlineData("ConfirmationDialog", FormResult.Cancel)]
+    [InlineData("NavigatePage", FormResult.OK)]
+    [InlineData("Worksheet", FormResult.OK)]
+    [InlineData("Card", FormResult.OK)]
+    [InlineData("List", FormResult.OK)]
+    [InlineData(null, FormResult.OK)]
+    [InlineData("", FormResult.OK)]
+    public void UnattendedCloseResult_IsCancelOnlyForTheThreeMeasuredDialogs(
+        string? pageType, FormResult expected)
+        => Assert.Equal(expected, LiveNavTestPage.UnattendedCloseResult(pageType));
+
+    // Case-insensitive for the same reason the affordance rules are: PageType arrives from AL
+    // source or a SymbolReference.json, neither of which normalises case.
+    [Theory]
+    [InlineData("standarddialog")]
+    [InlineData("PROMPTDIALOG")]
+    [InlineData("confirmationdialog")]
+    public void UnattendedCloseResultMatchIsCaseInsensitive(string pageType)
+        => Assert.Equal(FormResult.Cancel, LiveNavTestPage.UnattendedCloseResult(pageType));
 }

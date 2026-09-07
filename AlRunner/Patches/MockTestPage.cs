@@ -408,10 +408,45 @@ internal class LiveNavTestPage : MockITestPage
     /// LookupMode(true) modal reporting LookupCancel — so OnQueryClosePage sees OK on the one
     /// and LookupCancel on the other, and RunModal() returns the same. A flat OK default made
     /// every unattended lookup read as a confirmed pick.
+    ///
+    /// <para>The non-lookup half is PAGE-TYPE-dependent as well, which is issue #3284: the OK
+    /// above is what a <c>Worksheet</c> reports, not what every page reports. See
+    /// <see cref="UnattendedCloseResult(string?)"/>.</para>
     /// </summary>
     private FormResult _formResult
         => _invokedFormResult
-           ?? (_page?.LookupMode == true ? FormResult.LookupCancel : FormResult.OK);
+           ?? (_page?.LookupMode == true
+               ? FormResult.LookupCancel
+               : UnattendedCloseResult(RecordPatches.TryGetAnyPageType(_pageId)));
+
+    /// <summary>
+    /// What <c>RunModal()</c> and <c>OnQueryClosePage</c> report for a NON-lookup page the
+    /// handler closed by returning without invoking anything.
+    ///
+    /// <para>MEASURED ON A REAL SERVICE TIER (BC 28.4.53241.0), corpus codeunit 60338
+    /// "TBA Tests" arms i-l, plus "MQC Tests" (60276) arm b for the Worksheet row:
+    /// <c>StandardDialog</c>, <c>PromptDialog</c> and <c>ConfirmationDialog</c> report
+    /// <b>Cancel</b>; <c>NavigatePage</c> and <c>Worksheet</c> report <b>OK</b>. Issue #3284
+    /// — before it, every page type answered OK, so AL written as
+    /// <c>if Dlg.RunModal() = Action::OK then</c> took the confirming branch here and the
+    /// cancelling one on BC, with nothing raised to say so.</para>
+    ///
+    /// <para>This is NOT derivable from <see cref="HasDialogCancelAffordance(string?)"/> and
+    /// must not be folded into it: a <c>ConfirmationDialog</c> reports Cancel here while
+    /// refusing <c>Cancel()</c> as a built-in (arms g and k), and a <c>NavigatePage</c> reports
+    /// OK while refusing it (arms e and l). Two independent facts about the same PageType.</para>
+    ///
+    /// <para>An UNKNOWN PageType keeps OK, for the same reason the affordance rule keeps its
+    /// permissive answer: null means the page is not in this run's inventory, not that it is
+    /// a dialog.</para>
+    /// </summary>
+    internal static FormResult UnattendedCloseResult(string? pageType)
+        => pageType != null
+           && (string.Equals(pageType, "StandardDialog", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(pageType, "PromptDialog", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(pageType, "ConfirmationDialog", StringComparison.OrdinalIgnoreCase))
+            ? FormResult.Cancel
+            : FormResult.OK;
 
     /// <summary>
     /// The page's built-in OK/Cancel/LookupOK actions. Invoking one records how the page was
@@ -449,9 +484,12 @@ internal class LiveNavTestPage : MockITestPage
     /// pairs (Yes/No, Print, …) are left alone: this is about lookup-vs-normal closing,
     /// not a claim about which other built-ins a page has.
     ///
-    /// <para>Plain <c>Cancel</c> carries a SECOND condition on top of that, and it is not
-    /// symmetric with OK: a page only has a built-in Cancel when its PageType gives the client
-    /// dialog chrome to put one on. See <see cref="HasDialogCancelAffordance(string?)"/>.</para>
+    /// <para>Plain <c>Cancel</c> and plain <c>OK</c> each carry a SECOND condition on top of
+    /// that, and the two are not each other's mirror: a page has a built-in Cancel only when
+    /// its PageType gives the client dialog chrome to put one on
+    /// (<see cref="HasDialogCancelAffordance(string?)"/>), while OK is refused on a
+    /// ConfirmationDialog and on a PromptDialog that declares its own
+    /// (<see cref="HasPlainOkAffordance(string?, bool)"/>).</para>
     /// </summary>
     private bool Offers(FormResult formResult)
         => OffersBuiltInAction(
@@ -460,7 +498,10 @@ internal class LiveNavTestPage : MockITestPage
             // (a precompiled page the runner could not build one for), which is a different
             // input from "opened as a normal page" and must not collapse into it.
             lookupMode: _page?.LookupMode,
-            pageType: RecordPatches.TryGetAnyPageType(_pageId));
+            pageType: RecordPatches.TryGetAnyPageType(_pageId),
+            // False for a precompiled page the AL parser never saw, which keeps today's
+            // permissive OK for those rather than inventing a refusal from a lookup miss.
+            declaresSystemActionOk: RecordPatches.PageDeclaresSystemAction(_pageId, "OK"));
 
     /// <summary>
     /// The decision behind <see cref="Offers"/>, as a pure function of the three inputs, so it
@@ -468,12 +509,15 @@ internal class LiveNavTestPage : MockITestPage
     /// <c>TestPageClientConstructionRule</c> uses for the same reason).
     /// <paramref name="lookupMode"/> is null when the page's mode is unknown.
     /// </summary>
-    internal static bool OffersBuiltInAction(FormResult formResult, bool? lookupMode, string? pageType)
+    internal static bool OffersBuiltInAction(
+        FormResult formResult, bool? lookupMode, string? pageType, bool declaresSystemActionOk = false)
     {
         // Asked before the lookup test on purpose: a lookup page must answer NULL for plain
         // Cancel either way, so BC's FindBuiltInAction(Cancel, LookupCancel) falls through to
         // LookupCancel. The two conditions agree there and only the non-lookup case differs.
+        // The same holds for the OK pair below.
         if (formResult == FormResult.Cancel && !HasDialogCancelAffordance(pageType)) return false;
+        if (formResult == FormResult.OK && !HasPlainOkAffordance(pageType, declaresSystemActionOk)) return false;
 
         if (lookupMode is not bool lookup) return true;
         return formResult switch
@@ -507,13 +551,20 @@ internal class LiveNavTestPage : MockITestPage
     /// Card-type modal (still 'not found' even when declared); PageType = StandardDialog is
     /// what actually gives the client OK/Cancel chrome."</para>
     ///
-    /// <para>The set is the two page types built by a DIALOG builder, which is the same fact
-    /// <see cref="RunnerPageInstance"/>'s TargetPageOpensModally rests on and reached the same
-    /// way: <c>FormState.RunModal</c> is assigned in exactly two builders in BC 28.1's UI
-    /// builder assembly, <c>NavigatePageBuilder</c> and <c>StandardDialogBuilder</c>. Only
-    /// StandardDialog is measured on a service tier; NavigatePage rides on the shared builder
-    /// fact and keeps the behaviour it already had here, and issue #3131 tracks getting it —
-    /// and ConfirmationDialog — measured upstream rather than reasoned about.</para>
+    /// <para>The set was previously reasoned out from a builder fact — <c>FormState.RunModal</c>
+    /// is assigned in exactly two of BC's UI builders, <c>NavigatePageBuilder</c> and
+    /// <c>StandardDialogBuilder</c> — and issue #3131 recorded NavigatePage and
+    /// ConfirmationDialog as inferences to be measured. They have been (issue #3283, corpus
+    /// codeunit 60338 "TBA Tests" arms a, b, e, g), and the NavigatePage inference was WRONG:
+    /// a NavigatePage refuses <c>Cancel()</c> — its chrome is Back/Next/Finish — while
+    /// <c>PromptDialog</c>, which the builder fact does not cover at all, offers one. The
+    /// ConfirmationDialog inference held; it refuses both Cancel and OK.</para>
+    ///
+    /// <para>PromptDialog offers a plain Cancel whether or not it declares
+    /// <c>systemaction(Cancel)</c>, and whatever its <c>PromptMode</c>, because
+    /// <c>PromptDialogBuilder.BeginBuildActionBar</c> calls
+    /// <c>PageBuilder.AddActionBar(form, context, FormResult.Cancel)</c> unconditionally. That
+    /// explains the measurement; the service-tier arms are the evidence for it.</para>
     ///
     /// <para>An UNKNOWN PageType keeps today's permissive answer rather than refusing: null
     /// from <c>TryGetAnyPageType</c> means the page is not in this run's inventory at all, not
@@ -523,7 +574,39 @@ internal class LiveNavTestPage : MockITestPage
     internal static bool HasDialogCancelAffordance(string? pageType)
         => pageType == null
            || string.Equals(pageType, "StandardDialog", StringComparison.OrdinalIgnoreCase)
-           || string.Equals(pageType, "NavigatePage", StringComparison.OrdinalIgnoreCase);
+           || string.Equals(pageType, "PromptDialog", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Whether this page gives the client a plain <c>OK</c> — the condition on
+    /// <c>TestPage.OK()</c>, which is nearly-but-not-quite "every non-lookup page".
+    ///
+    /// <para>MEASURED ON A REAL SERVICE TIER (BC 28.4.53241.0), corpus codeunit 60338
+    /// "TBA Tests". Two page shapes refuse it, and neither is predictable from the Cancel
+    /// rule:</para>
+    ///
+    /// <list type="bullet">
+    /// <item><c>ConfirmationDialog</c> (arm h) — its chrome is Yes/No, so it has neither
+    /// built-in. The runner used to answer OK here for every non-lookup page, so AL that BC
+    /// refuses closed the page instead: a silent wrong answer, not a visible one.</item>
+    /// <item>A <c>PromptDialog</c> that DECLARES <c>systemaction(OK)</c> (arms c and d). The
+    /// declaration REPLACES the built-in rather than adding to it —
+    /// <c>PromptDialogBuilder.BuildPromptActions</c> adds an <c>ExitAction</c> for OK only on
+    /// the else-branch — so the same page without the declaration does offer it. This is the
+    /// one row here that is not a function of PageType alone.</item>
+    /// </list>
+    ///
+    /// <para><paramref name="declaresSystemActionOk"/> is false for a page the AL parser never
+    /// saw (precompiled dependency), which keeps the permissive answer for those; see
+    /// <c>RecordPatches.PageDeclaresSystemAction</c>.</para>
+    /// </summary>
+    internal static bool HasPlainOkAffordance(string? pageType, bool declaresSystemActionOk)
+    {
+        if (pageType == null) return true;
+        if (string.Equals(pageType, "ConfirmationDialog", StringComparison.OrdinalIgnoreCase)) return false;
+        if (declaresSystemActionOk
+            && string.Equals(pageType, "PromptDialog", StringComparison.OrdinalIgnoreCase)) return false;
+        return true;
+    }
 
     /// <summary>
     /// AL's <c>SomePage.View()</c> — the page's built-in "open read-only" page-mode action.

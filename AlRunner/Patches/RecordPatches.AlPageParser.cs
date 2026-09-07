@@ -75,7 +75,8 @@ public static partial class RecordPatches
                 // whether a table has a card page at all).
                 CardPageName: PageRefText(PropValue(props, "CardPageId")),
                 MemberIdToName: ParseMemberNames(id, p),
-                MemberIdToActionRefTarget: ParseActionRefTargets(id, p));
+                MemberIdToActionRefTarget: ParseActionRefTargets(id, p),
+                DeclaredSystemActions: ParseDeclaredSystemActions(p));
         }
 
         foreach (var obj in objects)
@@ -115,6 +116,49 @@ public static partial class RecordPatches
     /// any of them; the Rec.-bound scope limit over there is about field BINDING, not naming.
     /// </para>
     /// </summary>
+    /// <summary>
+    /// The NAMES this page declares inside <c>area(SystemActions)</c> — <c>systemaction(OK)</c>,
+    /// <c>systemaction(Cancel)</c>, <c>systemaction(Generate)</c> and the rest.
+    ///
+    /// <para>Issue #3283. Declaring one is not additive for OK: measured on real BC
+    /// 28.4.53241.0 (corpus codeunit 60338 "TBA Tests", arms c and d), a <c>PromptDialog</c>
+    /// that declares <c>systemaction(OK)</c> has NO built-in <c>OK</c> for
+    /// <c>TestPage.OK()</c> to resolve, while the same page without the declaration does. The
+    /// platform's reason is visible in <c>PromptDialogBuilder.BuildPromptActions</c>: it adds
+    /// an <c>ExitAction</c> for OK only on the else-branch, and a declared one is built by
+    /// <c>ActionBuilder</c> as a <c>NoopAction</c>/<c>InvokePageTriggerAction</c>, which
+    /// <c>TestPageProxy.GetBuiltInAction</c> does not accept. Cancel is unaffected because
+    /// <c>BeginBuildActionBar</c> adds a form-level Cancel exit action unconditionally.</para>
+    ///
+    /// <para><c>PageSystemActionSyntax</c> is a SIBLING of <c>PageActionSyntax</c> (both derive
+    /// from <c>PageActionWithTriggersBaseSyntax</c>), not a subclass, so
+    /// <see cref="ParseMemberNames"/>'s <c>OfType&lt;PageActionSyntax&gt;()</c> never saw
+    /// these.</para>
+    /// </summary>
+    private static HashSet<string> ParseDeclaredSystemActions(SyntaxNode obj)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var systemAction in obj.DescendantNodes().OfType<NavSyntax.PageSystemActionSyntax>())
+        {
+            var name = IdentText(systemAction.Name);
+            if (name.Length > 0) names.Add(name);
+        }
+        return names;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="pageId"/>'s AL source declares <c>systemaction(<paramref
+    /// name="systemActionName"/>)</c>.
+    ///
+    /// <para>FALSE for a page this run did not parse from AL — a precompiled page from a
+    /// dependency .app, whose SymbolReference.json the runner does not read system actions out
+    /// of. That keeps today's permissive answer for those rather than inventing a refusal from
+    /// a lookup miss, the same choice <see cref="TryGetAnyPageType"/>'s null makes.</para>
+    /// </summary>
+    internal static bool PageDeclaresSystemAction(int pageId, string systemActionName)
+        => _parsedPages.TryGetValue(pageId, out var page)
+           && page.DeclaredSystemActions.Contains(systemActionName);
+
     private static Dictionary<int, string> ParseMemberNames(int declaringObjectId, SyntaxNode obj)
     {
         var map = new Dictionary<int, string>();
@@ -701,7 +745,10 @@ internal record ParsedPage(
     IReadOnlyDictionary<int, string>? MemberIdToName = null,
     /// <summary>Member id of every <c>actionref</c> this object declares → the NAME of the
     /// action it points at — see <see cref="RecordPatches"/>.ParseActionRefTargets (#2113).</summary>
-    IReadOnlyDictionary<int, string>? MemberIdToActionRefTarget = null)
+    IReadOnlyDictionary<int, string>? MemberIdToActionRefTarget = null,
+    /// <summary>The names declared inside <c>area(SystemActions)</c> — see
+    /// <see cref="RecordPatches"/>.ParseDeclaredSystemActions (#3283).</summary>
+    IReadOnlySet<string>? DeclaredSystemActions = null)
 {
     // Positional records can't give a collection parameter a literal default that isn't a
     // constant, so a null Controls (constructed via the shorter historical call sites/tests,
@@ -711,4 +758,8 @@ internal record ParsedPage(
         = MemberIdToName ?? new Dictionary<int, string>();
     public IReadOnlyDictionary<int, string> MemberIdToActionRefTarget { get; init; }
         = MemberIdToActionRefTarget ?? new Dictionary<int, string>();
+    // OrdinalIgnoreCase: AL identifiers are case-insensitive, and this set is looked up with
+    // the literal "OK"/"Cancel" spellings while the source may say `systemaction(ok)`.
+    public IReadOnlySet<string> DeclaredSystemActions { get; init; }
+        = DeclaredSystemActions ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 }
