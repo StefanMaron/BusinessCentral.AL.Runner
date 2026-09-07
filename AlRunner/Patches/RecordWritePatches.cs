@@ -607,6 +607,18 @@ public static partial class BcRuntime
             updateValueFactory: (_, v) => v + 1L);
 
     /// <summary>
+    /// Take the next AutoIncrement value for a table WITHOUT going through
+    /// <c>NavRecord.ALInsertAsync</c> — for a runner path that writes rows straight into the
+    /// TempTableDataProvider. Sharing this counter is what keeps the two insert routes from
+    /// handing out the same primary key: #2289 is the same defect with <c>--test-data</c>
+    /// hydration as the other writer, and the Record Link store (RecordPatches.RecordLinkTable.cs)
+    /// is the second instance of it. The caller must already have forced the table's storage
+    /// into existence, so the first consult's high-water seed sees the real rows.
+    /// </summary>
+    internal static long TakeAutoIncrementValue(int tableId, int fieldNo)
+        => NextAutoIncrementValue(tableId, fieldNo);
+
+    /// <summary>
     /// AutoIncrement assignment helper, called via Cecil-prepended IL at the start
     /// of NavRecord.ALInsertAsync(DataError, bool, bool). Pure side-effect:
     /// if the table has a registered AutoIncrement field and that field is currently

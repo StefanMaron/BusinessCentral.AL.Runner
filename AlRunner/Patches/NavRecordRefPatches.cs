@@ -328,24 +328,20 @@ public static partial class BcRuntime
         return shared;
     }
 
-    // RecordLink — in-memory link store keyed by RuntimeHelpers.GetHashCode(NavRecord).
-    // Real impl writes to table 2000000068 (Record Link) which the runner has no SQL
-    // backend for. Cecil rewrites RecordLink.{AddLinkAsync, HasLinks, DeleteLinksAsync,
-    // DeleteLinkAsync, CopyLinksAsync, MoveLinksAsync, TableHasLinks} to the helpers
-    // below. Both `Rec.AddLink(...)` and `RecRef.AddLink(...)` funnel through this one
-    // store, so it must satisfy both AL surfaces — do not add a second one.
+    // RecordLink — the AL link surface, delegating to the Record Link table (2000000068).
     //
-    // Links carry an ID because that is BC's contract: AddLink returns the "Link ID"
-    // primary key of the Record Link row it created (strictly positive — it is an
-    // AutoIncrement field), and DeleteLink(ID) addresses that row. Returning 0 and
-    // no-oping DeleteLink was a silent fake that made Rec.DeleteLink(Id) do nothing.
-    private readonly record struct LinkEntry(int Id, string Url, string Description);
-
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, System.Collections.Generic.List<LinkEntry>> _recordLinks = new();
-
-    /// <summary>Next Record Link "Link ID". Starts at 1: BC's AutoIncrement key is
-    /// strictly positive, and AL code tests <c>LinkId &gt; 0</c> for success.</summary>
-    private static int _nextLinkId;
+    // Cecil rewrites RecordLink.{AddLinkAsync, HasLinks, DeleteLinksAsync, DeleteLinkAsync,
+    // CopyLinksAsync, MoveLinksAsync, TableHasLinks} to the helpers below. Both
+    // `Rec.AddLink(...)` and `RecRef.AddLink(...)` funnel through here, and so — since #3378 —
+    // does AL that opens `Record "Record Link"` itself, because these now read and write that
+    // table's own rows rather than a private dictionary beside it. RecordPatches.RecordLinkTable.cs
+    // holds the store; docs/scope.md has the boundary.
+    //
+    // Observably equivalent to BC (loud-failures.md): BC's own bodies are reads and writes of
+    // table 2000000068 through DataAccess, which the skeleton cannot serve — its
+    // TransactionalDataCache has no NavDatabase to build a DataCacheSessionState from. These
+    // helpers perform the same reads and writes against the same table, through the same
+    // TempTableDataProvider every AL Record for that table uses.
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static System.Threading.Tasks.ValueTask<int> RecordLink_AddLinkAsync(object record, string url, string description)
@@ -354,25 +350,22 @@ public static partial class BcRuntime
         if (url == null) throw new ArgumentNullException(nameof(url));
         if (description == null) throw new ArgumentNullException(nameof(description));
         if (url.Length > 2048) throw new ArgumentException("RecordLink URL above max size");
-        var key = RuntimeHelpers.GetHashCode(record);
-        var list = _recordLinks.GetOrAdd(key, _ => new System.Collections.Generic.List<LinkEntry>());
-        var id = System.Threading.Interlocked.Increment(ref _nextLinkId);
-        lock (list) list.Add(new LinkEntry(id, url, description));
-        return new System.Threading.Tasks.ValueTask<int>(id);
+        return new System.Threading.Tasks.ValueTask<int>(
+            AlRunner.Patches.RecordPatches.RecordLinkStore_Add(record, url, description));
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool RecordLink_HasLinks(object record)
     {
         if (record == null) throw new ArgumentNullException(nameof(record));
-        return _recordLinks.TryGetValue(RuntimeHelpers.GetHashCode(record), out var list) && list.Count > 0;
+        return AlRunner.Patches.RecordPatches.RecordLinkStore_HasLinks(record);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static System.Threading.Tasks.ValueTask RecordLink_DeleteLinksAsync(object record)
     {
         if (record == null) throw new ArgumentNullException(nameof(record));
-        _recordLinks.TryRemove(RuntimeHelpers.GetHashCode(record), out _);
+        AlRunner.Patches.RecordPatches.RecordLinkStore_DeleteAll(record);
         return System.Threading.Tasks.ValueTask.CompletedTask;
     }
 
@@ -380,15 +373,7 @@ public static partial class BcRuntime
     public static System.Threading.Tasks.ValueTask RecordLink_DeleteLinkAsync(object record, int linkId)
     {
         if (record == null) throw new ArgumentNullException(nameof(record));
-        if (_recordLinks.TryGetValue(RuntimeHelpers.GetHashCode(record), out var list))
-        {
-            lock (list)
-            {
-                list.RemoveAll(e => e.Id == linkId);
-                if (list.Count == 0) _recordLinks.TryRemove(RuntimeHelpers.GetHashCode(record), out _);
-            }
-        }
-        // BC's DeleteLink on a non-existent Link ID is a no-op, not an error.
+        AlRunner.Patches.RecordPatches.RecordLinkStore_DeleteOne(record, linkId);
         return System.Threading.Tasks.ValueTask.CompletedTask;
     }
 
@@ -396,19 +381,7 @@ public static partial class BcRuntime
     public static System.Threading.Tasks.ValueTask RecordLink_CopyLinksAsync(object src, object dst)
     {
         if (src == null || dst == null) return System.Threading.Tasks.ValueTask.CompletedTask;
-        if (_recordLinks.TryGetValue(RuntimeHelpers.GetHashCode(src), out var srcList))
-        {
-            var dstList = _recordLinks.GetOrAdd(RuntimeHelpers.GetHashCode(dst), _ => new System.Collections.Generic.List<LinkEntry>());
-            // Copy creates NEW Record Link rows, so each copy gets a fresh Link ID —
-            // unlike MoveLinks below, which relocates the existing rows and keeps theirs.
-            lock (srcList)
-            {
-                var snapshot = srcList.ToArray(); // src may == dst
-                lock (dstList)
-                    foreach (var e in snapshot)
-                        dstList.Add(e with { Id = System.Threading.Interlocked.Increment(ref _nextLinkId) });
-            }
-        }
+        AlRunner.Patches.RecordPatches.RecordLinkStore_Copy(src, dst);
         return System.Threading.Tasks.ValueTask.CompletedTask;
     }
 
@@ -416,16 +389,28 @@ public static partial class BcRuntime
     public static System.Threading.Tasks.ValueTask RecordLink_MoveLinksAsync(object src, object dst)
     {
         if (src == null || dst == null) return System.Threading.Tasks.ValueTask.CompletedTask;
-        if (_recordLinks.TryRemove(RuntimeHelpers.GetHashCode(src), out var list))
-            _recordLinks[RuntimeHelpers.GetHashCode(dst)] = list;
+        AlRunner.Patches.RecordPatches.RecordLinkStore_Move(src, dst);
         return System.Threading.Tasks.ValueTask.CompletedTask;
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool RecordLink_TableHasLinks(object parentTree, object table, string companyName)
+        => AlRunner.Patches.RecordPatches.RecordLinkStore_TableHasLinks(RecordLinkTableIdOf(table));
+
+    /// <summary>The table id BC's TableHasLinks was asked about. It is handed the table's
+    /// metadata, so the id is read off it rather than inferred; an unreadable shape answers 0,
+    /// which matches no row.</summary>
+    private static int RecordLinkTableIdOf(object? table)
     {
-        // Conservative: only true if any record from any table has a link in our store.
-        return _recordLinks.Count > 0;
+        if (table == null) return 0;
+        if (table is int direct) return direct;
+        foreach (var name in new[] { "TableId", "ObjectId", "Id" })
+        {
+            var p = table.GetType().GetProperty(name,
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (p?.GetValue(table) is int n) return n;
+        }
+        return 0;
     }
 
     // NavValue.CreateNavValueFromObject lacks a switch case for NavNclType.NavALErrorType
