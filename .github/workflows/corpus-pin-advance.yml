@@ -22,6 +22,10 @@ name: Corpus pin advance
 #
 # TRACKING_ISSUE below is the single destination, edited in place. Not a new issue per run and
 # not a comment per run: #3319 is explicit that this must not become a notification stream.
+#
+# It points at #3355, a dedicated issue whose body exists to be overwritten -- NOT at #3319
+# itself, which carries the design and the evidence for building this job. Pointing it at #3319
+# would have the first scheduled run erase all of that.
 
 on:
   schedule:
@@ -71,7 +75,7 @@ concurrency:
 env:
   # The one place the destination is named. Change it here to move the report to a dedicated
   # tracking issue; nothing else in this file needs to change.
-  TRACKING_ISSUE: '3319'
+  TRACKING_ISSUE: '3355'
 
 jobs:
   measure:
