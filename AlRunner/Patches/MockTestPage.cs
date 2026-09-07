@@ -1174,6 +1174,31 @@ internal class LiveNavTestPage : MockITestPage
     private bool _pendingNewRow;
 
     public override void InsertEmptyRow(bool beforeCurrent)
+        => InsertEmptyRowCore(beforeCurrent, alreadyStarted: false);
+
+    /// <summary>
+    /// The virtual seam both entry points share. <c>InsertEmptyRow(bool)</c> is ITestPage's
+    /// fixed signature and cannot carry the extra fact, so overriding IT would have left the
+    /// promotion path unable to reach a part's link stamping — the shape that made #2923's fix
+    /// necessary in the first place. Parts override this instead, and both callers reach them.
+    /// </summary>
+    private protected virtual void InsertEmptyRowCore(bool beforeCurrent, bool alreadyStarted)
+        => InsertEmptyRowBody(beforeCurrent, alreadyStarted);
+
+    /// <summary>
+    /// <paramref name="alreadyStarted"/> says the row being turned into a pending insert has
+    /// ALREADY had the platform's new-record step run for it — which is true on exactly one
+    /// path, the promotion of a draft line <see cref="EnterNewRowLine"/> started
+    /// (<see cref="PromoteNewRowLineForWrite"/>, issue #3029). Everything else about the entry
+    /// point is wanted there: the flush of a previous pending row, the insert-position capture
+    /// that feeds AutoSplitKey, a part's SubPageLink stamping and its validate step. Only the
+    /// <c>TryNewRecord</c> call is a duplicate, so only that is skipped.
+    ///
+    /// <para>Not a separate method, and not "delete the call": <c>New()</c> reaches this same
+    /// body and its new-record step is the correct and only one for the row it starts. The two
+    /// callers differ in one fact about the row, so that fact is the parameter.</para>
+    /// </summary>
+    private protected void InsertEmptyRowBody(bool beforeCurrent, bool alreadyStarted)
     {
         // A page with no SourceTable has no rowset to insert into at all — refuse by name
         // before touching any of the state below, rather than NRE-ing inside CaptureInsertPosition.
@@ -1182,8 +1207,20 @@ internal class LiveNavTestPage : MockITestPage
         // New() from the new-row line starts the row explicitly; the draft bookkeeping is
         // superseded by the CaptureInsertPosition below, and its saved return position must
         // not survive to drag the cursor back off the row being created.
+        //
+        // NEW() ON A STARTED DRAFT LINE IS THE SAME ROW (#3029). A part that opened over an
+        // empty rowset is already parked on its draft line, and the platform has already run
+        // its new-record step for it. New() there does not create a SECOND row — it commits to
+        // the one the blank line already stands for, exactly as typing into it does. So the
+        // same fact the promotion passes explicitly is also true when the caller did not say
+        // so, and is read off the latch rather than demanded of every caller.
+        alreadyStarted = alreadyStarted || (_onNewRowLine && _newRowLineRecordStarted);
+
         _onNewRowLine = false;
         _newRowLineReturnPosition = null;
+        // The draft line is being consumed either way, so whatever it started is now this row's
+        // — the NEXT draft line owes its own new-record step (#3029).
+        _newRowLineRecordStarted = false;
 
         FlushPendingNewRow();   // starting a second row persists the first
 
@@ -1202,7 +1239,10 @@ internal class LiveNavTestPage : MockITestPage
         // so the row arrived with blank keys and the damage surfaced one step later: an
         // OnValidate looking its parent up found nothing, and the test failed naming a derived
         // field rather than the key that was never set.
-        if (!(_page?.TryNewRecord(!beforeCurrent) ?? false))
+        // alreadyStarted: the draft line being promoted already ran this exact step when the
+        // cursor landed on it, so running it again would raise the page's OnNewRecord a second
+        // time for one row AND re-blank the buffer, discarding what that trigger wrote (#3029).
+        if (!alreadyStarted && !(_page?.TryNewRecord(!beforeCurrent) ?? false))
         {
             // Record-only mode: no page to ask, so no filters and no trigger to run either.
             // Non-null: guaranteed by the RequireRecord guard at the top of this method.
@@ -1308,7 +1348,7 @@ internal class LiveNavTestPage : MockITestPage
     /// by whatever inserts next.
     /// </summary>
     internal void DiscardPendingNewRow()
-    { _pendingNewRow = false; _pendingModify = false; _onNewRowLine = false; _newRowLineReturnPosition = null; _insertPositionCaptured = false; }
+    { _pendingNewRow = false; _pendingModify = false; _onNewRowLine = false; _newRowLineReturnPosition = null; _insertPositionCaptured = false; _newRowLineRecordStarted = false; }
 
     // BC's AutoSplitKey increment. Named NavForm.AutoSplitKeyIncrement there, and the same
     // literal in the client's AutoKeyGenerator — both sides of the wire agree on 10000.
@@ -1616,8 +1656,16 @@ internal class LiveNavTestPage : MockITestPage
         // beforeCurrent: false — the draft line is the LAST row of the rowset, so the row it
         // becomes is inserted after the data, which is also what BC's own TestPageProxy asks
         // for (InsertBehavior = RowUpdateBehavior.After, whatever beforeCurrent says).
-        // Virtual on purpose: a part must reach LiveNavTestPart's override.
-        InsertEmptyRow(beforeCurrent: false);
+        //
+        // alreadyStarted: EnterNewRowLine ran the platform's new-record step when the cursor
+        // landed on this line — that is the measured BC behaviour (corpus codeunit 60996,
+        // 8 legs). Typing does not start the row a second time; it decides that the row already
+        // started will be SAVED. Passing false here raised the page's OnNewRecord twice for one
+        // row and re-blanked the buffer under the trigger's own output (#3029).
+        //
+        // Virtual on purpose: a part must reach LiveNavTestPart's override, whose SubPageLink
+        // stamping and validate step are still owed on this path.
+        InsertEmptyRowCore(beforeCurrent: false, alreadyStarted: true);
     }
 
     /// <summary>A control wrote to the record. Called by the field, which owns no page state.</summary>
@@ -1947,10 +1995,29 @@ internal class LiveNavTestPage : MockITestPage
     public override bool MoveFirst()
     {
         var record = RequireRecord("MoveFirst()");
-        FlushParts(); FlushRow(); LeaveNewRowLine();
+        FlushParts(); FlushRow();
+
+        // Whether the cursor was ALREADY on the draft line, read before LeaveNewRowLine clears
+        // it. A First() over a rowset that is still empty does not move anywhere: the draft line
+        // was the only row before the call and is the only row after it, so the row it stands
+        // for is the same row and must not be started a second time (#3029). Without this, the
+        // open-time reload entered the draft line and the test's own First() entered it again,
+        // raising the page's OnNewRecord twice before anything was typed.
+        var wasOnNewRowLine = _onNewRowLine;
+
+        LeaveNewRowLine();
         var found = _page?.RaiseOnFindRecord("-")
                     ?? record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
-        if (!found) EnterNewRowLine(record);
+        if (!found)
+        {
+            // Same draft line as before the call: restore the latch LeaveNewRowLine just
+            // cleared, so EnterNewRowLine takes its already-started branch. A First() that DID
+            // move — from a data row, or onto one — leaves it clear and the next draft line
+            // gets its own new-record step, which is what keeps this from becoming
+            // "once per page".
+            if (wasOnNewRowLine) _newRowLineRecordStarted = true;
+            EnterNewRowLine(record);
+        }
         return Loaded(found);
     }
 
@@ -2086,6 +2153,22 @@ internal class LiveNavTestPage : MockITestPage
     private bool _onNewRowLine;
     private string? _newRowLineReturnPosition;
 
+    // ONE NEW-RECORD STEP PER DRAFT-LINE ROW (issue #3029). Set the moment the platform's
+    // new-record step has run for the draft line the cursor is on, and cleared whenever that
+    // line stops being the current one. See docs/testpage-onnewrecord-count.md#the-invariant.
+    //
+    // The invariant it holds is that starting a record is a ONE-TIME event for a row, while
+    // the two things that reach it are not: EnterNewRowLine is re-entered by page plumbing
+    // that made no cursor move the test asked for, and PromoteNewRowLineForWrite runs on a
+    // line EnterNewRowLine has already started. Both used to raise OnNewRecord unconditionally,
+    // so one draft-line row cost FIVE firings where BC charges one — measured, see the PR body.
+    //
+    // A latch and not a counter: the question at both call sites is "has this row been started
+    // already", which is a boolean. A count would also have to be reset on exactly the same
+    // events, and would invite reading it as "how many times BC would have fired", which is not
+    // what it would hold.
+    private bool _newRowLineRecordStarted;
+
     // Set while FindRowFromTableFieldValues (GoToRecord's underlying mechanism) is scanning
     // candidate rows one at a time via repeated MoveFirst/MoveNextDataRow calls — issue
     // #2677. Each intermediate stop DOES run this page's own OnAfterGetRecord (matching real
@@ -2152,6 +2235,25 @@ internal class LiveNavTestPage : MockITestPage
         // is NavForm.NewRecordAsync's second half, which the promotion path
         // (LiveNavTestPart.InsertEmptyRow -> ValidateStampedFields) runs when a write actually
         // starts the row.
+        //
+        // ONCE PER ROW (#3029). _newRowLineRecordStarted is what stops a re-entry from raising
+        // OnNewRecord a second time for the SAME draft line. It has to be checked HERE, around
+        // the new-record step, rather than at the top of the method: the caller's other work is
+        // still owed on a re-entry — the return position and the insert position are re-read
+        // above because the parent row may have moved under the part, and _onNewRowLine must
+        // end up set whichever branch ran. Guarding the whole method would have been the naive
+        // placement and is wrong for exactly that reason; it is mutation-tested in the PR body.
+        if (_newRowLineRecordStarted)
+        {
+            // The buffer is already the started row's. Re-blanking it would discard whatever
+            // the page's own OnNewRecord put there, which is the damage this guard exists to
+            // avoid as much as the duplicate firing is.
+            _onNewRowLine = true;
+            return true;
+        }
+
+        _newRowLineRecordStarted = true;
+
         if (!(_page?.TryNewRecord(belowXRec: true) ?? false))
         {
             // Record-only mode: no page to ask, so BC's filter step never runs. Do the two
@@ -2188,6 +2290,8 @@ internal class LiveNavTestPage : MockITestPage
     {
         if (!_onNewRowLine) return;
         _onNewRowLine = false;
+        // Stepping off the draft line ends that row (#3029) — see AbandonNewRowLine.
+        _newRowLineRecordStarted = false;
         var position = _newRowLineReturnPosition;
         _newRowLineReturnPosition = null;
         if (!string.IsNullOrEmpty(position)) _record!.ALSetPosition(position);
@@ -2209,6 +2313,11 @@ internal class LiveNavTestPage : MockITestPage
     {
         _onNewRowLine = false;
         _newRowLineReturnPosition = null;
+        // The row this draft line stood for is gone, so the NEXT draft line is a new row and
+        // owes its own new-record step (#3029). Clearing here rather than only in Reset is what
+        // keeps the latch from turning "once per row" into "once per page" — the failure a
+        // count-based test catches and an assignment-based one cannot.
+        _newRowLineRecordStarted = false;
     }
 
     /// <summary>The one value a field's current filter selects, or false when the filter is
@@ -4321,15 +4430,88 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     /// CardPart shape from #2195) has no cursor to position and nothing here to do — its
     /// OnOpenPage is the only trigger such a part gets.
     /// </summary>
+    /// <summary>
+    /// Whether a record's buffer holds an actual row rather than the blank one a page has
+    /// before its cursor lands anywhere (#3029).
+    ///
+    /// <para>Read off the PRIMARY KEY, because that is what a position is made of and what
+    /// distinguishes the two states here: measured while opening one card over an empty part,
+    /// the host's position reads <c>Field1=0()</c> during EagerlyBuildParts and
+    /// <c>Field1=0(H1)</c> on every call after its cursor lands. Comparing the position STRING
+    /// against a literal would be reading a display format; comparing the key VALUES against
+    /// their initialised state asks the same question of the data.</para>
+    ///
+    /// <para>A table whose whole primary key legitimately holds init values — an integer key at
+    /// 0, a singleton — answers false here and so keeps the pre-#3029 behaviour on this path,
+    /// which is the safe direction: the guard only ever SUPPRESSES a draft-line entry, so a
+    /// false negative costs nothing that was not already happening.</para>
+    /// </summary>
+    private static bool HasCurrentRow(NavRecord record)
+    {
+        var primaryKey = record.MetaTable?.PrimaryKey;
+        if (primaryKey == null || primaryKey.KeyFieldCount == 0) return true;
+        for (var i = 0; i < primaryKey.KeyFieldCount; i++)
+        {
+            var fieldNo = primaryKey.KeyFieldsList[i].FieldNo;
+            // NavValue's own "is this the type's zero" answer, so Code/Text compare against ''
+            // and Integer/Decimal against 0 without this method knowing which it has.
+            var value = record.GetFieldValue(fieldNo);
+            if (value != null && !value.IsZeroOrEmpty) return true;
+        }
+        return false;
+    }
+
+    // The parent row this part was last positioned for, as a position string, or null when it
+    // has never been positioned. Read at the top of ReloadLinkedRow to tell a re-entry for the
+    // SAME parent row from a genuine parent move — see the comment there (#3029).
+    private string? _lastReloadedForParentPosition;
+
     internal void ReloadLinkedRow()
     {
         if (Record is not { } record) return;
         ApplyLink();
-        AbandonNewRowLine();
+
+        // IS THIS A PARENT MOVE, OR THE SAME ROW ARRIVING AGAIN? (#3029)
+        //
+        // This method is deliberately not once-guarded — re-applying the link and re-finding is
+        // what makes a GoToRecord-driven refresh work, and that stays. But "the parent row
+        // changed" and "the host called me again about the row I am already on" are different
+        // events, and only the first ends the draft line's row.
+        //
+        // Opening one card over an empty part reaches here THREE times with the parent never
+        // moving: EagerlyBuildParts -> GetPart, MoveFirstDuringOpen -> Loaded ->
+        // RefreshLinkedParts, and ALGoToRecord -> FindRowFromFieldValues -> RefreshLinkedParts.
+        // Each one used to abandon the draft line and enter it again, and entering it raises
+        // the page's OnNewRecord — so merely opening a card cost three firings for a row the
+        // test had not asked for yet, plus a fourth for its own First(). Measured; see the PR
+        // body for the four stacks.
+        var parentPosition = _parentRecord?.ALGetPosition(useCaptions: false);
+        var sameParentRow = _lastReloadedForParentPosition != null
+                            && _lastReloadedForParentPosition == parentPosition;
+        _lastReloadedForParentPosition = parentPosition;
+
+        // NO PARENT ROW YET, SO NO DRAFT LINE YET (#3029). EagerlyBuildParts runs while the
+        // host is still opening and its own cursor has not landed anywhere — measured, the
+        // parent's position reads `Field1=0()` there, against `Field1=0(H1)` on every later
+        // call. A part linked to a parent row that does not exist is showing nothing, and
+        // parking it on a draft line at that moment raised the page's OnNewRecord for a row no
+        // parent owns.
+        //
+        // Only the ENTER is skipped, not the find or the Loaded() below it: the part's cursor
+        // still has to be positioned, and MoveFirstDuringOpen's own reload — which happens once
+        // the host HAS a row — enters the draft line properly. Suppressing the whole method here
+        // would lose the part's OnAfterGetRecord for a part that does have rows.
+        var parentHasNoRow = _parentRecord != null && !HasCurrentRow(_parentRecord);
+
+        // A genuine parent move ends whatever the part was showing, draft line included. A
+        // re-entry for the same row must NOT, or the draft line's started record is discarded
+        // and started again.
+        if (!sameParentRow) AbandonNewRowLine();
+
         var found = PageInstance?.RaiseOnFindRecord("-")
                     ?? record.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
         Loaded(found);
-        if (!found) EnterNewRowLine(record);
+        if (!found && !parentHasNoRow) EnterNewRowLine(record);
     }
 
     public override bool FindRowFromTableFieldValues(int[] fieldNos, object[] values, bool forward)
@@ -4373,10 +4555,10 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     /// multi-value or open-ended one raises BC's own error and stamps nothing — the
     /// <c>Equal</c> half of the same rule, decided by BC rather than re-derived from text.
     /// </summary>
-    public override void InsertEmptyRow(bool beforeCurrent)
+    private protected override void InsertEmptyRowCore(bool beforeCurrent, bool alreadyStarted)
     {
         ApplyLink();
-        base.InsertEmptyRow(beforeCurrent);
+        InsertEmptyRowBody(beforeCurrent, alreadyStarted);
         if (_links.Length == 0) return;
         var record = RequireRecord("subpage link");
         var primaryKeyFieldNos = PrimaryKeyFieldNos(record);
