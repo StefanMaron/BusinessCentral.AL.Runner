@@ -42,7 +42,7 @@ BC 28.x:        PASS TestPart_Visible_AnswersTrueForAReachablePart (240ms)
 Two spaces and no timing on 27.x; one space, a duration, and a deeper indent on 28.x.
 `FAIL` differs the same way. A pattern written against either fixed spelling reports
 **0 on the other half of the matrix while those legs are green and executing** — on that
-run the fixed two-space pattern returned 0 on 28.0, 28.3 and 28.4, each of which had run
+run the fixed two-space pattern returned 0 on every 28.x cloud leg, each of which had run
 all 28 tests. Use `PASS +<prefix>` with a `+` quantifier, never a literal run of spaces,
 and count **distinct names** so a duplicated line cannot inflate the figure either.
 
