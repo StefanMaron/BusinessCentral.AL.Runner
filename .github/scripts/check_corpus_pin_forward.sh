@@ -27,12 +27,43 @@
 #     exactly the older revision. The tests that would have gone red are the
 #     ones being removed.
 #
-# Caught for real on PR #3181, which was green and CLEAN while about to drop
-# corpus #199 and #201. That PR did nothing wrong: it bumped the pin forward
-# from the main that existed when it was written, and main's pin advanced
-# afterwards. Nothing rebased it and nothing told it to. That is why this is a
-# guard rather than a note in a rules file -- it is a merge-order accident, not
-# an authoring mistake, and it gets likelier as more agents run in parallel.
+# The shape is a merge-order accident, not an authoring mistake: a PR bumps the
+# pin forward from the main that existed when it was written, main's pin advances
+# afterwards, and nothing rebases it or tells it to. That is why this is a guard
+# rather than a note in a rules file, and it gets likelier as more agents run in
+# parallel.
+#
+# WHAT THIS GUARD ACTUALLY MEASURES, AND WHAT IT DOES NOT
+# -------------------------------------------------------
+# An earlier version of this header said the shape was "caught for real on PR
+# #3181, green and CLEAN while about to drop corpus #199 and #201". That was
+# wrong, and it is corrected here rather than quietly deleted, because the
+# measurement behind it is the honest statement of this guard's reach:
+#
+#   * #3181's base.sha was c0fda77e (2026-09-06T23:03:32Z) and its head pin was
+#     7394c15f. c0fda77e's pin is b0c6248a, and b0c6248a IS an ancestor of
+#     7394c15f -- a strictly forward bump. At #3181's first commit (6cbdfff5)
+#     the pin was b0c6248a, identical to base, which is the untouched case.
+#     So this guard would have PASSED #3181 at every revision it ever had.
+#   * Corpus #199 (b0c6248) and #201 (ae64da1) are both ANCESTORS of b0c6248a,
+#     so they were pinned at #3181's base and still pinned at its head. Nothing
+#     was about to drop them.
+#   * main's pin has only ever moved forward: 6e198a97 -> b0c6248a -> 7394c15f.
+#
+# The real limitation is narrower than that claim and worth stating plainly.
+# BASE_SHA comes from github.event.pull_request.base.sha, which is frozen at the
+# pull request's last event and does NOT follow the base branch. Measured on this
+# repository: #3181's base.sha stayed c0fda77e while main advanced to 9fe2b1d2 at
+# 23:29Z, and it did not move; pull requests touched after 23:29Z carried the
+# newer base. So the verdict is point-in-time -- it compares against the base as
+# of the PR's last event, not against main as of the merge.
+#
+# `edited` and `labeled` are in pr-gate.yml's trigger list, so setting
+# `status: review-ready` re-fires this job against a fresher base. That narrows
+# the window; it does not close it. A pin that was forward when the check last
+# ran can still be behind main by the time the merge button is pressed, and this
+# guard will not say so. Closing that would need a re-check at merge time
+# (a merge queue, or a push-triggered job on main), which is not what this is.
 #
 # THE FOUR VERDICTS, AND WHY THERE ARE FOUR RATHER THAN THREE
 # -----------------------------------------------------------
@@ -157,8 +188,35 @@ read_pin() {
 base_pin="$(read_pin "$BASE_SHA")" || base_pin=""
 head_pin="$(read_pin "$HEAD_SHA")" || head_pin=""
 
+# Declared submodule paths at either endpoint, one per line, read from the
+# committed .gitmodules rather than from the working tree.
+declared_submodule_paths() {
+  local rev
+  for rev in "$HEAD_SHA" "$BASE_SHA"; do
+    git show "$rev:.gitmodules" 2>/dev/null \
+      | sed -n 's/^[[:space:]]*path[[:space:]]*=[[:space:]]*//p'
+  done | sed 's/[[:space:]]*$//' | sort -u | sed '/^$/d'
+}
+
 if [ -z "$base_pin" ] && [ -z "$head_pin" ]; then
-  echo "Neither $BASE_SHA nor $HEAD_SHA carries a $SUBMODULE_PATH submodule; there is no corpus pin to compare."
+  # "No pin at either endpoint" has two very different causes, and passing on
+  # both is how this guard would stop guarding without anyone noticing.
+  #
+  # SUBMODULE_PATH is a HARDCODED default. Nothing ties it to what .gitmodules
+  # actually declares, so renaming the submodule -- or mistyping the default --
+  # lands here, prints "there is no corpus pin to compare", exits 0, and passes
+  # every pull request forever while reporting a green tick. That is the
+  # green-run-that-measured-nothing failure this script spends a whole exit code
+  # (3) refusing to commit elsewhere; it must not commit it here either.
+  #
+  # So: if either endpoint declares submodules at all and SUBMODULE_PATH is not
+  # among them, the configuration is wrong and no verdict is available. Only a
+  # repository that genuinely declares no such submodule passes.
+  declared="$(declared_submodule_paths)"
+  if [ -n "$declared" ] && ! printf '%s\n' "$declared" | command grep -qxF "$SUBMODULE_PATH"; then
+    die_undetermined "SUBMODULE_PATH is '$SUBMODULE_PATH', which neither $BASE_SHA nor $HEAD_SHA declares as a submodule. They do declare: $(printf '%s' "$declared" | tr '\n' ' '). This is a CONFIGURATION problem, not a verdict about the pin: with a path that matches no submodule this guard would find no pin at either endpoint and pass every pull request. Fix SUBMODULE_PATH, or the default in this script, to name the corpus submodule."
+  fi
+  echo "Neither $BASE_SHA nor $HEAD_SHA carries a $SUBMODULE_PATH submodule, and neither declares it in .gitmodules; there is no corpus pin to compare."
   exit 0
 fi
 

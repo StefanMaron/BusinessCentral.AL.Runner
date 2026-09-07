@@ -89,7 +89,16 @@ trap 'rm -rf "$TMP"' EXIT
 #             D1            a divergent branch, no ancestry either way with C2
 #
 # C1 stands for the pin main carried when a PR branched; C2 for the pin main
-# carries now. The #3181 shape is head=C1, base=C2.
+# carries now. The BACKWARD-PIN shape is head=C1, base=C2 -- a PR still carrying
+# the older pin while its base has advanced.
+#
+# This shape is NOT attributed to a specific pull request here. An earlier
+# version of these fixtures and of the script header named PR #3181 as the case
+# "caught for real"; that was measured and found to be wrong -- #3181's pin moved
+# strictly forward at every revision it had, and corpus #199 and #201 were
+# ancestors of its base pin throughout. check_corpus_pin_forward.sh's header
+# carries the full measurement. The shape below is still exactly the defect the
+# guard exists for; it just has no real-world instance to point at yet.
 
 CORPUS="$TMP/corpus"
 git init -q -b master "$CORPUS"
@@ -101,11 +110,11 @@ git -C "$CORPUS" add -A && git -C "$CORPUS" commit -qm "C0: corpus root"
 C0=$(git -C "$CORPUS" rev-parse HEAD)
 
 echo t1 >> "$CORPUS/spec.al"
-git -C "$CORPUS" commit -qam "C1: pin CalcFields on FlowFields (#199)"
+git -C "$CORPUS" commit -qam "C1: an earlier corpus commit"
 C1=$(git -C "$CORPUS" rev-parse HEAD)
 
 echo t2 >> "$CORPUS/spec.al"
-git -C "$CORPUS" commit -qam "C2: pin Subtype = Install reads back as Normal (#201)"
+git -C "$CORPUS" commit -qam "C2: a later corpus commit"
 C2=$(git -C "$CORPUS" rev-parse HEAD)
 
 git -C "$CORPUS" checkout -q -b divergent "$C1"
@@ -129,6 +138,9 @@ git -C "$SUPER" config protocol.file.allow always
 mkdir -p "$SUPER/tests"
 echo "runner" > "$SUPER/README.md"
 git -C "$SUPER" add -A && git -C "$SUPER" commit -qm "super: root"
+# Captured BEFORE the submodule is added: an endpoint that predates the corpus
+# submodule entirely, which is the one shape that legitimately has no pin.
+SUPER_ROOT=$(git -C "$SUPER" rev-parse HEAD)
 
 # protocol.file.allow must be passed with -c on the command itself; setting it
 # in the repository config is NOT consulted for the submodule's own clone, which
@@ -165,7 +177,7 @@ pin_to() {
 }
 
 BASE_AT_C2=$(pin_to "$C2")     # main today: the newer pin
-HEAD_AT_C1=$(pin_to "$C1")     # a PR still carrying the older pin  -- the #3181 shape
+HEAD_AT_C1=$(pin_to "$C1")     # a PR still carrying the older pin -- the backward shape
 HEAD_AT_C2=$(pin_to "$C2")     # a PR that did not touch the pin
 HEAD_AT_D1=$(pin_to "$D1")     # a PR carrying a divergent corpus commit
 BASE_AT_C1=$(pin_to "$C1")     # main at the older pin, for the forward-bump case
@@ -184,16 +196,16 @@ assert_rc "a genuine forward bump passes" 0 \
   BASE_SHA="$BASE_AT_C1" HEAD_SHA="$HEAD_AT_C2"
 assert_output_has "a forward bump names the direction it verified" "ancestor"
 
-# The centre of the suite: #3181's real shape, reconstructed. The head pin is an
-# ancestor of the base pin, so merging it would un-pin every corpus commit in
-# between -- suites already validated against a real service tier.
-assert_rc "a BACKWARD pin fails (#3181's shape: head pin is an ancestor of base pin)" 1 \
+# The centre of the suite: the backward shape. The head pin is an ancestor of the
+# base pin, so merging it would un-pin every corpus commit in between -- suites
+# already validated against a real service tier.
+assert_rc "a BACKWARD pin fails (head pin is an ancestor of base pin)" 1 \
   BASE_SHA="$BASE_AT_C2" HEAD_SHA="$HEAD_AT_C1"
 assert_output_has "the backward failure is a GitHub error annotation" "::error::"
 # head=C1, base=C2, so the corpus commit that would be un-pinned is C2 -- the
 # one main reached and this PR's pin does not.
 assert_output_has "the backward failure names the corpus commit that would be dropped" \
-  "C2: pin Subtype = Install reads back as Normal (#201)"
+  "C2: a later corpus commit"
 
 assert_rc "a DIVERGENT pin fails (neither commit is an ancestor of the other)" 1 \
   BASE_SHA="$BASE_AT_C2" HEAD_SHA="$HEAD_AT_D1"
@@ -335,6 +347,52 @@ check_eq "an unset HEAD_SHA is a usage error, not a pass" "2" "$rc"
 rc=0
 (cd "$SUPER" && env -u BASE_SHA HEAD_SHA="$HEAD_AT_C1" bash "$SCRIPT" >/dev/null 2>&1) || rc=$?
 check_eq "an unset BASE_SHA is a usage error, not a pass" "2" "$rc"
+
+# --- A SUBMODULE_PATH naming nothing must not be a silent pass ---------------
+#
+# The "neither endpoint carries a submodule" branch prints "there is no corpus
+# pin to compare" and exits 0. That branch is reachable for a reason that has
+# nothing to do with the repository having no submodule: SUBMODULE_PATH defaults
+# to a HARDCODED string, and nothing tied that string to what .gitmodules
+# actually declares. Rename the submodule, or mistype the default, and the guard
+# passes every pull request forever while reporting a green tick -- the
+# green-run-that-measured-nothing shape this script's own header refuses
+# elsewhere by spending exit 3 on it.
+#
+# The endpoints below are the real backward-pin case, so a guard that is looking
+# at the right path answers 1. Anything that answers 0 here is answering about a
+# path it never found.
+assert_rc "a SUBMODULE_PATH that names no submodule is not a silent pass" 3 \
+  BASE_SHA="$BASE_AT_C2" HEAD_SHA="$HEAD_AT_C1" SUBMODULE_PATH="tests/nonexistent"
+assert_output_has "the misconfigured path is named in the message" "tests/nonexistent"
+
+# The mirror of the case above: a repository that genuinely declares no
+# submodule at either endpoint has no pin to compare and must still PASS. Without
+# this, hardening the misconfigured-path case would turn every pull request on a
+# submodule-free history into a hard error -- trading a silent never-fire for a
+# loud always-fire, which is not an improvement.
+assert_rc "an endpoint predating the submodule is still a legitimate pass" 0 \
+  BASE_SHA="$SUPER_ROOT" HEAD_SHA="$SUPER_ROOT"
+assert_output_has "the no-submodule pass says so" "there is no corpus pin to compare"
+
+# And the default really is the path this repository declares. The case above
+# proves a wrong path is loud; this proves the shipped default is not that wrong
+# path. Read out of .gitmodules rather than restated, so renaming the submodule
+# without updating the script fails here.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+default_path="$(sed -n 's/^SUBMODULE_PATH="\${SUBMODULE_PATH:-\(.*\)}"$/\1/p' "$SCRIPT" | head -1)"
+check_eq "the script has a readable default SUBMODULE_PATH" "tests/al-language" "$default_path"
+
+if [ -f "$REPO_ROOT/.gitmodules" ]; then
+  if git config -f "$REPO_ROOT/.gitmodules" --get-regexp '^submodule\..*\.path$' \
+       | awk '{print $2}' | command grep -qxF "$default_path"; then
+    ok "the default SUBMODULE_PATH is a submodule this repository really declares"
+  else
+    bad "the default SUBMODULE_PATH ('$default_path') is not declared in .gitmodules -- the guard would find no pin and pass every PR"
+  fi
+else
+  bad "no .gitmodules at $REPO_ROOT, so the default SUBMODULE_PATH cannot be verified"
+fi
 
 # The verdict must depend on the endpoints, never on what happens to be checked
 # out -- this is the property that makes the refusals above meaningful.

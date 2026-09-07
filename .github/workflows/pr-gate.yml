@@ -219,11 +219,21 @@ jobs:
     # they stop existing, and the next green run reports success over a smaller
     # set.
     #
-    # Caught for real on PR #3181, green and CLEAN while about to drop corpus
-    # #199 and #201. That PR did nothing wrong: it bumped the pin forward from
-    # the main that existed when it was written, and main's pin advanced
-    # afterwards. It is a merge-order accident, which is why it needs a guard
-    # rather than a rule -- and it gets likelier as more agents run in parallel.
+    # The shape is a merge-order accident: a PR bumps the pin forward from the
+    # main that existed when it was written, and main's pin advances afterwards.
+    # Nothing rebases it. That is why it needs a guard rather than a rule, and it
+    # gets likelier as more agents run in parallel.
+    #
+    # THE VERDICT IS POINT-IN-TIME. BASE_SHA below is
+    # github.event.pull_request.base.sha, which is frozen at this PR's last event
+    # and does NOT follow the base branch. Measured: PR #3181's base.sha stayed
+    # c0fda77e while main advanced to 9fe2b1d2, and it did not move. `edited` and
+    # `labeled` are in this workflow's trigger list, so setting
+    # `status: review-ready` re-fires the job against a fresher base -- that
+    # narrows the window but does not close it. A pin forward at check time can
+    # still be behind main at merge time. check_corpus_pin_forward.sh's header
+    # has the full measurement, including why the "caught for real on #3181"
+    # claim this comment used to carry was wrong.
     #
     # It gates, so by the rule of thumb at the top of this file it must not be
     # able to fail for an environmental reason. Two things make that true, and
