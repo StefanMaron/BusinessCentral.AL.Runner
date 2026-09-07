@@ -1,0 +1,42 @@
+[
+  {
+    "codeunitId": 60350,
+    "CodeunitName": "Test TestFilter",
+    "Method": "TestFilter_CurrentKey_NamesTheKeyThePageIsWalking",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3316",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to 408c39fe to consume StefanMaron/BusinessCentral.AL.Language.Tests#240 (the upstream half of #3342), and 408c39fe is corpus master's tip -- corpus history is linear, so #240 cannot be taken without the nine PRs merged before it, one of which (#229, d025203) added this TestFilter suite. TestPage.Filter's CurrentKey() reports field numbers and is blank by default, and SetCurrentKey/Ascending never change the walk order. Tracked as #3316, which is open and is NOT closed by this PR. This entry is declared to SEQUENCE THE MERGE with PR #3356 (agent stma-auto-2, review-ready), which does close #3316: whichever of #3345 / #3356 merges second must DELETE this file, and rebase the corpus pin -- #3356 was branched from a main that does not contain this file, and pins 3331aa6, which check_corpus_pin_forward.sh refuses as backward once 408c39fe has landed. Expected to be short-lived, and loud in both directions if it is not: manifest drift fails the run with 'remove the entry' five times over once #3316's fix is in. main's #3349 stopped the pin at 0bbe376 for exactly these five failures; this branch cannot stop there because the commit it needs is past them."
+  },
+  {
+    "codeunitId": 60350,
+    "CodeunitName": "Test TestFilter",
+    "Method": "TestFilter_SetCurrentKey_ChangesBothTheReportedKeyAndTheWalkOrder",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3316",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to 408c39fe to consume StefanMaron/BusinessCentral.AL.Language.Tests#240 (the upstream half of #3342), and 408c39fe is corpus master's tip -- corpus history is linear, so #240 cannot be taken without the nine PRs merged before it, one of which (#229, d025203) added this TestFilter suite. TestPage.Filter's CurrentKey() reports field numbers and is blank by default, and SetCurrentKey/Ascending never change the walk order. Tracked as #3316, which is open and is NOT closed by this PR. This entry is declared to SEQUENCE THE MERGE with PR #3356 (agent stma-auto-2, review-ready), which does close #3316: whichever of #3345 / #3356 merges second must DELETE this file, and rebase the corpus pin -- #3356 was branched from a main that does not contain this file, and pins 3331aa6, which check_corpus_pin_forward.sh refuses as backward once 408c39fe has landed. Expected to be short-lived, and loud in both directions if it is not: manifest drift fails the run with 'remove the entry' five times over once #3316's fix is in. main's #3349 stopped the pin at 0bbe376 for exactly these five failures; this branch cannot stop there because the commit it needs is past them."
+  },
+  {
+    "codeunitId": 60350,
+    "CodeunitName": "Test TestFilter",
+    "Method": "TestFilter_SetCurrentKey_AcceptsACompositeKey",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3316",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to 408c39fe to consume StefanMaron/BusinessCentral.AL.Language.Tests#240 (the upstream half of #3342), and 408c39fe is corpus master's tip -- corpus history is linear, so #240 cannot be taken without the nine PRs merged before it, one of which (#229, d025203) added this TestFilter suite. TestPage.Filter's CurrentKey() reports field numbers and is blank by default, and SetCurrentKey/Ascending never change the walk order. Tracked as #3316, which is open and is NOT closed by this PR. This entry is declared to SEQUENCE THE MERGE with PR #3356 (agent stma-auto-2, review-ready), which does close #3316: whichever of #3345 / #3356 merges second must DELETE this file, and rebase the corpus pin -- #3356 was branched from a main that does not contain this file, and pins 3331aa6, which check_corpus_pin_forward.sh refuses as backward once 408c39fe has landed. Expected to be short-lived, and loud in both directions if it is not: manifest drift fails the run with 'remove the entry' five times over once #3316's fix is in. main's #3349 stopped the pin at 0bbe376 for exactly these five failures; this branch cannot stop there because the commit it needs is past them."
+  },
+  {
+    "codeunitId": 60350,
+    "CodeunitName": "Test TestFilter",
+    "Method": "TestFilter_Ascending_False_ReversesTheWalkAndIsReportedBack",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3316",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to 408c39fe to consume StefanMaron/BusinessCentral.AL.Language.Tests#240 (the upstream half of #3342), and 408c39fe is corpus master's tip -- corpus history is linear, so #240 cannot be taken without the nine PRs merged before it, one of which (#229, d025203) added this TestFilter suite. TestPage.Filter's CurrentKey() reports field numbers and is blank by default, and SetCurrentKey/Ascending never change the walk order. Tracked as #3316, which is open and is NOT closed by this PR. This entry is declared to SEQUENCE THE MERGE with PR #3356 (agent stma-auto-2, review-ready), which does close #3316: whichever of #3345 / #3356 merges second must DELETE this file, and rebase the corpus pin -- #3356 was branched from a main that does not contain this file, and pins 3331aa6, which check_corpus_pin_forward.sh refuses as backward once 408c39fe has landed. Expected to be short-lived, and loud in both directions if it is not: manifest drift fails the run with 'remove the entry' five times over once #3316's fix is in. main's #3349 stopped the pin at 0bbe376 for exactly these five failures; this branch cannot stop there because the commit it needs is past them."
+  },
+  {
+    "codeunitId": 60350,
+    "CodeunitName": "Test TestFilter",
+    "Method": "TestFilter_Ascending_AppliesToTheKeySetBySetCurrentKey",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3316",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to 408c39fe to consume StefanMaron/BusinessCentral.AL.Language.Tests#240 (the upstream half of #3342), and 408c39fe is corpus master's tip -- corpus history is linear, so #240 cannot be taken without the nine PRs merged before it, one of which (#229, d025203) added this TestFilter suite. TestPage.Filter's CurrentKey() reports field numbers and is blank by default, and SetCurrentKey/Ascending never change the walk order. Tracked as #3316, which is open and is NOT closed by this PR. This entry is declared to SEQUENCE THE MERGE with PR #3356 (agent stma-auto-2, review-ready), which does close #3316: whichever of #3345 / #3356 merges second must DELETE this file, and rebase the corpus pin -- #3356 was branched from a main that does not contain this file, and pins 3331aa6, which check_corpus_pin_forward.sh refuses as backward once 408c39fe has landed. Expected to be short-lived, and loud in both directions if it is not: manifest drift fails the run with 'remove the entry' five times over once #3316's fix is in. main's #3349 stopped the pin at 0bbe376 for exactly these five failures; this branch cannot stop there because the commit it needs is past them."
+  }
+]
