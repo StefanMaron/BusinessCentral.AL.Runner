@@ -2517,7 +2517,7 @@ public static partial class RecordPatches
         var ot = typeProp?.GetValue(objId)?.ToString();
         return ot switch
         {
-            "Page"     => FindClrTypeByName($"Form{id}"),
+            "Page"     => FindClrTypeByName($"Page{id}") ?? FindClrTypeByName($"Form{id}"),
             "Report"   => FindClrTypeByName($"Report{id}"),
             "CodeUnit" => FindClrTypeByName($"Codeunit{id}"),
             _          => FindRecordType(id),
