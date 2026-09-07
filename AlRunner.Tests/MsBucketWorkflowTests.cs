@@ -16,6 +16,8 @@
 //
 // Split like ReleaseTestParityTests: WorkflowTriggers.TriggersOf is a pure function proven
 // on constructed text; the rest wires it (and the marker checks) to the real files on disk.
+using System.Globalization;
+using AlRunner.Infrastructure;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -53,6 +55,65 @@ internal static class WorkflowTriggers
     }
 }
 
+internal static class WorkflowInputDefaults
+{
+    /// <summary>
+    /// Every <c>default:</c> declared for an input of the given name, one entry per
+    /// declaration — a workflow that offers both <c>workflow_call</c> and
+    /// <c>workflow_dispatch</c> declares its inputs twice, and an input added to only one of
+    /// them resolves to the empty string on the other trigger. Empty when the input is absent,
+    /// so callers must assert a COUNT before comparing values.
+    /// </summary>
+    internal static IReadOnlyList<string> Of(string workflowText, string inputName)
+    {
+        var lines = workflowText.Replace("\r\n", "\n").Split('\n');
+        var found = new List<string>();
+        var keyIndent = -1;
+        foreach (var raw in lines)
+        {
+            var line = raw.TrimEnd();
+            if (line.Length == 0) continue;
+            var trimmed = line.TrimStart();
+            if (trimmed.StartsWith('#')) continue;
+            var indent = line.Length - trimmed.Length;
+
+            if (keyIndent < 0)
+            {
+                if (trimmed == inputName + ":") keyIndent = indent;
+                continue;
+            }
+            if (indent <= keyIndent) { keyIndent = trimmed == inputName + ":" ? indent : -1; continue; }
+            if (trimmed.StartsWith("default:", StringComparison.Ordinal))
+                found.Add(trimmed["default:".Length..].Trim());
+        }
+        return found;
+    }
+}
+
+internal static class BashArrayLiteral
+{
+    /// <summary>
+    /// The inside of a bash array literal <c>name=( … )</c>, matched by counting parentheses
+    /// rather than by looking for a terminator string. An assertion about what the runner is
+    /// invoked WITH has to be scoped to the array it is invoked with — a flag mentioned in a
+    /// comment, an <c>echo</c>, or a sibling <c>args+=(</c> guarded by an <c>if</c> is not the
+    /// same claim. Empty when the array is absent.
+    /// </summary>
+    internal static string Of(string script, string name)
+    {
+        var open = script.IndexOf(name + "=(", StringComparison.Ordinal);
+        if (open < 0) return string.Empty;
+        var i = open + name.Length + 1;      // at the '('
+        var depth = 0;
+        for (var j = i; j < script.Length; j++)
+        {
+            if (script[j] == '(') depth++;
+            else if (script[j] == ')' && --depth == 0) return script[(i + 1)..j];
+        }
+        return string.Empty;                 // unbalanced — the caller's assertion says so
+    }
+}
+
 public sealed class MsBucketWorkflowTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -65,6 +126,16 @@ public sealed class MsBucketWorkflowTests
     private const string SharedMatrix = "bc-tests.yml";
     private const string ProvisionAction = "actions/provision-bc/action.yml";
     private const string ProvisionMarker = "uses: ./.github/actions/provision-bc";
+
+    /// <summary>
+    /// The per-test watchdog these workflows run with, in seconds (#3431). A constant, so
+    /// changing the number is a deliberate edit here with a reason, rather than a value that
+    /// drifted. 300 covers the hosted runner's slowdown against the developer boxes every
+    /// local number was measured on, and still catches the unbounded-loop class the watchdog
+    /// exists for — #3374's MaxIteration defect produced loops that finished at no timeout at
+    /// all. Worst case cost is five aborts at 300 s instead of at 60 s, about 25 minutes.
+    /// </summary>
+    private const int WorkflowTestTimeoutSeconds = 300;
 
     private static string Read(string relative)
     {
@@ -106,6 +177,54 @@ public sealed class MsBucketWorkflowTests
         Assert.Empty(WorkflowTriggers.TriggersOf("name: X\njobs:\n  run:\n    runs-on: ubuntu-latest\n"));
         Assert.Equal(new[] { "workflow_dispatch" },
             WorkflowTriggers.TriggersOf("on:\n  # push: would be wrong here\n  workflow_dispatch:\n"));
+    }
+
+    [Fact]
+    public void InputDefaults_FindsEveryDeclarationOfOneInput_AndNothingElses()
+    {
+        const string wf = """
+            on:
+              workflow_call:
+                inputs:
+                  test-timeout:
+                    type: number
+                    default: 300
+                  test-data:
+                    type: boolean
+                    default: true
+              workflow_dispatch:
+                inputs:
+                  test-timeout:
+                    description: >-
+                      Two declarations of one input is normal, and they can disagree.
+                    type: number
+                    default: 120
+            """;
+
+        Assert.Equal(new[] { "300", "120" }, WorkflowInputDefaults.Of(wf, "test-timeout"));
+        Assert.Equal(new[] { "true" }, WorkflowInputDefaults.Of(wf, "test-data"));
+        Assert.Empty(WorkflowInputDefaults.Of(wf, "bc-version"));
+    }
+
+    [Fact]
+    public void BashArrayLiteral_ReadsOnlyTheArraysOwnContents()
+    {
+        const string script = """
+            echo "--test-timeout is not set here"
+            args=( "$BUNDLE"
+                   --cache "$C"
+                   --test-timeout "$T" )
+            if [ "$X" = "true" ]; then
+              args+=( --test-data-company "CRONUS International Ltd_" )
+            fi
+            """;
+
+        var array = BashArrayLiteral.Of(script, "args");
+        Assert.Contains("--test-timeout \"$T\"", array, StringComparison.Ordinal);
+        // The echo above it and the conditional append below it are NOT the array.
+        Assert.DoesNotContain("echo", array, StringComparison.Ordinal);
+        Assert.DoesNotContain("--test-data-company", array, StringComparison.Ordinal);
+        Assert.Equal(string.Empty, BashArrayLiteral.Of(script, "nosuch"));
     }
 
     // ---- wired to the real files ------------------------------------------------------
@@ -292,6 +411,106 @@ public sealed class MsBucketWorkflowTests
         Assert.DoesNotContain("gh release view", code, StringComparison.Ordinal);
         // The download still uses the tag, so pinning cannot silently stop pinning.
         Assert.Contains("gh release download \"$tag\"", code, StringComparison.Ordinal);
+    }
+
+    // ---- the per-test watchdog (#3431) -------------------------------------------------
+
+    /// <summary>
+    /// #3431: the workflow set no timeout at all, so the runner's 60 s default applied on a
+    /// hosted 4-vCPU runner. The watchdog is WALL CLOCK and every local number in this
+    /// repository was measured on a much faster box, so run 34150530633 cut
+    /// <c>CloseFiscalYearWithAdditionalCurrencyRounding</c> off at <c>60001ms</c> — one
+    /// millisecond past the limit, on a test still making progress — where the same bucket on
+    /// a 12-core box ran 9,496 of 9,496 with no aborts. An abort is not one lost test: it ends
+    /// the process, and past <c>--resume-aborts</c> it takes the bucket's remaining suites.
+    ///
+    /// Three links, asserted separately, because checking any one of them alone passes on the
+    /// defect this test exists to catch:
+    ///
+    ///   1. the INPUT reaches a shell variable. Bound to a literal instead, the input would be
+    ///      decorative and a caller's override would go nowhere.
+    ///   2. that variable is INSIDE the runner's argument array — not in a comment, an
+    ///      <c>echo</c>, or the conditional <c>args+=( … )</c> that a false <c>test-data</c>
+    ///      skips. This is the link that fails when the flag is dropped while the input stays,
+    ///      which is precisely the "a check that cannot fail" shape: an input that exists and
+    ///      reaches nothing.
+    ///   3. that array is what the runner is invoked with.
+    ///
+    /// The shell variable is deliberately NOT called <c>AL_RUNNER_TEST_TIMEOUT_SEC</c>, which
+    /// the runner reads on its own: under that name link 2 could be deleted and the timeout
+    /// would still apply, so nothing here could tell the difference. That the flag itself
+    /// works is <c>TestTimeoutFlagTests</c>'s claim, proven against the runner; this file's
+    /// claim is only that the workflow supplies it.
+    /// </summary>
+    [Fact]
+    public void MsBucketWorkflow_PutsThePerTestTimeoutOnTheRunnersArgumentArray()
+    {
+        var code = CodeOnly(Read(Path.Combine("workflows", Workflow)));
+        var runStep = WorkflowStep.BodyOf(code, "Run the bucket(s)");
+
+        Assert.Contains("TEST_TIMEOUT_SEC: ${{ inputs.test-timeout }}", runStep, StringComparison.Ordinal);
+
+        var args = BashArrayLiteral.Of(runStep, "args");
+        Assert.False(string.IsNullOrWhiteSpace(args),
+            "the runner's `args=( … )` array is gone from the \"Run the bucket(s)\" step");
+        Assert.Contains("--test-timeout \"$TEST_TIMEOUT_SEC\"", args, StringComparison.Ordinal);
+
+        Assert.Contains("/al-runner\" \"${args[@]}\"", runStep, StringComparison.Ordinal);
+
+        // An empty value would make --test-timeout swallow the next argument rather than fail,
+        // producing a run configured differently from the one that was asked for. Both halves:
+        // the guard is there, and it runs BEFORE the bucket loop it protects.
+        var guard = runStep.IndexOf("::error::test-timeout must be a positive whole number",
+            StringComparison.Ordinal);
+        Assert.True(guard >= 0, "the empty/non-numeric test-timeout guard is gone");
+        Assert.True(guard < runStep.IndexOf("for bucket in \"${BUCKET_LIST[@]}\"", StringComparison.Ordinal),
+            "the test-timeout guard must run before the bucket loop, not inside it");
+    }
+
+    /// <summary>
+    /// The default has to be declared on BOTH trigger blocks and has to be the same number.
+    /// On <c>workflow_call</c> only, a manual dispatch resolves <c>inputs.test-timeout</c> to
+    /// the empty string and the guard above fails the job; on <c>workflow_dispatch</c> only,
+    /// ms-surface.yml and the nightly get nothing. Either way the run is wrong, and a PR check
+    /// is a far cheaper place to find that than a three-hour dispatch.
+    ///
+    /// It is compared against the runner's OWN default rather than a second copy of 60, so the
+    /// relationship stays true if that default ever moves.
+    /// </summary>
+    [Fact]
+    public void MsBucketWorkflow_DefaultsThePerTestTimeoutAboveTheRunnersOwn()
+    {
+        var defaults = WorkflowInputDefaults.Of(Read(Path.Combine("workflows", Workflow)), "test-timeout");
+
+        Assert.Equal(2, defaults.Count);
+        Assert.Single(defaults.Distinct(StringComparer.Ordinal));
+
+        Assert.True(int.TryParse(defaults[0], NumberStyles.None, CultureInfo.InvariantCulture, out var seconds),
+            $"test-timeout's default must be a whole number of seconds, not '{defaults[0]}'");
+        Assert.Equal(WorkflowTestTimeoutSeconds, seconds);
+        Assert.True(seconds > ParallelFanOut.DefaultTestTimeoutSec,
+            $"the workflow's per-test timeout ({seconds}s) must exceed the runner's own default "
+            + $"({ParallelFanOut.DefaultTestTimeoutSec}s) — at or below it the input changes nothing "
+            + "and #3431 is back");
+    }
+
+    /// <summary>
+    /// The nightly runs on the same hosted runner as every other caller, so it wants the same
+    /// watchdog — and gets it by passing nothing and inheriting ms-bucket.yml's default. A
+    /// second spelling of the number here is how the nightly's configuration and the surface's
+    /// would come to differ, which makes their numbers incomparable: the same failure mode as
+    /// the provisioning copy that drifted four times (#1976), one input down.
+    /// </summary>
+    [Fact]
+    public void NightlyWorkflow_InheritsThePerTestTimeout_RatherThanSpellingItAgain()
+    {
+        var code = CodeOnly(Read(Path.Combine("workflows", Nightly)));
+
+        Assert.DoesNotContain("test-timeout", code, StringComparison.Ordinal);
+        Assert.Contains("uses: ./.github/workflows/ms-bucket.yml", code, StringComparison.Ordinal);
+        // And the thing it inherits is real: ms-bucket.yml declares the input with a default,
+        // so "passes nothing" means 300 s, not nothing.
+        Assert.NotEmpty(WorkflowInputDefaults.Of(Read(Path.Combine("workflows", Workflow)), "test-timeout"));
     }
 
     [Fact]

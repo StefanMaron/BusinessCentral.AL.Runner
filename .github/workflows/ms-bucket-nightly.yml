@@ -126,6 +126,12 @@ jobs:
     # watchdog behaviour. A second spelling of any of that is how bc-tests.yml's provisioning
     # drifted four times and failed two releases (#1976).
     #
+    # test-timeout is deliberately NOT passed: this runs on the same hosted runner as every
+    # other caller, so it wants the same watchdog, and ms-bucket.yml's 300 s default (#3431)
+    # is where that number lives. Spelling it again here is how the nightly's configuration
+    # and the surface's would come to differ, which would make their numbers incomparable —
+    # exactly the failure this whole file exists to avoid.
+    #
     # bc-version is left EMPTY on purpose: ms-bucket.yml resolves that to the newest prefix in
     # .github/bc-versions.txt, which is the version the matrix marks required. Pinning a
     # version here is the thing this nightly must not do.

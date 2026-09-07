@@ -74,6 +74,16 @@ on:
         type: boolean
         required: false
         default: true
+      test-timeout:
+        description: >-
+          Per-test watchdog in seconds, handed down to ms-bucket.yml, which is what puts it on
+          the runner's command line. The runner's own 60 s default is a developer-box number:
+          it cuts legitimate tests off on a hosted runner, and an abort takes its bucket's
+          remaining suites with it (#3431). Must match ms-bucket.yml's default —
+          MsSurfaceWorkflowTests holds the two equal.
+        type: number
+        required: false
+        default: 300
 
 permissions:
   contents: read
@@ -96,6 +106,7 @@ jobs:
       expected-tests: 40530
       bc-version: ${{ inputs.bc-version }}
       test-data: ${{ inputs.test-data }}
+      test-timeout: ${{ inputs.test-timeout }}
       # Tests-ERM (9,496) and Tests-SCM (8,524) lead deliberately: 44% of the 40,530 between
       # them, measured on the 28.1.49838.53507 artifact (#3409), so if anything is lost to the
       # 360-minute ceiling it should not be the two buckets everything else is compared
