@@ -145,17 +145,71 @@ internal static partial class BcAppSymbolCache
     /// TargetObject: <c>#&lt;appIdNoHyphens&gt;#&lt;TableName&gt;</c> or plain <c>&lt;TableName&gt;</c>.
     ///
     /// Field-parse loop is an intentional copy of the loop in <see cref="TryParseTableSymbol"/> —
-    /// do NOT refactor into a shared helper. A prior attempt caused SIGSEGV.
-    /// ParsedField.CalcFormula stays null here: parsing it calls RecordPatches.TryParseCalcFormula,
-    /// which must not be called at startup (RecordPatches may not yet be initialised → SIGSEGV).
-    /// The raw property TEXT is carried on TableExtensionSymbol.CalcFormulaTexts instead and
-    /// parsed by the consumer once the runtime is up (#3121).
-    /// <para>The sentence that used to stand here — "Extension FlowFields with CalcFormulas
-    /// don't exist in standard precompiled BC apps" — is false. Measured against BC 28.1:
-    /// <c>Customer."Outstanding Serv.Invoices(LCY)"</c> (Service) and
+    /// do NOT refactor into a shared helper. A prior attempt caused SIGSEGV. Keeping it a copy
+    /// is also why it drifts: every property the table loop learns to read has to be added here
+    /// by hand, and both of the ones below were missed for as long as they existed.
+    ///
+    /// <para><b>The "must not call RecordPatches at startup" constraint is FALSE, and nothing in
+    /// this file rests on it any more.</b> It is written out here because two separate changes
+    /// (#3121/#3180 and #3177/#3197) were designed around it and a third would have been. What it
+    /// used to say: parsing a property here calls into <c>RecordPatches</c>, which "may not yet be
+    /// initialised → SIGSEGV". Measured, there is no point in the process at which that is
+    /// reachable. <c>RecordPatches.AddBcAppPath</c> — the only registration-time caller — runs
+    /// these two statements consecutively, inside one <c>lock (_bcTableIndexLock)</c>:
+    /// <code>
+    /// symbols = BcAppSymbolCache.Get(appPath);      // -> TryParseTableSymbol
+    ///                                               //    -> RecordPatches.TryParseRelationArmsText (#2528)
+    /// BcAppSymbolCache.GetTableExtensions(appPath); // -> this method
+    /// </code>
+    /// so the extension loop can never run earlier than the table loop that has already called
+    /// into <c>RecordPatches</c>. The other caller (the lazy index rebuild in
+    /// <c>RecordPatches.BcAppFallback</c>) is later still. The TableRelation read below is a
+    /// direct <c>RecordPatches.TryParseRelationArmsText</c> call at parse time, and it is
+    /// exercised on every corpus and runner-extras run, cold and warm — see the #3177 paragraph
+    /// for the numbers.</para>
+    ///
+    /// <para><b>Consequence for the CalcFormula half.</b> <c>ParsedField.CalcFormula</c> is still
+    /// null here and the raw property TEXT is carried on
+    /// <see cref="TableExtensionSymbol.CalcFormulaTexts"/> for the consumer to parse once the
+    /// runtime is up (#3121/#3180). That deferral WORKS and is not being changed here — but it is
+    /// a design choice now, not a requirement: the startup hazard it was built to avoid does not
+    /// exist. Anyone consolidating the two properties onto one mechanism should know that either
+    /// direction is open, and should not re-derive the constraint from this comment.</para>
+    ///
+    /// <para>The other sentence that used to stand here — "Extension FlowFields with CalcFormulas
+    /// don't exist in standard precompiled BC apps" — is also false, and separately measured.
+    /// Against BC 28.1: <c>Customer."Outstanding Serv.Invoices(LCY)"</c> (Service) and
     /// <c>"Stockkeeping Unit"."Qty. on Prod. Order"</c> (Manufacturing) are exactly that shape,
     /// and dropping their formula made <c>CalcFields</c> refuse them with BC's own
-    /// "You must define a CalcFormula for the {0} FlowField in the {1} table".</para>
+    /// "You must define a CalcFormula for the {0} FlowField in the {1} table". Counted across the
+    /// BC 28.4 platform packages, Base Application declares <b>36</b> FlowFields on
+    /// tableextensions and all 36 carry a CalcFormula.</para>
+    ///
+    /// <para>#3177 — TableRelation is read below, directly. #2528 taught
+    /// <see cref="TryParseTableSymbol"/> to re-parse a precompiled table field's TableRelation
+    /// out of the symbol property text, because without it <c>FieldRef.Relation</c> answers 0
+    /// and <c>Validate</c> skips the relation check, so a value real BC refuses is silently
+    /// accepted — a wrong ANSWER, not a missing feature. The extension loop never got that
+    /// change, so the same class, reading the same package, disagreed with itself about the
+    /// same property.</para>
+    ///
+    /// <para><b>261</b> tableextension fields across the platform packages carry a
+    /// TableRelation, of which <b>260</b> gain one here — the gate below excludes exactly one,
+    /// <c>Customer."Ship-to Filter"</c> (5903, a FlowFilter). #3177 was filed with 154, which
+    /// is the <b>Base Application share</b>, not an older count: the other 107 are in Business
+    /// Foundation, an equally precompiled dependency read through this same loop. The total does
+    /// NOT drift with the BC version — measured 154 + 107 = 261 identically on 28.1 and 28.4
+    /// (259 on 27.5). Examples: <c>Item."Routing No."</c> → <c>"Routing Header"</c>,
+    /// <c>Item."Production BOM No."</c> → <c>"Production BOM Header"</c>,
+    /// <c>Customer."Service Zone Code"</c> → <c>"Service Zone"</c> (table 5957, contributed by
+    /// tableextension 6450 "Serv. Customer" — the case
+    /// <c>tests/runner-extras/precompiled-table-relation</c> asserts end to end).</para>
+    ///
+    /// <para>No <c>CacheVersion</c> bump: table extensions are not part of <c>CachePayload</c>
+    /// and <see cref="TableExtensionCache"/> is process-only, so there is no persisted payload
+    /// that could replay the pre-fix answer — unlike #2528, which needed one for exactly that
+    /// reason. Everything downstream that IS disk-cached (AL output, install baseline) keys on
+    /// <c>RunnerFingerprint</c>, which includes the runner assembly's content hash.</para>
     /// </summary>
     private static TableExtensionSymbol? TryParseTableExtensionSymbol(System.Text.Json.JsonElement ext)
     {
@@ -209,8 +263,31 @@ internal static partial class BcAppSymbolCache
                     && (autoIncrement == "1" || autoIncrement.Equals("true", StringComparison.OrdinalIgnoreCase));
                 props.TryGetValue("MinValue", out var minValue); // #2495
                 props.TryGetValue("MaxValue", out var maxValue);
+                // #3177 — TableRelation, read exactly as the table loop reads it (#2528/#2518).
+                // Both properties, independently: ValidateTableRelation = 0 turns the CHECK off
+                // while leaving the relation itself readable, so reading only the first would
+                // switch validation on wholesale for fields BC does not validate.
+                //
+                // Gated on field class to match the table loop, whose reason is that a
+                // FlowFilter's TableRelation is a lookup hint for the filter's own UI rather
+                // than a stored value's referential constraint, and that RelationArms also feeds
+                // the reverse index NCLMetaTable_ComputeReferencingRelations builds for rename
+                // propagation, which filters on table id rather than field class. Note the
+                // blast radius here is NOT the 204 fields #2528 cites on the table path: across
+                // the platform packages this gate excludes exactly ONE extension field,
+                // Customer."Ship-to Filter" (5903, FlowFilter), so 260 of the 261 gain relations.
+                // It is kept anyway because the point of the change is that the two loops read
+                // the property the same way; ungated they would disagree again, in the other
+                // direction, over that one field.
+                props.TryGetValue("TableRelation", out var tableRelation);
+                var relationArms = (!isFlowField && !isFlowFilter)
+                    ? RecordPatches.TryParseRelationArmsText(tableRelation, fieldName)
+                    : null;
+                var relationValidate = !(props.TryGetValue("ValidateTableRelation", out var vtr)
+                    && (vtr == "0" || vtr.Equals("false", StringComparison.OrdinalIgnoreCase)));
                 fields.Add(new ParsedField(fieldId, fieldName, typeName, SymbolTypeLength(typeName), isFlowField, null,
                     optionMembers, initValue, isAutoIncrement, IsFlowFilter: isFlowFilter,
+                    RelationArms: relationArms, RelationValidate: relationValidate,
                     MinValue: minValue, MaxValue: maxValue));
             }
         }
