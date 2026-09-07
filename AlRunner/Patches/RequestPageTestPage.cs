@@ -180,7 +180,10 @@ internal sealed class RequestPageTestPage : MockITestPage
                 + string.Join(", ", RegisteredControlKeys().DefaultIfEmpty("(none)"))
                 + ". See docs/scope.md");
 
-        var field = new PageVariableTestField(page!, expression, id);
+        // _validationErrors is MockITestPage's own page-level ledger (#3009) — a request page
+        // counts a refused control write exactly as a page does, and AL reads it through the
+        // same TestRequestPage.ValidationErrorCount() / GetValidationError(Index) pair.
+        var field = new PageVariableTestField(page!, expression, id, _validationErrors);
         _controlFields[id] = field;
         return field;
     }

@@ -30,6 +30,14 @@ internal class MockITestPage : ITestPage
     private bool   _ascending        = true;
     private int[]? _currentKeyFields;
 
+    /// <summary>
+    /// The refusals this PAGE's controls have recorded, read back by ValidationErrorCount /
+    /// GetValidationError below (#3009). Protected so LiveNavTestPage can hand it to every
+    /// control it builds — one ledger per page, shared by all of that page's controls, which
+    /// is the shape real BC has.
+    /// </summary>
+    private protected readonly TestPageValidationErrors _validationErrors = new();
+
     // ── ITestPage ──────────────────────────────────────────────────────────
 
     // IsOpened() = false so NavTestPageBase.Open() "already open" guard passes.
@@ -60,7 +68,12 @@ internal class MockITestPage : ITestPage
     public virtual bool       MovePrevious()                                            => false;
     public virtual bool       MoveFirst()                                               => false;
     public virtual bool       MoveLast()                                                => false;
-    public string             GetValidationError(int index)                             => string.Empty;
+    // #3009: was hardcoded `string.Empty`, so a validation error real BC reports on the PAGE
+    // came back blank. Backed by a real ledger now; the base mock simply never has anything in
+    // it, because a page with no live instance has no controls that can record a refusal. Not
+    // virtual: LiveNavTestPage feeds the SAME ledger rather than overriding, which is what
+    // stops the two views from drifting. See TestPageValidationErrors.
+    public string             GetValidationError(int index)                             => _validationErrors.Get(index);
     public virtual bool       FindRowFromTableFieldValues(int[] f, object[] v, bool fw) => false;
     public virtual bool       FindRowFromControlFieldValue(int fId, object v, bool fw)  => false;
     public virtual object?    GetBookmark()                                             => null;
@@ -73,7 +86,11 @@ internal class MockITestPage : ITestPage
     public virtual ITestAction View()                                                   => new MockITestAction();
     public bool               Expand(bool doExpand)                                     => false;
 
-    public int        ValidationErrorCount => 0;
+    // #3009: was hardcoded 0. BC's NavTestPageBase.ALValidationErrorCount() reads this member
+    // straight through to AL's TestPage.ValidationErrorCount(), and NavTestField.CheckError
+    // reads it before and after every control write, so a constant 0 made the page branch of
+    // CheckError unreachable and made AL's own read answer 0 after a refusal BC counts.
+    public int        ValidationErrorCount => _validationErrors.Count;
     public virtual FormResult FormResult   => FormResult.OK;
     public string     Name                 => string.Empty;
     public virtual string Caption          => string.Empty;
@@ -1580,7 +1597,7 @@ internal class LiveNavTestPage : MockITestPage
             if (!_fields.TryGetValue(id, out var field))
                 _fields[id] = field =
                     new LiveNavTestField(_record!, tableFieldNo, _page, id,
-                        MarkEdited, PromoteNewRowLineForWrite);
+                        MarkEdited, PromoteNewRowLineForWrite, _validationErrors);
             return field;
         }
 
@@ -1590,7 +1607,8 @@ internal class LiveNavTestPage : MockITestPage
         if (expression != null)
         {
             if (!_pageVariableFields.TryGetValue(id, out var pageField))
-                _pageVariableFields[id] = pageField = new PageVariableTestField(_page!, expression, id);
+                _pageVariableFields[id] = pageField =
+                    new PageVariableTestField(_page!, expression, id, _validationErrors);
             return pageField;
         }
 
@@ -2684,10 +2702,11 @@ internal sealed class LiveNavTestField : ITestField
     private readonly Action? _onBeforeEdit;
 
     public LiveNavTestField(NavRecord record, int fieldNo)
-        : this(record, fieldNo, page: null, controlId: 0, onEdited: null, onBeforeEdit: null) { }
+        : this(record, fieldNo, page: null, controlId: 0, onEdited: null, onBeforeEdit: null,
+               pageValidationErrors: null) { }
 
     public LiveNavTestField(NavRecord record, int fieldNo, RunnerPageInstance? page, int controlId,
-        Action? onEdited, Action? onBeforeEdit)
+        Action? onEdited, Action? onBeforeEdit, TestPageValidationErrors? pageValidationErrors)
     {
         _record = record;
         _fieldNo = fieldNo;
@@ -2695,6 +2714,7 @@ internal sealed class LiveNavTestField : ITestField
         _controlId = controlId;
         _onEdited = onEdited;
         _onBeforeEdit = onBeforeEdit;
+        _validationErrors = new TestFieldValidationErrors(pageValidationErrors);
     }
 
     // The refusals this control has recorded, read back by ValidationErrorCount /
@@ -2702,7 +2722,11 @@ internal sealed class LiveNavTestField : ITestField
     // ITestField setter RECORDS a refusal, it does not throw it — NavTestField.CheckError
     // (BC's own precompiled code, wrapping every SetValue) is what raises it afterwards, and
     // it can only do that if the ledger survives the write (#2900).
-    private readonly TestFieldValidationErrors _validationErrors = new();
+    //
+    // Constructed with the owning PAGE's ledger (#3009) so a refusal lands in both: BC reads
+    // the field's count AND the page's around every write, and AL can read either afterwards.
+    // Null for the record-only ctor above, which has no page to report to.
+    private readonly TestFieldValidationErrors _validationErrors;
 
     public string Value
     {
@@ -2953,11 +2977,13 @@ internal sealed class PageVariableTestField : ITestField
     private readonly object _expression;
     private readonly int _controlId;
 
-    public PageVariableTestField(RunnerPageInstance page, object expression, int controlId)
+    public PageVariableTestField(RunnerPageInstance page, object expression, int controlId,
+        TestPageValidationErrors? pageValidationErrors)
     {
         _page = page;
         _expression = expression;
         _controlId = controlId;
+        _validationErrors = new TestFieldValidationErrors(pageValidationErrors);
     }
 
     // The Rec-bound sibling's ledger, for the same reason and read the same way — see
@@ -2965,7 +2991,10 @@ internal sealed class PageVariableTestField : ITestField
     // refuses a write through its OnValidate exactly as a Rec-bound one does, so leaving this
     // half hardcoded would have made the same AL assertion answer differently depending only
     // on how the control happens to be bound.
-    private readonly TestFieldValidationErrors _validationErrors = new();
+    //
+    // Constructed with the owning PAGE's ledger (#3009), same as the Rec-bound sibling — the
+    // page counts a refusal whichever way the control that raised it is bound.
+    private readonly TestFieldValidationErrors _validationErrors;
 
     public string Value
     {
@@ -3131,6 +3160,14 @@ internal sealed class MockITestField : ITestField
     public string Name          => string.Empty;
     public string Caption       => string.Empty;
     public NavType FieldType    => NavType.Text;
+    // 0/0/0 and the empty GetValidationError below are FAITHFUL here, not the #2900/#3009
+    // hardcoding that was fixed on the live controls — stated rather than left bare, because
+    // they read identically. This class is only ever built by MockITestPage.GetField, the
+    // degraded path for a page with no live RunnerPageInstance (see
+    // TestPageClientConstructionRule, which warns on stderr when a handle site lands here).
+    // Its Value setter is a plain string store that runs no AL: no OnValidate, no record
+    // write, nothing that can refuse. So there is genuinely never anything to count, and a
+    // ledger here would only ever report the same 0 with more machinery.
     public int    ValidationErrorCount        => 0;
     public long   LastUsedValidationErrorId   => 0;
     public long   MaxValidationErrorId        => 0;
