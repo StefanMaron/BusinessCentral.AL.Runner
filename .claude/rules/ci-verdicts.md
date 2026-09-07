@@ -12,25 +12,33 @@ something that resolves whether or not anyone is watching, and the verdict costs
 read afterwards. This is a standing instruction from the repository owner and it replaces the
 older advice in this file, which told agents to wait in the foreground.
 
-**`tools/ci-wait.py <PR> --timeout 1`** is the read. One pass, one answer, back in about a second:
+**`tools/ci-wait.py <PR> --timeout 0`** is the read. One pass, one answer, back in about a
+second:
 
 ```bash
-tools/ci-wait.py 2379 --timeout 1     # reads the verdict now; does not block
+tools/ci-wait.py 2379 --timeout 0     # reads the verdict now; does not block
 ```
 
-**It must be `--timeout 1`, never `--timeout 0`.** The poll is `deadline = time.time() +
-args.timeout` followed by `while time.time() < deadline:`, so a zero timeout never enters the
-loop and falls through to a bare `return 2`: **exits 0, 1 and 4 become unreachable and no check
-is ever looked at.** The pre-loop work still runs, so the head SHA and the required-context set
-are fetched and exit 3 remains reachable — a stale-worktree refusal is the likeliest thing you
-will actually hit. It is otherwise silent: the output is the ordinary still-running line, and
-the tell is that its parentheses are empty, `STILL RUNNING after 0s ()`, where the count of
-completed and failing checks belongs. Measured on one head seconds apart — `--timeout 0` exit 2,
-`--timeout 1` exit 0 GREEN with 10/10 ruleset contexts.
+**`--timeout 0` means a single pass**, and says so in its own `--help`: look once, report
+whatever has reported, do not wait. A negative value is refused by `argparse` rather than
+silently behaving like zero.
 
-That also means **"I ran it and got STILL RUNNING" proves nothing** on its own: that is what a
-green PR, a red PR and a PR with no checks all print under a zero timeout. Check a read against
-a PR you already know the state of before trusting a new invocation.
+This file said the opposite until #3351 — *"it must be `--timeout 1`, never `--timeout 0`"* —
+and the reasoning was correct about the code at the time. The poll was `deadline = time.time()
++ args.timeout` followed by `while time.time() < deadline:`, so a zero timeout never entered
+the loop, fell through to a bare `return 2`, and made exits 0, 1 and 4 unreachable without
+looking at a single check. Its only tell was empty parentheses — `STILL RUNNING after 0s ()` —
+where the progress detail belongs. `--timeout 1` was standing in for a single-pass mode by
+accident of timing: one second happens to be long enough for one poll.
+
+The loop is now a do-while, so the body always runs at least once, and the still-running line
+can no longer be emitted with an empty reason. **`--timeout 1` still works** and still means
+"wait up to a second"; it is simply no longer the way to express "look once".
+
+The general lesson outlives the specific bug: **an answer that could not have come out any
+other way is not evidence.** "I ran it and got STILL RUNNING" proved nothing under the old
+zero-timeout path, because a green PR, a red PR and a PR with no checks all printed it. Check
+a read against a PR whose state you already know before trusting a new invocation.
 
 Everything else in this file is about *how* to read a verdict, and none of it changes: a
 verdict belongs to one commit, a cancelled run is not a failure, and a failed job's log must
@@ -49,7 +57,7 @@ Move on; read again later. It is never a green, and never a reason to re-roll an
 The anti-poll argument this section used to make still holds *within* one read: never
 hand-roll `gh run view` plus `sleep`. Measured across one session's 17 subagents, CI waiting
 was 328 of 3,282 Bash calls, shaped as 107 `gh run view` polls and 37 `sleep` loops against
-only 29 proper waits. One `--timeout 1` call replaces all of it.
+only 29 proper waits. One `--timeout 0` call replaces all of it.
 
 | exit | meaning |
 |---|---|
@@ -124,7 +132,7 @@ Two things it cannot do, so do them yourself:
   for f in ci-wait.py agent_self_freshness.py; do
     git show "origin/main:tools/$f" > "$d/tools/$f"
   done
-  python3 "$d/tools/ci-wait.py" <PR> --timeout 1
+  python3 "$d/tools/ci-wait.py" <PR> --timeout 0
   ```
   **Extract both files, not just `ci-wait.py`** (#3295). A lone copy cannot import its sibling
   guard, and that used to print a note and judge the PR anyway — so the recipe *recommended
@@ -256,7 +264,7 @@ it can dispatch any of the eight against your branch. And the leg-set evidence i
 thinner on a PR: three legs give far fewer distinguishable failing sets than eight, so prefer
 the dispatch or an empty commit over reading a pattern out of three data points.
 
-Read the result with `tools/ci-wait.py <PR> --timeout 1`; do **not** block on it and do not
+Read the result with `tools/ci-wait.py <PR> --timeout 0`; do **not** block on it and do not
 hand-roll a `gh run view` poll loop (section 0). Anything other than `completed` means "not yet
 reported", never "green" — leave the PR and read it again on your next pass.
 

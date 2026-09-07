@@ -33,13 +33,15 @@ Usage
 -----
     tools/ci-wait.py 2379                 # wait for PR 2379's required checks
     tools/ci-wait.py 2379 --timeout 2400  # bound the wait (default 1800s)
+    tools/ci-wait.py 2379 --timeout 0     # single pass: look once, do not wait
     tools/ci-wait.py 2379 --no-log        # skip the failure log fetch
 
 Exit codes
 ----------
     0  every required check passed ON THE CURRENT HEAD -- safe to report green
     1  at least one required check failed; the failing log is printed
-    2  timed out while still running -- NOT a verdict, call again
+    2  no verdict yet -- the wait timed out, or a single pass (--timeout 0) found
+       required checks that had not reported. NOT a verdict, call again
     3  could not determine state (auth, network, no checks reported, the
        required-context set could not be established without narrowing it, or
        THIS FILE is behind origin/main -- see "Which copy is running" below)
@@ -1100,7 +1102,14 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("pr")
-    ap.add_argument("--timeout", type=int, default=1800)
+    # 0 means ONE pass -- look once, do not wait. It used to mean "a loop whose
+    # condition is false on entry", which could only ever return exit 2 with an
+    # empty reason: a non-verdict shaped exactly like a real one (#3351). A
+    # negative value is a caller error, not a mode, so argparse rejects it here
+    # rather than silently behaving like 0.
+    ap.add_argument("--timeout", type=int, default=1800, metavar="SECONDS",
+                    help="how long to keep polling; 0 = a single pass, look once "
+                         "and report whatever has reported so far (default: 1800)")
     ap.add_argument("--interval", type=int, default=25)
     ap.add_argument("--no-log", action="store_true")
     # Skips only the `git ls-remote` that confirms the local origin/main ref
@@ -1109,6 +1118,9 @@ def main() -> int:
     # branch that edits this tool -- is already not refused.
     ap.add_argument("--no-freshness-fetch", action="store_true")
     args = ap.parse_args()
+    if args.timeout < 0:
+        ap.error("--timeout must be 0 or greater; 0 means a single pass "
+                 "(look once, do not wait)")
 
     # BEFORE anything is asked of GitHub: is the copy of this file that is
     # running actually current? A stale copy answers confidently and wrongly,
@@ -1143,6 +1155,7 @@ def main() -> int:
         # THAT is a stale guard -- the same blind spot one level down. The remote
         # confirmation is asked for once and reused, so this costs one ls-remote.
         refused = False
+        why = ""
         confirm = not args.no_freshness_fetch
         for target in (os.path.abspath(__file__),
                        os.path.abspath(_freshness.__file__)):
@@ -1150,18 +1163,29 @@ def main() -> int:
             confirm = False  # one ls-remote, not one per file
             for note in fresh.notes:
                 print(note)
+            if fresh.refuse and not why:
+                # Two different facts reach this refusal and they call for
+                # different fixes: "STALE" means fast-forward, "unvouched" means
+                # nothing established the copy's age at all (#3296). Saying
+                # "STALE" for both sends the reader after the wrong remedy.
+                why = ("a STALE ci-wait.py" if fresh.state == "stale"
+                       else "a ci-wait.py NOTHING VOUCHES FOR")
             refused = refused or fresh.refuse
         if refused:
-            print("\nREFUSING to judge PR #%s from a STALE ci-wait.py. This is NOT a "
-                  "verdict -- nothing was asked of GitHub." % args.pr)
+            print("\nREFUSING to judge PR #%s from %s. This is NOT a "
+                  "verdict -- nothing was asked of GitHub." % (args.pr, why))
             return 3
 
     sha = head_sha(args.pr)
     if not sha:
         print(f"could not read PR #{args.pr} head SHA", file=sys.stderr)
         return 3
-    print(f"PR #{args.pr} head {sha[:8]} -- waiting for required checks "
-          f"(up to {args.timeout}s, polling internally)")
+    if args.timeout == 0:
+        print(f"PR #{args.pr} head {sha[:8]} -- reading required checks once "
+              "(single pass, not waiting)")
+    else:
+        print(f"PR #{args.pr} head {sha[:8]} -- waiting for required checks "
+              f"(up to {args.timeout}s, polling internally)")
 
     # Ask the ruleset what it requires RIGHT NOW rather than trusting a tuple
     # frozen into this file (#2785) -- but never accept an answer NARROWER than
@@ -1175,9 +1199,17 @@ def main() -> int:
               "to judge this PR on a narrower one. This is NOT a verdict.")
         return 3
 
+    # A do-while, not a while: the body runs at least once regardless of the
+    # deadline. `--timeout 0` therefore means the obvious thing -- look once, do
+    # not wait -- instead of a loop that never enters and falls through to the
+    # unconditional `return 2` below with nothing in its parentheses (#3351).
+    # That made exits 0, 1, 3 and 4 unreachable, so the answer could not fail,
+    # which is what made it worthless as evidence.
     deadline = time.time() + args.timeout
     last = ""
-    while time.time() < deadline:
+    polled = False
+    while not polled or time.time() < deadline:
+        polled = True
         # ORDER MATTERS: the workflow-run list is read FIRST, the check-run
         # rollup second. Read the other way round, a run completing between the
         # two calls gives a STALE rollup (context still missing) next to a FRESH
@@ -1197,11 +1229,19 @@ def main() -> int:
         wf_runs = workflow_runs_for(sha)
         if wf_runs is None:
             # The run list is load-bearing for the verdict now, so failing to read
-            # it is "no verdict yet", never "green" (#2807).
+            # it is "no verdict yet", never "green" (#2807). Record WHY: on a
+            # single pass this is the whole explanation the caller gets, and an
+            # unexplained non-verdict is the #3351 defect in another costume.
+            last = "could not read the workflow-run list for this commit"
+            if time.time() >= deadline:
+                break
             time.sleep(args.interval)
             continue
         runs = required_checks(sha)
         if runs is None:
+            last = "could not read the check-run rollup for this commit"
+            if time.time() >= deadline:
+                break
             time.sleep(args.interval)
             continue
         v = classify(runs, contexts, wf_runs)
@@ -1258,10 +1298,21 @@ def main() -> int:
             print("Confirm this SHA is still the PR head before reporting it.")
             return 0
 
+        if time.time() >= deadline:
+            break
         time.sleep(args.interval)
 
-    print(f"\nSTILL RUNNING after {args.timeout}s ({last}). "
-          "This is NOT a verdict -- call again; do not report a result.")
+    # Never emit this line with an empty reason. Empty parentheses were the ONLY
+    # tell that the tool had declined to look at all, and nothing in the sentence
+    # said so -- so the line read exactly like a genuine "not reported yet"
+    # (#3351). If the reason is missing now, say that it is missing.
+    reason = last or "no progress detail was recorded, which should not happen"
+    if args.timeout == 0:
+        print(f"\nNOT YET REPORTED on {sha[:8]} ({reason}). Read once, as asked; "
+              "this is NOT a verdict -- call again, or drop --timeout 0 to wait.")
+    else:
+        print(f"\nSTILL RUNNING after {args.timeout}s ({reason}). "
+              "This is NOT a verdict -- call again; do not report a result.")
     return 2
 
 
