@@ -189,8 +189,13 @@ public sealed class ObjectRefConstCallSiteWiringTests : IDisposable
             },
             new List<ParsedCalcFilter>());
 
+        // The trailing 2 is "Coupled Count"'s own field id (#3306): BuildMetaFieldRelations
+        // records an unresolvable reference against (table, field), and the field id is how the
+        // refusal at RecordImplementation.EvaluateRelation finds it. Nothing here is expected to
+        // record anything — these arms all resolve — but the id has to be a real one, matching
+        // the BuildMetaCalcFormula calls above, so a note could only ever land on the right field.
         var relations = Invoke("BuildMetaFieldRelations",
-            new List<ParsedRelationArm> { arm }, ReferencingTable(), "Coupled Count");
+            new List<ParsedRelationArm> { arm }, ReferencingTable(), "Coupled Count", 2);
         Assert.NotNull(relations);
 
         var relation = Assert.Single(Enumerate(relations!));
@@ -213,8 +218,13 @@ public sealed class ObjectRefConstCallSiteWiringTests : IDisposable
                 new("Table ID", ParsedCalcFilterKind.Const, null, "Database::\"ORW Referenced Row\""),
             });
 
+        // The trailing 2 is "Coupled Count"'s own field id (#3306): BuildMetaFieldRelations
+        // records an unresolvable reference against (table, field), and the field id is how the
+        // refusal at RecordImplementation.EvaluateRelation finds it. Nothing here is expected to
+        // record anything — these arms all resolve — but the id has to be a real one, matching
+        // the BuildMetaCalcFormula calls above, so a note could only ever land on the right field.
         var relations = Invoke("BuildMetaFieldRelations",
-            new List<ParsedRelationArm> { arm }, ReferencingTable(), "Coupled Count");
+            new List<ParsedRelationArm> { arm }, ReferencingTable(), "Coupled Count", 2);
         Assert.NotNull(relations);
 
         var relation = Assert.Single(Enumerate(relations!));

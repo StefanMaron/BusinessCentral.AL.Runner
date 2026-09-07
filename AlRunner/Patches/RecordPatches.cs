@@ -270,6 +270,9 @@ public static partial class RecordPatches
         // #3263, the sibling of the line above: a note saying THIS bundle's CalcFormula named
         // something unresolvable must not refuse the next bundle's FlowField.
         ClearUnresolvedCalcFormulaReferences();
+        // #3306, the same statement one property over: a note saying THIS bundle's
+        // TableRelation named something unresolvable must not refuse the next bundle's field.
+        ClearUnresolvedRelationReferences();
         _recordTypeCache.Clear();
         // Sibling of the line above, and it said so in its own comment ("Cached HITS only,
         // mirroring _recordTypeCache") while not being mirrored HERE — nothing cleared it on
