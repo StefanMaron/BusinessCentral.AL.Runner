@@ -362,8 +362,27 @@ public static partial class RecordPatches
             .FirstOrDefault(c => c.GetParameters().Length == 1
                                  && c.GetParameters()[0].ParameterType.Name == "NavSession");
 
-        _naeGetAllItems = _naeProviderType?.GetMethod("GetAllItems",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        // BcShape.FindMethod, not Type.GetMethod (#3069). A bare-name lookup throws
+        // AmbiguousMatchException the day Microsoft ships a second GetAllItems overload on
+        // this provider, and MethodScopePatches.NavMethodScope_AssertError rethrows only
+        // BcShapeGapException while absorbing everything else — so that throw would be
+        // SWALLOWED under an AL `asserterror`, passing it on a call real BC performs fine.
+        //
+        // The signature is pinned to the one BC's own provider declares —
+        // `protected override IEnumerable<ReadOnlyRecordBuffer> GetAllItems(out bool)`, so
+        // one `bool&` parameter — which makes an ADDED overload refuse by name rather than
+        // being picked between. FindMethod still answers null on absence, and null is the
+        // route this file already handles: TryEnsureNavAppExtraReflection returns false and
+        // the loaded-module fallback answers, which is what happens on every BC build
+        // measured so far anyway (BC's provider returns 0 rows here).
+        _naeGetAllItems = _naeProviderType == null ? null : BcShape.FindMethod(
+            _naeProviderType, "GetAllItems",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            "NAV App Extra (virtual table 2000000157)",
+            "NavAppExtraDataProvider.GetAllItems",
+            "it is the row set BC's own provider computes for this table, so the runner "
+            + "cannot pick an overload on the table's behalf",
+            new[] { typeof(bool).MakeByRefType() });
 
         return _naeProviderCtor != null && _naeGetAllItems != null;
     }
