@@ -302,18 +302,28 @@ internal sealed class RequestPageTestPage : MockITestPage
     private sealed class DataItemTestFilter : ITestFilter
     {
         private readonly NavRecord _record;
-        private int[] _currentKeyFields = Array.Empty<int>();
-        private bool _ascending = true;
 
         internal DataItemTestFilter(NavRecord record) => _record = record;
 
         public void SetFilter(int fieldId, string filterValue) => _record.ALSetFilter(fieldId, filterValue);
         public string GetFilter(int fieldId) => _record.ALGetFilter(fieldId)?.ToString() ?? string.Empty;
         public IEnumerable<NavFilter> GetFilter() => Array.Empty<NavFilter>();
-        public void SetCurrentKeyFields(int[] fields) => _currentKeyFields = fields ?? Array.Empty<int>();
-        public int[] GetCurrentKeyFields() => _currentKeyFields;
-        public bool Ascending { get => _ascending; set => _ascending = value; }
-        public string CurrentKey => string.Join(", ", _currentKeyFields);
+
+        // #3316: the key and the direction go to the record for the same reason the filters
+        // already do — that record is what NavReport.GetReportParameters serialises and what
+        // the report body walks, so a key held aside here would be one the report never sees,
+        // and a handler's SetCurrentKey would look like it worked while the data item came
+        // back in primary-key order. CurrentKey delegates too, so it names the key's fields
+        // rather than joining raw field numbers.
+        public void SetCurrentKeyFields(int[] fields)
+        {
+            if (fields == null || fields.Length == 0) return;
+            _record.ALSetCurrentKey(fields);
+        }
+
+        public int[] GetCurrentKeyFields() => AlRunner.TestFilterKeyFields.Of(_record);
+        public bool Ascending { get => _record.ALAscending; set => _record.ALAscending = value; }
+        public string CurrentKey => _record.ALCurrentKey;
     }
 
     private sealed class RecordingBuiltInAction : ITestAction
