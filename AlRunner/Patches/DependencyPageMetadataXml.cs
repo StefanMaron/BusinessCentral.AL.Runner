@@ -553,7 +553,34 @@ public static partial class RecordPatches
     {
         w.WriteStartElement("SourceTableView");
 
-        if (view.SortingFields.Count > 0 || view.Ascending.HasValue)
+        // <Sorting> IS UNCONDITIONAL, and the "only when the page declares sorting" version of
+        // this guard silently discarded the WHOLE view for half the pages that have one
+        // (#3063). BC's own PageDataProvider.GenerateSourceTableViewString opens with
+        //
+        //     if (view == null || view.Sorting == null) return NavText.Empty;
+        //
+        // so a MetaViewDefinition with real TableFilters and a null Sorting formats as the
+        // empty string — the WHERE segment is never reached. The runner emitted exactly that
+        // document for any page declaring `where(...)` and no `sorting(...)`, so Page Metadata
+        // reported "this page declares no view" for a page that declares one. Measured across
+        // this machine's platform .apps: 211 of the 417 pages carrying a SourceTableView
+        // declare a where with no sorting, Base Application 1710 "Deferral Lines - G/L"
+        // (`where("Deferral Doc. Type" = const("G/L"))`) among them.
+        //
+        // The real AL compiler always writes the element, and for a page declaring only a
+        // where it writes it EMPTY — verified with AL_RUNNER_TRACE_PAGE_METADATA=2 on a
+        // source-compiled page declaring `SourceTableView = where("Kind Code" = const('X'))`:
+        //
+        //     <SourceTableView>
+        //       <Sorting KeyFields="" KeyFieldsSetByView="0" AscendingSetByView="0" Ascending="1" />
+        //       <TableFilters FilterGroup="2" FieldID="3" FilterType="CONST" FilterValue="X" />
+        //     </SourceTableView>
+        //
+        // Those are the attribute values written below when the page declares no sorting, so
+        // the two page origins produce the same document rather than merely a working one:
+        // KeyFields absent, both SetByView flags off, Ascending on. BC reads KeyFields only
+        // when KeyFieldsSetByView says to, so an unconditional element adds no ordering the
+        // page did not declare — it only stops the filters being thrown away.
         {
             var keyFieldIds = new List<string>(view.SortingFields.Count);
             var unresolved = false;
@@ -600,10 +627,27 @@ public static partial class RecordPatches
                     + string.Join(", ", view.SortingFields.Select(f => f.FieldName))
                     + $") not applied — a field name did not resolve against table {page.SourceTableId}");
             }
+            else
+            {
+                // No sorting declared. The compiler still writes both attributes, empty and
+                // off; matching it keeps the two page origins byte-identical here, and BC
+                // ignores KeyFields entirely while KeyFieldsSetByView is "0".
+                w.WriteAttributeString("KeyFields", string.Empty);
+                w.WriteAttributeString("KeyFieldsSetByView", "0");
+            }
             if (view.Ascending.HasValue)
             {
                 w.WriteAttributeString("AscendingSetByView", "1");
                 w.WriteAttributeString("Ascending", view.Ascending.Value ? "1" : "0");
+            }
+            else
+            {
+                // The compiler's own shape for a page that declares no order(...): the flag
+                // off and Ascending nonetheless "1". Written rather than omitted so a page
+                // reached through a dependency .app and the same page compiled from source
+                // produce byte-identical <Sorting> attributes.
+                w.WriteAttributeString("AscendingSetByView", "0");
+                w.WriteAttributeString("Ascending", "1");
             }
             w.WriteEndElement(); // Sorting
         }

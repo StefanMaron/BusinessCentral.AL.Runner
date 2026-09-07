@@ -1207,13 +1207,39 @@ public class DependencyPageMetadataXmlTests
     }
 
     /// <summary>
-    /// A view with a <c>where(...)</c> and no <c>sorting(...)</c>/<c>order(...)</c> gets no
-    /// <c>&lt;Sorting&gt;</c> element: ApplySourceTableView reads that element only through
-    /// its two <c>*SetByView</c> flags, so one with neither set can do nothing, and 178 of
-    /// Base Application 28.1's 386 SourceTableView pages declare sorting at all.
+    /// A view with a <c>where(...)</c> and no <c>sorting(...)</c>/<c>order(...)</c> STILL gets
+    /// a <c>&lt;Sorting&gt;</c> element — empty, with both <c>*SetByView</c> flags off (#3063).
+    ///
+    /// <para>THIS ASSERTION USED TO SAY THE OPPOSITE, and the reasoning it carried was true
+    /// about the wrong consumer. It read: "ApplySourceTableView reads that element only
+    /// through its two <c>*SetByView</c> flags, so one with neither set can do nothing."
+    /// Correct — and <c>ApplySourceTableView</c> is not the only thing that reads the view.
+    /// BC's own <c>PageDataProvider.GenerateSourceTableViewString</c>, which renders Page
+    /// Metadata's <c>SourceTableView</c> column (field 15), opens with</para>
+    /// <code>
+    /// if (view == null || view.Sorting == null) return NavText.Empty;
+    /// </code>
+    /// <para>so a <c>MetaViewDefinition</c> carrying real <c>TableFilters</c> and a null
+    /// <c>Sorting</c> formats as the empty string: the WHERE segment is never reached and the
+    /// whole view is discarded. Page Metadata therefore reported "this page declares no view"
+    /// for a page that declares one — measured on Base Application 1710 "Deferral Lines -
+    /// G/L", whose <c>where("Deferral Doc. Type" = const("G/L"))</c> read back empty. Across
+    /// this machine's platform .apps, 211 of the 417 pages carrying a SourceTableView declare
+    /// a where with no sorting, so this was the majority case rather than a corner.</para>
+    ///
+    /// <para>The real AL compiler writes the element unconditionally, and writes it EMPTY for
+    /// a page declaring only a where — verified with <c>AL_RUNNER_TRACE_PAGE_METADATA=2</c> on
+    /// a source-compiled page declaring <c>SourceTableView = where("Kind Code" = const('X'))</c>:
+    /// <c>&lt;Sorting KeyFields="" KeyFieldsSetByView="0" AscendingSetByView="0" Ascending="1" /&gt;</c>.
+    /// Those exact attribute values are asserted below, so the two page origins produce the
+    /// same document rather than merely a working one.</para>
+    ///
+    /// <para>Nothing about the old claim's own consumer changes: both <c>*SetByView</c> flags
+    /// are still off, so <c>ApplySourceTableView</c> still applies no ordering the page did not
+    /// declare. The element only stops the filters being thrown away.</para>
     /// </summary>
     [Fact]
-    public void TryBuildDependencyPageMetadata_SourceTableViewWithoutSorting_EmitsFiltersButNoSortingElement()
+    public void TryBuildDependencyPageMetadata_SourceTableViewWithoutSorting_EmitsEmptySortingSoTheFiltersSurvive()
     {
         var dir = TestScratch.Dir("al-runner-dep-pagemeta-xml-tests");
         Directory.CreateDirectory(dir);
@@ -1226,7 +1252,21 @@ public class DependencyPageMetadataXmlTests
             var view = (XmlElement?)sourceObject.SelectSingleNode("m:SourceTableView", ns);
             Assert.NotNull(view);
 
-            Assert.Null(view!.SelectSingleNode("m:Sorting", ns));
+            // The element is PRESENT — the whole point. A null Sorting is what
+            // GenerateSourceTableViewString bails on, so its absence silently voids the
+            // filters asserted below.
+            var sorting = (XmlElement?)view!.SelectSingleNode("m:Sorting", ns);
+            Assert.NotNull(sorting);
+
+            // ...and empty, in the compiler's own spelling. KeyFieldsSetByView="0" is what
+            // keeps this from imposing an order the page never declared, so it is asserted
+            // rather than assumed: this test must not be satisfiable by an implementation
+            // that fabricated a key.
+            Assert.Equal(string.Empty, sorting!.GetAttribute("KeyFields"));
+            Assert.Equal("0", sorting.GetAttribute("KeyFieldsSetByView"));
+            Assert.Equal("0", sorting.GetAttribute("AscendingSetByView"));
+            Assert.Equal("1", sorting.GetAttribute("Ascending"));
+
             var filter = (XmlElement)view.SelectSingleNode("m:TableFilters", ns)!;
             Assert.Equal("2", filter.GetAttribute("FieldID"));
             Assert.Equal("CONST", filter.GetAttribute("FilterType"));
@@ -1420,7 +1460,12 @@ public class DependencyPageMetadataXmlTests
             Assert.Equal("1", sorting.GetAttribute("KeyFieldsSetByView"));
 
             // The view states no order(), so ApplySourceTableView must not touch ALAscending.
-            Assert.Equal("", sorting.GetAttribute("AscendingSetByView"));
+            // The flag is written "0" rather than left absent since #3063: the two mean the
+            // same thing to BC, and "0" is what the real AL compiler writes for a page
+            // declaring no order() (measured with AL_RUNNER_TRACE_PAGE_METADATA=2), so the
+            // two page origins produce the same document. What this assertion is about is
+            // that the flag is OFF, which is unchanged — it is emphatically not "1".
+            Assert.Equal("0", sorting.GetAttribute("AscendingSetByView"));
         }
         finally
         {
