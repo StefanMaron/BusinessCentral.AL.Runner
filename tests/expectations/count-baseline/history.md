@@ -1528,7 +1528,9 @@ six new tests arrive ahead of the runner fix for the gap they pin: the runner le
 `Object Subtype` empty on every `AllObj` / `AllObjWithCaption` row, so the four that assert a
 NON-empty subtype fail, while the two asserting an empty one already pass. That is
 pre-existing and not caused by the Permission Set change here — the identical four methods
-fail under the runner at `main` as well, measured both ways on this same pin. #2326 stays
+fail under the runner at `main` as well — the packed `2.10.0-local.5ad50bc2` tool, a `main`
+commit predating this branch, with PR #3391 unmerged — measured both ways on this same pin
+(BC 28.1.49838.53910). #2326 stays
 open, and its fix is the maintainer's open PR #3391; these four entries are deleted when that
 lands, at which point the drift guard demands it in the other direction.
 
