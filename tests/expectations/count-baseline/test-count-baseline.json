@@ -41,7 +41,7 @@
         "permission-set-assignment": { "tests": 6 },
         "precompiled-table-relation": { "tests": 10 },
         "precompiled-tableext-keys": { "tests": 6 },
-        "published-application-system-table": { "tests": 7 },
+        "published-application-system-table": { "tests": 9 },
         "query-join-aggregation-oos": { "tests": 4 },
         "report-precompiled-dep-metadata": { "tests": 2 },
         "server-multibundle-dep": { "tests": 0 },
