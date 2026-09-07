@@ -464,3 +464,5 @@ narrowly-scoped tool, not an addition to `ci-wait.py`.
 
 - `no-backgrounding-long-commands.md` — how to wait on anything long-running
 - `branch-and-pr.md` — branch naming, `Closes #N`, the assignee boundary
+- `verify-execution-not-the-tick.md` — the corpus-side companion: a green leg does not
+  prove the tests you added executed, and the check for that false-zeros

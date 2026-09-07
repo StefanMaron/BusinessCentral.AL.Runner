@@ -44,6 +44,27 @@ it. Having no
 container is the normal case for agents in web/remote sessions and is fully
 handled by this workflow.
 
+### Green is not the same as executed
+
+A green leg says the suite passed, not that *your* tests were in it. Corpus PR #220
+carried 32 new tests, went green on all 16 legs, and ran none of them — BC's per-object
+codegen had failed and the other 2639 tests carried the run. So before a corpus PR is
+merged, confirm the new tests actually executed, per leg:
+
+```bash
+tools/corpus-pass-count.py <run-id> <prefix>
+```
+
+Do not hand-roll that count. The 27.x and 28.x legs print `PASS` differently, a guessed
+name prefix returns zero that reads as a finding, and `gh api .../logs` writes an empty
+file and exits 0 on a coloured log — each of which reports zero while the tests are
+running fine. `.claude/rules/verify-execution-not-the-tick.md` has all five measured
+mechanisms and the second-query habit that catches them.
+
+Expect the eight OnPrem legs to report zero: they run a much smaller separate suite (29
+tests against 2915 on run `34079169063`) and are green for unrelated reasons. Only the
+eight cloud legs are the required contexts.
+
 ## Step 3 in full — why the orchestrator merges, not the authoring agent
 
 An impl agent opens the corpus PR and stops there. The orchestrator reviews

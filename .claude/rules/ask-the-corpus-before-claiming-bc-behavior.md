@@ -97,6 +97,8 @@ writing it into a comment, a doc table, or an issue as though it were establishe
 
 - `bc-behavior-tests-go-upstream.md` — where a BC-behavior test must live, and how to
   get a verdict out of the corpus CI
+- `verify-execution-not-the-tick.md` — a green corpus test is evidence only if it *ran*;
+  the check for that has produced a false zero five ways
 - `no-assumption-fixes.md` — understand the AL pattern before patching
 - `al-language-submodule.md` — the corpus is read-only here; how to bump the pin
 - `file-issues-for-gaps.md` — gaps get tracked, never silently worked around
