@@ -768,18 +768,9 @@ internal sealed partial class RunnerPageInstance
     {
         if (_form is not NavForm form) return false;
 
-        // A part control is NOT a ControlDefinition — the AL compiler emits it as an
-        // InfopartPageDefinition reached through MetadataHelper.InfoPartDefinitions, so
-        // ControlDefinition answers null for one and the own-Visible read below silently
-        // skipped every part (issue #3313). Both element kinds derive from
-        // UIElementDefinition, which is where Visible lives, so asking the part collection
-        // as a fallback is one property read on the same declared property, not a second
-        // rule. The ancestor walk beneath is already element-kind agnostic: it walks up from
-        // an id, and a part nested inside a group whose Visible is the literal false is
-        // eliminated for exactly the reason a field there is.
-        var ownVisible = ControlDefinition(controlId)?.Visible
-            ?? TryGetPartDefinition(controlId)?.Visible;
-        if (IsLiteralFalse(ownVisible)) return true;
+        if (IsLiteralFalse(OwnDeclaredVisible(
+                ControlDefinition(controlId)?.Visible, TryGetPartDefinition(controlId)?.Visible)))
+            return true;
 
         var helper = form.MetadataHelper;
         var currentId = controlId;
@@ -808,6 +799,31 @@ internal sealed partial class RunnerPageInstance
             currentId = group.ID;
         }
     }
+
+    /// <summary>
+    /// The <c>Visible</c> an element DECLARES, whichever metadata collection it lives in.
+    ///
+    /// <para>Before #3313 the elimination check read only <c>ControlDefinition(id)?.Visible</c>,
+    /// and that silently answered null for every subpage PART: a part is not a
+    /// <c>ControlDefinition</c> at all — the AL compiler emits it as an
+    /// <c>InfopartPageDefinition</c>, reached through <c>MetadataHelper.InfoPartDefinitions</c>
+    /// rather than through the control lookup. So a part declared <c>Visible = false</c> read
+    /// as declaring nothing, which is the AL default of true, and the part stayed reachable.</para>
+    ///
+    /// <para>Both element kinds derive from <c>UIElementDefinition</c>, which is where
+    /// <c>Visible</c> lives, so this is ONE property read over two collections rather than a
+    /// second rule: whichever collection holds the element, the declared string is the same
+    /// property with the same meaning. An id is never in both — a control id and a part id come
+    /// from one generated id space — so the order of the two is not a tie-break, and the null
+    /// coalesce says exactly that.</para>
+    ///
+    /// <para>Static and internal so <c>AlRunner.Tests</c> can pin the collection-fallback
+    /// directly. The alternative needs a live <c>NavForm</c> whose <c>MetadataHelper</c> carries
+    /// a real <c>InfopartPageDefinition</c>, which only the page-build pipeline produces — the
+    /// AL-observable half is measured upstream instead, by corpus codeunit 60346.</para>
+    /// </summary>
+    internal static string? OwnDeclaredVisible(string? controlVisible, string? partVisible)
+        => controlVisible ?? partVisible;
 
     /// <summary>
     /// True only for the compile-time literal spelling ("false"/"0", case-insensitive on the

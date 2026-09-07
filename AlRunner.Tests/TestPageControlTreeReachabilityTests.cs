@@ -16,9 +16,8 @@
 //     not found on the page." The corpus test asserts alongside it that 3 really IS a valid
 //     table field number on that part's source table, so what it pins is the ID SPACE.
 //
-// What is provable without a loaded BC page object is the mechanism underneath both, and that
-// is what these tests pin: the runner hands BC's own precompiled GetField/GetPart a NULL, which
-// is the input those methods are written to refuse, instead of either answering a handle or
+// The mechanism underneath both is that the runner hands BC's own precompiled GetField/GetPart
+// a NULL — the input those methods are written to refuse — instead of answering a handle or
 // raising a runner-invented RunnerOutOfScopeException. Ncl.dll 28.1:
 //
 //   NavTestPageBase.GetField(int, bool):  ... TestClientProxy<ITestField>.Proxy(testPage.GetField(id));
@@ -26,9 +25,20 @@
 //   NavTestPageBase.GetPart(int, bool):   ... TestClientProxy<ITestPart>.Proxy(testPage.GetPart(id));
 //                                         if (testPart == null) throw NavTestPartNotFoundException.Create(...)
 //
-// Each refusal row below is paired with a row that must still be ACCEPTED or must still refuse
-// as a runner gap. That pairing is the point: an implementation that refused everything — the
-// cheapest way to make the corpus's two negative assertions pass — fails the paired rows.
+// WHAT THESE TESTS CAN AND CANNOT REACH, stated plainly because it decides what a green run
+// here means. Both new branches need a live RunnerPageInstance over a NavForm whose
+// MetadataHelper carries real control and InfopartPageDefinition metadata, and only the
+// page-build pipeline produces one. So the end-to-end claim is proved by the corpus run, not
+// here, and the rows below split into two kinds:
+//
+//   * OwnDeclaredVisible — the actual defect, extracted so it is reachable. It FAILS against
+//     the pre-fix code, which read a control's Visible and nothing else.
+//
+//   * The gap-refusal and accept rows — regression rows around the change rather than proof of
+//     it. They pass before and after by design: what they pin is that the fix did NOT widen
+//     into refusing things it should not, which is the cheapest wrong way to make the corpus's
+//     two negative assertions pass. A row that passes both before and after is stated as such
+//     rather than presented as evidence.
 
 using AlRunner.Infrastructure;
 using AlRunner.Patches;
@@ -72,6 +82,52 @@ public sealed class TestPageControlTreeReachabilityTests
     [InlineData("NOT ShowIt")]
     public void AnythingElse_DoesNotEliminate(string? raw)
         => Assert.False(RunnerPageInstance.IsLiteralFalse(raw));
+
+    // ── The defect itself: where the declared Visible is looked up ─────────────────────
+
+    // THE ROW THAT FAILS WITHOUT THE FIX. A subpage part is not a ControlDefinition — the AL
+    // compiler emits it as an InfopartPageDefinition in a different metadata collection — so
+    // reading only the control collection answered null for a part declaring Visible = false,
+    // null is "declared nothing", and "declared nothing" is the AL default of TRUE. That is
+    // how a part BC never renders stayed reachable.
+    //
+    // Pre-fix this expression was `ControlDefinition(id)?.Visible` alone, so this row returned
+    // null and the assertion below failed.
+    [Fact]
+    public void APartsDeclaredVisible_IsFound_WhenTheControlCollectionHasNothing()
+        => Assert.Equal("false", RunnerPageInstance.OwnDeclaredVisible(controlVisible: null, partVisible: "false"));
+
+    // The other direction, and the row that stops the fix from being "always read the part
+    // collection": a control that DOES declare Visible keeps its own answer. If the fallback
+    // had been written the other way round, every field control on a page hosting a part would
+    // read the part's property instead of its own.
+    [Fact]
+    public void AControlsDeclaredVisible_Wins_OverThePartCollection()
+        => Assert.Equal("true", RunnerPageInstance.OwnDeclaredVisible(controlVisible: "true", partVisible: "false"));
+
+    // Neither collection declares anything — the ordinary case for the overwhelming majority
+    // of controls, which say nothing about Visible at all. It must stay null so IsLiteralFalse
+    // answers false and the element is NOT eliminated; an implementation that defaulted to
+    // "false" here would make every undecorated control unreachable.
+    [Fact]
+    public void NeitherCollectionDeclaringVisible_StaysUndeclared()
+        => Assert.Null(RunnerPageInstance.OwnDeclaredVisible(controlVisible: null, partVisible: null));
+
+    // And the composition that is the actual decision: a part declaring the literal false is
+    // eliminated, while a part declaring an expression that merely evaluates false right now
+    // is not. The second row is the one that keeps the fix narrow — without it, "hide the part
+    // when Visible is false" would also delete every conditionally-shown part from the tree.
+    [Theory]
+    [InlineData("false", true)]
+    [InlineData("0", true)]
+    [InlineData("true", false)]
+    [InlineData("ShowTheHiddenPart", false)]
+    [InlineData(null, false)]
+    public void APartIsEliminated_OnlyForTheLiteralFalse(string? partVisible, bool eliminated)
+        => Assert.Equal(
+            eliminated,
+            RunnerPageInstance.IsLiteralFalse(
+                RunnerPageInstance.OwnDeclaredVisible(controlVisible: null, partVisible: partVisible)));
 
     // ── GetField: BC's own refusal vs. the runner's gap refusal ────────────────────────
 
