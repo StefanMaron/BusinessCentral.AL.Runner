@@ -267,6 +267,9 @@ public static partial class RecordPatches
         // pending CalcFormula rebuilds forward only buys a wasted repopulate pass on the next
         // .app registration.
         ClearUnresolvedCalcFormulaTables();
+        // #3263, the sibling of the line above: a note saying THIS bundle's CalcFormula named
+        // something unresolvable must not refuse the next bundle's FlowField.
+        ClearUnresolvedCalcFormulaReferences();
         _recordTypeCache.Clear();
         // Sibling of the line above, and it said so in its own comment ("Cached HITS only,
         // mirroring _recordTypeCache") while not being mirrored HERE — nothing cleared it on

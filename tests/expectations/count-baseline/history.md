@@ -1137,3 +1137,41 @@ guard's `KnownOverlaps` allowlist: that list is documented debt tracked in #3160
 using two ids has no reason to join it.
 
 Written by agent impl-24 (automated implementation agent).
+
+## 2026-09-07 — corpus pin c3531ec6 → 2cba52d4 (al-language 2757 → 2814, al-language-onprem unchanged at 25)
+
+Bumped by the fix PR for #3263, #3178 and #3279. The pin has to move to the corpus tip because
+that is where both of this PR's own corpus tests live: #216 (six tests pinning a CalcFormula
+and a TableRelation that name a system field) and #217 (seven tests pinning a CalcFormula that
+names a tableextension field, codeunit 60823). Corpus history in this range is linear, so
+neither can be taken without the corpus commits merged before them; that is where the other 50
+al-language tests come from, not from anything this PR wrote. The from-values are against `main`
+as it stands when this merges (pin c3531ec6, al-language 2757): earlier drafts of this entry
+quoted b0c6248a / 2681 / onprem 19 → 25, which was this branch's own merge base and another PR's
+onprem move — `main` reached 25 without this PR, and it stays 25.
+
+Thirteen of the newly-arrived tests failed on the runner for reasons unrelated to this fix.
+Four of those families resolved while this PR sat in review, as their own pull requests merged:
+codeunit 60677 (an error raised in OnQueryClosePage, corpus #202) with #3181, codeunit 60827 (a
+source-parsed tableextension's TableRelation not enforced by Validate, corpus #207) with #3197,
+and codeunit 60889 (Access Control backing the session user's SUPER status, corpus #204) with
+#3287. None of them was ever declared here.
+
+The ninth-and-last family IS declared, in
+`tests/expectations/known-gaps-testpage-builtin-actions.json`: codeunit 60338's nine tests on
+the dialog page types' built-in OK/Cancel (corpus #218), five against #3283 (which built-in a
+PageType offers) and four against #3284 (the FormResult substituted for an unattended close).
+Both are open and both are fixed by PR #3285. The declaration exists ONLY to break a cycle
+through the corpus pin: #3285 needs this PR's CalcFormula/TableRelation fix for corpus codeunits
+60818, 60823 and 60827, and this PR needs #3285's fix for these nine. This PR merges first with
+them declared; #3285 merges second and deletes that file. Nothing in this PR touches TestPage
+built-in actions.
+
+Two families that arrived failing WERE declared here for a while, and went green mid-review as
+#3234 (the Session virtual table, #2940) and #3265 (the legacy Object registry, #3071) merged.
+The manifest caught that itself: a test that passes under an `expect-fail-known-gap` entry
+fails the run with "remove the entry", so the staleness was corrected rather than shipped.
+
+`runner-extras` is untouched by this PR.
+
+Written by agent fbk-2 (automated implementation agent).

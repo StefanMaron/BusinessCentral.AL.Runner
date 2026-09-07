@@ -1,0 +1,74 @@
+[
+  {
+    "codeunitId": 60338,
+    "CodeunitName": "TBA Tests",
+    "Method": "PromptDialogDeclaringCancel_CancelInvoke_ReportsCancel",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3283",
+    "Note": "LiveNavTestPage.OffersBuiltInAction decides which built-in OK()/Cancel() a TestPage resolves from the page's PageType alone, and disagrees with a real 28.4 service tier in four places -- in both directions, so it refuses AL that BC runs and accepts AL that BC refuses with \"The built-in action = <X> is not found on the page.\" Tracked as #3283, fixed in PR #3285. Declared only to sequence two pull requests that are circular through the corpus pin: #3285 fixes these nine tests but needs this PR's CalcFormula/TableRelation fix for corpus codeunits 60818, 60823 and 60827, while this PR needs #3285's fix for these. This PR merges first with the nine declared, #3285 merges second and DELETES this whole file. Pulled in by this PR's pin bump to the corpus tip 2cba52d4, which is where this PR's own corpus tests (#216, #217) live; corpus history is linear, so corpus #218 comes with them. Not caused by anything in this PR: nothing here touches TestPage built-in actions."
+  },
+  {
+    "codeunitId": 60338,
+    "CodeunitName": "TBA Tests",
+    "Method": "PromptDialogDeclaringNothing_CancelInvoke_ReportsCancel",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3283",
+    "Note": "LiveNavTestPage.OffersBuiltInAction decides which built-in OK()/Cancel() a TestPage resolves from the page's PageType alone, and disagrees with a real 28.4 service tier in four places -- in both directions, so it refuses AL that BC runs and accepts AL that BC refuses with \"The built-in action = <X> is not found on the page.\" Tracked as #3283, fixed in PR #3285. Declared only to sequence two pull requests that are circular through the corpus pin: #3285 fixes these nine tests but needs this PR's CalcFormula/TableRelation fix for corpus codeunits 60818, 60823 and 60827, while this PR needs #3285's fix for these. This PR merges first with the nine declared, #3285 merges second and DELETES this whole file. Pulled in by this PR's pin bump to the corpus tip 2cba52d4, which is where this PR's own corpus tests (#216, #217) live; corpus history is linear, so corpus #218 comes with them. Not caused by anything in this PR: nothing here touches TestPage built-in actions."
+  },
+  {
+    "codeunitId": 60338,
+    "CodeunitName": "TBA Tests",
+    "Method": "PromptDialogDeclaringOk_HasNoBuiltInOkAction",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3283",
+    "Note": "LiveNavTestPage.OffersBuiltInAction decides which built-in OK()/Cancel() a TestPage resolves from the page's PageType alone, and disagrees with a real 28.4 service tier in four places -- in both directions, so it refuses AL that BC runs and accepts AL that BC refuses with \"The built-in action = <X> is not found on the page.\" Tracked as #3283, fixed in PR #3285. Declared only to sequence two pull requests that are circular through the corpus pin: #3285 fixes these nine tests but needs this PR's CalcFormula/TableRelation fix for corpus codeunits 60818, 60823 and 60827, while this PR needs #3285's fix for these. This PR merges first with the nine declared, #3285 merges second and DELETES this whole file. Pulled in by this PR's pin bump to the corpus tip 2cba52d4, which is where this PR's own corpus tests (#216, #217) live; corpus history is linear, so corpus #218 comes with them. Not caused by anything in this PR: nothing here touches TestPage built-in actions."
+  },
+  {
+    "codeunitId": 60338,
+    "CodeunitName": "TBA Tests",
+    "Method": "NavigatePage_HasNoBuiltInCancelAction",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3283",
+    "Note": "LiveNavTestPage.OffersBuiltInAction decides which built-in OK()/Cancel() a TestPage resolves from the page's PageType alone, and disagrees with a real 28.4 service tier in four places -- in both directions, so it refuses AL that BC runs and accepts AL that BC refuses with \"The built-in action = <X> is not found on the page.\" Tracked as #3283, fixed in PR #3285. Declared only to sequence two pull requests that are circular through the corpus pin: #3285 fixes these nine tests but needs this PR's CalcFormula/TableRelation fix for corpus codeunits 60818, 60823 and 60827, while this PR needs #3285's fix for these. This PR merges first with the nine declared, #3285 merges second and DELETES this whole file. Pulled in by this PR's pin bump to the corpus tip 2cba52d4, which is where this PR's own corpus tests (#216, #217) live; corpus history is linear, so corpus #218 comes with them. Not caused by anything in this PR: nothing here touches TestPage built-in actions."
+  },
+  {
+    "codeunitId": 60338,
+    "CodeunitName": "TBA Tests",
+    "Method": "ConfirmationDialog_HasNoBuiltInOkAction",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3283",
+    "Note": "LiveNavTestPage.OffersBuiltInAction decides which built-in OK()/Cancel() a TestPage resolves from the page's PageType alone, and disagrees with a real 28.4 service tier in four places -- in both directions, so it refuses AL that BC runs and accepts AL that BC refuses with \"The built-in action = <X> is not found on the page.\" Tracked as #3283, fixed in PR #3285. Declared only to sequence two pull requests that are circular through the corpus pin: #3285 fixes these nine tests but needs this PR's CalcFormula/TableRelation fix for corpus codeunits 60818, 60823 and 60827, while this PR needs #3285's fix for these. This PR merges first with the nine declared, #3285 merges second and DELETES this whole file. Pulled in by this PR's pin bump to the corpus tip 2cba52d4, which is where this PR's own corpus tests (#216, #217) live; corpus history is linear, so corpus #218 comes with them. Not caused by anything in this PR: nothing here touches TestPage built-in actions."
+  },
+  {
+    "codeunitId": 60338,
+    "CodeunitName": "TBA Tests",
+    "Method": "StandardDialog_HandlerInvokesNothing_ReportsCancel",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3284",
+    "Note": "A [ModalPageHandler] that returns without invoking a built-in leaves the runner substituting FormResult OK for every non-lookup page; a real 28.4 service tier substitutes Cancel for StandardDialog, PromptDialog and ConfirmationDialog, so AL takes the wrong branch of `if Page.RunModal() = Action::OK` with nothing raised. Tracked as #3284, fixed in PR #3285. Declared only to sequence two pull requests that are circular through the corpus pin: #3285 fixes these nine tests but needs this PR's CalcFormula/TableRelation fix for corpus codeunits 60818, 60823 and 60827, while this PR needs #3285's fix for these. This PR merges first with the nine declared, #3285 merges second and DELETES this whole file. Pulled in by this PR's pin bump to the corpus tip 2cba52d4, which is where this PR's own corpus tests (#216, #217) live; corpus history is linear, so corpus #218 comes with them. Not caused by anything in this PR: nothing here touches TestPage built-in actions."
+  },
+  {
+    "codeunitId": 60338,
+    "CodeunitName": "TBA Tests",
+    "Method": "PromptDialog_HandlerInvokesNothing_ReportsCancel",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3284",
+    "Note": "A [ModalPageHandler] that returns without invoking a built-in leaves the runner substituting FormResult OK for every non-lookup page; a real 28.4 service tier substitutes Cancel for StandardDialog, PromptDialog and ConfirmationDialog, so AL takes the wrong branch of `if Page.RunModal() = Action::OK` with nothing raised. Tracked as #3284, fixed in PR #3285. Declared only to sequence two pull requests that are circular through the corpus pin: #3285 fixes these nine tests but needs this PR's CalcFormula/TableRelation fix for corpus codeunits 60818, 60823 and 60827, while this PR needs #3285's fix for these. This PR merges first with the nine declared, #3285 merges second and DELETES this whole file. Pulled in by this PR's pin bump to the corpus tip 2cba52d4, which is where this PR's own corpus tests (#216, #217) live; corpus history is linear, so corpus #218 comes with them. Not caused by anything in this PR: nothing here touches TestPage built-in actions."
+  },
+  {
+    "codeunitId": 60338,
+    "CodeunitName": "TBA Tests",
+    "Method": "ConfirmationDialog_HandlerInvokesNothing_ReportsCancel",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3284",
+    "Note": "A [ModalPageHandler] that returns without invoking a built-in leaves the runner substituting FormResult OK for every non-lookup page; a real 28.4 service tier substitutes Cancel for StandardDialog, PromptDialog and ConfirmationDialog, so AL takes the wrong branch of `if Page.RunModal() = Action::OK` with nothing raised. Tracked as #3284, fixed in PR #3285. Declared only to sequence two pull requests that are circular through the corpus pin: #3285 fixes these nine tests but needs this PR's CalcFormula/TableRelation fix for corpus codeunits 60818, 60823 and 60827, while this PR needs #3285's fix for these. This PR merges first with the nine declared, #3285 merges second and DELETES this whole file. Pulled in by this PR's pin bump to the corpus tip 2cba52d4, which is where this PR's own corpus tests (#216, #217) live; corpus history is linear, so corpus #218 comes with them. Not caused by anything in this PR: nothing here touches TestPage built-in actions."
+  },
+  {
+    "codeunitId": 60338,
+    "CodeunitName": "TBA Tests",
+    "Method": "PromptDialog_GenerateInvoke_FiresOnActionAndReportsCancel",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3284",
+    "Note": "A [ModalPageHandler] that returns without invoking a built-in leaves the runner substituting FormResult OK for every non-lookup page; a real 28.4 service tier substitutes Cancel for StandardDialog, PromptDialog and ConfirmationDialog, so AL takes the wrong branch of `if Page.RunModal() = Action::OK` with nothing raised. Tracked as #3284, fixed in PR #3285. Declared only to sequence two pull requests that are circular through the corpus pin: #3285 fixes these nine tests but needs this PR's CalcFormula/TableRelation fix for corpus codeunits 60818, 60823 and 60827, while this PR needs #3285's fix for these. This PR merges first with the nine declared, #3285 merges second and DELETES this whole file. Pulled in by this PR's pin bump to the corpus tip 2cba52d4, which is where this PR's own corpus tests (#216, #217) live; corpus history is linear, so corpus #218 comes with them. Not caused by anything in this PR: nothing here touches TestPage built-in actions."
+  }
+]
