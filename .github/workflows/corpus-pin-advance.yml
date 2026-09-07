@@ -2,62 +2,26 @@ name: Corpus pin advance
 
 # Issue #3319. How far can the tests/al-language pin advance today, and what holds the rest?
 #
-# WHY THIS EXISTS
-# ---------------
-# Advancing the corpus pin is a mechanical, repeatable measurement that a person or an agent
-# has now performed by hand at least six times (#2429, #3124, #3202, #3304, #3317, and again
-# on 2026-09-07). Every run produced a coordination record rather than a tool, and every
-# record went stale the moment it was written:
+# The rationale -- the algorithm and why it is not a bisect, why report-only, what goes stale --
+# is in docs/upstream-corpus-workflow.md#step-4-in-full--how-far-can-the-pin-advance-and-what-holds-the-rest.
+# What follows is only what you need in order to EDIT this file safely.
 #
-#   * #3304 sat claiming "9 commits behind, blocked by four issues" while two of those issues
-#     had since closed and the real gap was 2. Nobody re-measured until someone happened to
-#     look.
-#   * On 2026-09-07 a coordinator handed an agent a ceiling that was true when written and
-#     false 20 minutes later, because a corpus commit merged mid-task. Only the agent's own
-#     re-measurement caught it.
+# THREE THINGS HERE ARE LOAD-BEARING AND LOOK OPTIONAL
 #
-# Both are failures of CADENCE, not of skill. A daily measurement fixes both and costs one
-# leg.
+#   * `permissions: contents: read` is what makes report-only a property of the token rather
+#     than of the script. Do not raise it to `write` to "let it bump the pin" -- that is a
+#     decision for the account holder (#3319), not a permissions tweak.
+#   * `submodules: true` AND `fetch-depth: 0` on the checkout. `git log -S` over a truncated
+#     corpus history cannot see the commit that really introduced a test name, so it blames an
+#     older one and the reported target comes out too conservative while looking correct. The
+#     tool refuses rather than answering on a shallow clone.
+#   * The corpus run passes NO `--strict` and NO `--count-baseline`. `--strict` exits non-zero
+#     on any failure, which would abort the step before the report is written -- and a red tip
+#     is the normal case here, not an error. `--count-baseline` is an exact match against a
+#     baseline recorded for the PIN, so at the TIP it fails by construction.
 #
-# REPORT-ONLY, AND THERE IS NO FLAG TO CHANGE THAT
-# ------------------------------------------------
-# This workflow measures and writes a report onto ONE tracking issue. It does not open a pull
-# request, does not move the gitlink, and does not add `tests/expectations/` entries. That is
-# #3319's own recommendation, and the reasoning is worth keeping here because a later reader
-# will be tempted to add "...and open the PR":
-#
-#   * A job that opens a pin PR whenever a greener pin exists opens one most days, onto an
-#     account-wide Actions queue that is already cancelling its own verification -- every
-#     `main` matrix run in one busy window was `cancelled` by the next merge, and
-#     `main-verdict-floor` was delayed about an hour precisely then (#3302, #3003).
-#   * A pin bump is one of the few changes that can turn `main` red on every leg at once.
-#     That is a reasonable thing to require a human or a reviewing agent to look at.
-#   * Report-only replaces the artifact that has actually been produced by hand six times.
-#
-# Adding PR creation later is a small step from here; the reverse is not. `permissions:` below
-# grants `contents: read`, so this workflow could not push a branch even if its script tried.
-#
-# WHAT IT MUST NEVER DO
-# ---------------------
-# It must never add a `tests/expectations/` entry for a failure it finds. An entry converts a
-# live, owned gap into settled classification -- the failure mode
-# `.claude/rules/ask-the-corpus-before-claiming-bc-behavior.md` names directly. The 2026-09-07
-# manual run deliberately did not, and that is the correct behaviour. `--strict` and
-# `--count-baseline` are deliberately ABSENT from the run below for the same reason: this job
-# needs the failure LIST, not a pass/fail verdict, and a non-zero exit would abort the step
-# before the report could be written.
-#
-# ONE ISSUE, EDITED IN PLACE
-# --------------------------
-# The report replaces the body of a single tracking issue. Not a new issue per run, not a
-# comment per run -- #3319 is explicit that this must not become a notification stream, and a
-# daily comment on a long-lived issue is exactly that. Editing in place means the issue always
-# shows today's answer and never a stale one, which is the specific defect #3304 demonstrates.
-#
-# The tracking issue is #3319 itself until a dedicated one exists, set below in one place. It
-# is deliberately a number in this file rather than a lookup: a job that searches for its own
-# tracking issue by title can find the wrong one, or none, and then either writes into an
-# unrelated thread or silently reports nothing.
+# TRACKING_ISSUE below is the single destination, edited in place. Not a new issue per run and
+# not a comment per run: #3319 is explicit that this must not become a notification stream.
 
 on:
   schedule:
@@ -221,19 +185,11 @@ jobs:
           fi
           printf '[corpus] app to run: %s\n' "${CORPUS_APPS[@]}"
 
-          # NO --strict and NO --count-baseline, both deliberately.
+          # No --strict and no --count-baseline: see this file's header for why both would
+          # break the report rather than protect it.
           #
-          # --strict exits non-zero on any failure, which would abort this step before the
-          # report is written -- and the failure LIST is the entire product of this job. A red
-          # tip is the expected, normal case here, not an error.
-          #
-          # --count-baseline is an EXACT match against a baseline recorded for the PIN. At the
-          # TIP the count is different by construction (that is what the new commits are), so
-          # it would fail every run for a reason that says nothing about whether the pin can
-          # advance.
-          #
-          # --package-cache is required on every corpus run in this repo's CI: without it the
-          # runner build's default BC major and the platform apps do not line up and the run
+          # --package-cache is required on every corpus run in this repo's CI -- without it the
+          # runner build's default BC major and the platform apps do not line up, and the run
           # aborts on a provisioning-gap message before executing a single test.
           rc=0
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
@@ -250,12 +206,11 @@ jobs:
             echo "::error::the runner produced no --out document (exit $rc), so nothing was measured. Refusing to report a result."
             exit 1
           fi
-          python3 - <<'PY'
-import json
-d = json.load(open("corpus-tip-results.json"))
-n = len(d.get("all_failures") or [])
-print(f"[corpus] failure records at the tip: {n}")
-PY
+          # `python3 -c` on ONE line, not a heredoc. A heredoc body has to start at
+          # column 0 to terminate, and column 0 ends the YAML block scalar this `run:`
+          # is -- which makes the whole file unparseable. Caught by the yaml round-trip
+          # in tools/test_corpus_pin_advance.py, which is why that check exists.
+          python3 -c 'import json; d=json.load(open("corpus-tip-results.json")); print("[corpus] failure records at the tip:", len(d.get("all_failures") or []))'
 
       - name: Collect open issues for tracking linkage
         id: issues

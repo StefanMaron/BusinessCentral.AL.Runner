@@ -399,6 +399,52 @@ try:
     check("the scheduled workflow exists", os.path.exists(wf))
     if os.path.exists(wf):
         y = open(wf, encoding="utf-8").read()
+
+        # PARSE it, do not merely grep it. The first draft of this workflow embedded a
+        # `python3 - <<'PY'` heredoc inside a `run:` block; a heredoc body must start at
+        # column 0 to terminate, and column 0 ends the YAML block scalar -- so the file
+        # was unparseable and every string check below still passed. A workflow that
+        # cannot be parsed never runs, and GitHub would have reported that only after
+        # the merge.
+        try:
+            import yaml  # noqa: E402
+            try:
+                doc = yaml.safe_load(y)
+            except yaml.YAMLError as e:
+                # Reported as a FAILING CHECK, not as a traceback. A traceback aborts the
+                # run, so every check after this one silently stops being evaluated -- and
+                # a suite that stops early looks the same as one that had less to say.
+                doc = None
+                check("the workflow is valid YAML (not merely grep-able)", False,
+                      str(e).replace("\n", " ")[:200])
+            check("the workflow is valid YAML (not merely grep-able)", isinstance(doc, dict))
+            # `on:` parses as the boolean True in YAML 1.1, which is why it is looked up
+            # both ways rather than assumed.
+            if isinstance(doc, dict):
+                trig = doc.get("on", doc.get(True)) or {}
+                check("...and its parsed triggers include a schedule and a manual dispatch",
+                      "schedule" in trig and "workflow_dispatch" in trig, str(sorted(trig)))
+                steps = doc["jobs"]["measure"]["steps"]
+                check("...and its one job parses into a non-trivial step list",
+                      len(steps) >= 8, f"{len(steps)} steps")
+                # COMMENT LINES STRIPPED FIRST. Both flags are named several times in this
+                # workflow's prose, explaining why they are absent -- so a raw substring
+                # search over `run:` reports them as present and fails on the explanation
+                # rather than on the command. The claim is about what the step EXECUTES.
+                def code_lines(step) -> str:
+                    return "\n".join(l for l in (step.get("run") or "").splitlines()
+                                     if not l.lstrip().startswith("#"))
+                check("...and the corpus run step never passes --strict or --count-baseline "
+                      "(either would abort before the report, and a red tip is the normal case)",
+                      not any("--strict" in code_lines(s)
+                              or "--count-baseline" in code_lines(s) for s in steps))
+                check("...and the corpus run step DOES pass --out and both package caches "
+                      "(without the caches the run aborts on a provisioning gap)",
+                      any("--out corpus-tip-results.json" in code_lines(s)
+                          and code_lines(s).count("--package-cache") == 2 for s in steps))
+        except ImportError:
+            check("the workflow is valid YAML (not merely grep-able)", True,
+                  "skipped: PyYAML unavailable")
         check("it runs on a schedule", "schedule:" in y and "cron:" in y)
         check("it is dispatchable by hand too", "workflow_dispatch:" in y)
         cron = re.search(r"cron:\s*'([^']+)'", y)
