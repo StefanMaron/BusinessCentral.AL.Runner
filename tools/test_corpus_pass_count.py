@@ -237,6 +237,64 @@ check("fetch_log passes --allow-escape-sequences (without it gh emits nothing, "
 check("...and treats an empty body as unavailable rather than as zero passes",
       "not out.strip()" in src)
 
+
+# --------------------------------------------------------------------------
+# 7. AL Runner's own output is a THIRD spelling (#3357).
+#
+# preflight.py's corpus-baseline check parses a local run with this same
+# parser rather than hand-rolling a second one, and a local run names a test
+# `Codeunit65551.Method`, not `Method`. Captured verbatim from
+#   dotnet run --project AlRunner -c Release -- tests/runner-extras/object-system-table \
+#     --package-cache ~/.al-runner/platform-apps --show-pass
+# on 2026-09-07.
+# --------------------------------------------------------------------------
+print("\nAL Runner's local per-test spelling")
+
+LOG_LOCAL = """\
+=== object-system-table ===
+PASS  Codeunit65551.Object_IsEmpty_WhileAllObj_StillListsTheSameObjects (45ms)
+PASS  Codeunit65551.EmptyObject_StillAnswersOnAllFourRequestPaths (10ms)
+PASS  Codeunit65551.OemTextColumns_ReadAsEmptyText_RatherThanRaising (1ms)
+"""
+
+rloc = cpc.parse_leg(LOG_LOCAL, "Codeunit65551.")
+check("a dotted local name is captured WHOLE, not truncated at the codeunit",
+      rloc["passed"] == [
+          "Codeunit65551.EmptyObject_StillAnswersOnAllFourRequestPaths",
+          "Codeunit65551.Object_IsEmpty_WhileAllObj_StillListsTheSameObjects",
+          "Codeunit65551.OemTextColumns_ReadAsEmptyText_RatherThanRaising"],
+      str(rloc["passed"]))
+check("...so three tests in one codeunit count as three, not as one",
+      len(rloc["passed"]) == 3, str(len(rloc["passed"])))
+
+# An expectations-reclassified pass carries a qualifier between the verdict and
+# the name. Skipping those undercounts by exactly the number of oos/known-gap
+# entries in tests/expectations/ -- a shortfall that looks like a real one.
+LOG_QUALIFIED = """\
+=== al-language ===
+PASS (oos) Codeunit60101.SendEmail_IsOutOfScope (2ms)
+PASS (known-gap) Codeunit60101.TestPageBlankTemporal (3ms)
+PASS (divergence) Codeunit60101.SessionIdDiverges (1ms)
+PASS  Codeunit60101.PlainPass (1ms)
+FAIL  Codeunit60101.Broken (4ms)
+"""
+rq = cpc.parse_leg(LOG_QUALIFIED, "Codeunit60101.")
+check("PASS (oos) / (known-gap) / (divergence) all count as passes",
+      len(rq["passed"]) == 4, str(rq["passed"]))
+check("...and a FAIL next to them is still a FAIL",
+      rq["failed"] == ["Codeunit60101.Broken"], str(rq["failed"]))
+
+# The additive half: the corpus fixtures must parse to exactly what they did
+# before the pattern learned the local spelling.
+check("the 27.x corpus fixture is unaffected by the widened pattern",
+      cpc.parse_leg(LOG_27X, "TestPart_")["passed"] == r27["passed"],
+      str(cpc.parse_leg(LOG_27X, "TestPart_")["passed"]))
+check("the 28.x corpus fixture is unaffected too",
+      cpc.parse_leg(LOG_28X, "TestPart_")["passed"] == r28["passed"],
+      str(cpc.parse_leg(LOG_28X, "TestPart_")["passed"]))
+check("a bare corpus name is still captured without a dot",
+      all("." not in n for n in r27["passed"]), str(r27["passed"]))
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")

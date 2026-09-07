@@ -1545,6 +1545,249 @@ check("the JSON refusal carries no checks and says why",
       _doc.get("checks") == [] and "refusal" in _doc, sorted(_doc))
 
 
+
+# ------------------------------------------------- corpus baseline (--with-corpus)
+print()
+print("preflight.py -- corpus baseline")
+
+# The three corpus apps `scripts/corpus-app-dirs.py` enumerates, and the shape
+# tests/expectations/count-baseline/test-count-baseline.json records for them.
+# Numbers deliberately unlike the live ones: the check must read the file it is
+# handed, not a constant that happened to be right the day it was written.
+CORPUS_APPS = ["tests/al-language/tests/al-language",
+               "tests/al-language/tests/al-language-internals-fixture",
+               "tests/al-language/tests/al-language-onprem"]
+CORPUS_BASELINE = {
+    "suites": {
+        "al-language": {"tests": {"default": 12}, "appGroups": {"default": 1}},
+        "al-language-internals-fixture": {"tests": {"default": 0},
+                                          "appGroups": {"default": 1}},
+        "al-language-onprem": {"tests": {"default": 3}, "appGroups": {"default": 1}},
+        "runner-extras": {"groups": {"x": {"tests": 2}}},
+    }
+}
+
+
+def corpus_repo(baseline=CORPUS_BASELINE):
+    """A throwaway repo root carrying only the baseline file the check reads."""
+    root = tempfile.mkdtemp(prefix="preflight-corpus-")
+    d = os.path.join(root, "tests/expectations/count-baseline")
+    os.makedirs(d)
+    if baseline is not None:
+        with open(os.path.join(d, "test-count-baseline.json"), "w") as fh:
+            json.dump(baseline, fh)
+    return root
+
+
+# Verbatim shape of a real run, captured from
+#   dotnet run --project AlRunner -c Release -- tests/runner-extras/object-system-table \
+#     --package-cache ... --show-pass
+# on 2026-09-07. The labels, the two spaces after PASS, the `(45ms)` suffix and
+# every summary line below are that output, not an idea of it -- a fixture shaped
+# to satisfy the parser would test the author rather than the runner (#3311).
+def corpus_output(counts, *, fail=0, error=0, skipped=0, oos=0, known_gap=0,
+                  reported_pass=None, summary=True, suite_errors=(), compile_fail=()):
+    """Synthesise runner output for `counts` = {bundle dir name: passing tests}."""
+    lines = ["al-runner — running %d bundle(s)" % (len(counts) + len(compile_fail))]
+    for name in compile_fail:
+        lines += ["", f"=== {name} — COMPILE FAIL ===", "  AL0185: something"]
+    for name, n in counts.items():
+        if name in suite_errors:
+            lines += ["", f"=== {name} — SUITE ERRORS (1) ===", "  lost a suite",
+                      "  → the tests these suites declare are MISSING from this run, "
+                      "not passing."]
+        if n == 0:
+            continue
+        lines += ["", f"=== {name} ==="]
+        for i in range(n):
+            label = "PASS "
+            if i < oos:
+                label = "PASS (oos)"
+            elif i < oos + known_gap:
+                label = "PASS (known-gap)"
+            lines.append(f"{label} Codeunit6555{len(name) % 10}.Test_{name.replace('-', '_')}_{i} ({i}ms)")
+        for i in range(fail if name == list(counts)[0] else 0):
+            lines.append(f"FAIL  Codeunit65551.Broken_{i} (3ms)")
+            lines.append("      Assert.AreEqual failed")
+    if not summary:
+        return "\n".join(lines) + "\n"
+    total = sum(counts.values()) + fail + error + skipped
+    shown = sum(counts.values()) if reported_pass is None else reported_pass
+    lines += ["", "=" * 65, "al-runner — test run summary", "=" * 65,
+              f"Buckets:       {len(counts)} total",
+              f"  ran:         {len(counts)}",
+              "  compile-fail:%d" % len(compile_fail),
+              "  exec-fail:   0",
+              f"Tests:         {total} total",
+              f"  pass:        {shown}"]
+    if oos:
+        lines.append(f"    pass-oos:        {oos}")
+    if known_gap:
+        lines.append(f"    pass-known-gap:  {known_gap}")
+    lines += [f"  fail:        {fail}", f"  error:       {error}"]
+    if skipped:
+        lines.append(f"  skipped:     {skipped}")
+    lines += ["Time:", "  AL emit:     2.1s", "  C# compile:  1.7s",
+              "  test run:    0.2s", "  total:       4.0s", "  wall:        6.3s",
+              "=" * 65]
+    return "\n".join(lines) + "\n"
+
+
+class CorpusScript:
+    """A pf.run replacement answering both commands check_corpus issues."""
+
+    def __init__(self, output, rc=0, apps=None, timed_out=False, enumerator_rc=0):
+        self.output, self.rc, self.timed_out = output, rc, timed_out
+        self.apps = CORPUS_APPS if apps is None else apps
+        self.enumerator_rc = enumerator_rc
+        self.calls = []
+
+    def __call__(self, argv, **kw):
+        self.calls.append(argv)
+        if any("corpus-app-dirs" in a for a in argv):
+            return pf.Ran(rc=self.enumerator_rc,
+                          out="".join(a + "\n" for a in self.apps), err="")
+        return pf.Ran(rc=self.rc, out=self.output, err="", timed_out=self.timed_out)
+
+
+def corpus_result(output, *, baseline=CORPUS_BASELINE, **kw):
+    script = CorpusScript(output, **kw)
+    root = corpus_repo(baseline)
+    saved = pf.run
+    pf.run = script
+    try:
+        return pf.check_corpus(root, True), script
+    finally:
+        pf.run = saved
+        shutil.rmtree(root, ignore_errors=True)
+
+
+# ---- THE defect: a run that exits 0 having passed far fewer tests than the
+# baseline records used to report "the corpus baseline reproduced on this box".
+_short = corpus_output({"al-language": 3,
+                        "al-language-internals-fixture": 0,
+                        "al-language-onprem": 3})
+_res, _ = corpus_result(_short)
+check("a shortfall FAILs even though the process exited 0",
+      _res.status == "FAIL", f"{_res.status}: {_res.summary}")
+check("...and names both numbers, so the reader can act on it",
+      any("3" in d and "12" in d for d in _res.detail + [_res.summary]),
+      f"{_res.summary} {_res.detail}")
+check("...and names the suite that fell short",
+      any("al-language" in d for d in _res.detail + [_res.summary]), _res.detail)
+check("...and the machine-readable answer carries the counts",
+      _res.data.get("observed", {}).get("al-language") == 3
+      and _res.data.get("expected", {}).get("al-language") == 12, _res.data)
+
+# ---- the positive: the exact baseline, and nothing else, is a PASS
+_full = corpus_output({"al-language": 12,
+                       "al-language-internals-fixture": 0,
+                       "al-language-onprem": 3}, oos=2, known_gap=1)
+_res, _script = corpus_result(_full)
+check("reproducing the baseline exactly PASSes",
+      _res.status == "PASS", f"{_res.status}: {_res.summary} {_res.detail}")
+check("...and the summary states the count it verified, not just 'ok'",
+      "15" in _res.summary or any("15" in d for d in _res.detail),
+      f"{_res.summary} {_res.detail}")
+check("expectation-reclassified passes -- PASS (oos) / PASS (known-gap) -- still count",
+      _res.data.get("observed", {}).get("al-language") == 12, _res.data)
+
+# ---- the invocation itself: the flags used to be fabricated (#3357 defect 1)
+_argv = [a for a in _script.calls if "dotnet" in a[0]][0]
+check("the runner is invoked with the bundle paths POSITIONALLY",
+      all(app in _argv for app in CORPUS_APPS), _argv)
+check("there is no invented `test` subcommand or `--bundle` flag",
+      "--bundle" not in _argv and "test" not in _argv, _argv)
+check("the corpus apps are enumerated, never hardcoded to one path",
+      any("corpus-app-dirs" in a for c in _script.calls for a in c), _script.calls)
+check("the SHARED package caches are used -- a private one is blind to this failure",
+      _argv.count("--package-cache") == 2, _argv)
+
+# ---- growth fails too, and says which direction
+_over = corpus_output({"al-language": 13,
+                       "al-language-internals-fixture": 0,
+                       "al-language-onprem": 3})
+_res, _ = corpus_result(_over)
+check("a count ABOVE the baseline FAILs as well", _res.status == "FAIL",
+      f"{_res.status}: {_res.summary}")
+check("...and the direction is named", any("more" in d or "above" in d or "13" in d
+                                           for d in _res.detail), _res.detail)
+
+# ---- the RUN-WIDE total is not enough: one suite's tests can vanish into
+# another's count and leave the sum intact. Without a per-suite comparison this
+# case is indistinguishable from a healthy run.
+_redistributed = corpus_output({"al-language": 15,
+                                "al-language-internals-fixture": 0,
+                                "al-language-onprem": 0})
+_res, _ = corpus_result(_redistributed)
+check("a per-suite mismatch FAILs even when the run-wide total is exactly right",
+      _res.status == "FAIL", f"{_res.status}: {_res.summary}")
+check("...and names both suites that moved",
+      any("al-language-onprem" in d for d in _res.detail)
+      and any("al-language:" in d for d in _res.detail), _res.detail)
+
+# ---- a failing test is a FAIL even when the counts add up
+_failing = corpus_output({"al-language": 11,
+                          "al-language-internals-fixture": 0,
+                          "al-language-onprem": 3}, fail=1)
+_res, _ = corpus_result(_failing, rc=1)
+check("a corpus test that FAILED is a FAIL", _res.status == "FAIL", _res.summary)
+
+# ---- absence of evidence is never a pass
+_res, _ = corpus_result("al-runner — running 3 bundle(s)\n")
+check("a run that printed no summary FAILs rather than passing on the exit code",
+      _res.status == "FAIL", f"{_res.status}: {_res.summary}")
+check("...and says the run was not verified rather than reporting 0 passes as fact",
+      "summary" in (_res.summary + " ".join(_res.detail)).lower(),
+      f"{_res.summary} {_res.detail}")
+
+_res, _ = corpus_result("", timed_out=True)
+check("a timeout is a FAIL of its own", _res.status == "FAIL", _res.summary)
+check("...and is not reported as a count mismatch",
+      "timed out" in (_res.summary + " ".join(_res.detail)).lower(),
+      f"{_res.summary} {_res.detail}")
+
+# ---- a lost suite is a FAIL even when every surviving test passed
+_lost = corpus_output({"al-language": 12,
+                       "al-language-internals-fixture": 0,
+                       "al-language-onprem": 3}, suite_errors=("al-language",))
+_res, _ = corpus_result(_lost)
+check("a bundle that lost a suite FAILs even with the counts intact",
+      _res.status == "FAIL", f"{_res.status}: {_res.summary}")
+
+# ---- the exit code may add a FAIL, never grant a PASS
+_res, _ = corpus_result(_full, rc=4)
+check("a non-zero exit still FAILs when every number checks out",
+      _res.status == "FAIL", f"{_res.status}: {_res.summary}")
+check("...and says the exit code is what disagreed", "exit" in _res.summary.lower()
+      or any("exit" in d.lower() for d in _res.detail), f"{_res.summary} {_res.detail}")
+
+# ---- and the summary's own total is cross-checked against the per-bundle lines
+_lying = corpus_output({"al-language": 12,
+                        "al-language-internals-fixture": 0,
+                        "al-language-onprem": 3}, reported_pass=15 + 4)
+_res, _ = corpus_result(_lying)
+check("a summary that disagrees with the per-bundle PASS lines FAILs",
+      _res.status == "FAIL", f"{_res.status}: {_res.summary}")
+
+# ---- a baseline it cannot compute an expected count from is a refusal, not a pass
+_res, _ = corpus_result(_full, baseline={"suites": {"al-language": {"tests": {"default": 12}}}})
+check("an enumerated app with no baseline entry FAILs rather than counting as 0",
+      _res.status == "FAIL", f"{_res.status}: {_res.summary}")
+check("...and names the suite it has no expected count for",
+      any("al-language-onprem" in d for d in _res.detail + [_res.summary]),
+      f"{_res.summary} {_res.detail}")
+
+_res, _ = corpus_result(_full, apps=[])
+check("an enumerator that produced no apps FAILs -- a run of nothing is not a baseline",
+      _res.status == "FAIL", f"{_res.status}: {_res.summary}")
+
+# ---- SKIP stays honest, and still points at the file it is about
+_res = pf.check_corpus(corpus_repo(), False)
+check("the default is still SKIP, never folded into the passing count",
+      _res.status == "SKIP", _res.status)
+
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")
