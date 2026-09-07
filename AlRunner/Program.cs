@@ -4358,17 +4358,21 @@ if (coverageEnabled)
 // fired on every statement, but did zero bookkeeping work" for a plain run. Never
 // printed on a normal run: opt-in via an undocumented env var, not a CLI flag, because
 // this exists for AlRunner.Tests/PlainRunInstrumentationGateTests.cs only. Computing
-// and printing four longs/bools costs nothing worth gating further.
+// and printing four longs/bools costs nothing worth gating further. Each pair is ONE read
+// (#3169): two loads could print WorkPerformedCount > CallCount, a state that never existed.
 if (Environment.GetEnvironmentVariable("AL_RUNNER_DUMP_INSTRUMENTATION_COUNTERS") == "1")
 {
+    var coverage = AlRunner.Infrastructure.AlCoverageTracker.Counts.Read();
+    var captureValues = AlRunner.Infrastructure.AlValueCapture.Counts.Read();
+    var dap = AlRunner.Infrastructure.AlDapSession.Counts.Read();
     Console.Error.WriteLine(
         "[instrumentation-counters] " +
-        $"coverage.CallCount={AlRunner.Infrastructure.AlCoverageTracker.CallCount} " +
-        $"coverage.HasRecordedAnyHits={AlRunner.Infrastructure.AlCoverageTracker.HasRecordedAnyHits} " +
-        $"captureValues.CallCount={AlRunner.Infrastructure.AlValueCapture.CallCount} " +
-        $"captureValues.CollectedCount={AlRunner.Infrastructure.AlValueCapture.Collect().Count} " +
-        $"dap.CallCount={AlRunner.Infrastructure.AlDapSession.CallCount} " +
-        $"dap.WorkPerformedCount={AlRunner.Infrastructure.AlDapSession.WorkPerformedCount}");
+        $"coverage.CallCount={coverage.Total} " +
+        $"coverage.HasRecordedAnyHits={coverage.Part > 0} " +
+        $"captureValues.CallCount={captureValues.Total} " +
+        $"captureValues.CollectedCount={captureValues.Part} " +
+        $"dap.CallCount={dap.Total} " +
+        $"dap.WorkPerformedCount={dap.Part}");
 }
 
 // #2704 second layer: if a BC-internal path realized NavEnvironment's lazy ExecutionScheduler

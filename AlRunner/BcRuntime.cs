@@ -706,10 +706,10 @@ public static partial class BcRuntime
             {
                 var jl = JitListener;
                 if (jl == null) return;
-                jl.SnapshotCounters();
+                var counts = jl.SnapshotCounters();
                 Console.Error.WriteLine($"[Spike4] === EventPipe DryRun summary ===");
-                Console.Error.WriteLine($"[Spike4] Total MethodLoad events: {jl.TotalMethodLoadEvents}");
-                Console.Error.WriteLine($"[Spike4] BC MethodLoad events:    {jl.BcMethodLoadEvents}");
+                Console.Error.WriteLine($"[Spike4] Total MethodLoad events: {counts.Total}");
+                Console.Error.WriteLine($"[Spike4] BC MethodLoad events:    {counts.Bc}");
                 int i = 0;
                 foreach (var s in jl.DryBcSamples)
                 {
