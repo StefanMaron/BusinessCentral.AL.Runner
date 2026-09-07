@@ -59,6 +59,7 @@
 
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using AlRunner.Infrastructure;
 using Xunit;
@@ -320,6 +321,109 @@ public sealed class AlOutputCacheDoNotCacheTests : IDisposable
             ProgramSupport.AlOutputCacheBlocker(blocked));
     }
 
+    // ── arm 8: the SERVER-MODE gate, which arms 1-7 never entered (#3262) ─────────────────
+
+    /// <summary>
+    /// Issue #3262. Arms 1-7 above drive the CLI gate, <c>--print-cache-key</c> and the two
+    /// helpers as units. Not one of them starts <c>--server</c>, so the server-mode half of the
+    /// gate — <c>Program.cs</c>'s <c>serverCacheBlocker</c> branch — was reachable code that no
+    /// test entered in either direction. Deleting it left all seven green.
+    ///
+    /// <para><b>Why that is a real exposure and not a symmetry nit.</b> The CLI gate and the
+    /// server-mode gate write into the SAME <c>&lt;cacheDir&gt;</c>. A server request that wrote
+    /// an entry under a key blind to its dependency closure is served to a later CLI run against
+    /// that same directory, and the other way round. So a regression dropping only the
+    /// server-mode half reintroduces the whole of #2954 for CLI runs too, through a poisoned
+    /// shared directory, with every one of arms 1-7 still passing.</para>
+    ///
+    /// <para><b>Both directions in one arm, deliberately.</b> The blocked half alone would pass
+    /// against a server that never cached anything — the exact "would this still pass against a
+    /// do-nothing implementation?" failure in <c>.claude/rules/tdd.md</c> that this issue is
+    /// about. Re-shipping that here would be worse than the gap it closes. So the healthy half
+    /// runs the same fixture with a valid sibling manifest and must still write an entry cold
+    /// and still HIT it warm.</para>
+    ///
+    /// <para><b>The cache decision is read from the phase log, not from stderr.</b> Server mode
+    /// emits no <c>[cache] WROTE</c> or <c>[cache] HIT</c> line at all — those two
+    /// <c>Console.Error</c> calls exist only on the CLI path — so an stderr grep for them would
+    /// assert nothing and would keep passing whatever the server did. <c>AL_RUNNER_PHASE_LOG</c>
+    /// records <c>cache_hits</c> / <c>cache_misses</c> per bundle row, which is the server's
+    /// actual decision rather than a proxy for it, and is machine-readable.</para>
+    ///
+    /// <para>Runner-specific, not a BC claim — see this file's header. Server-mode process
+    /// configuration and AL-output cache HIT/MISS say nothing about what Business Central does,
+    /// and no service tier can adjudicate either, so this belongs in <c>AlRunner.Tests</c>
+    /// rather than upstream in the corpus.</para>
+    /// </summary>
+    [SkippableFact]
+    public async Task ServerMode_UnresolvableClosure_WritesNoCacheEntry_WhileAHealthyBundleStillCaches()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        // ── blocked half: the closure cannot be resolved ──────────────────────────────────
+        var (badBundle, badPkg, badCache) = Arrange("server-write-refused", siblingManifestValid: false);
+        var bad = await RunServerBundleAsync(badBundle, badPkg, badCache, "server-nokey");
+
+        // The run itself is unaffected. Refusing the cache is only the right answer if the
+        // tests still execute — a fix that made this request fail would trade a silent wrong
+        // answer for a loud broken one.
+        Assert.Equal(2, bad.Summary.GetProperty("total").GetInt32());
+        Assert.Equal(2, bad.Summary.GetProperty("passed").GetInt32());
+        Assert.Equal(0, bad.Summary.GetProperty("failed").GetInt32());
+        Assert.Equal(0, bad.Summary.GetProperty("errors").GetInt32());
+
+        // THE assertion the seven existing arms could not make: nothing was published into the
+        // directory a later CLI run would read. Counting files, not comparing keys — a key
+        // comparison cannot tell you whether a write happened.
+        var badWritten = Directory.GetFiles(badCache, "*.dll");
+        Assert.True(badWritten.Length == 0,
+            "a SERVER request that could not compute a cache identity still published "
+            + $"{badWritten.Length} AL-output cache entr(y/ies) into a directory shared with CLI "
+            + $"runs: {string.Join(", ", badWritten.Select(Path.GetFileName))}\n{bad.Diagnostics}");
+        // A sidecar without its DLL would mean only half the write was refused.
+        Assert.Empty(Directory.GetFiles(badCache, "*.enum-registry.json"));
+
+        // Loud, naming the reason, and tagged as the SERVER line specifically: the CLI gate
+        // emits "  [<rel>] [cache] NOKEY", so asserting the bare "[cache] NOKEY" text would
+        // also match a CLI emission and could not tell the two gates apart.
+        Assert.Contains("[server]", bad.StdErr);
+        Assert.Contains("[cache] NOKEY", bad.StdErr);
+        Assert.Contains("neither consulted nor written", bad.StdErr);
+        Assert.Contains("could not be resolved", bad.StdErr);
+
+        // Never accounted as an ordinary MISS: a MISS is an entry the next run HITs, and
+        // nothing was written for a next run to find. Read from the phase log, so this is the
+        // server's own recorded decision and not the absence of a line it never prints.
+        Assert.Equal(0, bad.CacheHits);
+        Assert.Equal(0, bad.CacheMisses);
+
+        // ── healthy half: the control, same fixture, valid sibling manifest ───────────────
+        var (okBundle, okPkg, okCache) = Arrange("server-healthy-control", siblingManifestValid: true);
+
+        var cold = await RunServerBundleAsync(okBundle, okPkg, okCache, "server-cold");
+        Assert.Equal(2, cold.Summary.GetProperty("passed").GetInt32());
+        Assert.DoesNotContain("[cache] NOKEY", cold.StdErr);
+        Assert.True(cold.CacheMisses > 0,
+            $"the control's cold run recorded no cache MISS, so it never reached the cache at "
+            + $"all and the warm assertion below would prove nothing\n{cold.Diagnostics}");
+        Assert.Equal(0, cold.CacheHits);
+        var okWritten = Directory.GetFiles(okCache, "*.dll");
+        Assert.True(okWritten.Length > 0,
+            "the control half wrote NO cache entry, so the blocked half above proves nothing — "
+            + $"an implementation that simply never caches would satisfy it\n{cold.Diagnostics}");
+
+        // Warm: a FRESH server process against the same directory must SERVE what the cold one
+        // wrote. A second request to the same process would be answered from the in-process
+        // module cache without consulting the on-disk cache this arm is about.
+        var warm = await RunServerBundleAsync(okBundle, okPkg, okCache, "server-warm");
+        Assert.Equal(2, warm.Summary.GetProperty("passed").GetInt32());
+        Assert.DoesNotContain("[cache] NOKEY", warm.StdErr);
+        Assert.True(warm.CacheHits > 0,
+            $"the control's warm run did not HIT the entry its cold run wrote, so the "
+            + $"server-mode cache is off for every bundle and the blocked half is vacuous"
+            + $"\n{warm.Diagnostics}");
+    }
+
     // ── fixture ───────────────────────────────────────────────────────────────────────────
 
     /// <summary>
@@ -460,6 +564,80 @@ public sealed class AlOutputCacheDoNotCacheTests : IDisposable
         var r = Spawn(bundle, pkgDir, cacheDir, extra: " --print-cache-key");
         var m = Regex.Match(r.Output, @"\[cache\]\s+KEY\s+key=([0-9a-f]{64})");
         return (m.Success ? m.Groups[1].Value : null, r.ExitCode, r.Output);
+    }
+
+    /// <summary>
+    /// One <c>--server</c> spawn, one <c>runTests</c> request over <paramref name="bundle"/>,
+    /// returning the protocol-v2 summary, the process's whole stderr, and the cache decision
+    /// the server actually recorded for that bundle.
+    ///
+    /// <para>A fresh process per call is the point, not overhead. The warm half of arm 8 has to
+    /// prove the entry survives to a LATER run, and a second request to the same process is
+    /// answered from the in-process cross-bundle module cache without ever consulting the
+    /// on-disk AL-output cache the assertion is about.</para>
+    ///
+    /// <para><paramref name="phaseTag"/> gives each call its own <c>AL_RUNNER_PHASE_LOG</c>
+    /// file, so <c>cache_hits</c> / <c>cache_misses</c> are this request's and not a running
+    /// total across the three spawns.</para>
+    ///
+    /// <para>The process is shut down BEFORE stderr is read. The summary line arriving on
+    /// stdout establishes nothing about how much of the request's stderr the background drain
+    /// task has appended (the two-pipe race <see cref="CliServer.StdErrSinceAsync"/>
+    /// documents), and arm 8's negative assertions on stderr are unsound until the stream is
+    /// closed and drained. Disposal waits for exit, which is EOF on stderr.</para>
+    /// </summary>
+    private async Task<ServerCacheObservation> RunServerBundleAsync(
+        string bundle, string pkgDir, string cacheDir, string phaseTag)
+    {
+        var phaseLog = Path.Combine(_scratch, $"{phaseTag}.phase.jsonl");
+        var server = await CliServer.StartAsync(
+            new[] { "--cache", cacheDir, "--package-cache", pkgDir, "--verbose" },
+            extraEnv: new Dictionary<string, string> { ["AL_RUNNER_PHASE_LOG"] = phaseLog });
+
+        JsonElement summary;
+        try
+        {
+            var req = JsonSerializer.Serialize(new
+            {
+                command = "runTests",
+                sourcePaths = new[] { bundle },
+                packagePaths = new[] { pkgDir },
+            });
+            var lines = await server.SendRequestStreamingAsync(req, TimeSpan.FromSeconds(240));
+            (_, summary) = ProtocolV2Streaming.Split(lines);
+        }
+        finally
+        {
+            await server.DisposeAsync();
+        }
+        var stdErr = server.StdErr;
+
+        // Sum across bundle rows rather than taking a single row: a request carries one
+        // sourcePaths entry here, but summing states the claim in a form that cannot silently
+        // read only the first of several.
+        var bundleRows = File.Exists(phaseLog)
+            ? File.ReadAllLines(phaseLog)
+                .Where(l => l.Length > 0)
+                .Select(l => JsonDocument.Parse(l).RootElement)
+                .Where(e => e.TryGetProperty("kind", out var k) && k.GetString() == "bundle")
+                .ToList()
+            : new List<JsonElement>();
+        Assert.True(bundleRows.Count > 0,
+            $"no phase-log bundle row for '{phaseTag}' — the cache-decision assertions below "
+            + $"would read 0/0 and pass vacuously.\n--- stderr ---\n{stdErr}");
+
+        var hits = bundleRows.Sum(r => r.TryGetProperty("cache_hits", out var h) ? h.GetInt32() : 0);
+        var misses = bundleRows.Sum(r => r.TryGetProperty("cache_misses", out var m) ? m.GetInt32() : 0);
+        return new ServerCacheObservation(summary, stdErr, hits, misses);
+    }
+
+    /// <summary>What one server request did about the AL-output cache, and the evidence.</summary>
+    private sealed record ServerCacheObservation(
+        JsonElement Summary, string StdErr, int CacheHits, int CacheMisses)
+    {
+        /// <summary>Everything an assertion failure needs, assembled only when one fails.</summary>
+        public string Diagnostics =>
+            $"cache_hits={CacheHits} cache_misses={CacheMisses}\n--- stderr ---\n{StdErr}";
     }
 
     private static (int ExitCode, string Output) Spawn(
