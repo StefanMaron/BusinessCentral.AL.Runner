@@ -61,14 +61,85 @@ public static class ALDatabasePatches
 
     /// <summary>Replacement for ALDatabase.ALCommit(). There is nothing to flush — the
     /// in-memory store is written through — but the write transaction ends here, which is
-    /// what AL observes via Database.IsInWriteTransaction().</summary>
+    /// what AL observes via Database.IsInWriteTransaction().
+    ///
+    /// Observably equivalent to BC's own body, which begins by switching on the session's
+    /// commit behaviour and only then commits (see docs/limitations.md#commitbehavior):
+    /// <c>Error</c> raises <c>Lang.CommitProhibited</c>, <c>Ignore</c> does nothing at all,
+    /// <c>Ok</c> commits. Ignore returning EARLY is the whole point — BC skips
+    /// <c>session.Commit()</c>, so neither the rollback boundary nor the write-transaction
+    /// flag moves, and a later unrelated error still undoes the write.</summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void ALDatabase_ALCommit()
     {
+        switch (CurrentCommitBehaviorName())
+        {
+            case "Error":
+                throw BuildCommitProhibited();
+            case "Ignore":
+                return;
+        }
+
         System.Threading.Volatile.Write(ref _inWriteTransaction, false);
         // Everything written so far is now durable: a later AL error rolls back to HERE,
         // not to the start of the test method.
         RecordPatches.MarkCommitPoint();
+    }
+
+    /// <summary>
+    /// The current session's <c>CommitBehavior</c> as its enum member name, or <c>null</c>
+    /// when there is no session (install/upgrade paths run before one exists) — treated as
+    /// <c>Ok</c>, which is what a fresh NavSession carries.
+    ///
+    /// Read by name rather than by value: the enum is
+    /// <c>Microsoft.Dynamics.Nav.Types.CommitBehavior</c>, and comparing names survives a
+    /// future BC adding a member without silently reinterpreting an ordinal. Same technique
+    /// TestExecutor.IsAutoRollback uses on TransactionModel, for the same reason.
+    /// </summary>
+    private static string? CurrentCommitBehaviorName()
+    {
+        var session = BcRuntime.SkeletonSession;
+        if (session == null) return null;
+        _commitBehaviorProp ??= session.GetType().GetProperty("CommitBehavior",
+            System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.Public
+            | System.Reflection.BindingFlags.NonPublic);
+        return _commitBehaviorProp?.GetValue(session)?.ToString();
+    }
+
+    private static System.Reflection.PropertyInfo? _commitBehaviorProp;
+
+    /// <summary>
+    /// BC's own NavCSideException carrying <c>Lang.CommitProhibited</c>, so AL's
+    /// <c>asserterror</c> / <c>GetLastErrorText</c> sees the platform text rather than a
+    /// runner paraphrase. Same reflection route as
+    /// <see cref="BuildTransactionWorldWithActiveWriteTransaction"/> and for the same reason:
+    /// Lang lives in Microsoft.Dynamics.Nav.Language.dll, which the runner does not
+    /// reference directly.
+    /// </summary>
+    private static Exception BuildCommitProhibited()
+    {
+        // Fallback is BC 28.4's own en-US text, measured on a service tier; used only if the
+        // resource cannot be read.
+        var message = LangString("CommitProhibited")
+            ?? "Commit is prohibited in the current scope. The operation cannot continue. "
+               + "Contact your system administrator.";
+        try
+        {
+            var tCSide = ResolveNavCSideExceptionType();
+            var ctor = tCSide?.GetConstructor(
+                System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.NonPublic,
+                null, new[] { typeof(string) }, null);
+            if (ctor != null)
+                return (Exception)ctor.Invoke(new object[] { message });
+        }
+        catch { /* fall through to the plain exception below */ }
+
+        // Never let the diagnostic construction mask the contract: AL must still see an error
+        // here, because BC would have thrown one.
+        return new InvalidOperationException(message);
     }
 
     /// <summary>
