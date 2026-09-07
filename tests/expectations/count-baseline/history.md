@@ -150,6 +150,44 @@ cloud app.
 No per-version override is needed: the range adds no preprocessor version guards, so `default`
 is correct for every leg. Measured on BC 28.1; the other seven legs are CI's word.
 
+### 2814 -> 2887, and onprem 25 -> 29 (pin 2cba52d4 -> 17b015e, corpus #220, #214, #221, #222, #225, #226, #228)
+
+A catch-up bump: every corpus PR in the range was already adjudicated on a real service tier
+upstream, and no runner fix was pending for any of the seven commits taken. It is green on its
+own, which is why it is its own PR (`al-language-submodule.md`, the catch-up case).
+
+`al-language` 2814 -> 2887 (+73) and `al-language-onprem` 25 -> 29 (+4). Both numbers were
+read off a run, not computed: the run at this pin reported them in its `[count-baseline]
+GROWTH` lines, and the run with these numbers in place exits 0. The onprem suite moves because
+corpus #228 added four `Published Application` FlowField tests to
+`record/TestPublishedApplicationSysTable.al`, and that table is `Scope = OnPrem`.
+
+Cross-checked by hand against the corpus source, per file, with comments and string literals
+stripped: 2889 `[Test]` procedures in the `al-language` app, of which two --
+`JsonObject_ReadFromYaml_OnCloudRuntime_IsNotSupported` and its `WriteToYaml` sibling in
+`session/TestFinalCoverage.al` -- sit behind `#if BC143PLUS`, which is not defined, so they
+compile out. 2889 - 2 = 2887, the runner's number exactly. A raw `[Test]` count over that
+subtree is 2889 and is wrong; the preprocessor is the reason.
+
+No per-version override is needed: none of the arriving files adds a preprocessor version
+guard. Measured on BC 28.1; the other seven legs are CI's word.
+
+**The pin stops at `17b015e`, two commits short of corpus `master`,** because corpus history is
+linear and the two commits after it fail against the runner today: `0bbe376` (corpus #227,
+TestPart, codeunit 60346, 11 tests) and `d025203` (corpus #229, TestFilter, codeunit 60350, 6
+tests). Measured at the tip on this same build: 17 failures, exactly those two codeunits and
+nothing else. Tracked by issues #3312, #3313 and #3009 for the TestPart cluster, and by #3316
+for five of the six TestFilter failures (`TestPage.Filter.CurrentKey` reporting field numbers,
+`SetCurrentKey`/`Ascending` not changing the walk order); the sixth is #3312's part-page id 0
+problem again.
+No `tests/expectations/` entry was added for any of them -- declaring a live, owned gap as
+settled classification is what `ask-the-corpus-before-claiming-bc-behavior.md` forbids, and
+leaving the two commits unpinned keeps the gap honest instead.
+
+`runner-extras` is untouched by this PR.
+
+Written by agent impl-1 (automated implementation agent).
+
 ## runner-extras
 
 ### object-metadata-system-table 4 -> 6 (PR for #2771)
