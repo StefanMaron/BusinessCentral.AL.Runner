@@ -465,12 +465,15 @@ public static class BcArtifacts
     /// <param name="tier">
     /// Which tier won: "cached-exact"/"cached-minor" (already local, nothing to fetch,
     /// identical to <see cref="DefaultVersionPrefix"/>'s outcome), "cdn-exact"/"cdn-minor"
-    /// (not cached but the CDN has it — provisioning will fetch exactly this), or
-    /// "major-fallback" (neither the engine's exact build nor its minor is available from
-    /// either source — genuinely degraded; the caller must warn, per issue #2020).
+    /// (not cached but the CDN has it — provisioning will fetch exactly this),
+    /// "cdn-exact-undetermined"/"cdn-minor-undetermined" (the CDN could not be asked; the tier
+    /// is held rather than demoted — issue #2981), or "major-fallback" (neither the engine's
+    /// exact build nor its minor is available from either source — genuinely degraded; the
+    /// caller must warn, per issue #2020).
     /// </param>
     public static string ResolveProvisionTargetCore(Version engineVersion, string artifactsRoot,
-        Func<string, bool> cdnHasExactVersion, Func<string, string?> cdnResolvePrefix, out string tier)
+        Func<string, AlRunner.Provisioning.CdnProbeResult> cdnHasExactVersion,
+        Func<string, AlRunner.Provisioning.CdnPrefixResult> cdnResolvePrefix, out string tier)
     {
         // Tier 1: the exact 4-part build — cached, or fetchable from the CDN.
         var exact = engineVersion.ToString();
@@ -481,9 +484,21 @@ public static class BcArtifacts
             return exact;
         }
         catch (InvalidOperationException) { /* not cached — try the CDN, then fall through */ }
-        if (cdnHasExactVersion(exact))
+        var exactProbe = cdnHasExactVersion(exact);
+        if (exactProbe.IsPublished)
         {
             tier = "cdn-exact";
+            return exact;
+        }
+        // Issue #2981: the probe went unanswered, so hold the tier instead of demoting.
+        // Demotion is the only branch here that can hand back a KNOWN-DEGRADED artifact, and
+        // the single observation licensing it is the CDN saying no — which this is not.
+        // Nothing is swallowed: the download that follows either succeeds (the transient blip
+        // #2981 reported) or fails with NetworkDiagnosis's classified observation.
+        // Why this rather than throwing, per loud-failures.md: docs/provisioning-tiers.md#undetermined.
+        if (exactProbe.IsUndetermined)
+        {
+            tier = "cdn-exact-undetermined";
             return exact;
         }
 
@@ -496,17 +511,26 @@ public static class BcArtifacts
             return majorMinor;
         }
         catch (InvalidOperationException) { /* not cached — try the CDN, then fall through */ }
-        var minorResolved = cdnResolvePrefix(majorMinor);
-        if (minorResolved != null)
+        var minorProbe = cdnResolvePrefix(majorMinor);
+        if (minorProbe.IsResolved)
         {
             tier = "cdn-minor";
-            return minorResolved;
+            return minorProbe.Version;
+        }
+        // #2981, same reasoning one tier down. Return the PREFIX, not a resolved build:
+        // nothing here resolved one, and inventing a build number the index never confirmed
+        // would be the same overreach. Provisioning resolves it once the network recovers.
+        if (minorProbe.IsUndetermined)
+        {
+            tier = "cdn-minor-undetermined";
+            return majorMinor;
         }
 
         // Tier 3: neither the exact build nor the engine's own minor is available from
         // either source (e.g. Microsoft withdrew the build — #2010). Fall back to the bare
         // major; the caller resolves+downloads the latest build of it and must warn loud —
-        // this is the one genuinely degraded outcome, not the default-path norm.
+        // this is the one genuinely degraded outcome, not the default-path norm. Reaching here
+        // now requires BOTH probes to have actually answered.
         tier = "major-fallback";
         return engineVersion.Major.ToString();
     }
@@ -518,8 +542,8 @@ public static class BcArtifacts
     public static string DefaultProvisionTarget(Version engineVersion, string artifactsRoot, out string tier,
         Action<string>? log = null)
         => ResolveProvisionTargetCore(engineVersion, artifactsRoot,
-            v => AlRunner.Provisioning.ArtifactDownloader.VersionExists(v, log),
-            p => AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(p, log),
+            v => AlRunner.Provisioning.ArtifactDownloader.ProbeVersion(v, log),
+            p => AlRunner.Provisioning.ArtifactDownloader.ProbeVersionPrefix(p, log),
             out tier);
 
     /// <summary>

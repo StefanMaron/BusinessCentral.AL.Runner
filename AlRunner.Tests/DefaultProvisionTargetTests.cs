@@ -18,6 +18,7 @@
 // network, no BC engine — proving each tier decision and, most importantly, that a cache
 // miss with a CDN hit does NOT collapse to the major (the exact defect from #2033).
 using AlRunner.Infrastructure;
+using AlRunner.Provisioning;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -56,7 +57,7 @@ public sealed class DefaultProvisionTargetTests : IDisposable
 
         var result = BcArtifacts.ResolveProvisionTargetCore(
             engineVersion, _root,
-            cdnHasExactVersion: v => v == "28.1.49838.50794",
+            cdnHasExactVersion: v => v == "28.1.49838.50794" ? CdnProbeResult.Published : CdnProbeResult.NotPublished,
             cdnResolvePrefix: p => throw new InvalidOperationException(
                 $"must not fall through to prefix resolution when the exact build is on the CDN (asked for '{p}')"),
             out var tier);
@@ -81,8 +82,8 @@ public sealed class DefaultProvisionTargetTests : IDisposable
 
         var result = BcArtifacts.ResolveProvisionTargetCore(
             engineVersion, _root,
-            cdnHasExactVersion: v => false, // withdrawn build, e.g. #2010
-            cdnResolvePrefix: p => p == "28.1" ? "28.1.55555.66666" : null,
+            cdnHasExactVersion: v => CdnProbeResult.NotPublished, // withdrawn build, e.g. #2010
+            cdnResolvePrefix: p => p == "28.1" ? CdnPrefixResult.Resolved("28.1.55555.66666") : CdnPrefixResult.NoMatch,
             out var tier);
 
         Assert.Equal("28.1.55555.66666", result);
@@ -101,8 +102,8 @@ public sealed class DefaultProvisionTargetTests : IDisposable
 
         var result = BcArtifacts.ResolveProvisionTargetCore(
             engineVersion, _root,
-            cdnHasExactVersion: v => false,
-            cdnResolvePrefix: p => null,
+            cdnHasExactVersion: v => CdnProbeResult.NotPublished,
+            cdnResolvePrefix: p => CdnPrefixResult.NoMatch,
             out var tier);
 
         Assert.Equal("28", result);
@@ -141,7 +142,7 @@ public sealed class DefaultProvisionTargetTests : IDisposable
 
         var result = BcArtifacts.ResolveProvisionTargetCore(
             engineVersion, _root,
-            cdnHasExactVersion: v => false,
+            cdnHasExactVersion: v => CdnProbeResult.NotPublished,
             cdnResolvePrefix: p => throw new InvalidOperationException(
                 "must not resolve via CDN when the engine's own minor is already cached"),
             out var tier);
