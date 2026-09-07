@@ -225,11 +225,15 @@ Merge when **all of**:
 3. The proving test exists. If the claim is about BC's behavior, that test is upstream and
    merged, or merging in the same pass.
 
-**Use `tools/ci-wait.py <PR>`** rather than a poll loop. It polls internally and returns one
-verdict: 0 green on current head, 1 failed with the log already fetched, 2 still running
-(*not* a verdict), 3 undetermined, 4 blocked with everything green — a cancelled required
-context (below), or a required context that produced no check run at all once every
-workflow run finished (#2807).
+**Read the verdict with `tools/ci-wait.py <PR> --timeout 1`; never block on it.** One pass,
+one answer, returns at once: 0 green on current head, 1 failed with the log already fetched,
+2 still running (*not* a verdict), 3 undetermined, 4 blocked with everything green — a
+cancelled required context (below), or a required context that produced no check run at all
+once every workflow run finished (#2807).
+
+Exit 2 is the ordinary answer on a PR you just opened, and it is not a problem: leave it and
+read again on the next sweep. Waiting buys nothing, because arming `--auto` lands a reviewed
+PR the moment its checks go green with nobody present (`.claude/rules/ci-verdicts.md` §0).
 
 **A FAILED verdict names what has reported so far.** While other required checks are
 still running the failing list can grow, and the tool says how many have not reported.

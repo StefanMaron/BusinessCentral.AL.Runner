@@ -71,5 +71,5 @@ half. Use `$!` on a job you started, or `wait`. Better: don't poll, run it in th
 
 - `branch-and-pr.md` — one branch per agent, one open PR per agent
 - `tdd.md` — the RED → GREEN cycle the revert recipe above exists to serve
-- `no-backgrounding-long-commands.md` — why the answer to "is it done yet" is a
-  foreground wait, not a polling loop
+- `no-backgrounding-long-commands.md` — why the answer to "is it done yet" is a foreground
+  wait for local work, and for CI is not to wait at all

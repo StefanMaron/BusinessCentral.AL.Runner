@@ -49,12 +49,17 @@ using System.Text;
 using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
+using Microsoft.Dynamics.Nav.Types.Exceptions;
+using Microsoft.Dynamics.Nav.Types.Exceptions.Encryption;
 
 namespace AlRunner.Patches;
 
 public static class TenantStoragePatches
 {
-    private enum Encryption { None, Encrypted }
+    // Values are BC's own Microsoft.Dynamics.Nav.Types.EncryptionStatus ordinals
+    // (PlainText=0, Encrypted=1, PendingForEncryption=2) — Repo_Get returns the int
+    // straight through, and BC's real ALIsolatedStorage.Get branches on it.
+    private enum Encryption { None, Encrypted, PendingForEncryption }
 
     private sealed record Entry(string Ciphertext, Encryption Status, bool IsSecret);
 
@@ -62,7 +67,13 @@ public static class TenantStoragePatches
     // scope-dependent — Module ignores both, Company keys on company, User on user.
     private static readonly ConcurrentDictionary<string, Entry> _store = new();
 
-    public static void ResetForTest() => _store.Clear();
+    public static void ResetForTest()
+    {
+        _store.Clear();
+        // The key ledger is per-test for the same reason the store is: BC rolls the
+        // tenant-properties row back with the rest of the test transaction.
+        _encKey = DefaultKeyState();
+    }
 
     internal static object CaptureInstallBaseline() => _store.ToArray();
 
@@ -162,7 +173,7 @@ public static class TenantStoragePatches
                                 string companyName, NavGuid userId, string key, string value,
                                 int encryptionStatus, /* TargetValueType */ int targetValueType)
     {
-        var mode = encryptionStatus == 1 /* EncryptionStatus.Encrypted */ ? Encryption.Encrypted : Encryption.None;
+        var mode = (Encryption)encryptionStatus;
         var isSecret = targetValueType == 1;
         _store[ComposeKey(scope, key)] = new Entry(value, mode, isSecret);
         return true;
@@ -185,7 +196,7 @@ public static class TenantStoragePatches
         // Verbatim, like BC's stored row — the REAL ALIsolatedStorage.Get body
         // ALDecrypts when the returned status is Encrypted (see Repo_Set note).
         value.Value = new NavText(entry.Ciphertext);
-        return (true, entry.Status == Encryption.Encrypted ? 1 : 0);
+        return (true, (int)entry.Status);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -214,11 +225,50 @@ public static class TenantStoragePatches
         return _store.TryRemove(ComposeKey(scope, key), out _);
     }
 
-    // ── ALSystemEncryption.* (in-process AES envelope for the AL Encrypt/Decrypt
-    //    surface — replaces the BC tenant-key-vault provider that's null on
-    //    the skeleton runtime). Same key as IsolatedStorage's deterministic key,
-    //    different prefix tag so collisions across surfaces are impossible. ─────
-    private static readonly byte[] _sysEncKey = DeriveSysKey();
+    // ── ALSystemEncryption.* — the tenant encryption KEY LEDGER, and the in-process
+    //    AES envelope that Encrypt/Decrypt ride on. ────────────────────────────────
+    //
+    // BC's real chain is ALSystemEncryption → TenantRsaEncryptionProvider →
+    // NavTenant.Get/SetEncryptionKeyFileName → NavDatabase.TenantProperties, whose ctor
+    // refuses a database that is not a SQL tenant database. The runner has none, so every
+    // entry point that touched key state raised a bare ArgumentException (#3329). This
+    // ledger replaces that persistence layer; nothing else about BC's surface changes.
+    //
+    // Observably equivalent (loud-failures.md): AL can never see BC's RSA key material or
+    // its key file. What it CAN see is KEYEXISTS / ENCRYPTIONENABLED, whether ENCRYPT and
+    // DECRYPT round-trip, and which BC exception each refusal raises — and each of those
+    // is answered from real state here rather than a default. Creating a key while one
+    // exists raises NavEncryptionCreatedException; encrypting or decrypting with no key
+    // raises NavEncryptionNotCreatedException; deleting a key first decrypts isolated
+    // storage exactly as BC's DecryptTenantData does, so a SetEncrypted value stays
+    // readable afterwards; and ciphertext written under one key does not decrypt under the
+    // next. The one thing the runner does NOT model is a fresh tenant with no key: it
+    // starts with a key present, which is what the two hardcoded `true` predicates this
+    // ledger replaces already asserted.
+    private sealed record EncryptionKeyState(byte[] Material, string Hash);
+
+    private const string EnvelopePrefix = "RNR1";
+    private const string KeyFileMagic = "AL-RUNNER-ENCRYPTION-KEY-V1:";
+
+    // ENVELOPE FORMAT AND THE INSTALL-BASELINE CACHE. Entry.Ciphertext is persisted verbatim
+    // into the on-disk install-baseline snapshot, so changing this format could in principle
+    // hand new code an envelope written by old code. It cannot, and that is why this needs no
+    // codec schema bump: InstallBaselineDiskCache.BuildKeyText calls
+    // RunnerFingerprint.WriteKeyLines, which puts a SHA-256 of the running al-runner.dll's
+    // bytes into the key, so any edit to this file re-keys every entry and the old ones are
+    // never looked up. The one hole is RunnerFingerprint's documented `runner:unknown`
+    // fallback (an assembly with no on-disk location); it is not specific to this format, and
+    // DecryptWith refuses an unrecognised envelope loudly rather than returning plaintext, so
+    // even there the worst case is a named failure, not silent garbage.
+
+    private static readonly byte[] _defaultSysEncKey = DeriveSysKey();
+    private static EncryptionKeyState? _encKey = DefaultKeyState();
+
+    private static EncryptionKeyState DefaultKeyState()
+        => new(_defaultSysEncKey, KeyHash(_defaultSysEncKey));
+
+    // Deterministic across processes on purpose: an isolated-storage row encrypted while
+    // an install baseline was captured has to decrypt in the process that restores it.
     private static byte[] DeriveSysKey()
     {
         using var pbkdf2 = new Rfc2898DeriveBytes(
@@ -228,11 +278,17 @@ public static class TenantStoragePatches
         return pbkdf2.GetBytes(32);
     }
 
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static string SysEnc_ALEncrypt(string plaintext)
+    private static string KeyHash(byte[] material)
+        => Convert.ToHexString(SHA256.HashData(material));
+
+    // ── Envelope: "RNR1:<16-hex key tag>:<base64(iv‖ciphertext)>" ───────────────────
+    // The key tag makes "wrong key" a deterministic refusal. Without it the only signal
+    // is AES-CBC padding, which validates by chance about once in 256 and would then hand
+    // AL silent garbage — the failure mode loud-failures.md exists to prevent.
+    private static string EncryptWith(byte[] key, string plaintext)
     {
         using var aes = Aes.Create();
-        aes.Key = _sysEncKey;
+        aes.Key = key;
         aes.GenerateIV();
         using var enc = aes.CreateEncryptor();
         var pt = Encoding.UTF8.GetBytes(plaintext ?? string.Empty);
@@ -240,34 +296,209 @@ public static class TenantStoragePatches
         var blob = new byte[16 + ct.Length];
         Buffer.BlockCopy(aes.IV, 0, blob, 0, 16);
         Buffer.BlockCopy(ct,     0, blob, 16, ct.Length);
-        // Prefix with "RNR1:" to identify our envelope cleanly.
-        return "RNR1:" + Convert.ToBase64String(blob);
+        return $"{EnvelopePrefix}:{KeyHash(key)[..16]}:{Convert.ToBase64String(blob)}";
+    }
+
+    /// <summary>Inverse of <see cref="EncryptWith"/>. Throws <see cref="CryptographicException"/>
+    /// — never a default — when the envelope is foreign or was sealed under another key. No
+    /// caller may let that escape: every one routes it through <see cref="AsBcCryptoFailure"/>,
+    /// because a raw .NET exception out of a rewritten BC body is the shape #3329 was.</summary>
+    private static string DecryptWith(byte[] key, string envelope)
+    {
+        var parts = (envelope ?? string.Empty).Split(':');
+        if (parts.Length != 3 || parts[0] != EnvelopePrefix)
+            throw new CryptographicException(
+                "ciphertext was not produced by this runner's ALEncrypt");
+        if (!string.Equals(parts[1], KeyHash(key)[..16], StringComparison.Ordinal))
+            throw new CryptographicException(
+                "ciphertext was encrypted with a different key than the one now in effect");
+        var raw = Convert.FromBase64String(parts[2]);
+        using var aes = Aes.Create();
+        aes.Key = key;
+        var iv = new byte[16];
+        Buffer.BlockCopy(raw, 0, iv, 0, 16);
+        aes.IV = iv;
+        using var dec = aes.CreateDecryptor();
+        return Encoding.UTF8.GetString(dec.TransformFinalBlock(raw, 16, raw.Length - 16));
+    }
+
+    // ── AL-facing statics (Cecil-rewritten onto these — see NclCecilRewrite.Records.cs) ──
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static string SysEnc_ALEncrypt(string plaintext)
+    {
+        var k = _encKey ?? throw new NavEncryptionNotCreatedException();
+        try
+        {
+            return EncryptWith(k.Material, plaintext);
+        }
+        catch (CryptographicException ex)
+        {
+            throw AsBcCryptoFailure("ALSystemEncryption.ALEncrypt", ex);
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static string SysEnc_ALDecrypt(string ciphertext)
     {
         if (string.IsNullOrEmpty(ciphertext)) return string.Empty;
-        if (!ciphertext.StartsWith("RNR1:"))
-            // Caller passed something that wasn't produced by our ALEncrypt —
-            // in real BC this would throw "not encrypted by this tenant". We
-            // throw too so the test catches the misuse rather than silently
-            // returning a default.
-            throw new InvalidOperationException("ALDecrypt: ciphertext was not produced by this runner's ALEncrypt.");
-        var raw = Convert.FromBase64String(ciphertext.Substring(5));
-        using var aes = Aes.Create();
-        aes.Key = _sysEncKey;
-        var iv = new byte[16];
-        Buffer.BlockCopy(raw, 0, iv, 0, 16);
-        aes.IV = iv;
-        using var dec = aes.CreateDecryptor();
-        var pt = dec.TransformFinalBlock(raw, 16, raw.Length - 16);
-        return Encoding.UTF8.GetString(pt);
+        var k = _encKey ?? throw new NavEncryptionNotCreatedException();
+        try
+        {
+            return DecryptWith(k.Material, ciphertext);
+        }
+        catch (Exception ex) when (ex is CryptographicException or FormatException)
+        {
+            throw AsBcCryptoFailure("ALSystemEncryption.ALDecrypt", ex);
+        }
+    }
+
+    /// <summary>BC's <c>ALSystemEncryption.TryInvoke</c> catches
+    /// <see cref="CryptographicException"/> and throws
+    /// <c>NavUnknownEncryptionException(Lang.MSGREUNKNOWN, inner)</c>, whose text is
+    /// "Unknown error". Same type here — that is what AL and any `catch` clause key on — but a
+    /// DELIBERATE divergence on the message, which names the API instead, because "Unknown
+    /// error" identifies no surface and loud-failures.md asks a refusal to.
+    /// <c>NewKey_CannotDecryptOldCiphertext</c> in tests/runner-extras/encryption-key-mgmt-3329
+    /// pins the divergence.</summary>
+    private static Exception AsBcCryptoFailure(string api, Exception inner)
+        => new NavUnknownEncryptionException($"{api}: {inner.Message}", inner);
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool SysEnc_ALKeyExists() => _encKey != null;
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool SysEnc_ALEncryptionEnabled() => _encKey != null;
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool SysEnc_ALCreateKey(DataError errorLevel)
+    {
+        try
+        {
+            // RsaEncryptionProviderBase.CreateKey: refuses when a key is already created.
+            if (_encKey != null) throw new NavEncryptionCreatedException();
+            InstallKey(RandomNumberGenerator.GetBytes(32));
+            return true;
+        }
+        catch (NavBaseException) when (errorLevel == DataError.TrapError)
+        {
+            return false;
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static bool SysEnc_ALKeyExists() => true;
+    public static void SysEnc_ALDeleteKey()
+    {
+        var k = _encKey;
+        if (k != null)
+        {
+            // ALDeleteKey calls DecryptTenantData() BEFORE the provider drops the key, so
+            // every Encrypted row is decrypted in place and parked at PendingForEncryption
+            // and survives the key going away (IsolatedStorageRepository.ChangeEncrptionStatus).
+            foreach (var kv in _store.ToArray())
+            {
+                if (kv.Value.Status != Encryption.Encrypted) continue;
+                string plaintext;
+                try
+                {
+                    plaintext = DecryptWith(k.Material, kv.Value.Ciphertext);
+                }
+                catch (Exception ex) when (ex is CryptographicException or FormatException)
+                {
+                    // A row this key cannot open. BC reaches this through ALDecrypt, so what AL
+                    // sees is a BC-typed refusal, not a raw .NET exception escaping a rewritten
+                    // BC body.
+                    throw AsBcCryptoFailure("ALSystemEncryption.ALDeleteKey", ex);
+                }
+                _store[kv.Key] = kv.Value with
+                {
+                    Ciphertext = plaintext,
+                    Status = Encryption.PendingForEncryption,
+                };
+            }
+        }
+        // BC's DeleteKey is idempotent — deleting with no key present is not an error.
+        _encKey = null;
+    }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
-    public static bool SysEnc_ALEncryptionEnabled() => true;
+    public static string SysEnc_ALExportKey(string password)
+    {
+        // RsaEncryptionProviderBase.ExportKey → RunCryptoProviderMethod →
+        // RequireKeyCreatedAndPresent, which refuses with this exception when no key exists.
+        var k = _encKey ?? throw new NavEncryptionNotCreatedException();
+        var payload = KeyFileMagic + Convert.ToBase64String(k.Material);
+        if (!string.IsNullOrEmpty(password))
+            payload = EncryptWith(PasswordKey(password), payload);
+        var dir = Path.Combine(Path.GetTempPath(), "al-runner-navserver", "encryption-keys");
+        Directory.CreateDirectory(dir);
+        // BC returns a server-side temp path the AL caller reads and then File.Erase()s.
+        var file = Path.Combine(dir, Guid.NewGuid().ToString() + ".key");
+        File.WriteAllText(file, payload, Encoding.UTF8);
+        return file;
+    }
+
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static bool SysEnc_ALImportKey(DataError errorLevel, string keyFileName, string password)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(keyFileName) || !File.Exists(keyFileName))
+                throw new NavNCLFileNotFoundException(keyFileName ?? string.Empty);
+            var text = File.ReadAllText(keyFileName, Encoding.UTF8);
+            if (!string.IsNullOrEmpty(password))
+            {
+                try { text = DecryptWith(PasswordKey(password), text); }
+                catch (Exception ex) when (ex is CryptographicException or FormatException)
+                {
+                    throw new NavEncryptionInvalidKeyFileException(ex);
+                }
+            }
+            if (!text.StartsWith(KeyFileMagic, StringComparison.Ordinal))
+                throw new NavEncryptionInvalidKeyFileException(
+                    "ImportKey: the file is not an AL Runner encryption key file, "
+                    + "or the wrong password was supplied.");
+            byte[] material;
+            try { material = Convert.FromBase64String(text[KeyFileMagic.Length..]); }
+            catch (FormatException ex) { throw new NavEncryptionInvalidKeyFileException(ex); }
+
+            // RsaEncryptionProviderBase.ImportKey compares the imported key's hash against
+            // the stored one and refuses a DIFFERENT key; re-importing the same key is fine.
+            var hash = KeyHash(material);
+            if (_encKey != null && !string.Equals(_encKey.Hash, hash, StringComparison.Ordinal))
+                throw new NavEncryptionExistingKeyImportException();
+            InstallKey(material);
+            return true;
+        }
+        catch (NavBaseException) when (errorLevel == DataError.TrapError)
+        {
+            return false;
+        }
+    }
+
+    private static byte[] PasswordKey(string password)
+    {
+        using var kdf = new Rfc2898DeriveBytes(
+            password, Encoding.UTF8.GetBytes("al-runner-key-file-salt-2026"),
+            100_000, HashAlgorithmName.SHA256);
+        return kdf.GetBytes(32);
+    }
+
+    /// <summary>Install <paramref name="material"/> as the tenant key and run BC's
+    /// EncryptPendingData: every row parked at PendingForEncryption by a preceding
+    /// DeleteKey is re-encrypted under the new key, which is what makes an
+    /// export → delete → import round trip leave isolated storage where it started.</summary>
+    private static void InstallKey(byte[] material)
+    {
+        _encKey = new EncryptionKeyState(material, KeyHash(material));
+        foreach (var kv in _store.ToArray())
+        {
+            if (kv.Value.Status != Encryption.PendingForEncryption) continue;
+            _store[kv.Key] = kv.Value with
+            {
+                Ciphertext = EncryptWith(material, kv.Value.Ciphertext),
+                Status = Encryption.Encrypted,
+            };
+        }
+    }
 }

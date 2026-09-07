@@ -43,13 +43,20 @@ public static partial class NclCecilRewrite
                 Console.Error.WriteLine("[Cecil] Rewrote IsolatedStorageRepository.{Set,Get,Contains×2,Delete} → TenantStoragePatches in-memory store");
             }
 
-            // ALSystemEncryption — same dead-JmpHook migration. The real bodies resolve a
-            // tenant RSA/KeyVault encryption provider (NavTenant.GetEncryptionKeyFileName →
-            // "The given database is not a tenant database" on the skeleton), hit by
-            // BaseApp CU1266/1279 IsEncryptionEnabled from SPBLIC's SetAppValue during
-            // the Pageworks install. Rewrite the four AL-facing statics onto the
-            // in-process AES envelope (real crypto — encrypted ≠ plaintext; key exists /
-            // encryption enabled are TRUE, matching an encryption-enabled BC tenant).
+            // ALSystemEncryption — same dead-JmpHook migration. Every one of these bodies
+            // resolves a tenant RSA/KeyVault encryption provider, and the provider's first
+            // act is to read NavTenant.GetEncryptionKeyFileName → NavDatabase.TenantProperties
+            // → "The given database is not a tenant database" on the skeleton. Rewrite the
+            // AL-facing statics onto TenantStoragePatches' key ledger + AES envelope.
+            // Only the DataError-carrying overloads are listed; ALCreateKey/0 and ALImportKey/2
+            // delegate to them in BC's own unmodified body.
+            //
+            // NOT carried over from the replaced bodies: the ApplicationObjectId(System, 5410/
+            // 5420) permission check, because the runner has no permission system (same reason
+            // NavSession.MaximizePermissions is a no-op here); and the RSA key FILE, because
+            // AL cannot observe key material — it sees KEYEXISTS/ENCRYPTIONENABLED, whether
+            // ENCRYPT/DECRYPT round-trips, and which exception a refusal raises, all of which
+            // the ledger answers from real state.
             var sysEncType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption");
             if (sysEncType != null)
             {
@@ -67,7 +74,11 @@ public static partial class NclCecilRewrite
                 RewriteEnc("ALDecrypt", 1, nameof(AlRunner.Patches.TenantStoragePatches.SysEnc_ALDecrypt));
                 RewriteEnc("ALKeyExists", 0, nameof(AlRunner.Patches.TenantStoragePatches.SysEnc_ALKeyExists));
                 RewriteEnc("ALEncryptionEnabled", 0, nameof(AlRunner.Patches.TenantStoragePatches.SysEnc_ALEncryptionEnabled));
-                Console.Error.WriteLine("[Cecil] Rewrote ALSystemEncryption.{ALEncrypt,ALDecrypt,ALKeyExists,ALEncryptionEnabled} → in-process AES envelope");
+                RewriteEnc("ALCreateKey", 1, nameof(AlRunner.Patches.TenantStoragePatches.SysEnc_ALCreateKey));
+                RewriteEnc("ALDeleteKey", 0, nameof(AlRunner.Patches.TenantStoragePatches.SysEnc_ALDeleteKey));
+                RewriteEnc("ALExportKey", 1, nameof(AlRunner.Patches.TenantStoragePatches.SysEnc_ALExportKey));
+                RewriteEnc("ALImportKey", 3, nameof(AlRunner.Patches.TenantStoragePatches.SysEnc_ALImportKey));
+                Console.Error.WriteLine("[Cecil] Rewrote ALSystemEncryption.{ALEncrypt,ALDecrypt,ALKeyExists,ALEncryptionEnabled,ALCreateKey,ALDeleteKey,ALExportKey,ALImportKey} → in-process key ledger + AES envelope");
             }
         }
 
@@ -1777,6 +1788,10 @@ public static partial class NclCecilRewrite
         set.Add("Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption::ALDecrypt/1");
         set.Add("Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption::ALKeyExists/0");
         set.Add("Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption::ALEncryptionEnabled/0");
+        set.Add("Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption::ALCreateKey/1");
+        set.Add("Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption::ALDeleteKey/0");
+        set.Add("Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption::ALExportKey/1");
+        set.Add("Microsoft.Dynamics.Nav.Runtime.ALSystemEncryption::ALImportKey/3");
         // ── Record / session / data-access path (Batch 6 — the LINCHPIN). ────────
         // Migrated ATOMICALLY so the whole path is single-mechanism (Cecil), killing
         // the JmpHook+Cecil coexistence spin. Each key's body is rewritten in the

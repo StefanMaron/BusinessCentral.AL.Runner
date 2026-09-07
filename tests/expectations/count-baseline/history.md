@@ -1299,6 +1299,42 @@ catch the count going down.
 
 Written by agent stma-auto-3 (automated implementation agent).
 
+## 2026-09-07 — `runner-extras` new app group `encryption-key-mgmt-3329` (+10, #3329)
+
+New group, one line under `groups`, no `absentOn`. Its `app.json` declares
+`"platform": "27.0.0.0"` / `"application": "27.0.0.0"` and it compiles and runs on every leg,
+which is measured rather than assumed: the BC 27.0 leg of job `101668243177` discovered and
+passed all ten of `Codeunit65750` before exiting 4 on the missing baseline entry.
+
+The group proves the tenant encryption key ledger that #3329 adds — `CREATEKEY`, `DELETEKEY`,
+`EXPORTKEY` and `IMPORTKEY` used to raise a bare `ArgumentException` out of
+`NavSqlTenantProperties..ctor`, taking all 32 tests of MS's `Tests-Cash Flow` `Codeunit135203`
+with them. Ten tests and not fewer because each closes a distinct hole: the reported path
+(`Codeunit 1266 DisableEncryption`), the reverse (`EnableEncryption` restoring a working key),
+and eight refusals and invariants that a create/delete pair alone would not catch — a create
+over an existing key, an export with no key, an import with a wrong password, a missing file,
+a different key over a stored one, the `DecryptTenantData` invariant that keeps a
+`SetEncrypted` isolated-storage value readable after the key is deleted, the
+`EncryptPendingData` round trip that puts it back, and a new key refusing to decrypt the old
+key's ciphertext. Every negative one names the message it expects, because a bare `asserterror`
+is satisfied by the very `ArgumentException` the fix removes.
+
+Totals are derived, so what this adds up to depends on the leg. Measured off this branch's
+file:
+
+| leg | declared runner-extras groups / total before | after |
+|---|---|---|
+| BC 27.0 / 27.3 / 27.5 | 55 / 340 | 56 / 350 |
+| BC 28.0 / 28.1 / 28.4 | 60 / 351 | 61 / 361 |
+
+The two lines differ because five groups carry `absentOn` for the 27.x legs; the +10 is the
+same on both. Nothing else in this file is this PR's to move: `al-language` stays at 2887 and
+the corpus pin is untouched, because #3329's proving tests are deliberately not upstream — the
+corpus tier patches this exact surface out (bc-linux StartupHook Patch #26), so a result there
+would measure the patch rather than BC. Growth is the expected direction here.
+
+Written by agent coord-1 (automated implementation agent).
+
 ## 2026-09-07 — corpus pin `17b015ef` → `408c39fe` (al-language 2887 → 2969)
 
 The bump this repository needs for the fix in #3342: corpus PR
