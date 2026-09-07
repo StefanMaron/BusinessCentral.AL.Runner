@@ -475,11 +475,15 @@ internal sealed partial class RunnerPageInstance
             catch (Exception ex)
             {
                 var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-                // stdout on purpose — see TryCreate's identical reasoning above.
+                // `[warn]` — see the tag note in TryCreate. Missed by the first sweep for #2461,
+                // and it kept the back-reference to the "stderr is not captured" reasoning that
+                // sweep deleted for being false. The host built this subpage itself and its AL
+                // may already have put state on the instance; rebuilding the part from scratch
+                // discards that, so the TestPage answers from an object the host is not using.
                 Console.Out.WriteLine(
-                    $"[RunnerPageInstance] part page {partPageId} (control {controlId}): could not reify "
-                    + $"the host's own subpage object ({inner.GetType().Name}: {inner.Message}); falling "
-                    + "back to a freshly constructed part page");
+                    $"[warn] RunnerPageInstance: part page {partPageId} (control {controlId}): could not reify "
+                    + $"the host's own subpage object ({inner.GetType().Name}: {inner.Message}); the part "
+                    + "falls back to a freshly constructed page, losing whatever state the host's own had");
                 if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
                     Console.Out.WriteLine(inner.StackTrace);
                 return null;

@@ -179,6 +179,16 @@ public sealed class TestPageDemotionIsAnnouncedTests
         { "AlRunner/Patches/RunnerPageInstance.cs", "its triggers stay unreachable" },
         { "AlRunner/Patches/RunnerPageInstance.cs", "no live base page " },
 
+        // AdoptFromHost — the part-page path, and the one the first sweep for this issue missed.
+        // The host built the subpage object itself and the runner could not reify it, so the part
+        // is rebuilt from scratch: the host's own live instance, with whatever state its AL had
+        // already put on it, is discarded. That is a demotion by the same definition as the rest
+        // of this table, and it was hidden the same way — plain `[RunnerPageInstance]` tag, and a
+        // "see TryCreate's identical reasoning above" pointing at reasoning this fix deleted for
+        // being false. Its ONLY sibling in this method — the AdoptFromHost tracing line ten lines
+        // up — is deliberately not here: that one is chatter, and it is the negative control below.
+        { "AlRunner/Patches/RunnerPageInstance.cs", "could not reify " },
+
         // The request-page equivalent: a report's request page whose form could not be adopted
         // resolves no control at all. Same shape, same filter, found by the same sweep.
         { "AlRunner/Patches/RequestPageTestPage.cs", "could not adopt the request-page form" },
