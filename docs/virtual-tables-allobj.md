@@ -47,13 +47,33 @@ string.Empty`, switches on the object type, and returns
 | Table, TableData | the `TableType` member name | `EnumHelper<TableType>.EnumToString(metaTable.TableType)` |
 | Page | the `PageType` member name | `EnumHelper<PageType>.EnumToString(metaForm.PageType)` |
 | Query | the `QueryType` member name | `EnumHelper<QueryType>.EnumToString(metaQuery.QueryType)` |
-| Codeunit | the `Subtype` member name, **or the empty string when it is `Normal`** | `subtype == CodeunitSubType.Normal ? string.Empty : EnumHelper<CodeunitSubType>.EnumToString(subtype)` |
+| Codeunit | the `Subtype` member name, **or the empty string when it is `Normal`** — and `Install` never reaches here as `Install` (below) | `subtype == CodeunitSubType.Normal ? string.Empty : EnumHelper<CodeunitSubType>.EnumToString(subtype)` |
 | PageExtension, TableExtension, EnumExtension, PermissionSetExtension, ReportExtension | the **target object's id**, as a decimal string | `appGroup.GetObjectSummary(...)?.Summary?.TargetObjectId.ToString(InvariantCulture)` |
 | Report, XmlPort, System, everything else | the empty string | no branch assigns `text` |
 
 `EnumHelper<T>.EnumToString` returns the enum member's own name (via `DefinedEnumToString`),
 falling back to the numeric value only for an undefined one — so the strings are spelled
 exactly as the AL property is spelled: `RoleCenter`, `Install`, `Temporary`, `CRM`.
+
+### Install is empty, for a reason one level upstream
+
+A codeunit declaring `Subtype = Install` reports the **empty string** here, and not because
+Install is blanked. The AL compiler does not carry Install into object metadata at all:
+`NCLMetaCodeunit.Subtype` returns the codeunit's `NavCodeunitOptionsAttribute` value — what
+the compiler *wrote*, not what the author declared — and for an Install codeunit that is
+`Normal`. `GetCaptionAndSubtype` therefore sees `Normal` and blanks it, so the value lands
+on the empty string by two steps rather than one.
+
+Both of the runner's row sources carry the *declared* property (the AL parser reads
+`Subtype = Install;` from source; `BcAppSymbolCache` reads `"Subtype": "Install"` from
+`SymbolReference.json`), so the translation happens in `ObjectSubtypeTextFor` — the same
+constant, in the same position, as `ResolveCodeunitSubtypeOrdinal` does it for CodeUnit
+Metadata's own `SubType` column. The measurement behind that constant, over 1,690 Base
+Application codeunits, is on `AlSubtypeTheCompilerDoesNotEmit`.
+
+Adjudicated directly: the first version of the upstream test asserted `'Install'`, and BC
+27.0, 27.3, 27.5, 28.2 and 28.3 each answered the empty string — while the other seven
+tests in the same prefix passed on every one of those legs.
 
 ### The Normal asymmetry
 
@@ -76,6 +96,9 @@ reports cannot drift:
 | Page | `ParsedPage.PageType` (Page Metadata's `PageType`) | `BcAppSymbolCache.PageSymbol.PageType` |
 | Query | `ParsedQuery.QueryType` | `BcAppSymbolCache.QuerySymbol.QueryType` |
 | Codeunit | `ParsedAlObjectDecl.Subtype` (CodeUnit Metadata's `Subtype`) | `BcAppSymbolCache.ObjectSymbol.Subtype` |
+
+Both codeunit sources state the *declared* property, so `ObjectSubtypeTextFor` applies the
+`Install` → `Normal` translation before the blanking test — see above.
 
 A `null` from any of those means "declares none", which the AL defaults turn into `Normal`
 for a table or query and into the empty string for a codeunit — matching BC.

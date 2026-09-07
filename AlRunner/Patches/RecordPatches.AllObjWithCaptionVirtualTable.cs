@@ -182,6 +182,21 @@ public static partial class RecordPatches
     /// two directions at once, and the upstream corpus asserts both halves side by side
     /// (codeunit 60802, BusinessCentral.AL.Language.Tests).</para>
     ///
+    /// <para>A codeunit declaring <c>Subtype = Install</c> also lands on the empty string,
+    /// and NOT because Install is blanked. The AL compiler does not carry Install into
+    /// object metadata at all — <c>NCLMetaCodeunit.Subtype</c> reads the codeunit's
+    /// <c>NavCodeunitOptionsAttribute</c>, which is what the compiler wrote, and for an
+    /// Install codeunit that is <c>Normal</c>. So BC's provider sees Normal here and blanks
+    /// it. Both row sources hand this method the DECLARED property, so the translation has
+    /// to happen here, exactly as CodeUnit Metadata does it in
+    /// <see cref="ResolveCodeunitSubtypeOrdinal"/> — same constant, same reason, and the
+    /// measurement behind it is on <see cref="AlSubtypeTheCompilerDoesNotEmit"/>.</para>
+    ///
+    /// <para>Five BC legs adjudicated this directly: the first version of the upstream test
+    /// asserted <c>'Install'</c> and 27.0/27.3/27.5/28.2/28.3 each answered the empty
+    /// string, while the other seven tests in the same prefix passed on every one of
+    /// them.</para>
+    ///
     /// <para>NOT covered here, and deliberately: the five *extension kinds
     /// (PageExtension / TableExtension / EnumExtension / PermissionSetExtension /
     /// ReportExtension), whose subtype on a real tier is the TARGET OBJECT'S ID rendered as
@@ -194,13 +209,20 @@ public static partial class RecordPatches
     internal static string ObjectSubtypeTextFor(string kind, string? subtype)
     {
         if (string.IsNullOrEmpty(subtype)) return string.Empty;
+        if (NormalizeObjectTypeName(kind) != "codeunit") return subtype;
+
+        // What the COMPILER wrote, not what the author declared — the same translation, in
+        // the same position, as ResolveCodeunitSubtypeOrdinal. Install collapses to Normal
+        // before the blanking test, so it cannot survive it.
+        var effective =
+            string.Equals(subtype, AlSubtypeTheCompilerDoesNotEmit, StringComparison.OrdinalIgnoreCase)
+                ? AlDefaultCodeunitSubtype
+                : subtype;
 
         // The one kind BC blanks when the subtype is its enum's default.
-        if (NormalizeObjectTypeName(kind) == "codeunit"
-            && string.Equals(subtype, "Normal", StringComparison.OrdinalIgnoreCase))
-            return string.Empty;
-
-        return subtype;
+        return string.Equals(effective, AlDefaultCodeunitSubtype, StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : effective;
     }
 
     private static Dictionary<string, int>? _awcObjectTypeOrdinals;

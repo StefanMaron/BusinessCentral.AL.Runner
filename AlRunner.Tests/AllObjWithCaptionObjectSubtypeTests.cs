@@ -13,7 +13,9 @@
 //   later tidy-up would most plausibly remove. BC blanks a Normal subtype for a CODEUNIT
 //   only; a table or a query whose type is Normal reports the word. An edit that
 //   "simplified" that into one uniform rule would be wrong in two directions at once, and
-//   the corpus tests only notice once the pin has been bumped.
+//   the corpus tests only notice once the pin has been bumped. The second asymmetry is
+//   Install, which is empty for a reason one level upstream of this table — see
+//   CodeunitWithInstallSubtype_IsEmpty_BecauseTheCompilerWritesNormal.
 //
 //   Source of the rule: Microsoft.Dynamics.Nav.Runtime.AllObjWithCaptionDataProvider
 //   .GetCaptionAndSubtype, decompiled from Microsoft.Dynamics.Nav.Ncl.dll on BC 28.1. The
@@ -51,6 +53,40 @@ public class AllObjWithCaptionObjectSubtypeTests
     }
 
     // ----------------------------------------------------------------------------------
+    // Install: empty, and NOT because Install is blanked.
+    //
+    // The AL compiler does not carry Install into object metadata — NCLMetaCodeunit.Subtype
+    // reads the codeunit's NavCodeunitOptionsAttribute, which is what the compiler WROTE,
+    // and for an Install codeunit that is Normal. BC's provider therefore sees Normal here
+    // and blanks it, so the value lands on the empty string by two steps.
+    //
+    // Five BC legs adjudicated this directly. The first version of the upstream test
+    // asserted 'Install'; 27.0, 27.3, 27.5, 28.2 and 28.3 each answered the empty string,
+    // while the other seven tests in the same prefix passed on every one of them. Same
+    // constant and same reason as ResolveCodeunitSubtypeOrdinal, whose own measurement
+    // (1,690 Base Application codeunits, not one carrying a 4) is on
+    // AlSubtypeTheCompilerDoesNotEmit.
+    // ----------------------------------------------------------------------------------
+
+    [Fact]
+    public void CodeunitWithInstallSubtype_IsEmpty_BecauseTheCompilerWritesNormal()
+    {
+        Assert.Equal(string.Empty, RecordPatches.ObjectSubtypeTextFor("Codeunit", "Install"));
+        Assert.Equal(string.Empty, RecordPatches.ObjectSubtypeTextFor("Codeunit", "install"));
+    }
+
+    [Fact]
+    public void InstallCollapse_IsCodeunitOnly()
+    {
+        // The collapse belongs to the codeunit branch. "Install" is not a member of
+        // TableType, PageType or QueryType, so no real object reaches these — but a
+        // translation written above the kind test rather than inside it would blank them,
+        // and nothing else in this file would notice.
+        Assert.Equal("Install", RecordPatches.ObjectSubtypeTextFor("Page", "Install"));
+        Assert.Equal("Install", RecordPatches.ObjectSubtypeTextFor("Table", "Install"));
+    }
+
+    // ----------------------------------------------------------------------------------
     // The ordinary direction: a declared subtype is carried through verbatim, for every
     // kind that has one. Distinct values per kind, so a constant-returning implementation
     // fails.
@@ -60,9 +96,9 @@ public class AllObjWithCaptionObjectSubtypeTests
     [InlineData("Page", "RoleCenter")]
     [InlineData("Page", "Card")]
     [InlineData("Page", "List")]
-    [InlineData("Codeunit", "Install")]
     [InlineData("Codeunit", "Test")]
     [InlineData("Codeunit", "Upgrade")]
+    [InlineData("Codeunit", "TestRunner")]
     [InlineData("Table", "CRM")]
     [InlineData("Table", "Temporary")]
     [InlineData("Query", "API")]
@@ -104,9 +140,9 @@ public class AllObjWithCaptionObjectSubtypeTests
     public void CodeunitKindMatch_IsSpellingInsensitive(string kind)
     {
         Assert.Equal(string.Empty, RecordPatches.ObjectSubtypeTextFor(kind, "Normal"));
-        // ...and a non-Normal subtype still comes through under the same spellings, so the
-        // match is not simply blanking everything it recognises.
-        Assert.Equal("Install", RecordPatches.ObjectSubtypeTextFor(kind, "Install"));
+        // ...and a subtype the compiler DOES carry still comes through under the same
+        // spellings, so the match is not simply blanking everything it recognises.
+        Assert.Equal("Test", RecordPatches.ObjectSubtypeTextFor(kind, "Test"));
     }
 
     [Fact]
