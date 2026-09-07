@@ -1,0 +1,18 @@
+[
+  {
+    "codeunitId": 60368,
+    "CodeunitName": "Test Integer Virtual Table",
+    "Method": "Record_Integer_RangeFarAboveAnySeededWindow_YieldsTheWholeRange",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3438",
+    "Note": "Pulled in by this PR's pin advance to 8678dc2, NOT caused by it: corpus history is linear, so #263 cannot be taken without #265 (98eec27), which added this test. The Integer virtual table is materialised over [-1000..100000] while real BC serves [-1000000000..1000000000], so Number = 250000 is an ordinary row the runner cannot reach. Since #3393 the request is refused loudly rather than truncated silently, which is what closed #2350; #3438 tracks the remaining reach and stays open after this PR merges. Its fix removes this entry."
+  },
+  {
+    "codeunitId": 60368,
+    "CodeunitName": "Test Integer Virtual Table",
+    "Method": "Record_Integer_RangeFarBelowZero_YieldsTheWholeRange",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3438",
+    "Note": "Pulled in by this PR's pin advance to 8678dc2, NOT caused by it: corpus history is linear, so #263 cannot be taken without #265 (98eec27), which added this test. The same gap as the row above, in the other direction -- Number = -250000 is below the materialised window's lower bound. #3438 stays open after this PR merges; its fix removes this entry."
+  }
+]
