@@ -75,10 +75,25 @@ worktrees are recycled. Nothing that lives inside the file can fix a copy of the
 file that is older than the fix -- only the invocation rule in
 `.claude/rules/ci-verdicts.md` covers those.
 
-A copy moved outside a git repository is UNKNOWN, and answers with a loud note
-rather than refusing. That is deliberate: the remedy this module prints is to run
-`origin/main`'s copy out of a temp directory, and a remedy that refuses itself is
-not a remedy.
+The two unknowns (#3296)
+------------------------
+"Could not establish" is not one situation, and resolving all of it toward an
+answer is how a guard reaches a verdict with its own safety check skipped. What
+separates them is whether anything OUTSIDE git vouches for the running code:
+
+  detached   the file is not in a git repository. The caller extracted it and
+             put it there -- that is the remedy this module prints, and a remedy
+             that refuses itself is not a remedy. Provenance is the caller's act.
+  identical  no merge base (shallow clone), but the file is byte-identical to
+             origin/main's blob. Identity is provenance; the history is beside
+             the point once the bytes match.
+  unvouched  everything else. Tracked in a repository with no origin/main;
+             untracked inside one; differing from origin/main with no merge base
+             to judge by. Nothing here says the copy is current, and its age is
+             unknowable from git -- so there is no answer to give.
+
+Only "unvouched" refuses. That keeps the temp-directory recipe working, which
+matters because it is the ONLY route open to a copy older than this check.
 """
 from __future__ import annotations
 
@@ -105,9 +120,21 @@ class Freshness:
                  has not incorporated. REFUSE: the running code is known to be
                  behind a published change to itself.
       "new"      the file does not exist on origin/main at all. Not refused.
-      "unknown"  could not be established -- outside a git repository, no
-                 origin/main ref, git missing, a shallow clone with no merge
-                 base. Not refused; said out loud.
+      "unknown"  could not be established. Whether that refuses depends on
+                 `provenance` below -- see the module docstring.
+
+    provenance: only meaningful when state is "unknown". Which of the two
+    unknowns this is: whether anything outside git vouches for the running code.
+      "detached"   the file is not inside a git repository at all, so the caller
+                   put it where it is. That is the documented extract-to-/tmp
+                   recipe, whose provenance IS the guarantee. NOT refused.
+      "identical"  no merge base (shallow clone), but the file is byte-identical
+                   to origin/main's blob. That identity is the guarantee. NOT
+                   refused.
+      "unvouched"  nothing vouches for it: tracked in a repository with no
+                   origin/main, untracked inside one, or differing from
+                   origin/main with no merge base to judge by. REFUSED.
+      "n/a"        state is not "unknown".
 
     base_confirmed:
       "confirmed"          the local origin/main ref matches the remote's main.
@@ -122,6 +149,7 @@ class Freshness:
     refuse: bool
     notes: list[str] = field(default_factory=list)
     base_confirmed: str = "skipped"
+    provenance: str = "n/a"
     local_blob: str | None = None
     base_blob: str | None = None
 
@@ -178,6 +206,33 @@ def _remedy(relpath: str) -> str:
             "  or work from a checkout that is up to date with origin/main.")
 
 
+def _detached(path: str, directory: str) -> Freshness:
+    """Outside a repository: the caller's own extraction is the provenance.
+
+    This is the one unknown that answers. See the module docstring; the note is
+    loud because the guarantee rests entirely on the caller having followed the
+    documented recipe, and nobody but the caller can check that.
+    """
+    return Freshness("unknown", False, [
+        f"note: {os.path.basename(path)} is not inside a git repository "
+        f"({directory}), so its freshness cannot be checked here. Answering on "
+        "the caller's PROVENANCE: this is the documented recipe of extracting "
+        "origin/main's copy to a temp directory, and that extraction is the "
+        "guarantee. If you did NOT just extract it from origin/main, this answer "
+        "is not vouched for by anything."], provenance="detached")
+
+
+def _unvouched(note: str, path: str, relpath: str | None = None) -> Freshness:
+    """Nothing vouches for this copy, so there is no answer to give (#3296).
+
+    Refusing rather than noting is the whole point: a note next to a verdict is
+    read as a caveat on a result, and the result is what the caller acts on.
+    """
+    return Freshness("unknown", True,
+                     [note, _remedy(relpath or f"tools/{os.path.basename(path)}")],
+                     provenance="unvouched")
+
+
 def assess(path: str, *, remote_check: bool = True, remote: str = "origin",
            branch: str = "main", runner=None, timeout: int = 20) -> Freshness:
     """Whether the copy of `path` on disk is behind origin/<branch> on that file.
@@ -197,26 +252,42 @@ def assess(path: str, *, remote_check: bool = True, remote: str = "origin",
 
     path = os.path.abspath(path)
     directory = os.path.dirname(path)
-    rc, root, _ = _git(runner, None, "-C", directory, "rev-parse", "--show-toplevel")
+    rc, root, err = _git(runner, None, "-C", directory, "rev-parse", "--show-toplevel")
     if rc != 0 or not root:
-        return Freshness("unknown", False, [
-            f"note: could not establish whether {os.path.basename(path)} is current -- "
-            f"{directory} is not inside a git repository (or git is unavailable). "
-            "Answering anyway; nothing here has checked that this copy of the tool "
-            "carries the latest fixes."])
+        # "Not a repository" and "git is not installed" used to share this branch
+        # and its answer. They are opposite facts: the first is the documented
+        # extract-to-/tmp recipe, whose provenance is the caller's own act; the
+        # second means the check could not run at all, which vouches for nothing.
+        # git says "not a git repository" on stderr; _default_runner puts the
+        # OSError text there when the binary is missing.
+        if "not a git repository" in err.lower():
+            return _detached(path, directory)
+        return _unvouched(
+            f"note: REFUSING to vouch for {os.path.basename(path)} -- git could not "
+            f"be run to check it ({err[:120]}). Nothing here has established that "
+            "this copy carries the latest fixes.", path)
 
     rc, relpath, _ = _git(runner, root, "ls-files", "--full-name", "--", path)
     relpath = relpath.splitlines()[0].strip() if relpath else ""
     if rc != 0 or not relpath:
-        return Freshness("unknown", False, [
-            f"note: could not establish whether {os.path.basename(path)} is current -- "
-            f"it is not a tracked file in {root}. Answering anyway."])
+        # Inside a repository but untracked. Not the temp-directory recipe (that
+        # lands OUTSIDE a repository), and being untracked is exactly what makes
+        # the file's age unknowable from git.
+        return _unvouched(
+            f"note: REFUSING to vouch for {os.path.basename(path)} -- it is not a "
+            f"tracked file in {root}, so git can say nothing about its age. If you "
+            "meant the extract-to-a-temp-directory recipe, extract to a directory "
+            "that is not inside a repository.", path)
 
     base = _rev(runner, root, ref)
     if not base:
-        return Freshness("unknown", False, [
-            f"note: could not establish whether {relpath} is current -- this "
-            f"repository has no {ref}. Answering anyway."])
+        # A real repository with the file tracked in it, and no origin/main to
+        # compare against. The content can be arbitrarily old and nothing in
+        # reach says otherwise -- this is the case #3296 was filed about.
+        return _unvouched(
+            f"note: REFUSING to vouch for {relpath} -- this repository has no {ref} "
+            "to compare against, so nothing has established that this copy carries "
+            "the latest fixes.", path, relpath=relpath)
 
     notes: list[str] = []
     result = _evaluate(runner, root, relpath, base, notes)
@@ -277,17 +348,29 @@ def _evaluate(runner, root: str, relpath: str, base: str, notes: list[str]) -> F
 
     rc, mb, _ = _git(runner, root, "merge-base", "HEAD", base)
     if rc != 0 or not mb:
-        # No merge base (shallow clone, unrelated history): fall back to comparing
-        # the working file itself. Weaker -- it cannot tell a legitimate local edit
-        # from staleness -- so it only NOTES, it does not refuse.
-        if local_blob and local_blob != base_blob:
+        # No merge base (shallow clone, unrelated history), so the branch-point
+        # comparison is unavailable. origin/main IS resolvable here, though, so
+        # the file can be compared to it directly -- and that splits the case in
+        # two rather than leaving it one blanket unknown (#3296).
+        if local_blob and local_blob == base_blob:
+            # Byte-identical to origin/main's copy. The history is beside the
+            # point once the bytes match: this IS the published version.
             notes.append(
-                f"note: could not establish whether {relpath} is current -- no merge "
-                f"base with origin/main (shallow clone?). The file differs from "
-                "origin/main's copy, which may be a local edit or may be staleness. "
-                "Answering anyway.")
-        return Freshness("unknown", False, base_confirmed="skipped",
-                         local_blob=local_blob, base_blob=base_blob)
+                f"note: no merge base with origin/main for {relpath} (shallow "
+                "clone?), but the file is byte-identical to origin/main's copy, "
+                "which is what the check would have established anyway. Answering.")
+            return Freshness("unknown", False, base_confirmed="skipped",
+                             local_blob=local_blob, base_blob=base_blob,
+                             provenance="identical")
+        notes.append(
+            f"note: REFUSING to vouch for {relpath} -- no merge base with "
+            "origin/main (shallow clone?), and the file differs from origin/main's "
+            "copy. That may be a local edit or may be staleness, and without a "
+            "merge base there is nothing here that can tell them apart.")
+        notes.append(_remedy(relpath))
+        return Freshness("unknown", True, base_confirmed="skipped",
+                         local_blob=local_blob, base_blob=base_blob,
+                         provenance="unvouched")
 
     mb_blob = _rev(runner, root, f"{mb}:{relpath}")
 
