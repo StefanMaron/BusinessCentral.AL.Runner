@@ -11,6 +11,7 @@ Run: python3 tools/test_ci_wait.py
 from __future__ import annotations
 
 import importlib.util
+import io
 import os
 import sys
 
@@ -1090,6 +1091,262 @@ check("the module docstring does not carry the falsified claim either",
       "no failure log" not in (cw.__doc__ or ""), (cw.__doc__ or "")[:0])
 check("...and defers to the rule file as the normative statement",
       "ci-verdicts.md" in (cw.__doc__ or ""), "")
+
+# ---------------------------------------------------------------------------
+# #3294: a check run can report status=in_progress WITH conclusion=success and a
+# completed_at. Observed on PR #3234 head, from the check-runs API:
+#
+#   name=PR body closing references must be correct, both directions
+#   id=101566184213  status=in_progress  conclusion=success
+#   completed_at=2026-09-06T22:01:46Z
+#
+# `gh pr view --json statusCheckRollup` rendered that same entry as plain
+# SUCCESS, so the ruleset was satisfied and the merge was available -- while
+# this tool, counting progress on `status == "completed"`, printed
+# "12/13 complete, 0 failing" across four calls over ~40 minutes and never
+# reached a verdict. A conclusion is GitHub's word that the run finished; the
+# status field is not load-bearing once it exists.
+# ---------------------------------------------------------------------------
+STUCK = {"status": "in_progress", "completed_at": "2026-09-06T22:01:46Z"}
+
+
+def stuck(name, conclusion="success", cid=None):
+    r = run(name, conclusion, status="in_progress", cid=cid)
+    r["completed_at"] = "2026-09-06T22:01:46Z"
+    return r
+
+
+_VICTIM = "PR body closing references must be correct, both directions"
+assert _VICTIM in cw.RULESET_CONTEXTS
+
+runs = [r for r in green_set() if r["name"] != _VICTIM]
+runs.append(stuck(_VICTIM))
+v = cw.classify(runs)
+check("a check run with conclusion=success but status=in_progress reaches a VERDICT",
+      v.code is not None, f"(code={v.code}) progress={v.progress}")
+check("...and that verdict is GREEN, matching what the ruleset reads",
+      v.code == 0, f"(code={v.code}) {v.lines}")
+check("...and it is counted as complete, not left outstanding",
+      v.progress is None or "/" not in (v.progress or "") or
+      v.progress.split("/")[0] == v.progress.split("/")[1].split()[0],
+      f"progress={v.progress}")
+
+# The same shape carrying a FAILING conclusion must not be swallowed either --
+# before the fix it was invisible in both directions, and a required failure
+# that never reports is the more dangerous half.
+runs = [r for r in green_set() if r["name"] != _VICTIM]
+runs.append(stuck(_VICTIM, "failure"))
+v = cw.classify(runs)
+check("a stuck check run concluding FAILURE is reported as a failure",
+      v.code == 1, f"(code={v.code}) {v.lines}")
+check("...and names the context that failed",
+      any(_VICTIM in l for l in v.lines), v.lines)
+
+# NEGATIVE, and the guard that must not be weakened: a genuinely in-flight run
+# has NO conclusion, and must still be pending. If this ever goes green the fix
+# has turned "waiting" into "passed", which is the one direction a verdict may
+# never go.
+runs = [r for r in green_set() if r["name"] != _VICTIM]
+runs.append(run(_VICTIM, None, status="in_progress"))
+v = cw.classify(runs)
+check("a genuinely in-flight run (no conclusion) is still NOT a verdict",
+      v.code is None, f"(code={v.code})")
+runs = [r for r in green_set() if r["name"] != _VICTIM]
+runs.append(run(_VICTIM, None, status="queued"))
+v = cw.classify(runs)
+check("a queued run with no conclusion is still NOT a verdict",
+      v.code is None, f"(code={v.code})")
+
+# --- the progress line must NAME what it is waiting on (#3294). "12/13" says
+# --- how many but never which, and that is what turned a one-line diagnosis
+# --- into a 40-minute one.
+runs = [r for r in green_set() if r["name"] != _VICTIM]
+runs.append(run(_VICTIM, None, status="in_progress"))
+v = cw.classify(runs)
+check("the progress line names the context still outstanding",
+      v.progress is not None and _VICTIM in v.progress, f"progress={v.progress}")
+check("...and still reports the count",
+      v.progress is not None and "complete" in v.progress, f"progress={v.progress}")
+
+# --- the same assumption, one level down: WORKFLOW runs are read with the same
+# --- status test in three more places, and a workflow run stuck the same way
+# --- wedges the poll just as thoroughly (superseding_runs / supersession /
+# --- rollup_is_final all treat "not completed" as "can still overturn this").
+check("rollup_is_final: a workflow run with a conclusion counts as finished",
+      cw.rollup_is_final([{"id": 1, "name": "Test Matrix", "status": "in_progress",
+                           "conclusion": "success"}]) is True, "")
+check("rollup_is_final: one with NO conclusion is still unfinished",
+      cw.rollup_is_final([{"id": 1, "name": "Test Matrix", "status": "in_progress",
+                           "conclusion": None}]) is False, "")
+
+# Run 41 produced the check run being judged and has finished; run 42 is the
+# newer run of the SAME workflow that carries the stuck shape. Both are listed,
+# so supersession() can resolve the owner by id -- without run 41 present the
+# lookup falls out early and the assertion below would pass vacuously.
+_wf_stuck = [{"id": 41, "name": "PR Check", "status": "completed",
+              "conclusion": "success"},
+             {"id": 42, "name": "PR Check", "status": "in_progress",
+              "conclusion": "success"}]
+_newest = {_VICTIM: {"name": _VICTIM, "status": "completed", "conclusion": "success",
+                     "id": 7, "details_url": "https://x/actions/runs/41/job/7"}}
+check("superseding_runs: a concluded-but-in_progress workflow run supersedes nothing",
+      cw.superseding_runs(_newest, cw.RULESET_CONTEXTS, _wf_stuck) == [],
+      str(cw.superseding_runs(_newest, cw.RULESET_CONTEXTS, _wf_stuck)))
+_sup, _killed = cw.supersession(_newest, _wf_stuck)
+check("supersession: it is not treated as a pending run of the same workflow",
+      _sup == set(), f"superseded={_sup}")
+
+# ...and the negative for both: with no conclusion it IS still pending, so the
+# in-flight guards keep working.
+_wf_live = [{"id": 41, "name": "PR Check", "status": "completed", "conclusion": "success"},
+            {"id": 42, "name": "PR Check", "status": "in_progress", "conclusion": None}]
+_sup_live, _ = cw.supersession(_newest, _wf_live)
+check("supersession: a genuinely pending newer run still supersedes",
+      _sup_live == {_VICTIM}, f"superseded={_sup_live}")
+check("superseding_runs: a genuinely pending newer run still supersedes",
+      cw.superseding_runs(_newest, (_VICTIM,), _wf_live) == [(_VICTIM, 42)],
+      str(cw.superseding_runs(_newest, (_VICTIM,), _wf_live)))
+
+
+# ---------------------------------------------------------------------------
+# #3295: the staleness guard must REFUSE, not answer, when it cannot run.
+#
+# `tools/agent_self_freshness.py` is what stops a stale copy of this file
+# printing a false GREEN -- measured in .claude/rules/ci-verdicts.md, 71 of the
+# 99 copies of ci-wait.py on one box were not origin/main's, and replaying a
+# recorded rollup through them 59 printed a false GREEN. When that helper cannot
+# be imported the guard used to print a note and answer anyway, so the one
+# condition under which the copy is MOST likely to be unusual -- running from a
+# path with no tools/ beside it -- was exactly the condition under which nothing
+# checked it. And the note went to stdout next to the verdict, so a caller
+# reading only the exit code never saw it.
+#
+# The claim proved here is behavioural, not textual: with the helper missing,
+# main() returns 3 and asks GitHub NOTHING.
+# ---------------------------------------------------------------------------
+import contextlib
+
+
+class _ReachedGitHub(Exception):
+    """Raised by the head_sha stub -- proves the gate let the run through."""
+
+
+@contextlib.contextmanager
+def _main_with(freshness, argv=("ci-wait.py", "3234")):
+    """Run cw.main() with a stubbed freshness module and no network."""
+    old_f, old_h, old_argv = cw._freshness, cw.head_sha, sys.argv
+    cw._freshness = freshness
+
+    def _boom(pr):
+        raise _ReachedGitHub(pr)
+
+    cw.head_sha = _boom
+    sys.argv = list(argv)
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            yield buf
+    finally:
+        cw._freshness, cw.head_sha, sys.argv = old_f, old_h, old_argv
+
+
+_reached = False
+_code = None
+with _main_with(None) as _buf:
+    try:
+        _code = cw.main()
+    except _ReachedGitHub:
+        _reached = True
+_out = _buf.getvalue()
+
+check("an unimportable freshness helper REFUSES rather than answering",
+      _code == 3, f"(code={_code}) {_out}")
+check("...and nothing is asked of GitHub before refusing", not _reached, "")
+check("...and it no longer says it is answering anyway",
+      "Answering anyway" not in _out, _out)
+check("...and says which check could not be run",
+      "agent_self_freshness" in _out, _out)
+
+
+class _FreshStub:
+    """Stands in for a freshness helper that reports this copy is current."""
+    __file__ = os.path.join(HERE, "agent_self_freshness.py")
+
+    class _R:
+        notes: list[str] = []
+        refuse = False
+
+    @staticmethod
+    def assess(target, remote_check=False):
+        return _FreshStub._R()
+
+
+_reached = False
+_code = None
+with _main_with(_FreshStub()) as _buf:
+    try:
+        _code = cw.main()
+    except _ReachedGitHub:
+        _reached = True
+
+check("a normal run is unaffected -- a fresh copy still proceeds to GitHub",
+      _reached and _code is None, f"(code={_code}, reached={_reached})")
+
+
+class _StaleStub(_FreshStub):
+    class _R:
+        notes = ["note: this copy is behind origin/main"]
+        refuse = True
+
+    @staticmethod
+    def assess(target, remote_check=False):
+        return _StaleStub._R()
+
+
+_reached = False
+_code = None
+with _main_with(_StaleStub()) as _buf:
+    try:
+        _code = cw.main()
+    except _ReachedGitHub:
+        _reached = True
+check("a stale copy is still refused with exit 3 (the #3020 guard is intact)",
+      _code == 3 and not _reached, f"(code={_code}, reached={_reached})")
+
+# End to end, the exact invocation .claude/rules/ci-verdicts.md used to
+# recommend: a copy of this file alone in a directory with no tools/ beside it.
+# PATH is emptied so that any attempt to shell out to `gh` fails loudly instead
+# of quietly succeeding -- exit 3 here therefore also proves no GitHub call.
+import shutil
+import subprocess
+import tempfile
+
+with tempfile.TemporaryDirectory() as _td:
+    _lone = os.path.join(_td, "ci-wait.py")
+    shutil.copy(os.path.join(HERE, "ci-wait.py"), _lone)
+    _env = dict(os.environ, PATH=_td)
+    _p = subprocess.run([sys.executable, _lone, "3234"], capture_output=True,
+                        text=True, env=_env, timeout=120)
+    check("a lone copy in a scratch directory exits 3 rather than judging a PR",
+          _p.returncode == 3, f"(rc={_p.returncode}) {_p.stdout}{_p.stderr}")
+    check("...and never reports a verdict",
+          "GREEN" not in _p.stdout and "all " not in _p.stdout,
+          _p.stdout)
+
+# The rule file may not keep recommending an invocation that now refuses. This
+# is an INVARIANT, not a blocklist of the two spellings that were wrong on the
+# day: any shell block that extracts ci-wait.py out of origin/main must extract
+# agent_self_freshness.py too, or it hands the reader a copy that exits 3.
+_rule = os.path.join(HERE, os.pardir, ".claude", "rules", "ci-verdicts.md")
+_rule_text = open(_rule).read() if os.path.exists(_rule) else ""
+_blocks = _rule_text.split("```")[1::2]  # the fenced blocks only
+_extracting = [b for b in _blocks if "tools/ci-wait.py" in b and "git show" in b]
+check("ci-verdicts.md still shows how to run origin/main's copy",
+      len(_extracting) >= 1, f"{len(_extracting)} extraction block(s)")
+check("...and every such recipe extracts the freshness helper alongside it",
+      all("agent_self_freshness.py" in b for b in _extracting),
+      "\n---\n".join(b for b in _extracting if "agent_self_freshness.py" not in b))
+
 
 print()
 if FAILURES:
