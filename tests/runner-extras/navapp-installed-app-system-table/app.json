@@ -1,0 +1,24 @@
+{
+  "id": "3d7c1e58-9a26-4b0f-8c41-6e5b2a9d7f04",
+  "name": "Runner Extras - NAV App Installed App System Table",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2961: NAV App Installed App (2000000153) is the tenant-database registry of installed apps. The runner has no install step, so the table was empty and every read answered nothing. This suite pins the runner's side: rows exist for the apps the runner loaded, this bundle is among them, and the identity columns discriminate between apps.",
+  "description": "What the table CONTAINS on a real tier is plain BC behaviour and is adjudicated upstream in the corpus (BusinessCentral.AL.Language.Tests). Unlike Published Application (2000000206), which is Scope = OnPrem and needed the corpus's OnPrem-target app, 2000000153 is Scope = Cloud, so the upstream test lives in the main Cloud corpus app. What stays HERE is only what the RUNNER does for a bundle that is not the corpus app: that rows exist at all with nothing installed, that this bundle's own manifest identity is among them, and that App ID and Package ID discriminate BETWEEN apps rather than every row sharing a default.",
+  "dependencies": [
+    {
+      "id": "5f2a9c74-1b83-4e07-9d62-8a4c3e015b9f",
+      "name": "NavAppInstalledApp Dep",
+      "publisher": "AL Runner",
+      "version": "9.7.5.3"
+    }
+  ],
+  "idRanges": [
+    {
+      "from": 65760,
+      "to": 65769
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0"
+}
