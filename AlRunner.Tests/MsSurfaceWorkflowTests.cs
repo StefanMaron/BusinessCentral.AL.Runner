@@ -283,6 +283,7 @@ public sealed class MsSurfaceWorkflowTests
                      "--package-cache", "READER_TAG", "--test-data-company",
                      "CRONUS International Ltd_", "AL_RUNNER_EMIT_TIMEOUT_SEC",
                      "provision-bc", "al-runner", "--test-timeout",
+                     "--test-data-normalize-company",
                  })
             Assert.DoesNotContain(owned, code, StringComparison.Ordinal);
     }
@@ -310,6 +311,31 @@ public sealed class MsSurfaceWorkflowTests
         Assert.Single(surface);
         Assert.NotEmpty(bucket);
         Assert.Equal(bucket.Distinct(StringComparer.Ordinal).Single(), surface[0]);
+    }
+
+    /// <summary>
+    /// #3450: the surface is where the prepared-company comparison gets run, so it needs the
+    /// knob — passed THROUGH, at the same default, for the same two reasons the timeout is.
+    ///
+    /// The default is asserted to be <c>false</c> by name here rather than only "equal to
+    /// ms-bucket.yml's". Equality alone would survive both files being flipped to <c>true</c>
+    /// together, and that is the change that silently invalidates every number this repository
+    /// has recorded: the skill's 259/595 for Tests-SMB, #3416's corpus counts, and the
+    /// full-surface runs were all measured against the un-normalized restore. Turning it on is
+    /// a dispatch-time decision, never a default.
+    /// </summary>
+    [Fact]
+    public void SurfaceWorkflow_PassesCompanyNormalizationThrough_AtTheSameDefault_Off()
+    {
+        Assert.Contains("normalize-company: ${{ inputs.normalize-company }}",
+            CodeOnly(Read(SurfaceWorkflow)), StringComparison.Ordinal);
+
+        var surface = WorkflowInputDefaults.Of(Read(SurfaceWorkflow), "normalize-company");
+        var bucket = WorkflowInputDefaults.Of(Read(BucketWorkflow), "normalize-company");
+
+        Assert.Equal("false", Assert.Single(surface));
+        Assert.NotEmpty(bucket);
+        Assert.Equal("false", bucket.Distinct(StringComparer.Ordinal).Single());
     }
 
     // ---- what the surface needs from ms-bucket.yml -------------------------------------

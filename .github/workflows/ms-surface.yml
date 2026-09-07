@@ -82,6 +82,15 @@ on:
         type: number
         required: false
         default: 300
+      normalize-company:
+        description: >-
+          Prepare the restored company the way Microsoft prepares its own, handed down to
+          ms-bucket.yml, which puts the switch on the runner's command line (#2730). OFF is
+          the surface as every recorded number measured it; ON is the second number the
+          comparison needs. Must match ms-bucket.yml's default.
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -105,6 +114,7 @@ jobs:
       bc-version: ${{ inputs.bc-version }}
       test-data: ${{ inputs.test-data }}
       test-timeout: ${{ inputs.test-timeout }}
+      normalize-company: ${{ inputs.normalize-company }}
       # Tests-ERM (9,496) and Tests-SCM (8,524) lead deliberately: 44% of the 40,530 between
       # them, measured on the 28.1.49838.53507 artifact (#3409), so if anything is lost to the
       # 360-minute ceiling it should not be the two buckets everything else is compared

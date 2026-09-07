@@ -108,11 +108,20 @@ internal static class TestDataNormalization
         lock (_gate) _outcomes.Clear();
     }
 
+    /// <summary>
+    /// The CLI spelling, as a constant so a caller that has to REPRODUCE it — ms-bucket.yml,
+    /// pinned by MsBucketWorkflowTests — binds to the parser rather than to a second copy of
+    /// the string. A switch, taking no value: <c>--test-data-normalize-company false</c> leaves
+    /// <c>false</c> as a positional argument, which Program.cs's flag loop adds to the bundle
+    /// list.
+    /// </summary>
+    internal const string FlagName = "--test-data-normalize-company";
+
     /// <summary>Parse one argument. False when it is not this flag, so the caller's flag loop
     /// is unchanged for everything else.</summary>
     internal static bool TryParseArg(string arg)
     {
-        if (arg != "--test-data-normalize-company") return false;
+        if (arg != FlagName) return false;
         Enabled = true;
         return true;
     }
