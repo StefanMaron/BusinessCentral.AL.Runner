@@ -10,7 +10,7 @@
 // in the absent client's place, and realising it at the outermost AL trigger's return rather
 // than at the event.
 //
-// Both arms drive the same bundle in one run, so the pair is what carries the claim: the
+// Three arms drive the same bundle in one run, and the pair is what carries the claim: the
 // control page differs from the Update page in exactly one respect, the absence of the
 // CurrPage.Update call. An implementation that refreshed after every SetValue would pass the
 // first arm and fail the second, and one that refreshed at the event rather than at the
@@ -54,13 +54,14 @@ public sealed class CurrPageUpdateRefreshTests : IDisposable
 
         var (exit, output) = Spawn(_root, pkg);
 
-        // Both arms are [Test] procedures asserting inside AL, so a green run IS the claim.
+        // Each arm is a [Test] procedure asserting inside AL, so a green run IS the claim.
         // The exit code alone would not distinguish "passed" from "discovered nothing", hence
         // the explicit pass/fail counts below.
-        Assert.True(output.Contains("pass:        2"),
-            $"expected both arms to pass; exit={exit}\n{output}");
+        Assert.True(output.Contains("pass:        3"),
+            $"expected all three arms to pass; exit={exit}\n{output}");
         Assert.DoesNotContain("fail:        1", output);
         Assert.DoesNotContain("fail:        2", output);
+        Assert.DoesNotContain("fail:        3", output);
     }
 
     private void WriteBundle()
@@ -180,6 +181,43 @@ public sealed class CurrPageUpdateRefreshTests : IDisposable
             }
             """);
 
+        // The exception arm: CurrPage.Update, then an AL Error() before OnValidate returns.
+        File.WriteAllText(Path.Combine(_root, "CardRaise.Page.al"), """
+            page 90356 "CPU Card Raise"
+            {
+                PageType = Card;
+                SourceTable = "CPU Row";
+                layout
+                {
+                    area(Content)
+                    {
+                        group(General)
+                        {
+                            field("No."; Rec."No.") { ApplicationArea = All; }
+                            field(Amount; Rec.Amount)
+                            {
+                                ApplicationArea = All;
+                                trigger OnValidate()
+                                begin
+                                    Trace.Note('ValidateBegin');
+                                    CurrPage.Update(true);
+                                    Error('refused by the trigger');
+                                end;
+                            }
+                        }
+                    }
+                    area(FactBoxes) { part(Facts; "CPU Facts") { ApplicationArea = All; } }
+                }
+                trigger OnAfterGetCurrRecord()
+                begin
+                    Trace.Note('HostAGCR');
+                    CurrPage.Facts.Page.SetHeader(Rec."No.");
+                end;
+                var
+                    Trace: Codeunit "CPU Trace";
+            }
+            """);
+
         // The control arm: identical but for the absent CurrPage.Update call.
         File.WriteAllText(Path.Combine(_root, "CardPlain.Page.al"), """
             page 90354 "CPU Card Plain"
@@ -260,6 +298,28 @@ public sealed class CurrPageUpdateRefreshTests : IDisposable
                     Card.Facts.First();
                     Check(50, Card.Facts.Derived.AsDecimal(), 'the FactBox after the edit');
                     Card.Close();
+                end;
+
+                // A trigger that ends in an AL Error() gets no refresh: BC's request dies with
+                // the failed trigger, and running page code during an unwinding AL error can
+                // replace the error the test is asserting on. The asserterror pins that the
+                // ORIGINAL message survives, and the trace pins that no HostAGCR was raised.
+                [Test]
+                procedure CurrPageUpdateThenError_RaisesNoRefreshAndKeepsTheOriginalError()
+                var
+                    Row: Record "CPU Row";
+                    Card: TestPage "CPU Card Raise";
+                begin
+                    Seed(Row, 'C');
+                    Card.OpenEdit();
+                    Card.GoToRecord(Row);
+                    Trace.Reset();
+
+                    asserterror Card.Amount.SetValue(50);
+
+                    if StrPos(GetLastErrorText(), 'refused by the trigger') = 0 then
+                        Error('the trigger''s own error did not survive: <%1>', GetLastErrorText());
+                    Check('ValidateBegin;', Trace.Get(), 'no refresh after a failed trigger');
                 end;
 
                 [Test]

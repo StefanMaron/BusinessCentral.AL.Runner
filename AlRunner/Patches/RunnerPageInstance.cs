@@ -1915,9 +1915,11 @@ internal sealed partial class RunnerPageInstance
                 binder: null, types: parameterTypes, modifiers: null);
         if (trigger == null) return null;
         BeginTrigger();
+        var completed = false;
         try
         {
-            try { return AwaitTriggerResult(trigger.Invoke(_form, arguments)); }
+            object? result;
+            try { result = AwaitTriggerResult(trigger.Invoke(_form, arguments)); }
             catch (TargetInvocationException tie) when (tie.InnerException != null)
             {
                 // An Error() inside the trigger is the trigger's own outcome, not a runner
@@ -1925,8 +1927,10 @@ internal sealed partial class RunnerPageInstance
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
                 throw; // unreachable
             }
+            completed = true;
+            return result;
         }
-        finally { EndTrigger(); }
+        finally { EndTrigger(completed); }
     }
 
     /// <summary>
@@ -2218,6 +2222,7 @@ internal sealed partial class RunnerPageInstance
     private void Invoke(TriggerMatch trigger)
     {
         BeginTrigger();
+        var completed = false;
         try
         {
             try { AwaitTriggerResult(trigger.Method.Invoke(trigger.Target, null)); }
@@ -2227,8 +2232,9 @@ internal sealed partial class RunnerPageInstance
                 // failure — rethrow it unwrapped so the AL stack survives.
                 System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
             }
+            completed = true;
         }
-        finally { EndTrigger(); }
+        finally { EndTrigger(completed); }
     }
 
     /// <summary>

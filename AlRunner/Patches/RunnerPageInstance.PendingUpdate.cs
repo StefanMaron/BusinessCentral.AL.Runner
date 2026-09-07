@@ -55,18 +55,28 @@ internal sealed partial class RunnerPageInstance
     }
 
     /// <summary>
-    /// Realise a pending refresh when the OUTERMOST AL trigger returns.
+    /// Realise a pending refresh when the OUTERMOST AL trigger returns NORMALLY.
     ///
     /// The timing is measured, not chosen: on BC 28.4 a SetValue whose OnValidate calls
     /// CurrPage.Update(true) produces ValidateBegin, ValidateEnd, THEN the host's
     /// OnAfterGetRecord and OnAfterGetCurrRecord — never between the two Validate markers. The
     /// depth counter is what puts it after the trigger rather than at the event, and it also
     /// keeps one refresh from being raised per nested trigger.
+    ///
+    /// <paramref name="completed"/> is false when the trigger raised. A trigger that ends in an
+    /// AL Error() does not get its refresh: BC's request dies with the failed trigger, and
+    /// running OnAfterGetCurrRecord here would run page code during an unwinding AL error — and
+    /// if THAT trigger raised, its exception would replace the error the test is asserting on,
+    /// which is the masking the TargetInvocationException unwrap at both call sites exists to
+    /// prevent. The pending flag is dropped rather than carried, so a request armed by a failed
+    /// trigger cannot fire on the next trigger's return either.
     /// </summary>
-    private void EndTrigger()
+    private void EndTrigger(bool completed)
     {
         _triggerDepth--;
-        if (_triggerDepth > 0 || !_updateRequested) return;
+        if (_triggerDepth > 0) return;
+        if (!completed) { _updateRequested = false; return; }
+        if (!_updateRequested) return;
         _updateRequested = false;
         _realisingUpdate = true;
         // RaiseOnAfterGetRecord raises OnAfterGetRecord and then OnAfterGetCurrRecord, which is
