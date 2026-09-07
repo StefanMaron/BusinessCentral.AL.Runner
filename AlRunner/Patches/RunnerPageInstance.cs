@@ -1579,12 +1579,43 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     internal bool RaiseOnClosePage(Microsoft.Dynamics.Nav.Types.FormResult closeAction)
     {
-        if (InvokeRecordTrigger("OnQueryClosePage",
+        object? queryClose;
+        try
+        {
+            queryClose = InvokeRecordTrigger("OnQueryClosePage",
                 new[] { typeof(Microsoft.Dynamics.Nav.Types.FormResult) },
-                new object[] { closeAction }) is false)
-            return false;
+                new object[] { closeAction });
+        }
+        catch (Exception ex)
+        {
+            // An AL Error() inside OnQueryClosePage is not the caller's error to receive raw:
+            // in BC the close is a client round trip, and the client's own close handler shows
+            // the text as a MESSAGE and refuses the close. Same decision as the handler-driven
+            // path in RunnerModalDispatch — TestPageProxy.InternalClose reaches
+            // NavFormCloseHandler.ExecuteCloseCore too, so both shapes must agree. See
+            // RunnerFormCloseHandler and issue #3057.
+            return RunnerFormCloseHandler.RefuseCloseAfter(ex, TestExecutionOrNull());
+        }
+
+        if (queryClose is false) return false;
         InvokeRecordTrigger("OnClosePage", Type.EmptyTypes, Array.Empty<object>());
         return true;
+    }
+
+    /// <summary>
+    /// BC's <c>NavTestExecution</c> for this page's session, reached the way BC reaches it —
+    /// <c>NavApplicationObjectBase.Session</c> on the form, then <c>NavSession.TestExecution</c>.
+    /// Null outside a test session, which is what <see cref="RunnerFormCloseHandler"/> treats as
+    /// "no message channel".
+    /// </summary>
+    private object? TestExecutionOrNull()
+    {
+        var session = _form.GetType()
+            .GetProperty("Session", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+            .GetValue(_form);
+        return session?.GetType()
+            .GetProperty("TestExecution", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?
+            .GetValue(session);
     }
 
     /// <summary>

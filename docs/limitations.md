@@ -1274,6 +1274,19 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   and `RunModal()` reports `Action::None`
   ([#3050](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3050)).
 
+  A ninth refusal joins them on the same surface, this one on **both** close paths. An
+  `OnQueryClosePage` that raises an AL *error* — as opposed to vetoing — is shown by BC's own
+  client-side close handler as a **message**, after which the close is refused and the page
+  stays open. The runner reproduces the message half through BC's own
+  `NavTestExecution.TestHandleMessage` (`AlRunner/Patches/RunnerFormCloseHandler.cs`), so with
+  no `[MessageHandler]` declared the test sees BC's `Unhandled UI: Message …` refusal, exactly
+  as a service tier produces it. With a `[MessageHandler]` declared the handler consumes the
+  text and control returns to a page real BC has left open, which the runner has no model for;
+  it raises `RunnerOutOfScopeException` with reason `testpage-close-refused-after-message`
+  rather than force the page shut and report a close BC did not perform
+  ([#3057](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3057),
+  [#3179](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3179)).
+
 <a id="virtual-table-shape-gaps"></a>
 
 - **System virtual tables — the runner refuses rather than answering a shape it cannot read.**
