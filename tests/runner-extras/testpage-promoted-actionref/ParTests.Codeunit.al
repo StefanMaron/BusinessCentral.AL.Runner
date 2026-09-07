@@ -294,6 +294,117 @@ codeunit 64545 "Par Tests"
             'the refusal must cite the OPEN issue tracking the gap, not the one whose fix closed');
     end;
 
+    // Runner-specific, #2943: the CODEUNIT kind. Sibling of the report arm above, and added
+    // because that arm was the only one of the four non-page kinds with a test at all — so a
+    // regression on any of the other three had nothing watching it.
+    //
+    // Two claims, and the second is what the report arm above cannot make: the refusal names
+    // the kind, AND the target was not quietly run anyway. A refusal that raised while still
+    // performing the work would pass a message-only assertion, which is the shape
+    // `loud-failures.md` warns about from the other direction.
+    [Test]
+    procedure RunObjectNamingACodeunitRefusesAsANotYetImplementedGap()
+    var
+        HostPage: TestPage "Par Host Page";
+        OpenLog: Record "Par Open Log";
+    begin
+        Initialize();
+
+        HostPage.OpenEdit();
+        asserterror HostPage.CodeunitRunObjectAction.Invoke();
+
+        Assert.Contains(GetLastErrorText(), 'not-yet-implemented',
+            'a RunObject naming a codeunit must be refused with a gap anchor');
+        Assert.Contains(GetLastErrorText(), 'Codeunit',
+            'the refusal must name the object KIND it declined, so the reader knows which gap this is');
+        Assert.Contains(GetLastErrorText(), '2943',
+            'the refusal must cite the OPEN issue tracking the gap');
+        Assert.IsFalse(OpenLog.Get('CODEUNIT-RAN'),
+            'the refused codeunit target must not have been run: a refusal that still does the work is worse than no refusal');
+    end;
+
+    // Runner-specific, #2943: the XMLPORT kind. Same pair of claims as the codeunit arm.
+    [Test]
+    procedure RunObjectNamingAnXmlPortRefusesAsANotYetImplementedGap()
+    var
+        HostPage: TestPage "Par Host Page";
+        OpenLog: Record "Par Open Log";
+    begin
+        Initialize();
+
+        HostPage.OpenEdit();
+        asserterror HostPage.XmlPortRunObjectAction.Invoke();
+
+        Assert.Contains(GetLastErrorText(), 'not-yet-implemented',
+            'a RunObject naming an xmlport must be refused with a gap anchor');
+        // 'XMLport' is BC's own RunObjectType spelling, not a typo: the message prints the
+        // enum member, and asserting a prettier spelling would pin something the runtime does
+        // not say.
+        Assert.Contains(GetLastErrorText(), 'XMLport',
+            'the refusal must name the object KIND it declined, so the reader knows which gap this is');
+        Assert.Contains(GetLastErrorText(), '2943',
+            'the refusal must cite the OPEN issue tracking the gap');
+        Assert.IsFalse(OpenLog.Get('XMLPORT-RAN'),
+            'the refused xmlport target must not have been run');
+    end;
+
+    // Runner-specific, #2943: the QUERY kind, and the fourth of four. A query has no trigger,
+    // so unlike the codeunit and xmlport arms there is nothing it could have run — the message
+    // assertions are the whole claim, and that is a limit of the object kind rather than a
+    // weaker test.
+    //
+    // Worth stating because BC does NOT treat this kind the way the message groups it: BC's
+    // ActionBuilder routes a Query target through the same CreateNavOpenTaskPageAction as a
+    // Page, with DataSourceType.Query. The runner still refuses it, because what that becomes
+    // in a test session is unmeasured — see the corpus PR linked from #2943.
+    [Test]
+    procedure RunObjectNamingAQueryRefusesAsANotYetImplementedGap()
+    var
+        HostPage: TestPage "Par Host Page";
+    begin
+        Initialize();
+
+        HostPage.OpenEdit();
+        asserterror HostPage.QueryRunObjectAction.Invoke();
+
+        Assert.Contains(GetLastErrorText(), 'not-yet-implemented',
+            'a RunObject naming a query must be refused with a gap anchor');
+        Assert.Contains(GetLastErrorText(), 'Query',
+            'the refusal must name the object KIND it declined, so the reader knows which gap this is');
+        Assert.Contains(GetLastErrorText(), '2943',
+            'the refusal must cite the OPEN issue tracking the gap');
+    end;
+
+    // Runner-specific, #2943, and the arm that pins a WRONG ANSWER rather than a missing one.
+    //
+    // "Par Decoy Report" is report 64547; "Par RunObject Target" is page 64547. AL gives each
+    // object kind its own id namespace, so both exist at once. The runner used to name a
+    // RunObject target with a PAGE lookup regardless of the kind the action declared, so this
+    // action -- whose AL plainly says `RunObject = report "Par Decoy Report"` -- refused with:
+    //
+    //     RunObject = Report 'Par RunObject Target' (64547)
+    //
+    // The refusal fired, so every message assertion in the arms above still passed; it simply
+    // named a different object, of a different kind, that the AL never mentions. A developer
+    // reading it would go looking at the wrong object. That is why this arm asserts the name
+    // that must be there AND the name that must not: asserting only the first would still pass
+    // if the resolver went back to answering both.
+    [Test]
+    procedure ARefusalNamesTheObjectOfTheKindTheActionDeclared()
+    var
+        HostPage: TestPage "Par Host Page";
+    begin
+        Initialize();
+
+        HostPage.OpenEdit();
+        asserterror HostPage.DecoyReportRunObjectAction.Invoke();
+
+        Assert.Contains(GetLastErrorText(), 'Par Decoy Report',
+            'the refusal must name the REPORT the action declared, resolved in the report id space');
+        Assert.NotContains(GetLastErrorText(), 'Par RunObject Target',
+            'the refusal must not name the PAGE that happens to share the report''s id: that is the #2943 defect');
+    end;
+
     // Runner-specific: an action with neither a trigger nor a RunObject genuinely has nothing to
     // run. Invoking it must refuse loudly rather than do nothing — doing nothing is what made an
     // unrun action surface one step later as an assertion about its missing effect.

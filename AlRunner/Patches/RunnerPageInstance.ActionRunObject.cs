@@ -617,7 +617,13 @@ internal sealed partial class RunnerPageInstance
         return new ActionRunTarget(
             action.RunObjectType,
             action.TargetID,
-            RecordPatches.TryGetAnyPageName(action.TargetID),
+            // Resolved WITHIN the kind the action declares, not as a page (#2943). AL gives
+            // each object kind its own id namespace, so `report 64701` and `page 64701` are
+            // two different objects at once; a page-only lookup answered the PAGE's name for
+            // a report target, and the refusal below then named an object the AL never
+            // mentioned. Measured: an action declaring `RunObject = report "Prb Decoy Report"`
+            // refused with "RunObject = Report 'Prb Decoy Page' (64701)".
+            RecordPatches.TryGetObjectNameOfKind(action.RunObjectType.ToString(), action.TargetID),
             action.RunPageOnRec,
             LinksFromMetadata(action));
     }
