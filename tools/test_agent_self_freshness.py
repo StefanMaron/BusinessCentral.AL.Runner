@@ -57,6 +57,14 @@ def git(cwd, *args):
     return p.stdout.strip()
 
 
+def has_ref(cwd: str, ref: str) -> bool:
+    """True if `ref` resolves. `git rev-parse --verify` exits 1 when it does not,
+    which is an answer rather than a failure, so this must not use git() above."""
+    p = subprocess.run(["git", "-C", cwd, "rev-parse", "--verify", "--quiet", ref],
+                       capture_output=True, text=True)
+    return p.returncode == 0 and bool(p.stdout.strip())
+
+
 def make_repo(tmp: str) -> tuple[str, str]:
     remote = os.path.join(tmp, "remote.git")
     work = os.path.join(tmp, "work")
@@ -181,6 +189,10 @@ try:
     # about that says the running copy is current -- unlike the temp-directory
     # case above, where the extraction itself is the provenance. Answering here is
     # the guard reaching a verdict with the safety check skipped.
+    # No local ref AND no remote to ask: nothing anywhere can vouch for this, so
+    # there is no answer to give. Note the repository has no `origin` at all --
+    # that is what makes it unvouched, NOT the missing local ref on its own (see
+    # the shallow-CI case below, which has no local ref and is answered).
     noremote = os.path.join(tmp, "noremote")
     os.makedirs(os.path.join(noremote, "tools"), exist_ok=True)
     subprocess.run(["git", "init", "-b", "main", noremote], capture_output=True, check=True)
@@ -190,12 +202,14 @@ try:
     git(noremote, "add", "-A")
     git(noremote, "commit", "-m", "tools, of unknown age")
     r = asf.assess(os.path.join(noremote, "tools/ci-wait.py"), remote_check=False)
-    check("a tracked file in a repo with NO origin/main REFUSES",
+    check("no origin/main locally AND no remote to ask REFUSES",
           r.state == "unknown" and r.refuse is True, f"{r.state} refuse={r.refuse} {r.notes}")
     check("...and is classified as unvouched, not detached",
           r.provenance == "unvouched", f"{r.provenance}")
     check("...and names the missing ref",
           any("refs/remotes/origin/main" in n for n in r.notes), r.notes)
+    check("...and says the remote was asked too, not just the local ref",
+          any("could not be reached" in n for n in r.notes), r.notes)
     check("...and does not claim to be answering anyway",
           not any("answering anyway" in n.lower() for n in r.notes), r.notes)
 
@@ -273,6 +287,106 @@ try:
           r.base_confirmed == "behind-unfetchable", r.base_confirmed)
     check("...and says the check ran against the OLDER ref",
           any("OLDER ref" in n for n in r.notes), r.notes)
+
+    # --- a shallow CI checkout: no local origin/main, but a reachable remote ---
+    # THE REGRESSION THIS SECTION EXISTS FOR. GitHub Actions checks out with
+    # fetch-depth 1 and a refspec covering only the branch under test, so
+    # refs/remotes/origin/main does not exist on any CI run. The first version of
+    # this fix refused there -- every run, including the three checks below --
+    # because it read "no local ref" as "nothing can vouch for this". The remote
+    # answers fine; it just has to be asked.
+    #
+    # Built as a REAL shallow clone rather than a mocked one, because the whole
+    # question is what git does in that shape.
+    ci = os.path.join(tmp, "ci-shallow")
+    subprocess.run(["git", "clone", "--depth", "1", "-b", "main", "file://" + remote, ci],
+                   capture_output=True, check=True)
+    check("the CI-shaped checkout really is shallow",
+          git(ci, "rev-parse", "--is-shallow-repository") == "true")
+    subprocess.run(["git", "-C", ci, "config", "remote.origin.fetch",
+                    "+refs/heads/main:refs/remotes/origin/main-only"],
+                   capture_output=True, check=True)
+    subprocess.run(["git", "-C", ci, "update-ref", "-d", "refs/remotes/origin/main"],
+                   capture_output=True)
+    check("...and really has no refs/remotes/origin/main",
+          not has_ref(ci, "refs/remotes/origin/main"),
+          git(ci, "for-each-ref", "refs/remotes"))
+
+    r = asf.assess(os.path.join(ci, "tools/ci-wait.py"), remote_check=False)
+    check("a shallow CI checkout with no local origin/main is NOT refused",
+          r.refuse is False, f"{r.state}/{r.provenance} {r.notes}")
+    check("...and says the base was fetched directly from the remote",
+          r.base_confirmed == "fetched-direct", f"{r.base_confirmed} {r.notes}")
+    check("...and says why, naming the shallow CI checkout",
+          any("shallow" in n.lower() for n in r.notes), r.notes)
+
+    # The fallback must not silently reorganise the caller's repository: it is a
+    # read. `git fetch <remote> <branch>` with no refspec writes FETCH_HEAD only.
+    check("...and creates no refs/remotes/origin/main behind the caller's back",
+          not has_ref(ci, "refs/remotes/origin/main"),
+          git(ci, "for-each-ref", "refs/remotes"))
+
+    # It must still be able to say STALE there -- an answer that can only ever be
+    # "fine" is not a guard. origin/main moves the file; the shallow checkout has
+    # not incorporated it.
+    land_on_remote(tmp, remote, "tools/ci-wait.py", "# vNEXT -- landed after the CI clone\n")
+    r = asf.assess(os.path.join(ci, "tools/ci-wait.py"), remote_check=False)
+    check("a shallow CI checkout still detects a file main has moved past",
+          r.state == "stale" and r.refuse is True, f"{r.state} refuse={r.refuse} {r.notes}")
+
+    # --- the shape that ACTUALLY runs in CI: shallow AND on a divergent branch -
+    # The case above clones `main` itself, so the file matches and the `identical`
+    # route answers. A real PR run is a shallow clone of a BRANCH THAT EDITS the
+    # guarded tool -- the file differs AND there is no merge base, which is the
+    # `unvouched` route. That refused every CI run on the first version of this
+    # fix, and the synthetic test above did not catch it because its shallow
+    # clone had nothing to diverge from. Reproduced here for real.
+    branchy = os.path.join(tmp, "ci-branch")
+    subprocess.run(["git", "clone", "--depth", "1", "-b", "main",
+                    "file://" + remote, branchy], capture_output=True, check=True)
+    git(branchy, "config", "user.email", "t@t")
+    git(branchy, "config", "user.name", "t")
+    subprocess.run(["git", "-C", branchy, "update-ref", "-d",
+                    "refs/remotes/origin/main"], capture_output=True)
+    git(branchy, "checkout", "-b", "agent/x/issue-9")
+    write(branchy, "tools/ci-wait.py", "# my in-flight fix to the tool\n")
+    git(branchy, "add", "-A")
+    git(branchy, "commit", "-m", "edit the guarded tool, as this very PR does")
+    check("the CI-branch checkout is shallow, divergent, and has no origin/main",
+          git(branchy, "rev-parse", "--is-shallow-repository") == "true"
+          and not has_ref(branchy, "refs/remotes/origin/main"))
+
+    _head_before = git(branchy, "rev-parse", "HEAD")
+    _refs_before = git(branchy, "for-each-ref", "refs/heads")
+    r = asf.assess(os.path.join(branchy, "tools/ci-wait.py"), remote_check=False)
+    check("a shallow checkout of a branch EDITING the tool is not refused",
+          r.refuse is False, f"{r.state}/{r.provenance} {r.notes}")
+    check("...and is judged CURRENT -- a branch that edits the tool, not a stale one",
+          r.state == "current", f"{r.state} {r.notes}")
+    check("...and says the base was fetched directly, no local ref needed",
+          r.base_confirmed == "fetched-direct", f"{r.base_confirmed} {r.notes}")
+
+    # Whatever route it took, it is a READ: HEAD and every ref untouched. The
+    # deepen step adds history objects only, and this holds whether or not it ran.
+    check("...and moves HEAD nowhere",
+          git(branchy, "rev-parse", "HEAD") == _head_before)
+    check("...and creates or moves no branch ref",
+          git(branchy, "for-each-ref", "refs/heads") == _refs_before)
+    # THE BUG THIS PINS: a plain `git fetch <remote> <branch>` applies the
+    # configured refspec and helpfully RECREATES refs/remotes/origin/main. A
+    # later call then reads that resurrected ref as a local one and trusts it --
+    # and it is already behind, so a genuinely stale file read as current.
+    # `--refmap=` is what stops it.
+    check("...and does NOT resurrect refs/remotes/origin/main",
+          not has_ref(branchy, "refs/remotes/origin/main"),
+          git(branchy, "for-each-ref", "refs/remotes"))
+
+    # And it must still say STALE in that shape, or the fallback has traded a
+    # refusal for a rubber stamp.
+    land_on_remote(tmp, remote, "tools/ci-wait.py", "# vLATER -- published after the branch\n")
+    r = asf.assess(os.path.join(branchy, "tools/ci-wait.py"), remote_check=False)
+    check("a shallow divergent checkout still detects a genuinely STALE tool",
+          r.state == "stale" and r.refuse is True, f"{r.state} refuse={r.refuse} {r.notes}")
 
     # --- no merge base: the blob itself is the provenance, or there is none ----
     # A shallow clone has no merge base with origin/main, so the branch-point

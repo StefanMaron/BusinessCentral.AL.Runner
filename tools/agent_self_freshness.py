@@ -87,10 +87,18 @@ separates them is whether anything OUTSIDE git vouches for the running code:
   identical  no merge base (shallow clone), but the file is byte-identical to
              origin/main's blob. Identity is provenance; the history is beside
              the point once the bytes match.
-  unvouched  everything else. Tracked in a repository with no origin/main;
-             untracked inside one; differing from origin/main with no merge base
-             to judge by. Nothing here says the copy is current, and its age is
-             unknowable from git -- so there is no answer to give.
+  unvouched  everything else. Untracked inside a repository; differing from
+             origin/main with no merge base to judge by; or no origin/main
+             ANYWHERE -- not locally and not from the remote when asked. Nothing
+             here says the copy is current, and its age is unknowable from git.
+
+A missing LOCAL origin/main ref is deliberately NOT in that list, because it is
+not the same fact as "origin/main is out of reach". GitHub Actions checks out
+with fetch-depth 1 and a refspec covering only the branch under test, so
+refs/remotes/origin/main does not exist on any CI run -- while the remote answers
+fine. Treating the two as one refused every CI run (caught in review on the first
+version of this fix). The remote is asked before anything is refused, via
+FETCH_HEAD, which creates and moves no ref.
 
 Only "unvouched" refuses. That keeps the temp-directory recipe working, which
 matters because it is the ONLY route open to a copy older than this check.
@@ -142,6 +150,9 @@ class Freshness:
       "behind-unfetchable" it did not, and the fetch failed.
       "unreachable"        the remote could not be reached at all.
       "no-ref"             the remote has no refs/heads/main.
+      "fetched-direct"     there was no local refs/remotes/<remote>/<branch>, so the
+                           comparison base came from the remote via FETCH_HEAD. It
+                           needs no further confirmation: it IS the remote's answer.
       "skipped"            remote_check was off, or the answer was already stale.
     """
 
@@ -204,6 +215,99 @@ def _remedy(relpath: str) -> str:
             f"    git show origin/main:{relpath} > /tmp/{os.path.basename(relpath)} "
             f"&& python3 /tmp/{os.path.basename(relpath)} <args>\n"
             "  or work from a checkout that is up to date with origin/main.")
+
+
+def _fetch_head(runner, root: str, remote: str, branch: str, *,
+                timeout: int | None = 30) -> tuple[str | None, str]:
+    """`origin/main`'s commit via FETCH_HEAD, without creating or moving any ref.
+
+    For a checkout that has no refs/remotes/<remote>/<branch> -- the shape
+    actions/checkout produces, and the shape a never-fetched clone has. Returns
+    (sha, why): sha is None when the remote would not answer, and `why` then says
+    what happened, because "could not reach the remote" and "this copy is stale"
+    are different facts and the caller has to be able to say which it hit.
+
+    `git fetch <remote> <branch>` with no refspec updates FETCH_HEAD only. That
+    matters: this module is a read, and a guard that quietly reorganises the
+    caller's refs to answer a question is doing something the caller did not ask
+    for. Deepening a shallow clone was the alternative and is rejected for the
+    same reason -- it rewrites the object store to answer a question that
+    FETCH_HEAD already answers.
+    """
+    # `--refmap=` with an explicit source ref suppresses the configured refspec,
+    # so NOTHING under refs/remotes/ is created or moved -- only FETCH_HEAD.
+    # Without it git applies remote.origin.fetch anyway and helpfully recreates
+    # refs/remotes/<remote>/<branch>, which a later call then reads as a local
+    # ref and trusts. Measured: that made a genuinely stale file read as current
+    # on the second call, because the ref it resurrected was already behind.
+    rc, _, err = _git(runner, root, "fetch", "--quiet", "--refmap=",
+                      remote, f"refs/heads/{branch}", timeout=timeout)
+    if rc != 0:
+        return None, (err or "fetch failed")[:120]
+    sha = _rev(runner, root, "FETCH_HEAD")
+    if not sha:
+        return None, "fetch succeeded but FETCH_HEAD could not be resolved"
+    return sha, ""
+
+
+def _is_shallow(runner, root: str) -> bool:
+    """True for a shallow clone -- the only shape deepening can help."""
+    rc, out, _ = _git(runner, root, "rev-parse", "--is-shallow-repository")
+    return rc == 0 and out.strip() == "true"
+
+
+# Deepening steps. Bounded on purpose: a branch point is normally a few tens of
+# commits back, and an unbounded --unshallow on a large repository is a very
+# different operation from the ~8s measured here. If none of these reaches a
+# merge base, the honest answer is that this checkout cannot establish it.
+_DEEPEN_STEPS = (100, 500)
+
+
+def _deepen(runner, root: str, remote: str, branch: str, *,
+            timeout: int | None = 30) -> bool:
+    """Pull in history so a shallow clone's grafted boundary stops lying.
+
+    Unconditional, unlike _deepen_for_merge_base below: a shallow clone always
+    HAS a merge base -- git reports the graft point, which for a freshly fetched
+    tip is that tip itself -- so "stop as soon as one resolves" would stop
+    immediately, on the wrong answer. Measured: before deepening, mb ==
+    FETCH_HEAD and a stale file reads as current; after, the comparison is
+    truthful in both directions.
+    """
+    rc, _, _ = _git(runner, root, "fetch", "--quiet", "--refmap=",
+                    f"--deepen={_DEEPEN_STEPS[0]}", remote, f"refs/heads/{branch}",
+                    timeout=timeout)
+    return rc == 0
+
+
+def _deepen_for_merge_base(runner, root: str, remote: str, branch: str,
+                           base: str, *, timeout: int | None = 30) -> str | None:
+    """Deepen a shallow clone until a merge base with `base` resolves; else None.
+
+    Adds history objects only -- measured on a real depth-1 CI clone: HEAD
+    unchanged, every ref unchanged, working tree clean. Nothing the repository
+    POINTS AT is altered, which is the property that makes this acceptable in a
+    read-only guard where creating or moving a ref would not be.
+
+    That property depends entirely on `--refmap=`, which is why every fetch in
+    this module carries it. Without it git applies the configured
+    remote.origin.fetch refspec and RECREATES refs/remotes/<remote>/<branch> as
+    a side effect. Measured consequence: a second assess() call then found that
+    resurrected ref, took the local-ref path instead of this one, and trusted a
+    ref that was already behind -- reporting a genuinely stale file as current.
+    A guard that silently rewrites the state it is about to read is worse than
+    one that refuses.
+    """
+    for depth in _DEEPEN_STEPS:
+        rc, _, _ = _git(runner, root, "fetch", "--quiet", "--refmap=",
+                        f"--deepen={depth}", remote, f"refs/heads/{branch}",
+                        timeout=timeout)
+        if rc != 0:
+            return None
+        rc, mb, _ = _git(runner, root, "merge-base", "HEAD", base)
+        if rc == 0 and mb:
+            return mb.strip()
+    return None
 
 
 def _detached(path: str, directory: str) -> Freshness:
@@ -279,22 +383,59 @@ def assess(path: str, *, remote_check: bool = True, remote: str = "origin",
             "meant the extract-to-a-temp-directory recipe, extract to a directory "
             "that is not inside a repository.", path)
 
+    notes: list[str] = []
     base = _rev(runner, root, ref)
     if not base:
-        # A real repository with the file tracked in it, and no origin/main to
-        # compare against. The content can be arbitrarily old and nothing in
-        # reach says otherwise -- this is the case #3296 was filed about.
-        return _unvouched(
-            f"note: REFUSING to vouch for {relpath} -- this repository has no {ref} "
-            "to compare against, so nothing has established that this copy carries "
-            "the latest fixes.", path, relpath=relpath)
+        # No LOCAL origin/main ref. That is not the same fact as "origin/main is
+        # out of reach", and conflating them refuses every CI run: GitHub Actions
+        # checks out with fetch-depth 1 and a refspec narrowed to the PR branch,
+        # so refs/remotes/origin/main does not exist -- while the remote itself
+        # answers perfectly well.
+        #
+        # So ASK THE REMOTE before giving up. `git fetch <remote> <branch>` with
+        # no refspec writes FETCH_HEAD and creates or moves no branch ref, so
+        # this stays a read: the caller's repository is not reorganised by a
+        # tool whose whole job is to answer a question about it.
+        # Deepen FIRST when the clone is shallow. A shallow clone's grafted
+        # boundary makes git report the freshly-fetched tip as its own merge
+        # base -- measured: mb == FETCH_HEAD, so mb_blob == base_blob and a
+        # genuinely stale file reads as current. Deepening dissolves the graft
+        # and the comparison becomes truthful again (measured both ways).
+        # Without this the fallback would trade a refusal for a rubber stamp,
+        # which is worse than refusing.
+        if _is_shallow(runner, root):
+            _deepen(runner, root, remote, branch, timeout=timeout)
+        base, why = _fetch_head(runner, root, remote, branch, timeout=timeout)
+        if not base:
+            # Genuinely nothing to compare against: no local ref AND the remote
+            # would not answer. This is the case #3296 is about -- a long-lived
+            # clone that never fetched -- and it is now reached only when the
+            # remote has also been asked and declined.
+            return _unvouched(
+                f"note: REFUSING to vouch for {relpath} -- this repository has no {ref}, "
+                f"and {remote}/{branch} could not be reached to compare against either "
+                f"({why}). Nothing has established that this copy carries the latest "
+                "fixes.", path, relpath=relpath)
+        notes.append(
+            f"note: this repository has no {ref}, so {relpath} was compared against "
+            f"{remote}/{branch} fetched directly ({base[:8]}). Normal for a shallow "
+            "CI checkout, whose refspec covers only the branch under test.")
 
-    notes: list[str] = []
-    result = _evaluate(runner, root, relpath, base, notes)
+    # True when `base` came from the remote just now rather than from a local
+    # ref. The confirmation block below exists to close the window in which a
+    # SHARED local ref has drifted from the remote; a base fetched seconds ago
+    # has no such window, and re-deriving it from `ref` would read None in a CI
+    # checkout and report a healthy run as "behind-unfetchable".
+    base_from_remote = not _rev(runner, root, ref)
+
+    result = _evaluate(runner, root, relpath, base, notes, remote=remote,
+                       branch=branch, timeout=timeout)
+    if base_from_remote:
+        result.base_confirmed = "fetched-direct"
 
     # The remote confirmation runs only when the local answer was NOT already
     # stale: a refusal should be instant and should not depend on the network.
-    if result.state != "stale" and remote_check:
+    if result.state != "stale" and remote_check and not base_from_remote:
         rc, out, _ = _git(runner, root, "ls-remote", "--exit-code", remote,
                           f"refs/heads/{branch}", timeout=timeout)
         tip, tip_state = parse_ls_remote(rc, out)
@@ -307,7 +448,8 @@ def assess(path: str, *, remote_check: bool = True, remote: str = "origin",
             if frc == 0 and new_base:
                 notes.append(f"note: {ref} was behind {remote}/{branch} and has been "
                              f"fetched ({base[:8]} -> {new_base[:8]}).")
-                result = _evaluate(runner, root, relpath, new_base, notes)
+                result = _evaluate(runner, root, relpath, new_base, notes,
+                                   remote=remote, branch=branch, timeout=timeout)
                 result.base_confirmed = "refreshed"
             else:
                 result.base_confirmed = "behind-unfetchable"
@@ -332,7 +474,9 @@ def assess(path: str, *, remote_check: bool = True, remote: str = "origin",
     return result
 
 
-def _evaluate(runner, root: str, relpath: str, base: str, notes: list[str]) -> Freshness:
+def _evaluate(runner, root: str, relpath: str, base: str, notes: list[str],
+              *, remote: str = "origin", branch: str = "main",
+              timeout: int | None = 30) -> Freshness:
     """The staleness question itself, against one resolved origin/main commit."""
     base_blob = _rev(runner, root, f"{base}:{relpath}")
     local_blob = None
@@ -362,6 +506,31 @@ def _evaluate(runner, root: str, relpath: str, base: str, notes: list[str]) -> F
             return Freshness("unknown", False, base_confirmed="skipped",
                              local_blob=local_blob, base_blob=base_blob,
                              provenance="identical")
+        # The file DIFFERS and there is no merge base, so the question is
+        # genuinely open: a branch that edits the tool and a stale copy look
+        # identical from here. Before refusing, try to make it answerable --
+        # a shallow clone has no merge base because it has no history, and
+        # history is fetchable.
+        #
+        # Deepening is a bigger step than the FETCH_HEAD read above, so it is
+        # last, bounded, and only on this branch -- never when the blobs already
+        # match. Measured on a real depth-1 CI clone of this repository: ~8s,
+        # HEAD unchanged, every ref unchanged, working tree clean. It only adds
+        # history objects: the repository learns more and points at nothing new.
+        # That is why it is acceptable where creating or moving a ref would not
+        # be -- the objection to mutation is about what a repository POINTS AT,
+        # which this does not touch.
+        if _is_shallow(runner, root):
+            mb = _deepen_for_merge_base(runner, root, remote, branch, base,
+                                        timeout=timeout)
+            if mb:
+                notes.append(
+                    f"note: no merge base with origin/main for {relpath} in a shallow "
+                    f"checkout, so history was deepened until one resolved ({mb[:8]}). "
+                    "No ref was created or moved.")
+                return _judge_against_merge_base(runner, root, relpath, mb, base_blob,
+                                                 local_blob, notes)
+
         notes.append(
             f"note: REFUSING to vouch for {relpath} -- no merge base with "
             "origin/main (shallow clone?), and the file differs from origin/main's "
@@ -372,6 +541,19 @@ def _evaluate(runner, root: str, relpath: str, base: str, notes: list[str]) -> F
                          local_blob=local_blob, base_blob=base_blob,
                          provenance="unvouched")
 
+    return _judge_against_merge_base(runner, root, relpath, mb, base_blob,
+                                     local_blob, notes)
+
+
+def _judge_against_merge_base(runner, root: str, relpath: str, mb: str,
+                              base_blob: str, local_blob: str | None,
+                              notes: list[str]) -> Freshness:
+    """The staleness verdict itself, given a resolved merge base.
+
+    Shared by the ordinary path and the deepened-shallow-clone path so the two
+    cannot drift: a second copy of this comparison is a second place for the
+    definition of "stale" to be wrong.
+    """
     mb_blob = _rev(runner, root, f"{mb}:{relpath}")
 
     if mb_blob != base_blob:
