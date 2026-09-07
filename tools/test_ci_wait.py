@@ -1348,6 +1348,104 @@ check("...and every such recipe extracts the freshness helper alongside it",
       "\n---\n".join(b for b in _extracting if "agent_self_freshness.py" not in b))
 
 
+# ---------------------------------------------------------------------------
+# #3309 -- an empty failing-log fetch is a REFUSAL, not an empty log.
+#
+# Both documented recipes have an empty-output failure mode, and they fail on
+# DIFFERENT jobs, which is why one alone is not enough:
+#
+#   * `gh run view --log-failed` prints only steps whose conclusion is
+#     `failure`. A job that concluded `cancelled` -- or whose failing step was
+#     cancelled -- has none, so it prints ZERO BYTES and exits 0. Measured on
+#     job 101605637617 of run 34077033494 (`bc-tests / Smoke net8.0`,
+#     conclusion `cancelled`, its `Build Release` step `cancelled`): 0 bytes
+#     from --log-failed, 26388 bytes from the API.
+#   * `gh api .../jobs/<id>/logs` REFUSES when the log carries terminal escape
+#     sequences, which BC logs do routinely: exit 1, zero bytes on stdout, and
+#     the reason on stderr. Measured on job 101602519097 of run 34076096593:
+#     0 bytes without the flag, 709372 bytes with --allow-escape-sequences.
+#
+# The claim proved here is that failing_log() tries the second when the first
+# comes back empty, and that an empty answer from BOTH is reported as a
+# refusal naming the reason -- never as "there is no log".
+# ---------------------------------------------------------------------------
+
+
+def _log_calls(stub):
+    """Run cw.failing_log() against a stubbed gh, returning (text, calls)."""
+    calls: list[list[str]] = []
+    old = cw.gh
+
+    def _gh(args, attempts=4):
+        calls.append(list(args))
+        return stub(list(args))
+
+    cw.gh = _gh
+    try:
+        return cw.failing_log("123"), calls
+    finally:
+        cw.gh = old
+
+
+def _is_api(args):
+    return args[0] == "api" and "logs" in args[1]
+
+
+def _is_run_view(args):
+    return args[:2] == ["run", "view"]
+
+
+# 1. The happy path stays one call: --log-failed answers, the API is not asked.
+_text, _calls = _log_calls(lambda a: (0, "boom: Assert.AreEqual failed") if _is_run_view(a) else (1, ""))
+check("#3309: a non-empty --log-failed is used as-is",
+      _text == "boom: Assert.AreEqual failed", repr(_text))
+check("#3309: ...and the API is not asked when --log-failed answered",
+      not any(_is_api(a) for a in _calls), repr(_calls))
+
+# 2. The cancelled-job shape: --log-failed exits 0 with nothing. An empty
+#    success is NOT an answer -- fall through to the API.
+_text, _calls = _log_calls(
+    lambda a: (0, "") if _is_run_view(a) else (0, "the 3021 lines nobody could see"))
+check("#3309: an EMPTY --log-failed falls through to the API",
+      _text == "the 3021 lines nobody could see", repr(_text))
+check("#3309: ...and the API call passes --allow-escape-sequences",
+      any(_is_api(a) and "--allow-escape-sequences" in a for a in _calls), repr(_calls))
+check("#3309: ...and the API call targets the job's logs endpoint",
+      any(a[0] == "api" and a[1].endswith("/actions/jobs/123/logs") for a in _calls),
+      repr(_calls))
+
+# 3. Both empty: report the refusal, and say WHY it is not "no log". This is
+#    the exit-1 message that used to send the reader back to the command that
+#    had just returned nothing.
+_text, _calls = _log_calls(lambda a: (0, "") if _is_run_view(a) else (1, "escape sequences"))
+check("#3309: both empty yields no log text",
+      not _text, repr(_text))
+check("#3309: ...and both recipes were actually tried",
+      any(_is_run_view(a) for a in _calls) and any(_is_api(a) for a in _calls), repr(_calls))
+
+# 4. A stub that ALWAYS returns empty must not look like success, and a stub
+#    that ALWAYS succeeds must not hide the fallback -- the two directions the
+#    brief for #3309 asked this test to distinguish.
+_text, _ = _log_calls(lambda a: (0, ""))
+check("#3309: an always-empty gh produces no text (never a false log)", not _text, repr(_text))
+_text, _ = _log_calls(lambda a: (0, "always"))
+check("#3309: an always-succeeding gh produces text", _text == "always", repr(_text))
+
+# 5. The exit-1 hint must not send the reader back to the command that just
+#    came back empty without also naming the API form. Textual, deliberately:
+#    the failure it prevents is a human reading a dead end.
+_src = open(os.path.join(HERE, "ci-wait.py")).read()
+_hint = _src.split("could not fetch the failing log")[1][:900] if "could not fetch the failing log" in _src else ""
+check("#3309: the exit-1 hint still exists", bool(_hint), "")
+check("#3309: ...and offers the API form that survives escape sequences",
+      "--allow-escape-sequences" in _hint, _hint)
+
+# 6. The rule file has to carry the trap, or the next agent rediscovers it.
+check("#3309: ci-verdicts.md records that an empty --log-failed is not an empty log",
+      "--allow-escape-sequences" in _rule_text and "cancelled" in _rule_text,
+      "ci-verdicts.md does not mention the escape-sequence refusal")
+
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")

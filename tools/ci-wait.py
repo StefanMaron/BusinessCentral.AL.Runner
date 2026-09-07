@@ -25,8 +25,9 @@ keep getting wrong:
     head SHA, so a newer completed run for an older push is never reported as
     this push's result.
   * NEVER re-run a failed job -- it destroys the log. On failure this fetches
-    `--log-failed` for you, so there is no reason to reach for a re-run and no
-    second round trip to read it.
+    the log for you -- through `--log-failed`, falling back to the API form
+    that survives escape sequences (#3309) -- so there is no reason to reach
+    for a re-run and no second round trip to read it.
 
 Usage
 -----
@@ -185,6 +186,37 @@ def job_id_from(details_url: str | None) -> str | None:
         return None
     m = re.search(r"/job/(\d+)", details_url)
     return m.group(1) if m else None
+
+
+def failing_log(job: str) -> str:
+    """A failing job's log, through whichever of the two recipes answers (#3309).
+
+    Both documented ways of reading a failed job's log have an empty-output
+    failure mode, they fail on different jobs, and neither says "refused" in a
+    way a caller reading stdout can see:
+
+      * `gh run view --log-failed` prints only steps whose conclusion is
+        `failure`. A job that concluded `cancelled`, or whose failing step was
+        cancelled, has no such step -- so it prints ZERO BYTES and exits 0.
+        Measured on job 101605637617 (`bc-tests / Smoke net8.0`, cancelled):
+        0 bytes here, 26388 bytes from the API.
+      * `gh api .../jobs/<id>/logs` refuses a response carrying terminal escape
+        sequences unless `--allow-escape-sequences` is passed. BC logs carry
+        them routinely. Measured on job 101602519097: 0 bytes on stdout, exit 1,
+        and the reason on stderr -- which reads as an empty log.
+
+    So try --log-failed (it filters to the failing step, which is what a reader
+    wants), and fall through to the API when it comes back empty. An empty
+    string from here means both refused, never "this job has no log".
+    """
+    rc, out = gh(["run", "view", "--repo", REPO, "--log-failed", "--job", job])
+    if rc == 0 and out:
+        return out
+    # `--allow-escape-sequences` is not optional: without it gh exits 1 with
+    # nothing on stdout, which is indistinguishable from an empty log.
+    rc, out = gh(["api", f"repos/{REPO}/actions/jobs/{job}/logs",
+                  "--allow-escape-sequences"])
+    return out if rc == 0 and out else ""
 
 
 def head_sha(pr: str) -> str | None:
@@ -1185,16 +1217,22 @@ def main() -> int:
                 # wants; passing it fails with "could not find job". The job id is the
                 # trailing path segment of details_url (.../actions/runs/<run>/job/<job>).
                 job = job_id_from((v.log_target or {}).get("details_url"))
-                rc, out = (gh(["run", "view", "--repo", REPO, "--log-failed", "--job", job])
-                           if job else (1, ""))
-                if rc == 0 and out:
+                out = failing_log(job) if job else ""
+                if out:
                     tail = out.split("\n")[-120:]
                     print("\n--- failing log (tail) ---")
                     print("\n".join(tail))
                 else:
+                    # Both recipes came back empty, so do NOT send the reader to
+                    # the one that just did -- name the other one too (#3309).
                     where = job or "<job id>"
-                    print("\n(could not fetch the failing log; read it with "
-                          f"`gh run view --repo {REPO} --log-failed --job {where}`)")
+                    print("\n(could not fetch the failing log; BOTH recipes came back "
+                          "empty, which is a refusal, not an absent log -- try")
+                    print(f"   gh run view --repo {REPO} --log-failed --job {where}")
+                    print(f"   gh api repos/{REPO}/actions/jobs/{where}/logs "
+                          "--allow-escape-sequences")
+                    print(" -- an empty --log-failed means the failing step was "
+                          "cancelled; an empty api means escape sequences)")
                     if (v.log_target or {}).get("details_url"):
                         print(f" or open {v.log_target['details_url']}")
             print("\nNEVER `gh run rerun` -- it overwrites this log permanently. "
