@@ -583,11 +583,7 @@ public static partial class BcRuntime
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static NCLMetaTable NavTestPageBase_GetMetaTable(object self)
     {
-        var pageIdField = FindInstanceField(self.GetType(), "pageUnderTestId");
-        var objId = pageIdField?.GetValue(self);
-        var idProp = objId?.GetType().GetProperty("ObjectNumber",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-        var pageId = idProp?.GetValue(objId) is int value ? value : 0;
+        var pageId = GetPageIdFromTestPage(self);
 
         // BC's own body returns null when the page's SourceObject.SourceTable is 0 — a page
         // without a source table is legal AL, and PrimaryKeyFields then reads as empty.
@@ -667,13 +663,53 @@ public static partial class BcRuntime
             live.FlushPendingNewRow();
     }
 
+    /// <summary>
+    /// The page id a NavTestPageBase is standing on — the one thing every reader below needs,
+    /// and the one thing <c>pageUnderTestId</c> alone cannot answer for a PART.
+    ///
+    /// <para>BC hardcodes page id 0 for every part. <c>NavTestPart</c> has exactly one
+    /// constructor and it writes the literal:</para>
+    /// <code>
+    /// internal NavTestPart(ITreeObject parent, ITestPart testPart)
+    ///     : base(parent, new ApplicationObjectId(ObjectType.Page, 0), testPart)
+    /// </code>
+    /// <para>so a part's <c>pageUnderTestId.ObjectNumber</c> is 0 by construction, never
+    /// because anything is unknown. BC's own base constructor treats it as an expected value
+    /// rather than an error — <c>if (pageUnderTestId.ObjectNumber != 0) metaPage =
+    /// LoadMetadata();</c> — and <c>NavTestPart</c> then resolves its metadata from the
+    /// OTHER field: <c>NavTestPart.LoadMetadata()</c> is
+    /// <c>Tree.Session.MetadataProvider.GetPageDefinition(testPart.PageId)</c>. So BC's own
+    /// answer for "which page is this part" is <c>ITestPage.PageId</c> off the client object,
+    /// and that is exactly what this reads.</para>
+    ///
+    /// <para>Verified against Microsoft.Dynamics.Nav.Ncl.dll. Not version-specific: the
+    /// <c>NavTestPart</c> constructor decompiles to the byte-identical hash
+    /// <c>6c0201fa…5415fd</c> on 27.0 and 28.1, and <c>compare_symbols</c> across the type
+    /// reports no added, removed or changed members between them. <c>ITestPage.PageId</c> is a
+    /// real interface member of <c>Microsoft.Dynamics.Nav.Types.ITestPage</c> (inherited by
+    /// <c>ITestPart</c>), which the runner's <c>LiveNavTestPage</c> already implements with the
+    /// part page's real id — <c>MockTestPage.GetPart</c> passes <c>partPageId</c> into every
+    /// <c>LiveNavTestPart</c> it builds. Issue #3312.</para>
+    ///
+    /// <para>The fallback is deliberately narrow: it fires ONLY when the id read from
+    /// <c>pageUnderTestId</c> is 0, so a top-level page keeps answering exactly what it
+    /// answered before, and a part whose client cannot name its page still yields 0 — which
+    /// leaves the caller's refusal intact rather than substituting a guess.</para>
+    /// </summary>
     private static int GetPageIdFromTestPage(object self)
     {
         var pageIdField = FindInstanceField(self.GetType(), "pageUnderTestId");
         var objId = pageIdField?.GetValue(self);
         var idProp = objId?.GetType().GetProperty("ObjectNumber",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-        return idProp?.GetValue(objId) is int value ? value : 0;
+        var pageId = idProp?.GetValue(objId) is int value ? value : 0;
+        if (pageId != 0) return pageId;
+
+        // A part: ask the client object, which is where BC asks too.
+        var testPageField = FindInstanceField(self.GetType(), "testPage");
+        if (testPageField?.GetValue(self) is Microsoft.Dynamics.Nav.Types.ITestPage client)
+            return client.PageId;
+        return 0;
     }
 
     private static FieldInfo? FindInstanceField(Type type, string name)
