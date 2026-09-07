@@ -138,9 +138,21 @@ public static partial class RecordPatches
         {
             if (_pmvViewFormatterResolved) return _pmvGenerateSourceTableViewString;
             var type = typeof(NCLMetadata).Assembly.GetType("Microsoft.Dynamics.Nav.Runtime.PageDataProvider");
-            _pmvGenerateSourceTableViewString = type?.GetMethod(
-                "GenerateSourceTableViewString",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+            // BcShape.FindMethod, not Type.GetMethod (#3069). A bare-name lookup throws
+            // AmbiguousMatchException the day Microsoft ships a second overload of this name,
+            // and MethodScopePatches.NavMethodScope_AssertError rethrows only
+            // BcShapeGapException and absorbs everything else — so that throw would be
+            // SWALLOWED under an AL `asserterror`, passing it on a call real BC performs fine.
+            // FindMethod refuses with the right type instead, and still answers null on
+            // absence, which ReadSourceTableView already turns into a named refusal.
+            _pmvGenerateSourceTableViewString = type == null ? null : BcShape.FindMethod(
+                type, "GenerateSourceTableViewString",
+                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static,
+                "Page Metadata (virtual table 2000000138)",
+                "PageDataProvider.GenerateSourceTableViewString",
+                "it is how BC renders the SourceTableView column (field 15), so the runner "
+                + "cannot pick an overload on the page's behalf",
+                new[] { typeof(MetaViewDefinition) });
             _pmvViewFormatterResolved = true;
             return _pmvGenerateSourceTableViewString;
         }
