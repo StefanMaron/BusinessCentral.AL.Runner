@@ -1,0 +1,42 @@
+[
+  {
+    "codeunitId": 60350,
+    "CodeunitName": "Test TestFilter",
+    "Method": "TestFilter_CurrentKey_NamesTheKeyThePageIsWalking",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3316",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to 408c39fe to consume StefanMaron/BusinessCentral.AL.Language.Tests#240 (the upstream half of #3342), and 408c39fe is corpus master's tip -- corpus history is linear, so #240 cannot be taken without the nine PRs merged before it, one of which (#229, d025203) added this TestFilter suite. TestPage.Filter's CurrentKey() reports field numbers and is blank by default, and SetCurrentKey/Ascending never change the walk order. Tracked as #3316, which is open, has no open PR against it, and is NOT closed by this PR; the fix for it removes this entry. main's #3349 stopped the pin at 0bbe376 for exactly these failures; this branch cannot stop there because the commit it needs is past them."
+  },
+  {
+    "codeunitId": 60350,
+    "CodeunitName": "Test TestFilter",
+    "Method": "TestFilter_SetCurrentKey_ChangesBothTheReportedKeyAndTheWalkOrder",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3316",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to 408c39fe to consume StefanMaron/BusinessCentral.AL.Language.Tests#240 (the upstream half of #3342), and 408c39fe is corpus master's tip -- corpus history is linear, so #240 cannot be taken without the nine PRs merged before it, one of which (#229, d025203) added this TestFilter suite. TestPage.Filter's CurrentKey() reports field numbers and is blank by default, and SetCurrentKey/Ascending never change the walk order. Tracked as #3316, which is open, has no open PR against it, and is NOT closed by this PR; the fix for it removes this entry. main's #3349 stopped the pin at 0bbe376 for exactly these failures; this branch cannot stop there because the commit it needs is past them."
+  },
+  {
+    "codeunitId": 60350,
+    "CodeunitName": "Test TestFilter",
+    "Method": "TestFilter_SetCurrentKey_AcceptsACompositeKey",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3316",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to 408c39fe to consume StefanMaron/BusinessCentral.AL.Language.Tests#240 (the upstream half of #3342), and 408c39fe is corpus master's tip -- corpus history is linear, so #240 cannot be taken without the nine PRs merged before it, one of which (#229, d025203) added this TestFilter suite. TestPage.Filter's CurrentKey() reports field numbers and is blank by default, and SetCurrentKey/Ascending never change the walk order. Tracked as #3316, which is open, has no open PR against it, and is NOT closed by this PR; the fix for it removes this entry. main's #3349 stopped the pin at 0bbe376 for exactly these failures; this branch cannot stop there because the commit it needs is past them."
+  },
+  {
+    "codeunitId": 60350,
+    "CodeunitName": "Test TestFilter",
+    "Method": "TestFilter_Ascending_False_ReversesTheWalkAndIsReportedBack",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3316",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to 408c39fe to consume StefanMaron/BusinessCentral.AL.Language.Tests#240 (the upstream half of #3342), and 408c39fe is corpus master's tip -- corpus history is linear, so #240 cannot be taken without the nine PRs merged before it, one of which (#229, d025203) added this TestFilter suite. TestPage.Filter's CurrentKey() reports field numbers and is blank by default, and SetCurrentKey/Ascending never change the walk order. Tracked as #3316, which is open, has no open PR against it, and is NOT closed by this PR; the fix for it removes this entry. main's #3349 stopped the pin at 0bbe376 for exactly these failures; this branch cannot stop there because the commit it needs is past them."
+  },
+  {
+    "codeunitId": 60350,
+    "CodeunitName": "Test TestFilter",
+    "Method": "TestFilter_Ascending_AppliesToTheKeySetBySetCurrentKey",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3316",
+    "Note": "Pulled in by this PR's submodule pin bump, NOT caused by it. The pin had to advance to 408c39fe to consume StefanMaron/BusinessCentral.AL.Language.Tests#240 (the upstream half of #3342), and 408c39fe is corpus master's tip -- corpus history is linear, so #240 cannot be taken without the nine PRs merged before it, one of which (#229, d025203) added this TestFilter suite. TestPage.Filter's CurrentKey() reports field numbers and is blank by default, and SetCurrentKey/Ascending never change the walk order. Tracked as #3316, which is open, has no open PR against it, and is NOT closed by this PR; the fix for it removes this entry. main's #3349 stopped the pin at 0bbe376 for exactly these failures; this branch cannot stop there because the commit it needs is past them."
+  }
+]
