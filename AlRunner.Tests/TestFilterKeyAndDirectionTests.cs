@@ -242,11 +242,17 @@ public sealed class TestFilterKeyAndDirectionTests
     // ── the base mock keeps its own store, and that is deliberate ────────────────────
 
     // MockITestPage has no record, so it has no rowset to sort and nothing to delegate to.
-    // Its members stay a remembered store — but they must be VIRTUAL, because that is the only
-    // reason LiveNavTestPage's overrides are reached at all. Non-virtual members here would
-    // make every override above dead code that Cecil still sees.
+    // Its members stay a remembered store — but they must be OVERRIDABLE, because that is the
+    // only reason LiveNavTestPage's overrides are reached at all. Every override asserted above
+    // would otherwise be dead code that Cecil still sees exactly as it sees a live one.
+    //
+    // The assertion is `IsVirtual && !IsFinal`, and the second half is the load-bearing one:
+    // C# emits an implicit interface implementation as `virtual final` whether or not it
+    // carries the `virtual` keyword, so `IsVirtual` alone is TRUE for the pre-fix members and
+    // proves nothing. Measured on the pre-fix assembly, where an IsVirtual-only assertion
+    // passed while every delegation test failed.
     [Fact]
-    public void BaseMock_ITestFilterKeyMembers_AreVirtualSoTheLivePageCanOverrideThem()
+    public void BaseMock_ITestFilterKeyMembers_AreOverridableByTheLivePage()
     {
         var type = LoadType(typeof(AlRunner.MockITestPage));
 
@@ -257,9 +263,29 @@ public sealed class TestFilterKeyAndDirectionTests
                  })
         {
             var m = Method(type, name);
-            Assert.True(m.IsVirtual,
-                $"MockITestPage.{name} must be virtual — LiveNavTestPage's override is what "
-                + "makes the key and the direction reach the record.");
+            Assert.True(m.IsVirtual && !m.IsFinal,
+                $"MockITestPage.{name} must be overridable — LiveNavTestPage's override is what "
+                + "makes the key and the direction reach the record. A sealed interface "
+                + "implementation would silently keep the base mock's write-only store.");
         }
+    }
+
+    // The complement, and the reason the test above is worth having: LiveNavTestPage must
+    // actually declare the overrides, not merely be free to. A member missing here falls
+    // through to the base mock's store with no diagnostic anywhere.
+    [Fact]
+    public void LivePage_OverridesEveryITestFilterKeyMember()
+    {
+        var type = LoadType(typeof(AlRunner.LiveNavTestPage));
+
+        foreach (var name in new[]
+                 {
+                     "SetCurrentKeyFields", "GetCurrentKeyFields",
+                     "get_Ascending", "set_Ascending", "get_CurrentKey",
+                 })
+            Assert.True(
+                type.Methods.Any(m => m.Name == name && m.HasBody && m.IsVirtual && m.IsReuseSlot),
+                $"LiveNavTestPage must override {name} — without it the page answers from "
+                + "MockITestPage's remembered store and the rowset never changes.");
     }
 }
