@@ -80,7 +80,13 @@ internal static class TestDataOptions
         ExplicitBackupPath = null;
         CompanyOverride = null;
         _cachedIdentity = null;
-        TestDataNormalization.ResetForTests();
+        // NOT TestDataNormalization: each option class resets its own statics, and the classes
+        // that mutate them run in PARALLEL under xunit. Resetting the normalization flag from
+        // here made TestDataProvisioningTests' Dispose clear a flag
+        // TestDataCompanyNormalizationTests was mid-assertion on — measured, as
+        // CacheIdentity() == "" in a test that had just set Enabled = true. Decoupling removes
+        // the race outright, where serialising the classes would only have hidden it from the
+        // two that happened to be named.
     }
 
     /// <summary>
