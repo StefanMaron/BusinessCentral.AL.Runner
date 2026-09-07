@@ -128,6 +128,31 @@ Separately, and unrelated to rollback: the isolation between a "worker session"
 and its caller does not exist. `StartSession` runs synchronously, inline, sharing
 the same record store as the caller — see "No parallel session execution" below.
 
+#### CommitBehavior
+
+`[CommitBehavior(...)]` changes what `Commit()` does for the whole **dynamic** scope of the
+attributed procedure — everything it calls, including table triggers and event subscribers
+reached from it. Both values are modeled:
+
+- **`CommitBehavior::Ignore`** — `Commit()` does nothing at all. The rollback boundary does
+  not move and the write transaction does not end, so a later unrelated error still undoes
+  writes made before the ignored `Commit()`. The same code without the attribute leaves
+  those writes durable, which is the contrast worth knowing.
+- **`CommitBehavior::Error`** — `Commit()` raises instead of committing, with BC's own text,
+  `Commit is prohibited in the current scope. The operation cannot continue. Contact your
+  system administrator.`
+
+Measured against a real BC service tier, not inferred: five assertions — the unattributed
+control, `Ignore` on the attributed procedure itself, `Ignore` governing a `Commit()` issued
+by an unattributed callee, the scope being popped when the attributed call returns, and the
+`Error` refusal — in `error-handling/TestCommitBehaviorAttribute.al` (codeunit 60881),
+corpus PR #276. Runner side landed with issue #3449.
+
+One related refusal is **not** implemented, tracked in issue #3451: BC rejects an explicit
+`Commit()` inside a `[TransactionModel(TransactionModel::AutoRollback)]` test with "Tests
+cannot call the Commit function if TransactionModel property is set to AutoRollback."
+(measured on a BC 28.4 container); the runner accepts it.
+
 ### Test isolation modes — mapping to AL's `TestIsolation` values
 
 The `--isolation` (alias `--test-isolation`) flag picks one of three granularities.

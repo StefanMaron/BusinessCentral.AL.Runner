@@ -1,0 +1,42 @@
+[
+  {
+    "codeunitId": 60679,
+    "CodeunitName": "ALT Page Find Record Tests",
+    "Method": "OnFindRecord_FirstAnswersTheFirstRowOfTheTriggerRowset",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3439",
+    "Note": "Pulled in by this PR's pin advance to ec8a9c23, NOT caused by it: corpus history is linear, so #276 (the upstream half of this PR) cannot be taken without #275 (6c6a1d12), which added this test. A page declaring OnFindRecord/OnNextRecord serves its own rowset in real BC; the runner never dispatches those triggers and walks the table instead, so the TestPage lands on a different row. Tracked as #3439, which is open and is NOT closed by this PR; open PR #3448 fixes it and removes this entry."
+  },
+  {
+    "codeunitId": 60679,
+    "CodeunitName": "ALT Page Find Record Tests",
+    "Method": "OnNextRecord_NextWalksTheTriggerRowsetAndStopsAtItsEnd",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3439",
+    "Note": "Same gap as the entry above, reached through Next() rather than First(). Tracked as #3439, open and NOT closed by this PR; open PR #3448 fixes it and removes this entry."
+  },
+  {
+    "codeunitId": 60679,
+    "CodeunitName": "ALT Page Find Record Tests",
+    "Method": "OnFindRecord_LastAndPreviousWalkTheTriggerRowset",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3439",
+    "Note": "Same gap as the entry above, reached through Last()/Previous(). Tracked as #3439, open and NOT closed by this PR; open PR #3448 fixes it and removes this entry."
+  },
+  {
+    "codeunitId": 60679,
+    "CodeunitName": "ALT Page Find Record Tests",
+    "Method": "OnFindRecord_GoToKeyRefusesARowTheTriggerRowsetDoesNotServe",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3439",
+    "Note": "Same gap as the entry above: because the runner walks the table rather than the trigger rowset, GoToKey accepts a row the page does not serve instead of refusing it. Tracked as #3439, open and NOT closed by this PR; open PR #3448 fixes it and removes this entry."
+  },
+  {
+    "codeunitId": 60679,
+    "CodeunitName": "ALT Page Find Record Tests",
+    "Method": "OnFindRecordAndOnNextRecord_AreBothReachedWhileTheClientBuildsTheRowset",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3439",
+    "Note": "Same gap as the entry above, asserting that both triggers are reached at all. Tracked as #3439, open and NOT closed by this PR; open PR #3448 fixes it and removes this entry."
+  }
+]
