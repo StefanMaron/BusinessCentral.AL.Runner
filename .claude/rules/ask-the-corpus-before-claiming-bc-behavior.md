@@ -81,7 +81,13 @@ that opens a page through an action (#2986). It has since been fixed and the sur
 re-measured open on all eight legs, so it is a verdict again.
 
 Before resting a UI-side claim on a corpus result, read `src/StartupHook/StartupHook.cs` in
-`StefanMaron/MsDyn365Bc.On.Linux` for the surface you are asking about.
+`StefanMaron/MsDyn365Bc.On.Linux` for the surface you are asking about. The same applies
+off the UI: Windows identity (`ALDatabase.ALSid`, `WindowsPrincipal`), report rendering
+(`CustomReportingServiceClient`), encryption key resolution, Azure AD and service topology
+are all patched on that tier, and a green there measures the patch. The list, with patch
+numbers, is in `docs/upstream-corpus-workflow.md` § "How to find out whether a surface you
+care about is patched" — and the same list is why "the bc-linux container passes it" is not
+by itself evidence of a runner gap when triaging Microsoft's test buckets (#2314).
 `docs/upstream-corpus-workflow.md` § "What the corpus tier can and cannot adjudicate" has the
 worked case, what remains out of reach, and the `SingleInstance`-probe technique for an
 observable a rollback would otherwise destroy.

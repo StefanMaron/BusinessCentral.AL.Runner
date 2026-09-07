@@ -195,7 +195,17 @@ internal static partial class BcAppSymbolCache
     // parsed value only. ActionRunObjectSymbol also gained UnreadableRunPageLinkEntries, and
     // that half PayloadShape would have keyed on by itself; the bump is the explicit statement
     // of the two halves it would not.
-    private const int CacheVersion = 33;
+    // v34: ReportDataItemSymbol gained MaxIteration (#3370) — a precompiled report data
+    // item's declared loop bound, which CollectReportDataItems never read. Both halves of
+    // the rule above are true at once, as they were for v32. The record's SHAPE changed and
+    // ReportDataItemSymbol is reachable from CachePayload, so PayloadShape already keys a
+    // fresh payload differently on its own; and the PARSE changed too, because a property
+    // that was never looked at now is. The bump states the second half, which no structural
+    // hash can see. Without a new key a stale payload answers MaxIteration = 0 for every
+    // data item — which BC's DataItemIterator reads as "no limit", so a `MaxIteration = 1`
+    // loop over the Integer virtual table runs 101,001 times instead of once and the test
+    // never finishes. A wrong answer replayed from cache rather than a cache miss.
+    private const int CacheVersion = 34;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -634,7 +644,11 @@ internal static partial class BcAppSymbolCache
         // "Vendor - Payment Receipt" that is hundreds of thousands of rows where BC produces
         // a handful. Invisible until a dataset was actually built from them (#2436).
         string? DataItemLink = null, string? DataItemLinkReference = null,
-        bool PrintOnlyIfDetail = false);
+        bool PrintOnlyIfDetail = false,
+        // The loop bound. BC treats 0 as NO LIMIT, so dropping a declared MaxIteration = 1
+        // over the Integer virtual table runs the data item across the whole Integer window
+        // instead of once — 101,001 iterations, which reads as a hang (#3370).
+        int MaxIteration = 0);
 
     /// <summary>
     /// One <c>column(Name; SourceExpr)</c> of a report data item, as SymbolReference.json
@@ -1896,11 +1910,18 @@ internal static partial class BcAppSymbolCache
             props.TryGetValue("DataItemLink", out var dataItemLink);
             props.TryGetValue("DataItemLinkReference", out var dataItemLinkReference);
             props.TryGetValue("PrintOnlyIfDetail", out var printOnlyIfDetail);
+            // Absent, unparseable and "0" all mean the same thing to BC's loop, so they all
+            // land on 0 — the value that means "no limit", never a fabricated bound.
+            props.TryGetValue("MaxIteration", out var maxIterationText);
+            int maxIteration = int.TryParse(
+                maxIterationText, System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture, out var mi) ? mi : 0;
 
             into.Add(new ReportDataItemSymbol(dataItemId, name, relatedTable, indent, tableView, filterFields,
                 ParseReportColumns(di),
                 RecordPatches.TableViewText(dataItemLink), dataItemLinkReference,
-                printOnlyIfDetail is "1" or "true" or "True"));
+                printOnlyIfDetail is "1" or "true" or "True",
+                maxIteration));
             CollectReportDataItems(di, indent + 1, into);
         }
     }

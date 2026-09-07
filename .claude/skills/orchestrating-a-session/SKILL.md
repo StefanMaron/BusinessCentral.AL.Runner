@@ -225,7 +225,7 @@ Merge when **all of**:
 3. The proving test exists. If the claim is about BC's behavior, that test is upstream and
    merged, or merging in the same pass.
 
-**Read the verdict with `tools/ci-wait.py <PR> --timeout 1`; never block on it.** One pass,
+**Read the verdict with `tools/ci-wait.py <PR> --timeout 0`; never block on it.** One pass,
 one answer, returns at once: 0 green on current head, 1 failed with the log already fetched,
 2 still running (*not* a verdict), 3 undetermined, 4 blocked with everything green — a
 cancelled required context (below), or a required context that produced no check run at all

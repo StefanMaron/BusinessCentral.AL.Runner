@@ -1,0 +1,11 @@
+/// <summary>
+/// Minimal assertion helper for this runner-extras app (own ID range).
+/// </summary>
+codeunit 65280 "RMI Assert"
+{
+    procedure AreEqual(Expected: Integer; Actual: Integer; Msg: Text)
+    begin
+        if Expected <> Actual then
+            Error('Assert.AreEqual failed. Expected:<%1> Actual:<%2>. %3', Expected, Actual, Msg);
+    end;
+}

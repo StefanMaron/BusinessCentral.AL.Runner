@@ -657,6 +657,16 @@ public sealed partial class BcCompiler
             }
         }
 
+        // #2929: snapshot both sets BEFORE the pairing loop below consumes them. A SWAP of two
+        // same-kind object ids presents as two vacated and two appeared identities whose
+        // IdentityKeys cross over — A vacates `Codeunit|id:90310` and B appears at
+        // `Codeunit|id:90310` — so the loop pairs each vacated id with the OTHER object and
+        // empties both dictionaries. Reading them afterwards therefore sees nothing at all, which
+        // is precisely the silent case: measured, that pairing is what let a swap through with an
+        // EMPTY fallbackReason. See ObjectIdMoved.
+        var vacatedBeforePairing = vacated.Values.Select(v => v.Identity).ToList();
+        var appearedBeforePairing = appeared.Values.Select(a => a.Identity).ToList();
+
         // Pair vacated <-> appeared identities (renames/moves): from BC's point of view these
         // are Modified, not Removed+Added — see this file's header comment.
         var renamePairs = new List<(RadObjectIdentity Identity, string OldPath, string NewPath, NavSyntax.SyntaxTree Tree)>();
@@ -680,6 +690,25 @@ public sealed partial class BcCompiler
                     "duplicate declaration, only the compiler can adjudicate that";
                 return null;
             }
+        }
+
+        // #2929: the THIRD hole in this file's "an unmodified caller is always safe" argument.
+        // A caller folds the CALLEE'S OWN OBJECT ID into its generated C#, exactly as it folds
+        // the ordinals #2571's guard covers — see ObjectIdMoved for the measurement and for why
+        // FoldedOrdinalMoved structurally cannot see this one. Checked HERE rather than beside
+        // the other two guards below because the evidence is `vacated`/`appeared`, which exist
+        // by this point and are gone by the time the module definitions are built.
+        if (ObjectIdMoved(vacatedBeforePairing, appearedBeforePairing, baseline.ObjectByPath.Values) is { } idMoved)
+        {
+            fallbackReason =
+                $"{idMoved} no longer has the object id it had last cycle. A caller folds a callee's "
+                + "OBJECT ID into its OWN generated C# as a literal — `new NavCodeunitHandle(this, "
+                + "90310)` for a cross-object call, `NCLEnumMetadata.Create(90320)` for an "
+                + "enum-typed variable — so reusing an UNMODIFIED caller's cached C# would leave it "
+                + "naming the PREVIOUS id. That is not reliably loud: when two objects of the same "
+                + "kind SWAP ids every folded id still resolves, to the other object, and an enum "
+                + "emits no dispatch surface at all. Falling back to a full compile for this cycle";
+            return null;
         }
 
         // Entitlement: no ModuleDefinition representation at all, so every TRACKED entitlement
@@ -1685,6 +1714,101 @@ public sealed partial class BcCompiler
             foreach (var (name, ordinal) in previous)
                 if (!current.TryGetValue(name, out var now) || now != ordinal)
                     return $"{id.Kind} '{id.Name}' ({name})";
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Names the first object whose OWN OBJECT ID moved this cycle — it vacated one
+    /// <c>(Kind, Id)</c> identity and reappeared under the same kind and name at a different id —
+    /// or null when none did. Issue #2929: the third hole in this file's header argument, and
+    /// like #2548's and #2571's it can be silent.
+    ///
+    /// <para><b>Why FoldedOrdinalMoved cannot see this.</b> That guard reduces each CHANGED
+    /// identity to a name-to-ordinal map on both sides and reports a name whose value moved. An
+    /// object id change is not a value moving WITHIN an identity — it moves the identity itself,
+    /// so the old <c>(Kind, Id)</c> is absent from the after-surface and the new one is absent
+    /// from the before-surface. <c>RadFoldedOrdinals</c> then has no entry to compare and returns
+    /// the same "cannot answer" non-answer #2548's guard uses for an ambiguous object. Consistent,
+    /// and not sufficient. This is why the check is a companion rather than an edit to it.</para>
+    ///
+    /// <para><b>What is folded, measured with <c>--dump-csharp</c> on BC 28.1.</b> A bundle of two
+    /// codeunits, two enums and one caller referencing all four. Swapping each pair's ids, with
+    /// every name and body byte-for-byte unchanged, moved four literals in the CALLER's generated
+    /// C# while only the CALLEES' files were edited: <c>new NavCodeunitHandle(this, 90310)</c> and
+    /// its mirror, and <c>NavOption.Create(NCLEnumMetadata.Create(90320), …)</c> twice.</para>
+    ///
+    /// <para><b>Why a swap is silent.</b> After it, every folded id still RESOLVES — to the other
+    /// object. The dispatch that follows is <c>Invoke(memberId, …)</c>, and two codeunits
+    /// declaring the same procedure name hash to the same member id, so even that matches: the
+    /// caller runs the wrong codeunit's body with no exception and no diagnostic. An enum is worse
+    /// still, emitting a zero-byte C# file, so there is no dispatch surface to be loud on at all.
+    /// A plain renumber to a free id is expected to be louder, but the invariant this protects
+    /// does not depend on which — what the fast path ships must equal what a cold build produces.
+    /// </para>
+    ///
+    /// <para><b>Deliberately narrow: only a MOVE triggers.</b> The trigger is a vacated identity
+    /// whose kind and NAME reappear at a different id — an object that is still there under the
+    /// name callers wrote, holding a different number. An object ADDED under a new name and id
+    /// vacates nothing and cannot be referenced by code compiled before it existed; an object
+    /// RENAMED in place keeps its id, so its old name matches nothing that appeared and every
+    /// folded literal stays correct; an object genuinely REMOVED reappears nowhere; a body or
+    /// property edit never reaches here at all. Without that narrowness the guard would degenerate
+    /// into "any added or removed file falls back", which is most of the fast path.</para>
+    ///
+    /// <para><b>Both sets are read BEFORE the rename pairing consumes them</b>, and that ordering
+    /// is the whole reason a swap is caught. The pairing loop keys on <c>IdentityKey</c>, i.e. on
+    /// <c>(Kind, Id)</c>: in a swap, A vacates <c>Codeunit|id:90310</c> and B appears at
+    /// <c>Codeunit|id:90310</c>, so the loop reads that as a rename of one object and empties both
+    /// dictionaries. Measured: a check placed after it saw two empty sets and let the swap through
+    /// with an EMPTY <c>fallbackReason</c>. Matching on <c>(Kind, Name)</c> instead is what
+    /// re-associates each object with the id it actually now holds.</para>
+    ///
+    /// <para><b>The id-less kinds are excluded, and must be.</b> Interface, controladdin, profile,
+    /// pagecustomization, profileextension and entitlement are Name-keyed with <c>Id = null</c>
+    /// (see this file's header comment) — the reflected numeric id BC reports for some of them is
+    /// its own SymbolMap bookkeeping and is not stable across independently-constructed
+    /// Compilations, so comparing it would report phantom moves. They have no AL-visible object id
+    /// for a caller to fold in the first place.</para>
+    ///
+    /// <para><b>Why the baseline is consulted as well.</b> A vacated identity's name is taken from
+    /// the baseline's own record for that <c>(Kind, Id)</c> where one exists, rather than from the
+    /// identity handed in — for a file whose declared identity changed in place, the vacated
+    /// identity is reconstructed at the call site and the baseline is the authority on what that
+    /// id was called last cycle.</para>
+    /// </summary>
+    private static string? ObjectIdMoved(
+        IEnumerable<RadObjectIdentity> vacatedIds,
+        IEnumerable<RadObjectIdentity> appearedIds,
+        IEnumerable<RadObjectIdentity> baselineIds)
+    {
+        // (Kind, Name) -> the id it now holds, for everything that appeared this cycle.
+        var appearedByName = new Dictionary<(NavCA.SymbolKind, string), int>();
+        foreach (var id in appearedIds)
+        {
+            if (!id.Id.HasValue || IdlessSymbolKinds.Contains(id.Kind)) continue;
+            appearedByName[(id.Kind, id.Name)] = id.Id.Value;
+        }
+        if (appearedByName.Count == 0) return null;
+
+        // A vacated identity's Name is authoritative when the baseline recorded one for that exact
+        // (Kind, Id); fall back to the identity's own Name otherwise.
+        var baselineNameById = new Dictionary<(NavCA.SymbolKind, int), string>();
+        foreach (var id in baselineIds)
+            if (id.Id.HasValue && !IdlessSymbolKinds.Contains(id.Kind))
+                baselineNameById[(id.Kind, id.Id.Value)] = id.Name;
+
+        foreach (var vacatedId in vacatedIds)
+        {
+            if (!vacatedId.Id.HasValue || IdlessSymbolKinds.Contains(vacatedId.Kind)) continue;
+            var name = baselineNameById.TryGetValue((vacatedId.Kind, vacatedId.Id.Value), out var recorded)
+                ? recorded
+                : vacatedId.Name;
+            if (!appearedByName.TryGetValue((vacatedId.Kind, name), out var nowId)) continue;
+            // Same kind, same name, same id: nothing a caller folded moved. Cheap, and it keeps
+            // the rule literally "the id MOVED" rather than "the identity was touched".
+            if (nowId == vacatedId.Id.Value) continue;
+            return $"{vacatedId.Kind} '{name}' (was {vacatedId.Id.Value}, now {nowId})";
         }
         return null;
     }

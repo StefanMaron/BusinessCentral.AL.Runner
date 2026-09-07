@@ -180,6 +180,28 @@ assert_exit "prose merely mentioning the corpus does not count" 1 \
   "AlRunner/Patches/MockTestPage.cs" \
   "This matches what the corpus asserts upstream, see the al-language tests."
 
+# The marker and the URL share ONE line. Each of the first three shapes below
+# went red on a real PR in a single day (#3330: PRs #3305, #3308, #3324) --
+# the two-line one from a coordinator brief that said "a bare full URL on its
+# own line". They are pinned so the rule that documents them cannot drift from
+# what the regex accepts.
+assert_exit "the marker inside backticks, mid-sentence, does not count (#3305)" 1 \
+  "AlRunner/Patches/MockTestPage.cs" \
+  "The \`Corpus-PR:\` for this is #211, opened earlier today."
+assert_exit "a markdown link is not a bare URL (#3308)" 1 \
+  "AlRunner/Patches/MockTestPage.cs" \
+  "Corpus-PR: [#211]($CORPUS_URL)"
+assert_exit "the marker and the URL on two separate lines do not count (#3324)" 1 \
+  "AlRunner/Patches/MockTestPage.cs" \
+  "Corpus-PR:
+$CORPUS_URL"
+assert_exit "a bold marker is not the marker" 1 \
+  "AlRunner/Patches/MockTestPage.cs" \
+  "**Corpus-PR:** $CORPUS_URL"
+assert_exit "an autolink in angle brackets does not count" 1 \
+  "AlRunner/Patches/MockTestPage.cs" \
+  "Corpus-PR: <$CORPUS_URL>"
+
 # --- Extraction mode, used by the advisory half in pr-check.yml --------------
 # The parsing lives here, under test; only the gh call that resolves the URL is
 # in the workflow, where it cannot be unit-tested.

@@ -300,6 +300,15 @@ public static partial class RecordPatches
             w.WriteElementString("DataItemLinkReference", di.DataItemLinkReference);
         if (di.PrintOnlyIfDetail)
             w.WriteElementString("PrintOnlyIfDetail", "1");
+        // MetaDataItem reads MAXITERATION from this same node through int.Parse, and
+        // DataItemIterator.ExecuteDataItemLoopAsync bounds the loop with
+        //     if (MaxIteration != 0 && maxIteration == MaxIteration) break;
+        // so 0 is "no limit", not "zero iterations". Only a stated bound is emitted:
+        // <MaxIteration>0</MaxIteration> would be a claim the symbol file never made, and
+        // omitting it lands BC on the same 0 by its own default. #3370.
+        if (di.MaxIteration > 0)
+            w.WriteElementString(
+                "MaxIteration", di.MaxIteration.ToString(System.Globalization.CultureInfo.InvariantCulture));
         if (!string.IsNullOrEmpty(di.RequestFilterFields))
             w.WriteElementString("ReqFilterFields", di.RequestFilterFields);
 

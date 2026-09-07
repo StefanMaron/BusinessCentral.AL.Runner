@@ -1275,6 +1275,8 @@ class _FreshStub:
     class _R:
         notes: list[str] = []
         refuse = False
+        state = "current"
+        provenance = "n/a"
 
     @staticmethod
     def assess(target, remote_check=False):
@@ -1297,6 +1299,8 @@ class _StaleStub(_FreshStub):
     class _R:
         notes = ["note: this copy is behind origin/main"]
         refuse = True
+        state = "stale"
+        provenance = "n/a"
 
     @staticmethod
     def assess(target, remote_check=False):
@@ -1312,6 +1316,40 @@ with _main_with(_StaleStub()) as _buf:
         _reached = True
 check("a stale copy is still refused with exit 3 (the #3020 guard is intact)",
       _code == 3 and not _reached, f"(code={_code}, reached={_reached})")
+check("...and the refusal calls it STALE, which is what it is",
+      "STALE ci-wait.py" in _buf.getvalue(), _buf.getvalue()[:300])
+
+
+class _UnvouchedStub(_FreshStub):
+    """An UNKNOWN that nothing vouches for: refused, but not for staleness (#3296).
+
+    The remedy differs -- fast-forward versus establish where this copy came from
+    -- so reporting one as the other sends the reader after the wrong fix.
+    """
+
+    class _R:
+        notes = ["note: REFUSING to vouch for tools/ci-wait.py -- no origin/main"]
+        refuse = True
+        state = "unknown"
+        provenance = "unvouched"
+
+    @staticmethod
+    def assess(target, remote_check=False):
+        return _UnvouchedStub._R()
+
+
+_reached = False
+_code = None
+with _main_with(_UnvouchedStub()) as _buf:
+    try:
+        _code = cw.main()
+    except _ReachedGitHub:
+        _reached = True
+check("an unvouched copy is refused with exit 3 and asks GitHub nothing",
+      _code == 3 and not _reached, f"(code={_code}, reached={_reached})")
+check("...and is NOT reported as stale",
+      "NOTHING VOUCHES FOR" in _buf.getvalue()
+      and "STALE ci-wait.py" not in _buf.getvalue(), _buf.getvalue()[:300])
 
 # End to end, the exact invocation .claude/rules/ci-verdicts.md used to
 # recommend: a copy of this file alone in a directory with no tools/ beside it.

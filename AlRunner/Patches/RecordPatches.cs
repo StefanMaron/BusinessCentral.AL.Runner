@@ -2153,6 +2153,28 @@ public static partial class RecordPatches
                 return permSetDa;
             }
 
+            // ── Permission Set system table (2000000004) ────────────────────────────────
+            // Declared as an ordinary (obsolete-pending) table, but a modern tier does not
+            // read it from SQL: DataAccessSource.GetVirtualDataProvider routes it to
+            // PermissionSetDataProvider, which computes one row per ASSIGNABLE permission
+            // set the installed apps declare. An empty store made Microsoft's own
+            // "Permissions Mock"(codeunit 131006).Assign fail its PermissionSet.Get(RoleID),
+            // which is every named entry point of "Library - Lower Permissions" (issue
+            // #3344). See RecordPatches.PermissionSetSystemTable.cs.
+            if (IsPermissionSetSystemTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var permSetSysDa))
+                {
+                    var createdPermSetSys = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    permSetSysDa = perTable.GetOrAdd(tableId, createdPermSetSys);
+                }
+                // The assignable-only shape — what walking the table lists. A keyed Get()
+                // repopulates with the non-assignable sets as well, through
+                // DataAccess_PermissionSetSystemTableGuardForGet.
+                PopulatePermissionSetSystemTable(permSetSysDa, table, includeNonAssignable: false);
+                return permSetSysDa;
+            }
+
             // ── Aggregate Permission Set system virtual table (2000000167) ──────────────
             // Virtual on the service tier too: its rows are the UNION of System-scope
             // (Metadata Permission Set, 2000000250 — just above) and Tenant-scope (Tenant

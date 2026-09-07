@@ -5,8 +5,15 @@ description: Run Microsoft's BaseApp test buckets through AL Runner to find real
 
 # Running Microsoft's BaseApp test buckets
 
-Microsoft ships 33 test buckets inside the BC artifact — about **40,550 tests** — and they run
-through AL Runner as ordinary bundles, with no container. That makes them the largest supply of
+Microsoft ships **34 `Tests-*` buckets** inside the BC artifact, 32 of them non-empty, holding
+**40,530 `[Test]` methods** — counted per bucket on the 28.1.49838.53507 platform artifact
+(#3409). They run through AL Runner as ordinary bundles, with no container.
+
+Older notes in this repository say "about 40,550", and three of them stay that way on purpose:
+`ParallelFanOut.cs` and the two `ParallelFanOut*TimeoutTests` describe one specific past run
+("a 40,550-test run down to 14,856"), and rewriting a recorded measurement to match a later
+count would falsify it. 40,530 is the counted figure for the artifact; 40,550 is what that run
+totalled. That makes them the largest supply of
 real, un-guessed work available: every failure is a concrete difference between the runner and
 what Microsoft's own tests expect.
 
@@ -37,6 +44,17 @@ dispatch, unsupported filter kinds, silently skipped handlers. Those are worth f
 
 **So: never file an issue from a run without `--test-data`.** A no-test-data run is legitimate
 for measuring speed or for bisecting a regression, never for deciding what is broken.
+
+**And "the bc-linux container passes it" is not, by itself, a runner-gap verdict either.**
+`StefanMaron/MsDyn365Bc.On.Linux` boots BC's Windows binaries with a startup hook that
+rewrites the methods that cannot work there — `ALDatabase.ALSid` answers a hashed SID,
+`WindowsPrincipal.IsInRole` is always `true`, RDLC rendering goes to a no-op
+`CustomReportingServiceClient`, encryption and Azure AD factories are bypassed. A cluster that
+passes on the container because of one of those is passing against the patch, and the runner
+has no BC behaviour there to copy; the 65-test `ALSid` cluster in #2312 was exactly that. Check
+a container-passing cluster against the patch table in `docs/upstream-corpus-workflow.md`
+§ "How to find out whether a surface you care about is patched" before calling it a gap
+(#2314).
 
 ### …and `--test-data` still gives a restored CRONUS, not a *prepared* one
 
@@ -141,7 +159,9 @@ Do not run all 33 at once to answer a question. Pick by what you are asking:
   and its cluster ranking has matched the full run's. Big enough to rank work, small enough to
   finish.
 - **The complete picture** — all buckets, but expect hours and size the worker count from
-  measured headroom.
+  measured headroom. On a hosted runner this is a single dispatch of
+  `.github/workflows/ms-surface.yml` (below); on a developer machine it competes with
+  everything else for memory and has OOMed the box.
 
 Memory, measured after the per-worker GC tuning: roughly **1.1 GB per worker** without test
 data, **~2.3 GB with it** (including its backup-reader sidecar). Derive the job count from free
@@ -194,10 +214,18 @@ together.
 
 ## In CI
 
-`.github/workflows/ms-bucket.yml` runs one bucket on a hosted runner with the full
-configuration, `workflow_dispatch` only. It is a measurement job, not a gate: green means it
-produced a number, not that the suite passed. Prefer it over a developer machine when the
-machine is also doing something else.
+`.github/workflows/ms-bucket.yml` runs one bucket — or a list of them, sequentially in one
+job — on a hosted runner with the full configuration, `workflow_dispatch` only. It is a
+measurement job, not a gate: green means it produced a number, not that the suite passed.
+Prefer it over a developer machine when the machine is also doing something else.
+
+`.github/workflows/ms-surface.yml` is the whole surface: one dispatch, one job, all 32
+non-empty buckets in sequence, one combined total (#3409). Each bucket's numbers reach the job
+summary and the run's annotations as that bucket finishes, so a run that hits the 360-minute
+hosted ceiling still hands over everything that completed. It excludes `Tests-TestLibraries`
+(a library, zero tests) and `Tests-Local` (empty in the W1 artifact); the bucket list is held
+to the artifact's own inventory by `AlRunner.Tests/MsSurfaceWorkflowTests.cs`. For a subset,
+dispatch `ms-bucket.yml` with its `buckets` input rather than editing the surface list.
 
 ## Sister material
 
