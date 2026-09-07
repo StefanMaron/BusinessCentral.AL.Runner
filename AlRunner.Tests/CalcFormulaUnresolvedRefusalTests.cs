@@ -42,9 +42,13 @@ public sealed class CalcFormulaUnresolvedRefusalTests : IDisposable
     private readonly string _root;
 
     // Process-wide unique among AlRunner.Tests statics: these land in the same static
-    // _parsedTables / _metaTableCache the whole assembly shares.
-    private const int ParentTableId = 93960;
-    private const int LineTableId = 93961;
+    // _parsedTables / _metaTableCache the whole assembly shares, so a duplicate id does not
+    // fail loudly — it hands back the OTHER file's table. 93960/93961 were the first choice
+    // here and belong to FieldTriggerInstallSilentSkipTests; on a full-assembly run this class
+    // then got a table carrying "No." and "Description" and neither FlowField, on every unit
+    // leg, while passing alone and in every filtered local run.
+    private const int ParentTableId = 94000;
+    private const int LineTableId = 94001;
     private const int ResolvableFlowFieldId = 4;
     private const int UnresolvableFlowFieldId = 5;
 
