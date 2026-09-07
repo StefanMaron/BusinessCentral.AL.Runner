@@ -20,11 +20,13 @@ tools/ci-wait.py 2379 --timeout 1     # reads the verdict now; does not block
 
 **It must be `--timeout 1`, never `--timeout 0`.** The poll is `deadline = time.time() +
 args.timeout` followed by `while time.time() < deadline:`, so a zero timeout never enters the
-loop, never asks GitHub anything, and falls through to a bare `return 2` — exits 0, 1, 3 and 4
-become unreachable and *every* read says "not reported yet". It is silent: the output is the
-ordinary still-running line, and the only tell is the empty parentheses in
-`STILL RUNNING after 0s ()`, where the reason should be. Measured on one head seconds apart —
-`--timeout 0` exit 2, `--timeout 1` exit 0 GREEN with 10/10 ruleset contexts.
+loop and falls through to a bare `return 2`: **exits 0, 1 and 4 become unreachable and no check
+is ever looked at.** The pre-loop work still runs, so the head SHA and the required-context set
+are fetched and exit 3 remains reachable — a stale-worktree refusal is the likeliest thing you
+will actually hit. It is otherwise silent: the output is the ordinary still-running line, and
+the tell is that its parentheses are empty, `STILL RUNNING after 0s ()`, where the count of
+completed and failing checks belongs. Measured on one head seconds apart — `--timeout 0` exit 2,
+`--timeout 1` exit 0 GREEN with 10/10 ruleset contexts.
 
 That also means **"I ran it and got STILL RUNNING" proves nothing** on its own: that is what a
 green PR, a red PR and a PR with no checks all print under a zero timeout. Check a read against
