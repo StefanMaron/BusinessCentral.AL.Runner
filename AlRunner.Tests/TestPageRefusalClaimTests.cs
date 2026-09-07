@@ -442,10 +442,16 @@ public sealed class TestPageRefusalClaimTests
     };
 
     /// <summary>
-    /// The eight permanent THROWS (nine citations — the option-value refusal spells the pointer
+    /// The seven permanent THROWS (eight citations — the option-value refusal spells the pointer
     /// on both branches of one ternary), by the sentence each one renders. The RunObject action
-    /// is the ninth throw and is deliberately absent: see
+    /// is the eighth throw and is deliberately absent: see
     /// <see cref="RunnerPageInstance_KeepsItsTwoUncontestedPermanentCitations"/>.
+    ///
+    /// <para>The Date one — "is not the round-trip spelling TestPage SetValue(Date) itself
+    /// produces" — was here and is gone (#3384). It was not swept: a real BC 28.4 service tier
+    /// accepts several spellings that refusal rejected, so it was refusing writes BC performs.
+    /// Nothing replaced it, because the runner now hands the string to BC's own evaluator and
+    /// falls back to the existing NavText path, where BC raises its own refusal.</para>
     /// </summary>
     public static IEnumerable<object[]> KeptMarkers() => new[]
     {
@@ -454,7 +460,6 @@ public sealed class TestPageRefusalClaimTests
         new object[] { "MockTestPage.cs", "so it cannot be used to locate a row" },
         new object[] { "MockTestPage.cs", "is not an acceptable value" },
         new object[] { "MockTestPage.cs", "is not one of the option's values" },
-        new object[] { "MockTestPage.cs", "is not the round-trip spelling TestPage" },
         new object[] { "RunnerPageInstance.cs", "would open the related table's list page" },
         new object[] { "RunnerPageInstance.cs", "so there is no table-field OnLookup to fall back to" },
     };
@@ -481,12 +486,15 @@ public sealed class TestPageRefusalClaimTests
     }
 
     [Fact]
-    public void MockTestPage_KeepsExactlyItsSixPermanentCitations()
+    public void MockTestPage_KeepsExactlyItsFivePermanentCitations()
     {
-        // Exact, because nothing in flight reclassifies a MockTestPage refusal: six citations
-        // across five throws (the option-value refusal spells the pointer on both branches of
+        // Exact, because nothing in flight reclassifies a MockTestPage refusal: five citations
+        // across four throws (the option-value refusal spells the pointer on both branches of
         // one ternary). Under-sweep and over-sweep both fail.
-        Assert.Equal(6, Regex.Matches(CodeOf("MockTestPage.cs"), "docs/scope\\.md").Count);
+        //
+        // Was six until #3384 removed the Date round-trip refusal — see KeptMarkers for why
+        // that one was wrong rather than swept. The number moves only with a reason recorded.
+        Assert.Equal(5, Regex.Matches(CodeOf("MockTestPage.cs"), "docs/scope\\.md").Count);
     }
 
     [Fact]
