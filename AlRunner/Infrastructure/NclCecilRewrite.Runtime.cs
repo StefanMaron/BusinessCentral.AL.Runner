@@ -1481,6 +1481,66 @@ public static partial class NclCecilRewrite
             }
             Console.Error.WriteLine("[Cecil] Replaced NavSession.MaximizePermissions/RemoveMaximizedPermissions → no-op (no permission system in runner)");
 
+            // NavTestExecution.set_EffectivePermissionSets → store the field and nothing else.
+            //
+            // Codeunit 131006 "Permissions Mock" — the platform-supported way an AL test lowers
+            // its own effective permissions, and the entry point codeunit 132217
+            // "Library - Lower Permissions" wraps — reaches this setter on its very first line:
+            // Start() constructs Microsoft.Dynamics.Nav.Runtime.PermissionTestHelper, whose ctor
+            // calls Clear() → NavTestExecution.SetEffectiveTestPermissions(null) → this setter.
+            //
+            // The real body dereferences `Tree.Session.Permissions` TWICE, and that reference is
+            // null here BY DESIGN: NavUserPermissions.HasRole / GetRoles both need a SQL-backed
+            // NavTenant.Database, and populating a skeleton NavTenant was measured breaking ~466
+            // tests (docs/limitations.md, "Permission-set assignment"). Measured with
+            // AL_RUNNER_TRACE_NRE=1, the NullReferenceException lands at IL_007D — the
+            // `Tree.Session.Permissions.ClearPermissions()` tail, after the field assignment at
+            // IL_0078 has already happened. The guard arm at IL_0016
+            // (`!Tree.Session.Permissions.IsSuperForAllCompanies`) is the same null, reached the
+            // second time round when AddEffectivePermissionSet passes a non-null set. One rewrite
+            // covers both entries, and therefore Start(), Clear(), Dispose() and Assign().
+            //
+            // SCOPE AUDIT — why storing the field alone is observably equivalent for in-scope
+            // test code, statement by statement of the body being replaced:
+            //   * the super-user guard would PASS: the skeleton session is SUPER, which this
+            //     runner already states five times over — NavSession.HasExecutePermission /
+            //     HasCachedExecutePermissions / HasExecutePermissionForCompany /
+            //     HasExecutePermissionForAllCompanies rewritten to `true`,
+            //     VerifyExecutePermission no-opped (NclCecilRewrite.Metadata.cs), and
+            //     MaximizePermissions / RemoveMaximizedPermissions no-opped just above. So the
+            //     NavMustBeSuperUserException arm is unreachable, not suppressed.
+            //   * SendTraceTag("000004G", …) is telemetry. No AL-observable effect.
+            //   * Permissions.ClearPermissions() invalidates the session's permission cache. The
+            //     runner has no permission cache to invalidate — which is precisely why the
+            //     reference it is called on is null.
+            // The field assignment is KEPT, so NavTestExecution.EffectivePermissionSets and
+            // EffectivePermissionsInUse still answer what BC's own bodies wrote, and
+            // PermissionTestHelper's get/set round-trip through the platform stays real.
+            //
+            // This does NOT make the runner enforce permissions. docs/scope.md's all-granted
+            // position is unchanged: a test asserting access DENIAL under a lowered permission
+            // set still cannot pass here, and must not be written as though it could.
+            {
+                var navTestExecT = nclMod.GetType(Rt + "NavTestExecution")
+                    ?? throw new InvalidOperationException("NavTestExecution not found — Ncl shape changed; do not commit");
+                var effPermSetter = navTestExecT.Methods.FirstOrDefault(mm =>
+                        mm.Name == "set_EffectivePermissionSets" && mm.Parameters.Count == 1 && mm.HasBody)
+                    ?? throw new InvalidOperationException("NavTestExecution.set_EffectivePermissionSets not found — Ncl shape changed; do not commit");
+                var effPermField = navTestExecT.Fields.FirstOrDefault(f => f.Name == "effectivePermissions")
+                    ?? throw new InvalidOperationException("NavTestExecution.effectivePermissions not found — Ncl shape changed; do not commit");
+                var body = effPermSetter.Body;
+                body.Instructions.Clear();
+                body.Variables.Clear();
+                body.ExceptionHandlers.Clear();
+                var il = body.GetILProcessor();
+                il.Append(il.Create(OpCodes.Ldarg_0));
+                il.Append(il.Create(OpCodes.Ldarg_1));
+                il.Append(il.Create(OpCodes.Stfld, effPermField));
+                il.Append(il.Create(OpCodes.Ret));
+                body.MaxStackSize = 2;
+                Console.Error.WriteLine("[Cecil] Rewrote NavTestExecution.set_EffectivePermissionSets → store only (NavSession.Permissions is null in the runner)");
+            }
+
             // NavTenant.GetReportSettingsOverride(int) → null. The real body lazily
             // reads the tenant's "Report Settings Override" table by spinning up a
             // full SYSTEM SESSION (NavUserAuthentication etc. — service-tier only).

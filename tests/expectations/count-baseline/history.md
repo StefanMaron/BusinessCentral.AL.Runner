@@ -236,6 +236,54 @@ commits after it unpinned keeps the gap honest.
 
 Written by agent stma-auto-1 (automated implementation agent).
 
+## 2026-09-07 — corpus pin `408c39fe` → `ddb9b5ab` (al-language 2969 → 2978)
+
+Two commits. This bump exists to consume corpus
+[#241](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/241) (`ddb9b5ab`,
+codeunit 60291 `"Test Permissions Mock Lifecyc"`), the upstream half of **#3343**. `ddb9b5ab`
+is corpus `master`'s tip; corpus history is linear, so corpus #242 (`21e2fed`, partial
+records) comes along with it and there is no earlier commit that contains #241.
+
+The starting point is `408c39fe`/2969, not `0bbe376`/2915: the entry above records
+`0bbe376` → `408c39fe` (+54) from #3345, which merged while this branch was open. This branch
+merged `main` and rebuilt its number from that base rather than carrying its own first draft
+(`0bbe376` → `ddb9b5ab`, +63) forward, which would have double-counted #3345's step.
+
+`al-language` 2969 → **2978** (+9), measured on a real 3-bundle run on BC 28.1 with the
+workflow's own cache paths, not computed: **3007 tests total** across the three corpus apps, of
+which `al-language-onprem` contributes 29 and `al-language-internals-fixture` 0 — both
+unchanged, since neither of the two commits touches those apps. `runner-extras` is untouched.
+Corpus #241's own contribution is 3 of the +9; corpus #242's is 6.
+
+One `default` rather than per-version entries, checked rather than assumed: neither of the two
+commits carries a preprocessor gate at all, and the run reports the same 3007/2978 on BC 27.0,
+27.5 and 28.4.
+
+### The four tests corpus #242 brings, and why they are declared
+
+Codeunit 60775 `"Test Record Partial Load"` measures the half of partial records nothing
+covered: which fields BC silently ADDS to a `SetLoadFields` request, and what reading an
+omitted field does. Four of its tests fail here, and every one fails on its **precondition** —
+the arrange step establishing that a field is not loaded — rather than on the behaviour it is
+about. `Record.AreFieldsLoaded` answers true for every field, always: the runner loads whole
+rows and has no partial load set.
+
+Declared `expect-fail-known-gap` in `known-gaps-record-partial-load.json` against **#3358**,
+which stays open after this PR merges. Note what is NOT broken: reading an omitted field yields
+its real stored value here, which is what BC does too — `SetLoadFields` is a performance hint,
+never a data filter — so this is a reporting gap, not a data-correctness one.
+
+Nothing else in this file is this PR's to move. The 60774 `expect-oos` entry for corpus #239's
+SaveAs(Pdf) content test and the five 60350 TestFilter `expect-fail-known-gap` entries against
+#3316 both arrived on `main` with #3345 and are left exactly as that PR wrote them; this
+branch's own duplicate of the first was dropped in favour of `main`'s during the merge.
+
+After the declarations the run reports **3007 total, 3007 pass (4 `pass-oos`,
+20 `pass-known-gap`), 0 fail**, and `--expectations-require-match` audits **all 25 entries
+matched a discovered test**.
+
+Written by agent fbk-1 (automated implementation agent).
+
 ## runner-extras
 
 ### object-metadata-system-table 4 -> 6 (PR for #2771)
