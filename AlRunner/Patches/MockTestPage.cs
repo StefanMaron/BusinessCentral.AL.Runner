@@ -18,6 +18,57 @@ using Microsoft.Dynamics.Nav.Types.Exceptions;
 namespace AlRunner;
 
 /// <summary>
+/// The field numbers of a record's current key, for <c>ITestFilter.GetCurrentKeyFields</c>
+/// (#3316). Shared by the two implementations that back a filter with a real NavRecord —
+/// <see cref="LiveNavTestPage"/> and RequestPageTestPage's data-item filter — so the two
+/// cannot answer the same question differently.
+/// </summary>
+internal static class TestFilterKeyFields
+{
+    /// <summary>
+    /// NCLMetaKey's field list is internal and NavRecord exposes only ALCurrentKey (the key
+    /// rendered by name) and ALCurrentKeyIndex, so the numbers are recovered by resolving each
+    /// rendered field name against the table's own metadata. A name the table does not know is
+    /// skipped rather than guessed at: an invented field number would be a wrong answer, where
+    /// a short list is a visibly incomplete one.
+    /// </summary>
+    internal static int[] Of(NavRecord record)
+    {
+        var names = SplitRenderedKey(record.ALCurrentKey);
+        if (names.Length == 0) return Array.Empty<int>();
+
+        var nos = new List<int>();
+        foreach (var name in names)
+            foreach (var field in record.MetaTable.Fields)
+            {
+                if (!string.Equals(field.FieldName, name, StringComparison.OrdinalIgnoreCase)) continue;
+                nos.Add(field.FieldNo);
+                break;
+            }
+        return nos.ToArray();
+    }
+
+    /// <summary>
+    /// The field names out of a key as NavRecord.ALCurrentKey renders it — comma-separated,
+    /// each name optionally quoted because BC quotes any name that is not a bare identifier
+    /// ("Entry No." carries a space and a period). Split out from <see cref="Of"/> so the
+    /// parsing can be asserted without a live NavRecord.
+    /// </summary>
+    internal static string[] SplitRenderedKey(string? rendered)
+    {
+        if (string.IsNullOrEmpty(rendered)) return Array.Empty<string>();
+
+        var names = new List<string>();
+        foreach (var part in rendered!.Split(','))
+        {
+            var name = part.Trim().Trim('"');
+            if (name.Length != 0) names.Add(name);
+        }
+        return names.ToArray();
+    }
+}
+
+/// <summary>
 /// Minimal ITestPage + ITestFilter + IDisposable implementation.
 /// All field/action/filter state is held in plain dictionaries; navigation
 /// always reports "no more rows" (returns false / empty).
@@ -105,16 +156,25 @@ internal class MockITestPage : ITestPage
     public virtual void SetFilter(int fieldId, string filterValue) => _filters[fieldId] = filterValue;
     public IEnumerable<NavFilter> GetFilter() => Array.Empty<NavFilter>();
     public virtual string GetFilter(int fieldId) => _filters.TryGetValue(fieldId, out var v) ? v : string.Empty;
-    public void   SetCurrentKeyFields(int[] fields) { _currentKeyFields = fields; }
-    public int[]  GetCurrentKeyFields() => _currentKeyFields ?? Array.Empty<int>();
+    // Virtual since #3316: a page with a live rowset holds its key and direction on the
+    // NavRecord it walks, not here — see LiveNavTestPage's overrides. This base implementation
+    // is what a page with no record has: it remembers what was set, because nothing else can.
+    public virtual void SetCurrentKeyFields(int[] fields) { _currentKeyFields = fields; }
+    public virtual int[]  GetCurrentKeyFields() => _currentKeyFields ?? Array.Empty<int>();
 
-    public bool   Ascending
+    public virtual bool   Ascending
     {
         get => _ascending;
         set => _ascending = value;
     }
 
-    public string CurrentKey
+    // #3316: this used to join the raw field NUMBERS, so AL's TestPage.Filter.CurrentKey()
+    // answered "2, 3" where BC answers a key naming its fields. NavTestFilter.ALCurrentKey
+    // reads this member straight through, so the rendering is wholly ours. Without a record
+    // there is no metadata to resolve a number against, so a recordless page renders the
+    // numbers as before rather than inventing names; LiveNavTestPage overrides with the real
+    // one. See docs/limitations.md.
+    public virtual string CurrentKey
     {
         get
         {
@@ -2359,6 +2419,75 @@ internal class LiveNavTestPage : MockITestPage
 
     public override string GetFilter(int fieldNo)
         => RequireRecord("GetFilter()").ALGetFilter(fieldNo);
+
+    // ── ITestFilter: the key and the direction the page walks (#3316) ─────────────
+    //
+    // The same argument SetFilter above makes. A page's key and sort direction are properties
+    // of the rowset, so they belong on the NavRecord the page walks — every navigation member
+    // of this class goes through ALFindFirstAsync/ALNextAsync on that record, and those read
+    // the record's current key and ascending flag. Held in fields on this object instead (what
+    // MockITestPage does, and what this class inherited until now) they were a write-only
+    // store: SetCurrentKey and Ascending were recorded and reported back, and the page went on
+    // walking its primary key ascending regardless.
+    //
+    // Delegating also fixes CurrentKey's rendering for free rather than by a second mechanism.
+    // NavRecord.ALCurrentKey resolves the key against the table's own metadata and names its
+    // fields, which is what corpus codeunit 60398's Record-side assertions already pin
+    // ('CurrentKey() must include primary key field Entry No.'); the field-number join this
+    // class used to inherit is what produced the observed '3' and '2, 3'.
+
+    /// <summary>
+    /// Install the key the page walks. Delegates to the record, so it changes the ORDER the
+    /// page walks and not merely what <see cref="CurrentKey"/> reports.
+    ///
+    /// <para>An empty or null field list leaves the record's key alone: BC's own
+    /// NavRecord.ALSetCurrentKey builds an NCLMetaField per field and asks the record
+    /// implementation to select a key from them, and a zero-length list names no key. AL
+    /// cannot produce that call anyway — <c>SetCurrentKey()</c> with no argument is
+    /// error AL0135 — so this only guards the interface, which is not AL-constrained.</para>
+    /// </summary>
+    public override void SetCurrentKeyFields(int[] fields)
+    {
+        if (fields == null || fields.Length == 0) return;
+        RequireRecord("SetCurrentKey()").ALSetCurrentKey(fields);
+        // A key change reorders the rowset, so the cursor's position within it is no longer
+        // meaningful — the same reason SetFilter repositions. BC's client reopens the rowset
+        // on the new key and lands on its first row, which is what the corpus asserts by
+        // walking from First() after SetCurrentKey.
+        RepositionAfterFilterChange();
+    }
+
+    /// <summary>
+    /// The field numbers of the key the record is currently walking. Answered from the
+    /// record's own current key rather than from a remembered argument list, so a page whose
+    /// key was never set through this interface still reports the key it is actually on.
+    /// </summary>
+    public override int[] GetCurrentKeyFields()
+        => _record == null ? Array.Empty<int>() : TestFilterKeyFields.Of(_record);
+
+    /// <summary>
+    /// The direction the page walks its current key. Read and written on the record, so
+    /// <c>Ascending(false)</c> reverses the walk instead of only being reported back.
+    /// </summary>
+    public override bool Ascending
+    {
+        get => _record == null || _record.ALAscending;
+        set
+        {
+            RequireRecord("Ascending()").ALAscending = value;
+            // Reversing the order moves the first row, so the cursor is repositioned for the
+            // same reason a key change repositions it.
+            RepositionAfterFilterChange();
+        }
+    }
+
+    /// <summary>
+    /// The current key rendered the way BC renders it — naming the key's fields. Straight
+    /// through to NavRecord.ALCurrentKey, which is what AL's own <c>Record.CurrentKey()</c>
+    /// reads, so the page and the record can never disagree about the key the page is on.
+    /// </summary>
+    public override string CurrentKey => _record == null ? string.Empty : _record.ALCurrentKey;
+
 
     /// <summary>
     /// Resolve a CONTROL id to the source-table field it is bound to. A control bound to a

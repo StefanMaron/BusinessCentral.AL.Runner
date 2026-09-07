@@ -232,6 +232,12 @@ Two things about the verdicts it produces, because both change what "stop" means
    this catches is a cache left inconsistent by a killed run, which once cost 76% of passing
    tests with no error and an unchanged exit code — a private cache is blind to exactly that.
 
+   The verdict is the **numbers**, not the exit code. `preflight.py --with-corpus` reads
+   `test-count-baseline.json`, enumerates the corpus apps the way CI does, and compares the
+   observed pass count **per app** against that file, failing on any difference in either
+   direction. A non-zero exit adds a failure; it can never grant a pass. It used to be the only
+   thing checked, which made the check blind to the one failure it is named for (#3357).
+
    If it does not reproduce: stop, notify, and open an issue. Everything downstream is untrusted
    until it does.
 

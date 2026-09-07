@@ -51,7 +51,18 @@ CORPUS = "StefanMaron/BusinessCentral.AL.Language.Tests"
 
 # One space or many, so both the 27.x and the 28.x spelling match. A `+`, never
 # a fixed count -- the fixed count IS the bug (#3311 variant 1).
-_RESULT = re.compile(r"\b(PASS|FAIL)\s+([A-Za-z_][A-Za-z0-9_]*)")
+#
+# Two more spellings, both from AL Runner's OWN output rather than a corpus leg's
+# (#3357). It prints `PASS  Codeunit65551.Method (45ms)`, so the name carries a
+# dot -- an undotted pattern silently counts distinct CODEUNITS instead of tests,
+# collapsing thousands to dozens. And an expectations-reclassified pass prints
+# `PASS (known-gap) Codeunit65551.Method`, which an unqualified pattern skips
+# entirely. Both are additive for a corpus log, which has neither dots nor
+# qualifiers in its names: see test_corpus_pass_count.py, where the real-log
+# fixtures parse to the same names before and after.
+_RESULT = re.compile(
+    r"\b(PASS|FAIL)\s+(?:\((?:oos|known-gap|divergence)\)\s+)?"
+    r"([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*)")
 
 # The harness's own per-leg total, used as an INDEPENDENT second query: it tells
 # a leg that ran a suite apart from one that ran nothing at all.

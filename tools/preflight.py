@@ -2114,6 +2114,140 @@ def probe_decompiler(repo: str, timeout: float = 90) -> DecompilerState:
     return st
 
 
+# --------------------------------------------------------------------------
+# the corpus baseline
+# --------------------------------------------------------------------------
+CORPUS_BASELINE_REL = "tests/expectations/count-baseline/test-count-baseline.json"
+CORPUS_APP_ENUMERATOR = "scripts/corpus-app-dirs.py"
+CORPUS_SUBMODULE = "tests/al-language"
+
+# `=== <bundle> ===`, and the three variants that carry a stage after an em dash
+# (`— COMPILE FAIL`, `— EXEC FAIL`, `— SUITE ERRORS (n)`). The `=== ` with a
+# trailing space is what keeps the summary block's row of `=` out of it.
+_CORPUS_BUCKET = re.compile(r"^=== (?P<name>[^=].*?) ===$")
+_CORPUS_TOTAL = re.compile(r"^Tests:\s+(\d+) total\s*$")
+_CORPUS_FIELD = re.compile(r"^ {2}(pass|fail|error|skipped):\s+(\d+)\s*$")
+
+
+@dataclass
+class CorpusRun:
+    """What a corpus run actually reported, read from its own output."""
+    per_bucket: dict = field(default_factory=dict)   # bundle dir -> distinct passing tests
+    summary: Optional[dict] = None                   # total/pass/fail/error/skipped
+    lost_suites: list = field(default_factory=list)
+    broken_buckets: list = field(default_factory=list)
+
+
+def corpus_pass_parser():
+    """tools/corpus-pass-count.py, loaded as a module.
+
+    Reused rather than re-implemented: counting passes out of a run is the thing
+    that has produced a confident WRONG answer -- always zero, always shaped like
+    a result -- five separate ways (`verify-execution-not-the-tick.md`), and that
+    parser is the one with fixtures behind it. Its name has hyphens, so it needs
+    importlib rather than an import statement.
+    """
+    import importlib.util
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "corpus-pass-count.py")
+    spec = importlib.util.spec_from_file_location("corpus_pass_count", path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def parse_corpus_run(text: str, parser=None) -> CorpusRun:
+    """Read a local corpus run's own report: passes per bundle, plus its summary.
+
+    TWO differently-shaped readings of the same run, on purpose. The per-bundle
+    count comes from the `PASS` lines, the totals from the summary block, and
+    check_corpus refuses a run whose two readings disagree -- the second query
+    `verify-execution-not-the-tick.md` asks for, because a single pattern that
+    silently stops matching reports zero and zero reads like a measurement.
+
+    A missing summary is None, never `{"pass": 0}`: "the run printed nothing to
+    read" and "the run passed no tests" are different facts and only one of them
+    is about the box.
+    """
+    parser = parser or corpus_pass_parser()
+    sections: dict[str, list[str]] = {}
+    out = CorpusRun()
+    current: Optional[str] = None
+    summary: Optional[dict] = None
+    for line in text.splitlines():
+        m = _CORPUS_BUCKET.match(line.rstrip())
+        if m:
+            name, _, stage = m.group("name").partition(" — ")
+            name, stage = name.strip(), stage.strip()
+            if stage.startswith("COMPILE FAIL") or stage.startswith("EXEC FAIL"):
+                out.broken_buckets.append(f"{name}: {stage}")
+                current = None
+            elif stage.startswith("SUITE ERRORS"):
+                # The bucket RAN and its surviving tests are real, but the tests
+                # the lost suites declare are missing rather than passing (#2762).
+                out.lost_suites.append(f"{name}: {stage}")
+                current = None
+            else:
+                current = name
+                sections.setdefault(name, [])
+            continue
+        if line.startswith("===="):        # the summary block's separator
+            current = None
+        mt = _CORPUS_TOTAL.match(line.rstrip())
+        if mt:
+            summary = {"total": int(mt.group(1))}
+            continue
+        mf = _CORPUS_FIELD.match(line.rstrip())
+        if mf and summary is not None:
+            summary[mf.group(1)] = int(mf.group(2))
+            continue
+        if current is not None:
+            sections[current].append(line)
+    out.summary = summary
+    for name, lines in sections.items():
+        out.per_bucket[name] = len(parser.parse_leg("\n".join(lines), "")["passed"])
+    return out
+
+
+def corpus_expected_counts(doc: dict, suites: Iterable[str]) -> tuple[dict, list]:
+    """Expected test count per suite, read from the checked-in baseline document.
+
+    Anything it cannot compute is a PROBLEM, never a zero. A suite silently
+    treated as expecting 0 tests is a check that passes when the run executes
+    none of it, which is the failure this whole function exists inside of.
+    """
+    counts: dict[str, int] = {}
+    problems: list[str] = []
+    suites_doc = (doc or {}).get("suites")
+    if not isinstance(suites_doc, dict):
+        return {}, [f"the baseline file has no `suites` object "
+                    f"(see {CORPUS_BASELINE_REL})"]
+    for s in suites:
+        entry = suites_doc.get(s)
+        if not isinstance(entry, dict):
+            problems.append(f"{s}: the run would execute this app, and the baseline "
+                            f"has no entry for it")
+            continue
+        tests = entry.get("tests")
+        if not isinstance(tests, dict) or not isinstance(tests.get("default"), int):
+            problems.append(f"{s}: baseline entry has no flat `tests.default` "
+                            f"(the per-app-group form is not one this check reads)")
+            continue
+        extra = sorted(k for k in tests if k != "default")
+        if extra:
+            # byBcVersion overrides the default per BC version, and preflight does
+            # not know which BC version this box will select. Refusing is loud and
+            # fixable; guessing `default` would quietly compare against a number
+            # that does not apply to this box.
+            problems.append(f"{s}: baseline entry carries {', '.join(extra)}, which "
+                            f"this check cannot resolve without knowing the BC version")
+            continue
+        counts[s] = tests["default"]
+    return counts, problems
+
+
 def check_corpus(repo: str, enabled: bool) -> CheckResult:
     """The skill's step 1: the corpus is the known-good baseline, and its expected
     count is checked in at tests/expectations/count-baseline/.
@@ -2122,13 +2256,25 @@ def check_corpus(repo: str, enabled: bool) -> CheckResult:
     run before every cycle; --with-corpus turns it on. A SKIP is reported as a
     SKIP, never folded into the passing count, so nobody reads a green preflight
     as "the baseline reproduced".
+
+    The verdict is the NUMBERS, never the exit code (#3357). This check used to
+    pass on `if r.ok:` alone, having computed the path of the baseline file and
+    never opened it -- so the one failure it names, a shared cache left
+    inconsistent by a killed run costing 76% of passing tests "with no error and
+    an unchanged exit code", was the one thing it could not see. A non-zero exit
+    can still ADD a failure here; it can never grant a pass.
     """
-    baseline = os.path.join(repo, "tests/expectations/count-baseline/test-count-baseline.json")
+    baseline = os.path.join(repo, CORPUS_BASELINE_REL)
+    invocation = ("mapfile -t APPS < <(python3 scripts/corpus-app-dirs.py tests/al-language)\n"
+                  "dotnet run --project AlRunner -c Release -- \"${APPS[@]}\" "
+                  "--package-cache ~/.al-runner/platform-apps "
+                  "--package-cache ~/.al-runner/test-apps --show-pass --strict "
+                  "--count-baseline " + CORPUS_BASELINE_REL)
     if not enabled:
         return CheckResult(name="corpus-baseline", status="SKIP",
                            summary="not run (multi-minute); pass --with-corpus to run it",
                            command="tools/preflight.py --with-corpus",
-                           detail=[f"expected counts live in {os.path.relpath(baseline, repo)}",
+                           detail=[f"expected counts live in {CORPUS_BASELINE_REL}",
                                    "A box that cannot reproduce the corpus baseline produces "
                                    "results that cannot be trusted - notably a shared cache "
                                    "left inconsistent by a killed run, which once cost 76% of "
@@ -2141,23 +2287,123 @@ def check_corpus(repo: str, enabled: bool) -> CheckResult:
                            summary=f"no baseline file at {baseline}",
                            command=f"ls {baseline}",
                            remedy="Check out the repository fully, including tests/expectations.")
-    r = run(["dotnet", "run", "--project", "AlRunner", "--", "test",
-             "--bundle", "tests/al-language", "--package-cache",
-             os.path.expanduser("~/.al-runner/platform-apps")],
+    try:
+        with open(baseline) as fh:
+            doc = json.load(fh)
+    except (OSError, ValueError) as exc:
+        return CheckResult(name="corpus-baseline", status="FAIL",
+                           summary=f"the baseline file could not be read: {exc}",
+                           command=f"python3 -m json.tool {CORPUS_BASELINE_REL}",
+                           remedy="Repair or re-check-out the baseline file.")
+
+    def fail(summary: str, detail: list, remedy: str, data: Optional[dict] = None) -> CheckResult:
+        return CheckResult(name="corpus-baseline", status="FAIL", summary=summary,
+                           command=invocation, detail=detail, remedy=remedy,
+                           data=data or {})
+
+    # The apps are ENUMERATED, never named (#2984): a hardcoded path is green by
+    # construction the day the corpus gains an app, because the new app is checked
+    # out and never executed.
+    enum = run(["python3", CORPUS_APP_ENUMERATOR, CORPUS_SUBMODULE], cwd=repo, timeout=120)
+    apps = [ln.strip() for ln in enum.out.splitlines() if ln.strip()]
+    if not enum.ok or not apps:
+        return fail("the corpus apps could not be enumerated, so nothing was measured",
+                    [(enum.out + enum.err).strip()[-800:] or "no output"],
+                    f"Check {CORPUS_APP_ENUMERATOR} and that the {CORPUS_SUBMODULE} "
+                    f"submodule is checked out (git submodule update --init).")
+
+    suites = [os.path.basename(a.rstrip("/")) for a in apps]
+    expected, problems = corpus_expected_counts(doc, suites)
+    if problems:
+        return fail("the expected count cannot be computed, so the run cannot be judged",
+                    problems,
+                    f"Add or correct the entries in {CORPUS_BASELINE_REL} "
+                    f"(its README.md has the schema), then re-run.",
+                    {"apps": apps, "expected": expected})
+    want = sum(expected.values())
+
+    r = run(["dotnet", "run", "--project", "AlRunner", "-c", "Release", "--", *apps,
+             "--package-cache", os.path.expanduser("~/.al-runner/platform-apps"),
+             "--package-cache", os.path.expanduser("~/.al-runner/test-apps"),
+             "--show-pass", "--strict", "--expectations-require-match",
+             "--count-baseline", CORPUS_BASELINE_REL],
             cwd=repo, timeout=3600)
-    if r.ok:
-        return CheckResult(name="corpus-baseline", status="PASS",
-                           summary="the corpus baseline reproduced on this box",
-                           command="dotnet run --project AlRunner -- test --bundle "
-                                   "tests/al-language --package-cache ~/.al-runner/platform-apps")
-    tail = "\n".join((r.out + r.err).strip().splitlines()[-15:])
-    return CheckResult(name="corpus-baseline", status="FAIL",
-                       summary="the corpus baseline did NOT reproduce - everything downstream "
-                               "is untrusted until it does",
-                       command="dotnet run --project AlRunner -- test --bundle tests/al-language",
-                       detail=[tail],
-                       remedy="Stop, notify, and open an issue. Do not start a cycle on a box "
-                              "whose baseline does not reproduce.")
+    text = r.out + "\n" + r.err
+    tail = "\n".join(text.strip().splitlines()[-15:])
+    if r.timed_out:
+        return fail("the corpus run timed out - the baseline was never measured",
+                    [tail or "no output"],
+                    "Re-run it by hand and find out where it hangs; a box that cannot "
+                    "finish the corpus cannot be trusted to finish a cycle.")
+    try:
+        obs = parse_corpus_run(text)
+    except Exception as exc:                                  # noqa: BLE001
+        return fail(f"the run's output could not be read ({exc}), so nothing was verified",
+                    [tail or "no output"],
+                    "Fix tools/corpus-pass-count.py / this parser before trusting any "
+                    "result from this box.")
+
+    data = {"expected": expected, "observed": obs.per_bucket, "apps": apps,
+            "exit_code": r.rc, "summary": obs.summary}
+    lines = [f"{s}: expected {expected[s]}, observed {obs.per_bucket.get(s, 0)}"
+             for s in suites]
+
+    if obs.summary is None:
+        return fail("the run printed no test summary, so nothing was verified - "
+                    "this is NOT a report of zero passes",
+                    [tail or "no output"] + lines,
+                    "Re-run the invocation by hand and read its output; the run did "
+                    "not get as far as reporting.", data)
+    if obs.broken_buckets or obs.lost_suites:
+        return fail("a bundle did not run in full, so the baseline was not reproduced",
+                    obs.broken_buckets + obs.lost_suites + lines,
+                    "Fix the compile/suite error above - the tests those suites "
+                    "declare are MISSING from this run, not passing.", data)
+    if obs.summary.get("fail") or obs.summary.get("error"):
+        return fail(f"{obs.summary.get('fail', 0)} test(s) failed and "
+                    f"{obs.summary.get('error', 0)} errored on this box",
+                    [tail] + lines,
+                    "Stop, notify, and open an issue. Do not start a cycle on a box "
+                    "whose baseline does not reproduce.", data)
+
+    mism = [f"{s}: expected {expected[s]}, observed {obs.per_bucket.get(s, 0)} "
+            f"({obs.per_bucket.get(s, 0) - expected[s]:+d})"
+            for s in suites if obs.per_bucket.get(s, 0) != expected[s]]
+    if mism:
+        # Both directions, deliberately. A shortfall is the incident this check is
+        # named for; a SURPLUS is only reachable through double counting or a tree
+        # whose pin and baseline disagree, and both mean the numbers this box
+        # produces describe something other than the corpus. A floor ("at least N")
+        # is the shape that let a stale baseline hide a later real drop (#1880).
+        return fail("the corpus baseline did NOT reproduce - the pass count does not "
+                    "match the checked-in baseline",
+                    mism + [f"total: expected {want}, "
+                            f"observed {sum(obs.per_bucket.values())}"],
+                    "Stop, notify, and open an issue. Do not start a cycle on a box "
+                    "whose baseline does not reproduce. If the corpus pin moved, the "
+                    f"baseline in {CORPUS_BASELINE_REL} moves with it, in that PR.",
+                    data)
+    if obs.summary.get("pass") != want:
+        return fail("the run's own summary disagrees with its per-bundle PASS lines - "
+                    f"summary says {obs.summary.get('pass')}, the lines add up to {want}",
+                    [tail] + lines,
+                    "Do not trust either number until they agree; one of the two "
+                    "readings stopped measuring what it names.", data)
+    if not r.ok:
+        # Every number checked out and the process still failed: --count-baseline
+        # (exit 4), --expectations-require-match (exit 5) or a crash. Reported as a
+        # FAIL rather than explained away, because the run is saying something the
+        # counts above cannot see.
+        return fail(f"every count matched but the run exited {r.rc} - something the "
+                    f"counts cannot see went wrong",
+                    [tail] + lines,
+                    "Read the tail above: 4=count-baseline mismatch, "
+                    "5=an expectations entry matched no test, 134/139=crash.", data)
+    return CheckResult(name="corpus-baseline", status="PASS",
+                       summary=f"the corpus baseline reproduced on this box: {want} tests "
+                               f"passed across {len(apps)} app(s), matching "
+                               f"{CORPUS_BASELINE_REL}",
+                       command=invocation, detail=lines, data=data)
 
 
 # --------------------------------------------------------------------------
