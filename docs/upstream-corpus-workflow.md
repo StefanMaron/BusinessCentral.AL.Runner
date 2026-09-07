@@ -202,3 +202,73 @@ control arm proving that probe is really set when the thing does happen.
 Corpus PRs #185 and #194 are the worked pattern; the second was caught by its
 own guard, one revision before it would have shipped an unfalsifiable
 assertion.
+
+## Step 4 in full — how far can the pin advance, and what holds the rest
+
+`.claude/rules/al-language-submodule.md` gives three cases for a pin bump: fold,
+catch-up, and *blocked by an intervening commit* — "pin the newest commit whose
+predecessors are all satisfied, leave the rest, and name the open issue holding
+the remainder." That third case is the common one, and working it out is a
+measurement, not a judgement call.
+
+`.github/workflows/corpus-pin-advance.yml` runs it daily and writes the answer
+onto one tracking issue. `tools/corpus-pin-advance.py` is the measurement.
+
+### The algorithm is deliberately not a bisect
+
+1. Run the corpus at the **tip**.
+2. Green → the tip is the answer, and it cost one run.
+3. Red → map the failing test **names** back to the corpus commits that
+   introduced them (`git log -S` over the corpus), which names the blocker
+   directly.
+4. The newest commit whose predecessors are all satisfied is the target.
+
+Cost is the point. A corpus run is minutes, so a binary search is `log n` runs
+while the name-to-commit mapping is one. Replayed against the 2026-09-07 gap —
+whose manual run took three corpus executions to bisect — all five failing names
+map to `d025203` in 13 ms of `git log -S`, giving the same target `0bbe376` from
+the first run's output alone.
+
+The mapping is **exact-token**, not substring. Corpus test names nest
+(`TestFilter_SetCurrentKey` is a prefix of
+`TestFilter_SetCurrentKey_AcceptsACompositeKey`), and a plain `-S` pickaxe
+attributes the longer name to whichever older commit introduced the shorter one.
+That reports the blocker as *older* than it is, which makes the target too
+conservative while looking entirely plausible.
+
+### Why it reports rather than opening a pull request
+
+The recommendation in #3319, adopted:
+
+- A job that opens a pin PR whenever a greener pin exists opens one most days,
+  onto an account-wide Actions queue that is already cancelling its own
+  verification (#3302, #3003).
+- A pin bump is one of the few changes that can turn `main` red on every leg at
+  once — reasonable to put in front of a human.
+- Report-only replaces an artifact that has been produced by hand six times
+  (#2429, #3124, #3202, #3304, #3317, and 2026-09-07). #3202 and #3304 are, in
+  substance, "here is the newest green pin and here is what holds the rest".
+
+Adding PR creation later is a small step; the reverse is not. The workflow is
+granted `contents: read`, so it cannot move the gitlink even if its script tried.
+
+### What it must never do
+
+It never adds a `tests/expectations/` entry for a failure it finds. An entry
+converts a live, owned gap into settled classification — the failure mode
+`.claude/rules/ask-the-corpus-before-claiming-bc-behavior.md` names directly.
+An **untracked** failure is the finding most worth surfacing, so the report calls
+those out explicitly rather than leaving the cell blank; #3316 exists because a
+manual run noticed exactly that.
+
+### Two things that go stale, and why the job re-reads them
+
+- **The gap shrinks without being asked.** #3304 sat claiming "9 commits behind,
+  blocked by four issues" while two of those issues had closed and the real gap
+  was 2.
+- **The tip moves mid-task.** A ninth corpus commit landed while the 2026-09-07
+  pin PR was being merged, and a coordinator's stated ceiling was true when
+  written and false 20 minutes later.
+
+So the pin is read from the superproject tree and the tip from `git ls-remote`,
+on every run. Neither is ever taken from a brief, a cached ref or a previous run.

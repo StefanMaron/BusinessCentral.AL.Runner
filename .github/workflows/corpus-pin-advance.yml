@@ -1,0 +1,295 @@
+name: Corpus pin advance
+
+# Issue #3319. How far can the tests/al-language pin advance today, and what holds the rest?
+#
+# The rationale -- the algorithm and why it is not a bisect, why report-only, what goes stale --
+# is in docs/upstream-corpus-workflow.md#step-4-in-full--how-far-can-the-pin-advance-and-what-holds-the-rest.
+# What follows is only what you need in order to EDIT this file safely.
+#
+# THREE THINGS HERE ARE LOAD-BEARING AND LOOK OPTIONAL
+#
+#   * `permissions: contents: read` is what makes report-only a property of the token rather
+#     than of the script. Do not raise it to `write` to "let it bump the pin" -- that is a
+#     decision for the account holder (#3319), not a permissions tweak.
+#   * `submodules: true` AND `fetch-depth: 0` on the checkout. `git log -S` over a truncated
+#     corpus history cannot see the commit that really introduced a test name, so it blames an
+#     older one and the reported target comes out too conservative while looking correct. The
+#     tool refuses rather than answering on a shallow clone.
+#   * The corpus run passes NO `--strict` and NO `--count-baseline`. `--strict` exits non-zero
+#     on any failure, which would abort the step before the report is written -- and a red tip
+#     is the normal case here, not an error. `--count-baseline` is an exact match against a
+#     baseline recorded for the PIN, so at the TIP it fails by construction.
+#
+# TRACKING_ISSUE below is the single destination, edited in place. Not a new issue per run and
+# not a comment per run: #3319 is explicit that this must not become a notification stream.
+#
+# It points at #3355, a dedicated issue whose body exists to be overwritten -- NOT at #3319
+# itself, which carries the design and the evidence for building this job. Pointing it at #3319
+# would have the first scheduled run erase all of that.
+
+on:
+  schedule:
+    # 05:43 UTC daily.
+    #
+    # DAILY because the gap moves in days, not hours -- #3319's own reading, and the six
+    # manual runs bear it out. An hourly job would re-report the same answer 23 extra times
+    # and spend a corpus leg doing it.
+    #
+    # 05:43 rather than a round hour, for two independent reasons. GitHub queues a large share
+    # of cron workflows on the hour and delays them under load, so an off-the-hour slot is
+    # simply likelier to start on time (ms-bucket-nightly.yml picks 03:17 for this reason).
+    # And :43 keeps it clear of `main-verdict-floor.yml`, which fires on `*/30` -- every :00
+    # and :30 -- so this job is not queued behind a full eight-leg matrix run.
+    #
+    # 05:43 UTC is also outside the busy merge window that delayed main-verdict-floor by about
+    # an hour in #3302, which was an evening-UTC window.
+    - cron: '43 5 * * *'
+  workflow_dispatch:
+    inputs:
+      bc-version:
+        description: BC build or prefix to measure on. Empty = newest in .github/bc-versions.txt.
+        required: false
+        default: ''
+      dry-run:
+        description: Measure and print the report to the job summary, but do not edit the issue.
+        type: boolean
+        required: false
+        default: false
+
+# contents: read -- this workflow reads the repository and never writes to it. It could not
+# push a pin bump if its script tried to, which is the report-only constraint enforced by the
+# token rather than by intent.
+# issues: write -- the single tracking-issue body edit, and nothing else.
+permissions:
+  contents: read
+  issues: write
+
+# One at a time, and QUEUE rather than cancel. A cancelled run produces no report and no
+# diagnosis, which is the one outcome with no value -- the same reasoning ms-bucket-nightly.yml
+# gives. Overlap is not a real risk at a daily cadence, but a hand dispatch during a scheduled
+# run is.
+concurrency:
+  group: corpus-pin-advance
+  cancel-in-progress: false
+
+env:
+  # The one place the destination is named. Change it here to move the report to a dedicated
+  # tracking issue; nothing else in this file needs to change.
+  TRACKING_ISSUE: '3355'
+
+jobs:
+  measure:
+    name: How far can the corpus pin advance?
+    runs-on: ubuntu-latest
+    # A cold corpus run against three apps, plus provisioning and a cold build. The corpus leg
+    # in bc-tests.yml is minutes; this budget is the hosted ceiling for the same reason
+    # ms-bucket.yml takes it -- a job killed at the timeout produces no report.
+    timeout-minutes: 180
+    steps:
+      # submodules: true AND fetch-depth: 0 are both load-bearing, and the tool refuses to
+      # answer without them rather than answering wrongly. `git log -S` over a truncated
+      # history cannot see the commit that really introduced a test name, so it attributes the
+      # failure to an older commit -- which reports a target pin that is too conservative while
+      # looking entirely correct. check_corpus_pin_forward.sh documents the same trap for
+      # `merge-base --is-ancestor`.
+      - uses: actions/checkout@v6
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Read the pin on main, and resolve the corpus tip
+        id: pins
+        env:
+          CORPUS: tests/al-language
+        run: |
+          # The PIN is read from the superproject tree with git ls-tree, not from the checked
+          # out submodule's HEAD: the next step deliberately moves that HEAD to the tip, and a
+          # pin read afterwards would report the tip as the pin and the gap as zero.
+          pin=$(git ls-tree HEAD "$CORPUS" | awk '$1=="160000" && $2=="commit" {print $3}')
+          if [ -z "$pin" ]; then
+            echo "::error::no $CORPUS gitlink in HEAD's tree -- there is no corpus pin to advance"
+            exit 1
+          fi
+
+          # The corpus history must be COMPLETE before anything is attributed to a commit.
+          git -C "$CORPUS" fetch --unshallow origin master 2>/dev/null \
+            || git -C "$CORPUS" fetch origin master
+          git -C "$CORPUS" fetch origin '+refs/heads/master:refs/remotes/origin/master'
+
+          # The TIP is resolved at run time, every run, from the remote. Never from a previous
+          # run, a cached ref or a brief: #3319 records a ninth corpus commit landing while a
+          # pin PR was being merged, and a ceiling that was true when written and false 20
+          # minutes later.
+          tip=$(git -C "$CORPUS" rev-parse origin/master)
+
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
+          echo "tip=$tip" >> "$GITHUB_OUTPUT"
+          gap=$(git -C "$CORPUS" rev-list --count "$pin..$tip")
+          echo "gap=$gap" >> "$GITHUB_OUTPUT"
+          echo "pin=$pin  tip=$tip  gap=$gap commit(s)"
+
+      - name: Move the corpus checkout to the tip
+        if: steps.pins.outputs.gap != '0'
+        env:
+          CORPUS: tests/al-language
+          TIP: ${{ steps.pins.outputs.tip }}
+        run: |
+          # The whole point is to measure the TIP, not the pin. A detached checkout of the
+          # submodule's working tree only -- the superproject gitlink is untouched, so nothing
+          # here can turn into a pin bump. `permissions: contents: read` means it could not be
+          # pushed regardless.
+          git -C "$CORPUS" checkout -q --detach "$TIP"
+          git -C "$CORPUS" log -1 --oneline
+
+      - name: Resolve the BC build
+        id: bc
+        env:
+          REQUESTED: ${{ inputs.bc-version }}
+        run: |
+          # Same resolver ms-bucket.yml and bc-tests.yml use, never a second implementation --
+          # re-resolving differently is the drift #2010 was.
+          req="${REQUESTED// /}"
+          if [ -z "$req" ]; then
+            req=$(grep -v '^#' .github/bc-versions.txt | tr ' ' '\n' | grep . | sort -V | tail -1)
+            echo "No version given; using the newest prefix in .github/bc-versions.txt: $req"
+          fi
+          dots=$(printf '%s' "$req" | tr -dc . | wc -c)
+          if [ "$dots" -eq 3 ]; then
+            full="$req"
+          else
+            full=$(dotnet run --project tools/DownloadArtifacts -- resolve-version "$req" 2>/dev/null || true)
+            if [ -z "$full" ]; then
+              echo "::error::could not resolve BC '$req' to a published build"
+              exit 1
+            fi
+          fi
+          echo "version=$full" >> "$GITHUB_OUTPUT"
+          echo "BC build: $full"
+
+      - uses: ./.github/actions/provision-bc
+        if: steps.pins.outputs.gap != '0'
+        with:
+          bc-version: ${{ steps.bc.outputs.version }}
+
+      - name: Run the corpus at the tip
+        id: corpus
+        if: steps.pins.outputs.gap != '0'
+        run: |
+          # The apps are ENUMERATED, never named (#2984). A corpus commit in the gap may ADD a
+          # test app, and a hardcoded path would check it out, never execute it, and report the
+          # tip as green by construction -- the exact defect #2984 fixed in bc-tests.yml.
+          mapfile -t CORPUS_APPS < <(python3 scripts/corpus-app-dirs.py tests/al-language)
+          if [ "${#CORPUS_APPS[@]}" -eq 0 ]; then
+            echo "::error::scripts/corpus-app-dirs.py produced no app directories -- refusing to report an empty measurement as a green tip"
+            exit 1
+          fi
+          printf '[corpus] app to run: %s\n' "${CORPUS_APPS[@]}"
+
+          # No --strict and no --count-baseline: see this file's header for why both would
+          # break the report rather than protect it.
+          #
+          # --package-cache is required on every corpus run in this repo's CI -- without it the
+          # runner build's default BC major and the platform apps do not line up, and the run
+          # aborts on a provisioning-gap message before executing a single test.
+          rc=0
+          dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
+              "${CORPUS_APPS[@]}" \
+              --package-cache "$HOME/.al-runner/platform-apps" \
+              --package-cache "$HOME/.al-runner/test-apps" \
+              --out corpus-tip-results.json || rc=$?
+          echo "runner exit: $rc"
+
+          # A run that produced no document measured nothing, and a report built from a missing
+          # file would read as "the tip is green" -- the false zero
+          # .claude/rules/verify-execution-not-the-tick.md is about. Loud, not silent.
+          if [ ! -s corpus-tip-results.json ]; then
+            echo "::error::the runner produced no --out document (exit $rc), so nothing was measured. Refusing to report a result."
+            exit 1
+          fi
+          # `python3 -c` on ONE line, not a heredoc. A heredoc body has to start at
+          # column 0 to terminate, and column 0 ends the YAML block scalar this `run:`
+          # is -- which makes the whole file unparseable. Caught by the yaml round-trip
+          # in tools/test_corpus_pin_advance.py, which is why that check exists.
+          python3 -c 'import json; d=json.load(open("corpus-tip-results.json")); print("[corpus] failure records at the tip:", len(d.get("all_failures") or []))'
+
+      - name: Collect open issues for tracking linkage
+        id: issues
+        if: steps.pins.outputs.gap != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Titles and bodies of every open issue, so a failing test name can be linked to the
+          # issue that already tracks it. An UNTRACKED failure is the finding most worth
+          # surfacing -- #3316 exists because a manual run noticed exactly that -- so this list
+          # being complete is what makes "nothing tracks this" trustworthy.
+          gh issue list --repo "$GITHUB_REPOSITORY" --state open --limit 500 \
+              --json number,title,body > open-issues.json
+          python3 -c "import json;print('[issues] open:', len(json.load(open('open-issues.json'))))"
+
+      - name: Build the report
+        id: report
+        if: steps.pins.outputs.gap != '0'
+        run: |
+          python3 tools/corpus-pin-advance.py \
+              --results corpus-tip-results.json \
+              --corpus tests/al-language \
+              --pin "${{ steps.pins.outputs.pin }}" \
+              --tip "${{ steps.pins.outputs.tip }}" \
+              --issues open-issues.json \
+              --bc-version "${{ steps.bc.outputs.version }}" \
+              --measured-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              > pin-report.md
+          cat pin-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Report that the pin is already current
+        if: steps.pins.outputs.gap == '0'
+        run: |
+          {
+            echo "<!-- corpus-pin-advance: generated, edited in place. Do not hand-write. -->"
+            echo
+            echo "**Measured:** $(date -u +%Y-%m-%dT%H:%M:%SZ) · [run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)"
+            echo
+            echo "## Where the pin is"
+            echo
+            echo "The pin \`${{ steps.pins.outputs.pin }}\` **is the corpus tip.** Nothing to advance."
+            echo
+            echo "No corpus run was spent: with an empty gap there is nothing to measure, and a"
+            echo "leg spent confirming that is a leg taken from the shared account-wide queue."
+            echo
+            echo "Generated by \`tools/corpus-pin-advance.py\` (issue #3319)."
+          } > pin-report.md
+          cat pin-report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update the tracking issue
+        if: ${{ !inputs.dry-run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # ONE issue, body replaced in place. Not a new issue and not a comment -- #3319 is
+          # explicit that this must not become a notification stream, and a daily comment on a
+          # long-lived thread is precisely that.
+          #
+          # --body-file, never --body with an interpolated string: the report contains
+          # backticks, pipes and newlines, and a shell-interpolated body would mangle it or
+          # execute part of it.
+          if [ ! -s pin-report.md ]; then
+            echo "::error::no report was produced, so there is nothing to write. Refusing to blank the tracking issue body."
+            exit 1
+          fi
+          gh issue edit "$TRACKING_ISSUE" --repo "$GITHUB_REPOSITORY" --body-file pin-report.md
+          echo "Wrote the report to issue #$TRACKING_ISSUE"
+
+      - name: Upload the report and the raw measurement
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: corpus-pin-advance
+          path: |
+            pin-report.md
+            corpus-tip-results.json
+          if-no-files-found: ignore
