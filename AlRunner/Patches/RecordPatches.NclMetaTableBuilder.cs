@@ -513,8 +513,15 @@ public static partial class RecordPatches
         // turns each into the NCLMetaFieldRelation that GetReferencingRelations' reverse
         // index — and therefore Rename propagation (#1730, #1737) — is built from.
         object? relationsObj = f.RelationArms is { Count: > 0 }
-            ? BuildMetaFieldRelations(f.RelationArms, parentTable, f.FieldName)
+            ? BuildMetaFieldRelations(f.RelationArms, parentTable, f.FieldName, f.FieldId)
             : null;
+        // #3306: a rebuild that NOW resolves must drop any note the previous build left, or the
+        // guard would keep refusing a field the runner has since learned to resolve. This is the
+        // late-registration case RecordPatches.BcAppFallback exists for — the target table
+        // arrives in a .app registered after the first build — and it is the exact mirror of
+        // ClearUnresolvedCalcFormulaReference in BuildMetaCalcFormula.
+        if (relationsObj != null && parentTable != null)
+            ClearUnresolvedRelationReference(parentTable.TableId, f.FieldId);
 
         for (int i = 0; i < ps.Length; i++)
         {
@@ -750,13 +757,37 @@ public static partial class RecordPatches
     /// condition field, or filter field — that does not resolve refuses the WHOLE relation
     /// (null, pre-#1730 behaviour: no propagation) rather than guessing: fieldId 0 means
     /// "the primary key", and a half-built arm would propagate renames real BC does not.
+    ///
+    /// <para>#3306: refusing the relation is still right, but answering <c>null</c> and moving
+    /// on was not. A null relation array is what BC's <c>NCLMetaField</c> ctor turns into
+    /// <c>EmptyFieldRelations</c>, and <c>RecordImplementation.EvaluateRelation</c> cannot tell
+    /// that apart from a field declaring no <c>TableRelation</c> at all — so <c>Validate</c>
+    /// silently accepted a value with no row in the related table and <c>FieldRef.Relation</c>
+    /// silently answered 0. Every refusal below therefore also RECORDS what could not be
+    /// resolved, against <paramref name="forFieldId"/> on the referencing table, and
+    /// <see cref="RecordPatches.RecordImpl_UnresolvedRelationGuardForEvaluate"/> refuses at the
+    /// seam AL reaches. See <c>RecordPatches.RelationUnresolved.cs</c> for why the refusal is
+    /// there and not thrown from here (one bad arm must not make the whole table unbuildable —
+    /// the same choice #3279 made on the CalcFormula side).</para>
     /// </summary>
     private static object? BuildMetaFieldRelations(
-        List<ParsedRelationArm> arms, ParsedTable? referencingTable, string forFieldName)
+        List<ParsedRelationArm> arms, ParsedTable? referencingTable, string forFieldName,
+        int forFieldId)
     {
         if (_tMetaFieldRelation == null || _tMetaFilter == null || _tMetaCondition == null
             || _tFilterType == null)
             return null;
+
+        // Record the reason and refuse the whole relation. Returning null is unchanged; what is
+        // new is that the reason survives to the seam instead of living only in a verbose line.
+        object? Refuse(string reason)
+        {
+            Console.Error.WriteLine(
+                $"[RecordPatches] TableRelation on '{forFieldName}': {reason} — relation dropped");
+            if (referencingTable != null)
+                NoteUnresolvedRelationReference(referencingTable.TableId, forFieldId, reason);
+            return null;
+        }
 
         ParsedTable? Resolve(string name) =>
             _parsedTables.Values.FirstOrDefault(t =>
@@ -787,22 +818,18 @@ public static partial class RecordPatches
                 fieldId = 0;
             }
             if (target == null)
-            {
-                Console.Error.WriteLine(
-                    $"[RecordPatches] TableRelation target '{arm.TableName}{(arm.FieldName != null ? "." + arm.FieldName : "")}' did not resolve to a parsed table — relation dropped");
-                return null;
-            }
+                return Refuse(
+                    $"target '{arm.TableName}{(arm.FieldName != null ? "." + arm.FieldName : "")}' "
+                    + "did not resolve to a parsed table");
 
             var conditionObjects = new List<object>();
             foreach (var c in arm.Conditions)
             {
                 if (referencingTable == null
                     || !TryResolveTableFieldByName(referencingTable, c.SourceFieldName, out var localField))
-                {
-                    Console.Error.WriteLine(
-                        $"[RecordPatches] TableRelation on '{forFieldName}': condition field '{c.SourceFieldName}' not found on '{referencingTable?.TableName}' — relation dropped");
-                    return null;
-                }
+                    return Refuse(
+                        $"condition field '{c.SourceFieldName}' was not found on "
+                        + $"'{referencingTable?.TableName}'");
                 conditionObjects.Add(BuildMetaCondition(localField.FieldId,
                     c.Kind == ParsedCalcFilterKind.Const ? "CONST" : "FILTER",
                     c.Kind == ParsedCalcFilterKind.Const
@@ -814,11 +841,9 @@ public static partial class RecordPatches
             foreach (var w in arm.Filters)
             {
                 if (!TryResolveTableFieldByName(target, w.SourceFieldName, out var srcField))
-                {
-                    Console.Error.WriteLine(
-                        $"[RecordPatches] TableRelation on '{forFieldName}': where() field '{w.SourceFieldName}' not found on '{target.TableName}' — relation dropped");
-                    return null;
-                }
+                    return Refuse(
+                        $"where() field '{w.SourceFieldName}' was not found on "
+                        + $"'{target.TableName}'");
 
                 // #2518 — `where(<target field> = field(<referencing field>))`. BC's
                 // NCLMetaFilterField.CreateFromMetaFilter reads filterValue as the field id of
@@ -831,11 +856,9 @@ public static partial class RecordPatches
                 {
                     if (referencingTable == null
                         || !TryResolveTableFieldByName(referencingTable, w.ParentFieldName!, out var refField))
-                    {
-                        Console.Error.WriteLine(
-                            $"[RecordPatches] TableRelation on '{forFieldName}': where() field() link '{w.ParentFieldName}' not found on '{referencingTable?.TableName}' — relation dropped");
-                        return null;
-                    }
+                        return Refuse(
+                            $"where() field() link '{w.ParentFieldName}' was not found on "
+                            + $"'{referencingTable?.TableName}'");
                     filterObjects.Add(BuildMetaFilter(srcField.FieldId, "FIELD",
                         refField.FieldId.ToString(CultureInfo.InvariantCulture),
                         w.ValueIsFilter, w.OnlyMaxLimit));

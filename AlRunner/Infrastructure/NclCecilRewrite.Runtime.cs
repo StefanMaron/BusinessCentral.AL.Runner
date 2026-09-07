@@ -1145,6 +1145,41 @@ public static partial class NclCecilRewrite
                 H(recordPatches, "NavRecord_NoSourceColumnGuardForRead"),
                 argSlots: 2); // `this` — the NavRecord — and the field number
 
+            // ── RecordImplementation.EvaluateRelation — unresolved-TableRelation refusal (#3306) ──
+            // The sibling of the guard above, one property over, and it exists for the same
+            // reason: a runner-side metadata gap that reaches AL as an ordinary value.
+            //
+            // RecordPatches.BuildMetaFieldRelations answers null for a relation whose target
+            // table / condition field / where() field / where()-field() link did not resolve.
+            // BC's NCLMetaField ctor turns null into EmptyFieldRelations, and EvaluateRelation
+            // answers -1 for that — the SAME answer it gives for the entirely ordinary "no arm
+            // applies to this row". Its callers then take their defaults: Validate skips the
+            // relation check (accepting a value with no row in the related table, which real BC
+            // refuses), and GetRelation maps -1 to 0 so FieldRef.Relation reads exactly like
+            // "no TableRelation declared".
+            //
+            // THIS is the seam rather than the two public consumers, and that is read out of
+            // Ncl.dll 28.1 rather than assumed — EvaluateRelation(NCLMetaField) has exactly
+            // three callers and they are the three AL-observable routes:
+            //     NavRecord.EvaluateRelation(int)                  -> FieldRef.Relation / autofill
+            //     RecordImplementation.GetRelation(NCLMetaField)   -> FieldRef.Relation's value
+            //     <ValidateNonFlowFieldAsync>d__160.MoveNext       -> Validate's relation check
+            // so one prepend covers all three and no fourth route can slip past it. Guarding the
+            // public consumers instead would have missed the state machine, which is the one
+            // that matters most and the one grep cannot find.
+            //
+            // Not a throw inside the builder: one unresolvable arm would make the whole TABLE
+            // unbuildable, killing every test that touches it including those never reading the
+            // field. #3279 made the same call on the CalcFormula side.
+            //
+            // Two arg slots, both reference-typed, so no boxing is needed: `this` (the
+            // RecordImplementation, which the helper ignores — the decision depends only on
+            // WHICH FIELD is evaluated) and the NCLMetaField.
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "RecordImplementation", "EvaluateRelation", "NCLMetaField"),
+                H(recordPatches, "RecordImpl_UnresolvedRelationGuardForEvaluate"),
+                argSlots: 2); // `this` — the RecordImplementation — and the field
+
             // ── NavDatabase / NavRecordId collation comparers ───────────────────
             ReplaceBodyWithHelper(nclMod,
                 FindNclMethod(nclMod, Rt + "NavDatabase", "get_CollationAwareStringComparer", 0),
