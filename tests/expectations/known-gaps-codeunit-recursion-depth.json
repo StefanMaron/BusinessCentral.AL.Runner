@@ -1,0 +1,10 @@
+[
+  {
+    "codeunitId": 60035,
+    "CodeunitName": "Test Codeunit Recursion Depth",
+    "Method": "RecursionDepth_JustInsideTheCeiling_Completes",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3405",
+    "Note": "Pulled in by this PR's pin advance to 8678dc2, NOT caused by it: corpus history is linear, so #263 cannot be taken without #270 (ce2c3af), which added this test. The runner's NavMethodScope recursion guard throws at 500 frames where BC's own ceiling is 1000, so a call BC completes is refused with 'Maximum recursion depth (500) exceeded'. #3405 tracks it, is open, and is NOT closed by this PR; its fix removes this entry. The other four tests #270 added pass -- only the arm that sits between the two ceilings fails, which is what identifies the cause."
+  }
+]
