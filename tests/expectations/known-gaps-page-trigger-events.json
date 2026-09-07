@@ -1,0 +1,18 @@
+[
+  {
+    "codeunitId": 60636,
+    "CodeunitName": "Test Page Trigger Events",
+    "Method": "ModifyRecordEvent_ManuallyBoundSubscriber_FiresOnlyWhileBound",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3440",
+    "Note": "Added by THIS PR's own corpus commit #274 (ccc10f1). The event now fires and the subscriber is reached \u2014 what is still wrong is a SEPARATE defect this PR made visible: the page's xRec is not refreshed after a page-driven save, so the second write in one page session reports the value from before the FIRST write ('BEFORE' where BC gives 'DIRECT'). Filed as #3440, which is open and is NOT closed by this PR; its fix removes this entry."
+  },
+  {
+    "codeunitId": 60636,
+    "CodeunitName": "Test Page Trigger Events",
+    "Method": "NewAndInsertRecordEvents_PageDrivenInsert_FireForTheKeyOnly",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3441",
+    "Note": "Added by THIS PR's own corpus commit #274 (ccc10f1). OnInsertRecordEvent fires exactly once, as it must \u2014 what is still wrong is a SEPARATE defect this PR made visible: the runner defers a page-driven insert until every control has been written, so the event sees the finished row ('NEW') where BC inserts on the key and sees a blank. Filed as #3441, which is open and is NOT closed by this PR; its fix removes this entry."
+  }
+]
