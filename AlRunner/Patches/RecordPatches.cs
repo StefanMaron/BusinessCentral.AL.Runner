@@ -2517,6 +2517,10 @@ public static partial class RecordPatches
         var ot = typeProp?.GetValue(objId)?.ToString();
         return ot switch
         {
+            // Page{id} first: that is what the AL compiler emits for a page, and answering
+            // null here is not inert — NavEventSubscription's ctor calls GetScopeType on it
+            // unguarded and NREs (#3436). Form{id} stays as a fallback rather than being
+            // replaced, since it predates this and nothing measured which builds need it.
             "Page"     => FindClrTypeByName($"Page{id}") ?? FindClrTypeByName($"Form{id}"),
             "Report"   => FindClrTypeByName($"Report{id}"),
             "CodeUnit" => FindClrTypeByName($"Codeunit{id}"),
