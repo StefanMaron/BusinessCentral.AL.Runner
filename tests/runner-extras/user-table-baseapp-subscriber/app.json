@@ -1,0 +1,19 @@
+{
+  "id": "6c1f9a20-4b73-4f8e-9a52-2d7e3c8b4f61",
+  "name": "Runner Extras - User Table Base App Subscriber",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2381: an [EventSubscriber] declared by a PRECOMPILED dependency (Base Application codeunit 418 \"User Management\") on the User system table (2000000120) must reach both the OnAfterInsertEvent and the OnAfterModifyEvent arm.",
+  "description": "Runner-mechanism claim about SUBSCRIBER DISCOVERY, not about what BC does. That a table's OnAfterInsertEvent/OnAfterModifyEvent reaches its subscribers is plain BC behaviour and belongs upstream; what is runner-specific is that AlRunner/Patches/EventSubscriberPatches.cs finds those subscribers by walking the ECMA-335 metadata of the loaded Base Application R2R chunks and injecting them onto the User metatable's NavTableTriggerEventHandler. That path cannot be exercised from the al-language corpus at all: a corpus test's AL is compiled from source BY the runner, so a subscriber written there takes the source-compiled route and would stay green while the precompiled-dependency route was broken. The corpus is also the wrong home for a second reason - the test has to INSERT a row into User, and Microsoft's own shipped CleanupData (codeunit 134614) records that inserting a User switches the server's authentication mode and test isolation does not revert it, so on a real service tier this would take the rest of the leg down. Base Application codeunit 418 is used deliberately rather than a subscriber this bundle declares itself: a bundle-declared subscriber lives in the runner's own freshly emitted assembly and was already measured to fire while issue #2381 was open, so it proves nothing about the precompiled path.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65640,
+      "to": 65649
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}
