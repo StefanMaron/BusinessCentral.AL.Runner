@@ -306,6 +306,49 @@ public class PageBackgroundTaskInlineTests
                     Error('ARM5 FAIL: a refused Insert() must not have landed the row');
                 Card.Close();
             end;
+
+            // The refusal above is for DATABASE writes only. A write to a TEMPORARY record is
+            // session memory and never reaches the database, so the same worker dispatch must
+            // let it through -- BC's own RecordImplementation.HasWritePermission short-circuits
+            // on `parentRecord.IsTemporary` BEFORE it consults `DataAccess.IsReadOnly`.
+            // Measured on real BC 28.4.53241.0 (issue #3342): both arms Success.
+            [Test]
+            procedure RunPageBackgroundTask_WorkerTemporaryWrite_Allowed()
+            var
+                Row: Record "PBTI Row";
+                Card: TestPage "PBTI Card";
+                Params: Dictionary of [Text, Text];
+                Results: Dictionary of [Text, Text];
+                Value: Text;
+            begin
+                Initialize();
+                Card.OpenView();
+
+                Params.Add('Op', 'TempVar');
+                Results := Card.RunPageBackgroundTask(Codeunit::"PBTI TempWorker", Params, false);
+                if not Results.Get('Count', Value) then
+                    Error('ARM6 FAIL: the worker returned no Count for the temporary Record variable');
+                if Value <> '2' then
+                    Error('ARM6 FAIL: expected 2 rows in the temporary Record variable, got %1', Value);
+                Results.Get('Name', Value);
+                if Value <> 'TMP-1:Yes' then
+                    Error('ARM6 FAIL: expected TMP-1:Yes read back out of the temporary Record variable, got %1', Value);
+                if Row.Get('TMP-1') then
+                    Error('ARM6 FAIL: a temporary write must not have reached the database table');
+
+                Clear(Params);
+                Clear(Results);
+                Params.Add('Op', 'TempTable');
+                Results := Card.RunPageBackgroundTask(Codeunit::"PBTI TempWorker", Params, false);
+                if not Results.Get('Count', Value) then
+                    Error('ARM6 FAIL: the worker returned no Count for the TableType = Temporary table');
+                if Value <> '2' then
+                    Error('ARM6 FAIL: expected 2 rows in the TableType = Temporary table, got %1', Value);
+                Results.Get('Name', Value);
+                if Value <> 'WRITTEN-BY-WORKER' then
+                    Error('ARM6 FAIL: expected WRITTEN-BY-WORKER read back out of the TableType = Temporary table, got %1', Value);
+                Card.Close();
+            end;
         }
 
         codeunit 62518 "PBTI WriteWorker"
@@ -323,6 +366,71 @@ public class PageBackgroundTaskInlineTests
                 Row.Insert();
             end;
         }
+
+        table 62519 "PBTI Temp Row"
+        {
+            DataClassification = SystemMetadata;
+            TableType = Temporary;
+
+            fields
+            {
+                field(1; "Entry No."; Integer) { }
+                field(2; Name; Text[50]) { }
+            }
+
+            keys
+            {
+                key(PK; "Entry No.") { Clustered = true; }
+            }
+        }
+
+        codeunit 62520 "PBTI TempWorker"
+        {
+            trigger OnRun()
+            var
+                TempRow: Record "PBTI Row" temporary;
+                TempTableRow: Record "PBTI Temp Row";
+                Params: Dictionary of [Text, Text];
+                Results: Dictionary of [Text, Text];
+                Op: Text;
+            begin
+                Params := Page.GetBackgroundParameters();
+                Params.Get('Op', Op);
+
+                case Op of
+                    'TempVar':
+                        begin
+                            TempRow.Init();
+                            TempRow."No." := 'TMP-1';
+                            TempRow.Handle := true;
+                            TempRow.Insert();
+                            TempRow.Init();
+                            TempRow."No." := 'TMP-2';
+                            TempRow.Handle := false;
+                            TempRow.Insert();
+                            Results.Add('Count', Format(TempRow.Count()));
+                            TempRow.Get('TMP-1');
+                            Results.Add('Name', TempRow."No." + ':' + Format(TempRow.Handle));
+                        end;
+                    'TempTable':
+                        begin
+                            TempTableRow.Init();
+                            TempTableRow."Entry No." := 1;
+                            TempTableRow.Name := 'WRITTEN-BY-WORKER';
+                            TempTableRow.Insert();
+                            TempTableRow.Init();
+                            TempTableRow."Entry No." := 2;
+                            TempTableRow.Name := 'SECOND';
+                            TempTableRow.Insert();
+                            Results.Add('Count', Format(TempTableRow.Count()));
+                            TempTableRow.Get(1);
+                            Results.Add('Name', TempTableRow.Name);
+                        end;
+                end;
+
+                Page.SetBackgroundTaskResult(Results);
+            end;
+        }
         """);
 
         var (output, exitCode) = RunRunner(root);
@@ -335,6 +443,7 @@ public class PageBackgroundTaskInlineTests
         Assert.Contains("PASS  Codeunit62517.EnqueueBackgroundTask_HandledErrorDoesNotPropagate", output);
         Assert.Contains("PASS  Codeunit62517.EnqueueBackgroundTask_UnhandledErrorPropagates", output);
         Assert.Contains("PASS  Codeunit62517.RunPageBackgroundTask_WorkerInsert_RefusedByReadOnlySession", output);
+        Assert.Contains("PASS  Codeunit62517.RunPageBackgroundTask_WorkerTemporaryWrite_Allowed", output);
     }
 
     /// <summary>

@@ -63,6 +63,19 @@ public static class PageBackgroundTaskWritePatches
         if (record is not NavRecord rec) return;
         if (rec.ParentSession?.PageBackgroundTask == null) return;
 
+        // A TEMPORARY record is session memory, not the database, so a read-only session
+        // never refuses a write to one. That is BC's own condition, not an inference:
+        // RecordImplementation.HasWritePermission (Ncl.dll, 28.1 decompile) short-circuits on
+        // temporariness BEFORE it consults the read-only session --
+        //     if (parentRecord.IsTemporary) { return true; }
+        //     if (DataAccess.IsReadOnly)   { return false; }
+        // -- and NavRecord's constructor sets `isTemporary || metaTable.TableType ==
+        // TableType.Temporary`, so IsTemporary covers a `temporary` variable AND a table
+        // declared TableType = Temporary. Measured on real BC 28.4.53241.0 (issue #3342):
+        // a page background task worker writing to either kind succeeds, while the same
+        // worker writing to the database table is refused.
+        if (rec.IsTemporary) return;
+
         var tableId = rec.MetaTable?.TableId ?? rec.ObjectId.ObjectNumber;
         var tableName = rec.MetaTable?.TableName ?? rec.ObjectName;
         var message = "Sorry, the current permissions prevented the action. " +
