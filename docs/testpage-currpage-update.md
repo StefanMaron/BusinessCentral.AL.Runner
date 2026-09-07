@@ -42,7 +42,7 @@ the mechanism, so what follows is the delta.
 | arm | BC 28.4 |
 |---|---|
 | `SetValue` whose `OnValidate` calls `CurrPage.Update(true)` | `ValidateBegin;ValidateEnd;HostAGR;HostAGCR;SetHeader;` |
-| `SetValue` whose `OnValidate` calls `CurrPage.Update(false)` | one extra `HostAGCR`, same position |
+| `SetValue` whose `OnValidate` calls `CurrPage.Update(false)` | `ValidateBegin;ValidateEnd;HostAGR;HostAGCR;SetHeader;` — the same pair |
 | `SetValue` with no `CurrPage.Update` anywhere | no extra `HostAGCR` |
 | action whose `OnAction` calls `CurrPage.Update(true)` | `HostAGR;ActionBegin;ActionEnd;HostAGR;HostAGR;HostAGCR;SetHeader;` |
 
@@ -51,7 +51,10 @@ Two things follow, and both are why the fix takes the shape it does:
 1. **The refresh lands after the calling trigger returns**, never between `ValidateBegin` and
    `ValidateEnd`. That is the depth counter in `EndTrigger`.
 2. **BC raises the pair, `OnAfterGetRecord` then `OnAfterGetCurrRecord`** — which is exactly what
-   `RunnerPageInstance.RaiseOnAfterGetRecord` already does.
+   `RunnerPageInstance.RaiseOnAfterGetRecord` already does. The `Update(false)` row was measured
+   separately, with `OnAfterGetRecord` instrumented, precisely because the first pass through
+   these arms recorded only `OnAfterGetCurrRecord` and so could not have told the two apart:
+   `saveRecord` changes whether the row is written, not which triggers the refresh raises.
 
 ## What is deliberately not reproduced
 
@@ -59,6 +62,20 @@ Two things follow, and both are why the fix takes the shape it does:
   action against the runner's one. They are client-side row-load churn; the runner raises the
   pair once. Nothing in the corpus pins the `OnAfterGetRecord` count, and pinning BC's would
   assert client behaviour the runner has no equivalent of.
+- **`NavFormUpdateTypes.UpdateParent`.** BC ORs it in for a page declaring
+  `UpdatePropagation = Both`, asking the client to refresh this page's HOST as well. The runner
+  has no parent link to walk — a TestPage part reaches its host through the test's own variable,
+  not through a field on the page instance. It is read as a no-op rather than refused, because
+  the flag always arrives alongside `Update`, so this page's own refresh still happens and only
+  the host's does not; throwing would turn a partial answer into no answer for every such page.
+  Unmeasured.
+- **A request with no owning AL trigger.** BC's `NavForm` internals raise `UpdateRequest` from
+  paths the TestPage layer drives directly — `NewRecordAsync` and the `SaveRecordAsync` inside
+  it — with no AL trigger on the stack. Those are dropped rather than carried, because a carried
+  flag would fire at the end of the next, unrelated trigger and attribute an
+  `OnAfterGetCurrRecord` to a `CurrPage.Update` some earlier operation made.
+  `RunnerPageInstance.TryRaiseExtensionOnlyAction` needs nothing here: it is `static` and runs
+  only where no page instance could be built at all, so there is no subscription and no flag.
 - **A `CurrPage.Update` issued from inside the refresh itself.** The subscriber drops a request
   raised while a refresh is running. Realising it would arm the flag again from inside the
   refresh and refresh again without bound — a hang. No measurement covers that shape.
@@ -66,7 +83,10 @@ Two things follow, and both are why the fix takes the shape it does:
 ## What measures it
 
 Upstream corpus, `tests/al-language/pageupdate/`, codeunit 60496 `ALT Page Update Test` — four
-tests, green on a real service tier. The control arm (`NoCurrPageUpdate_…`) is the one that makes
+tests, green on a real service tier. It carries no `Update(false)` arm: that row above was
+measured in the container, and the corpus PR was already held awaiting unrelated `master`
+failures when the measurement landed, so adding one is follow-up rather than a gap in the
+claim. The control arm (`NoCurrPageUpdate_…`) is the one that makes
 the others a statement about `CurrPage.Update`: its page differs only in the absence of the call.
 
 Runner-side, `AlRunner.Tests/CurrPageUpdateRefreshTests.cs` pins the runner's own mechanism.

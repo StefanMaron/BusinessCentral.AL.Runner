@@ -57,11 +57,12 @@ public sealed class CurrPageUpdateRefreshTests : IDisposable
         // Each arm is a [Test] procedure asserting inside AL, so a green run IS the claim.
         // The exit code alone would not distinguish "passed" from "discovered nothing", hence
         // the explicit pass/fail counts below.
-        Assert.True(output.Contains("pass:        3"),
-            $"expected all three arms to pass; exit={exit}\n{output}");
+        Assert.True(output.Contains("pass:        4"),
+            $"expected all four arms to pass; exit={exit}\n{output}");
         Assert.DoesNotContain("fail:        1", output);
         Assert.DoesNotContain("fail:        2", output);
         Assert.DoesNotContain("fail:        3", output);
+        Assert.DoesNotContain("fail:        4", output);
     }
 
     private void WriteBundle()
@@ -320,6 +321,31 @@ public sealed class CurrPageUpdateRefreshTests : IDisposable
                     if StrPos(GetLastErrorText(), 'refused by the trigger') = 0 then
                         Error('the trigger''s own error did not survive: <%1>', GetLastErrorText());
                     Check('ValidateBegin;', Trace.Get(), 'no refresh after a failed trigger');
+                end;
+
+                // BC's own NavForm.NewRecordAsync raises UpdateRequest with no AL trigger on
+                // the stack. A request armed there must NOT be carried: if it were, it would
+                // fire at the end of the next, unrelated trigger and raise an
+                // OnAfterGetCurrRecord that no CurrPage.Update in that trigger asked for. The
+                // page used here calls CurrPage.Update nowhere at all, so any HostAGCR in the
+                // trace after the SetValue can only have come from a leaked request.
+                [Test]
+                procedure ARequestArmedOutsideATrigger_DoesNotFireOnTheNextTrigger()
+                var
+                    Row: Record "CPU Row";
+                    Card: TestPage "CPU Card Plain";
+                begin
+                    Seed(Row, 'D');
+                    Card.OpenEdit();
+                    Card.GoToRecord(Row);
+                    Card.New();
+                    Card."No.".SetValue('D2');
+                    Trace.Reset();
+
+                    Card.Amount.SetValue(50);
+
+                    Check('ValidateBegin;ValidateEnd;', Trace.Get(),
+                        'no refresh leaked from the New() that preceded this trigger');
                 end;
 
                 [Test]

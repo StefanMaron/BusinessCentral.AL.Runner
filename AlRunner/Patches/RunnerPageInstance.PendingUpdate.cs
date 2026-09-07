@@ -4,17 +4,10 @@ using Microsoft.Dynamics.Nav.Types;
 
 namespace AlRunner.Patches;
 
-// CurrPage.Update() under a TestPage — issue #3373.
-//
-// BC's own NavForm.UpdateCoreAsync already runs unmodified here: it saves the record and then
-// raises the form's public UpdateRequest event. On a real service tier the CLIENT is what
-// subscribes, and answering that request is what re-loads the current row and raises the
-// page's OnAfterGetRecord/OnAfterGetCurrRecord. Headless there is no subscriber, so the save
-// happened and the trigger never did — and a page that derives state in OnAfterGetCurrRecord
-// (a page global, or a value pushed into a FactBox part) kept answering the pre-edit value.
-//
-// This subscribes in the client's place. See docs/testpage-currpage-update.md for the measured
-// BC trigger orders and what is deliberately not reproduced.
+// CurrPage.Update() under a TestPage — issue #3373. The runner subscribes to NavForm's
+// UpdateRequest event in the absent client's place.
+// See docs/testpage-currpage-update.md — the mechanism, the measured BC trigger orders, and
+// what is deliberately not reproduced.
 internal sealed partial class RunnerPageInstance
 {
     private bool _updateRequestSubscribed;
@@ -29,6 +22,17 @@ internal sealed partial class RunnerPageInstance
     /// <c>SaveRecordAsync</c> with <c>RecordSaved</c> alone, which is a plain "the record was
     /// written" notification and not a request to re-load the form — treating the two alike
     /// would refresh after every <c>CurrPage.SaveRecord</c>, which nothing has measured.
+    ///
+    /// <para><c>UpdateParent</c> is read as a no-op ON PURPOSE, not overlooked. BC ORs it in
+    /// when the page declares <c>UpdatePropagation = Both</c>, and it asks the client to
+    /// refresh the HOST of this page as well. The runner has no parent link to walk — a
+    /// TestPage part reaches its host through the test's own variable, not through a field on
+    /// the page instance — so there is nothing here that could carry the refresh upward. It is
+    /// not refused loudly either: the flag always arrives ALONGSIDE <c>Update</c>, so this
+    /// page's own refresh still happens and the divergence is confined to the host not also
+    /// refreshing. Throwing would turn a partial answer into no answer for every
+    /// <c>UpdatePropagation = Both</c> page. Unmeasured, and tracked in
+    /// docs/testpage-currpage-update.md § "What is deliberately not reproduced".</para>
     /// </summary>
     private void EnsureUpdateRequestSubscription()
     {
@@ -44,6 +48,15 @@ internal sealed partial class RunnerPageInstance
             // reproducing whatever BC does for a page whose OnAfterGetCurrRecord calls
             // CurrPage.Update on itself. Nothing measures that shape.
             if (_realisingUpdate) return;
+            // A request with NO OWNING TRIGGER is dropped rather than carried. BC's own
+            // NavForm internals raise this event from paths the TestPage layer drives
+            // directly — NewRecordAsync and the SaveRecordAsync inside it, reached from
+            // MockTestPage without any AL trigger on the stack. Arming there would leave the
+            // flag set with nothing to consume it, and the refresh would then fire at the end
+            // of the NEXT, unrelated trigger: an OnAfterGetCurrRecord attributed to a
+            // CurrPage.Update that some earlier operation made. Requiring an owning trigger is
+            // what keeps the realisation attributable to the call that armed it.
+            if (_triggerDepth == 0) return;
             _updateRequested = true;
         };
     }
