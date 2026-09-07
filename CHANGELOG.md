@@ -25,6 +25,48 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **tools:** count a corpus run's per-leg passes correctly, and write down the five false zeros
+- **calcformula:** resolve SystemRowVersion, which BC puts at field id 0
+- **testpage:** give the PAGE its own validation-error ledger, so AL stops reading a hardcoded 0
+- **testpage:** land Last() on the new-row line when it finds nothing, as First() does
+- **testpage:** match a service tier on the dialog page types' built-in OK/Cancel and on the unattended close
+- **published-app:** answer NAV App Extra, so the other two FlowFields stop reading false
+- **ci-wait:** fall through to the API when a failing-log fetch comes back empty
+- **calcformula:** resolve a tableextension or system field in every CalcFormula and TableRelation lookup, and refuse instead of dropping an arm
+- **page-metadata:** answer the nine SourceObject columns from BC's own parsed metadata
+- **install:** let install triggers run to completion — observe their ValueTask, and remove the three gaps that hid behind it
+- **jmphook:** apply the disabled and Cecil-owned guards to InstallIndirect
+- **permissions:** back the session user's SUPER status with a real Access Control row, and bump the corpus pin
+- **ci-wait:** reach a verdict on a concluded run, refuse when freshness is unknown
+- **symbols:** read TableRelation for a field a precompiled tableextension contributes
+- **pages:** show an error from OnQueryClosePage the way BC's client does
+- **ci:** read the collection-weight gate against the leg's own clock, and fail only above 2.5x
+- **record:** the legacy Object (2000000001) registry holds no rows, because a real tier holds none
+- **session:** give the Session virtual table (2000000009) the reading session's row
+- **user-table:** run BC's SystemTableTriggers arms for the User system table
+- **record:** merge a tableextension's declared keys into the extended table's key list
+- **testpage:** open a RunObject action's target unattended when no handler is bound
+- **reload:** clear the query-symbol source list, and keep a bundle's own registration alive across the RAD fast path
+- **symbolcache:** strip AL directives from a SourceTableView's sorting() clause too
+- **testpage:** make TestPage.View() and TestPage.Edit() open the CardPageId card
+- **symbolcache:** count a RunPageLink's entries with the splitter that parses them, and carry what it could not read
+- **execute:** pick the OnRun codeunit by object id, and make the #2801 ordering rule provable without the AL compiler
+- **cache:** refuse an AL-output cache identity when the key's inputs are unknown
+- **bc-shape:** name the member at 73 BC-internals lookups guarded only by `!`
+- **symbols:** refuse when a dependency .app's symbols cannot be read, instead of reporting that it declares nothing
+- **pagemeta:** pass the unreadable-entry out parameter at the RunObject call site
+- **flowfield:** keep a FlowField's CalcFormula through a tableextension symbol and a late .app registration
+- **pagemeta:** refuse a page whose SourceTableView or SubPageLink could not be read, and read the ones AL directives guard
+- **preflight:** retry a dropped packet, refuse a stale copy, and report what the token can merge
+- **testpage:** apply a RunObject action's RunPageLink instead of refusing it
+- **ci-wait:** complete the built-in required-context fallback, and stop the test fixtures freezing the ruleset size
+- **metadata:** answer Page Metadata's PageType from BC's own runtime enum, and CodeUnit Metadata's SubType from the compiler's
+- **record:** refuse Object Metadata's nine payload columns by name instead of reading blank
+- **testpage:** resolve a control whose binding the AL compiler registered under another control
+- **dotnet-interop:** name the surface when a .NET type refuses this OS, and stop the page-open path swallowing refusals
+- **reload:** clear four built-metadata caches that outlived the bundle they were built from
+- **tests:** skip a subdirectory deleted while the project walk runs
+- **test-exec:** order a codeunit's test methods by a key that does not depend on reflection order
 - **metadata:** clear the object-reference const memo on a bundle reload, and cover the resolver's bare-name and call-site halves
 - **seeding:** refuse a system-table column the seeder cannot find, instead of skipping it
 - **testpage:** name the AL error "The TestPage is not open." was reported in place of
@@ -266,6 +308,9 @@ All notable changes to this project are documented here. Format based on
 - **alsid:** answer Sid(name) with BC's not-mapped empty string on a host with no Windows identity store
 
 ### Documentation
+- **impl-agent:** stop gating comments the posting rule says are ungated
+- **weights:** correct why AlOutputCacheDoNotCacheTests is recorded at 64s
+- **ci:** state the BC matrix and required checks this repo actually has, and guard the numbers
 - **corpus:** record that the action-opens-a-page blind spot is closed, and what is left
 - **rules:** scan the open-issue queue and fold in siblings that land in the same file
 - **ci:** narrow the cancelled-run re-run exemption to commits with no failure log
@@ -287,6 +332,14 @@ All notable changes to this project are documented here. Format based on
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- **corpus:** advance the pin seven commits, as far as it goes green
+- **runner-extras:** pin the source-parsed reader for a tableextension's TableRelation
+- **runner-extras:** pin precompiled-dependency subscriber dispatch on the User system table
+- **cache:** drive the server-mode do-not-cache gate, which no arm entered
+- refuse a pull request that moves the corpus pin backward
+- **expectations:** flag a PR that closes a gap issue while its known-gap entry survives
+- **fixtures:** discharge the last three Base Application floor entries
+- enforce a corpus-linkage declaration, and reconcile the pin-bump rule with practice
 - run 3 BC legs on a pull request, and rename the required check to match
 - move the guards that must block into a workflow that can gate
 - **guards:** stop the _BCVersion drift gate walking into every agent's worktree
