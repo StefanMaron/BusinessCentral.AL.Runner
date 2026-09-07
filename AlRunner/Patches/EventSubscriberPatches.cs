@@ -405,6 +405,8 @@ public static partial class EventSubscriberPatches
         lock (_lock)
         {
             _byKey.Clear();
+            _byPageKey.Clear();
+            _pageScopeContents.Clear();
             _byCodeunitKey.Clear();
             _byTableEventKey.Clear();
             _byObjectEventKey.Clear();
@@ -880,6 +882,14 @@ public static partial class EventSubscriberPatches
     {
         foreach (var kv in _byKey)
             kv.Value.RemoveAll(h => BcRuntime.IsStaleBundleAssembly(h.Method.DeclaringType!.Assembly));
+        foreach (var kv in _byPageKey)
+            kv.Value.RemoveAll(h => BcRuntime.IsStaleBundleAssembly(h.Method.DeclaringType!.Assembly));
+        // _pageScopeContents is deliberately NOT cleared here. It memoises "already appended
+        // to THIS scope object", and a reloaded generation's method is a different MethodInfo,
+        // so it is admitted anyway. Clearing it would re-append the subscriptions still sitting
+        // in a live scope's array — a duplicate firing, which is the opposite of the leak this
+        // prune exists to stop. ResetForReload does clear it, because that path expects fresh
+        // metaforms and so fresh scopes.
         foreach (var kv in _byCodeunitKey)
             kv.Value.RemoveAll(m => BcRuntime.IsStaleBundleAssembly(m.DeclaringType!.Assembly));
         foreach (var kv in _byTableEventKey)
