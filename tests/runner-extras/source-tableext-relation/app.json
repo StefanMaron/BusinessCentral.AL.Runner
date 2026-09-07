@@ -1,0 +1,26 @@
+{
+  "id": "b4e17c39-5a26-4d80-91f3-7c8ea2b0d5f6",
+  "name": "Runner Extras - Source TableExt Relation",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3286: a TableRelation a SOURCE-PARSED tableextension declares on a PRECOMPILED base table must reach the extended table's metadata, so Validate enforces it.",
+  "description": "Runner-mechanism claim, not a claim about AL. That a tableextension's TableRelation is enforced by Validate is plain BC behaviour and is pinned upstream twice: corpus codeunit 60827 for a relation a PRECOMPILED tableextension contributes, and corpus codeunit 60407 for one this corpus DECLARES on a Base Application table. What neither can reach is the crossing this bundle exercises -- an extension the runner source-parses grafted onto a base table it never source-parsed, where RecordPatches.MergeExtensionFields has to carry RelationArms from the AL-source reader into a metatable built from BC's own precompiled metadata. A corpus bundle is one app compiled as a whole, so it cannot separate the two readers; only a runner bundle can.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65720,
+      "to": 65739
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "17.0",
+  "target": "Cloud",
+  "features": []
+}
