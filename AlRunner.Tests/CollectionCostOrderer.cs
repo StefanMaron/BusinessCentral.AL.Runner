@@ -120,10 +120,18 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // #3262: 8 tests, most spawning a real runner subprocess, several of them twice
             // (a cold write then a warm read from a fresh server process, so the in-process
             // module cache cannot answer instead of the disk). Absent from this table on its
-            // first CI run: measured 64.2s on the BC 28.4 leg, which tripped
-            // check-collection-weights.py. Rounded down per the gate's own instruction; at
-            // 64.2s it sits far enough above the 60s freshness threshold that rounding down
-            // does not leave it back on the fallback the way a 60.9s entry would.
+            // first CI run: measured 64.2s on the BC 28.4 leg, one leg only, which is the
+            // ceiling of that claim rather than a settled figure.
+            //
+            // Recorded at 64, rounded down. The reason is #2175's dispatch-order rule, NOT
+            // the freshness gate: check-collection-weights.py only inspects collections
+            // ABSENT from this table, so once a key is present no recorded value can make
+            // that gate fire on it. What a too-low value would cost is dispatch order --
+            // record something near UnmeasuredWeightSeconds (30) and the collection is
+            // scheduled as if it were still absent, which is the #1887 tail this table
+            // exists to prevent. 64 is far enough above 30 that rounding down cannot do
+            // that. That is also the real reason the two 60.9s entries below carry their
+            // observed maximum: their LOW end across legs approaches 30, not 60.
             ["AlOutputCacheDoNotCacheTests"] = 64,
             // perf/boot-overhead: added with the on-disk install-baseline tier. Measured
             // 125.6s on the first CI run of that branch (BC 28.4 leg), where it was absent
