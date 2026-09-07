@@ -22,7 +22,7 @@ internal sealed partial class RunnerPageInstance
         if (!DeclaresRowsetTrigger("OnFindRecord")) return null;
         var result = InvokeRecordTrigger("OnFindRecord", new[] { typeof(NavText) },
             new object[] { new NavText(which) });
-        return result as bool?;
+        return result as bool? ?? throw NotDispatched("OnFindRecord", "RaiseOnFindRecordAsync(NavText)", result);
     }
 
     /// <summary>
@@ -46,7 +46,7 @@ internal sealed partial class RunnerPageInstance
         if (!DeclaresRowsetTrigger("OnNextRecord")) return null;
         var result = InvokeRecordTrigger("OnNextRecord", new[] { typeof(int), typeof(int) },
             new object[] { steps, 0 });
-        return result as int?;
+        return result as int? ?? throw NotDispatched("OnNextRecord", "RaiseOnNextRecordAsync(int,int)", result);
     }
 
     /// <summary>
@@ -69,6 +69,29 @@ internal sealed partial class RunnerPageInstance
     /// on what the page declared, and it is the same authority the invocation then dispatches
     /// against.</para>
     /// </summary>
+    /// <summary>
+    /// The page declared the trigger and the invocation did not produce its value — so the
+    /// rowset this page serves was not consulted, and nothing else in the runner will notice.
+    ///
+    /// <para>The one way to reach this is BC changing the shape
+    /// <see cref="InvokeRecordTrigger"/> resolves. The signatures above were read off Ncl.dll on
+    /// **28.1 only** — no 27.x artifact was on the box to compare against — so the other seven
+    /// supported versions are unverified here by construction, and a version answering neither
+    /// those shapes nor the plain virtual returns null from the invoke. Falling back to the
+    /// platform find would then walk the table for a page that overrides it: the exact defect
+    /// this file exists to fix, silently, and on one BC version only. Throwing is what makes a
+    /// CI leg say so.</para>
+    /// </summary>
+    private Exception NotDispatched(string trigger, string bcMember, object? result)
+        => new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            $"NavForm.{bcMember}",
+            $"page-rowset-trigger-not-dispatched — page {_form?.GetType().Name ?? "<unknown>"} declares {trigger}, but "
+            + "invoking it produced "
+            + (result == null ? "no value" : $"a {result.GetType().Name}")
+            + $". The runner cannot serve this page's rowset without {trigger}, and answering "
+            + "from the SourceTable instead would silently show the wrong rows. See "
+            + "docs/page-rowset-triggers.md");
+
     private bool DeclaresRowsetTrigger(string trigger)
     {
         const BindingFlags Declared = BindingFlags.Public | BindingFlags.NonPublic
