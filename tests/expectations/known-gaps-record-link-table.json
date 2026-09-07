@@ -1,0 +1,82 @@
+[
+  {
+    "codeunitId": 60777,
+    "CodeunitName": "Test Record Link Table",
+    "Method": "RecordLink_RowInsertedIntoTheTable_IsVisibleToHasLinks",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3378",
+    "Note": "Corpus PR #260 (commit c9b5cc8) pins that the Record Link table and the AL link surface (AddLink / DeleteLinks / HasLinks / RecordLinkManagement.CopyLinks) are one store. The runner does not yet back that surface with the table, which is issue #3378. #3378 stays OPEN after this entry lands. THIS WHOLE FILE IS DELETED BY PR #3381, which implements it. Added by the fbk-1 agent while folding the corpus pin into PR #3379."
+  },
+  {
+    "codeunitId": 60777,
+    "CodeunitName": "Test Record Link Table",
+    "Method": "RecordLink_RowInsertedIntoTheTable_IsRemovedByDeleteLinks",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3378",
+    "Note": "Corpus PR #260 (commit c9b5cc8) pins that the Record Link table and the AL link surface (AddLink / DeleteLinks / HasLinks / RecordLinkManagement.CopyLinks) are one store. The runner does not yet back that surface with the table, which is issue #3378. #3378 stays OPEN after this entry lands. THIS WHOLE FILE IS DELETED BY PR #3381, which implements it. Added by the fbk-1 agent while folding the corpus pin into PR #3379."
+  },
+  {
+    "codeunitId": 60777,
+    "CodeunitName": "Test Record Link Table",
+    "Method": "RecordLink_AddLink_WritesARowIntoTheRecordLinkTable",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3378",
+    "Note": "Corpus PR #260 (commit c9b5cc8) pins that the Record Link table and the AL link surface (AddLink / DeleteLinks / HasLinks / RecordLinkManagement.CopyLinks) are one store. The runner does not yet back that surface with the table, which is issue #3378. #3378 stays OPEN after this entry lands. THIS WHOLE FILE IS DELETED BY PR #3381, which implements it. Added by the fbk-1 agent while folding the corpus pin into PR #3379."
+  },
+  {
+    "codeunitId": 60777,
+    "CodeunitName": "Test Record Link Table",
+    "Method": "RecordLink_AddLink_IsVisibleToASecondRecordVariable",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3378",
+    "Note": "Corpus PR #260 (commit c9b5cc8) pins that the Record Link table and the AL link surface (AddLink / DeleteLinks / HasLinks / RecordLinkManagement.CopyLinks) are one store. The runner does not yet back that surface with the table, which is issue #3378. #3378 stays OPEN after this entry lands. THIS WHOLE FILE IS DELETED BY PR #3381, which implements it. Added by the fbk-1 agent while folding the corpus pin into PR #3379."
+  },
+  {
+    "codeunitId": 60777,
+    "CodeunitName": "Test Record Link Table",
+    "Method": "RecordLink_DeleteLink_RemovesOnlyTheAddressedRow",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3378",
+    "Note": "Corpus PR #260 (commit c9b5cc8) pins that the Record Link table and the AL link surface (AddLink / DeleteLinks / HasLinks / RecordLinkManagement.CopyLinks) are one store. The runner does not yet back that surface with the table, which is issue #3378. #3378 stays OPEN after this entry lands. THIS WHOLE FILE IS DELETED BY PR #3381, which implements it. Added by the fbk-1 agent while folding the corpus pin into PR #3379."
+  },
+  {
+    "codeunitId": 60777,
+    "CodeunitName": "Test Record Link Table",
+    "Method": "RecordLinkManagement_CopyLinks_CopiesTheSourceRowsAndLeavesOthersAlone",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3378",
+    "Note": "Corpus PR #260 (commit c9b5cc8) pins that the Record Link table and the AL link surface (AddLink / DeleteLinks / HasLinks / RecordLinkManagement.CopyLinks) are one store. The runner does not yet back that surface with the table, which is issue #3378. #3378 stays OPEN after this entry lands. THIS WHOLE FILE IS DELETED BY PR #3381, which implements it. Added by the fbk-1 agent while folding the corpus pin into PR #3379."
+  },
+  {
+    "codeunitId": 60777,
+    "CodeunitName": "Test Record Link Table",
+    "Method": "RecordLinkManagement_CopyLinks_IsVisibleToHasLinksOnTheTarget",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3378",
+    "Note": "Corpus PR #260 (commit c9b5cc8) pins that the Record Link table and the AL link surface (AddLink / DeleteLinks / HasLinks / RecordLinkManagement.CopyLinks) are one store. The runner does not yet back that surface with the table, which is issue #3378. #3378 stays OPEN after this entry lands. THIS WHOLE FILE IS DELETED BY PR #3381, which implements it. Added by the fbk-1 agent while folding the corpus pin into PR #3379."
+  },
+  {
+    "codeunitId": 60777,
+    "CodeunitName": "Test Record Link Table",
+    "Method": "RecordLink_InsertingADuplicateLinkId_Errors",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3378",
+    "Note": "Corpus PR #260 (commit c9b5cc8) pins that the Record Link table and the AL link surface (AddLink / DeleteLinks / HasLinks / RecordLinkManagement.CopyLinks) are one store. The runner does not yet back that surface with the table, which is issue #3378. #3378 stays OPEN after this entry lands. THIS WHOLE FILE IS DELETED BY PR #3381, which implements it. Added by the fbk-1 agent while folding the corpus pin into PR #3379."
+  },
+  {
+    "codeunitId": 60777,
+    "CodeunitName": "Test Record Link Table",
+    "Method": "RecordLink_AddLink_AndUnnumberedTableInserts_ShareOneLinkIdSequence",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3378",
+    "Note": "Corpus PR #260 (commit c9b5cc8) pins that the Record Link table and the AL link surface (AddLink / DeleteLinks / HasLinks / RecordLinkManagement.CopyLinks) are one store. The runner does not yet back that surface with the table, which is issue #3378. #3378 stays OPEN after this entry lands. THIS WHOLE FILE IS DELETED BY PR #3381, which implements it. Added by the fbk-1 agent while folding the corpus pin into PR #3379."
+  },
+  {
+    "codeunitId": 60777,
+    "CodeunitName": "Test Record Link Table",
+    "Method": "RecordLink_AddLink_InsideATrappedError_IsRolledBackLikeATableInsert",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3378",
+    "Note": "Corpus PR #260 (commit c9b5cc8) pins that the Record Link table and the AL link surface (AddLink / DeleteLinks / HasLinks / RecordLinkManagement.CopyLinks) are one store. The runner does not yet back that surface with the table, which is issue #3378. #3378 stays OPEN after this entry lands. THIS WHOLE FILE IS DELETED BY PR #3381, which implements it. Added by the fbk-1 agent while folding the corpus pin into PR #3379."
+  }
+]
