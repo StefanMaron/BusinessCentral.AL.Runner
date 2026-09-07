@@ -1,0 +1,18 @@
+[
+  {
+    "codeunitId": 60368,
+    "CodeunitName": "Test Integer Virtual Table",
+    "Method": "Record_Integer_RangeFarAboveAnySeededWindow_YieldsTheWholeRange",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3438",
+    "Note": "Pulled in by this catch-up pin bump to corpus 98eec27 (StefanMaron/BusinessCentral.AL.Language.Tests#265), NOT caused by it. The test reads Number 250000, an ordinary row on a real service tier: #3393 established from the Ncl decompile that IntegerDataProvider clamps to [-1000000000..1000000000], so BC serves it. The runner materialises [-1000..100000] eagerly and, since #3393, refuses a closed bound outside that window loudly rather than truncating it silently -- so the refusal here is the guard working as designed, and the residual gap is the window's width, not the guard. Tracked as #3438, which is open, unassigned, carries no fix PR, and stays open after this PR merges; widening the window to BC's range removes this entry."
+  },
+  {
+    "codeunitId": 60368,
+    "CodeunitName": "Test Integer Virtual Table",
+    "Method": "Record_Integer_RangeFarBelowZero_YieldsTheWholeRange",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3438",
+    "Note": "The same gap at the other end of the window: the test reads Number -250000, which real BC serves within its [-1000000000..1000000000] clamp and which sits below the runner's materialised floor of -1000. See the sibling entry above for why the refusal is #3393's guard behaving correctly rather than a regression. Tracked as #3438, which stays open after this PR merges."
+  }
+]

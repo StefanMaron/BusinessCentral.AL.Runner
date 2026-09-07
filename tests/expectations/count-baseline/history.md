@@ -1586,3 +1586,45 @@ revision of this branch carried are gone, and neither was deleted on a guess:
   the "remove the entry" direction.
 
 Written by the fbk-1 agent.
+
+### 3008 -> 3011 (pin 69ae7598 -> 98eec278, +3)
+
+A **catch-up** bump: PR #3393, the runner fix these three tests need, merged earlier today, so
+this bump closes no issue and stands on its own.
+
+ONE corpus commit of the nine available: #265 `98eec27`, which pins how far the Integer virtual
+table reaches and that an open-ended filter is answered rather than refused.
+
+**3011 is the guard's own printed `actual`**, read by running with a deliberately impossible
+baseline so the guard had to state the number it measured -- not `3008 + 3`. `al-language-onprem`
+stayed at 29 and `al-language-internals-fixture` at 0.
+
+**Why the pin stops here rather than at corpus master `ccc10f12`.** Corpus history is linear and
+`98eec27` is the oldest of the nine commits master is ahead by. Each of the remaining eight was
+measured individually, cumulatively, on this branch's build; failures are strictly monotonic, so
+the attribution below is a partition rather than an estimate:
+
+| corpus commit | corpus PR | +new failures | codeunit | held by |
+|---|---|---|---|---|
+| `98eec27` | #265 | 2 | `Codeunit60368` Integer window | **#3438** -- declared here |
+| `ce2c3af` | #270 | 1 | `Codeunit60035` recursion depth | PR #3412 (`Closes #3405`) |
+| `8678dc2` | #263 | 5 | `Codeunit60670` temporal SetValue | PR #3394 (`Closes #3384`) |
+| `7153eb5` | #267 | 1 | `Codeunit60662` blank temporal | PR #3410 (`Closes #2361`) |
+| `5f4b254` | #266 | 5 | `Codeunit60358` part OnNewRecord | PR #3414 (`Closes #3029`) |
+| `9bb602a` | #268 | **0** | -- passes already | nothing |
+| `c5b8123` | #269 | 4 | `Codeunit60702` effective permissions | PR #3413 (`Closes #2382`) |
+| `2a89f13` | #271 | 1 | `Codeunit60411` same-value SetValue | PR #3427 (`Closes #3055`) |
+| `ccc10f12` | #274 | 9 | `Codeunit60636` page trigger events | #3436, #3441, #3440 (no PR) |
+
+Every one of those eight is held by an open runner PR **created today and still unmerged**, or
+by an open issue with no PR. Declaring known-gap entries for them would produce entries that go
+stale the day each PR merges -- the failure mode that once produced 20 bogus entries -- so they
+are left for the fold bumps their own PRs will carry.
+
+`98eec27` is the exception, and that is why it is the one commit taken: its blocker **#3438** is
+open, unassigned and carries no fix PR, so the two entries declared in
+`known-gaps-integer-virtual-table-window.json` describe a durable gap rather than a race with a
+merge queue. #3393 implemented the *guard* (closing #2350) and deliberately left the window's
+*width* as the in-scope remainder; #3438 is that remainder.
+
+Written by agent `stma-auto-49`, an automated agent acting on the account holder's behalf.
