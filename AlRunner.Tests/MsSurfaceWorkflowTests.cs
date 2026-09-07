@@ -87,6 +87,65 @@ internal static class WorkflowStep
     }
 }
 
+internal static class ReusableCallInputs
+{
+    /// <summary>
+    /// The <c>with:</c> mapping a caller hands to a reusable workflow: one entry per key
+    /// declared directly under it, value as written. A <c>key: |</c> block scalar yields
+    /// <c>"|"</c> — its lines sit deeper and are not keys. Empty when the job has no
+    /// <c>with:</c>, so callers must assert a COUNT before iterating.
+    /// </summary>
+    internal static IReadOnlyList<(string Name, string Value)> Of(string code)
+    {
+        var lines = code.Replace("\r\n", "\n").Split('\n');
+        var found = new List<(string, string)>();
+        var withIndent = -1;
+        var keyIndent = -1;
+        foreach (var raw in lines)
+        {
+            var line = raw.TrimEnd();
+            if (line.Length == 0) continue;
+            var trimmed = line.TrimStart();
+            if (trimmed.StartsWith('#')) continue;
+            var indent = line.Length - trimmed.Length;
+
+            if (withIndent < 0)
+            {
+                if (trimmed == "with:") withIndent = indent;
+                continue;
+            }
+            if (indent <= withIndent) { withIndent = trimmed == "with:" ? indent : -1; keyIndent = -1; continue; }
+            if (keyIndent < 0) keyIndent = indent;
+            if (indent != keyIndent) continue;
+            var colon = trimmed.IndexOf(':');
+            if (colon <= 0) continue;
+            found.Add((trimmed[..colon], trimmed[(colon + 1)..].Trim()));
+        }
+        return found;
+    }
+}
+
+internal static class ReusableCallTypeCoercion
+{
+    /// <summary>
+    /// The inputs a caller hands down as a bare <c>${{ … }}</c> expression while the called
+    /// workflow declares them <c>type: number</c> — the shape that makes GitHub refuse to
+    /// create the run at all (#3456). A literal is fine; <c>fromJSON(…)</c> is the coercion.
+    /// </summary>
+    internal static IReadOnlyList<string> UncoercedNumberInputs(string callerCode, string calleeText)
+    {
+        var bad = new List<string>();
+        foreach (var (name, value) in ReusableCallInputs.Of(callerCode))
+        {
+            if (!value.Contains("${{", StringComparison.Ordinal)) continue;
+            if (value.Contains("fromJSON(", StringComparison.Ordinal)) continue;
+            if (!WorkflowInputDeclarations.Of(calleeText, name, "type:").Contains("number")) continue;
+            bad.Add(name);
+        }
+        return bad;
+    }
+}
+
 public sealed class MsSurfaceWorkflowTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -96,6 +155,7 @@ public sealed class MsSurfaceWorkflowTests
 
     private const string SurfaceWorkflow = "workflows/ms-surface.yml";
     private const string BucketWorkflow = "workflows/ms-bucket.yml";
+    private const string NightlyWorkflow = "workflows/ms-bucket-nightly.yml";
 
     /// <summary>
     /// The 35 <c>*.Source.zip</c> entries under <c>Applications/BaseApp/Test/</c>, measured —
@@ -289,6 +349,118 @@ public sealed class MsSurfaceWorkflowTests
     }
 
     /// <summary>
+    /// #3456: every dispatch of ms-surface.yml failed in three seconds with ZERO jobs, no log
+    /// and no annotation, from the moment #3443 added <c>test-timeout: ${{ inputs.test-timeout }}</c>.
+    ///
+    /// A <c>workflow_dispatch</c> input reaches the <c>inputs</c> context as a STRING whatever
+    /// its declared type says, and handing a string to a <c>workflow_call</c> input declared
+    /// <c>type: number</c> makes GitHub refuse to create the run — before any job exists, so
+    /// there is nothing to read afterwards. Booleans are NOT affected: <c>test-data</c> and
+    /// <c>normalize-company</c> pass through bare and the run starts (measured, run
+    /// 34166606192). So the rule is number-typed inputs only, and the coercion is
+    /// <c>fromJSON()</c>.
+    ///
+    /// Checked over every caller of ms-bucket.yml rather than over the one input that broke:
+    /// <c>expected-tests</c> is number-typed too and is a literal today, so the same edit is
+    /// one passthrough away from being made again. What no test in this repository can cover
+    /// is whether GitHub ACCEPTS the file — that is a property of GitHub's schema, not of the
+    /// text, and only a dispatch answers it.
+    /// </summary>
+    [Fact]
+    public void EveryCallerOfTheBucketWorkflow_CoercesTheNumberTypedInputsItHandsDown()
+    {
+        var callee = Read(BucketWorkflow);
+
+        foreach (var caller in new[] { SurfaceWorkflow, NightlyWorkflow })
+        {
+            var handedDown = ReusableCallInputs.Of(CodeOnly(Read(caller)));
+            Assert.NotEmpty(handedDown);
+
+            var uncoerced = ReusableCallTypeCoercion.UncoercedNumberInputs(CodeOnly(Read(caller)), callee);
+            Assert.True(uncoerced.Count == 0,
+                $"{caller} hands ms-bucket.yml a bare ${{{{ … }}}} expression for the number-typed "
+                + $"input(s) {string.Join(", ", uncoerced)}. GitHub refuses to create the run — zero "
+                + "jobs, no log — so wrap the value in fromJSON() or pass a literal (#3456).");
+        }
+
+        // Non-vacuous in both directions: the machinery resolved a real number-typed input on
+        // the callee side, and the surface really does hand that input down.
+        Assert.Contains("number", WorkflowInputDeclarations.Of(callee, "test-timeout", "type:"));
+        Assert.Contains(ReusableCallInputs.Of(CodeOnly(Read(SurfaceWorkflow))),
+            i => i.Name == "test-timeout");
+    }
+
+    // ---- the with-block reader and the coercion rule, proven on constructed text ---------
+
+    [Fact]
+    public void ReusableCallInputs_ReadsOnlyTheWithBlocksOwnKeys()
+    {
+        const string code = """
+            jobs:
+              surface:
+                uses: ./.github/workflows/ms-bucket.yml
+                with:
+                  label: surface
+                  expected-tests: 40530
+                  test-timeout: ${{ inputs.test-timeout }}
+                  buckets: |
+                    Tests-ERM
+                    Tests-SCM
+            """;
+
+        var inputs = ReusableCallInputs.Of(code);
+
+        Assert.Equal(new[] { "label", "expected-tests", "test-timeout", "buckets" },
+            inputs.Select(i => i.Name));
+        Assert.Equal("40530", inputs.Single(i => i.Name == "expected-tests").Value);
+        Assert.Equal("${{ inputs.test-timeout }}", inputs.Single(i => i.Name == "test-timeout").Value);
+        // A block scalar's lines are deeper than the keys and are not keys themselves.
+        Assert.Equal("|", inputs.Single(i => i.Name == "buckets").Value);
+        Assert.DoesNotContain(inputs, i => i.Name == "uses");
+        Assert.Empty(ReusableCallInputs.Of("jobs:\n  surface:\n    uses: ./x.yml\n"));
+    }
+
+    [Fact]
+    public void UncoercedNumberInputs_NamesTheBareExpressionAndNothingElse()
+    {
+        const string callee = """
+            on:
+              workflow_call:
+                inputs:
+                  test-timeout:
+                    type: number
+                    default: 300
+                  expected-tests:
+                    type: number
+                    default: 0
+                  test-data:
+                    type: boolean
+                    default: true
+                  bc-version:
+                    type: string
+                    default: ''
+            """;
+
+        const string broken = """
+            jobs:
+              surface:
+                with:
+                  test-timeout: ${{ inputs.test-timeout }}
+                  expected-tests: 40530
+                  test-data: ${{ inputs.test-data }}
+                  bc-version: ${{ inputs.bc-version }}
+            """;
+
+        // The number-typed passthrough is named; the number LITERAL, the boolean passthrough
+        // and the string passthrough are not — booleans and strings coerce, numbers do not.
+        Assert.Equal(new[] { "test-timeout" },
+            ReusableCallTypeCoercion.UncoercedNumberInputs(broken, callee));
+
+        var fixedUp = broken.Replace("${{ inputs.test-timeout }}", "${{ fromJSON(inputs.test-timeout) }}");
+        Assert.Empty(ReusableCallTypeCoercion.UncoercedNumberInputs(fixedUp, callee));
+    }
+
+    /// <summary>
     /// #3431: the surface ran with the runner's 60 s wall-clock default per-test watchdog on a
     /// hosted runner, so tests that finish comfortably inside it locally were cut off.
     ///
@@ -302,7 +474,7 @@ public sealed class MsSurfaceWorkflowTests
     [Fact]
     public void SurfaceWorkflow_PassesThePerTestTimeoutThrough_AtTheSameDefault()
     {
-        Assert.Contains("test-timeout: ${{ inputs.test-timeout }}",
+        Assert.Contains("test-timeout: ${{ fromJSON(inputs.test-timeout) }}",
             CodeOnly(Read(SurfaceWorkflow)), StringComparison.Ordinal);
 
         var surface = WorkflowInputDefaults.Of(Read(SurfaceWorkflow), "test-timeout");
