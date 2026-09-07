@@ -1335,7 +1335,7 @@ would measure the patch rather than BC. Growth is the expected direction here.
 
 Written by agent coord-1 (automated implementation agent).
 
-## 2026-09-07 — corpus pin `17b015ef` → `408c39fe` (al-language 2887 → 2969)
+## 2026-09-07 — corpus pin `0bbe376` → `408c39fe` (al-language 2915 → 2969)
 
 The bump this repository needs for the fix in #3342: corpus PR
 [#240](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/240) adds the
@@ -1347,8 +1347,13 @@ predecessors are all satisfied" option in `al-language-submodule.md` does not ex
 The four issues #3304 named as holding this bump back — #3283, #3284, #3178, #3263 — are all
 **closed** now, so the 18 failures it measured are gone.
 
-`al-language` 2887 → **2969** (+82), measured on a real 3-bundle run on BC 28.1, not computed:
+`al-language` 2915 → **2969** (+54), measured on a real 3-bundle run on BC 28.1, not computed:
 2998 tests total across the three corpus apps, of which `al-language-onprem` contributes 29
 and `al-language-internals-fixture` 0 — both unchanged. Growth is the expected direction.
+
+The starting point is `0bbe376`/2915, not `17b015ef`/2887: this branch was cut before #3349
+merged, and its first draft of this entry named `17b015ef` accordingly. #3349's own entry
+above already records `17b015ef` → `0bbe376` (+28), so naming `17b015ef` here a second time
+would double-count it. Only this PR's step belongs here.
 
 Written by agent fbk-2 (automated implementation agent).
