@@ -1716,3 +1716,44 @@ and the five appearing as plain `PASS`. Codeunit 60680's two `Copy`-onto-tempora
 here and passed before the fix as well; they pin behaviour rather than record a gap.
 
 Written by the fbk-3 agent.
+### 3071 -> 3072 (pin ec8a9c23 -> 7195a4ba, catch-up bump)
+
+Two upstream commits, both merged before this PR was opened, so a bump alone is green rather
+than red by construction — the **catch-up** case in `.claude/rules/al-language-submodule.md`.
+
+| corpus PR | commit | what it pins |
+|---|---|---|
+| [#257](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/257) | `2549e353` | `Encrypt()` does not return its plaintext input, and `Decrypt()` reverses it exactly |
+| [#258](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/258) | `7195a4ba` | the error text a non-rendering tier reports when `Report.SaveAs(Pdf)` refuses |
+
+Only #257 moves the count. It reinstates
+`Codeunit60378.IsolatedStorage_EncryptDecrypt_RoundTripsAndIsNotPlaintext`, removed while
+bc-linux's tenant encryption key was a pass-through fake that structurally could not satisfy
+the "ciphertext differs from plaintext" half; MsDyn365Bc.On.Linux#72 turned that fake off, so
+the test came back unchanged in what it claims.
+
+#258 adds **no test procedure**. It restores an `Assert.ExpectedError` inside the existing
+`Codeunit60774.Report_SaveAs_Pdf_ReturnValueAgreesWithTheBytesInTheStream`, in the arm taken
+only by a tier that refuses to render. It changes nothing here: that test is declared
+`expect-oos` in `tests/expectations/oos-reports.json`, so the runner raises
+`report-rendering-external` before AL reaches the new assertion, and it still classifies
+`PASS (oos)` across the bump.
+
+**3072 is the number the guard itself printed**, not 3071 plus one. Measured on BC
+28.1.49838.53910 on a real three-app run: with the pin moved and the baseline still at 3071
+the run exited 4 with
+`GROWTH: suite 'al-language' tests count: expected 3071, actual 3072 (BC 28.1)`, and 3072 is
+that `actual`. Re-run after the bump: **3101 tests total, 3101 pass, 0 fail, exit 0**, of which
+`al-language-onprem` contributes 29 and `al-language-internals-fixture` 0 — both unchanged,
+neither reporting a mismatch, so only the one key moved.
+
+A control run at the **old** pin, same runner build and same baseline file, exited 0 with 3100
+total. So the +1 is the bump's own effect and not a property of this machine.
+
+**No manifest drift, in either direction.** The classification split is identical across the
+bump — 3 `pass-oos`, 36 `pass-known-gap`, 1 `pass-divergence`, 0 FAIL — and
+`--expectations-require-match` reported `all 40 entries matched a discovered test` on both
+sides. Nothing declared `expect-fail-known-gap` started passing, and nothing undeclared
+started throwing out-of-scope.
+
+Written by agent stma-auto-2 (automated implementation agent).
