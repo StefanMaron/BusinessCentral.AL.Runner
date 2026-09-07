@@ -1457,3 +1457,47 @@ The starting point is `ddb9b5ab`/2978, not `408c39fe`/2969: `5ad50bc2` on `main`
 pin and the count in one commit, and its own step is already recorded by that PR.
 
 Written by agent stma-auto-11 (automated implementation agent).
+
+## 2026-09-07 — corpus pin `9ee6bbc` → `920a7bed` (al-language 2977 → 2993)
+
+The **fold** case in `al-language-submodule.md`: corpus PR
+[#254](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/254) adds the
+nine `PermissionSet_` tests that prove the Permission Set (2000000004) fix in this same PR,
+so this bump is red by construction without that fix and belongs in the fix PR rather than in
+one of its own. Corpus history is linear, so two earlier commits come along as a prefix:
+
+| corpus commit | what it adds | effect on the count |
+|---|---|---|
+| `e6a0a0c` (corpus [#262](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/262)) | per-codeunit `SingleInstance` cache fixtures, plus two codeunit-boundary tests | **+2** |
+| `29042fc` (corpus [#264](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/264)) | what `AllObjWithCaption`'s `Object Subtype` answers per object kind | **+6** |
+| `920a7bed` (corpus [#254](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/254)) | what the Permission Set table (2000000004) answers | **+9** |
+
+`920a7bed` is deliberately **not** corpus `master`'s tip. The next commit, `c9b5cc83`
+(corpus #260, eleven `RecordLink` tests), needs a runner fix that is still open as PR #3381,
+so pinning it here would be red by construction — "pin the newest commit whose predecessors
+are all satisfied", and that commit is `920a7bed`.
+
+**2993 is a measured number, not `2977 + 17`.** Counting `[Test]` lines in the range gives 17
+and is wrong: one of them sits inside a comment block in
+`codeunit/SICSessionScopedPrimer.Codeunit.al`, a deliberately non-test codeunit. The run is
+what decides. Measured on BC 28.1 on a real 3-bundle run: **3022 tests, 3022 pass, 0 fail,
+exit 0**, of which `al-language-onprem` contributes 29 and `al-language-internals-fixture` 0
+— both unchanged and neither reporting a mismatch. Before the baseline was edited, the same
+tree exited 4 with the growth the guard is for, and 2993 is that `actual`.
+
+**Four expectation entries had to go in with it**, in
+`tests/expectations/known-gaps-allobj-subtype.json`, all linking
+[#2326](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2326). Corpus #264's
+six new tests arrive ahead of the runner fix for the gap they pin: the runner leaves
+`Object Subtype` empty on every `AllObj` / `AllObjWithCaption` row, so the four that assert a
+NON-empty subtype fail, while the two asserting an empty one already pass. That is
+pre-existing and not caused by the Permission Set change here — the identical four methods
+fail under the runner at `main` as well (measured both ways on this same pin). #2326 stays
+open, and its fix is the maintainer's open PR #3391; these four entries are deleted when that
+lands, at which point the drift guard demands it in the other direction.
+
+`pass-known-gap` therefore moves 11 → **15**, and the manifest 15 → **19** entries, all of
+which the run matched (`match audit: all 19 entries matched a discovered test`) under
+`--expectations-require-match`.
+
+Written by agent fbk-2 (automated implementation agent).
