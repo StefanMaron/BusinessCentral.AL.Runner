@@ -100,11 +100,30 @@ When a new headless-on-Linux blocker appears, check bc-linux first.
 
 ## Runtime packages (ISV)
 
-For an ISV `.app` whose payload is compiled IL (a *runtime package*: no
-`src/*.al`, no R2R `publishedartifacts/*.dll`),
-`NavAppPackageCompiler.ExtractEmittedContent(stream) → byte[]` extracts the
-compiled DLL **without SQL or `CSharpCompiler`**. The runner has no detection or
-extraction case for this yet — a clean future addition.
+A *runtime package* is an ISV `.app` with no `src/*.al` and no R2R
+`publishedartifacts/*.dll`. Its payload is **not** compiled IL: it is the
+**generated C# source** per object, indexed by `/bin/EmittedContent.json` — the
+post-AL-compile, pre-C#-compile form. Decompiled from `Microsoft.Dynamics.Nav.Ncl.dll`
+on 27.5.46862 and 28.4.53241 (identical bodies):
+
+- `NavAppPackageCompiler.ExtractEmittedContent(Stream)` returns
+  `Result<INavAppPackageMetadata>`, not `byte[]`, and that interface carries no
+  assembly, module or IL member. `NavAppPackageCompiler` is an **internal static**
+  class, reachable only by reflection.
+- `NavAppPackageMetadata.FillFromRuntimePackage` walks `EmittedContent.json` and
+  `ConvertToObjectMetadata` reads each entry's `CodeFileName`, `MetadataFileName`
+  and `SourceFileName` with `ReadFileAsString` into `string` fields (`UserCode`,
+  `Metadata`, `UserALCode`). It also reads `NavEnvironment.Instance.EmitVersion`,
+  so the call is not free of BC environment state despite taking only a stream,
+  and `CreateRuntimePackageId()` on this path is `Guid.NewGuid()`, fresh per call.
+
+So "without SQL" holds; "without a C# compiler" does not — source text is exactly
+what a C# compiler consumes. The only method in the artifact set that hands back
+DLL bytes from a package is `NavAppPackageReader.GetPublishedArtifacts()`, gated on
+`IsReadyToRunPackage`, which is the R2R case this section excludes. Consuming a
+runtime package directly would therefore mean feeding its C# into the runner's
+existing compile pipeline rather than loading a DLL out of it; the runner has no
+detection or extraction case for this yet (#2211 has the scoping).
 
 ## Hard boundary: the data layer stays ours
 

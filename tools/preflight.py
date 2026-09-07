@@ -2514,6 +2514,7 @@ def freshness_refusal(printer=None, *, remote_check: bool = True) -> Optional[in
                 "thresholds.")
         return None
     refused = False
+    stale = False
     confirm = remote_check
     for target in (os.path.abspath(__file__), os.path.abspath(_freshness.__file__)):
         # Both halves: the staleness rule itself lives in the sibling module, and
@@ -2522,12 +2523,17 @@ def freshness_refusal(printer=None, *, remote_check: bool = True) -> Optional[in
         confirm = False
         for note in fresh.notes:
             printer(note)
+        stale = stale or fresh.state == "stale"
         refused = refused or fresh.refuse
     if refused:
-        printer("\nREFUSING TO REPORT ON THIS BOX -- this copy of preflight.py is STALE. It "
-                "would apply an older set of checks and thresholds without saying so, and a "
-                "copy predating #2936 reports a HEALTHY box as unable to push. NOTHING WAS "
-                "PROBED; this is not a verdict about the box.")
+        # Since #3296 this also fires when nothing VOUCHES for the running copy --
+        # a different fact from staleness, with a different remedy, so it is named
+        # as itself rather than reported as "STALE".
+        printer("\nREFUSING TO REPORT ON THIS BOX -- this copy of preflight.py is %s. It "
+                "would apply a set of checks and thresholds not known to match "
+                "origin/main's without saying so, and a copy predating #2936 reports a "
+                "HEALTHY box as unable to push. NOTHING WAS PROBED; this is not a verdict "
+                "about the box." % ("STALE" if stale else "one NOTHING VOUCHES FOR"))
         return 3
     return None
 

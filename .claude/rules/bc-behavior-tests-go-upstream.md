@@ -54,6 +54,45 @@ BC-behaviour test to unblock yourself; say so plainly and land the runner fix wi
 runner-specific coverage is legitimately available, recording the missing upstream test as
 follow-up.
 
+## Declare the linkage in the PR body — the gate accepts exactly one shape
+
+`pr-gate.yml`'s `AL-observable changes must declare corpus linkage` job
+(`.github/scripts/check_corpus_linkage.sh`, #3255) blocks the merge of any PR that touches
+`AlRunner/Patches/`, `AlRunner/Rewriters/`, `AlRunner/Infrastructure/NclCecilRewrite*`,
+`AlRunner/BcCompiler*` or `AlRunner/BcAssembler.cs` (non-`.md`) unless the **PR body** carries
+one of these, each **on its own line, marker and value together**:
+
+```
+Corpus-PR: https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/226
+Corpus-NA: precompiled-dependency path; a corpus test source-compiles and would pass
+```
+
+The `Corpus-PR:` line is matched by one regex: optional leading whitespace, the marker, the
+full `.../BusinessCentral.AL.Language.Tests/pull/<N>` URL, optionally a trailing `/` or `.`,
+nothing else. The `Corpus-NA:` reason is free text and must not be a placeholder (`n/a`,
+`none`, `TBD`, `-`, …). Both forms are case-insensitive. Shapes that went red on real PRs in
+one day (#3330), each pinned in `test_check_corpus_linkage.sh`:
+
+| written | why it fails |
+|---|---|
+| `` The `Corpus-PR:` for this is #226 `` | mid-sentence, backticks, and no URL |
+| `Corpus-PR: [#228](https://…/pull/228)` | a markdown link is not a bare URL |
+| `Corpus-PR:` on one line, the URL on the next | the marker and the URL must share a line — a brief saying "a bare full URL on its own line" produces this |
+| `**Corpus-PR:** https://…/pull/226` | bold markers break the marker |
+| `Corpus-PR: <https://…/pull/226>` | angle-bracket autolinks break the URL |
+
+A `Corpus-PR:` line that fails the regex is reported as *malformed*, not absent, so the log
+says which of the two you have. Check before pushing — the script takes the body and the
+changed paths from the environment, so this is a five-second local check:
+
+```bash
+PR_BODY="$(cat body.md)" CHANGED_FILES="$(git diff --name-only origin/main...HEAD)" \
+  bash .github/scripts/check_corpus_linkage.sh
+```
+
+The gate checks that you **declared** something; whether the declaration is right is the
+reviewer's call, never CI's.
+
 ## Not a licence to skip TDD
 
 `tdd.md` still applies in full. This rule decides **where** the proving test lives, never

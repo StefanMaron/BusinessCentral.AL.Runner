@@ -126,6 +126,44 @@ Setup is in the README's tooling section (`mise use -g dotnet:csharp-ls` plus th
 plugin); if `LSP` reports no server for `.cs`, the plugin is not active — that is a setup
 answer, never a "nothing calls this" answer.
 
+**2c. The `bc-decompiler` MCP server — for "what does BC actually do".**
+
+`mcp__bc-decompiler__*` reads `Microsoft.Dynamics.Nav.Ncl.dll` and friends directly:
+`search_members` → `get_decompiled_source` → `find_callers` (which resolves through async
+state machines), and `compare_symbols` diffs a method between two BC versions. One cached BC
+version is one registered context, aliased `bc270` … `bc284`. If the tools are absent from
+your session, nothing is broken — it is not installed or not loaded. Setup:
+
+```bash
+tools/setup-bc-decompiler.sh      # needs the .NET 10 SDK; the runner itself stays on net8.0
+```
+
+That clones and publishes `pardeike/DecompilerServer` into `$DECOMPILER_SERVER_DIR`
+(default `~/Documents/Repos/tools/DecompilerServer`) and prints the block to put in
+`.mcp.json` at the repository root:
+
+```json
+{ "mcpServers": { "bc-decompiler": { "type": "stdio", "command": "dotnet",
+    "args": ["<DEST>/publish/DecompilerServer.dll"], "env": {} } } }
+```
+
+Two things about that file. `.mcp.json` is **gitignored** — per-machine, never committed. And
+it is read **only at session start**, so a freshly written one does nothing for the session
+you are in: "configured" and "usable right now" are different states, and only a restart
+turns the first into the second. `tools/preflight.py` tells them apart by speaking MCP to the
+server itself; in-session, `mcp__bc-decompiler__status` is the check.
+
+A context needs its BC artifacts on disk first — `load_assembly` points at
+`<artifacts>/<ver>/Microsoft.Dynamics.Nav.Ncl.dll` under `~/.local/share/al-runner/artifacts/`
+(or `$AL_RUNNER_ARTIFACTS_ROOT`), so a version that was never provisioned cannot be
+decompiled. `al-runner provision --bc-version <ver>` fetches it; then load once per version
+(contexts persist in `~/.decompilerserver/` across restarts):
+
+```
+load_assembly(assemblyPath: "<artifacts>/<ver>/Microsoft.Dynamics.Nav.Ncl.dll",
+              additionalSearchDirs: ["<artifacts>/<ver>"], contextAlias: "bc284")
+```
+
 **3. `grep` here is a shell function, and it fails silently.**
 
 Measured in this environment: `grep` resolves to a shell **function**, not `/usr/bin/grep`.

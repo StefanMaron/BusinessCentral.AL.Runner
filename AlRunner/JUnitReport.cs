@@ -45,21 +45,26 @@ public static class JUnitReport
     public static void WriteJUnit(string outputPath, IReadOnlyList<BucketResult> buckets,
         IReadOnlyList<string> carriedJUnitFiles)
     {
+        // Paired with its bucket rather than flattened (#2919). `suspect` is a property of the
+        // (bucket, test) PAIR, and the grouping below is by codeunit, so two bundles that share
+        // a codeunit name land in one <testsuite> — asking the question per suite would then
+        // answer it for whichever bucket happened to come first. Same change #2898 made to
+        // SerializeJsonOutput and PrintFailureClassification, for the same reason.
         var tests = buckets
             .Where(b => b.Stage == BucketStage.Ran)
-            .SelectMany(b => b.Tests)
+            .SelectMany(b => b.Tests.Select(t => (Bucket: b, Test: t)))
             .ToList();
 
         var suites = tests
-            .GroupBy(t => t.Codeunit)
+            .GroupBy(x => x.Test.Codeunit)
             .OrderBy(g => g.Key)
             .ToList();
 
-        double totalSeconds = tests.Sum(t => t.Duration.TotalSeconds);
+        double totalSeconds = tests.Sum(x => x.Test.Duration.TotalSeconds);
         long totalTests = tests.Count;
-        long totalFailures = tests.Count(t => t.Outcome == TestOutcome.Fail);
-        long totalErrors = tests.Count(t => t.Outcome == TestOutcome.Error);
-        long totalSkipped = tests.Count(t => t.Outcome == TestOutcome.Skipped);
+        long totalFailures = tests.Count(x => x.Test.Outcome == TestOutcome.Fail);
+        long totalErrors = tests.Count(x => x.Test.Outcome == TestOutcome.Error);
+        long totalSkipped = tests.Count(x => x.Test.Outcome == TestOutcome.Skipped);
 
         var carried = LoadCarriedSuites(carriedJUnitFiles);
         foreach (var (_, carriedSuites) in carried)
@@ -96,13 +101,15 @@ public static class JUnitReport
             foreach (var cs in carriedSuites) cs.WriteTo(writer);
         }
 
+        WriteLostSuiteComments(writer, buckets);
+
         foreach (var suite in suites)
         {
             var suiteTests = suite.ToList();
-            double suiteSeconds = suiteTests.Sum(t => t.Duration.TotalSeconds);
-            int suiteFailures = suiteTests.Count(t => t.Outcome == TestOutcome.Fail);
-            int suiteErrors = suiteTests.Count(t => t.Outcome == TestOutcome.Error);
-            int suiteSkipped = suiteTests.Count(t => t.Outcome == TestOutcome.Skipped);
+            double suiteSeconds = suiteTests.Sum(x => x.Test.Duration.TotalSeconds);
+            int suiteFailures = suiteTests.Count(x => x.Test.Outcome == TestOutcome.Fail);
+            int suiteErrors = suiteTests.Count(x => x.Test.Outcome == TestOutcome.Error);
+            int suiteSkipped = suiteTests.Count(x => x.Test.Outcome == TestOutcome.Skipped);
 
             writer.WriteStartElement("testsuite");
             writer.WriteAttributeString("name", suite.Key);
@@ -112,7 +119,7 @@ public static class JUnitReport
             writer.WriteAttributeString("skipped", suiteSkipped.ToString());
             writer.WriteAttributeString("time", suiteSeconds.ToString("F3", CultureInfo.InvariantCulture));
 
-            foreach (var test in suiteTests)
+            foreach (var (bucket, test) in suiteTests)
             {
                 writer.WriteStartElement("testcase");
                 writer.WriteAttributeString("name", test.Method);
@@ -123,14 +130,14 @@ public static class JUnitReport
                 {
                     writer.WriteStartElement("failure");
                     writer.WriteAttributeString("message", test.Message ?? "Test failed");
-                    writer.WriteString(BuildBody(test));
+                    writer.WriteString(BuildBody(bucket, test));
                     writer.WriteEndElement(); // failure
                 }
                 else if (test.Outcome == TestOutcome.Error)
                 {
                     writer.WriteStartElement("error");
                     writer.WriteAttributeString("message", test.Message ?? "Runner error");
-                    writer.WriteString(BuildBody(test));
+                    writer.WriteString(BuildBody(bucket, test));
                     writer.WriteEndElement(); // error
                 }
                 else if (test.Outcome == TestOutcome.Skipped)
@@ -187,17 +194,71 @@ public static class JUnitReport
     private static double Seconds(XElement el)
         => double.TryParse(el.Attribute("time")?.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : 0;
 
-    private static string BuildBody(TestResult test)
+    /// <summary>
+    /// An XML comment per bucket that lost one or more suites (#2919), the JUnit counterpart of
+    /// the `suiteErrors` array --output-json gained in #2762.
+    ///
+    /// <para>A lost suite contributes NO <c>testsuite</c> element, so without this the reader of
+    /// the XML cannot tell a suite that did not run from one that never existed — and in the
+    /// total-loss case the document is a wholly green, wholly empty report. That is the silent
+    /// failure `.claude/rules/loud-failures.md` forbids, one surface over.</para>
+    ///
+    /// <para>A comment rather than a synthetic <c>testsuite</c>, for the same reason the
+    /// carried-attempt provenance above is one: every JUnit consumer tolerates a comment, while a
+    /// synthetic suite would have to invent an <c>errors</c> count and so would move the very
+    /// numbers a dashboard plots. It reports what did not run; it does not restate the run.</para>
+    /// </summary>
+    private static void WriteLostSuiteComments(XmlWriter writer, IReadOnlyList<BucketResult> buckets)
+    {
+        foreach (var b in buckets)
+        {
+            if (b.CompileErrors.Count == 0) continue;
+
+            // Both a Ran bucket that lost SOME suites and a CompileFailed one that lost all of
+            // them: neither contributes an element naming what is missing, and Stage is not a
+            // distinction the reader of this document can act on.
+            var text = new StringBuilder();
+            text.Append($" {b.CompileErrors.Count} suite(s) in {b.BucketPath} did not compile "
+                + "and are MISSING from this run — the counts above describe only what survived; ");
+            // Capped, with a count of what it hid: a silent truncation would be a smaller instance
+            // of the defect this comment exists to fix (#2898's argument for BundleProgressLine).
+            foreach (var e in b.CompileErrors.Take(3)) text.Append($"[{e}] ");
+            if (b.CompileErrors.Count > 3)
+                text.Append($"... and {b.CompileErrors.Count - 3} more ");
+
+            // "--" cannot appear inside an XML comment at all, so a compiler message carrying one
+            // — `--package-cache`, a rule of dashes in a banner — would make the document
+            // malformed rather than merely ugly. Same softening as the carried-file comment.
+            writer.WriteComment(text.ToString().Replace("--", "- -"));
+        }
+    }
+
+    private static string BuildBody(BucketResult bucket, TestResult test)
     {
         // #2240: the missing-test-data explanation goes in the BODY, never into the `message`
         // attribute above — that attribute is BC's own failure text and a CI dashboard groups
         // failures by it, so appending to it would both alter the reported failure and split one
         // cluster into two.
+        //
+        // #2919 marks a collateral-suspect result the same way and for the same reason, and it is
+        // why this needs the bucket: the marker belongs to the (bucket, test) pair. Deliberately
+        // NOT a `suspect` attribute and NOT a reclassification — a `<failure>` moved to
+        // `<skipped>` to keep `failures` down would make a CI trend line drop for a reporting
+        // change, and an attribute outside the schema is what a validating consumer rejects. The
+        // counters stay exactly as they were: the marker says this failure MAY be collateral, not
+        // that it did not happen.
+        var marker = Reporter.IsSuspect(bucket, test)
+            ? Reporter.SuspectMarker(bucket)
+              + $" {bucket.CompileErrors.Count} suite(s) in this bundle did not compile, so objects "
+              + "this test needs may be missing — re-run with the bundle intact before treating "
+              + "this as a regression.\n\n"
+            : "";
+
         var head = string.IsNullOrEmpty(test.Diagnosis)
             ? test.Message ?? ""
             : $"{test.Message}\n{test.Diagnosis}";
         var body = test.AlCallStack ?? test.FullException;
-        if (body == null) return head;
-        return $"{head}\n\n{body}";
+        if (body == null) return marker + head;
+        return $"{marker}{head}\n\n{body}";
     }
 }

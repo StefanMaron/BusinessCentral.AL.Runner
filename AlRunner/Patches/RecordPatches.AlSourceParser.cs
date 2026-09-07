@@ -473,7 +473,7 @@ public static partial class RecordPatches
         if (!isFlowField && !isFlowFilter
             && PropValue(props, "TableRelation") is NavSyntax.TableRelationPropertyValueSyntax tr)
         {
-            relationArms = ParseRelationArms(tr, fname);
+            relationArms = ParseRelationArms(tr, fname, fromCompiledSource: true);
         }
 
         // MinValue / MaxValue (#2495): raw AL expression text, unquoted — these are numeric
@@ -497,25 +497,53 @@ public static partial class RecordPatches
     /// exactly how real BC treats it: the else arm carries NO condition, not the complement
     /// of the earlier arms' conditions (verified against a real service tier; see corpus
     /// codeunit 60239, Record_Rename_ConditionalRelation_ElseTableRename_UpdatesIfArmRowsToo).
-    /// Returns null — refusing the whole relation — on any arm this representation cannot
-    /// carry faithfully.
+    /// <para>How it refuses depends on where the text came from (#3326). The related-table-name
+    /// check below always THROWS, because no input of either provenance can fail it. An
+    /// unrepresentable condition SHAPE throws only for AL this runner compiled — Microsoft's
+    /// compiler has already vetted that, so reaching it means the runner's model of AL has
+    /// diverged — and returns null for text read back out of a precompiled <c>.app</c>, where
+    /// refusing the property is the correct permanent answer. A silent null on the source path
+    /// would drop the whole relation, and unlike the builder's drop that #3306 covers, it never
+    /// reaches the builder at all, so nothing downstream could see it. Measurement:
+    /// <c>docs/tablerelation-parser-refusals.md</c>.</para>
     /// </summary>
+    /// <param name="fromCompiledSource">
+    /// True when the relation text came from AL this runner is compiling, so Microsoft's own
+    /// compiler has already vetted it and an unrepresentable shape means the runner's model of AL
+    /// has diverged — a throw. False when it was read back as a STRING out of a precompiled
+    /// <c>.app</c>'s <c>SymbolReference.json</c>, where nothing gates it and refusing the property
+    /// is the correct permanent answer (#3326).
+    /// </param>
     private static List<ParsedRelationArm>? ParseRelationArms(
-        NavSyntax.TableRelationPropertyValueSyntax tr, string fieldName)
+        NavSyntax.TableRelationPropertyValueSyntax tr, string fieldName, bool fromCompiledSource)
     {
         var arms = new List<ParsedRelationArm>();
         for (var node = tr; node != null; node = node.ElseExpression?.ElseTableRelationCondition)
         {
             var parts = RelationTargetNameParts(node.RelatedTableField);
             // 1 part = table; 2 parts = table + field, OR namespace + table — BuildMetaFieldRelations
-            // tries both readings and that ambiguity is already its job. RelationTargetNameParts drops
-            // any leading namespace segments (#2851), so reaching here with any other count means the
-            // name did not read as a name at all, and the relation stays uncaptured.
+            // tries both readings and that ambiguity is already its job.
+            //
+            // Neither 0 nor >2 can occur, so this throws rather than dropping the relation (#3326;
+            // see docs/tablerelation-parser-refusals.md for the measurement). >2 has been
+            // impossible since #2851 made RelationTargetNameParts clamp to the last two parts; 0
+            // is unproducible because NameParts appends a part for each of the only two CONCRETE
+            // NameSyntax shapes the AL compiler has, and AL's error recovery synthesises a
+            // *missing* IdentifierNameSyntax rather than nothing. Dropping the relation here
+            // would leave FieldRef.Relation answering 0 and Validate accepting a value real BC
+            // refuses — the silent wrong answer #3306 fixed one layer down, and one its guard at
+            // EvaluateRelation cannot see, because a null RelationArms never reaches the builder.
             if (parts.Count is not (1 or 2))
             {
-                Console.Error.WriteLine(
-                    $"[TableRelation] REFUSED {fieldName}: {parts.Count}-part related-table name '{node.RelatedTableField}'");
-                return null;
+                throw new InvalidOperationException(
+                    $"[TableRelation] #3326: field '{fieldName}' has a {parts.Count}-part "
+                    + $"related-table name '{node.RelatedTableField}' "
+                    + $"(node {node.RelatedTableField?.GetType().Name ?? "null"}). "
+                    + "RelationTargetNameParts clamps to at most 2 and NameParts always yields at "
+                    + "least 1, so this is unreachable — the runner's model of AL has diverged "
+                    + "from the compiler's. Do not commit a workaround: fix NameParts or "
+                    + "RelationTargetNameParts, or the relation is silently dropped and "
+                    + "FieldRef.Relation answers 0.");
             }
             // The two lists differ in ONE way, and it is not cosmetic (#2518): a where(...)
             // filter may carry a `field(...)` link, an if(...) condition may not. BC models
@@ -523,9 +551,9 @@ public static partial class RecordPatches
             // MetaCondition, whose NCLMetaFilter.CreateFromMetaCondition has CONST and FILTER
             // cases only and throws NotSupportedException on FIELD.
             var conditions = RelationConditionList(node.IfExpression?.IfTableRelationCondition,
-                fieldName, allowFieldLinks: false);
+                fieldName, allowFieldLinks: false, fromCompiledSource);
             var filters = RelationConditionList(node.TableFilter?.Filter,
-                fieldName, allowFieldLinks: true);
+                fieldName, allowFieldLinks: true, fromCompiledSource);
             if (conditions == null || filters == null) return null;
             arms.Add(new ParsedRelationArm(parts[0], parts.Count == 2 ? parts[1] : null,
                 conditions, filters));
@@ -549,15 +577,22 @@ public static partial class RecordPatches
     /// CONST and FILTER cases only, throwing <c>NotSupportedException</c> on FIELD; carrying
     /// one there would build metadata BC cannot load, so it still refuses the whole relation.
     /// </para>
-    /// <para>Refusing returns null — the WHOLE relation is dropped, never half-captured. That
-    /// is deliberate for an unrepresentable shape, but it is also why this list matters: a
-    /// dropped relation leaves <c>FieldRef.Relation</c> answering 0, which is
-    /// indistinguishable from "no TableRelation declared". Before #2518 every
-    /// <c>where(... = field(...))</c> relation was dropped for exactly that reason — 826 of
-    /// them in Base Application 28.1, including <c>Customer.City</c>.</para>
+    /// <para>An unrepresentable shape throws when <paramref name="fromCompiledSource"/> (#3326),
+    /// and otherwise still returns null. It used to always return null, dropping the WHOLE
+    /// relation and leaving <c>FieldRef.Relation</c> answering 0 — indistinguishable from "no
+    /// TableRelation declared". Before #2518 every <c>where(... = field(...))</c> relation was
+    /// dropped for exactly that reason: 826 of them in Base Application 28.1, including
+    /// <c>Customer.City</c>. That is the cost of getting this list wrong, and why the shapes it
+    /// does not carry must be loud rather than silent. Measurement, including why no
+    /// compiler-accepted AL reaches the throw:
+    /// <c>docs/tablerelation-parser-refusals.md</c>.</para>
     /// </summary>
+    /// <param name="fromCompiledSource">See <see cref="ParseRelationArms"/>: true for AL this
+    /// runner compiles (an unrepresentable shape throws), false for relation text read back out
+    /// of a precompiled <c>.app</c>'s <c>SymbolReference.json</c> (it returns null).</param>
     private static List<ParsedCalcFilter>? RelationConditionList(
-        NavSyntax.TableFilterExpressionSyntax? filter, string fieldName, bool allowFieldLinks)
+        NavSyntax.TableFilterExpressionSyntax? filter, string fieldName, bool allowFieldLinks,
+        bool fromCompiledSource)
     {
         var list = new List<ParsedCalcFilter>();
         if (filter == null) return list;
@@ -616,11 +651,44 @@ public static partial class RecordPatches
                     break;
 
                 default:
-                    Console.Error.WriteLine(
-                        $"[TableRelation] REFUSED {fieldName}: unsupported " +
-                        (allowFieldLinks ? "where() entry " : "if() condition ") +
-                        $"{cond?.GetType().Name} ({cond})");
-                    return null;
+                    // Two provenances, two correct answers (#3326;
+                    // docs/tablerelation-parser-refusals.md has the probes and the counts).
+                    //
+                    // From a PRECOMPILED .app's SymbolReference.json the relation arrives as a
+                    // string nothing has vetted, and an unrepresentable shape is a real, permanent
+                    // fact rather than a runner bug: an if() condition becomes a MetaCondition,
+                    // and NCLMetaFilter.CreateFromMetaCondition has CONST and FILTER cases only,
+                    // throwing NotSupportedException on FIELD. Refusing the property is what BC
+                    // itself would have to do, so return null and let the caller read it as "no
+                    // relation" — the contract TryParseRelationArmsText documents.
+                    //
+                    // From AL this runner COMPILES, Microsoft's own compiler has already rejected
+                    // every shape that reaches here — an if() field() link as AL0489, and
+                    // InvalidPropertyExpressionSyntax only ever exists after a failed parse — so
+                    // arriving here means the runner's model of AL has diverged from the
+                    // compiler's, and a silent null would drop the whole relation. That leaves
+                    // FieldRef.Relation answering 0 and Validate accepting a value real BC
+                    // refuses, and #3306's guard cannot catch it because a null RelationArms
+                    // never reaches the builder that records the note.
+                    if (!fromCompiledSource)
+                    {
+                        Console.Error.WriteLine(
+                            $"[TableRelation] REFUSED {fieldName}: unsupported " +
+                            (allowFieldLinks ? "where() entry " : "if() condition ") +
+                            $"{cond?.GetType().Name} ({cond})");
+                        return null;
+                    }
+                    throw new InvalidOperationException(
+                        $"[TableRelation] #3326: field '{fieldName}' has an unsupported "
+                        + (allowFieldLinks ? "where() entry " : "if() condition ")
+                        + $"{cond?.GetType().Name} ({cond}) in AL this runner compiled. No AL the "
+                        + "compiler accepts produces this shape — an if() field() link is rejected "
+                        + "as AL0489, and InvalidPropertyExpressionSyntax only exists after a "
+                        + "failed parse — so reaching it means the runner's model of AL has "
+                        + "diverged from the compiler's. Do not commit a workaround that drops the "
+                        + "relation: that makes FieldRef.Relation answer 0 and Validate accept a "
+                        + "value real BC refuses. Carry the shape, or establish that BC cannot "
+                        + "represent it.");
             }
         }
         return list;
@@ -1246,7 +1314,7 @@ public static partial class RecordPatches
             if (obj is not NavSyntax.TableSyntax table || table.Fields == null) continue;
             foreach (var f in table.Fields.Fields)
                 if (PropValue(f.PropertyList, "TableRelation") is NavSyntax.TableRelationPropertyValueSyntax tr)
-                    return ParseRelationArms(tr, fieldName);
+                    return ParseRelationArms(tr, fieldName, fromCompiledSource: false);
         }
         return null;
     }

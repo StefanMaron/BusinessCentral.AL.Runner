@@ -1,0 +1,31 @@
+{
+  "id": "c8d9e0f1-2a3b-4c4d-9e5f-6a7b8c9d0e13",
+  "name": "Runner Extras - Report Dep MaxIteration",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves a precompiled dependency report's dataitem MaxIteration bounds its loop, instead of being dropped and read by BC as no-limit (issue #3370).",
+  "description": "Regression test for BcAppSymbolCache.CollectReportDataItems never reading the MaxIteration property, and DependencyReportMetadata.WriteDataItem never emitting it. The dependency 'RMI Precompiled MaxIteration Dep' (declared below, resolved from the committed .alpackages/*.app symbol package, loaded from the committed .deps-bin/*.dll) ships report 65801 as PURE COMPILED CODE with two Integer dataitems: one bounded ONLY by MaxIteration = 1, and one bounded ONLY by a where(Number = filter(1 .. 3)) view. The report's own metadata is therefore reconstructed from SymbolReference.json rather than emit-captured, which is the surface under test. BC's DataItemIterator bounds a dataitem loop with `if (MaxIteration != 0 && maxIteration == MaxIteration) break;`, so a dropped MaxIteration reads as no limit and the first dataitem iterates the whole Integer virtual-table window (-1000..100000, 101,001 rows) instead of once. This hermetically reproduces the class of hang that cost 42% of the Microsoft test surface in issue #3370, without depending on an externally-provisioned Base Application report.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "b7c8d9e0-1f2a-4b3c-8d4e-5f6a7b8c9d02",
+      "name": "RMI Precompiled MaxIteration Dep",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65280,
+      "to": 65299
+    }
+  ],
+  "runtime": "17.0",
+  "target": "Cloud",
+  "features": []
+}

@@ -625,17 +625,23 @@ def freshness_refusal(printer=None) -> int | None:
                 "nothing has checked that this copy carries the latest guards.")
         return None
     refused = False
+    stale = False
     confirm = True
     for target in (os.path.abspath(__file__), os.path.abspath(_freshness.__file__)):
         fresh = _freshness.assess(target, remote_check=confirm)
         confirm = False  # one ls-remote, not one per file
         for note in fresh.notes:
             printer(note)
+        stale = stale or fresh.state == "stale"
         refused = refused or fresh.refuse
     if refused:
-        printer("\nREFUSING TO WRITE -- this copy of pr-body.py is STALE. Its guards "
-                "are older than origin/main's, and a guard you do not have cannot "
-                "refuse anything. Nothing was read or written.")
+        # "STALE" and "nothing vouches for it" are different facts with different
+        # remedies -- fast-forward versus establish where the copy came from
+        # (#3296) -- so the message names the one that applies.
+        printer("\nREFUSING TO WRITE -- this copy of pr-body.py is %s. Its guards "
+                "are not known to match origin/main's, and a guard you do not have "
+                "cannot refuse anything. Nothing was read or written."
+                % ("STALE" if stale else "one NOTHING VOUCHES FOR"))
         return EXIT_PRECONDITION
     return None
 
