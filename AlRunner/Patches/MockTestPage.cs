@@ -3172,9 +3172,22 @@ internal static class TestPageTemporalValue
     // leaves BC's own refusal as the observable outcome rather than a wrong value.
     private static bool TryBindEvaluator()
     {
-        if (_lookupDone) return _evaluate != null;
-        _lookupDone = true;
+        // Latched AFTER the work, under a gate: setting _lookupDone first let a second thread
+        // read "already bound" while _evaluate was still null, and EnsureEvaluatorBound then
+        // refused a BC build it had bound perfectly well, naming no reason (#3444, #3187's
+        // latch-before-work shape).
+        lock (BindGate)
+        {
+            if (_lookupDone) return _evaluate != null;
+            try { return BindEvaluatorCore(); }
+            finally { _lookupDone = true; }
+        }
+    }
 
+    private static readonly object BindGate = new();
+
+    private static bool BindEvaluatorCore()
+    {
         string? why = null;
         try
         {
