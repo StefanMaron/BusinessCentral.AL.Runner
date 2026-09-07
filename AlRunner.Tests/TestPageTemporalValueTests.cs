@@ -99,4 +99,64 @@ public sealed class TestPageTemporalValueTests
         Assert.False(TestPageTemporalValue.TryResolve(NavType.Date, input, out var v));
         Assert.Null(v);
     }
+
+    // ---- The lenient-parse guard (PR #3394 review item 3) --------------------------------
+    //
+    // Step one must invert exactly the one spelling this runner emits and nothing else, so that
+    // every spelling a *user* can type reaches BC's own evaluator instead. These four are the
+    // discriminating ones, all measured on a real BC 28.4.53241.0 tier through a Date control:
+    //
+    //   'w'         accepted -> the working date        011528     accepted -> 2028-01-15
+    //   't'         refused                             15.01.28   refused
+    //
+    // No general-purpose date parser produces those answers: .NET cannot read 'w' at all, and a
+    // lenient invariant parse WOULD read '15.01.28' and '011528' — and would then answer here,
+    // before BC ever saw them, substituting .NET's reading of a typed date for the platform's.
+    // Asserting at the step-one seam rather than through TryResolve keeps this independent of
+    // whether a BC engine is loaded in the test process.
+    [Theory]
+    [InlineData("w")]
+    [InlineData("t")]
+    [InlineData("011528")]
+    [InlineData("15.01.28")]
+    [InlineData("2026-01-15")]
+    [InlineData("01/15/26")]
+    public void TryResolveRoundTrip_ASpellingAUserCanType_IsLeftToBcsOwnEvaluator(string typed)
+    {
+        Assert.False(TestPageTemporalValue.TryResolveRoundTrip(NavType.Date, typed, out var v));
+        Assert.Null(v);
+    }
+
+    // The paired positive, so the theory above cannot pass by the step declining everything.
+    [Fact]
+    public void TryResolveRoundTrip_TheRunnersOwnSpelling_IsTheOneItAccepts()
+    {
+        Assert.True(TestPageTemporalValue.TryResolveRoundTrip(
+            NavType.Date, "01/15/2026 00:00:00", out var v));
+
+        var date = Assert.IsType<NavDate>(v);
+        Assert.Equal(new DateTime(2026, 1, 15), date.Value.Date);
+    }
+
+    // ---- The binding is real on the pinned Ncl (PR #3394 review item 4) -------------------
+    //
+    // NavValueEvaluator, NavNclType and the 6-parameter Evaluate are internal to Ncl.dll, so
+    // step two binds them by reflection off a shape read from the 28.1/28.4 decompiles. If a BC
+    // build moves that shape the binding throws rather than declining — but a throw nobody
+    // provokes proves nothing, so this provokes it against the Ncl this build is pinned to.
+    //
+    // Touching NavDate first is not incidental: the assembly is loaded lazily, and asserting
+    // before anything has referenced a Ncl type would measure the load order, not the binding.
+    [Fact]
+    public void EnsureEvaluatorBound_BindsAgainstThePinnedNcl_RatherThanThrowing()
+    {
+        _ = NavDate.Create(DateTime.SpecifyKind(new DateTime(2026, 1, 15), DateTimeKind.Local));
+        Assert.Contains(
+            AppDomain.CurrentDomain.GetAssemblies(),
+            a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
+
+        // Throws RunnerOutOfScopeException, naming testpage-temporal-evaluator, if the shape has
+        // moved. Passing means the reflection above matches the Ncl this build actually loads.
+        TestPageTemporalValue.EnsureEvaluatorBound();
+    }
 }

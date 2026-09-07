@@ -3039,29 +3039,50 @@ internal static class TestPageTemporalValue
         resolved = null;
         if (type is not (NavType.Date or NavType.DateTime or NavType.Time)) return false;
 
-        // First: the spelling this runner's OWN ValueToString produces for a typed argument —
-        // Convert.ToString(<DateTime>, InvariantCulture), i.e. "MM/dd/yyyy HH:mm:ss". BC's
-        // evaluator cannot read it because BC's own client never emits it: a Date renders there
-        // as a date, and a Time carries no date at all. A Time arrives with NavTime's base date
-        // attached ("01/02/0001 14:30:00"), which is why the Time arm reads TimeOfDay.
-        if (DateTime.TryParseExact(value, "MM/dd/yyyy HH:mm:ss", CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.None, out var roundTrip))
-        {
-            // Create requires DateTimeKind.Local on all three — the ctors throw
-            // NavNCLDateInvalidException otherwise, and TryParseExact answers Unspecified.
-            resolved = type switch
-            {
-                NavType.Date => NavDate.Create(
-                    DateTime.SpecifyKind(roundTrip.Date, DateTimeKind.Local)),
-                NavType.DateTime => NavDateTime.Create(
-                    DateTime.SpecifyKind(roundTrip, DateTimeKind.Local)),
-                _ => NavTime.Create(DateTime.SpecifyKind(
-                    NavTimeBaseDate.Add(roundTrip.TimeOfDay), DateTimeKind.Local)),
-            };
-            return resolved != null;
-        }
+        return TryResolveRoundTrip(type, value, out resolved)
+            || TryEvaluateThroughBc(type, value, out resolved);
+    }
 
-        return TryEvaluateThroughBc(type, value, out resolved);
+    /// <summary>
+    /// Step one: the spelling this runner's OWN <c>ValueToString</c> produces for a typed
+    /// argument — <c>Convert.ToString(&lt;DateTime&gt;, InvariantCulture)</c>, the general
+    /// date/time pattern <c>MM/dd/yyyy HH:mm:ss</c>. A <c>Time</c> arrives with
+    /// <c>NavTime</c>'s base date attached ("01/02/0001 14:30:00"), which is why the Time arm
+    /// reads <c>TimeOfDay</c> and drops the carrier date.
+    ///
+    /// <para>Handling it here rather than leaving it to BC is not a divergence, and that was
+    /// measured rather than assumed (PR #3394 review): a real BC 28.4.53241.0 tier handed
+    /// <c>SetValue('01/01/2024 00:00:00')</c> as TEXT on a Date control accepts it and stores
+    /// <c>2024-01-01</c> — the same answer this branch gives. What this branch buys is that the
+    /// typed-argument path does not depend on that, since BC's own client never emits this
+    /// spelling for a Date or a Time.</para>
+    ///
+    /// <para><c>TryParseExact</c>, never a lenient parse, and that is the point of the arm:
+    /// a lenient invariant parse would also swallow <c>15.01.28</c> and <c>011528</c> here and
+    /// answer before BC's evaluator ever sees them, silently substituting .NET's reading of a
+    /// user-typed date for the platform's. See <c>TestPageTemporalValueTests</c>.</para>
+    /// </summary>
+    internal static bool TryResolveRoundTrip(NavType type, string value, out NavValue? resolved)
+    {
+        resolved = null;
+        if (type is not (NavType.Date or NavType.DateTime or NavType.Time)) return false;
+
+        if (!DateTime.TryParseExact(value, "MM/dd/yyyy HH:mm:ss", CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var roundTrip))
+            return false;
+
+        // Create requires DateTimeKind.Local on all three — the ctors throw
+        // NavNCLDateInvalidException otherwise, and TryParseExact answers Unspecified.
+        resolved = type switch
+        {
+            NavType.Date => NavDate.Create(
+                DateTime.SpecifyKind(roundTrip.Date, DateTimeKind.Local)),
+            NavType.DateTime => NavDateTime.Create(
+                DateTime.SpecifyKind(roundTrip, DateTimeKind.Local)),
+            _ => NavTime.Create(DateTime.SpecifyKind(
+                NavTimeBaseDate.Add(roundTrip.TimeOfDay), DateTimeKind.Local)),
+        };
+        return resolved != null;
     }
 
     // NavTime's ClientObject is a DateTime on BC's own base date; Create rejects anything else.
@@ -3076,7 +3097,7 @@ internal static class TestPageTemporalValue
     private static bool TryEvaluateThroughBc(NavType type, string value, out NavValue? resolved)
     {
         resolved = null;
-        if (!TryBindEvaluator()) return false;
+        EnsureEvaluatorBound();
 
         var member = type switch
         {
@@ -3158,13 +3179,35 @@ internal static class TestPageTemporalValue
             why = $"{ex.GetType().Name}: {ex.Message}";
         }
 
-        Console.Error.WriteLine(
-            "[MockTestPage] WARN: could not bind BC's own NavValueEvaluator — " + why + ". "
-            + "TestPage SetValue on a Date/DateTime/Time control still accepts a typed AL "
-            + "argument, but text spellings (Format() output, 'yyyy-mm-dd', 'w') will be "
-            + "refused by BC as they were before #3384.");
         _evaluate = null;
+        _bindFailure = why;
         return false;
+    }
+
+    private static string? _bindFailure;
+
+    /// <summary>
+    /// Bind BC's evaluator, or THROW.
+    ///
+    /// <para>Not a decline. Declining is what happens when the evaluator runs and BC refuses the
+    /// text, and that is correct — the caller then falls through to its NavText path and BC
+    /// raises its own refusal. A failure to BIND is a different thing entirely: it means this
+    /// runner cannot ask BC at all, on a BC build whose shape it does not recognise. Left as a
+    /// decline it would be invisible, because the typed-argument path keeps working through
+    /// <see cref="TryResolveRoundTrip"/> and only text spellings quietly revert to the
+    /// pre-#3384 refusal — a silent downgrade of exactly the kind loud-failures.md forbids.
+    /// </para>
+    /// </summary>
+    internal static void EnsureEvaluatorBound()
+    {
+        if (TryBindEvaluator()) return;
+
+        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+            "TestPage SetValue on a Date/DateTime/Time control",
+            "testpage-temporal-evaluator — could not bind BC's own NavValueEvaluator ("
+            + (_bindFailure ?? "reason not recorded") + "), so the runner cannot ask this BC "
+            + "build how it reads a date, time or datetime a test typed as text. This is a "
+            + "runner/BC-version mismatch, not a rejected value.");
     }
 }
 
@@ -3556,8 +3599,23 @@ internal sealed class PageVariableTestField : ITestField
             // spelling, throwing out-of-scope for text BC reads happily. NavDateTime and NavTime
             // had no arm at all, so a typed argument reached the page's own generated setter as
             // a NavText and threw InvalidCastException.
-            NavDate or NavDateTime or NavTime when
-                TestPageTemporalValue.TryResolve(FieldType, value, out var temporal) => temporal!,
+            //
+            // A DECLINE has to be a typed refusal here, unlike the Rec-bound side. There, the
+            // NavText fall-through reaches BC's own ALValidateAsync and BC raises the refusal
+            // naming the value. A page variable has no validate behind it: the NavText goes
+            // straight into the page's generated setter and comes back out as
+            // "Unable to cast object of type 'NavText' to type 'NavDate'" from inside
+            // NavFormSourceExpression — which names neither the control nor the value the test
+            // wrote. #2054's NavDate arm did raise a typed refusal, and dropping to a bare cast
+            // failure would have been a regression against it.
+            NavDate or NavDateTime or NavTime =>
+                TestPageTemporalValue.TryResolve(FieldType, value, out var temporal)
+                    ? temporal!
+                    : throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+                        $"TestPage SetValue (control {_controlId})",
+                        $"testpage-temporal-value — '{value}' is not a {FieldType} this BC build "
+                        + "can evaluate, and a page-variable control has no field validate "
+                        + "behind it to refuse the value itself."),
             _ => ALCompiler.ToNavValue(value),
         };
 
