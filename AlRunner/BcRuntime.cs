@@ -804,6 +804,32 @@ public static partial class BcRuntime
         // NavException type lookup succeeds and CurrentMethodScope reflection is valid.
         if (_skeletonSession != null)
             AlRunner.Infrastructure.AlCallStackCapture.Initialize(_skeletonSession);
+
+        WarmSkeletonFormatSettings();
+    }
+
+    /// <summary>
+    /// Touch the skeleton session's <c>FormatSettings</c> once, here, while startup is still
+    /// single-threaded.
+    ///
+    /// <para>BC's <c>NavSession.SyncFormatSettings</c> lazily builds an instance
+    /// <c>Dictionary&lt;(int, int), FormatSettings&gt;</c> and <c>Add</c>s to it with no lock
+    /// (28.1 Ncl decompile). One skeleton session is shared, so two threads reaching it first
+    /// together get <c>ArgumentException: An item with the same key has already been added.
+    /// Key: (1033, 1033)</c> out of BC's own code — observed for real, see #3444. Completing
+    /// the lazy init before anything can share it removes the first-touch window.</para>
+    /// </summary>
+    private static void WarmSkeletonFormatSettings()
+    {
+        try
+        {
+            _ = (_skeletonSession as Microsoft.Dynamics.Nav.Runtime.NavSession)?.FormatSettings;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(
+                $"[BcRuntime] WARN: FormatSettings warm failed: {ex.GetType().Name}: {ex.Message}");
+        }
     }
 
     /// <summary>

@@ -3174,14 +3174,53 @@ internal static class TestPageTemporalValue
         // "no" so the caller keeps its NavText path, where BC raises the refusal AL is written
         // against. Throwing from here would replace that message with this one.
         var args = new object?[] { BcRuntime.SkeletonSession, _trapError, null, null, value, 0 };
-        bool ok;
-        try { ok = (bool)_evaluate!.Invoke(evaluator, args)!; }
-        catch (System.Reflection.TargetInvocationException) { return false; }
-        catch (System.ArgumentException) { return false; }
-
-        if (!ok) return false;
+        if (!InvokeEvaluate(() => (bool)_evaluate!.Invoke(evaluator, args)!)) return false;
         resolved = args[2] as NavValue;
         return resolved != null;
+    }
+
+    /// <summary>
+    /// Run BC's evaluator and answer what it answered - but only for an answer BC gave.
+    ///
+    /// <para>Under <c>DataError.TrapError</c> a refusal is not an exception: BC returns false and
+    /// traps its own <c>NavNCLEvaluateException</c> (28.1 Ncl, <c>NavValueEvaluator`1.Evaluate</c>:
+    /// <c>catch when (obj is NavNCLEvaluateException &amp;&amp; dataError == 0)</c>; TrapError is
+    /// 0). So anything else reaching here is the evaluator NOT COMPLETING, and answering false for
+    /// it shows the AL author BC's date-format refusal for a value BC would have taken (#3444).</para>
+    ///
+    /// <para><c>BcShapeGapException</c> because an <c>asserterror</c> can absorb a
+    /// <c>RunnerOutOfScopeException</c> and would then pass on a runner fault (#3062, #3428).</para>
+    /// </summary>
+    internal static bool InvokeEvaluate(Func<bool> invoke)
+    {
+        try { return invoke(); }
+        catch (System.Reflection.TargetInvocationException ex)
+            when (ex.InnerException is NavNCLEvaluateException)
+        {
+            // BC ran and said no, in the one shape that can still arrive as a throw.
+            return false;
+        }
+        catch (System.Reflection.TargetInvocationException ex)
+        {
+            var inner = ex.InnerException ?? ex;
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "TestPage SetValue on a Date/DateTime/Time control",
+                "NavValueEvaluator.Evaluate",
+                $"BC's own value evaluator did not complete ({inner.GetType().Name}: "
+                + $"{inner.Message}), so the runner has no answer from BC about this spelling. "
+                + "This is a runner fault on the evaluate path, not a value BC rejected.");
+        }
+        catch (System.ArgumentException ex)
+        {
+            // Unwrapped, so it came from Invoke itself rather than from BC: the bound Evaluate
+            // does not take the arguments this call site passes.
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "TestPage SetValue on a Date/DateTime/Time control",
+                "NavValueEvaluator.Evaluate",
+                $"the bound Evaluate refused this call's arguments ({ex.GetType().Name}: "
+                + $"{ex.Message}), so this BC build's evaluator is not the shape the runner "
+                + "reflects against. A runner/BC-version mismatch, not a rejected value.");
+        }
     }
 
     // Bound by reflection because NavValueEvaluator and NavNclType are internal to Ncl.dll. The
@@ -3193,9 +3232,22 @@ internal static class TestPageTemporalValue
     // leaves BC's own refusal as the observable outcome rather than a wrong value.
     private static bool TryBindEvaluator()
     {
-        if (_lookupDone) return _evaluate != null;
-        _lookupDone = true;
+        // Latched AFTER the work, under a gate: setting _lookupDone first let a second thread
+        // read "already bound" while _evaluate was still null, and EnsureEvaluatorBound then
+        // refused a BC build it had bound perfectly well, naming no reason (#3444, #3187's
+        // latch-before-work shape).
+        lock (BindGate)
+        {
+            if (_lookupDone) return _evaluate != null;
+            try { return BindEvaluatorCore(); }
+            finally { _lookupDone = true; }
+        }
+    }
 
+    private static readonly object BindGate = new();
+
+    private static bool BindEvaluatorCore()
+    {
         string? why = null;
         try
         {
