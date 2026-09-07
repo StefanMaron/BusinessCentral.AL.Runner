@@ -2,10 +2,16 @@
 
 A backgrounded process is killed when the turn ends: no completion notification arrives,
 the work sits uncommitted, and you wait forever on something already dead. This applies to
-**any** long command — corpus runs, repeat-iteration flake loops, `dotnet test` sweeps,
-provisioning, artifact downloads, long `gh`/API polling. Run it in the **foreground** with a
+**any** long command **that runs on this box** — corpus runs, repeat-iteration flake loops,
+`dotnet test` sweeps, provisioning, artifact downloads. Run it in the **foreground** with a
 correspondingly generous timeout. Do not chain short sleeps to fake a wait — either wait on
 the foreground command or truly move on.
+
+**CI is the one thing you never wait for, in the foreground or anywhere else.** A workflow run
+is not your child process: it completes whether or not this turn is alive, and its verdict is
+there to read whenever you come back. So push, open the PR, and move on — then read the result
+later with `tools/ci-wait.py <PR> --timeout 0`. `ci-verdicts.md` §0 is the rule; this one
+governs work running locally.
 
 A cold full-corpus run (build + AL emit + C# compile + execute ~2000 tests) is not a
 few-seconds operation — budget several minutes, or use a compile cache to skip recompilation
@@ -30,27 +36,26 @@ turn:
   flag, wrapper, or phrasing of a `Bash` call earns you a wake-up.
 - **The harness backgrounding it FOR you**, with a message saying you will be notified. That
   promise does not hold for anything started inside your own turn. It already cost a stall: an
-  agent correctly ran `gh run watch` in the foreground, the harness backgrounded it and
-  promised a notification, and the agent ended its turn waiting for one that could never arrive.
+  agent ran `gh run watch` in the foreground — then the correct move, now superseded by not
+  waiting on CI at all — the harness backgrounded it and promised a notification, and the agent
+  ended its turn waiting for one that could never arrive. The mechanism is what matters here and
+  it is unchanged: it applies to any long local command you background.
 
-If you catch yourself about to end a turn while something you launched is still running, that
-is the bug, not patience. Three agents lost their work this way in a single day, each having
-reported "CI is running, I'll confirm." Re-check directly and keep checking in the foreground:
+If you catch yourself about to end a turn while **local** work you launched is still running,
+that is the bug. Three agents lost work this way in a single day, each having reported "CI is
+running, I'll confirm" — and note what actually cost them: not that they stopped watching CI,
+but that they ended a turn with an **unpushed worktree**. Pushing first is what would have
+saved every one of them, and it is the fix here rather than a longer wait.
 
-```bash
-gh run view <run-id> --json status,conclusion
-```
-
-Anything other than `completed` means "not yet reported", never "green".
-
-Correct shapes, in order of preference: run it in the foreground; or push first so the loss is
-survivable and let CI be the verdict; or genuinely abandon it and say so. "End the turn and
+Correct shapes for local work, in order of preference: run it in the foreground; or push first
+so the loss is survivable; or genuinely abandon it and say so. "Start it, end the turn, and
 wait" is not on the list.
 
-For CI specifically, `tools/ci-wait.py <PR>` does the whole poll inside one tool call and
-returns a single verdict — see `ci-verdicts.md` for its exit codes.
+For a pull request, the correct shape is different and simpler: push, open it, hand back. Read
+the verdict on a later pass with `tools/ci-wait.py <PR> --timeout 0`, which answers at once and
+refuses to call a still-running check a result — see `ci-verdicts.md` for the exit codes.
 
 ## Sister rules
 
-- `ci-verdicts.md` — driving a PR to merge; `tools/ci-wait.py` and its exit codes
+- `ci-verdicts.md` — driving a PR to merge, and why CI is read rather than waited for
 - `no-git-stash-with-worktrees.md` — why a hand-rolled polling loop matches itself

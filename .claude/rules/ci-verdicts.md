@@ -4,15 +4,38 @@
 comments yourself — don't wait for someone else to notice a PR is red. Each step below
 records a mistake made here more than once.
 
-## 0. Wait on CI with one call, not a poll loop
+## 0. Never block on CI — read the verdict, and read it again later if it is not in yet
 
-**`tools/ci-wait.py <PR>`** keeps the polling but moves it inside a single tool call: it
-loops internally, prints nothing until it has an answer, and returns one verdict.
+**Do not wait for CI.** Push the branch, open the pull request, and carry on with the next
+thing. Holding a turn open until a workflow run reports spends wall-clock and budget on
+something that resolves whether or not anyone is watching, and the verdict costs nothing to
+read afterwards. This is a standing instruction from the repository owner and it replaces the
+older advice in this file, which told agents to wait in the foreground.
+
+**`tools/ci-wait.py <PR> --timeout 0`** is the read. One pass, one answer, returns immediately:
 
 ```bash
-tools/ci-wait.py 2379                 # blocks, then reports once
-tools/ci-wait.py 2379 --timeout 2400
+tools/ci-wait.py 2379 --timeout 0     # reads the verdict now; never blocks
 ```
+
+Everything else in this file is about *how* to read a verdict, and none of it changes: a
+verdict belongs to one commit, a cancelled run is not a failure, and a failed job's log must
+never be re-run away. What changed is only *when* you read — on your next pass over the PR,
+rather than by keeping a turn open until the answer arrives.
+
+**Who reads it, and when.** An implementation agent opens its PR and hands back; it never
+waits and never merges (`.claude/agents/impl-agent.md`). The coordinator sweeps open PRs once
+per cycle and reads each verdict then. A PR whose checks have not reported yet is simply read
+again on the next sweep — and nothing is lost by that, because `gh pr merge --auto` lands a
+reviewed PR the moment its checks go green with nobody present.
+
+**Exit 2 is the ordinary answer here, not a failure.** It means the checks have not reported.
+Move on; read again later. It is never a green, and never a reason to re-roll anything.
+
+The anti-poll argument this section used to make still holds *within* one read: never
+hand-roll `gh run view` plus `sleep`. Measured across one session's 17 subagents, CI waiting
+was 328 of 3,282 Bash calls, shaped as 107 `gh run view` polls and 37 `sleep` loops against
+only 29 proper waits. One `--timeout 0` call replaces all of it.
 
 | exit | meaning |
 |---|---|
@@ -25,7 +48,7 @@ tools/ci-wait.py 2379 --timeout 2400
 `ci-wait.py` reads the required contexts from the **live branch ruleset** on each
 invocation (`GET /repos/{owner}/{repo}/rules/branches/main`, which reports only *active*
 rulesets), falling back to its built-in list and saying so loudly if that call fails. A
-required context added in the GitHub UI is therefore waited for immediately rather than
+required context added in the GitHub UI is therefore picked up immediately rather than
 ignored until someone edits the tool (#2785); `check_required_contexts.py` fails CI when the
 built-in lists and the live ruleset drift apart in either direction. What it will **not** do is
 accept a ruleset answer that is *narrower* than its built-in list — that returns exit 3 rather
@@ -110,11 +133,6 @@ Two things it cannot do, so do them yourself:
 
 `tools/preflight.py` carries the same exposure and is **not** guarded yet (#3164).
 
-Measured across one session's 17 subagents, CI waiting was 328 of 3,282 Bash calls, and the
-shape was wrong — 107 `gh run view` polls and 37 `sleep` loops against only 29 blocking
-`gh run watch` calls. Each poll re-sends the whole conversation; this turns ten-to-forty
-round trips into one.
-
 ### A cancelled run's leftovers sit in the same rollup as the live run, and `gh pr checks` hides which is which
 
 This is the trap behind #3002, and it bites in **both** directions. The API attaches every
@@ -180,7 +198,8 @@ break because `main` moved underneath you.
 `gh pr checks` reports the newest *completed* run, which can predate your last push;
 reporting green from a stale run has happened at least four times. Confirm the check's commit
 SHA matches local `HEAD` — a mismatch means "not yet reported," not "green." Never report a
-PR as done while its CI is still running.
+PR as done while its CI is still running — say it is open with checks running, which is a
+perfectly good place to leave a PR (section 0).
 
 **Which contexts gate.** Two come from the big workflows: **`BC test matrix passed`**
 (`.github/workflows/test-matrix.yml`) and **`Tests updated`**
@@ -223,10 +242,9 @@ it can dispatch any of the eight against your branch. And the leg-set evidence i
 thinner on a PR: three legs give far fewer distinguishable failing sets than eight, so prefer
 the dispatch or an empty commit over reading a pattern out of three data points.
 
-Wait in the **foreground** — `tools/ci-wait.py`, or `gh run watch <run-id>`. Never end a turn
-while CI you are responsible for is still running (`no-backgrounding-long-commands.md`).
-Re-check with `gh run view <id> --json status,conclusion` and treat anything other than
-`completed` as "not yet reported".
+Read the result with `tools/ci-wait.py <PR> --timeout 0`; do **not** block on it and do not
+hand-roll a `gh run view` poll loop (section 0). Anything other than `completed` means "not yet
+reported", never "green" — leave the PR and read it again on your next pass.
 
 ### In the corpus, "which harness code ran" has two dials, and the obvious one is wrong
 
