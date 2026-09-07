@@ -323,12 +323,19 @@ public sealed class CurrPageUpdateRefreshTests : IDisposable
                     Check('ValidateBegin;', Trace.Get(), 'no refresh after a failed trigger');
                 end;
 
-                // BC's own NavForm.NewRecordAsync raises UpdateRequest with no AL trigger on
-                // the stack. A request armed there must NOT be carried: if it were, it would
-                // fire at the end of the next, unrelated trigger and raise an
-                // OnAfterGetCurrRecord that no CurrPage.Update in that trigger asked for. The
-                // page used here calls CurrPage.Update nowhere at all, so any HostAGCR in the
-                // trace after the SetValue can only have come from a leaked request.
+                // A regression guard on the "no refresh without a CurrPage.Update in THIS
+                // trigger" property, driven across an operation - New() - that runs BC's own
+                // NewRecordAsync/SaveRecordAsync outside any AL trigger. The page used here
+                // calls CurrPage.Update nowhere at all, so any HostAGCR after the SetValue is
+                // a refresh nothing asked for.
+                //
+                // Honest about what it does NOT prove: it still passes with the
+                // `_triggerDepth == 0` drop removed, because those internal raisers carry
+                // RecordSaved WITHOUT Update and the flag filter already rejects them. The
+                // case that reaches the drop is a PART's CurrPage.Update propagating to its
+                // HOST - measured once across the whole corpus, stack recorded in
+                // docs/testpage-currpage-update.md - and it needs a host/part pair this
+                // fixture does not have.
                 [Test]
                 procedure ARequestArmedOutsideATrigger_DoesNotFireOnTheNextTrigger()
                 var
