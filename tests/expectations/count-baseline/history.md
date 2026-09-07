@@ -1586,3 +1586,48 @@ revision of this branch carried are gone, and neither was deleted on a guess:
   the "remove the entry" direction.
 
 Written by the fbk-1 agent.
+
+## 2026-09-07 — corpus pin `69ae7598` → `8678dc2` (al-language 3008 → 3026)
+
+The pin advanced to consume StefanMaron/BusinessCentral.AL.Language.Tests#263, the upstream
+half of #3384 (a TestPage control could not be written with a Date, DateTime or Time in any
+spelling). Corpus history is linear, so the two merged corpus PRs sitting between the old pin
+and #263 came with it, and both contribute tests:
+
+| corpus PR | commit | what it pins | tests |
+|---|---|---|---|
+| #265 | `98eec27` | how far the Integer virtual table reaches, and that an open filter is answered | +3 |
+| #270 | `ce2c3af` | the AL call-depth ceiling, from both sides | +5 |
+| #263 | `8678dc2` | what a TestPage control does with a Date, DateTime or Time (this PR's own upstream test) | +10 |
+
+**3026 is the number the guard itself reported**, not one computed from the old total plus a
+count of added tests (#2803). Measured on BC 28.1.49838.53910; with the bump in place the run
+is 3055/3055 across the three corpus app groups, and re-running against a deliberately wrong
+baseline prints
+`DROP: suite 'al-language' tests count: expected 9999, actual 3026 (BC 28.1)` and exits 4 — so
+the guard is ARMED here rather than silently skipping, and 3026 is its own `actual`.
+
+**Read the suite counts, not the run total.** `--count-baseline` is per suite, and the run
+total 3055 is `al-language` 3026 + `al-language-onprem` 29 + `al-language-internals-fixture` 0.
+Passing the single parent path `tests/al-language` instead of the three app directories CI
+passes (`scripts/corpus-app-dirs.py`) folds all three into one suite called `al-language`, which
+reports 3055 against a 3026 baseline and looks like a 29-test growth that is not there. That
+cost a wrong number on the way to this entry; the invocation to copy is the one in
+`bc-tests.yml`, both `--package-cache` arguments included.
+
+`appGroups` for `al-language` stays **1** for the same reason: it reads 3 under the folded
+invocation and 1 under CI's, and nothing in these three commits adds an app.
+
+Three of the newly-pulled-in tests do not pass yet, both declared `expect-fail-known-gap`
+against issues that stay OPEN after this PR merges:
+
+- `known-gaps-integer-virtual-table.json` — #265's two reach tests, issue #3438. The Integer
+  table is materialised over `[-1000..100000]` while real BC serves `[-1e9..1e9]`. Since #3393
+  the request is refused loudly instead of truncated silently, which is what closed #2350; the
+  remaining reach is #3438 and was filed for this bump.
+- `known-gaps-codeunit-recursion-depth.json` — #270's `RecursionDepth_JustInsideTheCeiling_Completes`,
+  issue #3405. The runner's guard throws at 500 frames where BC's ceiling is 1000, so only the
+  arm sitting between the two ceilings fails; #270's other four pass, which is what identifies
+  the cause.
+
+Written by the fbk-1 agent.
