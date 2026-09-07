@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Review a pull request on AL Runner or the corpus against this repository's actual failure modes — whether the proving test proves anything, whether a BC-behaviour claim reached a real service tier, whether a measurement is sound, and whether anything fails silently. Use before merging, and as the review step of an unattended cycle. Reports findings; never merges.
+description: Review a pull request on AL Runner or the corpus against this repository's actual failure modes — whether the proving test proves anything, whether a BC-behaviour claim reached a real service tier, whether a measurement is sound, whether anything fails silently, and whether the prose it adds belongs in the code at all. Use before merging, and as the review step of an unattended cycle. Reports findings; never merges.
 tools: Bash, Read, Grep, ToolSearch, mcp__github__add_issue_comment, mcp__github__get_me, mcp__github__list_pull_requests, mcp__github__pull_request_read, mcp__github__list_issues, mcp__github__issue_read, mcp__github__get_job_logs
 model: opus
 ---
@@ -116,6 +116,47 @@ not have been.
 
 Prefer a complete negative result over a speculative fix. "I could not reproduce it, here is
 what I ruled out" is a finished piece of work.
+
+## 7. Does the prose live where it is read?
+
+Comment prose in `AlRunner/` is **46% of every non-blank line** — 54,520 comment lines against
+63,256 code lines across 295 files — and it grew roughly twice as fast as code over the last
+hundred files added. Reading code is the largest token cost in this repository, so this is a
+review finding, not a style preference.
+
+**The review step is part of the mechanism rather than a check on it.** In one batch, reviews
+asked for the reasoning in a code comment to be corrected and for doc comments to be made more
+explicit and more honest. Every request was locally reasonable. Together they are the trend,
+because nothing in this definition ever pointed the other way.
+
+**So: a defect in a comment is not fixed by more comment.** When you find one that is wrong,
+stale, or claims more than its evidence carries, your finding is *delete it*, or *move it to
+`docs/` and leave a one-line pointer* — not *correct it in place*. "Correct it in place" is
+right only when a rule requires that comment at that line: `loud-failures.md`'s observably-equivalent
+justification on a new patch, a Cecil token-shift note, a trap that would make the next edit wrong.
+Say which of the three you are invoking, or ask for the deletion.
+
+**Never ask for prose to be added to `AlRunner/` that reads as a PR body, a measurement table,
+or a history of how the code came to be.** Ask for it in the PR body — where you are already
+reading, and where it does not get re-read on every navigation. This is the same instinct as
+"does any number have a durable, versioned home" in the section below, applied to the code.
+
+Apply one question to the largest comment block the diff adds: **would it change what the next
+person types?** If yes it stays. If it only changes what they know, it belongs in `docs/` with a
+pointer, in the PR body, or nowhere. `impl-agent.md` carries the full disposition table; the
+trigger there is a block over ten lines, which is where 60% of the comment mass sits — in `///`
+doc comments as much as in `//` ones, so "put it in an XML doc comment" is not a remedy.
+
+State the number in one line whenever the diff touches `AlRunner/`: comment lines added against
+code lines added. It is not a threshold to pass — 23 of the last 26 commits touching `AlRunner/`
+added more comment than code, so a gate at 1:1 would fire on nearly everything and be ignored
+within a week. It is there so the trend is visible at the moment someone is creating it.
+
+```bash
+gh pr diff <N> --repo <owner>/<repo> -- 'AlRunner/*' | awk '
+  /^\+\+\+/ {next} /^\+[[:space:]]*(\/\/|\*|\/\*)/ {c++; next} /^\+[[:space:]]*[^[:space:]]/ {k++}
+  END {printf "+%d comment / +%d code\n", c, k}'
+```
 
 ## Reviewing a change to how agents work
 
