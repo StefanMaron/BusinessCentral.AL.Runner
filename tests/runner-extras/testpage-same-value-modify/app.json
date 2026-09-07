@@ -1,0 +1,18 @@
+{
+  "id": "3c8a91d2-77e5-4b06-9a3f-0c55aa273055",
+  "name": "Runner Extras - TestPage Same-Value Modify Gate",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3055: LiveNavTestPage.FlushPendingModify used to issue a Modify whenever a control had assigned a field, so a SetValue writing back the value the field ALREADY held still ran the table's OnModify. Real BC gates the page write on a value comparison (NavForm.SaveRecordAsync), so it does not.",
+  "description": "This bundle pins the RUNNER-INTERNAL half of the fix: that FlushPendingModify's gate coalesces per row and is driven by the record-vs-OldRecord comparison rather than by 'a control was assigned'. The BC-behaviour claim itself -- what a real service tier does for a same-value SetValue -- is measured upstream in StefanMaron/BusinessCentral.AL.Language.Tests codeunit 60411 'SVM Tests' (corpus PR #271), on eight BC versions. Declares no 'application' dependency: every object here is its own, so the Base Application floor would only cost load time (see .claude/rules/no-base-app-in-csharp-tests.md for the measurement behind that).",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65760,
+      "to": 65769
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

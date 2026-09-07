@@ -1205,7 +1205,7 @@ internal class LiveNavTestPage : MockITestPage
             _record!.ALInit();
             // The tail of NavForm.NewRecordAsync is `OldRecord.ALAssign(SourceTable)`, and
             // TryNewRecord runs it on the page path. Record-only mode never reaches BC's
-            // method at all, so the snapshot RowChangedSinceNewRecord compares against has to
+            // method at all, so the snapshot RowValuesChangedSinceLoad compares against has to
             // be taken here or the gate below would measure this row against some earlier one.
             _record!.OldRecord.ALAssign(_record);
         }
@@ -1237,14 +1237,17 @@ internal class LiveNavTestPage : MockITestPage
     /// <c>detectChangeFromFieldsInitializedFromFilters: false</c>, which is what the no-argument
     /// <c>SaveRecordAsync()</c> (the one <c>NavForm.UpdateCoreAsync</c> uses) passes.</para>
     ///
-    /// <para>Not applied to <see cref="FlushPendingModify"/>, and that is BC's asymmetry rather
-    /// than an omission: on the modify half SaveRecordAsync ORs the comparison with
-    /// <c>calledFromALCode &amp;&amp; RecordImplementation.HasChangedFields</c>, and
-    /// <c>_pendingModify</c> is only ever set by <see cref="MarkEdited"/> — i.e. exactly when a
-    /// control assigned a field. Whether BC's <c>HasActualChangedValues()</c> also demands the
-    /// value actually MOVED is unmeasured; see issue #3055.</para>
+    /// <para>Applied to <see cref="FlushPendingModify"/> too, since issue #3055 — one gate, both
+    /// halves, which is also SaveRecordAsync's own shape. The open question recorded here used
+    /// to be whether the OR's second arm (<c>calledFromALCode &amp;&amp;
+    /// RecordImplementation.HasChangedFields</c>) let a same-value write through, since
+    /// <c>_pendingModify</c> is set by <see cref="MarkEdited"/> on any assignment. It does not:
+    /// that arm reaches <c>MutableRecordBuffer.HasActualChangedValues()</c>, which returns
+    /// <c>false</c> unless some modified field fails <c>IsChangedValueSameAsOriginalValue</c>.
+    /// Both arms are value comparisons, so neither writes a row that did not move.
+    /// <c>docs/testpage-write-gate.md</c> has the decompiled bodies and what measured them.</para>
     /// </summary>
-    private bool RowChangedSinceNewRecord()
+    private bool RowValuesChangedSinceLoad()
     {
         // Non-null: only reached from FlushPendingNewRow, gated by _pendingNewRow, which is
         // only set after InsertEmptyRow's RequireRecord guard (or by MarkEdited, which is only
@@ -1259,12 +1262,12 @@ internal class LiveNavTestPage : MockITestPage
         _pendingNewRow = false;
         // A row New() started and nothing wrote to is not persisted — BC discards it rather
         // than inserting a blank line, so a subpage part that showed 2 rows still shows 2.
-        // See RowChangedSinceNewRecord for the mechanism and what measured it.
+        // See RowValuesChangedSinceLoad for the mechanism and what measured it.
         //
         // The captured insert position is dropped with the row: it describes bounds read at
         // THIS New()'s cursor, and leaving it armed would offer them to the next insert, which
         // may be on another row or another part entirely.
-        if (!RowChangedSinceNewRecord()) { _insertPositionCaptured = false; return; }
+        if (!RowValuesChangedSinceLoad()) { _insertPositionCaptured = false; return; }
         // AutoSplitKey, in BC's own order: SplitKey, then OnInsertRecord, then the record's
         // Insert (NavForm.SaveRecordAsync / NavForm.InsertAsync(belowXRec) both do exactly
         // this). Skipping it left the last primary-key field at its Init() default, so a page
@@ -1635,6 +1638,21 @@ internal class LiveNavTestPage : MockITestPage
     {
         if (!_pendingModify) return;
         _pendingModify = false;
+
+        // A row whose values did not actually MOVE is not written, so its OnModify does not run
+        // (issue #3055). _pendingModify only records that a control assigned a field; BC's
+        // SaveRecordAsync decides on the values themselves, and both arms of its gate are value
+        // comparisons — CompareAllNormalFields against OldRecord, ORed with
+        // RecordImplementation.HasChangedFields, which reaches
+        // MutableRecordBuffer.HasActualChangedValues and returns false unless some modified
+        // field fails IsChangedValueSameAsOriginalValue. See docs/testpage-write-gate.md.
+        //
+        // Before the veto, not after, because that is where BC puts it: SaveRecordAsync returns
+        // without ever reaching RaiseOnModifyRecordAsync when the comparison finds nothing. A
+        // page whose OnModifyRecord has a side effect must not get it for a write that is not
+        // happening.
+        if (!RowValuesChangedSinceLoad()) return;
+
         // OnModifyRecord vetoes exactly as OnInsertRecord does.
         if (_page != null && !_page.RaiseOnModifyRecord()) return;
 
