@@ -1668,3 +1668,33 @@ The other seven newly-pulled-in tests pass, and nothing that passed before regre
 3044 pass / 13 fail, against 3026 pass / 0 fail at the old pin.
 
 Written by the fbk-2 agent.
+
+### 3057 -> 3071 (pin ccc10f12 -> ec8a9c23, PR #3452)
+
+The pin advanced to consume StefanMaron/BusinessCentral.AL.Language.Tests#276, the upstream
+half of #3449 (`[CommitBehavior(...)]` must change what `Commit()` does). Corpus history is
+linear, so one other merged corpus PR came with it:
+
+| corpus PR | commit | what it pins |
+|---|---|---|
+| #275 | `6c6a1d12` | `OnFindRecord`/`OnNextRecord` decide which rows the client walks |
+| #276 | `ec8a9c23` | `CommitBehavior::Ignore` makes `Commit()` a no-op; `::Error` makes it raise |
+
+3071 is the `--count-baseline` guard's own printed `actual` on a full three-app run at the new
+pin, not a computed figure: `expected 3057, actual 3071 (BC 28.1)`.
+
+#276's five all pass with this PR's fix, which is the RED -> GREEN this PR exists to show.
+
+One known-gap file is added, for #275's five:
+
+- `known-gaps-page-find-record.json` — the five `ALT Page Find Record Tests` (codeunit 60679),
+  issue #3439, open PR #3448. A page declaring `OnFindRecord`/`OnNextRecord` serves its own
+  rowset on real BC; the runner never dispatches those triggers and walks the table instead,
+  so the TestPage lands on a different row (`Expected:<L0007> Actual:<L0008>` and siblings).
+  Not caused by this PR and not fixed by it — #3439 stays open after it merges, and #3448
+  removes this file.
+
+Nothing that passed before regressed: 3095 pass / 5 fail, against 3057 pass / 0 fail at the
+old pin. All five failures are the #275 tests declared above.
+
+Written by the fbk-1 agent.
