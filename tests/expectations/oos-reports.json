@@ -1,14 +1,5 @@
 [
   {
-    "codeunitId": 60878,
-    "CodeunitName": "Test Report SaveAs Pdf",
-    "Method": "SaveAsPdf_RdlcLayout_ReturnsFalseWithLastErrorTextOnLinux",
-    "Mode": "expect-oos",
-    "Reason": "report-rendering-external",
-    "Doc": "docs/scope.md#report-rendering",
-    "Note": "RDLC rendering needs an external renderer and is permanently out of scope (docs/scope.md §3.5.1). ReportResultSetProcessorFactory.GetRdlcResultSetProcessor is Cecil-rewritten to throw the documented 'out-of-scope: <api> — report-rendering-external — …' message; expect-oos matches that message convention as of #1743. The upstream test asserts a BC-on-Linux platform limitation, not Cloud SaaS behaviour — real BC SaaS renders RDLC."
-  },
-  {
     "codeunitId": 60774,
     "CodeunitName": "Test Report SaveAs Pdf Body",
     "Method": "Report_SaveAs_Pdf_ReturnValueAgreesWithTheBytesInTheStream",
