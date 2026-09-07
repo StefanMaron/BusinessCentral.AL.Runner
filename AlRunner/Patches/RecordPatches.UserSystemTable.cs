@@ -61,11 +61,20 @@
 //   storage), so the backup's users land BEFORE this row rather than being loaded over it.
 //
 // WHAT THIS DELIBERATELY DOES NOT DO
-//   It does not seed User Setup (91), Access Control (2000000053) or User Personalization
-//   (2000000073) for this user. Real BC does not create any of those with the account either —
-//   they are application-level rows created when someone configures them — so seeding them
-//   would be inventing state BC does not have. Cascade behaviour on delete/rename across those
-//   tables is #2356, and remains out of this file.
+//   It does not seed User Setup (91) or User Personalization (2000000073) for this user. Real BC
+//   does not create either with the account — they are application-level rows created when
+//   someone configures them — so seeding them would be inventing state BC does not have. Cascade
+//   behaviour on delete/rename across those tables is #2356, and remains out of this file.
+//
+//   ACCESS CONTROL (2000000053) USED TO BE ON THAT LIST AND IS NOT ANY MORE (#3176). The
+//   reasoning above does not hold for it: a tier's user is SUPER by PROVISIONING, before anyone
+//   configures anything, and a real service tier has now said so — corpus codeunit 60889
+//   `SessionUserIsSuper_AndAccessControlHoldsTheRowThatSaysSo` (upstream PR #204) asserts that
+//   `IsSuper(UserSecurityId())` answering true and Access Control holding a matching SUPER row
+//   are two views of ONE fact, and it is green on all eight required BC legs. The runner made
+//   them disagree. RecordPatches.AccessControlSeed.cs seeds that one row, immediately after this
+//   one and before the same baseline capture; the rest of this paragraph's reasoning is
+//   unchanged for the two tables that remain.
 //
 // WHEN THE INSERT IS REFUSED (#2941 review)
 //   The insert uses DataError.TrapError, whose entire purpose is to report a refusal as a
