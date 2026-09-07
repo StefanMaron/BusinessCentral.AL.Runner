@@ -32,7 +32,7 @@ using NCLMetaField = Microsoft.Dynamics.Nav.Runtime.NCLMetaField;
 
 namespace AlRunner.Patches;
 
-public static class EventSubscriberPatches
+public static partial class EventSubscriberPatches
 {
     private readonly record struct Key(int PublisherId, int EventTypeOrdinal);
     private readonly record struct CodeunitEventKey(int PublisherCodeunitId, string EventMethodName);
@@ -234,6 +234,7 @@ public static class EventSubscriberPatches
         if (_publisherLookup == null) return;
         DoInject(_publisherLookup);
         DoInjectValidate(_publisherLookup);
+        InjectPageTriggerSubs();
         SeedCodeunitEventScopeSentinels();
         SeedTableEventScopeSentinels();
         SeedObjectEventScopeSentinels();
@@ -404,6 +405,8 @@ public static class EventSubscriberPatches
         lock (_lock)
         {
             _byKey.Clear();
+            _byPageKey.Clear();
+            _pageScopeContents.Clear();
             _byCodeunitKey.Clear();
             _byTableEventKey.Clear();
             _byObjectEventKey.Clear();
@@ -879,6 +882,14 @@ public static class EventSubscriberPatches
     {
         foreach (var kv in _byKey)
             kv.Value.RemoveAll(h => BcRuntime.IsStaleBundleAssembly(h.Method.DeclaringType!.Assembly));
+        foreach (var kv in _byPageKey)
+            kv.Value.RemoveAll(h => BcRuntime.IsStaleBundleAssembly(h.Method.DeclaringType!.Assembly));
+        // _pageScopeContents is deliberately NOT cleared here. It memoises "already appended
+        // to THIS scope object", and a reloaded generation's method is a different MethodInfo,
+        // so it is admitted anyway. Clearing it would re-append the subscriptions still sitting
+        // in a live scope's array — a duplicate firing, which is the opposite of the leak this
+        // prune exists to stop. ResetForReload does clear it, because that path expects fresh
+        // metaforms and so fresh scopes.
         foreach (var kv in _byCodeunitKey)
             kv.Value.RemoveAll(m => BcRuntime.IsStaleBundleAssembly(m.DeclaringType!.Assembly));
         foreach (var kv in _byTableEventKey)
@@ -1127,6 +1138,23 @@ public static class EventSubscriberPatches
                     }
                     else if (ObjectTypeToEventPublisherKind(publisherObjType) is string okind)
                     {
+                        // Page(8) FIRST, because a page has BOTH kinds of event and only the
+                        // manually-declared ones belong on the universal path below. BC's nine
+                        // IMPLICIT page trigger events (OnOpenPageEvent … OnQueryClosePageEvent,
+                        // ordinals 11-19) are published from NavForm's own lifecycle through
+                        // NCLMetaForm.pageTriggerEventHandler, exactly as a table's ordinals 1-10
+                        // are published through NCLMetaTable.tableTriggerEventHandler — so they
+                        // need the same treatment, not the <EventName>_Scope route. Filing one of
+                        // them below is what made every page trigger-event subscriber a silent
+                        // no-op (issue #3436): registered, and then never looked up.
+                        if (okind == "Page"
+                            && TryAddPageTriggerSubscriber(t, codeunitId, m, publisherId, methodName,
+                                                           out bool addedNewPageSub))
+                        {
+                            if (addedNewPageSub) added++;
+                            continue;
+                        }
+
                         // Page(8)/Report(3)/Query(9)/XmlPort(6): a manually-declared
                         // [IntegrationEvent]/[BusinessEvent] on one of these object kinds
                         // (issue #1794 — the gap #1770's table fix deliberately left open).

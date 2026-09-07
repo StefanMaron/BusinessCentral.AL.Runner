@@ -1631,3 +1631,40 @@ against issues that stay OPEN after this PR merges:
   the cause.
 
 Written by the fbk-1 agent.
+
+## 3026 → 3057 — pin `8678dc28` → `ccc10f12` (page platform trigger events, #3436 / PR #3445)
+
+Six corpus commits, 31 tests. `ccc10f12` is this PR's own upstream half
+(`StefanMaron/BusinessCentral.AL.Language.Tests`#274, nine tests pinning BC's implicit page
+trigger events); corpus history is linear, so it cannot be taken without #267, #266, #268,
+#269 and #271 sitting under it.
+
+Thirteen of the newly-pulled-in tests do not pass yet. Every one is declared
+`expect-fail-known-gap` against an issue that stays OPEN after this PR merges, and every one
+of those issues already has its own open fix PR whose merge deletes the entry:
+
+- `known-gaps-testpage-draft-line.json` — #266's five `ONRC Tests`, issue #3029, open PR #3414.
+  The runner raises a page's `OnNewRecord` a different number of times than BC for a draft
+  line (`EnterNewRowLine` and the promotion both call `TryNewRecord`).
+- `known-gaps-session-company-information.json` — #269's four
+  `Test Session Comp Info Close`, issue #2382, open PR #3413.
+  `NavUserAccountHelper.GetEffectivePermissionForObject` throws `NullReferenceException` on the
+  skeleton session, whose `Permissions` is null; three of the four reach it through Company
+  Information page 1's `OnOpenPage`.
+- `known-gaps-testpage-samevalue-setvalue.json` — #271's `SetValue_WithTheSameValue_DoesNotRunOnModify`,
+  issue #3055, open PR #3427. A same-value write runs `OnModify` once where BC runs it not at all.
+- `known-gaps-testpage-blank-temporal.json` — #267's
+  `TestPageField_AssertEquals_BlankDateTimeVariable_IsRefusedByAPopulatedControl`, issue #2361,
+  open PR #3410. **Appended to the existing file**, not given one of its own: the drift guard
+  treats a second declaration of the same test as an error, and five siblings of this gap were
+  already declared there.
+- `known-gaps-page-trigger-events.json` — two of #274's own nine, issues #3440 and #3441. These
+  are not the gap this PR fixes: the events now fire and reach their subscriber. They are two
+  separate defects the fix made observable for the first time — a stale `xRec` after a
+  page-driven save, and a page-driven insert deferred until every control is written instead of
+  committing on the key. Both were filed with the corpus test named as their proving test.
+
+The other seven newly-pulled-in tests pass, and nothing that passed before regressed:
+3044 pass / 13 fail, against 3026 pass / 0 fail at the old pin.
+
+Written by the fbk-2 agent.
