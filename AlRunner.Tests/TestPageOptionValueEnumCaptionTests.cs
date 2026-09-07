@@ -276,7 +276,11 @@ public sealed class TestPageOptionValueEnumCaptionTests
         var field = new PageVariableTestField(
             BuildPage(),
             new FakeExpression("Kind", NavOption.Create(metadata, 0)),
-            controlId: 50100);
+            controlId: 50100,
+            // Not the subject here — these two pin option-caption rendering, not the #3009
+            // page-level validation-error ledger, and a control built without a page reports
+            // its refusals only to its own.
+            pageValidationErrors: null);
 
         Assert.Equal(3, field.OptionCount);
         Assert.Equal("Fields", field.GetOption(0));
@@ -291,7 +295,11 @@ public sealed class TestPageOptionValueEnumCaptionTests
         var field = new PageVariableTestField(
             BuildPage(),
             new FakeExpression("Kind", NavOption.Create(metadata, 0)),
-            controlId: 50100);
+            controlId: 50100,
+            // Not the subject here — these two pin option-caption rendering, not the #3009
+            // page-level validation-error ledger, and a control built without a page reports
+            // its refusals only to its own.
+            pageValidationErrors: null);
 
         Assert.Equal(string.Empty, field.GetOption(-1));
         Assert.Equal(string.Empty, field.GetOption(7));
