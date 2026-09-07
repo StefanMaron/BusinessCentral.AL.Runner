@@ -1400,6 +1400,34 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
     and the table is named on stderr with the reason; `--test-data`'s per-table outcome
     distinguishes "created during another table's hydration" from "never touched".
 
+  **Which company `--test-data` presents, and the one flag that changes it**
+  ([#2730](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2730)). The flag
+  restores the sandbox artifact's `BusinessCentral-W1.bak` **as shipped**. That is a valid BC
+  company, but it is not the company Microsoft's BaseApp test buckets were written against:
+  Microsoft generates theirs from scratch with the legacy DemoTool at pipeline time
+  ([#3429](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3429) has the
+  recipe and the field-by-field comparison). The differences measured so far:
+
+  | `General Ledger Setup` field | restored backup | Microsoft's DemoTool company |
+  |---|---|---|
+  | Additional Reporting Currency | `EUR` | `''` |
+  | Global Dimension 2 Code | `CUSTOMERGROUP` | `PROJECT` |
+  | Shortcut Dimension 3-6 Code | `''` | `CUSTOMERGROUP`, `AREA`, `BUSINESSGROUP`, `SALESCAMPAIGN` |
+
+  The Additional Reporting Currency is the one with a measured cost. Given an ACY, BC's own
+  residual rule **correctly** writes an extra G/L Entry, so every Microsoft test that counts
+  G/L Entries after a posting sees one more than it expects. Nothing in that chain is a runner
+  defect — the company is different. `--test-data-normalize-company` blanks that field after
+  the restore. It is **off by default**, and deliberately so: every pass/fail number recorded
+  in this repository was measured against the un-normalized restore, and a normalized run's
+  numbers are not comparable with them. When it is on, every rule reports what it changed, from
+  which value, in how many rows, and a rule that did not fire reports why.
+
+  The dimension rows are **not** normalized and must not be added as field writes: changing
+  Global Dimension 2 on a company that already has posted entries dimensioned by
+  `CUSTOMERGROUP` is not a field write in BC, and `PROJECT` does not exist as a `Dimension` in
+  the restored company at all.
+
   Measured on BC 28.1's W1 CRONUS backup with the Base Application / System Application /
   Business Foundation closure: **39,231 rows across 344 tables** hydrated; 12 refused,
   1 ambiguous by name, 293 companion columns dropped for apps outside the closure. All 12
