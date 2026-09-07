@@ -1492,29 +1492,97 @@ fixture fix needing no runner change, so a bump alone is green rather than red b
 
 Written by agent stma-auto-22 (automated implementation agent).
 
-### 3008 -> pin e6a0a0c -> 69ae7598 (al-language 2978 -> 3008, +30)
+## 2026-09-07 — corpus pin `e6a0a0cd` → `920a7bed` (al-language 2978 → 2993)
 
-Folded into PR #3379, the runner fix for #3373. Four corpus commits on top of `e6a0a0c`,
-which `main` had already pinned:
+The **fold** case in `al-language-submodule.md`: corpus PR
+[#254](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/254) adds the
+nine `PermissionSet_` tests that prove the Permission Set (2000000004) fix in this same PR,
+so this bump alone is red by construction and belongs in the fix PR rather than in one of its
+own. Corpus history is linear, so one earlier commit comes along as a prefix:
 
-| corpus PR | tests | disposition here |
+| corpus commit | what it adds | effect on the count |
 |---|---|---|
-| #264 `29042fc` | AllObjWithCaption "Object Subtype" | 4 declared `expect-fail-known-gap` -> #2326 |
-| #254 `920a7be` | Permission Set table (2000000004) | pass, once runner PR #3360 is on `main` |
-| #260 `c9b5cc8` | Record Link table | 10 declared `expect-fail-known-gap` -> #3378 |
-| #259 `69ae759` | `CurrPage.Update` raises `OnAfterGetCurrRecord` | pass -- this PR's own fix is what makes them pass |
+| `29042fc` (corpus [#264](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/264)) | what `AllObjWithCaption`'s `Object Subtype` answers per object kind | **+6** |
+| `920a7bed` (corpus [#254](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/254)) | what the Permission Set table (2000000004) answers | **+9** |
 
-The two known-gap sets each live in a file of their own,
-`known-gaps-allobj-subtype-corpus264.json` and `known-gaps-record-link-table.json`, so the PRs
-that implement those surfaces (#3391 and #3381) can delete a whole file rather than edit around
-other entries. The first is deliberately separate from the existing
-`known-gaps-allobj-subtype.json`, which records the SAME issue (#2326) reached by a different
-route -- Base Application's `TestField` on the Profile Card -- and which #3391 also removes.
-Both issues stay OPEN after this lands.
+The starting point is `e6a0a0cd`/2978, not `9ee6bbcd`/2977: the entry above already records
+`9ee6bbcd` → `e6a0a0cd` (+1), which landed on `main` while this branch was being measured, so
+naming it again here would double-count it.
 
-#254's seven tests are deliberately NOT declared. They need runner PR #3360, which was merging
-into `main` separately while this was written; declaring them would have converted a
-merge-ordering question into settled classification, which is what
-`ask-the-corpus-before-claiming-bc-behavior.md` forbids.
+`920a7bed` is deliberately **not** corpus `master`'s tip. The next commit, `c9b5cc83`
+(corpus #260, eleven `RecordLink` tests), needs a runner fix that is still open as PR #3381,
+so pinning it here would be red by construction — "pin the newest commit whose predecessors
+are all satisfied", and that commit is `920a7bed`.
+
+**2993 is a measured number, not `2978 + 15`.** Counting `[Test]` lines across the range gives
+one too many: one of them sits inside a comment block in
+`codeunit/SICSessionScopedPrimer.Codeunit.al`, a deliberately non-test codeunit. The run is
+what decides. Measured on BC 28.1 on a real 3-bundle run: **3022 tests, 3022 pass, 0 fail,
+exit 0**, of which `al-language-onprem` contributes 29 and `al-language-internals-fixture` 0 —
+both unchanged and neither reporting a mismatch.
+
+**Four expectation entries had to go in with it**, in
+`tests/expectations/known-gaps-allobj-subtype.json`, all linking
+[#2326](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2326). Corpus #264's
+six new tests arrive ahead of the runner fix for the gap they pin: the runner leaves
+`Object Subtype` empty on every `AllObj` / `AllObjWithCaption` row, so the four that assert a
+NON-empty subtype fail, while the two asserting an empty one already pass. That is
+pre-existing and not caused by the Permission Set change here — the identical four methods
+fail under the runner at `main` as well — the packed `2.10.0-local.5ad50bc2` tool, a `main`
+commit predating this branch, with PR #3391 unmerged — measured both ways on this same pin
+(BC 28.1.49838.53910). #2326 stays
+open, and its fix is the maintainer's open PR #3391; these four entries are deleted when that
+lands, at which point the drift guard demands it in the other direction.
+
+`pass-known-gap` therefore moves 11 → **15**, and the manifest 15 → **19** entries, all of
+which the run matched (`match audit: all 19 entries matched a discovered test`) under
+`--expectations-require-match`.
+
+Written by agent fbk-2 (automated implementation agent).
+
+### 2993 -> 3004 (pin 920a7bed -> c9b5cc83, PR #3381)
+
+The pin advances by exactly one corpus commit, `c9b5cc83` — corpus
+[#260](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/260), the upstream
+half of [#3378](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3378) (the
+Record Link table and the AL link surface are one store). `git -C tests/al-language diff --stat
+920a7bed..c9b5cc83` is two files and nothing else: `record/ALTLinkHost.Table.al` and
+`record/TestRecordLinkTable.al` (codeunit 60777, eleven `RecordLink*` tests).
+
+This is the **fold** case, not a catch-up bump: the eleven tests fail without this PR's runner
+fix, so the bump belongs in the fix PR and would be red on its own. Measured on this pin at BC
+28.1.49838.53910, `--test RecordLink`, on the corpus app: **10 of 11 fail** under the packed
+`2.10.0-local.5ad50bc2` tool (a `main` commit predating this branch) and **11 of 11 pass** under
+this branch's build.
+
+`c9b5cc83` is deliberately not corpus `master`'s tip. The next commit, `69ae759` (corpus #259),
+belongs to a different open runner PR, so pinning past `c9b5cc83` would pull in tests whose
+fix has not landed — "pin the newest commit whose predecessors are all satisfied".
+
+**3004 is the guard's own printed `actual`**, not `2993 + 11`. The three-app run reported
+`al-language` 3004 with `al-language-onprem` at 29 and `al-language-internals-fixture` at 0,
+both unchanged.
+
+Written by agent fbk-2 (automated implementation agent).
+
+### 3004 -> 3008 (pin c9b5cc83 -> 69ae7598, +4)
+
+Folded into PR #3379, the runner fix for #3373. ONE corpus commit: #259 `69ae759`, which pins
+that `CurrPage.Update()` raises the page's `OnAfterGetCurrRecord`, and raises it after the
+trigger that called it has returned. Its four tests are green here because of this PR's own
+fix -- alone the bump would be red by construction, which is the *fold* case in
+`.claude/rules/al-language-submodule.md`.
+
+Nothing is declared in `tests/expectations/` for this bump. The two known-gap files an earlier
+revision of this branch carried are gone, and neither was deleted on a guess:
+
+- `known-gaps-allobj-subtype-corpus264.json` (#264's AllObjWithCaption "Object Subtype" tests,
+  issue #2326) -- PR #3360 landed those same four entries in the existing
+  `known-gaps-allobj-subtype.json`, which now holds five against #2326. Each of the four
+  method names was checked against that file before this one was removed; keeping both would
+  have double-declared them.
+- `known-gaps-record-link-table.json` (#260's Record Link tests, issue #3378) -- PR #3381
+  implements the surface, so those ten tests now pass and a known-gap entry would be drift in
+  the "remove the entry" direction.
 
 Written by the fbk-1 agent.

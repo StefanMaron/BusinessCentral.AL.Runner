@@ -1,0 +1,138 @@
+name: MS surface (manual)
+
+# Runs the WHOLE Microsoft BaseApp test surface — 40,530 tests across 32 non-empty buckets —
+# through AL Runner in one manual dispatch, and reports one combined total. Issue #3409.
+#
+# It is a VERIFICATION NET, not a gate, on exactly the same terms as ms-bucket.yml: green
+# means it produced numbers, red means it did not. Thousands of failing tests are the expected
+# outcome of running Microsoft's own tests against the runner, and are reported rather than
+# failed on. Not a required check, not in any branch ruleset; `main`'s gate is and stays
+# "BC test matrix passed" (test-matrix.yml).
+#
+# ─── ONE JOB, NOT A MATRIX ───────────────────────────────────────────────────────────────────
+#
+# The surface is ~3 hours on a hosted runner and ms-bucket.yml's timeout-minutes is 360, the
+# hosted maximum, so one runner fits. Sharding it six ways was designed and rejected: it buys
+# about two hours and costs six queue slots and six provisionings out of an Actions queue that
+# is per-ACCOUNT and shared with the corpus repository and with every open PR's CI. The full
+# argument is in #3409.
+#
+# What made sharding tempting was this job's failure mode — hit the ceiling and you get
+# nothing. That is removed rather than traded around: every bucket's numbers go to the job
+# summary AND out as a workflow annotation the moment that bucket finishes, and the results
+# artifact uploads with if: always(). A run killed at the ceiling still hands over every bucket
+# that completed. AlRunner.Tests/MsSurfaceWorkflowTests.cs holds that property in place.
+#
+# ─── WHAT IT REUSES ──────────────────────────────────────────────────────────────────────────
+#
+# Everything. This file is POLICY — which buckets, how many tests to expect — and ms-bucket.yml
+# is the MECHANICS: provisioning through the shared composite action, the 977 MB backup and its
+# cache, the pinned bcbak reader, both package caches, the raised emit timeout, the private
+# --cache root, the company name in SQL form, one runner process per bucket, and the summary
+# scripts. A second spelling of any of that is how bc-tests.yml's provisioning drifted four
+# times and failed two releases (#1976) — and here it would silently produce a number measured
+# under a different configuration from the nightly's, which is worse than no number at all.
+#
+# ─── WHAT IT DOES NOT RUN, AND WHY ───────────────────────────────────────────────────────────
+#
+# The platform artifact ships 35 *.Source.zip files under Applications/BaseApp/Test/. Three are
+# not in the list below:
+#
+#   * Tests-TestLibraries — 204 .al files and zero [Test] methods. It is the library the other
+#     buckets compile against, not a bucket; running it would report a zero that reads like a
+#     failure.
+#   * Tests-Local — empty in the W1 artifact. It is the country-specific bucket and ships tests
+#     only in a localised artifact.
+#   * Library-NoTransactions — a shared library source, not a Tests-* bucket at all.
+#
+# AlRunner.Tests/MsSurfaceWorkflowTests.cs holds the list to the artifact's own measured
+# inventory in BOTH directions: nothing invented, and nothing the artifact ships left silently
+# out. If Microsoft adds a bucket, that test is what turns a quietly smaller total into a red
+# PR check.
+#
+# ─── PARTIAL RUNS ────────────────────────────────────────────────────────────────────────────
+#
+# There is no bucket filter here on purpose: this workflow means "all of it". To run a subset,
+# dispatch ms-bucket.yml directly — its `buckets` input takes a comma- or newline-separated
+# list and runs it in exactly this single-job, one-process-per-bucket way.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bc-version:
+        description: >-
+          BC build: a full four-part build (28.4.53241.54318) or a prefix (28.4) resolved to
+          its newest published build. Empty = the newest prefix in .github/bc-versions.txt.
+        type: string
+        required: false
+        default: ''
+      test-data:
+        description: >-
+          Hydrate the demo company from the sandbox backup (--test-data). Leave it on:
+          without it roughly 40% of the failures are missing setup data rather than defects, and
+          the two numbers are not comparable.
+        type: boolean
+        required: false
+        default: true
+
+permissions:
+  contents: read
+
+# One surface run at a time. A second dispatch queues rather than cancelling a multi-hour
+# measurement in flight.
+concurrency:
+  group: ms-surface
+  cancel-in-progress: false
+
+jobs:
+  surface:
+    uses: ./.github/workflows/ms-bucket.yml
+    with:
+      label: surface
+      # 40,530 tests, measured on the 28.1.49838.53507 artifact. Handed down so the
+      # combined-total step can say when the measured total falls well short of it: a bundle
+      # lost to COMPILE FAIL vanishes from the totals rather than failing them (#2715), so a
+      # run can finish, report a number, and have quietly measured two thirds of the surface.
+      expected-tests: 40530
+      bc-version: ${{ inputs.bc-version }}
+      test-data: ${{ inputs.test-data }}
+      # Tests-ERM (9,496) and Tests-SCM (8,524) lead deliberately: 44% of the 40,530 between
+      # them, measured on the 28.1.49838.53507 artifact (#3409), so if anything is lost to the
+      # 360-minute ceiling it should not be the two buckets everything else is compared
+      # against. The remaining 30 are in #3409's grouping order and are NOT ranked by size —
+      # per-bucket counts for them were never measured, so no ordering claim is made about
+      # them. The combined-total table reports each bucket's wall time, which is what a future
+      # ordering should be based on.
+      buckets: |
+        Tests-ERM
+        Tests-SCM
+        Tests-SCM-Service
+        Tests-SCM-Assembly
+        Tests-SCM-Manufacturing
+        Tests-Misc
+        Tests-SINGLESERVER
+        Tests-Bank
+        Tests-Data Exchange
+        Tests-Rapid Start
+        Tests-Graph
+        Tests-Monitor Sensitive Fields
+        Tests-Workflow
+        Tests-CRM integration
+        Tests-Report
+        Tests-Cost Accounting
+        Tests-Integration
+        Tests-User
+        Tests-VAT
+        Tests-Dimension
+        Tests-Marketing
+        Tests-Fixed Asset
+        Tests-Resource
+        Tests-Physical Inventory
+        Tests-Job
+        Tests-SMB
+        Tests-General Journal
+        Tests-Prepayment
+        Tests-Cash Flow
+        Tests-Reverse
+        Tests-Permissions
+        Tests-Upgrade

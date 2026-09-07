@@ -200,10 +200,12 @@ internal sealed class RequestPageTestPage : MockITestPage
         try { return _pageInstance = RunnerPageInstance.Adopt(_requestPageForm, _reportId); }
         catch (Exception ex)
         {
-            // stdout on purpose: the test-execution child's stderr is not captured, so a
-            // Console.Error line would be invisible exactly when it is needed.
+            // `[warn]` so the demotion survives Log's default filter (#2461): a request page
+            // whose form could not be adopted answers no control at all, and tagged
+            // `[RequestPageTestPage]` this line was dropped on both streams. The stream is not
+            // the variable — the filter wraps stdout and stderr alike.
             Console.Out.WriteLine(
-                $"[RequestPageTestPage] report {_reportId}: could not adopt the request-page form "
+                $"[warn] RequestPageTestPage: report {_reportId}: could not adopt the request-page form "
                 + $"({ex.GetType().Name}: {ex.Message}); its controls stay unresolvable");
             return null;
         }

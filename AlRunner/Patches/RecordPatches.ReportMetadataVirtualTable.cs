@@ -366,9 +366,10 @@ public static partial class RecordPatches
 
             _reportRows = rows.Values.ToList();
             _reportRowsBuiltFrom = generation;
-            // Diagnostic channel is stdout on purpose: the test-execution child's stderr is
-            // not captured, so a Console.Error trace here would be invisible exactly when
-            // it is needed. Env-gated so a normal run stays quiet.
+            // Env-gated so a normal run stays quiet. The stream is arbitrary, not load-bearing:
+            // Log's filter wraps stdout and stderr alike, and this tag is hyphenated so it
+            // bypasses the filter either way (#2461 corrected the older claim here that stderr
+            // "is not captured" — there is no test-execution child process).
             var trace = Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_REPORT_METADATA");
             if (!string.IsNullOrEmpty(trace))
             {

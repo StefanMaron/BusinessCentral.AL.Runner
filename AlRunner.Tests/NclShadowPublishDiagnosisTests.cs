@@ -24,6 +24,12 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+// CaptureStderr swaps the process-wide Console.Error and reads the sink back, so this class
+// must sit in a collection xunit will not run in parallel — ConsoleSwapIsolationGuardTests
+// enforces that. The swap is load-bearing here (the WARN text IS the assertion), so dropping
+// it is not the alternative it is for a class that only silences noise. This class needs no
+// other serial collection: it touches no process-global state besides the console.
+[Collection(ConsoleFilterSerialCollection.Name)]
 public sealed class NclShadowPublishDiagnosisTests
 {
     private const string MarkerFileName = ".al-runner-shadow-source";
