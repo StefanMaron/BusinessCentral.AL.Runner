@@ -78,10 +78,30 @@ cursor, so it maps one navigation call to one trigger call:
 | `GoToKey()` / `GoToRecord()` / a field-value search | `OnFindRecord('-')` then `OnNextRecord(1)` per row of the scan |
 
 This is deliberately not a reproduction of the client's prefetch. What it reproduces is the
-observable: which rows a walk produces, in which order, and where it stops. A page's trigger is
-written against `Which` and `Steps` values it forwards to `Find`/`Next`, so `-`, `+` and `±1`
-are answered identically by any implementation of the documented shape — while the *number* of
-calls is something no page can depend on and no corpus test asserts.
+observable: which rows a walk produces, in which order, and where it stops.
+
+**`Steps` matches BC. `Which` does not, and cannot be made to.** The corpus pins `Steps ∈ {1,
+-1}` because those are the only values a real client was observed to pass, and the runner passes
+the same two. There is no equivalent to copy for `Which`: across every container run above, a
+real client issued `OnFindRecord` only when *anchoring* — `=><` at page open, `=<` at a
+`CurrPage.Update` refresh — and **never once in response to a `First()`, `Last()`, `Previous()`
+or `GoToKey()`**, because by then it is walking rows it already holds. So BC has no `Which`
+value for "go to the first row of this rowset" for the runner to reuse.
+
+Passing `=><` anyway would be wrong rather than merely different: `=><` means *nearest to the
+key the record currently holds*, so a page forwarding it to `Find` would answer whatever row is
+near the cursor instead of the first one. `-` and `+` are the AL spelling of what `First()` and
+`Last()` mean, which is why the runner sends them.
+
+The honest cost: a page that **branches** on `Which` rather than forwarding it — `case Which of
+'=><': …` — is a legitimate shape that would behave differently here than on a tier, and
+nothing in the corpus pins `Which`, so nothing would catch it. A corpus test that did pin it
+would have to assert `=><`/`=<`, which the runner does not send, so it would encode this
+divergence as a failure rather than describe it. If that shape turns up in real AL, the fix is
+for the runner to anchor the way the client does — not to change these two values.
+
+The *number* of calls is a separate matter and is not a divergence anyone can depend on: no
+page can observe it and no corpus test asserts it.
 
 Where the page declares neither trigger, nothing changes: the six navigation sites in
 `AlRunner/Patches/MockTestPage.cs` fall back to `NavRecord.ALFindFirstAsync` /
