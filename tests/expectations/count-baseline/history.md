@@ -1564,3 +1564,25 @@ fix has not landed — "pin the newest commit whose predecessors are all satisfi
 both unchanged.
 
 Written by agent fbk-2 (automated implementation agent).
+
+### 3004 -> 3008 (pin c9b5cc83 -> 69ae7598, +4)
+
+Folded into PR #3379, the runner fix for #3373. ONE corpus commit: #259 `69ae759`, which pins
+that `CurrPage.Update()` raises the page's `OnAfterGetCurrRecord`, and raises it after the
+trigger that called it has returned. Its four tests are green here because of this PR's own
+fix -- alone the bump would be red by construction, which is the *fold* case in
+`.claude/rules/al-language-submodule.md`.
+
+Nothing is declared in `tests/expectations/` for this bump. The two known-gap files an earlier
+revision of this branch carried are gone, and neither was deleted on a guess:
+
+- `known-gaps-allobj-subtype-corpus264.json` (#264's AllObjWithCaption "Object Subtype" tests,
+  issue #2326) -- PR #3360 landed those same four entries in the existing
+  `known-gaps-allobj-subtype.json`, which now holds five against #2326. Each of the four
+  method names was checked against that file before this one was removed; keeping both would
+  have double-declared them.
+- `known-gaps-record-link-table.json` (#260's Record Link tests, issue #3378) -- PR #3381
+  implements the surface, so those ten tests now pass and a known-gap entry would be drift in
+  the "remove the entry" direction.
+
+Written by the fbk-1 agent.

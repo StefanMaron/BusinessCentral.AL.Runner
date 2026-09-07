@@ -1346,15 +1346,24 @@ internal sealed partial class RunnerPageInstance
         var byRef = new ByRef<NavText>(() => value, v => value = v);
 
         object? result;
-        // AwaitTriggerResult, not a bare Invoke: BC emits `trigger OnLookup(...): Boolean` as
-        // `ValueTask<bool>`, so the raw Invoke result never pattern-matches `is true` and every
-        // lookup read as "the user cancelled" — see AwaitTriggerResult's remarks.
-        try { result = AwaitTriggerResult(trigger.Method.Invoke(trigger.Target, new object?[] { byRef })); }
-        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        // Bracketed like Invoke/InvokeRecordTrigger: an OnLookup that calls CurrPage.Update is
+        // an AL trigger like any other, and it owns the refresh its call armed.
+        BeginTrigger();
+        var completed = false;
+        try
         {
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
-            throw; // unreachable
+            // AwaitTriggerResult, not a bare Invoke: BC emits `trigger OnLookup(...): Boolean` as
+            // `ValueTask<bool>`, so the raw Invoke result never pattern-matches `is true` and every
+            // lookup read as "the user cancelled" — see AwaitTriggerResult's remarks.
+            try { result = AwaitTriggerResult(trigger.Method.Invoke(trigger.Target, new object?[] { byRef })); }
+            catch (TargetInvocationException tie) when (tie.InnerException != null)
+            {
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+                throw; // unreachable
+            }
+            completed = true;
         }
+        finally { EndTrigger(completed); }
 
         return result is true ? value : null;
     }
@@ -1936,14 +1945,23 @@ internal sealed partial class RunnerPageInstance
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
                 binder: null, types: parameterTypes, modifiers: null);
         if (trigger == null) return null;
-        try { return AwaitTriggerResult(trigger.Invoke(_form, arguments)); }
-        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        BeginTrigger();
+        var completed = false;
+        try
         {
-            // An Error() inside the trigger is the trigger's own outcome, not a runner
-            // failure — rethrow it unwrapped so the AL stack survives.
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
-            throw; // unreachable
+            object? result;
+            try { result = AwaitTriggerResult(trigger.Invoke(_form, arguments)); }
+            catch (TargetInvocationException tie) when (tie.InnerException != null)
+            {
+                // An Error() inside the trigger is the trigger's own outcome, not a runner
+                // failure — rethrow it unwrapped so the AL stack survives.
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+                throw; // unreachable
+            }
+            completed = true;
+            return result;
         }
+        finally { EndTrigger(completed); }
     }
 
     /// <summary>
@@ -2236,13 +2254,20 @@ internal sealed partial class RunnerPageInstance
 
     private void Invoke(TriggerMatch trigger)
     {
-        try { AwaitTriggerResult(trigger.Method.Invoke(trigger.Target, null)); }
-        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        BeginTrigger();
+        var completed = false;
+        try
         {
-            // An Error() inside the AL trigger is the trigger's own outcome, not a runner
-            // failure — rethrow it unwrapped so the AL stack survives.
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            try { AwaitTriggerResult(trigger.Method.Invoke(trigger.Target, null)); }
+            catch (TargetInvocationException tie) when (tie.InnerException != null)
+            {
+                // An Error() inside the AL trigger is the trigger's own outcome, not a runner
+                // failure — rethrow it unwrapped so the AL stack survives.
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            }
+            completed = true;
         }
+        finally { EndTrigger(completed); }
     }
 
     /// <summary>
