@@ -190,6 +190,52 @@ leaving the two commits unpinned keeps the gap honest instead.
 
 Written by agent impl-1 (automated implementation agent).
 
+## 2026-09-07 — corpus pin `17b015ef` → `0bbe376` (al-language 2887 → 2915)
+
+One commit, and one is the whole of what the runner can take today. The pin advances to
+corpus #227 (`0bbe376`, TestPart — 5 fixture pages/tables plus `TestTestPart.al`), which the
+entry immediately above listed as blocked. It is no longer blocked: the two runner fixes it
+was waiting on merged earlier today, #3312 via PR #3336 and #3313 via PR #3338, and this
+pin bump is the catch-up that consumes them.
+
+2915 is measured, not computed — a full corpus run on this branch at this pin, BC 28.1,
+`--package-cache ~/.al-runner/platform-apps --strict`: **2915 total, 2915 pass, 0 fail,
+0 error, exit 0** (2 `pass-oos`, 11 `pass-known-gap`, 1 `pass-divergence`). The +28 over
+2887 is corpus #227's codeunit 60346 and nothing else; `0bbe376` touches no file under
+`al-language-onprem`, so that suite stays at 29 and `runner-extras` is untouched.
+
+**The wall is `d025203` (corpus #229, TestFilter), and it was measured rather than
+inferred.** Three runs on one build decided the prefix: the tip `3331aa6` gives 2966 tests
+with 5 failures, `0bbe376` gives 2915/2915 clean, and `d025203` gives 2927 with the same 5
+failures — so the first red commit is `d025203` and every commit past it is untested behind
+it, because corpus history here is linear (0 merge commits across the 8).
+
+All 5 are codeunit 60350 and all are one shape, already tracked as **#3316**:
+
+| test | expected | runner answered |
+|---|---|---|
+| `TestFilter_CurrentKey_NamesTheKeyThePageIsWalking` | `Entry No.` a substring | `` (empty) |
+| `TestFilter_SetCurrentKey_ChangesBothTheReportedKeyAndTheWalkOrder` | `Rank` a substring | `3` |
+| `TestFilter_SetCurrentKey_AcceptsACompositeKey` | `Grp` a substring | `2, 3` |
+| `TestFilter_Ascending_False_ReversesTheWalkAndIsReportedBack` | `3|2|1` | `1|2|3` |
+| `TestFilter_Ascending_AppliesToTheKeySetBySetCurrentKey` | `1|3|2` | `1|2|3` |
+
+`MockTestPage`'s `ITestFilter` members are a write-only store. `CurrentKey` is
+`string.Join(", ", _currentKeyFields)` over raw field *numbers*, which is where `3` and
+`2, 3` come from; it is empty on a freshly-opened page because nothing seeds
+`_currentKeyFields` from the table's primary key. And `GetCurrentKeyFields` and `_ascending`
+have **zero** consumers anywhere in `AlRunner/` — measured, not read off — so the last two
+rows are the same defect seen through the walk order rather than through the reported string.
+BC's own `NavTestFilter.ALCurrentKey` is `filter.CurrentKey`, delegating to the `ITestFilter`
+the runner supplies, so the gap is entirely runner-side.
+
+No `tests/expectations/` entry is added for those 5. They stay unpinned behind the wall,
+for the same reason the entry above gives: classifying a live, owned gap as settled is what
+`ask-the-corpus-before-claiming-bc-behavior.md` forbids, and leaving `d025203` and the six
+commits after it unpinned keeps the gap honest.
+
+Written by agent stma-auto-1 (automated implementation agent).
+
 ## runner-extras
 
 ### object-metadata-system-table 4 -> 6 (PR for #2771)
