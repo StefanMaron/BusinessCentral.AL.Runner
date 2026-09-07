@@ -181,6 +181,66 @@ public static partial class NclCecilRewrite
                 Console.Error.WriteLine("[Cecil] Neutralised WindowsIdentity.GetCurrent() in NavEnvironment..cctor → ldnull (serviceAccount=null; portable cctor)");
             }
 
+            // 1b) NavUserAuthentication.get_WindowsIdentity — the SECOND
+            //     WindowsIdentity.GetCurrent() on the startup path, and the sibling the
+            //     block above missed. Same instruction, same PlatformNotSupportedException
+            //     on Linux, same one-instruction neutralisation.
+            //
+            //     BC's body:
+            //
+            //         if (AuthenticationMethod == Windows || AuthenticationMethod == UserName)
+            //         {
+            //             if (windowsIdentity != null)            return windowsIdentity;
+            //             ... IServiceSecurityContextIdentityProvider?.GetWindowsIdentity()
+            //             ... getWindowsIdentity?.Invoke()
+            //             return WindowsIdentity.GetCurrent();     // <- Linux-fatal
+            //         }
+            //         return null;
+            //
+            //     The runner's skeleton NavUserAuthentication is built with
+            //     RuntimeHelpers.GetUninitializedObject (BcRuntime identity seed), so
+            //     AuthenticationMethod is the default enum value and the property takes the
+            //     first branch; none of the three earlier returns can produce a value here
+            //     either, so every read reached GetCurrent() and threw.
+            //
+            //     ldnull is FAITHFUL, not a silent default: there is no current Windows
+            //     identity on Linux, the property's own else-branch already returns null for
+            //     any other authentication method, and every caller null-checks —
+            //     NavUserAuthentication.Clone() reads `if (WindowsIdentity != null)` and
+            //     simply does not copy the handle. Nothing downstream receives a fabricated
+            //     identity.
+            //
+            //     Reached from ALSession.ALStartSessionAsyncImpl → NavUserAuthentication
+            //     .Clone(), which is what BC's feature-telemetry uptake logging
+            //     (Codeunit8705.UpdateFeatureUptakeStatus, performWriteTransactionsIn
+            //     ASeparateSession) does — so it fires from an ordinary Base App install
+            //     trigger, not from anything the test author wrote. Found by letting
+            //     install triggers run past their first await (#2960).
+            //
+            //     Body is byte-identical across BC 27.0 and 28.4 (decompile hash
+            //     0a36e18b2f811a5a130d8490215c5f5eb9b5813f3db8628c81feabe29ab0ef97 in both),
+            //     so requiring exactly one call site is a real invariant and the throw below
+            //     is a shape-change alarm, not a guess.
+            //     Token-safe: replaces one call's use of an existing memberRef with a
+            //     no-operand ldnull; adds no new typeRef/memberRef.
+            {
+                var getWinId = FindNclMethod(nclMod,
+                    "Microsoft.Dynamics.Nav.Runtime.NavUserAuthentication", "get_WindowsIdentity", 0);
+                var il = getWinId.Body.GetILProcessor();
+                var getCurrentCalls = getWinId.Body.Instructions
+                    .Where(i => (i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt)
+                        && i.Operand is MethodReference mr
+                        && mr.DeclaringType.FullName == "System.Security.Principal.WindowsIdentity"
+                        && mr.Name == "GetCurrent"
+                        && mr.Parameters.Count == 0)
+                    .ToList();
+                if (getCurrentCalls.Count != 1)
+                    throw new InvalidOperationException(
+                        $"[Cecil] expected exactly 1 WindowsIdentity.GetCurrent() in NavUserAuthentication.get_WindowsIdentity, found {getCurrentCalls.Count} — Ncl shape changed; do not commit");
+                il.Replace(getCurrentCalls[0], il.Create(OpCodes.Ldnull));
+                Console.Error.WriteLine("[Cecil] Neutralised WindowsIdentity.GetCurrent() in NavUserAuthentication.get_WindowsIdentity → ldnull (no Windows identity on Linux; every caller null-checks)");
+            }
+
             // 2a) NavEnvironment.get_ServiceAccount → BcRuntime.GetServiceAccountReplacement().
             //     Helper returns object?; the property returns SecurityIdentifier, so cast.
             {
