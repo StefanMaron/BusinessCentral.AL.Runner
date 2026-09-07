@@ -38,6 +38,17 @@ dispatch, unsupported filter kinds, silently skipped handlers. Those are worth f
 **So: never file an issue from a run without `--test-data`.** A no-test-data run is legitimate
 for measuring speed or for bisecting a regression, never for deciding what is broken.
 
+**And "the bc-linux container passes it" is not, by itself, a runner-gap verdict either.**
+`StefanMaron/MsDyn365Bc.On.Linux` boots BC's Windows binaries with a startup hook that
+rewrites the methods that cannot work there — `ALDatabase.ALSid` answers a hashed SID,
+`WindowsPrincipal.IsInRole` is always `true`, RDLC rendering goes to a no-op
+`CustomReportingServiceClient`, encryption and Azure AD factories are bypassed. A cluster that
+passes on the container because of one of those is passing against the patch, and the runner
+has no BC behaviour there to copy; the 65-test `ALSid` cluster in #2312 was exactly that. Check
+a container-passing cluster against the patch table in `docs/upstream-corpus-workflow.md`
+§ "How to find out whether a surface you care about is patched" before calling it a gap
+(#2314).
+
 ### …and `--test-data` still gives a restored CRONUS, not a *prepared* one
 
 The 40% above is the coarse form of a sharper fact. **Microsoft's pipelines run independent
