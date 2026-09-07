@@ -172,14 +172,16 @@ subtree is 2889 and is wrong; the preprocessor is the reason.
 No per-version override is needed: none of the arriving files adds a preprocessor version
 guard. Measured on BC 28.1; the other seven legs are CI's word.
 
-**The pin stops at `17b015e`, two commits short of corpus `master`,** because corpus history is
-linear and the two commits after it fail against the runner today: `0bbe376` (corpus #227,
-TestPart, codeunit 60346, 11 tests) and `d025203` (corpus #229, TestFilter, codeunit 60350, 6
-tests). Measured at the tip on this same build: 17 failures, exactly those two codeunits and
-nothing else. Tracked by issues #3312, #3313 and #3009 for the TestPart cluster, and by #3316
-for five of the six TestFilter failures (`TestPage.Filter.CurrentKey` reporting field numbers,
-`SetCurrentKey`/`Ascending` not changing the walk order); the sixth is #3312's part-page id 0
-problem again.
+**The pin stops at `17b015e`, six commits short of corpus `master` as of 2026-09-07,**
+because corpus history is linear and the two commits after it fail against the runner
+today: `0bbe376` (corpus #227, TestPart, codeunit 60346, 11 tests) and `d025203` (corpus
+#229, TestFilter, codeunit 60350, 6 tests). Measured at the tip on this same build: 17
+failures, exactly those two codeunits and nothing else. Tracked by issues #3312 and #3313
+for the TestPart cluster -- #3009 was cited here too when this was written and has since
+closed via PR #3323, so that cluster is 8 rather than 11 -- and by #3316 for five of the
+six TestFilter failures (`TestPage.Filter.CurrentKey` reporting field numbers,
+`SetCurrentKey`/`Ascending` not changing the walk order); the sixth is #3312's part-page
+id 0 problem again.
 No `tests/expectations/` entry was added for any of them -- declaring a live, owned gap as
 settled classification is what `ask-the-corpus-before-claiming-bc-behavior.md` forbids, and
 leaving the two commits unpinned keeps the gap honest instead.
