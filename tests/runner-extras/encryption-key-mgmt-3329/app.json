@@ -1,0 +1,19 @@
+{
+  "id": "6f3a9d21-8c47-4b0e-9a15-2f7d4c8b1e33",
+  "name": "Runner Extras - Encryption Key Management",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3329: the tenant encryption KEY-MANAGEMENT surface (CREATEKEY / DELETEKEY / EXPORTKEY / IMPORTKEY) used to raise a bare ArgumentException from NavSqlTenantProperties..ctor. target=OnPrem is required -- see the description.",
+  "description": "These tests do not live in the al-language corpus, and the reason was measured rather than assumed. Two halves. (1) Scope: the corpus app targets Cloud, and the AL compiler refuses ExportEncryptionKey, ImportEncryptionKey and Cryptography Management's EnableEncryption/DisableEncryption there with 'error AL0296: ... has scope OnPrem and cannot be used for Cloud development' -- the same wall that put tests/runner-extras/http-egress-boundary-oos here. CreateEncryptionKey, DeleteEncryptionKey, EncryptionEnabled and EncryptionKeyExists do compile for Cloud, so that quarter is expressible upstream. (2) It is still not safe to express: BC's CreateKey WRITES a 2048-bit RSA key file under the server's Keys folder and DeleteKey DELETES it, a file-system effect no test-isolation rollback covers, so a corpus test would permanently change the shared service tier's tenant key -- and corpus codeunit 60378 (TestIsolatedStorage.al) stores values with SetEncrypted on that same tenant, which stop decrypting the moment the key behind them is replaced. What is left is a claim about the runner's own key ledger and its refusals, which is what this suite asserts. The runner also starts each session with a key already present, unlike a fresh BC tenant, so every test below normalises the starting state explicitly instead of assuming it.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65750,
+      "to": 65759
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}
