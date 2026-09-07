@@ -111,6 +111,47 @@ public sealed class InstrumentationCounterPairSnapshotTests
         finally { AlDapSession.Enabled = was; }
     }
 
+    /// <summary>The halves are one packed word, not two independent counters, so they cannot
+    /// disagree below the carry boundary — the property the class doc claims. Seeded to one
+    /// short of 2^32 in Part with three Adds rather than driven there one increment at a time
+    /// (4.29e9 calls is not a unit test), then walked across: Part rolls to 0 and the carry
+    /// lands in Total. A design with two separate 32-bit counters would leave Total at 0.</summary>
+    [Fact]
+    public void CountPair_CarryOutOfPartPropagatesIntoTotal_NotAnIndependentWrap()
+    {
+        const long PartCapacity = 1L << 32;
+        var pair = new CountPair();
+
+        // One short of the boundary: Part holds the full 32-bit range, Total is untouched.
+        Assert.Equal(new CountPair.Snapshot(0, PartCapacity - 1), pair.Add(0, PartCapacity - 1));
+
+        // The increment that crosses it. Part does NOT wrap in isolation.
+        var crossed = pair.IncrementPart();
+        Assert.Equal(new CountPair.Snapshot(1, 0), crossed);
+        Assert.Equal(crossed, pair.Read());
+
+        // ClearPart leaves the carried Total alone, so the borrowed count is not recoverable
+        // by resetting the low half — this is a one-way trade, not a transient skew.
+        pair.ClearPart();
+        Assert.Equal(new CountPair.Snapshot(1, 0), pair.Read());
+    }
+
+    /// <summary>The negative direction of the same mechanism: below the boundary the two
+    /// halves are strictly independent, which is why every reachable count is correct. A
+    /// large Part and a large Total coexist with no interference at all.</summary>
+    [Fact]
+    public void CountPair_BelowTheCarryBoundary_TheHalvesDoNotInterfere()
+    {
+        var pair = new CountPair();
+        Assert.Equal(new CountPair.Snapshot(0, uint.MaxValue), pair.Add(0, uint.MaxValue - 0));
+        pair.ClearPart();
+
+        // Total counts far past anything an AL run reaches while Part stays exact.
+        Assert.Equal(new CountPair.Snapshot(1_000_000, 999_999), pair.Add(1_000_000, 999_999));
+        Assert.Equal(new CountPair.Snapshot(1_000_001, 1_000_000), pair.Add(1, 1));
+        Assert.True(pair.Read().Part <= pair.Read().Total);
+    }
+
     // ────────────────────────────────────────────────────────────────── IL guards ──
 
     private static AssemblyDefinition Assembly()

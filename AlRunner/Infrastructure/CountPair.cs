@@ -7,8 +7,12 @@ namespace AlRunner.Infrastructure;
 /// write is a single Interlocked op and <see cref="Read"/> is a single load: the pair it
 /// returns existed at one instant, which two separate loads of two separate counters cannot
 /// promise (#3169, the #3025 shape). No lock: readers run on a ProcessExit handler and the
-/// JIT callback thread; writers run on every AL statement. Each half wraps at 2^32 — these
-/// are diagnostics, not meters.
+/// JIT callback thread; writers run on every AL statement. The halves are NOT independent
+/// counters: one Interlocked.Add over the packed word means they can never disagree, but a
+/// carry out of Part would propagate into Total rather than wrapping Part alone. That needs
+/// ~4.29e9 (2^32) increments in one process, which is unreachable here, and it is the
+/// deliberate trade for not allocating per AL statement (#3170's CompareExchange'd record
+/// does). These are diagnostics, not meters.
 /// </summary>
 internal sealed class CountPair
 {
