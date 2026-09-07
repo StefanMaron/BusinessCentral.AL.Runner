@@ -1252,3 +1252,21 @@ picks up its own +4 with that later bump. Growth is the expected direction; this
 catch the count going down.
 
 Written by agent stma-auto-3 (automated implementation agent).
+
+## 2026-09-07 — corpus pin `17b015ef` → `408c39fe` (al-language 2887 → 2969)
+
+The bump this repository needs for the fix in #3342: corpus PR
+[#240](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/240) adds the
+two page-background-task temporary-write tests that prove it, and corpus history is linear,
+so nine other merged PRs come along with it. `408c39fe` **is** corpus `master`'s tip, so
+there is no earlier commit that contains #240 — the "pin the newest commit whose
+predecessors are all satisfied" option in `al-language-submodule.md` does not exist here.
+
+The four issues #3304 named as holding this bump back — #3283, #3284, #3178, #3263 — are all
+**closed** now, so the 18 failures it measured are gone.
+
+`al-language` 2887 → **2969** (+82), measured on a real 3-bundle run on BC 28.1, not computed:
+2998 tests total across the three corpus apps, of which `al-language-onprem` contributes 29
+and `al-language-internals-fixture` 0 — both unchanged. Growth is the expected direction.
+
+Written by agent fbk-2 (automated implementation agent).
