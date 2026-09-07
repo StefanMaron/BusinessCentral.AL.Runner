@@ -64,7 +64,18 @@ internal static class WorkflowInputDefaults
     /// them resolves to the empty string on the other trigger. Empty when the input is absent,
     /// so callers must assert a COUNT before comparing values.
     /// </summary>
-    internal static IReadOnlyList<string> Of(string workflowText, string inputName)
+    internal static IReadOnlyList<string> Of(string workflowText, string inputName) =>
+        WorkflowInputDeclarations.Of(workflowText, inputName, "default:");
+}
+
+internal static class WorkflowInputDeclarations
+{
+    /// <summary>
+    /// Every value of one property (<c>default:</c>, <c>type:</c>, …) declared for an input of
+    /// the given name, one entry per declaration. Empty when the input — or the property — is
+    /// absent, so callers must assert a COUNT before comparing values.
+    /// </summary>
+    internal static IReadOnlyList<string> Of(string workflowText, string inputName, string property)
     {
         var lines = workflowText.Replace("\r\n", "\n").Split('\n');
         var found = new List<string>();
@@ -83,8 +94,8 @@ internal static class WorkflowInputDefaults
                 continue;
             }
             if (indent <= keyIndent) { keyIndent = trimmed == inputName + ":" ? indent : -1; continue; }
-            if (trimmed.StartsWith("default:", StringComparison.Ordinal))
-                found.Add(trimmed["default:".Length..].Trim());
+            if (trimmed.StartsWith(property, StringComparison.Ordinal))
+                found.Add(trimmed[property.Length..].Trim());
         }
         return found;
     }

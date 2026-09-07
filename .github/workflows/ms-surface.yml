@@ -113,7 +113,11 @@ jobs:
       expected-tests: 40530
       bc-version: ${{ inputs.bc-version }}
       test-data: ${{ inputs.test-data }}
-      test-timeout: ${{ inputs.test-timeout }}
+      # fromJSON is load-bearing, not decoration: a workflow_dispatch input reaches the
+      # inputs context as a STRING whatever its declared type, and a string handed to a
+      # workflow_call input declared `type: number` makes GitHub refuse to create the run —
+      # zero jobs, no log, no annotation (#3456). Booleans coerce; numbers do not.
+      test-timeout: ${{ fromJSON(inputs.test-timeout) }}
       normalize-company: ${{ inputs.normalize-company }}
       # Tests-ERM (9,496) and Tests-SCM (8,524) lead deliberately: 44% of the 40,530 between
       # them, measured on the 28.1.49838.53507 artifact (#3409), so if anything is lost to the
