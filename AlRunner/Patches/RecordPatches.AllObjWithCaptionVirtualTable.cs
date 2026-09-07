@@ -21,20 +21,10 @@
 //   Same rows, same key, same construction path — this deliberately reuses AllObj's
 //   inventory (EnumerateKnownAlObjects) and its reflection helpers rather than growing a
 //   parallel one, so the two tables can never disagree about which objects exist. The
-//   additions are the caption and the subtype, both of which are COLUMNS AllObj does not
-//   have: AllObj's fields are 1/3/4/60/61/62, with no 20 and no 30. So a subtype riding
-//   through the shared inventory is not a value AllObj declines to write — it is a column
-//   AllObj does not declare, and BC's own AllObjDataProvider fills a six-slot buffer where
-//   AllObjWithCaptionDataProvider fills nine.
-//
-// OBJECT SUBTYPE (field 30, #2326)
-//   Per-object-kind, and NOT uniform: a page reports its PageType, a codeunit its Subtype,
-//   a table its TableType, a query its QueryType, and a kind with no subtype concept
-//   reports the empty string. The one asymmetry worth knowing before editing
-//   ObjectSubtypeTextFor is that BC blanks a Normal subtype for a CODEUNIT only — a table
-//   or query whose type is Normal reports the word. The five *extension kinds, whose real
-//   subtype is the target object's id, are deliberately left empty rather than guessed;
-//   see ObjectSubtypeTextFor and docs/virtual-tables-allobj.md#object-subtype.
+//   additions are the caption and the subtype (field 30, #2326), both COLUMNS AllObj does
+//   not declare — its fields are 1/3/4/60/61/62. Both ride through the shared inventory for
+//   this table's benefit; see ObjectSubtypeTextFor and
+//   docs/virtual-tables-allobj.md#object-subtype.
 //
 // WHERE CAPTIONS COME FROM (two sources, neither invented)
 //   1. Objects the runner compiles itself — the Caption property read off their AL source,
@@ -164,47 +154,13 @@ public static partial class RecordPatches
     /// The text BC puts in "Object Subtype" for one object, given the subtype the runner's
     /// inventory carries for it (<see cref="EnumerateKnownAlObjects"/>).
     ///
-    /// <para>Observably equivalent to AllObjWithCaptionDataProvider.GetCaptionAndSubtype,
-    /// which is a switch on the object type: a Table answers
-    /// <c>EnumHelper&lt;TableType&gt;.EnumToString(metaTable.TableType)</c>, a Page its
-    /// <c>PageType</c>, a Query its <c>QueryType</c>, and a Codeunit its <c>Subtype</c> —
-    /// except that a codeunit whose subtype is <c>Normal</c> answers <c>string.Empty</c>
-    /// rather than the member name. Every kind the switch does not name leaves the local at
-    /// <c>string.Empty</c>, and the return converts an empty string to the provider's
-    /// <c>emptySubtype</c>, so "no subtype" and "the empty string" are the same observable
-    /// value. The derivation, the per-kind table and the two decompiled bodies it came from
-    /// are in docs/virtual-tables-allobj.md#object-subtype.</para>
-    ///
-    /// <para>The <c>Normal</c> asymmetry is not a tidy-up: BC blanks Normal for a CODEUNIT
-    /// only. A table declaring no <c>TableType</c> answers the word <c>Normal</c>, and so
-    /// does a query declaring no <c>QueryType</c>, because their branches call
-    /// <c>EnumToString</c> unconditionally. Applying one rule to all three would be wrong in
-    /// two directions at once, and the upstream corpus asserts both halves side by side
-    /// (codeunit 60802, BusinessCentral.AL.Language.Tests).</para>
-    ///
-    /// <para>A codeunit declaring <c>Subtype = Install</c> also lands on the empty string,
-    /// and NOT because Install is blanked. The AL compiler does not carry Install into
-    /// object metadata at all — <c>NCLMetaCodeunit.Subtype</c> reads the codeunit's
-    /// <c>NavCodeunitOptionsAttribute</c>, which is what the compiler wrote, and for an
-    /// Install codeunit that is <c>Normal</c>. So BC's provider sees Normal here and blanks
-    /// it. Both row sources hand this method the DECLARED property, so the translation has
-    /// to happen here, exactly as CodeUnit Metadata does it in
-    /// <see cref="ResolveCodeunitSubtypeOrdinal"/> — same constant, same reason, and the
-    /// measurement behind it is on <see cref="AlSubtypeTheCompilerDoesNotEmit"/>.</para>
-    ///
-    /// <para>Five BC legs adjudicated this directly: the first version of the upstream test
-    /// asserted <c>'Install'</c> and 27.0/27.3/27.5/28.2/28.3 each answered the empty
-    /// string, while the other seven tests in the same prefix passed on every one of
-    /// them.</para>
-    ///
-    /// <para>NOT covered here, and deliberately: the five *extension kinds
-    /// (PageExtension / TableExtension / EnumExtension / PermissionSetExtension /
-    /// ReportExtension), whose subtype on a real tier is the TARGET OBJECT'S ID rendered as
-    /// a decimal string, read off the app group's own object summary. The runner has no
-    /// equivalent of NavAppGroup.GetObjectSummary, and answering an id the runner resolved
-    /// some other way would be a different fact wearing the same column. Those kinds carry a
-    /// null subtype through the inventory and land on the empty string — the value they had
-    /// before this change — which is tracked separately rather than guessed at.</para>
+    /// <para>Observably equivalent to AllObjWithCaptionDataProvider.GetCaptionAndSubtype: a
+    /// per-kind switch answering the member name, except that a CODEUNIT whose subtype is
+    /// <c>Normal</c> answers the empty string — a table or query whose type is Normal
+    /// answers the word. Editing this method without that asymmetry in hand gets it wrong in
+    /// two directions at once. Per-kind table, the decompiled bodies, why <c>Install</c>
+    /// lands on empty, and the five *extension kinds this deliberately leaves empty:
+    /// see docs/virtual-tables-allobj.md#object-subtype.</para>
     /// </summary>
     internal static string ObjectSubtypeTextFor(string kind, string? subtype)
     {

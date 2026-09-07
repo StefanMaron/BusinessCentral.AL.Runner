@@ -99,6 +99,9 @@ public sealed class BcMatrixDocumentationDriftTests
             + "install-seeding column check — a historical observation, not the matrix"),
         ("docs/upstream-corpus-workflow.md", "27.1 27.2 27.4",
             "the 27 minors the corpus does NOT run; naming the gap is the point of the sentence"),
+        ("docs/virtual-tables-allobj.md", "27.0 27.3 27.5 28.2 28.3",
+            "the corpus legs that had reported when the upstream Install-subtype assertion was "
+            + "adjudicated — a historical observation of which legs answered, not the matrix"),
     };
 
     // ---- version lists written out in prose --------------------------------------------

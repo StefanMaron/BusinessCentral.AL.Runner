@@ -257,13 +257,9 @@ public static partial class RecordPatches
     /// the property the AL compiler wrote into that app's SymbolReference.json — never
     /// guessed from the object's name or shape. Null when this kind has no subtype concept,
     /// or when the symbol file states none.
-    /// <para>Each kind is answered from the symbol record that already carries the property
-    /// for its own virtual table, so a dependency object's subtype here and the value that
-    /// table reports cannot drift: pages through <see cref="TryGetDependencyPageSymbol"/>
-    /// (Page Metadata's PageType), queries through <see cref="TryGetQuerySymbol"/>, tables
-    /// through <see cref="EnumerateBcAppTableSymbols"/> (Table Metadata's TableType), and
-    /// codeunits off <see cref="BcAppSymbolCache.ObjectSymbol.Subtype"/> (CodeUnit Metadata's
-    /// Subtype). See docs/virtual-tables-allobj.md#object-subtype.</para>
+    /// <para>Each kind reads the same symbol record that feeds its own virtual table, so a
+    /// subtype here and the value that table reports cannot drift — keep it that way when
+    /// adding a kind. See docs/virtual-tables-allobj.md#object-subtype.</para>
     /// </summary>
     private static string? DependencyObjectSubtype(BcAppSymbolCache.ObjectSymbol o)
         => NormalizeObjectTypeName(o.Kind) switch

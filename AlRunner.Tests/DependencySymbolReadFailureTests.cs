@@ -248,8 +248,8 @@ public sealed class DependencySymbolReadFailureTests : IDisposable
         // EnumerateBcAppProfileSymbols — (AppId, AppName, ProfileSymbol)
         ValueTuple<Guid, string, BcAppSymbolCache.ProfileSymbol> pr =>
             string.Equals(pr.Item3.ProfileId, ProfileId, StringComparison.OrdinalIgnoreCase),
-        // EnumerateBcAppObjects — (Kind, Id, Name, Caption)
-        ValueTuple<string, int, string, string> ob => FixtureObjectIds.Contains(ob.Item2),
+        // EnumerateBcAppObjects — (Kind, Id, Name, Caption, Subtype)
+        ValueTuple<string, int, string, string, string> ob => FixtureObjectIds.Contains(ob.Item2),
         _ => throw new Xunit.Sdk.XunitException(
             $"unrecognised walk item type {item.GetType()} — add an arm here. A filter that "
             + "matches nothing would make every fixture-scoped assertion in this file pass "
