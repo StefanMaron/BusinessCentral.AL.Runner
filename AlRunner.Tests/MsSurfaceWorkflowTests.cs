@@ -288,11 +288,8 @@ public sealed class MsSurfaceWorkflowTests
     }
 
     /// <summary>
-    /// #3431: the surface ran with the runner's 60 s default per-test watchdog on a hosted
-    /// 4-vCPU runner, so tests that finish comfortably inside it locally were cut off — and an
-    /// abort ends the process and past <c>--resume-aborts</c> takes its bucket's remaining
-    /// suites, which understates the total by an amount that depends on how fast the machine
-    /// was.
+    /// #3431: the surface ran with the runner's 60 s wall-clock default per-test watchdog on a
+    /// hosted runner, so tests that finish comfortably inside it locally were cut off.
     ///
     /// The surface owns the POLICY knob and ms-bucket.yml owns putting it on the command line.
     /// So two things: the value is PASSED THROUGH rather than re-spelled — a hardcoded number

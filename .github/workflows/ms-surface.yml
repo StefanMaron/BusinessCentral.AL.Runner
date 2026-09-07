@@ -76,11 +76,9 @@ on:
         default: true
       test-timeout:
         description: >-
-          Per-test watchdog in seconds, handed down to ms-bucket.yml, which is what puts it on
-          the runner's command line. The runner's own 60 s default is a developer-box number:
-          it cuts legitimate tests off on a hosted runner, and an abort takes its bucket's
-          remaining suites with it (#3431). Must match ms-bucket.yml's default —
-          MsSurfaceWorkflowTests holds the two equal.
+          Per-test watchdog in seconds, handed down to ms-bucket.yml, which puts it on the
+          runner's command line. The runner's own 60 s default aborts legitimate tests on a
+          hosted runner (#3431). Must match ms-bucket.yml's default.
         type: number
         required: false
         default: 300

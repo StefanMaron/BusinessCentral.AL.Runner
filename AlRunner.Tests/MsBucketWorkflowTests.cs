@@ -130,10 +130,8 @@ public sealed class MsBucketWorkflowTests
     /// <summary>
     /// The per-test watchdog these workflows run with, in seconds (#3431). A constant, so
     /// changing the number is a deliberate edit here with a reason, rather than a value that
-    /// drifted. 300 covers the hosted runner's slowdown against the developer boxes every
-    /// local number was measured on, and still catches the unbounded-loop class the watchdog
-    /// exists for — #3374's MaxIteration defect produced loops that finished at no timeout at
-    /// all. Worst case cost is five aborts at 300 s instead of at 60 s, about 25 minutes.
+    /// drifted. 300 covers the hosted runner's slowdown and still catches the unbounded-loop
+    /// class the watchdog exists for: #3374's MaxIteration loops finished at no timeout at all.
     /// </summary>
     private const int WorkflowTestTimeoutSeconds = 300;
 
@@ -416,13 +414,8 @@ public sealed class MsBucketWorkflowTests
     // ---- the per-test watchdog (#3431) -------------------------------------------------
 
     /// <summary>
-    /// #3431: the workflow set no timeout at all, so the runner's 60 s default applied on a
-    /// hosted 4-vCPU runner. The watchdog is WALL CLOCK and every local number in this
-    /// repository was measured on a much faster box, so run 34150530633 cut
-    /// <c>CloseFiscalYearWithAdditionalCurrencyRounding</c> off at <c>60001ms</c> — one
-    /// millisecond past the limit, on a test still making progress — where the same bucket on
-    /// a 12-core box ran 9,496 of 9,496 with no aborts. An abort is not one lost test: it ends
-    /// the process, and past <c>--resume-aborts</c> it takes the bucket's remaining suites.
+    /// #3431: the workflow set no timeout at all, so the runner's 60 s wall-clock default
+    /// applied on a hosted runner and aborted tests that finish comfortably inside it locally.
     ///
     /// Three links, asserted separately, because checking any one of them alone passes on the
     /// defect this test exists to catch:
@@ -457,9 +450,9 @@ public sealed class MsBucketWorkflowTests
 
         Assert.Contains("/al-runner\" \"${args[@]}\"", runStep, StringComparison.Ordinal);
 
-        // An empty value would make --test-timeout swallow the next argument rather than fail,
-        // producing a run configured differently from the one that was asked for. Both halves:
-        // the guard is there, and it runs BEFORE the bucket loop it protects.
+        // The guard fails the job once, up front. The runner rejects a bad value itself, but
+        // only after provisioning and each bucket's setup have been paid, once per
+        // invocation. Both halves: the guard is there, and it runs BEFORE the bucket loop.
         var guard = runStep.IndexOf("::error::test-timeout must be a positive whole number",
             StringComparison.Ordinal);
         Assert.True(guard >= 0, "the empty/non-numeric test-timeout guard is gone");
