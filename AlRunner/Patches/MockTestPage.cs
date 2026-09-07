@@ -1634,7 +1634,49 @@ internal class LiveNavTestPage : MockITestPage
         if (!found) EnterNewRowLine(record);
         return Loaded(found);
     }
-    public override bool MoveLast() { var record = RequireRecord("MoveLast()"); FlushParts(); FlushRow(); LeaveNewRowLine(); return Loaded(record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult()); }
+
+    /// <summary>
+    /// Go to the last row of the page's rowset.
+    ///
+    /// The empty case falls onto the implicit new-row line exactly as <see cref="MoveFirst"/>
+    /// does, and for the same reason: on an editable, insert-allowed page a client that finds
+    /// no matching row still renders one row — the blank line — and a subsequent write has to
+    /// have somewhere to land. Without it, `Last()` on such a page left the cursor on nothing
+    /// and `TP.SomeField.SetValue('X')` afterwards wrote into a record nothing had positioned
+    /// (issue #2964; the same gap #2392 fixed for First() and #2923 for a linked part).
+    ///
+    /// The RETURN VALUE stays false, so this changes internal cursor state only, never what
+    /// Last() answers. That matters for the one internal caller,
+    /// FindRowFromTableFieldValues's backward scan, which starts at MoveLast() and enters its
+    /// `while (hasRow)` loop only on true — the identical guarantee the MoveFirst() arm of
+    /// that same line already relies on.
+    ///
+    /// WHERE Last() LANDS on a page that DOES have rows is the last DATA row, not the blank
+    /// line past it — so this is a fallback for the empty case only, never a step onto the
+    /// draft line from a rowset that has data. Both halves are measured on a real service
+    /// tier, corpus codeunit 60757 "Test Page Last New Row Line"
+    /// (StefanMaron/BusinessCentral.AL.Language.Tests#231), over the same fixture family
+    /// codeunit 60743 uses:
+    ///
+    ///   * EditableInsertableList_Last_LandsOnTheLastDataRow — three seeded rows, Last() reads
+    ///     'CHARLIE', so "last data row" and "new-row line" are two distinct positions no
+    ///     off-by-one can conflate;
+    ///   * EditableInsertableList_NextAfterLast_ReachesTheNewRowLine — the blank line is still
+    ///     there, one Next() past where Last() stopped;
+    ///   * EmptyEditableList_LastReturnsFalse — asserted in the same procedure as First(), so
+    ///     an implementation aliasing the two cannot satisfy both;
+    ///   * EmptyEditableList_SetValueAfterLast_InsertsARow and its linked-part twin
+    ///     ModalHostPart_EmptyPart_SetValueAfterLast_InsertsARow — the arms this fallback
+    ///     exists for, and the only two of the twelve that failed before it.
+    /// </summary>
+    public override bool MoveLast()
+    {
+        var record = RequireRecord("MoveLast()");
+        FlushParts(); FlushRow(); LeaveNewRowLine();
+        var found = record.ALFindLastAsync(DataError.TrapError).GetAwaiter().GetResult();
+        if (!found) EnterNewRowLine(record);
+        return Loaded(found);
+    }
 
     /// <summary>
     /// Advance to the next row the CLIENT has, which past the last data row of an editable,
