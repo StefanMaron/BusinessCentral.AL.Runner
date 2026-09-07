@@ -80,6 +80,7 @@ internal static class TestDataOptions
         ExplicitBackupPath = null;
         CompanyOverride = null;
         _cachedIdentity = null;
+        TestDataNormalization.ResetForTests();
     }
 
     /// <summary>
@@ -164,7 +165,8 @@ internal static class TestDataOptions
     {
         if (!Enabled) return "";
         return _cachedIdentity ??= BuildCacheIdentity(
-            ResolveBackupPath(), CompanyOverride, BackupReaderTool.ExtractorIdentity());
+            ResolveBackupPath(), CompanyOverride, BackupReaderTool.ExtractorIdentity(),
+            TestDataNormalization.CacheIdentity());
     }
 
     /// <summary>
@@ -174,7 +176,13 @@ internal static class TestDataOptions
     /// than a content hash: the backup is ~1 GB and re-hashing it on every run would cost far
     /// more than the whole hydration it guards.
     /// </summary>
-    internal static string BuildCacheIdentity(string backupPath, string? company, string extractorIdentity)
+    /// <param name="normalizationIdentity">#2730: which company-normalization rule set (if any)
+    /// rewrote the hydrated values. A baseline captured WITHOUT normalization restored into a run
+    /// that asked FOR it would proceed against un-normalized rows with no error anywhere — the
+    /// same silent-wrong-answer argument the rest of this key is made of. Empty when the flag is
+    /// off, which is what keeps a non-opting run's key byte-identical.</param>
+    internal static string BuildCacheIdentity(
+        string backupPath, string? company, string extractorIdentity, string normalizationIdentity)
     {
         var full = Path.GetFullPath(backupPath);
         long length = -1;
@@ -183,7 +191,7 @@ internal static class TestDataOptions
         if (info.Exists) { length = info.Length; writeTicks = info.LastWriteTimeUtc.Ticks; }
         var payload = string.Join('|',
             "testdata", HydrationSchemaVersion.ToString(), full, length.ToString(),
-            writeTicks.ToString(), company ?? "<first>", extractorIdentity);
+            writeTicks.ToString(), company ?? "<first>", extractorIdentity, normalizationIdentity);
         using var sha = System.Security.Cryptography.SHA256.Create();
         return "td" + Convert.ToHexString(
             sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(payload)))[..16];

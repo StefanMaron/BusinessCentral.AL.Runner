@@ -476,6 +476,10 @@ for (int i = 0; i < args.Length; i++)
     // `al-runner --test-data tests/foo` would be ambiguous. See TestDataOptions.
     if (args[i] == "--test-data-company" && i + 1 < args.Length)
     { AlRunner.Infrastructure.TestDataOptions.CompanyOverride = args[++i]; continue; }
+    // #2730: opt-in company normalization, default OFF. --test-data alone keeps behaving
+    // exactly as it does today, because every pass/fail number recorded in this repository was
+    // measured against the un-normalized restore. See TestDataNormalization.
+    if (AlRunner.Infrastructure.TestDataNormalization.TryParseArg(args[i])) { continue; }
     if (AlRunner.Infrastructure.TestDataOptions.TryParseArg(args[i])) { continue; }
     if (args[i] == "--bc-version" && i + 1 < args.Length) { bcVersionArg = args[++i]; continue; }
     if (args[i] == "--artifact-path" && i + 1 < args.Length) { artifactPathArg = args[++i]; continue; }

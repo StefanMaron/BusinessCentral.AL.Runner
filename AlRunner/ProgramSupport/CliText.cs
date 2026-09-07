@@ -170,7 +170,18 @@ internal static partial class ProgramSupport
         w.WriteLine("  cost tracks what the suite actually uses:");
         w.WriteLine("    al-runner --test-data <bundle-dir>              # the shipped backup for the selected version/country");
         w.WriteLine("    al-runner --test-data=/path/to/X.bak <dirs>     # an explicit backup");
-        w.WriteLine("    al-runner --test-data --test-data-company NAME  # a specific company inside it");
+        w.WriteLine("    al-runner --test-data --test-data-company NAME  # which company inside it (required");
+        w.WriteLine("                                                    # when the backup holds more than one)");
+        w.WriteLine("    al-runner --test-data --test-data-normalize-company  # narrow the restored company");
+        w.WriteLine("                                                    # towards Microsoft's test company");
+        w.WriteLine("  --test-data-normalize-company is OFF by default and only does anything alongside");
+        w.WriteLine("  --test-data. The backup is a valid BC company but not the one Microsoft's BaseApp");
+        w.WriteLine("  tests were written against: Microsoft generates theirs with the legacy DemoTool, and");
+        w.WriteLine("  the restored one carries an Additional Reporting Currency theirs does not, which makes");
+        w.WriteLine("  BC correctly post an extra residual G/L Entry. The flag rewrites named, measured");
+        w.WriteLine("  fields after the restore and prints exactly which rules fired and what each changed,");
+        w.WriteLine("  so a pass/fail count is never readable without knowing which company produced it.");
+        w.WriteLine("  Numbers from a normalized run are NOT comparable with numbers from one without it.");
         w.WriteLine("  You do not have to know in advance which failures those are: when a test fails on a");
         w.WriteLine("  table that has NO rows in this run, the runner prints a one-line [test-data] note");
         w.WriteLine("  under the failure naming that table. BC's own message is left exactly as it was —");
@@ -509,9 +520,29 @@ internal static partial class ProgramSupport
         w.WriteLine("                          reason, never silently dropped.");
         w.WriteLine("  --test-data=PATH        As --test-data, but from an explicit .bak file.");
         w.WriteLine("  --test-data-company NAME");
-        w.WriteLine("                          Company inside the backup to hydrate. Default: the first");
-        w.WriteLine("                          company the backup reports, which is printed at the start");
-        w.WriteLine("                          of the run.");
+        // #2290: this used to promise "Default: the first company the backup reports". The
+        // runner deliberately refuses to choose — picking silently would mean every hydrated
+        // row came from a company nobody selected — and the shipped W1 backup holds TWO
+        // companies, so anyone following the old text on the default artifact hit an
+        // EXEC-FAIL. The runtime behaviour is the intended one; the help text was wrong.
+        w.WriteLine("                          Company inside the backup to hydrate. REQUIRED when the");
+        w.WriteLine("                          backup holds more than one company — the runner refuses to");
+        w.WriteLine("                          choose for you, and names the companies it found. A backup");
+        w.WriteLine("                          holding exactly one company is hydrated without this flag,");
+        w.WriteLine("                          and the company used is printed at the start of the run.");
+        w.WriteLine("  --test-data-normalize-company");
+        w.WriteLine("                          OFF BY DEFAULT. With --test-data, rewrite named fields of");
+        w.WriteLine("                          the restored company to match the company Microsoft's");
+        w.WriteLine("                          BaseApp tests are written against (Microsoft builds theirs");
+        w.WriteLine("                          with the legacy DemoTool, not from this backup). Currently");
+        w.WriteLine("                          one rule: General Ledger Setup.\"Additional Reporting");
+        w.WriteLine("                          Currency\" := blank, because the backup's EUR makes BC");
+        w.WriteLine("                          correctly post an extra residual G/L Entry that Microsoft's");
+        w.WriteLine("                          G/L-Entry-counting tests do not expect. Every rule reports");
+        w.WriteLine("                          what it changed, from which value, in how many rows — and a");
+        w.WriteLine("                          rule that did not fire reports why. Pass/fail numbers from a");
+        w.WriteLine("                          normalized run are NOT comparable with numbers from a run");
+        w.WriteLine("                          without it.");
         w.WriteLine("  --auto-provision        Download the BC artifacts for the project's version if");
         w.WriteLine("                          they are missing, then continue the run. ON BY DEFAULT");
         w.WriteLine("                          since issue #2024 — this flag is now redundant with a");

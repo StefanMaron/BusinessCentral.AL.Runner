@@ -605,8 +605,14 @@ internal static class TestDataProvisioner
                 $"table '{entry.TableName}': the reader's JSON could not be parsed ({ex.Message})");
         }
 
+        // #2730: normalize BEFORE the rows become NavValues. This one point covers both the
+        // rows that land in the live store and the `pristineRows` handed to AppendBaselineTable,
+        // so a value cannot be normalized in the store and un-normalized in the snapshot that
+        // replaces it at the next test boundary. A no-op unless --test-data-normalize-company.
+        var toHydrate = TestDataNormalization.Apply(entry.AlTableId.Value, entry.TableName, rows);
+
         return RecordPatches.HydrateTestDataTable(
-            entry.AlTableId.Value, entry.TableName, rows, intoSource, out metaTable, out pristineRows);
+            entry.AlTableId.Value, entry.TableName, toHydrate, intoSource, out metaTable, out pristineRows);
     }
 
     /// <summary>

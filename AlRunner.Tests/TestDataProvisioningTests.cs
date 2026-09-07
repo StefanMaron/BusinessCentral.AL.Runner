@@ -117,16 +117,16 @@ public sealed class TestDataProvisioningTests : IDisposable
         const string company = "CRONUS International Ltd_";
         const string reader = "readerhash0000ab";
 
-        var baseline = TestDataOptions.BuildCacheIdentity(bak, company, reader);
+        var baseline = TestDataOptions.BuildCacheIdentity(bak, company, reader, "");
 
-        Assert.NotEqual(baseline, TestDataOptions.BuildCacheIdentity(other, company, reader));
-        Assert.NotEqual(baseline, TestDataOptions.BuildCacheIdentity(bak, "My Company", reader));
+        Assert.NotEqual(baseline, TestDataOptions.BuildCacheIdentity(other, company, reader, ""));
+        Assert.NotEqual(baseline, TestDataOptions.BuildCacheIdentity(bak, "My Company", reader, ""));
         // A reader upgrade that changes decoded VALUES must invalidate the snapshot; that is
         // why the extractor identity is part of the key rather than a comment.
-        Assert.NotEqual(baseline, TestDataOptions.BuildCacheIdentity(bak, company, "readerhash0000cd"));
+        Assert.NotEqual(baseline, TestDataOptions.BuildCacheIdentity(bak, company, "readerhash0000cd", ""));
 
         // Stable for identical inputs — a key that churned would defeat the cache entirely.
-        Assert.Equal(baseline, TestDataOptions.BuildCacheIdentity(bak, company, reader));
+        Assert.Equal(baseline, TestDataOptions.BuildCacheIdentity(bak, company, reader, ""));
     }
 
     [Fact]
@@ -137,12 +137,12 @@ public sealed class TestDataProvisioningTests : IDisposable
         {
             var bak = Path.Combine(dir.FullName, "BusinessCentral-W1.bak");
             File.WriteAllBytes(bak, new byte[64]);
-            var first = TestDataOptions.BuildCacheIdentity(bak, "CRONUS", "reader");
+            var first = TestDataOptions.BuildCacheIdentity(bak, "CRONUS", "reader", "");
 
             // A different backup written to the same path is a different database.
             File.WriteAllBytes(bak, new byte[128]);
             File.SetLastWriteTimeUtc(bak, DateTime.UtcNow.AddMinutes(5));
-            var second = TestDataOptions.BuildCacheIdentity(bak, "CRONUS", "reader");
+            var second = TestDataOptions.BuildCacheIdentity(bak, "CRONUS", "reader", "");
 
             Assert.NotEqual(first, second);
         }
