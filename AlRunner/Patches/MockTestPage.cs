@@ -1173,32 +1173,27 @@ internal class LiveNavTestPage : MockITestPage
     // must initialise the buffer and remember to flush it.
     private bool _pendingNewRow;
 
-    public override void InsertEmptyRow(bool beforeCurrent)
-        => InsertEmptyRowCore(beforeCurrent, alreadyStarted: false);
 
     /// <summary>
-    /// The virtual seam both entry points share. <c>InsertEmptyRow(bool)</c> is ITestPage's
-    /// fixed signature and cannot carry the extra fact, so overriding IT would have left the
-    /// promotion path unable to reach a part's link stamping — the shape that made #2923's fix
-    /// necessary in the first place. Parts override this instead, and both callers reach them.
-    /// </summary>
-    private protected virtual void InsertEmptyRowCore(bool beforeCurrent, bool alreadyStarted)
-        => InsertEmptyRowBody(beforeCurrent, alreadyStarted);
-
-    /// <summary>
-    /// <paramref name="alreadyStarted"/> says the row being turned into a pending insert has
-    /// ALREADY had the platform's new-record step run for it — which is true on exactly one
-    /// path, the promotion of a draft line <see cref="EnterNewRowLine"/> started
-    /// (<see cref="PromoteNewRowLineForWrite"/>, issue #3029). Everything else about the entry
-    /// point is wanted there: the flush of a previous pending row, the insert-position capture
-    /// that feeds AutoSplitKey, a part's SubPageLink stamping and its validate step. Only the
-    /// <c>TryNewRecord</c> call is a duplicate, so only that is skipped.
+    /// Turn the current position into a pending insert.
     ///
-    /// <para>Not a separate method, and not "delete the call": <c>New()</c> reaches this same
-    /// body and its new-record step is the correct and only one for the row it starts. The two
-    /// callers differ in one fact about the row, so that fact is the parameter.</para>
+    /// <para>SKIPS THE PLATFORM'S NEW-RECORD STEP WHEN THE ROW IS ALREADY STARTED (#3029). Two
+    /// callers arrive on a draft line <see cref="EnterNewRowLine"/> has already started: a
+    /// write promoting it (<see cref="PromoteNewRowLineForWrite"/>) and a <c>New()</c> on a
+    /// part that opened over an empty rowset. Neither creates a SECOND row — both commit to
+    /// the one the blank line already stands for — so re-running the step would raise the
+    /// page's OnNewRecord twice for one row AND re-blank the buffer, discarding what that
+    /// trigger wrote.</para>
+    ///
+    /// <para>Read off <c>_newRowLineRecordStarted</c> rather than passed in by each caller.
+    /// Both spellings were built and mutation-tested; the parameter turned out to be dead,
+    /// because the state it duplicated is exactly the state the callers would have had to
+    /// consult in order to set it. One source of truth is what stops the two from disagreeing.
+    /// Everything else the entry point does is still owed on these paths — the flush of a
+    /// previous pending row, the insert-position capture that feeds AutoSplitKey, a part's
+    /// SubPageLink stamping and its validate step — so only the one call is skipped.</para>
     /// </summary>
-    private protected void InsertEmptyRowBody(bool beforeCurrent, bool alreadyStarted)
+    public override void InsertEmptyRow(bool beforeCurrent)
     {
         // A page with no SourceTable has no rowset to insert into at all — refuse by name
         // before touching any of the state below, rather than NRE-ing inside CaptureInsertPosition.
@@ -1214,7 +1209,7 @@ internal class LiveNavTestPage : MockITestPage
         // the one the blank line already stands for, exactly as typing into it does. So the
         // same fact the promotion passes explicitly is also true when the caller did not say
         // so, and is read off the latch rather than demanded of every caller.
-        alreadyStarted = alreadyStarted || (_onNewRowLine && _newRowLineRecordStarted);
+        var alreadyStarted = _onNewRowLine && _newRowLineRecordStarted;
 
         _onNewRowLine = false;
         _newRowLineReturnPosition = null;
@@ -1665,7 +1660,7 @@ internal class LiveNavTestPage : MockITestPage
         //
         // Virtual on purpose: a part must reach LiveNavTestPart's override, whose SubPageLink
         // stamping and validate step are still owed on this path.
-        InsertEmptyRowCore(beforeCurrent: false, alreadyStarted: true);
+        InsertEmptyRow(beforeCurrent: false);
     }
 
     /// <summary>A control wrote to the record. Called by the field, which owns no page state.</summary>
@@ -2639,7 +2634,22 @@ internal class LiveNavTestPage : MockITestPage
     /// against a real service tier). An empty result leaves the page on no row, which
     /// MoveFirst reports as false.
     /// </summary>
-    private void RepositionAfterFilterChange() => MoveFirst();
+    private void RepositionAfterFilterChange()
+    {
+        // A FILTER CHANGE ENDS THE DRAFT LINE'S ROW (#3029). The blank line a page shows past
+        // its data stands for a row IN the current rowset — its key fields are filled from that
+        // rowset's own single-valued filters — so once the filter moves it stands for a
+        // different row and owes a fresh new-record step.
+        //
+        // Without this, corpus codeunit 60710's OpenEdit -> SetFilter -> New() sequence took
+        // MoveFirst's same-row branch: the page had parked on a draft line for the UNfiltered
+        // rowset while opening, the filter then selected P2, and New() reused the row started
+        // before anyone had said P2 — so the new row carried a blank ParentCode instead of the
+        // filter's value. Three tests, and they are the reason this clears rather than the
+        // reasoning above.
+        AbandonNewRowLine();
+        MoveFirst();
+    }
 
     public override string GetFilter(int fieldNo)
         => RequireRecord("GetFilter()").ALGetFilter(fieldNo);
@@ -4555,10 +4565,10 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     /// multi-value or open-ended one raises BC's own error and stamps nothing — the
     /// <c>Equal</c> half of the same rule, decided by BC rather than re-derived from text.
     /// </summary>
-    private protected override void InsertEmptyRowCore(bool beforeCurrent, bool alreadyStarted)
+    public override void InsertEmptyRow(bool beforeCurrent)
     {
         ApplyLink();
-        InsertEmptyRowBody(beforeCurrent, alreadyStarted);
+        base.InsertEmptyRow(beforeCurrent);
         if (_links.Length == 0) return;
         var record = RequireRecord("subpage link");
         var primaryKeyFieldNos = PrimaryKeyFieldNos(record);
