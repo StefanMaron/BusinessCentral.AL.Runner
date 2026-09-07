@@ -168,7 +168,19 @@ public static partial class RecordPatches
         int tableId;
         try { tableId = rec.MetaTable.TableId; }
         catch { return; }
+        NoteTransactionWriteForTable(tableId);
+    }
 
+    /// <summary>
+    /// The same capture, addressed by table id rather than by the record being written — for a
+    /// runner path that writes rows into a table's provider without a NavRecord of THAT table
+    /// in hand. The Record Link store (RecordPatches.RecordLinkTable.cs) is the case: it holds
+    /// the record the link belongs to, whose table is not the one being written.
+    /// Without this, an <c>asserterror</c> after <c>Rec.AddLink(...)</c> would leave the link
+    /// row behind while an AL <c>Insert</c> into the same table rolls back.
+    /// </summary>
+    internal static void NoteTransactionWriteForTable(int tableId)
+    {
         foreach (var (source, perTable) in _dataAccessByTable)
         {
             if (!perTable.TryGetValue(tableId, out var dataAccess)) continue;
