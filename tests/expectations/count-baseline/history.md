@@ -1457,3 +1457,27 @@ The starting point is `ddb9b5ab`/2978, not `408c39fe`/2969: `5ad50bc2` on `main`
 pin and the count in one commit, and its own step is already recorded by that PR.
 
 Written by agent stma-auto-11 (automated implementation agent).
+
+## `9ee6bbcd` -> `69ae7598`, al-language 2977 -> 3008 (+31)
+
+Folded into PR #3379, the runner fix for #3373. Five corpus commits:
+
+| corpus PR | tests | disposition here |
+|---|---|---|
+| #262 `e6a0a0c` | SingleInstance cache fixtures | pass |
+| #264 `29042fc` | AllObjWithCaption "Object Subtype" | 4 declared `expect-fail-known-gap` -> #2326 |
+| #254 `920a7be` | Permission Set table (2000000004) | pass, once runner PR #3360 is on `main` |
+| #260 `c9b5cc8` | Record Link table | 10 declared `expect-fail-known-gap` -> #3378 |
+| #259 `69ae759` | `CurrPage.Update` raises `OnAfterGetCurrRecord` | pass -- this PR's own fix is what makes them pass |
+
+The two known-gap sets each live in a file of their own,
+`known-gaps-allobj-subtype-corpus264.json` and `known-gaps-record-link-table.json`, so the PRs
+that implement those surfaces (#3391 and #3381) can delete a whole file rather than edit around
+other entries. Both issues stay OPEN after this lands.
+
+#254's seven tests are deliberately NOT declared. They need runner PR #3360, which was merging
+into `main` separately while this was written; declaring them would have converted a
+merge-ordering question into settled classification, which is what
+`ask-the-corpus-before-claiming-bc-behavior.md` forbids.
+
+Written by the fbk-1 agent.
