@@ -4190,6 +4190,9 @@ int computedExitCode = 0;
         : (expectationsMatchFailure ? 5 : 0)));  // #3123: an expectations entry matched no test
 }
 
+// Set when the --output-json document is owed to stdout, printed after the output writes
+// below have had their say on computedExitCode. See the branch that sets it.
+bool printJsonOutput = false;
 if (outputJson && willResume)
 {
     // The final attempt prints the whole run. If Rerun then fails to START that attempt it
@@ -4200,12 +4203,13 @@ if (outputJson && willResume)
 }
 else if (outputJson)
 {
-    var json = Reporter.SerializeJsonOutput(allResults, computedExitCode);
-    // Restore the real stdout (captured above) so this is the ONLY thing ever
-    // written to it — every banner/progress line up to this point went to stderr
-    // instead. See the redirect right after arg parsing for why.
-    if (outputJsonStdout != null) Console.SetOut(outputJsonStdout);
-    Console.WriteLine(json);
+    // Deferred, not serialized here: computedExitCode is not final until the output writes
+    // below have run, and the `exitCode` field exists precisely so a JSON-only consumer
+    // learns the real outcome (#2403). Serializing at this point emitted `exitCode: 0` on a
+    // run whose --out write then failed and whose process exited 2. Everything between here
+    // and the write goes to stderr (stdout is redirected for the whole run in --output-json
+    // mode), so postponing the single stdout write changes nothing else.
+    printJsonOutput = true;
 }
 else
 {
@@ -4381,6 +4385,19 @@ if (lostOutputs.Count > 0 && computedExitCode == 0)
         $"(see the message above). The run's results are in the summary printed before this; " +
         $"exiting 2 because the file you asked for is not on disk.");
     computedExitCode = 2;
+}
+
+// The --output-json document, now that computedExitCode is final. Deliberately after the
+// escalation above: its `exitCode` field is the run's real outcome for a consumer that reads
+// only this document, so it must not disagree with what the process exits with.
+if (printJsonOutput)
+{
+    var json = Reporter.SerializeJsonOutput(allResults, computedExitCode);
+    // Restore the real stdout (captured above) so this is the ONLY thing ever
+    // written to it — every banner/progress line up to this point went to stderr
+    // instead. See the redirect right after arg parsing for why.
+    if (outputJsonStdout != null) Console.SetOut(outputJsonStdout);
+    Console.WriteLine(json);
 }
 
 // Exit non-zero if anything failed — the default since the v2 cut, matching main/v1.

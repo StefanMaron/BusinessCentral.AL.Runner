@@ -60,6 +60,15 @@ It never *raises* the exit code above what the tests earned — a run that alrea
 reports its own, more specific code (3 compile, 2 execute, 1 test failure). The escalation
 only applies when the run would otherwise have exited 0.
 
+**`--output-json` reports the same code.** The document's `exitCode` field exists so a
+JSON-only consumer learns the real outcome even when the process itself exits 0 under
+`--no-strict-exit` — which makes it a claim about the run, and it has to agree with the
+process. The document is therefore serialized *after* the output writes have run, not before
+them: serializing earlier emitted `exitCode: 0` on a run whose `--out` write then failed and
+whose process exited 2, telling the one consumer the field is for that the file it asked for
+was on disk. Nothing else moves — stdout is redirected to stderr for the whole run in
+`--output-json` mode, so the document stays the only thing ever written to stdout.
+
 ## Where the code is
 
 - `AlRunner/Infrastructure/OutputPaths.cs` — `TryPrepare` (preflight) and `TryWrite`

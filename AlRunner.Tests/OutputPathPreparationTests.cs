@@ -72,9 +72,13 @@ public sealed class OutputPathPreparationTests
         lock (outSb) lock (errSb) return (proc.ExitCode, outSb.ToString(), errSb.ToString());
     }
 
+    // TestScratch.FlatDir, not Path.GetTempPath() by hand: ScratchDirs then records an owner
+    // for the directory, so a killed test host's leftovers are reclaimed rather than leaked
+    // (#2706/#2743, enforced by ScratchDirOwnershipGuardTests). FlatDir reserves the path but
+    // deliberately does not create the leaf, so the CreateDirectory stays.
     private static string FreshTempDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-outpath-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.FlatDir("al-runner-outpath-");
         Directory.CreateDirectory(dir);
         return dir;
     }
@@ -268,6 +272,79 @@ public sealed class OutputPathPreparationTests
             // Nothing ran: the summary banner the runner always prints is absent.
             Assert.DoesNotContain("test run summary", stdout);
             Assert.DoesNotContain("Tests:", stdout);
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    // ---- --output-json must not report an exit code the process did not use --------------
+
+    /// <summary>Reads the <c>exitCode</c> field out of the runner's --output-json document.
+    /// Kept as a small parse rather than a substring match so the assertion is about the
+    /// field's VALUE — a `Contains("\"exitCode\": 2")` would also be satisfied by the string
+    /// turning up anywhere else in the report.</summary>
+    private static int JsonExitCodeField(string stdout)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(stdout);
+        return doc.RootElement.GetProperty("exitCode").GetInt32();
+    }
+
+    /// <summary>
+    /// The JSON document's <c>exitCode</c> field exists so a JSON-only consumer learns the real
+    /// outcome even when the process exits 0 (--no-strict-exit). That makes it a claim about
+    /// the run, and it was serialized BEFORE the lostOutputs escalation — so a --out write that
+    /// failed produced a document saying <c>exitCode: 0</c> while the process itself exited 2.
+    /// A consumer reading only the JSON, which is exactly who the field is for, was told the
+    /// run succeeded and the file it asked for was on disk. Neither was true.
+    ///
+    /// <para>A directory sitting AT the target path is what defers the failure to write time:
+    /// preflight creates and checks the PARENT, which exists and is fine here, so the run
+    /// happens in full and only the final write fails — the same shape as a directory that
+    /// disappears mid-run, and reproducible without permissions games.</para>
+    /// </summary>
+    [Fact]
+    public void Cli_OutputJson_ReportsTheSameExitCodeTheProcessUses_WhenTheOutWriteFails()
+    {
+        var root = FreshTempDir();
+        try
+        {
+            // A DIRECTORY where the file should go: parent exists (preflight passes), the
+            // write at the end throws.
+            var target = Path.Combine(root, "results.json");
+            Directory.CreateDirectory(target);
+
+            var (exit, stdout, stderr) = RunCli(
+                Bundle, "--package-cache", PackageCache, "--output-json", "--out", target);
+
+            // The process escalates to 2 — the run was fine, the artifact is not on disk.
+            Assert.Equal(2, exit);
+            Assert.Contains("could not write --out", stderr);
+
+            // ...and the JSON says the same thing. This is the assertion that was RED.
+            Assert.Equal(2, JsonExitCodeField(stdout));
+
+            // The document is still the ONLY thing on stdout — deferring the print past the
+            // write must not let the "Classification →"/diagnostic lines leak into it.
+            Assert.StartsWith("{", stdout.TrimStart());
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
+
+    /// <summary>The other direction, so the test above cannot be satisfied by hardcoding 2: a
+    /// --out write that SUCCEEDS leaves the field at 0, and the file is really there.</summary>
+    [Fact]
+    public void Cli_OutputJson_ReportsZero_WhenTheOutWriteSucceeds()
+    {
+        var root = FreshTempDir();
+        try
+        {
+            var target = Path.Combine(root, "ok", "results.json");
+
+            var (exit, stdout, stderr) = RunCli(
+                Bundle, "--package-cache", PackageCache, "--output-json", "--out", target);
+
+            Assert.Equal(0, exit);
+            Assert.Equal(0, JsonExitCodeField(stdout));
+            Assert.True(File.Exists(target), $"no classification file.\nSTDERR:\n{stderr}");
         }
         finally { Directory.Delete(root, recursive: true); }
     }
