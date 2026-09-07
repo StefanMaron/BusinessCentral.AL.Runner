@@ -221,6 +221,38 @@ internal class LiveNavTestPage : MockITestPage
         if (_tornDown) throw MakeTestPageNotOpenException();
         if (_parts.TryGetValue(controlId, out var cached)) return cached;
 
+        // A part whose own Visible — or that of any group enclosing it — is the compile-time
+        // LITERAL false is not rendered into the test page's control tree at all, exactly as
+        // an eliminated FIELD control is not (see LiveNavTestPage.GetField, which has done
+        // this since #1778). Returning null is what makes that faithful: the caller is
+        // NavTestPageBase.GetPart(int,bool), a precompiled BC method, and when ITestPage.GetPart
+        // answers null it raises BC's own NavTestPartNotFoundException ("The part with ID = ...
+        // was not found on the page.") itself — so this part gets the EXACT exception real BC
+        // raises, not a runner-invented one, and not a RunnerOutOfScopeException, which would
+        // wrongly classify implementable BC behaviour as out of scope.
+        //
+        // Measured on a real service tier by corpus codeunit 60346
+        // (StefanMaron/BusinessCentral.AL.Language.Tests#227, all 8 cloud legs): the suite's
+        // first revision asserted the PAIR — a Visible = true part answering true and a
+        // Visible = false part answering false on one open host — and every leg falsified it
+        // identically with "The part with ID = 1318487454 was not found on the page." The
+        // suite's own fixture comment records the conclusion: reaching a part declared
+        // Visible = false errors; it does not yield a handle reporting false.
+        //
+        // NOTE what this does NOT say. NavTestPart genuinely overrides ALVisible/ALEnabled in
+        // the IL as `return testPart.Visible` / `return testPart.Enabled`, reading the part
+        // control's own metadata — those overrides are real and are not being contradicted.
+        // What the tier establishes is that AL cannot REACH a control whose Visible would be
+        // false, so those overrides can never be observed returning false. The claim here is
+        // about reachability, not about what the accessors return.
+        //
+        // A Visible bound to a variable or an expression is never eliminated this way, even
+        // while it currently evaluates false — see
+        // RunnerPageInstance.ControlIsCompileTimeEliminated for the literal-vs-expression
+        // distinction and the ancestor walk, which this shares with the field path rather
+        // than re-deriving.
+        if (_page?.ControlIsCompileTimeEliminated(controlId) == true) return null!;
+
         if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA") == "1")
             Console.Out.WriteLine($"[MockTestPage.GetPart] controlId={controlId} pageId={_pageId} _page={(_page == null ? "null" : "set")} _page.Form={( _page?.Form == null ? "null" : _page.Form.GetType().FullName)}");
 
@@ -1695,10 +1727,43 @@ internal class LiveNavTestPage : MockITestPage
             return pageField;
         }
 
-        // Neither. Historically `id` was handed to the record as a FIELD NUMBER, which
-        // produced "The supplied field number '<hash>' cannot be found in the '<table>'
-        // table" — a control-name hash reported as a missing field, blaming the table for
-        // the runner's own inability to resolve the control. Say what actually happened.
+        // Neither — and from here there are TWO different answers, which this site used to
+        // collapse into one runner-gap refusal (issue #3313).
+        //
+        // If the page declares no control with this id AT ALL, the id is not in the page's
+        // control-id space and BC refuses it BY DESIGN. NavTestPageBase.GetField(int,bool) —
+        // the precompiled BC method the AL compiler emits for TestPage.GetField(Id) — is
+        // `fields.TryGetValue(id, ...)` over the page's own control dictionary, falling back
+        // to ITestPage.GetField(id), and raises its own NavTestFieldNotFoundException ("The
+        // field with ID = N is not found on the page.") when that answers null. Returning
+        // null hands BC's method exactly the input it is written to refuse, so AL sees BC's
+        // own exception rather than one the runner invented.
+        //
+        // The reachable case in ordinary AL is confusing GetField's id space with the source
+        // table's: `Host.Lines.GetField(Rec.FieldNo(Descr))`. Table field numbers are keys in
+        // neither dictionary. Answering a field for one was a SILENT WRONG ANSWER in the sense
+        // .claude/rules/loud-failures.md names — AL got a handle it could never have obtained
+        // on a real tier, and nothing looked broken until the same test ran against one.
+        //
+        // Measured on a real service tier by corpus codeunit 60346
+        // (StefanMaron/BusinessCentral.AL.Language.Tests#227, all 8 cloud legs): the suite's
+        // first revision passed table field 3 and every leg answered "The field with ID = 3
+        // is not found on the page." The corpus test asserts alongside it that 3 really IS a
+        // valid table field number on that part's source table, so the refusal it pins is
+        // about the ID SPACE and not about a meaningless argument.
+        //
+        // If the page DOES declare the control and the runner merely could not resolve its
+        // binding, that is a genuine runner gap and keeps the named refusal below — this
+        // narrows what gets reported as unimplemented, it does not widen it. Only a live page
+        // object can answer the declaration question, so a page the runner built no metadata
+        // for keeps the gap refusal too, which is the honest answer there: the runner does not
+        // know whether BC would have found the control.
+        if (_page?.DeclaresControl(id) == false) return null!;
+
+        // Historically `id` was handed to the record as a FIELD NUMBER, which produced "The
+        // supplied field number '<hash>' cannot be found in the '<table>' table" — a
+        // control-name hash reported as a missing field, blaming the table for the runner's
+        // own inability to resolve the control. Say what actually happened.
         throw TestPageShapeGap.ControlBinding(
             $"TestPage control {id}",
             "this control is bound neither to a field of the page's "
@@ -3504,6 +3569,27 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
         _links = links;
     }
 
+    // Constant true, and -- since #3313 -- for a stated reason rather than as an unexplained
+    // hardcode. NavTestPart.ALVisible/ALEnabled read exactly these two properties
+    // (`return testPart.Visible` / `return testPart.Enabled` in Ncl.dll), so hardcoding them
+    // would normally be exactly the silent answer .claude/rules/loud-failures.md refuses.
+    // What makes it faithful is the reachability rule LiveNavTestPage.GetPart now enforces: a
+    // part control whose Visible is the compile-time literal false is not in the test page's
+    // control tree at all, so no LiveNavTestPart is ever constructed for one and AL has no
+    // handle on which to call either accessor. Every part that reaches this class is therefore
+    // one BC would render, for which both answers are true.
+    //
+    // Measured on a real service tier by corpus codeunit 60346
+    // (StefanMaron/BusinessCentral.AL.Language.Tests#227): its first revision tried to assert
+    // the false arm of each pair, and all 8 cloud legs answered "The part with ID = ... was
+    // not found on the page." instead -- Visible() and Enabled() can never be observed
+    // returning false from AL.
+    //
+    // The limit of that argument, stated so a later reader need not re-derive it: a part whose
+    // Visible is an EXPRESSION currently evaluating false IS reachable (expressions are never
+    // compile-time eliminated -- see ControlIsCompileTimeEliminated), and this would answer
+    // true for it. No service tier has measured that shape, because the corpus fixture
+    // declares the literal, so it is not guessed at here.
     public bool Enabled => true;
     public bool Visible => true;
 

@@ -768,7 +768,9 @@ internal sealed partial class RunnerPageInstance
     {
         if (_form is not NavForm form) return false;
 
-        if (IsLiteralFalse(ControlDefinition(controlId)?.Visible)) return true;
+        if (IsLiteralFalse(OwnDeclaredVisible(
+                ControlDefinition(controlId)?.Visible, TryGetPartDefinition(controlId)?.Visible)))
+            return true;
 
         var helper = form.MetadataHelper;
         var currentId = controlId;
@@ -799,6 +801,31 @@ internal sealed partial class RunnerPageInstance
     }
 
     /// <summary>
+    /// The <c>Visible</c> an element DECLARES, whichever metadata collection it lives in.
+    ///
+    /// <para>Before #3313 the elimination check read only <c>ControlDefinition(id)?.Visible</c>,
+    /// and that silently answered null for every subpage PART: a part is not a
+    /// <c>ControlDefinition</c> at all — the AL compiler emits it as an
+    /// <c>InfopartPageDefinition</c>, reached through <c>MetadataHelper.InfoPartDefinitions</c>
+    /// rather than through the control lookup. So a part declared <c>Visible = false</c> read
+    /// as declaring nothing, which is the AL default of true, and the part stayed reachable.</para>
+    ///
+    /// <para>Both element kinds derive from <c>UIElementDefinition</c>, which is where
+    /// <c>Visible</c> lives, so this is ONE property read over two collections rather than a
+    /// second rule: whichever collection holds the element, the declared string is the same
+    /// property with the same meaning. An id is never in both — a control id and a part id come
+    /// from one generated id space — so the order of the two is not a tie-break, and the null
+    /// coalesce says exactly that.</para>
+    ///
+    /// <para>Static and internal so <c>AlRunner.Tests</c> can pin the collection-fallback
+    /// directly. The alternative needs a live <c>NavForm</c> whose <c>MetadataHelper</c> carries
+    /// a real <c>InfopartPageDefinition</c>, which only the page-build pipeline produces — the
+    /// AL-observable half is measured upstream instead, by corpus codeunit 60346.</para>
+    /// </summary>
+    internal static string? OwnDeclaredVisible(string? controlVisible, string? partVisible)
+        => controlVisible ?? partVisible;
+
+    /// <summary>
     /// True only for the compile-time literal spelling ("false"/"0", case-insensitive on the
     /// word form) — the same literal recognition <see cref="EvaluateProperty"/> uses, minus the
     /// expression-name fallback, because an expression must never be treated as eliminating.
@@ -816,6 +843,29 @@ internal sealed partial class RunnerPageInstance
     // rather than inheriting a freeze from a measurement that was not about it.
     internal bool ActionVisible(int actionId)
         => EvaluateProperty(ActionDefinition(actionId)?.Visible, "Visible", actionId, atOpen: false);
+
+    /// <summary>
+    /// Whether <paramref name="controlId"/> names a control this page DECLARES at all — the
+    /// question "is this id in the page's control-id space", asked of the page's own merged
+    /// metadata rather than of any binding the runner did or did not manage to resolve.
+    ///
+    /// <para>It exists to keep two different answers apart at <c>LiveNavTestPage.GetField</c>
+    /// (issue #3313), which used to give both the same runner-gap refusal:</para>
+    /// <list type="bullet">
+    /// <item>the id names a real control here and the runner could not resolve its binding —
+    /// a genuine runner gap, and still a <c>RunnerOutOfScopeException</c>;</item>
+    /// <item>the id names no control here at all — BC's OWN refusal, and the runner must
+    /// raise BC's own <c>NavTestFieldNotFoundException</c> instead of classifying documented
+    /// BC behaviour as an unimplemented runner surface.</item>
+    /// </list>
+    ///
+    /// <para>A control's id is compiler-generated per compilation and lives in its own id
+    /// space; a table field number is not in it. That is what makes the second case reachable
+    /// from ordinary AL — <c>GetField(Rec.FieldNo(X))</c> confuses the two spaces — and it is
+    /// what corpus codeunit 60346 measures.</para>
+    /// </summary>
+    internal bool DeclaresControl(int controlId)
+        => _form is NavForm form && form.MetadataHelper.TryGetControlDefinitionById(controlId, out _);
 
     private Microsoft.Dynamics.Nav.Types.Metadata.ControlDefinition? ControlDefinition(int controlId)
         => _form is NavForm form && form.MetadataHelper.TryGetControlDefinitionById(controlId, out var d) ? d : null;
