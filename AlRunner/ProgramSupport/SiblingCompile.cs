@@ -313,6 +313,23 @@ internal static partial class ProgramSupport
     // within the SAME process (--watch, --server) — see that class's own header for why.
     internal static BcCompiler GetDepSymbolCompiler(string dir) => AlRunner.Infrastructure.DepSymbolCompilerCache.GetOrCreate(dir);
 
+    /// <summary>
+    /// The loud rethrow both source pre-passes use when building one impl fails (#2956).
+    /// A provisioning gap keeps its detailed report by travelling in a wrapper that is
+    /// itself an <c>IDependencyProvisioningDiagnostic</c>, so Program.cs's #2095 handlers
+    /// — CLI and server — still recognize it and still render
+    /// <c>ToDetailedMessage</c>, with this impl named. Everything else stays exactly the
+    /// <c>InvalidOperationException</c> it was, so a genuine compile failure still reports
+    /// COMPILE-FAIL / exit 3 and is never relabelled as a package the reader must go find.
+    /// </summary>
+    private static Exception WrapEmitFailure(
+        string stage, string implName, string implPath, Exception inner, string? message = null)
+        => inner is AlRunner.Infrastructure.IDependencyProvisioningDiagnostic
+            ? new AlRunner.Infrastructure.LayeredDependencyProvisioningException(stage, implName, implPath, inner)
+            : new InvalidOperationException(
+                message ?? $"[{stage}] Failed to emit symbols for impl '{implName}' from {implPath}: {inner.Message}",
+                inner);
+
     // ── Layered source build pre-pass ─────────────────────────────────────────
     // Detects inter-bundle dependencies, emits impl bundles in topo order into a
     // per-run workspace cache dir, and prepends that dir to packageCacheDirs.
@@ -533,14 +550,13 @@ internal static partial class ProgramSupport
             //   * a WARM workspace (hadSymbols) never resolved at all, so a dependency that has
             //     since gone missing did not fail here; the per-bundle resolve reports it later,
             //     with the message and exit code Program.cs's own handlers decide;
-            //   * a COLD one wrapped the failure in "[layered] Failed to emit symbols for impl
-            //     '<name>' from <path>: <reason>" (LayeredSourceChainTests pins that text).
+            //   * a COLD one reports through WrapEmitFailure below.
             //
-            // Letting a MissingDependencyException escape from here instead does produce a
-            // better message — Program.cs's #2095 handler renders ToDetailedMessage's
-            // provisioning-gap report, which the wrapper defeats — but that is an error-reporting
-            // change with its own blast radius across CLI and server mode, not part of a cache
-            // key fix. Filed as #2956, with both messages measured against the same fixture.
+            // #2956 resolved the reporting half: a provisioning gap now travels in a wrapper
+            // that IS an IDependencyProvisioningDiagnostic, so Program.cs's #2095 handler still
+            // renders ToDetailedMessage; everything else stays an InvalidOperationException
+            // reported as COMPILE-FAIL. The retry below is unchanged and still needed — the
+            // resolve must throw from inside the emit try for either classification to happen.
             IReadOnlyList<(AppManifest Manifest, string AppPath)> implDeps = Array.Empty<(AppManifest, string)>();
             string? implResolveFailure = null;
             try { implDeps = implResolver.Resolve(implId.Dependencies); }
@@ -595,9 +611,8 @@ internal static partial class ProgramSupport
                     // GetSharedReferences excludes the impl from its own specs (self-ref guard).
                     //
                     // If the resolve failed, redo it so it throws HERE — inside this try, whose
-                    // catch produces the "[layered] Failed to emit symbols for impl …" message
-                    // this path has always produced. The retry only runs on a path that is about
-                    // to abort.
+                    // catch classifies it (WrapEmitFailure: provisioning gap vs. compile
+                    // failure, #2956). The retry only runs on a path that is about to abort.
                     if (implResolveFailure != null)
                         implDeps = implResolver.Resolve(implId.Dependencies);
                     BcCompiler.SetResolvedDeps(implDeps, implSymbolDirs);
@@ -644,8 +659,8 @@ internal static partial class ProgramSupport
                 {
                     // Loud failure per repo rule — the dependent bundle cannot compile
                     // against this impl without its symbols, so don't continue silently.
-                    throw new InvalidOperationException(
-                        $"[layered] Failed to emit symbols for impl '{implId.Name}' from {implPath}: {ex.Message}", ex);
+                    // #2956: a provisioning gap keeps its own report (see WrapEmitFailure).
+                    throw WrapEmitFailure("layered", implId.Name, implPath, ex);
                 }
             }
 
@@ -673,8 +688,9 @@ internal static partial class ProgramSupport
                 catch (Exception ex)
                 {
                     // Loud failure per repo rule — never silently continue.
-                    throw new InvalidOperationException(
-                        $"[layered] Failed to emit impl package '{implId.Name}' from {implPath}: {ex.Message}", ex);
+                    // #2956: a provisioning gap keeps its own report (see WrapEmitFailure).
+                    throw WrapEmitFailure("layered", implId.Name, implPath, ex,
+                        $"[layered] Failed to emit impl package '{implId.Name}' from {implPath}: {ex.Message}");
                 }
             }
 
@@ -910,8 +926,9 @@ internal static partial class ProgramSupport
                 catch (Exception ex)
                 {
                     // Loud failure per repo rule — never silently continue.
-                    throw new InvalidOperationException(
-                        $"[source-dep] Failed to emit source dependency '{sid.Name}' from {dir}: {ex.Message}", ex);
+                    // #2956: a provisioning gap keeps its own report (see WrapEmitFailure).
+                    throw WrapEmitFailure("source-dep", sid.Name, dir, ex,
+                        $"[source-dep] Failed to emit source dependency '{sid.Name}' from {dir}: {ex.Message}");
                 }
             }
             // Compile-visible half: emit the dep's AL symbols (*.symbols.json) + deps
@@ -965,8 +982,9 @@ internal static partial class ProgramSupport
                 }
                 catch (Exception ex)
                 {
-                    throw new InvalidOperationException(
-                        $"[source-dep] Failed to emit symbols for '{sid.Name}' from {dir}: {ex.Message}", ex);
+                    // #2956: a provisioning gap keeps its own report (see WrapEmitFailure).
+                    throw WrapEmitFailure("source-dep", sid.Name, dir, ex,
+                        $"[source-dep] Failed to emit symbols for '{sid.Name}' from {dir}: {ex.Message}");
                 }
             }
 
