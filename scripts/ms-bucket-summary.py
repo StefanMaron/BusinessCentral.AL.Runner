@@ -183,6 +183,19 @@ def compose(meta, totals, scan, rc, elapsed_s):
     return "\n".join(out)
 
 
+def notice_line(meta, totals, elapsed_s):
+    """A one-line workflow annotation carrying this bucket's numbers.
+
+    Emitted per bucket by a LIST run (#3409), where the whole thing is one step: a step
+    summary is only finalised when its step ends, so a job killed at the 360-minute hosted
+    ceiling would take every finished bucket's numbers with it. An annotation goes out
+    through the log stream as it happens and survives that.
+    """
+    return (f"::notice title={meta['bucket']} on BC {meta['bc_version']}::"
+            f"{totals['tests']} tests — {totals['passed']} pass, {totals['failures']} fail, "
+            f"{totals['errors']} error, {totals['skipped']} skipped, in {fmt_elapsed(elapsed_s)}")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--log", required=True)
@@ -194,6 +207,9 @@ def main(argv=None):
     ap.add_argument("--reader", default="")
     ap.add_argument("--junit", default=None)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--notice", action="store_true",
+                    help="also emit a one-line ::notice:: annotation with this bucket's totals "
+                         "(a list run reports each bucket as it finishes, not at the end)")
     ap.add_argument("--step-summary", default=None,
                     help="also append the markdown here; defaults to $GITHUB_STEP_SUMMARY when set")
     a = ap.parse_args(argv)
@@ -220,6 +236,8 @@ def main(argv=None):
             f.write(md + "\n")
 
     ok = measured(a.rc, totals is not None)
+    if ok and a.notice:
+        print(notice_line(meta, totals, a.elapsed))
     if not ok:
         # A GitHub workflow annotation, so the REASON travels with the run-list entry and the
         # scheduled-failure notification instead of living in a log nobody opens. This is what
