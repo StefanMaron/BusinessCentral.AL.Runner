@@ -26,9 +26,19 @@ public static partial class RecordPatches
         {
             if (obj is not NavSyntax.QuerySyntax q) continue;
             if (ObjectIdOf(q) is not int id) continue;
-            _parsedQueries[id] = new ParsedQuery(id, IdentText(q.Name), IsExtension: false);
+            // QueryType feeds AllObjWithCaption's "Object Subtype" column (#2326), the same
+            // way ParsedPage.PageType does for a page. AL's default when the property is
+            // absent is Normal, and BC reports a query's QueryType by NAME — including
+            // "Normal" — unlike a codeunit's Subtype, which BC blanks when it is Normal.
+            var queryTypeText = Unquote(PropValue(q.PropertyList, "QueryType")?.ToString()?.Trim() ?? "");
+            _parsedQueries[id] = new ParsedQuery(id, IdentText(q.Name), IsExtension: false,
+                QueryType: queryTypeText.Length > 0 ? queryTypeText : "Normal");
         }
     }
 }
 
-internal record ParsedQuery(int Id, string Name, bool IsExtension);
+/// <summary>
+/// <paramref name="QueryType"/> is AL's <c>QueryType</c> property as written, defaulted to
+/// <c>Normal</c> when the query declares none — see RecordPatches.AllObjWithCaptionVirtualTable.cs.
+/// </summary>
+internal record ParsedQuery(int Id, string Name, bool IsExtension, string QueryType = "Normal");

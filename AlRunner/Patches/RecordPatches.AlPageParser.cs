@@ -327,7 +327,7 @@ public static partial class RecordPatches
 
         var pageId = 0;
         var otherKinds = new List<string>();
-        foreach (var (kind, id, objectName, _) in EnumerateKnownAlObjects())
+        foreach (var (kind, id, objectName, _, _) in EnumerateKnownAlObjects())
         {
             // Exact (case-insensitive) match, NOT the space-stripping NamesEqual used for
             // SourceTable/BaseName elsewhere in this file: that one exists because AL writes

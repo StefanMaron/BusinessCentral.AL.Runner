@@ -150,7 +150,7 @@ public static partial class RecordPatches
         // redundant build was NOT the same order as the necessary work: it was 1.7x larger.
         Dictionary<(string Kind, int Id), Guid>? ownerIndex = null;
 
-        foreach (var (kind, id, name, _) in EnumerateKnownAlObjects())
+        foreach (var (kind, id, name, _, _) in EnumerateKnownAlObjects())
         {   // AllObj has no caption column; the shared inventory carries one for
             // AllObjWithCaption (2000000058), which reads the same rows.
             if (id <= 0) continue;
@@ -188,39 +188,51 @@ public static partial class RecordPatches
     /// then the object name, applied by the consumer (AllObjWithCaption) so that "not
     /// declared" and "declared as the name" stay distinguishable here. AllObj itself has
     /// no caption column and ignores it.
+    ///
+    /// <para><c>Subtype</c> is the object's declared subtype for the kinds that have one,
+    /// null for the kinds that do not — see BuildAllObjWithCaptionValue for how BC spells
+    /// each kind, and which of them BC blanks. AllObj has no Object Subtype COLUMN at all
+    /// (its fields are 1/3/4/60/61/62), so like Caption this rides through for
+    /// AllObjWithCaption's benefit; see docs/virtual-tables-allobj.md#object-subtype.</para>
     /// </summary>
-    private static IEnumerable<(string Kind, int Id, string Name, string? Caption)> EnumerateKnownAlObjects()
+    private static IEnumerable<(string Kind, int Id, string Name, string? Caption, string? Subtype)> EnumerateKnownAlObjects()
     {
         foreach (var t in _parsedTables.Values)
-            yield return ("Table", t.TableId, t.TableName, SourceCaptionFor("Table", t.TableId));
+            yield return ("Table", t.TableId, t.TableName, SourceCaptionFor("Table", t.TableId),
+                // A table declaring no TableType is Normal, and BC reports that by name.
+                t.TableTypeName ?? (t.IsTableTypeTemporary ? "Temporary" : AlDefaultTableType));
         // Pages and pageextensions live in separate dictionaries because AL gives them
         // separate id namespaces (#1710) — both are enumerated, so an app declaring
         // `page N` and `pageextension N` reports BOTH rows instead of only whichever
         // one was parsed last.
         foreach (var p in _parsedPages.Values)
-            yield return ("Page", p.Id, p.Name, SourceCaptionFor("Page", p.Id));
+            // ParsedPage.PageType already carries AL's own default ("Card") for a page
+            // declaring none, applied at parse time — the same value Page Metadata reports.
+            yield return ("Page", p.Id, p.Name, SourceCaptionFor("Page", p.Id), p.PageType);
         foreach (var p in _parsedPageExtensions.Values)
-            yield return ("PageExtension", p.Id, p.Name, SourceCaptionFor("PageExtension", p.Id));
+            yield return ("PageExtension", p.Id, p.Name, SourceCaptionFor("PageExtension", p.Id), null);
         foreach (var r in _parsedReports.Values)
             // SourceCaptionFor("Report", …) reads r.Caption itself — AlReportParser is the
             // only pass that parses a report's Caption (#1714). Going through the same
             // accessor as every other kind is what keeps that single source uniform.
-            yield return ("Report", r.Id, r.Name, SourceCaptionFor("Report", r.Id));
+            yield return ("Report", r.Id, r.Name, SourceCaptionFor("Report", r.Id), null);
         foreach (var r in _parsedReportExtensions.Values)
-            yield return ("ReportExtension", r.Id, r.Name, SourceCaptionFor("ReportExtension", r.Id));
+            yield return ("ReportExtension", r.Id, r.Name, SourceCaptionFor("ReportExtension", r.Id), null);
         foreach (var q in _parsedQueries.Values)
         {
             var kind = q.IsExtension ? "QueryExtension" : "Query";
-            yield return (kind, q.Id, q.Name, SourceCaptionFor(kind, q.Id));
+            yield return (kind, q.Id, q.Name, SourceCaptionFor(kind, q.Id), q.QueryType);
         }
         foreach (var x in _parsedXmlPorts.Values)
-            yield return ("XMLport", x.Id, x.Name, SourceCaptionFor("XMLport", x.Id));
+            yield return ("XMLport", x.Id, x.Name, SourceCaptionFor("XMLport", x.Id), null);
         // Codeunits / enums / *extension kinds — see RecordPatches.AlObjectDeclParser.cs.
+        // ParsedAlObjectDecl.Subtype is populated for Codeunit only and is null for a
+        // codeunit declaring none, which is exactly what BC blanks (Normal → empty).
         foreach (var d in _parsedObjectDecls.Values)
-            yield return (d.Kind, d.Id, d.Name, SourceCaptionFor(d.Kind, d.Id));
+            yield return (d.Kind, d.Id, d.Name, SourceCaptionFor(d.Kind, d.Id), d.Subtype);
         // Enums registered by the emit pipeline and by dependency .app scans.
         foreach (var e in AlEnumMetadataRegistry.Snapshot())
-            yield return ("Enum", e.Id, e.Name, SourceCaptionFor("Enum", e.Id));
+            yield return ("Enum", e.Id, e.Name, SourceCaptionFor("Enum", e.Id), null);
         // Precompiled dependency .app objects (BaseApp / SystemApp / ISV apps).
         foreach (var o in EnumerateBcAppObjects())
             yield return o;
@@ -233,11 +245,53 @@ public static partial class RecordPatches
     /// discover what exists, answered short. Walk and failure policy now come from
     /// EnumerateRegisteredBcAppSymbols; see RecordPatches.DependencyAppSymbolWalk.cs.
     /// </summary>
-    private static IEnumerable<(string Kind, int Id, string Name, string? Caption)> EnumerateBcAppObjects()
+    private static IEnumerable<(string Kind, int Id, string Name, string? Caption, string? Subtype)> EnumerateBcAppObjects()
     {
         foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("objects (AllObj)"))
             foreach (var o in symbols.Objects)
-                yield return (o.Kind, o.Id, o.Name, o.Caption);
+                yield return (o.Kind, o.Id, o.Name, o.Caption, DependencyObjectSubtype(o));
+    }
+
+    /// <summary>
+    /// The declared subtype of an object living in a PRECOMPILED dependency .app, read from
+    /// the property the AL compiler wrote into that app's SymbolReference.json — never
+    /// guessed from the object's name or shape. Null when this kind has no subtype concept,
+    /// or when the symbol file states none.
+    /// <para>Each kind is answered from the symbol record that already carries the property
+    /// for its own virtual table, so a dependency object's subtype here and the value that
+    /// table reports cannot drift: pages through <see cref="TryGetDependencyPageSymbol"/>
+    /// (Page Metadata's PageType), queries through <see cref="TryGetQuerySymbol"/>, tables
+    /// through <see cref="EnumerateBcAppTableSymbols"/> (Table Metadata's TableType), and
+    /// codeunits off <see cref="BcAppSymbolCache.ObjectSymbol.Subtype"/> (CodeUnit Metadata's
+    /// Subtype). See docs/virtual-tables-allobj.md#object-subtype.</para>
+    /// </summary>
+    private static string? DependencyObjectSubtype(BcAppSymbolCache.ObjectSymbol o)
+        => NormalizeObjectTypeName(o.Kind) switch
+        {
+            "page" => TryGetDependencyPageSymbol(o.Id)?.PageType,
+            "query" => TryGetQuerySymbol(o.Id)?.QueryType,
+            "table" => DependencyTableTypeName(o.Id),
+            // ObjectSymbol.Subtype is populated for Codeunit only; null means the symbol file
+            // stated none, which is Normal, which BC blanks.
+            "codeunit" => o.Subtype,
+            _ => null,
+        };
+
+    // Table type by id across the registered dependency .apps. Built once per run: the walk
+    // behind EnumerateBcAppTableSymbols parses every registered app's table list, and this is
+    // asked once per dependency table row of AllObjWithCaption.
+    private static Dictionary<int, string?>? _aovDependencyTableTypes;
+
+    private static string? DependencyTableTypeName(int tableId)
+    {
+        if (_aovDependencyTableTypes == null)
+        {
+            var map = new Dictionary<int, string?>();
+            foreach (var t in EnumerateBcAppTableSymbols())
+                map[t.TableId] = t.TableTypeName ?? (t.IsTableTypeTemporary ? "Temporary" : AlDefaultTableType);
+            _aovDependencyTableTypes = map;
+        }
+        return _aovDependencyTableTypes.TryGetValue(tableId, out var name) ? name : null;
     }
 
     /// <summary>
