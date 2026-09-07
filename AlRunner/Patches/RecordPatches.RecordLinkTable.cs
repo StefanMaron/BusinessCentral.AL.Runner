@@ -36,6 +36,7 @@ public static partial class RecordPatches
         internal NCLMetaField? Company;
         internal NCLMetaField? UserId;
         internal NCLMetaField? Created;
+        internal NCLMetaField? SystemId;
     }
 
     private static readonly ConditionalWeakTable<object, RecordLinkColumns> _recordLinkColumns = new();
@@ -77,8 +78,18 @@ public static partial class RecordPatches
                 Company = byName.TryGetValue("Company", out var c) ? c : null,
                 UserId = byName.TryGetValue("User ID", out var u) ? u : null,
                 Created = byName.TryGetValue("Created", out var cr) ? cr : null,
+                SystemId = ResolveSystemIdField(table),
             };
         });
+
+    /// <summary>BC's own SystemId column for a table, read off the metatable rather than found
+    /// by column name. Returns null when the shape has no such property, in which case rows
+    /// simply carry the column's own empty value — the state this store shipped in before the
+    /// divergence below was measured.</summary>
+    private static NCLMetaField? ResolveSystemIdField(NCLMetaTable table)
+        => table.GetType()
+            .GetProperty("SystemIdField", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)
+            ?.GetValue(table) as NCLMetaField;
 
     /// <summary>
     /// The Record Link table's own TempTableDataProvider — the same one an AL
@@ -216,6 +227,13 @@ public static partial class RecordPatches
         // reading the table sees a plausible row, skipped rather than guessed when they do not.
         Set(columns.Created, DateTime.UtcNow);
         Set(columns.UserId, SkeletonUserId());
+        // The third instance of "two writers, one invariant". Measured on BC 28.1 before this
+        // line existed: a row from AddLink carried SystemId {00000000-...} while a row an AL
+        // Insert wrote into the same table carried a real Guid. InsertRows runs inside
+        // SuppressSystemIdUniqueness, so nothing downstream would have assigned one. Each row
+        // this store creates is a NEW row -- including a CopyLinks copy, which BC also creates
+        // rather than relocates -- so each gets its own id.
+        Set(columns.SystemId, Guid.NewGuid());
 
         return values;
     }
@@ -311,9 +329,16 @@ public static partial class RecordPatches
         if (srcKey == null || to is not NavRecord dst) return;
         var dstValue = NavValue.CreateNavValueFromObject(columns.RecordId, dst.ALRecordId);
 
+        // Copying a record onto ITSELF creates nothing. BC's own CopyLinksAsync guards on
+        // `companyNameToken != companyNameToken2 || !sourceRecord.ALRecordId.Equals(destinationNavRecordId)`
+        // and returns before touching the table when both match. Adjudicated on a real service
+        // tier by corpus test
+        // `RecordLinkManagement_CopyLinks_SourceOntoItself_DoesNotDuplicateTheRows` (codeunit
+        // 60777), which measured the count unchanged; the runner used to answer twice as many.
+        // The runner is single-company, so the RecordId half of BC's guard is the whole guard here.
+        if (dstValue.GetBytes().AsSpan().SequenceEqual(srcKey)) return;
+
         var rows = ReadRecordLinkRows(provider);
-        // Snapshot before writing: src may be dst (a record copied onto itself), and the
-        // copies must not themselves be copied.
         var toCopy = rows.Where(r => RowBelongsTo(r, columns, srcKey)).ToList();
         if (toCopy.Count == 0) return;
 

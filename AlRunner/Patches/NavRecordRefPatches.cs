@@ -397,21 +397,21 @@ public static partial class BcRuntime
     public static bool RecordLink_TableHasLinks(object parentTree, object table, string companyName)
         => AlRunner.Patches.RecordPatches.RecordLinkStore_TableHasLinks(RecordLinkTableIdOf(table));
 
-    /// <summary>The table id BC's TableHasLinks was asked about. It is handed the table's
-    /// metadata, so the id is read off it rather than inferred; an unreadable shape answers 0,
-    /// which matches no row.</summary>
+    /// <summary>The table id BC's TableHasLinks was asked about. BC hands it the table's own
+    /// NCLMetaTable, whose public TableId is the id — a cast the compiler checks, rather than a
+    /// property name looked up by string with a silent 0 (= matches no row) when it misses.
+    /// The companyName argument is not read: the runner is single-company, so every stored row's
+    /// Company column already holds the one company a filter could name.</summary>
     private static int RecordLinkTableIdOf(object? table)
-    {
-        if (table == null) return 0;
-        if (table is int direct) return direct;
-        foreach (var name in new[] { "TableId", "ObjectId", "Id" })
+        => table switch
         {
-            var p = table.GetType().GetProperty(name,
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            if (p?.GetValue(table) is int n) return n;
-        }
-        return 0;
-    }
+            Microsoft.Dynamics.Nav.Runtime.NCLMetaTable meta => meta.TableId,
+            int direct => direct,
+            null => 0,
+            _ => throw new InvalidOperationException(
+                $"RecordLink.TableHasLinks was handed a {table.GetType().FullName}, not an "
+                + "NCLMetaTable — BC's signature changed and the table id can no longer be read"),
+        };
 
     // NavValue.CreateNavValueFromObject lacks a switch case for NavNclType.NavALErrorType
     // (introduced for ErrorInfo.ErrorType()) — when AL code reads a default ALErrorType
