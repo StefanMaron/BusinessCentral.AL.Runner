@@ -250,6 +250,17 @@ public static class TenantStoragePatches
     private const string EnvelopePrefix = "RNR1";
     private const string KeyFileMagic = "AL-RUNNER-ENCRYPTION-KEY-V1:";
 
+    // ENVELOPE FORMAT AND THE INSTALL-BASELINE CACHE. Entry.Ciphertext is persisted verbatim
+    // into the on-disk install-baseline snapshot, so changing this format could in principle
+    // hand new code an envelope written by old code. It cannot, and that is why this needs no
+    // codec schema bump: InstallBaselineDiskCache.BuildKeyText calls
+    // RunnerFingerprint.WriteKeyLines, which puts a SHA-256 of the running al-runner.dll's
+    // bytes into the key, so any edit to this file re-keys every entry and the old ones are
+    // never looked up. The one hole is RunnerFingerprint's documented `runner:unknown`
+    // fallback (an assembly with no on-disk location); it is not specific to this format, and
+    // DecryptWith refuses an unrecognised envelope loudly rather than returning plaintext, so
+    // even there the worst case is a named failure, not silent garbage.
+
     private static readonly byte[] _defaultSysEncKey = DeriveSysKey();
     private static EncryptionKeyState? _encKey = DefaultKeyState();
 
@@ -289,8 +300,9 @@ public static class TenantStoragePatches
     }
 
     /// <summary>Inverse of <see cref="EncryptWith"/>. Throws <see cref="CryptographicException"/>
-    /// — never a default — when the envelope is foreign or was sealed under another key;
-    /// callers map that onto the BC exception their surface raises.</summary>
+    /// — never a default — when the envelope is foreign or was sealed under another key. No
+    /// caller may let that escape: every one routes it through <see cref="AsBcCryptoFailure"/>,
+    /// because a raw .NET exception out of a rewritten BC body is the shape #3329 was.</summary>
     private static string DecryptWith(byte[] key, string envelope)
     {
         var parts = (envelope ?? string.Empty).Split(':');
@@ -316,7 +328,14 @@ public static class TenantStoragePatches
     public static string SysEnc_ALEncrypt(string plaintext)
     {
         var k = _encKey ?? throw new NavEncryptionNotCreatedException();
-        return EncryptWith(k.Material, plaintext);
+        try
+        {
+            return EncryptWith(k.Material, plaintext);
+        }
+        catch (CryptographicException ex)
+        {
+            throw AsBcCryptoFailure("ALSystemEncryption.ALEncrypt", ex);
+        }
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
@@ -330,10 +349,32 @@ public static class TenantStoragePatches
         }
         catch (Exception ex) when (ex is CryptographicException or FormatException)
         {
-            // Same mapping RsaEncryptionProviderBase.Decrypt applies to a bad payload.
-            throw new NavEncryptionException("ALDecrypt: " + ex.Message, ex);
+            throw AsBcCryptoFailure("ALSystemEncryption.ALDecrypt", ex);
         }
     }
+
+    /// <summary>The exception a crypto failure raises out of an ALSystemEncryption entry point.
+    ///
+    /// TYPE is BC's own, and is what AL and any `catch` clause key on:
+    /// <c>ALSystemEncryption.TryInvoke</c> catches <see cref="CryptographicException"/> and
+    /// throws <c>NavUnknownEncryptionException</c>. The rewrite replaces the body that
+    /// contained TryInvoke, so reproducing its mapping is what keeps that contract.
+    ///
+    /// MESSAGE is the runner's, deliberately, and says so by naming the API. BC pairs the type
+    /// with <c>Lang.MSGREUNKNOWN</c> and that string is not reachable from this process —
+    /// measured, not assumed. Microsoft.Dynamics.Nav.Core (which holds the sibling
+    /// SystemEncryptionDecryptBadDataError that RsaEncryptionProviderBase.Decrypt would use) is
+    /// absent from AppDomain.CurrentDomain entirely, because every caller above it is
+    /// rewritten; and the loaded Ncl exposes no Microsoft.Dynamics.Nav.Common.Language.Lang
+    /// type and no MSGREUNKNOWN key in any of its 61 resource blobs — ILSpy synthesises that
+    /// name from a resource lookup. Fabricating BC-looking text would be the silent fake here,
+    /// so the message names the runner API and carries the specific cause instead. The other
+    /// five refusals on this surface DO carry BC's own text, because those exception types
+    /// (NavEncryptionCreatedException, NavEncryptionNotCreatedException,
+    /// NavEncryptionExistingKeyImportException, NavEncryptionInvalidKeyFileException,
+    /// NavNCLFileNotFoundException) build it themselves.</summary>
+    private static Exception AsBcCryptoFailure(string api, Exception inner)
+        => new NavUnknownEncryptionException($"{api}: {inner.Message}", inner);
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool SysEnc_ALKeyExists() => _encKey != null;
@@ -369,9 +410,21 @@ public static class TenantStoragePatches
             foreach (var kv in _store.ToArray())
             {
                 if (kv.Value.Status != Encryption.Encrypted) continue;
+                string plaintext;
+                try
+                {
+                    plaintext = DecryptWith(k.Material, kv.Value.Ciphertext);
+                }
+                catch (Exception ex) when (ex is CryptographicException or FormatException)
+                {
+                    // A row this key cannot open. BC reaches this through ALDecrypt, so what AL
+                    // sees is a BC-typed refusal, not a raw .NET exception escaping a rewritten
+                    // BC body.
+                    throw AsBcCryptoFailure("ALSystemEncryption.ALDeleteKey", ex);
+                }
                 _store[kv.Key] = kv.Value with
                 {
-                    Ciphertext = DecryptWith(k.Material, kv.Value.Ciphertext),
+                    Ciphertext = plaintext,
                     Status = Encryption.PendingForEncryption,
                 };
             }

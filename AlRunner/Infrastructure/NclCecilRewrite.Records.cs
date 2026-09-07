@@ -48,14 +48,8 @@ public static partial class NclCecilRewrite
             // act is to read NavTenant.GetEncryptionKeyFileName → NavDatabase.TenantProperties
             // → "The given database is not a tenant database" on the skeleton. Rewrite the
             // AL-facing statics onto TenantStoragePatches' key ledger + AES envelope.
-            //
-            // ALEncrypt/ALDecrypt/ALKeyExists/ALEncryptionEnabled were rewritten first (hit by
-            // BaseApp CU1266/1279 IsEncryptionEnabled from SPBLIC's SetAppValue during the
-            // Pageworks install). ALCreateKey/ALDeleteKey/ALExportKey/ALImportKey are the
-            // KEY-MANAGEMENT half, added for #3329 — MS's Tests-Cash Flow CU135203 calls
-            // DisableEncryption from its shared Initialize, so all 32 of its tests failed on
-            // the same ArgumentException. Only the DataError-carrying overloads are rewritten;
-            // ALCreateKey/0 and ALImportKey/2 delegate to them in BC's own unmodified body.
+            // Only the DataError-carrying overloads are listed; ALCreateKey/0 and ALImportKey/2
+            // delegate to them in BC's own unmodified body.
             //
             // NOT carried over from the replaced bodies: the ApplicationObjectId(System, 5410/
             // 5420) permission check, because the runner has no permission system (same reason

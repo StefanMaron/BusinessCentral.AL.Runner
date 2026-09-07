@@ -9,10 +9,10 @@
 /// Codeunit 1266 DisableEncryption, and that reaches ALDeleteKey.
 ///
 /// Why here and not in the upstream corpus: see this app's app.json "description". Short
-/// version, both halves measured — half the surface will not compile for a Cloud target
-/// (AL0296), and the half that does would permanently replace the shared service tier's
-/// encryption key, because BC's CreateKey/DeleteKey write and delete a key FILE that no
-/// test-isolation rollback covers.
+/// version, both halves measured — the corpus tier PATCHES this surface out (bc-linux
+/// StartupHook Patch #26 no-ops CreateKey/DeleteKey/ImportKey/ExportKey and hardcodes
+/// IsKeyCreated true), so a result there would measure the patch rather than BC; and half the
+/// surface will not compile for a Cloud target anyway (AL0296, OnPrem scope).
 ///
 /// Test isolation here is per codeunit, not per test, so each test calls Initialize() to
 /// normalise the key state rather than inheriting whatever the previous one left.
@@ -29,11 +29,23 @@ codeunit 65750 "Enc Key Mgmt Tests"
             CreateEncryptionKey();
     end;
 
+    /// asserterror on its own proves only that SOMETHING threw, and the #3329 defect threw
+    /// too — so a test that only checks the error text is non-empty passes against the very
+    /// build these tests exist to reject. Every negative test below names its message.
+    local procedure AssertErrorText(Expected: Text; Context: Text)
+    var
+        Actual: Text;
+    begin
+        Actual := GetLastErrorText();
+        if Actual = '' then
+            Error('%1: expected an error, got none', Context);
+        if StrPos(Actual, Expected) = 0 then
+            Error('%1: expected an error containing\  %2\got\  %3', Context, Expected, Actual);
+    end;
+
     // ── The reported failure: Codeunit 1266 -> 1279 -> ALDeleteKey ────────────────
     [Test]
     procedure DisableEncryption_TurnsEncryptionOff()
-    var
-        ErrTxt: Text;
     begin
         Initialize();
         if not CryptographyManagement.IsEncryptionEnabled() then
@@ -54,11 +66,8 @@ codeunit 65750 "Enc Key Mgmt Tests"
 
         // Negative: encrypting with no key must be refused, never answered with a default.
         asserterror CryptographyManagement.EncryptText('some-plaintext');
-        ErrTxt := GetLastErrorText();
-        if ErrTxt = '' then
-            Error('EncryptText with no key must raise a message');
-        if StrPos(ErrTxt, 'Encryption is either not enabled or the encryption key cannot be found') = 0 then
-            Error('unexpected refusal from EncryptText: %1', ErrTxt);
+        AssertErrorText('Encryption is either not enabled or the encryption key cannot be found',
+            'EncryptText with no key');
     end;
 
     [Test]
@@ -87,22 +96,14 @@ codeunit 65750 "Enc Key Mgmt Tests"
 
     [Test]
     procedure CreateKey_WhenOneAlreadyExists_IsRefused()
-    var
-        ErrTxt: Text;
     begin
         Initialize();
         if not EncryptionEnabled() then
             Error('precondition: a key must be present');
 
         asserterror CreateEncryptionKey();
-        ErrTxt := GetLastErrorText();
-        if ErrTxt = '' then
-            Error('CreateEncryptionKey over an existing key must raise a message');
-        // Not "the given database is not a tenant database" — that was the #3329 defect,
-        // and a bare `asserterror` here passes against it. The refusal has to be BC's own
-        // key-already-created one.
-        if StrPos(ErrTxt, 'not a tenant database') > 0 then
-            Error('CreateEncryptionKey failed on tenant-database resolution, not on the existing key: %1', ErrTxt);
+        AssertErrorText('Unable to create a new encryption key. An encryption key already exists.',
+            'CreateEncryptionKey over an existing key');
 
         // The refused create must not have disturbed the key that was already there.
         if not EncryptionEnabled() then
@@ -163,16 +164,15 @@ codeunit 65750 "Enc Key Mgmt Tests"
     procedure ImportKey_WithWrongPassword_IsRefused()
     var
         KeyFile: Text;
-        ErrTxt: Text;
     begin
         Initialize();
         KeyFile := ExportEncryptionKey('right-password');
         DeleteEncryptionKey();
 
         asserterror ImportEncryptionKey(KeyFile, 'wrong-password');
-        ErrTxt := GetLastErrorText();
-        if ErrTxt = '' then
-            Error('ImportEncryptionKey with the wrong password must raise a message');
+        AssertErrorText(
+            'The import failed. The provided encryption key file contains invalid data and could not be imported.',
+            'ImportEncryptionKey with the wrong password');
 
         // A refused import must not install a key.
         if EncryptionEnabled() then
@@ -181,16 +181,13 @@ codeunit 65750 "Enc Key Mgmt Tests"
 
     [Test]
     procedure ImportKey_MissingFile_IsRefused()
-    var
-        ErrTxt: Text;
     begin
         Initialize();
         DeleteEncryptionKey();
 
         asserterror ImportEncryptionKey('no-such-file-3329.key', 'pw');
-        ErrTxt := GetLastErrorText();
-        if ErrTxt = '' then
-            Error('ImportEncryptionKey on a missing file must raise a message');
+        AssertErrorText('File no-such-file-3329.key was not found.',
+            'ImportEncryptionKey on a missing file');
         if EncryptionEnabled() then
             Error('a refused import must leave encryption disabled');
     end;
@@ -199,7 +196,6 @@ codeunit 65750 "Enc Key Mgmt Tests"
     procedure ImportKey_DifferentKeyWhileOneExists_IsRefused()
     var
         KeyFile: Text;
-        ErrTxt: Text;
         Cipher: Text;
     begin
         Initialize();
@@ -210,9 +206,8 @@ codeunit 65750 "Enc Key Mgmt Tests"
         Cipher := CryptographyManagement.EncryptText('under-key-B');
 
         asserterror ImportEncryptionKey(KeyFile, 'pw');
-        ErrTxt := GetLastErrorText();
-        if ErrTxt = '' then
-            Error('importing a different key over an existing one must raise a message');
+        AssertErrorText('A different encryption key is already registered in the database.',
+            'ImportEncryptionKey of a different key over an existing one');
 
         // Key B must be untouched — data encrypted under it still decrypts.
         if CryptographyManagement.Decrypt(Cipher) <> 'under-key-B' then
@@ -222,16 +217,14 @@ codeunit 65750 "Enc Key Mgmt Tests"
     [Test]
     procedure ExportKey_WithNoKey_IsRefused()
     var
-        ErrTxt: Text;
         KeyFile: Text;
     begin
         Initialize();
         DeleteEncryptionKey();
 
         asserterror KeyFile := ExportEncryptionKey('pw');
-        ErrTxt := GetLastErrorText();
-        if ErrTxt = '' then
-            Error('ExportEncryptionKey with no key must raise a message');
+        AssertErrorText('An encryption key is required to complete the request.',
+            'ExportEncryptionKey with no key');
     end;
 
     // A new key must not be able to read the old key's ciphertext. Without the key tag in
@@ -241,7 +234,6 @@ codeunit 65750 "Enc Key Mgmt Tests"
     procedure NewKey_CannotDecryptOldCiphertext()
     var
         Cipher: Text;
-        ErrTxt: Text;
     begin
         Initialize();
         Cipher := CryptographyManagement.EncryptText('sealed-under-key-A');
@@ -250,9 +242,11 @@ codeunit 65750 "Enc Key Mgmt Tests"
         CreateEncryptionKey();
 
         asserterror CryptographyManagement.Decrypt(Cipher);
-        ErrTxt := GetLastErrorText();
-        if ErrTxt = '' then
-            Error('decrypting key A ciphertext under key B must raise a message');
+        // Named message, not a bare asserterror: this is where a wrong-key decrypt could
+        // otherwise slip through on AES padding luck, or on the #3329 ArgumentException.
+        AssertErrorText(
+            'ALSystemEncryption.ALDecrypt: ciphertext was encrypted with a different key than the one now in effect',
+            'Decrypt of key A ciphertext under key B');
 
         // ...and key B is a working key, so the refusal above is about the key, not about
         // encryption being unavailable.
