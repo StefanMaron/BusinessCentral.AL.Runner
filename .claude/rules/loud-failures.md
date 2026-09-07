@@ -58,6 +58,61 @@ behaviour for in-scope test code. If it isn't, it throws instead. Existing patch
 rule; a `SCOPE-AUDIT.md` exercise classifies each as faithful / silent-fake / TODO, and
 silent-fakes are converted to throws as they're identified.
 
+### The justification is a claim plus a citation, not the derivation behind it
+
+The obligation above is unchanged and not negotiable: **no patch ships without a stated reason
+why its answer is observably equivalent**, and a patch that cannot state one throws instead.
+What this section bounds is the *form* of that statement, because the requirement was being
+discharged by writing the whole investigation into the file.
+
+Measured over `AlRunner/Patches/` (155 files, 30,655 comment lines, 48.4% of non-blank lines),
+attributing each comment block by its vocabulary:
+
+| | share of comment mass in `Patches/` |
+|---|---|
+| blocks stating an equivalence/scope claim only | 8.6% |
+| blocks that are pure derivation — corpus narration, measurements, rejected attempts | 25.1% |
+| blocks mixing a claim with its derivation | 18.8% |
+| blocks doing neither (ordinary explanation) | 47.5% |
+
+85% of that pure-derivation mass sits in blocks longer than ten lines. So the obligation
+accounts for well under a tenth of what is in these files, and the prose it is embedded in
+accounts for several times more — which is the evidence that the *form*, not the requirement,
+is what needs bounding.
+
+**What the audit justification must contain, at the line:**
+
+1. **The claim** — what an in-scope caller observes, and why that equals what real BC answers.
+   One to three sentences.
+2. **The citation** — what settled it. A corpus codeunit number and its verdict
+   (`corpus 60940, green on 27.5 and 28.3`), an issue number, a `docs/` anchor, or the BC member
+   whose body decides it. A citation is a pointer a reader can follow, not a summary of what
+   they would find.
+3. **The trap, if there is one** — the thing a later editor would get wrong. "Re-check the call
+   count if a BC version changes shape" is worth its line; the scan that produced the count is not.
+
+**What belongs elsewhere**, with the pointer left behind:
+
+| | goes to |
+|---|---|
+| how the corpus adjudicated it, leg by leg | `docs/`, cited by anchor |
+| the decompiled BC internals you walked to reach the conclusion | `docs/`, or the citation alone |
+| what you tried first and why it failed | the PR body |
+| a measurement table | `docs/`, where it is versioned and can be re-run |
+
+A justification that has been reduced this way is **still a justification** and still satisfies
+this rule. A reviewer may ask for one to be shortened; a reviewer may never ask for one to be
+removed, and may never accept a patch that has none. Where the shortened claim and the `docs/`
+section disagree, the `docs/` section is the one under test — it is the copy a drift test can
+check, and the code carries a pointer to it rather than a second copy of it.
+
+**The failure mode this creates, and what to do about it.** Prose moved out of the code can stop
+matching the code with nothing failing. That is a real cost and it is why the pointer is
+mandatory rather than optional: a reader who finds the claim finds the document. Where the moved
+prose carries a load-bearing claim, pin it with a drift test — this repository already has
+roughly ten of them (`BcMatrixDocumentationDriftTests`, `CliDocumentationTests` and siblings),
+so the pattern is established rather than proposed.
+
 ## Anti-patterns (don't ship these)
 
 - `public static string ALDatabase_ALSid(string userName) => "S-1-0-0";` — silent fake. Either

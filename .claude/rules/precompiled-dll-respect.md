@@ -63,3 +63,17 @@ When you find a method that NREs / misbehaves on the skeleton runtime:
 3. **Our own AL output?** We can rewrite freely, but in practice the right fix is almost always
    a runtime-engine patch instead, because the same fix then also helps integration tests of
    MS/ISV code.
+
+## Where the note about a rewrite belongs
+
+A Cecil rewrite that could violate one of the forbidden rows above — a token shift, a layout
+assumption, a signature the precompiled chain depends on — carries a note **at the call site
+that could violate it**, because that is where the next edit happens. Keep it to the constraint
+and its citation.
+
+The walk that established the constraint does not belong there: which BC members you decompiled,
+what `find_callers` returned, which versions you compared with `compare_symbols`, what you tried
+before this. That goes to `docs/` or the PR body, with a one-line pointer left at the call site.
+`loud-failures.md` § "The justification is a claim plus a citation, not the derivation behind it"
+is the same split, stated once for both rules; it bounds the *form* of these notes and never
+whether one is required.
