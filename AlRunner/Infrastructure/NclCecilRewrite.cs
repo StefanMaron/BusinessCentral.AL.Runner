@@ -505,6 +505,43 @@ public static partial class NclCecilRewrite
     /// CreateTarget helpers that live on CodeunitPatches / RecordPatches / XmlPortPatches.
     /// Same forwarding + per-arg boxing semantics as the name-based overload.
     /// </summary>
+    /// <summary>
+    /// Refuse a helper whose parameter count does not match the number of IL arg slots the
+    /// rewritten body will forward. <see cref="PrependStaticCall"/> has always thrown on
+    /// exactly this mistake; <see cref="ReplaceBodyWithHelper"/> did not, and that asymmetry
+    /// is issue #3328.
+    ///
+    /// Why this has to throw rather than adapt: a mismatch emits a body whose stack does not
+    /// balance its `call`, which is INVALID IL. Cecil writes it out happily, the rewritten
+    /// image is saved to the Ncl Cecil cache happily, and nothing objects until the JIT
+    /// reaches the method — at which point it raises a bare
+    /// `InvalidProgramException: Common Language Runtime detected an invalid program.`
+    /// naming only the BC method, with no frame of ours anywhere in the stack. In #3328 that
+    /// took out every AL `Dialog.Update()` call (202 Tests-VAT failures via BC's Codeunit550)
+    /// and the diagnosis cost a disassembly of the emitted assembly.
+    ///
+    /// Failing here instead moves the error from "runtime, in a stack that names nobody" to
+    /// "rewrite time, naming both methods and both counts" — `loud-failures.md` applied to
+    /// the rewrite layer, where a silently-wrong body is exactly the anti-pattern it names.
+    ///
+    /// Pure and internal so the guard itself is provable in isolation with constructed
+    /// numbers, with no BC artifacts required — the same shape as
+    /// <c>BcEngineReadinessGuard.AssertReadyOnCi</c>.
+    /// </summary>
+    internal static void AssertHelperArityMatches(
+        string targetName, string helperName, int helperParamCount, int argCount)
+    {
+        if (helperParamCount == argCount) return;
+
+        throw new InvalidOperationException(
+            $"[Cecil] replacement helper {helperName} takes {helperParamCount} parameter(s), "
+            + $"but the rewritten body of {targetName} forwards {argCount} IL arg slot(s) "
+            + "(declared parameters + `this` on an instance method). Emitting that body would "
+            + "produce invalid IL that only fails when the JIT reaches the method, as a bare "
+            + "InvalidProgramException naming no method of ours (issue #3328). Pick the helper "
+            + $"whose arity is {argCount}, or add one — do not force the wrong shim to fit.");
+    }
+
     private static void ReplaceBodyWithHelper(
         ModuleDefinition module, MethodDefinition target, MethodInfo helperMi)
     {
@@ -512,6 +549,17 @@ public static partial class NclCecilRewrite
         var helperParams = helperMi.GetParameters();
         // Total IL arg slots: declared params + 1 for `this` on an instance method.
         int argCount = target.Parameters.Count + (target.HasThis ? 1 : 0);
+
+        // #3328: refuse a helper that cannot take what this body is about to push. Every
+        // slot counted above IS forwarded by the loop below, so helper arity and argCount
+        // must be equal or the emitted body is invalid IL. Checked BEFORE anything is
+        // written, so a mismatch never reaches the Cecil cache.
+        AssertHelperArityMatches(
+            target.FullName,
+            $"{helperMi.DeclaringType?.Name}.{helperMi.Name}",
+            helperParams.Length,
+            argCount);
+
         var body = target.Body;
         body.Instructions.Clear();
         body.Variables.Clear();
@@ -543,8 +591,15 @@ public static partial class NclCecilRewrite
             // too — in both cases the helper param index equals the IL-arg slot index i.
             // If it's NOT a value type (object / interface / class), the value-type arg must
             // be boxed to satisfy the reference parameter.
-            var helperParamType = i < helperParams.Length ? helperParams[i].ParameterType : null;
-            bool helperWantsReference = helperParamType != null && !helperParamType.IsValueType;
+            // #3328: this used to read `i < helperParams.Length ? ... : null`, silently
+            // treating an out-of-range helper index as "no boxing needed". That tolerance is
+            // what let a too-short helper list through: the wrong shim produced a body that
+            // was BOTH unbalanced and under-boxed, and neither was reported. The arity guard
+            // above now makes i < helperParams.Length an invariant, so index directly — an
+            // IndexOutOfRangeException here would mean the guard itself is wrong, which is
+            // worth surfacing rather than papering over.
+            var helperParamType = helperParams[i].ParameterType;
+            bool helperWantsReference = !helperParamType.IsValueType;
             if (helperWantsReference)
                 il.Append(il.Create(OpCodes.Box, targetParamType));
         }

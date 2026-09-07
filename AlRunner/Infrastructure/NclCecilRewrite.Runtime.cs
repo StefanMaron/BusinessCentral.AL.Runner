@@ -1218,7 +1218,11 @@ public static partial class NclCecilRewrite
                     ReplaceBodyWithHelper(nclMod, m,
                         H(helperShims, m.Parameters.Count switch
                         {
-                            0 => "ReturnValueTask2",   // +1 for `this`; shim arity counts it
+                            // +1 for `this`; shim arity counts it. #3328: the 0 arm used to
+                            // say ReturnValueTask2 — stating the rule and then breaking it —
+                            // which emitted one push into a two-parameter call and made every
+                            // AL `Dialog.Update()` raise InvalidProgramException.
+                            0 => "ReturnValueTask1",
                             1 => "ReturnValueTask2",
                             _ => "ReturnValueTask3",
                         }));
