@@ -10,7 +10,7 @@ the foreground command or truly move on.
 **CI is the one thing you never wait for, in the foreground or anywhere else.** A workflow run
 is not your child process: it completes whether or not this turn is alive, and its verdict is
 there to read whenever you come back. So push, open the PR, and move on — then read the result
-later with `tools/ci-wait.py <PR> --timeout 0`. `ci-verdicts.md` §0 is the rule; this one
+later with `tools/ci-wait.py <PR> --timeout 1`. `ci-verdicts.md` §0 is the rule; this one
 governs work running locally.
 
 A cold full-corpus run (build + AL emit + C# compile + execute ~2000 tests) is not a
@@ -52,7 +52,7 @@ so the loss is survivable; or genuinely abandon it and say so. "Start it, end th
 wait" is not on the list.
 
 For a pull request, the correct shape is different and simpler: push, open it, hand back. Read
-the verdict on a later pass with `tools/ci-wait.py <PR> --timeout 0`, which answers at once and
+the verdict on a later pass with `tools/ci-wait.py <PR> --timeout 1`, which answers at once and
 refuses to call a still-running check a result — see `ci-verdicts.md` for the exit codes.
 
 ## Sister rules
