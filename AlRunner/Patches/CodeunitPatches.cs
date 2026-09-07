@@ -576,7 +576,20 @@ public static partial class BcRuntime
                     RecordPatches.GetInsertAllowedForPage(pageId), recordless, self, pageId);
         }
 
-        Console.Error.WriteLine($"[TestPage] {why}; using navigation mock.");
+        // `[warn]` so the demotion survives Log's default filter (#2461). This is the loudest
+        // of the three outcomes above and was the most thoroughly hidden: `[TestPage]` matched
+        // the ^[Tag] pattern and was dropped on BOTH streams, so a TestPage that had become a
+        // MockITestPage — every action Enabled, every Invoke() a no-op — announced itself into
+        // a void.
+        //
+        // The page id is interpolated HERE rather than left to travel inside `why`. `why` comes
+        // from TestPageFactory.TryBuild, which renders "page {pageId}..." on some branches and
+        // "source table {tableId}..." or "Record{tableId} has no 6-arg constructor" on others —
+        // so the branch that fires decides whether the reader learns which page went to the
+        // mock. Naming it unconditionally is what makes every one of these lines actionable.
+        Console.Error.WriteLine(
+            $"[warn] TestPage: page {pageId}: {why}; this TestPage is using the navigation mock, "
+            + "whose actions report Enabled and whose Invoke() does nothing");
         return new MockITestPage();
     }
 
