@@ -98,6 +98,11 @@ codeunit 65750 "Enc Key Mgmt Tests"
         ErrTxt := GetLastErrorText();
         if ErrTxt = '' then
             Error('CreateEncryptionKey over an existing key must raise a message');
+        // Not "the given database is not a tenant database" — that was the #3329 defect,
+        // and a bare `asserterror` here passes against it. The refusal has to be BC's own
+        // key-already-created one.
+        if StrPos(ErrTxt, 'not a tenant database') > 0 then
+            Error('CreateEncryptionKey failed on tenant-database resolution, not on the existing key: %1', ErrTxt);
 
         // The refused create must not have disturbed the key that was already there.
         if not EncryptionEnabled() then
