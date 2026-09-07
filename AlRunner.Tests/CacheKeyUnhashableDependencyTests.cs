@@ -72,6 +72,11 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+// Swaps the process-wide Console.Error/Out to capture what the code under test writes.
+// xunit runs collections in parallel, so without this the swap races every other class
+// doing the same and a line lands in the wrong sink (#2913; ConsoleSwapIsolationGuardTests
+// enforces it).
+[Collection(ConsoleFilterSerialCollection.Name)]
 public sealed class CacheKeyUnhashableDependencyTests : IDisposable
 {
     private static readonly string RepoRoot = Path.GetFullPath(
