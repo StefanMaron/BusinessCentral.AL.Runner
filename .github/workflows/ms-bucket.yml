@@ -1,8 +1,27 @@
 name: MS bucket (manual)
 
-# Runs ONE Microsoft BaseApp test bucket (default Tests-ERM, 9,496 tests) through AL Runner
-# in the full configuration — including --test-data — and reports total / pass / fail /
-# error and wall time in the job summary. Issue #2724.
+# Runs Microsoft BaseApp test buckets through AL Runner in the full configuration —
+# including --test-data — and reports total / pass / fail / error and wall time in the job
+# summary. Issue #2724.
+#
+# ONE BUCKET, OR A LIST OF THEM IN ONE JOB (#3409)
+#   `bucket` takes one name; `buckets` takes several, comma- or newline-separated, and wins
+#   when both are given. A list runs SEQUENTIALLY in this single job — provisioning, the
+#   977 MB backup and the compile caches are paid once for all of them, which is the whole
+#   reason a list exists. .github/workflows/ms-surface.yml passes all 32 non-empty buckets
+#   this way to measure the full Microsoft surface.
+#
+#   Each bucket gets its OWN runner process. Peak RSS tracks how many bundles a process
+#   loads, not how many tests it runs — measured, 3 bundles / 939 tests peaked at 4.4 GB
+#   against 1 bundle / 1,027 tests at 3.7 GB — so handing 32 bundle directories to one
+#   invocation would stack their memory on a runner that has already peaked at 10.9 GiB on
+#   Tests-ERM alone. Separate processes reset it between buckets.
+#
+#   Each bucket's numbers are written to the job summary and emitted as a workflow
+#   annotation BEFORE the next bucket starts. A hosted job cannot run longer than 360
+#   minutes and that ceiling cannot be raised, so a long list must not have "the job was
+#   killed, so you get nothing" as its failure mode. Reporting as it goes is what makes one
+#   job safe here, and it is far cheaper than sharding across six.
 #
 # This is a VERIFICATION NET, not a gate:
 #   * `on: workflow_dispatch` only. No push, no pull_request, no schedule. A 9,500-test
@@ -86,7 +105,32 @@ on:
       bucket:
         description: Microsoft BaseApp test bucket, e.g. Tests-SMB or Tests-ERM.
         type: string
-        required: true
+        required: false
+        default: ''
+      buckets:
+        description: >-
+          Several buckets, comma- or newline-separated, run sequentially in this one job.
+          Wins over `bucket` when both are given.
+        type: string
+        required: false
+        default: ''
+      label:
+        description: >-
+          Names the run in the job title, the concurrency group and the uploaded artifact.
+          Defaults to the single bucket's name. A list run MUST pass one: without it every
+          list run shares one concurrency group and they queue behind each other silently.
+        type: string
+        required: false
+        default: ''
+      expected-tests:
+        description: >-
+          How many tests this set of buckets is expected to hold. 0 = do not compare. The
+          combined-total step says so when the measured total falls well short, because a
+          bundle lost to COMPILE FAIL vanishes from the totals rather than failing them
+          (#2715).
+        type: number
+        required: false
+        default: 0
       bc-version:
         description: >-
           BC build or prefix. Empty = the newest prefix in .github/bc-versions.txt.
@@ -106,8 +150,23 @@ on:
           (Tests-ERM, Tests-SCM, Tests-Misc, Tests-Cash Flow, …). A wrong name fails fast and
           lists what the artifact ships.
         type: string
-        required: true
+        required: false
         default: Tests-ERM
+      buckets:
+        description: >-
+          Several buckets instead of one, comma- or newline-separated (Tests-SMB,Tests-Bank).
+          Wins over `bucket` when both are filled in. They run SEQUENTIALLY in this one job
+          and share its provisioning, backup and compile caches.
+        type: string
+        required: false
+        default: ''
+      label:
+        description: >-
+          Names the run in the job title, the concurrency group and the artifact. Defaults to
+          the single bucket's name.
+        type: string
+        required: false
+        default: ''
       bc-version:
         description: >-
           BC build: a full four-part build (28.4.53241.54318) or a prefix (28.4) resolved to
@@ -127,10 +186,15 @@ on:
 permissions:
   contents: read
 
-# One run per bucket at a time. A second dispatch of the same bucket queues behind the first
-# rather than cancelling a multi-hour measurement in flight.
+# One run per bucket (or per labelled set) at a time. A second dispatch of the same thing
+# queues behind the first rather than cancelling a multi-hour measurement in flight.
+#
+# The label is in the group for a reason that is invisible when it goes wrong: a list run
+# passes no `bucket`, so on `ms-bucket-${{ inputs.bucket }}` alone every list run would land
+# in the group `ms-bucket-` and, with cancel-in-progress false, wait for the previous one.
+# That is a silent queue, not an error.
 concurrency:
-  group: ms-bucket-${{ inputs.bucket }}
+  group: ms-bucket-${{ inputs.label || inputs.bucket || 'list' }}
   cancel-in-progress: false
 
 env:
@@ -139,10 +203,12 @@ env:
 
 jobs:
   run:
-    name: ${{ inputs.bucket }} on BC ${{ inputs.bc-version || 'newest' }}
+    name: ${{ inputs.label || inputs.bucket || 'buckets' }} on BC ${{ inputs.bc-version || 'newest' }}
     runs-on: ubuntu-latest
-    # The hosted maximum. Tests-SINGLESERVER (834 tests) takes ~4 minutes warm; Tests-ERM is
-    # 11x the tests plus a cold build, provisioning and a cold emit.
+    # The hosted maximum, and it cannot be raised. Tests-SINGLESERVER (834 tests) takes ~4
+    # minutes warm; Tests-ERM is 11x the tests plus a cold build, provisioning and a cold
+    # emit; the whole 40,530-test surface is a few hours. This is why every bucket's numbers
+    # are reported as it finishes rather than at the end.
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v6
@@ -178,19 +244,55 @@ jobs:
           echo "version=$full" >> "$GITHUB_OUTPUT"
           echo "BC build: $full"
 
+      # BEFORE provisioning on purpose: an empty or duplicated list costs seconds to reject
+      # here and 12 minutes of provisioning to reject after it.
+      - name: Resolve the bucket list
+        id: plan
+        env:
+          BUCKET: ${{ inputs.bucket }}
+          BUCKETS: ${{ inputs.buckets }}
+        run: |
+          list="$BUCKETS"
+          if [ -n "$(printf '%s' "$list" | tr -d '[:space:],')" ]; then
+            if [ -n "$(printf '%s' "$BUCKET" | tr -d '[:space:]')" ]; then
+              echo "::notice::both 'bucket' and 'buckets' were given; the list wins and '$BUCKET' is ignored"
+            fi
+          else
+            list="$BUCKET"
+          fi
+          # Comma OR newline separated, so a caller can write either.
+          printf '%s\n' "$list" | tr ',' '\n' \
+            | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep . > "$RUNNER_TEMP/buckets.txt" || true
+          count=$(wc -l < "$RUNNER_TEMP/buckets.txt")
+          if [ "$count" -eq 0 ]; then
+            echo "::error::no bucket to run — give 'bucket' or 'buckets'"
+            exit 1
+          fi
+          # A bucket named twice would be RUN twice and counted twice in the combined total,
+          # which is a wrong number rather than a failure — so it is refused here.
+          dupes=$(sort "$RUNNER_TEMP/buckets.txt" | uniq -d)
+          if [ -n "$dupes" ]; then
+            echo "::error::bucket(s) named more than once, which would double-count them: $dupes"
+            exit 1
+          fi
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "Running $count bucket(s):"
+          nl -ba "$RUNNER_TEMP/buckets.txt"
+
       - uses: ./.github/actions/provision-bc
         with:
           bc-version: ${{ steps.bc.outputs.version }}
 
       - name: Fetch the bucket sources
-        env:
-          BUCKET: ${{ inputs.bucket }}
         run: |
-          dotnet run --project tools/DownloadArtifacts -- \
-            test-sources ${{ steps.bc.outputs.version }} "$RUNNER_TEMP/ms-buckets" "$BUCKET"
-          bundle="$RUNNER_TEMP/ms-buckets/$BUCKET"
-          echo "AL files in $bundle: $(find "$bundle" -name '*.al' | wc -l)"
-          test -f "$bundle/app.json"
+          mapfile -t BUCKET_LIST < "$RUNNER_TEMP/buckets.txt"
+          for bucket in "${BUCKET_LIST[@]}"; do
+            dotnet run --project tools/DownloadArtifacts -- \
+              test-sources ${{ steps.bc.outputs.version }} "$RUNNER_TEMP/ms-buckets" "$bucket"
+            bundle="$RUNNER_TEMP/ms-buckets/$bucket"
+            echo "AL files in $bundle: $(find "$bundle" -name '*.al' | wc -l)"
+            test -f "$bundle/app.json"
+          done
 
       - name: Install the backup reader (bcbak)
         if: ${{ inputs.test-data }}
@@ -281,65 +383,105 @@ jobs:
           path: ~/.al-runner/test-data/${{ steps.bc.outputs.version }}
           key: bc-test-data-w1-${{ steps.bc.outputs.version }}
 
-      - name: Run the bucket
+      - name: Run the bucket(s)
         id: run
         env:
           # The 120 s default is sized for a corpus app, not a 9,500-test bucket whose emit
           # alone is minutes. #2721 scales the default by --jobs worker count; this is a single
           # process, so the base value is what applies.
           AL_RUNNER_EMIT_TIMEOUT_SEC: "3600"
-          BUCKET: ${{ inputs.bucket }}
+          # Explicit, not left to the runner's core count. Server GC sizes its heaps from the
+          # CPU count and those heaps are ~90% of peak RSS: Tests-ERM peaked at 10.9 GiB on a
+          # 12-core box, and a hosted runner has 4 vCPU and 16 GB. Two heaps buys margin on the
+          # largest bucket at a small throughput cost.
+          #
+          # DOTNET_GCHeapHardLimit is deliberately NOT used and must not be added: below about
+          # 1.25 GB it silently changed test RESULTS (259 passing became 212), so it would
+          # corrupt the number this workflow exists to produce rather than fail loudly.
+          #
+          # The value is read as HEX, like every DOTNET_GC* knob. "2" means 2 either way; a
+          # later edit to "16" would mean 22 heaps, not 16.
+          DOTNET_GCHeapCount: "2"
           BC_VERSION: ${{ steps.bc.outputs.version }}
           WITH_TEST_DATA: ${{ inputs.test-data }}
+          READER: ${{ steps.reader.outputs.tag }}
         run: |
           set +e
-          bundle="$RUNNER_TEMP/ms-buckets/$BUCKET"
+          mapfile -t BUCKET_LIST < "$RUNNER_TEMP/buckets.txt"
+          total=${#BUCKET_LIST[@]}
           bak="$HOME/.al-runner/test-data/$BC_VERSION/BusinessCentral-W1.bak"
-          args=( "$bundle"
-                 --package-cache "$HOME/.al-runner/platform-apps"
-                 --package-cache "$HOME/.al-runner/test-apps"
-                 --cache "$RUNNER_TEMP/al-runner-cache"
-                 --output-junit "$GITHUB_WORKSPACE/junit.xml"
-                 --out "$GITHUB_WORKSPACE/results.json"
-                 --quiet )
-          if [ "$WITH_TEST_DATA" = "true" ]; then
-            # SQL form of the company name: trailing underscore. With a period the run fails
-            # loudly and lists both companies.
-            args+=( "--test-data=$bak" --test-data-company "CRONUS International Ltd_" )
-          fi
           # cwd OUTSIDE the checkout: the runner auto-probes ./tests/expectations from cwd as
           # a fallback (ExpectationsDirectoryResolution.cs), and the corpus manifest has no
           # business reclassifying a Microsoft bucket.
           cd "$RUNNER_TEMP"
-          start=$SECONDS
-          "$GITHUB_WORKSPACE/AlRunner/bin/Release/net8.0/al-runner" "${args[@]}" 2>&1 \
-            | tee "$GITHUB_WORKSPACE/run.log"
-          rc=${PIPESTATUS[0]}
-          echo "rc=$rc" >> "$GITHUB_OUTPUT"
-          echo "elapsed=$(( SECONDS - start ))" >> "$GITHUB_OUTPUT"
-          echo "runner exit code: $rc (1 = tests failed, the expected outcome; the summary step decides the verdict)"
+          i=0
+          for bucket in "${BUCKET_LIST[@]}"; do
+            i=$((i + 1))
+            # Bucket names contain spaces (Tests-Cash Flow); the directory name must not.
+            slug=$(printf '%s' "$bucket" | tr ' /' '__')
+            out="$GITHUB_WORKSPACE/results/$slug"
+            mkdir -p "$out"
+            printf '%s\n' "$bucket" > "$out/bucket.txt"
+            args=( "$RUNNER_TEMP/ms-buckets/$bucket"
+                   --package-cache "$HOME/.al-runner/platform-apps"
+                   --package-cache "$HOME/.al-runner/test-apps"
+                   --cache "$RUNNER_TEMP/al-runner-cache"
+                   --output-junit "$out/junit.xml"
+                   --out "$out/results.json"
+                   --quiet )
+            if [ "$WITH_TEST_DATA" = "true" ]; then
+              # SQL form of the company name: trailing underscore. With a period the run fails
+              # loudly and lists both companies.
+              args+=( "--test-data=$bak" --test-data-company "CRONUS International Ltd_" )
+            fi
+            echo "::group::[$i/$total] $bucket"
+            start=$SECONDS
+            "$GITHUB_WORKSPACE/AlRunner/bin/Release/net8.0/al-runner" "${args[@]}" 2>&1 \
+              | tee "$out/run.log"
+            rc=${PIPESTATUS[0]}
+            elapsed=$(( SECONDS - start ))
+            echo "runner exit code: $rc (1 = tests failed, the expected outcome)"
+            echo "::endgroup::"
+            printf '%s\n' "$rc" > "$out/rc.txt"
+            printf '%s\n' "$elapsed" > "$out/elapsed.txt"
+            # This bucket's numbers reach the job summary and the run's annotations NOW, before
+            # the next one starts. --notice is what survives a job killed at the 360-minute
+            # ceiling: an annotation is emitted through the log stream as it happens, whereas a
+            # step summary is only finalised when the step ends, and this step is the whole run.
+            python3 "$GITHUB_WORKSPACE/scripts/ms-bucket-summary.py" \
+              --log "$out/run.log" --junit "$out/junit.xml" \
+              --rc "$rc" --elapsed "$elapsed" \
+              --bucket "$bucket" --bc-version "$BC_VERSION" \
+              --test-data "$WITH_TEST_DATA" --reader "$READER" \
+              --notice \
+              --out "$out/summary.md" \
+              --step-summary "$GITHUB_STEP_SUMMARY"
+          done
+          # Always 0: the verdict belongs to the combined-total step below, which sees every
+          # bucket. Failing here would skip it and lose the one number this run is for.
+          exit 0
 
-      - name: Job summary
+      # The verdict, and the deliverable. Green when every requested bucket produced a number
+      # (runner exit 0/1 plus a JUnit file); red when one did not. Thousands of FAILING tests
+      # are the expected outcome of a Microsoft bucket and are reported, not failed on.
+      - name: Combined total
         if: always()
         run: |
-          # Exit 0 = a number was produced (runner exit 0/1 + JUnit); 1 = no measurement.
-          python3 scripts/ms-bucket-summary.py \
-            --log run.log --junit junit.xml \
-            --rc "${{ steps.run.outputs.rc || 2 }}" \
-            --elapsed "${{ steps.run.outputs.elapsed || 0 }}" \
-            --bucket "${{ inputs.bucket }}" \
+          python3 scripts/ms-bucket-total.py \
+            --results results \
+            --buckets "$RUNNER_TEMP/buckets.txt" \
             --bc-version "${{ steps.bc.outputs.version }}" \
             --test-data "${{ inputs.test-data }}" \
-            --reader "${{ steps.reader.outputs.tag }}" \
+            --expected-tests "${{ inputs.expected-tests || 0 }}" \
             --step-summary "$GITHUB_STEP_SUMMARY"
 
+      # One directory per bucket: results/<bucket>/{junit.xml,results.json,run.log,summary.md}.
+      # if: always() so a job killed at the 360-minute ceiling still hands over every bucket
+      # that finished — the same reason the per-bucket summaries are written inside the loop.
       - name: Upload results (JUnit for clustering, classification JSON, full log)
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: ms-bucket-${{ inputs.bucket }}-${{ steps.bc.outputs.version }}
-          path: |
-            junit.xml
-            results.json
-            run.log
+          name: ms-bucket-${{ inputs.label || inputs.bucket || 'list' }}-${{ steps.bc.outputs.version }}
+          path: results
           if-no-files-found: ignore

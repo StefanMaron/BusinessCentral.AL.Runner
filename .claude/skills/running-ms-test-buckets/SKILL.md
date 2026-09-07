@@ -152,7 +152,9 @@ Do not run all 33 at once to answer a question. Pick by what you are asking:
   and its cluster ranking has matched the full run's. Big enough to rank work, small enough to
   finish.
 - **The complete picture** — all buckets, but expect hours and size the worker count from
-  measured headroom.
+  measured headroom. On a hosted runner this is a single dispatch of
+  `.github/workflows/ms-surface.yml` (below); on a developer machine it competes with
+  everything else for memory and has OOMed the box.
 
 Memory, measured after the per-worker GC tuning: roughly **1.1 GB per worker** without test
 data, **~2.3 GB with it** (including its backup-reader sidecar). Derive the job count from free
@@ -205,10 +207,18 @@ together.
 
 ## In CI
 
-`.github/workflows/ms-bucket.yml` runs one bucket on a hosted runner with the full
-configuration, `workflow_dispatch` only. It is a measurement job, not a gate: green means it
-produced a number, not that the suite passed. Prefer it over a developer machine when the
-machine is also doing something else.
+`.github/workflows/ms-bucket.yml` runs one bucket — or a list of them, sequentially in one
+job — on a hosted runner with the full configuration, `workflow_dispatch` only. It is a
+measurement job, not a gate: green means it produced a number, not that the suite passed.
+Prefer it over a developer machine when the machine is also doing something else.
+
+`.github/workflows/ms-surface.yml` is the whole surface: one dispatch, one job, all 32
+non-empty buckets in sequence, one combined total (#3409). Each bucket's numbers reach the job
+summary and the run's annotations as that bucket finishes, so a run that hits the 360-minute
+hosted ceiling still hands over everything that completed. It excludes `Tests-TestLibraries`
+(a library, zero tests) and `Tests-Local` (empty in the W1 artifact); the bucket list is held
+to the artifact's own inventory by `AlRunner.Tests/MsSurfaceWorkflowTests.cs`. For a subset,
+dispatch `ms-bucket.yml` with its `buckets` input rather than editing the surface list.
 
 ## Sister material
 
