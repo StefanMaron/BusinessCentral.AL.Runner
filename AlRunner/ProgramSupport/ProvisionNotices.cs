@@ -32,8 +32,25 @@ internal static partial class ProgramSupport
            $"Microsoft.Dynamics.Nav.CodeAnalysis. Fix with: al-runner provision --bc-version {engineVersion}";
 
     /// <summary>
+    /// The "cdn-exact-undetermined"/"cdn-minor-undetermined" tiers — issue #2981. The CDN was
+    /// never reached, so nothing here may state what it does or does not hold; the whole point
+    /// of the tier is that the runner declined to demote on a question that went unanswered.
+    /// Deliberately NOT a KNOWN-DEGRADED warning: the target is still the one version
+    /// selection wants, and if the fault persists the download that follows fails with
+    /// NetworkDiagnosis's classified observation rather than quietly running on the wrong
+    /// artifact.
+    /// </summary>
+    /// <param name="target">What provisioning will now fetch — the held tier's version or prefix.</param>
+    internal static string UndeterminedProbeNotice(string engineVersion, string target)
+        => $"[bc] no --bc-version given and the CDN could not be reached to check BC {engineVersion} " +
+           $"— see the observation above. Keeping BC {target} as the provisioning target rather than " +
+           $"falling back to an older minor: a probe that went unanswered is not evidence the build " +
+           $"was withdrawn. If the fault persists the download below will fail and name it.";
+
+    /// <summary>
     /// "major-fallback" tier: neither the engine's exact build nor its minor could be obtained
     /// from cache or the CDN. Genuinely degraded — but not necessarily Microsoft's doing.
+    /// Reaching this tier now requires both CDN probes to have actually answered (#2981).
     /// </summary>
     internal static string MajorFallbackWarning(string engineVersion, string engineMajorMinor, string engineMajor)
         => $"[bc] warning: BC {engineMajorMinor}.x is not cached and could not be obtained " +
