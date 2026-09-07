@@ -1,0 +1,17 @@
+{
+  "id": "5f2a9c74-1b83-4e07-9d62-8a4c3e015b9f",
+  "name": "NavAppInstalledApp Dep",
+  "publisher": "AL Runner",
+  "version": "9.7.5.3",
+  "brief": "Issue #2961. Dependency half of the NAV App Installed App (2000000153) registry reproducer: a second loaded app, with a deliberately distinctive four-part version, so the consuming bundle can prove the registry discriminates BETWEEN apps rather than answering the same row for all of them.",
+  "description": "Carries no logic. Its whole purpose is to exist in the loaded closure with an identity — app id, name, publisher and a 9.7.5.3 version whose four parts are all different and none of them 0 or 1 — that cannot be confused with the consuming bundle's 1.0.0.0. A registry that fabricated rows, shared one package id, or echoed the bundle's own manifest back would pass the single-app tests next door and fail here.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65770,
+      "to": 65779
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0"
+}
