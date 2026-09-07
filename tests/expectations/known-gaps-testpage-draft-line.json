@@ -1,0 +1,42 @@
+[
+  {
+    "codeunitId": 60358,
+    "CodeunitName": "ONRC Tests",
+    "Method": "New_OnEmptyLinkedPart_RunsOnNewRecordOncePlusTheOpenCost",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3029",
+    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #266 (5f4b254), which added this test. The runner's TestPage raises a page's OnNewRecord a different number of times than BC does for a draft line \u2014 EnterNewRowLine and the promotion both call TryNewRecord. Expected 7 OnNewRecord firings, got 4. Tracked as #3029, which is open and is NOT closed by this PR; open PR #3414 fixes it and removes this entry."
+  },
+  {
+    "codeunitId": 60358,
+    "CodeunitName": "ONRC Tests",
+    "Method": "DraftLine_ShownAndUntouched_RunsOnNewRecordOncePerRenderedBlankLine",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3029",
+    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #266 (5f4b254), which added this test. The runner's TestPage raises a page's OnNewRecord a different number of times than BC does for a draft line \u2014 EnterNewRowLine and the promotion both call TryNewRecord. Expected 6 OnNewRecord firings, got 4. Tracked as #3029, which is open and is NOT closed by this PR; open PR #3414 fixes it and removes this entry."
+  },
+  {
+    "codeunitId": 60358,
+    "CodeunitName": "ONRC Tests",
+    "Method": "DraftLine_ShownThenWritten_WriteDoesNotRaiseOnNewRecordAgain",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3029",
+    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #266 (5f4b254), which added this test. The runner's TestPage raises a page's OnNewRecord a different number of times than BC does for a draft line \u2014 EnterNewRowLine and the promotion both call TryNewRecord. Expected 6 OnNewRecord firings, got 4. Tracked as #3029, which is open and is NOT closed by this PR; open PR #3414 fixes it and removes this entry."
+  },
+  {
+    "codeunitId": 60358,
+    "CodeunitName": "ONRC Tests",
+    "Method": "DraftLine_ReachedByNextThenWritten_RunsOnNewRecordExactlyOnce",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3029",
+    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #266 (5f4b254), which added this test. The runner's TestPage raises a page's OnNewRecord a different number of times than BC does for a draft line \u2014 EnterNewRowLine and the promotion both call TryNewRecord. Landing on an existing data row raised OnNewRecord once where BC raises it not at all. Tracked as #3029, which is open and is NOT closed by this PR; open PR #3414 fixes it and removes this entry."
+  },
+  {
+    "codeunitId": 60358,
+    "CodeunitName": "ONRC Tests",
+    "Method": "TwoRowsWrittenThroughTheDraftLine_SecondRowRaisesOnNewRecordOnceMore",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3029",
+    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #266 (5f4b254), which added this test. The runner's TestPage raises a page's OnNewRecord a different number of times than BC does for a draft line \u2014 EnterNewRowLine and the promotion both call TryNewRecord. Expected 6 OnNewRecord firings, got 5. Tracked as #3029, which is open and is NOT closed by this PR; open PR #3414 fixes it and removes this entry."
+  }
+]
