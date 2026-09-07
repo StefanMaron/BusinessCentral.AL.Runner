@@ -638,6 +638,24 @@ if (serverMode && watchMode)
     Console.Error.WriteLine("--server and --watch are mutually exclusive (both stay warm in-process; pick one).");
     return 2;
 }
+// #2403: every file-producing flag's parent directory is created HERE, before the run,
+// because all three writers open their file only after it finishes — so a missing
+// directory used to cost the whole run (measured: 103s and 834 classified results, lost
+// to an unhandled DirectoryNotFoundException at the last step). Refusing at parse time
+// makes a mistyped path cost nothing. --coverage-out is only checked when --coverage
+// asked for the file; it has a default value, and preflighting that default would create
+// a directory for a run that never writes one.
+foreach (var (outputFlag, outputValue) in new[]
+{
+    ("--out", outPath),
+    ("--output-junit", outputJunitPath),
+    ("--coverage-out", coverageEnabled ? coverageOutputPath : null),
+})
+{
+    if (outputValue == null) continue;
+    var outputProblem = AlRunner.Infrastructure.OutputPaths.TryPrepare(outputFlag, outputValue);
+    if (outputProblem != null) { Console.Error.WriteLine(outputProblem); return 2; }
+}
 // Issue #2085: --platform-apps/--test-apps/--service-tier/--resolve-version only make
 // sense under the `provision` subcommand (they force/bypass a specific artifact-set
 // download; a normal test run has no use for them). Reject early rather than silently
@@ -4180,6 +4198,9 @@ int computedExitCode = 0;
         : (expectationsMatchFailure ? 5 : 0)));  // #3123: an expectations entry matched no test
 }
 
+// Set when the --output-json document is owed to stdout, printed after the output writes
+// below have had their say on computedExitCode. See the branch that sets it.
+bool printJsonOutput = false;
 if (outputJson && willResume)
 {
     // The final attempt prints the whole run. If Rerun then fails to START that attempt it
@@ -4190,12 +4211,13 @@ if (outputJson && willResume)
 }
 else if (outputJson)
 {
-    var json = Reporter.SerializeJsonOutput(allResults, computedExitCode);
-    // Restore the real stdout (captured above) so this is the ONLY thing ever
-    // written to it — every banner/progress line up to this point went to stderr
-    // instead. See the redirect right after arg parsing for why.
-    if (outputJsonStdout != null) Console.SetOut(outputJsonStdout);
-    Console.WriteLine(json);
+    // Deferred, not serialized here: computedExitCode is not final until the output writes
+    // below have run, and the `exitCode` field exists precisely so a JSON-only consumer
+    // learns the real outcome (#2403). Serializing at this point emitted `exitCode: 0` on a
+    // run whose --out write then failed and whose process exited 2. Everything between here
+    // and the write goes to stderr (stdout is redirected for the whole run in --output-json
+    // mode), so postponing the single stdout write changes nothing else.
+    printJsonOutput = true;
 }
 else
 {
@@ -4276,12 +4298,21 @@ if (tddMode)
             tddOut.WriteLine($"  {m.ObjectDisplayName}: {m.MemberKind} {m.Signature}");
     }
 }
+// #2403: the run is over by now, so a write failure here must not take the run's exit
+// code (or its already-printed summary) down with it. TryWrite re-creates the parent —
+// preflight ran minutes ago and the directory can have gone away since — and hands back
+// a diagnostic instead of throwing. Reported on stderr and, below, folded into the exit
+// code as a distinct reporting failure, so a script that depends on the file still learns
+// it is missing rather than reading a stale copy as this run's output.
+var lostOutputs = new List<string>();
 if (outPath != null)
 {
-    Reporter.WriteClassification(allResults, outPath);   // #2719: the run, not this attempt's slice
+    var writeProblem = AlRunner.Infrastructure.OutputPaths.TryWrite("--out", outPath,
+        () => Reporter.WriteClassification(allResults, outPath));   // #2719: the run, not this attempt's slice
+    if (writeProblem != null) { Console.Error.WriteLine(writeProblem); lostOutputs.Add("--out"); }
     // In --output-json mode this must not land on stdout (it already printed the
     // JSON above and restored the real stdout writer) — route to stderr there.
-    (outputJson ? Console.Error : Console.Out).WriteLine($"Classification → {outPath}");
+    else (outputJson ? Console.Error : Console.Out).WriteLine($"Classification → {outPath}");
 }
 if (outputJunitPath != null)
 {
@@ -4290,8 +4321,10 @@ if (outputJunitPath != null)
     // files and go into the XML too — the printed summary above already folded their totals in,
     // and under --jobs the parent reads ONLY this file, so a slice here silently shrank the
     // aggregate by everything the earlier attempts ran. Empty list on a run that never resumed.
-    JUnitReport.WriteJUnit(outputJunitPath, results, mergeCountsFiles);
-    if (!outputJson) Console.WriteLine($"JUnit XML → {outputJunitPath}");
+    var junitProblem = AlRunner.Infrastructure.OutputPaths.TryWrite("--output-junit", outputJunitPath,
+        () => JUnitReport.WriteJUnit(outputJunitPath, results, mergeCountsFiles));
+    if (junitProblem != null) { Console.Error.WriteLine(junitProblem); lostOutputs.Add("--output-junit"); }
+    else if (!outputJson) Console.WriteLine($"JUnit XML → {outputJunitPath}");
 }
 if (coverageEnabled)
 {
@@ -4302,12 +4335,21 @@ if (coverageEnabled)
     var coverageSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
         bundles, relativeTo: Directory.GetCurrentDirectory());
     var coverageStatements = AlRunner.Infrastructure.AlCoverageTracker.Collect(coverageSourceMap);
-    var coverageFiles = AlRunner.Infrastructure.AlCoverageReport.WriteCobertura(
-        coverageOutputPath, coverageStatements);
+    List<AlRunner.Infrastructure.AlCoverageReport.FileCoverage>? coverageFiles = null;
+    var coverageProblem = AlRunner.Infrastructure.OutputPaths.TryWrite("--coverage-out", coverageOutputPath,
+        () => coverageFiles = AlRunner.Infrastructure.AlCoverageReport.WriteCobertura(
+            coverageOutputPath, coverageStatements));
     var coverageOut = outputJson ? Console.Error : Console.Out;
-    coverageOut.WriteLine();
-    coverageOut.WriteLine(AlRunner.Infrastructure.AlCoverageReport.FormatConsoleTable(coverageFiles));
-    coverageOut.WriteLine($"Cobertura → {coverageOutputPath}");
+    if (coverageProblem != null) { Console.Error.WriteLine(coverageProblem); lostOutputs.Add("--coverage-out"); }
+    else
+    {
+        // The per-file table is computed by WriteCobertura itself, so it exists only when
+        // the write succeeded — printing a coverage summary for a file that was never
+        // written would claim an artifact the caller does not have.
+        coverageOut.WriteLine();
+        coverageOut.WriteLine(AlRunner.Infrastructure.AlCoverageReport.FormatConsoleTable(coverageFiles!));
+        coverageOut.WriteLine($"Cobertura → {coverageOutputPath}");
+    }
 }
 
 // Issue #2481's behavioural regression gate — dumps the per-statement/per-scope
@@ -4338,6 +4380,33 @@ if (!serverMode && !watchMode && !dapMode
     && AlRunner.Infrastructure.ExecutionSchedulerShutdown.DisposeIfRealized()
         == AlRunner.Infrastructure.ExecutionSchedulerShutdown.Outcome.Disposed)
     Console.Error.WriteLine("[shutdown] disposed BC ExecutionScheduler that a BC-internal path realized during the run (#2704)");
+
+// #2403: an output file the caller asked for and did not get. Ranked exactly like
+// carryIncomplete above, and for the same reason: it says nothing about the AL, it says the
+// REPORT is not there — so a consumer must not read it as "some tests failed", and equally
+// must not read a zero as "the file I asked for is on disk". Never RAISED above what the
+// tests earned, so a failing run still reports its own, more specific code.
+if (lostOutputs.Count > 0 && computedExitCode == 0)
+{
+    Console.Error.WriteLine(
+        $"al-runner ran to completion but could not write {string.Join(", ", lostOutputs)} " +
+        $"(see the message above). The run's results are in the summary printed before this; " +
+        $"exiting 2 because the file you asked for is not on disk.");
+    computedExitCode = 2;
+}
+
+// The --output-json document, now that computedExitCode is final. Deliberately after the
+// escalation above: its `exitCode` field is the run's real outcome for a consumer that reads
+// only this document, so it must not disagree with what the process exits with.
+if (printJsonOutput)
+{
+    var json = Reporter.SerializeJsonOutput(allResults, computedExitCode);
+    // Restore the real stdout (captured above) so this is the ONLY thing ever
+    // written to it — every banner/progress line up to this point went to stderr
+    // instead. See the redirect right after arg parsing for why.
+    if (outputJsonStdout != null) Console.SetOut(outputJsonStdout);
+    Console.WriteLine(json);
+}
 
 // Exit non-zero if anything failed — the default since the v2 cut, matching main/v1.
 // --no-strict-exit restores the old always-0 behaviour for JSON-only consumers.
