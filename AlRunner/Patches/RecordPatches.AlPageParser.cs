@@ -477,6 +477,40 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// <paramref name="objectId"/>'s declared NAME within the object kind
+    /// <paramref name="runObjectKind"/> names — <c>Page</c>, <c>Report</c>, <c>Codeunit</c>,
+    /// <c>XmlPort</c> or <c>Query</c>. Null when this run knows no object of that kind with
+    /// that id.
+    ///
+    /// <para>AL gives every object kind its OWN id namespace, so <c>report 64701</c> and
+    /// <c>page 64701</c> are two different objects that coexist. Resolving an id without
+    /// saying which kind it belongs to therefore answers the wrong object rather than
+    /// nothing, and it does so most often in the message a developer is reading to find out
+    /// what went wrong (#2943).</para>
+    ///
+    /// <para>Kind matching goes through <see cref="NormalizeObjectTypeName"/>, so the
+    /// inventory's <c>"XmlPort"</c> and BC's <c>RunObjectType.XMLport</c> compare equal
+    /// without a second spelling table to keep in step.</para>
+    /// </summary>
+    internal static string? TryGetObjectNameOfKind(string runObjectKind, int objectId)
+    {
+        if (objectId <= 0 || string.IsNullOrWhiteSpace(runObjectKind)) return null;
+
+        // A page keeps its dedicated lookup: it is the one kind with a precompiled-dependency
+        // fallback, which the source inventory below does not carry.
+        var wanted = NormalizeObjectTypeName(runObjectKind);
+        if (wanted == "page") return TryGetAnyPageName(objectId);
+
+        foreach (var (kind, id, name, _) in EnumerateKnownAlObjects())
+            if (id == objectId
+                && !string.IsNullOrEmpty(name)
+                && NormalizeObjectTypeName(kind) == wanted)
+                return name;
+
+        return null;
+    }
+
+    /// <summary>
     /// Control id → source-table field number for every field control on the page, INCLUDING
     /// the ones contributed by pageextensions that extend it.
     /// <para>An extension's controls are keyed in the EXTENSION's own id space, because BC's

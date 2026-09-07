@@ -18,6 +18,14 @@
 ///                                       link SELECTS is pinned upstream in the al-language
 ///                                       corpus (handlers/TestPageActionRunPageLink.al).
 ///   ReportRunObjectAction               a RunObject naming a REPORT: in scope, not implemented.
+///   CodeunitRunObjectAction             ... a CODEUNIT, same.
+///   XmlPortRunObjectAction              ... an XMLPORT, same.
+///   QueryRunObjectAction                ... a QUERY, same. All four kinds now have an arm;
+///                                       until #2943 only the report did, so a regression on
+///                                       the other three had nothing watching it.
+///   DecoyReportRunObjectAction          a REPORT whose id collides with a PAGE's, which is
+///                                       legal (separate id namespaces per kind) and is what
+///                                       pins #2943's mislabeling defect.
 ///   NoEffectAction / NoEffectRef        neither a trigger nor a RunObject, so genuinely
 ///                                       nothing to run; the refusal that names the actionref's
 ///                                       TARGET lives here.
@@ -128,6 +136,40 @@ page 64541 "Par Host Page"
                 ApplicationArea = All;
                 Caption = 'Report Run Object Action';
                 RunObject = report "Par Noop Report";
+            }
+
+            // The other three non-page kinds. RunObject accepts five; the runner performs
+            // exactly one (Page) and refuses the rest. Until these were added, only the REPORT
+            // arm of that refusal had a test, so a regression that made a codeunit, xmlport or
+            // query target do nothing QUIETLY would not have been caught by anything.
+            action(CodeunitRunObjectAction)
+            {
+                ApplicationArea = All;
+                Caption = 'Codeunit Run Object Action';
+                RunObject = codeunit "Par Noop Runner";
+            }
+
+            action(XmlPortRunObjectAction)
+            {
+                ApplicationArea = All;
+                Caption = 'XmlPort Run Object Action';
+                RunObject = xmlport "Par Noop XmlPort";
+            }
+
+            action(QueryRunObjectAction)
+            {
+                ApplicationArea = All;
+                Caption = 'Query Run Object Action';
+                RunObject = query "Par Noop Query";
+            }
+
+            // The regression guard for #2943's mislabeling defect. Its target is a REPORT whose
+            // id collides with the page "Par RunObject Target" — see ParDecoyReport.Report.al.
+            action(DecoyReportRunObjectAction)
+            {
+                ApplicationArea = All;
+                Caption = 'Decoy Report Run Object Action';
+                RunObject = report "Par Decoy Report";
             }
 
             action(NoEffectAction)
