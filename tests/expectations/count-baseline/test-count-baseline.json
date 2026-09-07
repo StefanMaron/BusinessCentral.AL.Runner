@@ -2,7 +2,7 @@
   "_comment": "Schema, semantics and how to bump: README.md in this directory. Per-bump rationale: history.md, never a prose line in here (#2485).",
   "suites": {
     "al-language": {
-      "tests": { "default": 2978 },
+      "tests": { "default": 3008 },
       "appGroups": { "default": 1 }
     },
     "al-language-internals-fixture": { "tests": { "default": 0 }, "appGroups": { "default": 1 } },
@@ -33,6 +33,8 @@
         "microsoft-test-library": { "tests": 3, "absentOn": ["27.0", "27.3", "27.5"] },
         "navapp-callermodule-dispatch-dep": { "tests": 0 },
         "navapp-callermodule-dispatch-main": { "tests": 4 },
+        "navapp-installed-app-dep": { "tests": 0 },
+        "navapp-installed-app-system-table": { "tests": 6 },
         "navapp-moduleinfo-dep": { "tests": 0 },
         "navapp-moduleinfo-main": { "tests": 15 },
         "object-metadata-system-table": { "tests": 6 },

@@ -61,6 +61,33 @@ Read it: `gh issue view <N> --repo StefanMaron/BusinessCentral.AL.Runner`.
 
 ## Step 3 — Implement (strict TDD)
 
+### The session scratchpad is SHARED — namespace before you write to it
+
+The scratchpad directory in your prompt looks per-agent and is not: every agent of
+this session gets the same one. Measured 2026-09-07 in one session's scratchpad —
+**200 entries, one of them namespaced.** It has published PRs #2973/#2974/#3181
+carrying another agent's body and a wrong `Closes #N`, buried a bug report inside a
+closed issue (#3073), and made a full-corpus run silently omit the tests it was
+measuring (#2980). Those are wrong answers in the shape of results, not tidiness.
+
+Get a private path rather than remembering to invent one:
+
+```bash
+p=$(tools/agent_scratchpad.py path pr-body.md --agent-id <AGENT-ID>)
+gh pr create --title "..." --body-file "$p"
+
+tools/agent_scratchpad.py dir --agent-id <AGENT-ID>       # clone corpora in here
+tools/agent_scratchpad.py check <path> --agent-id <AGENT-ID>   # exit 1 if shared
+```
+
+Never stage a PR body, clone a corpus, or write a probe bundle at a bare path in
+the scratchpad root — `body.md`, `corpus/`, `probe/` are the exact names that have
+already collided. `docs/agent-scratchpad.md` has the incident list.
+
+**And after `gh pr create`/`gh pr edit`, re-read what you published:**
+`gh pr view <N> --json closingIssuesReferences` must list exactly the issues you
+meant. That is what caught #3181 before it merged.
+
 ### Isolate your working tree first
 
 If you were not handed an isolated checkout, run `git status --short` on the tree you were given before touching git. Uncommitted changes you did not make mean another agent is mid-edit there — do **not** `git checkout -b`, you will either drag their work onto your branch or yank the tree out from under them. Take a worktree instead.
@@ -220,7 +247,7 @@ Full decision tree: `.claude/rules/bc-behavior-tests-go-upstream.md` plus the `a
 `.github/workflows/require-tests.yml`'s `require-tests` job triggers only when your diff touches `AlRunner/` (excluding `.md` files); when it does, it requires the diff to also touch something under `tests/` or `AlRunner.Tests/`. Two things agents got wrong:
 
 - The gate's grep (`^(tests/|AlRunner\.Tests/)`) accepts the gitlink line a pin bump produces in `git diff --name-only` — legitimate *only* when this PR is the fix PR the bump is folded into (above). You may still never edit a file *inside* the read-only submodule. If your proving test lives upstream and the pin isn't being bumped here (its corpus PR hasn't merged yet), add a **runner-side mechanism test** under `AlRunner.Tests/` instead — see `AlRunner.Tests/EnumCaptionCaptureTests.cs` or `AlRunner.Tests/MediaSetPatchesTests.cs` for the shape — pinning the runner's own C# behavior, not duplicating the BC-behaviour claim.
-- The `no-tests-needed` label bypasses the gate but is **not** a substitute for a real test when runtime behavior changed — use it only when the diff genuinely needs none (pure comment/doc changes inside `AlRunner/`). The `docs-only` label is for PRs that don't touch `AlRunner/` at all; those never trip the gate.
+- The `no-tests-needed` label bypasses the gate but is **not** a substitute for a real test when runtime behavior changed — use it only when the diff genuinely needs none (pure comment/doc changes inside `AlRunner/`). The `docs-only` label is for PRs that don't touch `AlRunner/` at all; those never trip the gate. Separately, and label or not, a PR whose every changed path ends in `.md` runs no BC legs — `test-matrix.yml` measures that from the diff and `BC test matrix passed` reports success with a note (#2890).
 
 Required doc updates:
 

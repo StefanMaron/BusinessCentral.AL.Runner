@@ -264,6 +264,13 @@ it can dispatch any of the eight against your branch. And the leg-set evidence i
 thinner on a PR: three legs give far fewer distinguishable failing sets than eight, so prefer
 the dispatch or an empty commit over reading a pattern out of three data points.
 
+**A pull request whose every changed path ends in `.md` runs no legs at all** (#2890):
+`test-matrix.yml`'s `changes` job measures the diff through `pr_changed_files.sh`, `bc-tests`
+is skipped, and `BC test matrix passed` still reports — success, with a step log saying the
+matrix was not run. The decision comes from the diff, never from the `docs-only` label. The
+cost is that the unit tests reading `.md` files (`ProseRelocationPointerTests`,
+`BcMatrixDocumentationDriftTests`) run on the merge commit's push to `main`, not on the PR.
+
 Read the result with `tools/ci-wait.py <PR> --timeout 0`; do **not** block on it and do not
 hand-roll a `gh run view` poll loop (section 0). Anything other than `completed` means "not yet
 reported", never "green" — leave the PR and read it again on your next pass.

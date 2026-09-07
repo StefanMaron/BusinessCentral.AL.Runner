@@ -51,7 +51,8 @@ name: MS bucket (nightly)
 # number from it can be compared against something. A nightly's job is DRIFT DETECTION, not
 # work generation.
 #
-# Not Tests-ERM (9,496) and not the full surface (~40,550): those are hours, and GitHub Actions
+# Not Tests-ERM (9,496) and not the full surface (40,530, counted — ms-surface.yml runs it
+# on demand): those are hours, and GitHub Actions
 # concurrency is per-ACCOUNT, shared with this repo's own eight-leg matrix and with the corpus
 # repository's. A multi-hour nightly would contend with PR CI every night for a number nobody
 # needs daily. Ranking work across the Microsoft surface is what the MANUAL dispatch is for.

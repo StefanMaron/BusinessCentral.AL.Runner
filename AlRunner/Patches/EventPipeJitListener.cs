@@ -76,8 +76,6 @@ public sealed class EventPipeJitListener : EventListener
     private readonly List<(string TypeFqn, string MethodName, MethodInfo Replacement, MethodBase? Original)> _targets = new();
 
     // Diagnostics
-    public int TotalMethodLoadEvents   { get; private set; }
-    public int BcMethodLoadEvents      { get; private set; }
     public bool BcEventsObserved       { get; private set; } = false;
     private readonly object _lock = new();
 
@@ -160,13 +158,10 @@ public sealed class EventPipeJitListener : EventListener
 
             if (methodNamespace == null || methodName == null) return;
 
-            // Count total and BC-specific events
-            Interlocked.Increment(ref _rawTotalMethodLoadEvents);
-
             bool isBc = methodNamespace.StartsWith("Microsoft.Dynamics.Nav", StringComparison.Ordinal);
+            long bcCount = CountMethodLoad(isBc).Bc;
             if (isBc)
             {
-                int bcCount = Interlocked.Increment(ref _rawBcEvents);
                 BcEventsObserved = true;
 
                 if (dry)
@@ -314,14 +309,25 @@ public sealed class EventPipeJitListener : EventListener
 
     // Shared atomic counters (writable from any thread via Interlocked)
     private int _rawTotalEvents;
-    private int _rawTotalMethodLoadEvents;
-    private int _rawBcEvents;
+    // Total and BC MethodLoad events as ONE value (#3169): the JIT callback thread is still
+    // live when the ProcessExit handler reads them, and two loads could report Bc > Total.
+    private readonly AlRunner.Infrastructure.CountPair _methodLoads = new();
 
-    // Snapshot for public properties (called from test runner thread after warm-up)
-    public void SnapshotCounters()
+    public readonly record struct MethodLoadCounts(long Total, long Bc);
+
+    /// <summary>One atomic add for both halves; extracted so the tally can be driven without
+    /// a live EventPipe session.</summary>
+    internal MethodLoadCounts CountMethodLoad(bool isBc)
     {
-        TotalMethodLoadEvents = _rawTotalMethodLoadEvents;
-        BcMethodLoadEvents    = _rawBcEvents;
+        var s = _methodLoads.Add(1, isBc ? 1 : 0);
+        return new(s.Total, s.Part);
+    }
+
+    /// <summary>The pair as it stood at one instant — one load, never two.</summary>
+    public MethodLoadCounts SnapshotCounters()
+    {
+        var s = _methodLoads.Read();
+        return new(s.Total, s.Part);
     }
 
     // ── Compiled-body JMP patch ────────────────────────────────────────────────

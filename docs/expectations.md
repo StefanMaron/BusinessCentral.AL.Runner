@@ -126,7 +126,7 @@ rather than replace it.
                                                    //   short label for what diverges
     "Issue":  "https://github.com/.../issues/123", // required when Mode = expect-fail-known-gap
                                                    // FORBIDDEN when Mode = expect-divergence
-    "Doc":  "docs/scope.md#reports",               // required when Mode = expect-divergence
+    "Doc":  "docs/scope.md#report-rendering",               // required when Mode = expect-divergence
                                                    //   where the decision is written down
                                                    // optional otherwise
 

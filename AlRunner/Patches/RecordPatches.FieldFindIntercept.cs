@@ -152,6 +152,15 @@ public static partial class RecordPatches
             RedriveAggregatePermissionSetForRequest(self, request);
             return false;
         }
+        if (tableId == PermissionSetSystemTableId)
+        {
+            // Find()/FindSet() over the Permission Set table lists ASSIGNABLE sets only,
+            // which is not the row set a keyed Get() sees — see
+            // RecordPatches.PermissionSetSystemTable.cs's "THE TWO PATHS" banner. Rebuild the
+            // store in the walk's shape, then fall through to the ORIGINAL InnerFindAsync.
+            RepopulatePermissionSetSystemTableForRequest(self, request, includeNonAssignable: false);
+            return false;
+        }
         return tableId == FieldFindTableId;
     }
 

@@ -97,6 +97,7 @@ public static class AlValueCapture
     {
         _series = new List<AlCapturedValue>();
         _frames.Clear();
+        Counts.ClearPart();
     }
 
     /// <summary>Every value change observed since the last Reset(), in execution order —
@@ -108,13 +109,15 @@ public static class AlValueCapture
         _series ?? (IReadOnlyList<AlCapturedValue>)Array.Empty<AlCapturedValue>();
 
     /// <summary>
-    /// Issue #2481's behavioural regression gate: incremented UNCONDITIONALLY, first
-    /// thing in <see cref="OnStmtHit"/>/<see cref="OnExit"/>, proving those Cecil-
-    /// rewritten call sites fire regardless of <see cref="Enabled"/>. Paired with
-    /// <see cref="Collect"/>'s emptiness (which stays empty whenever <see
-    /// cref="Enabled"/> stays false) — see AlRunner.Tests/PlainRunInstrumentationGateTests.cs.
+    /// Issue #2481's behavioural regression gate. <c>Total</c> is incremented UNCONDITIONALLY,
+    /// first thing in <see cref="OnStmtHit"/>/<see cref="OnExit"/>, proving those Cecil-
+    /// rewritten call sites fire regardless of <see cref="Enabled"/>; <c>Part</c> is the number
+    /// of records appended to the series, bumped at both append sites, and stays zero whenever
+    /// <see cref="Enabled"/> stays false. One value, not a counter plus a list read, so the
+    /// dump line reports a pair that existed (#3169). See
+    /// AlRunner.Tests/PlainRunInstrumentationGateTests.cs.
     /// </summary>
-    internal static long CallCount;
+    internal static readonly CountPair Counts = new();
 
     /// <summary>
     /// Feeds the per-execution series from BC's own StmtHit(N) — called from
@@ -140,7 +143,7 @@ public static class AlValueCapture
     /// </summary>
     public static IReadOnlyList<AlCapturedValue> OnStmtHit(NavMethodScope scope, int currentStatementNumber)
     {
-        System.Threading.Interlocked.Increment(ref CallCount);
+        Counts.IncrementTotal();
         if (!Enabled) return Array.Empty<AlCapturedValue>();
         if (!scope.IsTopLevelCall) return Array.Empty<AlCapturedValue>();
         // NavMethodScope.ExitStatementNumber (int.MaxValue) is written directly by
@@ -174,7 +177,11 @@ public static class AlValueCapture
             changed = DiffAndUpdate(scopeName, previous, fields, state.LastKnown, isBaseline,
                 isBaseline ? null : AssignedBetween(syntax, previous, currentStatementNumber));
         }
-        if (changed.Count > 0) (_series ??= new List<AlCapturedValue>()).AddRange(changed);
+        if (changed.Count > 0)
+        {
+            (_series ??= new List<AlCapturedValue>()).AddRange(changed);
+            Counts.Add(0, changed.Count);
+        }
         state.LastStatementId = currentStatementNumber;
         return changed;
     }
@@ -195,7 +202,7 @@ public static class AlValueCapture
     /// </summary>
     public static void OnExit(NavMethodScope scope)
     {
-        System.Threading.Interlocked.Increment(ref CallCount);
+        Counts.IncrementTotal();
         // #2056: every scope exit also ends its open loop instances (AlIterationTracker
         // self-gates), so this must run even when captureValues is off.
         IReadOnlyList<AlCapturedValue> changed = Array.Empty<AlCapturedValue>();
@@ -216,7 +223,11 @@ public static class AlValueCapture
             var assigned = AlScopeSyntaxResolver.Resolve(scope.GetType())?.Writes.TargetsOf(statementId);
 
             changed = DiffAndUpdate(scopeName, statementId, NamedFields(scope), lastKnown, isBaseline: false, assigned);
-            if (changed.Count > 0) (_series ??= new List<AlCapturedValue>()).AddRange(changed);
+            if (changed.Count > 0)
+            {
+                (_series ??= new List<AlCapturedValue>()).AddRange(changed);
+                Counts.Add(0, changed.Count);
+            }
         }
         AlIterationTracker.OnScopeExit(scope, changed);
     }

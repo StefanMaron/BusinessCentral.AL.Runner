@@ -106,6 +106,12 @@ public static partial class RecordPatches
     /// <c>Exist(...)</c> FlowField is computed over. Seeded alongside 2000000206 (#3066).</summary>
     internal const int InstalledApplicationSystemTableId = 2000000212;
 
+    /// <summary>NAV App Installed App — the TENANT-database registry of installed apps
+    /// (#2961). Seeded alongside 2000000206/2000000212 from the same loaded-app closure, so
+    /// the three tables cannot disagree about which apps are present. Unlike those two it is
+    /// <c>Scope = Cloud</c>, so ordinary Cloud-target AL can name it directly.</summary>
+    internal const int NavAppInstalledAppSystemTableId = 2000000153;
+
     private static bool _publishedApplicationBundleRowSeededForThisBundle;
 
     internal static void ResetPublishedApplicationSystemTableForNewBundle()
@@ -163,6 +169,11 @@ public static partial class RecordPatches
         // practice (both ship in System.app), so this is a guard, not an expected path.
         var installedMeta = EnsureTableInMetadataCache(InstalledApplicationSystemTableId);
 
+        // NAV App Installed App (2000000153), same guard and the same reason: a closure can
+        // carry 2000000206 without it, and this table simply stays empty as it did before
+        // #2961 rather than the whole seed failing.
+        var navAppInstalledMeta = EnsureTableInMetadataCache(NavAppInstalledAppSystemTableId);
+
         var source = ResolveSkeletonDataAccessSource();
         if (source == null)
         {
@@ -183,6 +194,7 @@ public static partial class RecordPatches
         if (modules.Count == 0) return;
 
         int seeded = 0, alreadyPresent = 0, installedSeeded = 0, installedAlreadyPresent = 0;
+        int navAppSeeded = 0, navAppAlreadyPresent = 0;
         var failed = new List<string>();
 
         SeedOutcome Run(string label, Action insert)
@@ -225,6 +237,19 @@ public static partial class RecordPatches
                 case SeedOutcome.Inserted: installedSeeded++; break;
                 case SeedOutcome.AlreadyPresent: installedAlreadyPresent++; break;
             }
+
+            if (navAppInstalledMeta == null) continue;
+
+            // Attempted independently of both rows above, for the reason given there: these
+            // are separate inserts into separate tables, and skipping this one because a
+            // sibling was already present would leave an app published-and-installed on one
+            // pair of tables and absent from the one ordinary Cloud AL actually reads.
+            switch (Run($"{moduleLabel} (nav app installed)",
+                        () => InsertNavAppInstalledAppRow(navAppInstalledMeta, source, m)))
+            {
+                case SeedOutcome.Inserted: navAppSeeded++; break;
+                case SeedOutcome.AlreadyPresent: navAppAlreadyPresent++; break;
+            }
         }
 
         // A PARTIAL row set must not be allowed to continue, and specifically must not be
@@ -244,17 +269,21 @@ public static partial class RecordPatches
                 $"[PublishedApplication] seeded only {seeded + alreadyPresent} of {modules.Count} "
                 + $"{what} row(s) into table {PublishedApplicationSystemTableId} and "
                 + $"{installedSeeded + installedAlreadyPresent} into table "
-                + $"{InstalledApplicationSystemTableId}; refusing to continue "
+                + $"{InstalledApplicationSystemTableId} and "
+                + $"{navAppSeeded + navAppAlreadyPresent} into table "
+                + $"{NavAppInstalledAppSystemTableId}; refusing to continue "
                 + "because a partial row set would be captured into the install baseline and "
                 + "restored silently by later runs. Failures: " + string.Join(" | ", failed)
                 + " — see AlRunner#2963.");
 
-        if (seeded > 0 || installedSeeded > 0)
+        if (seeded > 0 || installedSeeded > 0 || navAppSeeded > 0)
             PerfTrace.Log(
                 $"PublishedApplication: seeded {seeded} {what} row(s)"
                 + (alreadyPresent > 0 ? $" ({alreadyPresent} already present)" : "")
                 + $", {installedSeeded} installed-application row(s)"
-                + (installedAlreadyPresent > 0 ? $" ({installedAlreadyPresent} already present)" : ""));
+                + (installedAlreadyPresent > 0 ? $" ({installedAlreadyPresent} already present)" : "")
+                + $", {navAppSeeded} nav-app-installed-app row(s)"
+                + (navAppAlreadyPresent > 0 ? $" ({navAppAlreadyPresent} already present)" : ""));
     }
 
     /// <summary>
@@ -318,6 +347,53 @@ public static partial class RecordPatches
                 // Part of this table's primary key ("Runtime Package ID", "Tenant ID") and the
                 // same blank the Published Application row carries, for the same reason.
                 Set("Tenant ID", string.Empty);
+            });
+    }
+
+    /// <summary>
+    /// One NAV App Installed App (2000000153) row per loaded app (#2961) — the TENANT-database
+    /// registry, keyed on "App ID" alone, that ordinary Cloud-target AL reads when it asks
+    /// which apps are installed.
+    /// </summary>
+    /// <remarks>
+    /// <para>Built from the SAME <c>BcRuntime.RegisteredModules()</c> closure and the SAME
+    /// <c>AppPackageIdentity</c> values as the 2000000206 and 2000000212 rows seeded beside it,
+    /// so the three tables cannot disagree about which apps are present or which package id
+    /// names an app. That agreement is the point: BC's own
+    /// <c>TenantApplicationStorageRepository</c> joins this table to Tenant Application Storage
+    /// ON <c>[Package ID]</c>, so a package id here that differed from the one on the published
+    /// row would be a registry that answers about a different app than it names.</para>
+    /// <para>Columns deliberately left at <c>NCLMetaField.EmptyValue</c>, BC's own per-field
+    /// default, because the runner has no faithful value for them and inventing one would be
+    /// the silent-fake shape <c>.claude/rules/loud-failures.md</c> forbids: "Content Hash" and
+    /// "Hash Algorithm" (a real tier computes these over the .app payload at publish time — the
+    /// runner never hashes a package), the four "Compatibility" columns (BC's own publish SQL
+    /// inserts literal 0 for all four, which is what EmptyValue already gives), "Extension
+    /// Type", and "Published As". The last is the one worth naming: its OptionMembers are
+    /// Global/PTE/Dev, so EmptyValue reads as Global — which is what a platform app loaded from
+    /// an artifact cache actually is, not a guess dressed as a measurement. A bundle published
+    /// as a PTE on a real tier would read PTE there and Global here; no runner-side test asserts
+    /// that column, and no corpus test may either until a tier has adjudicated it.</para>
+    /// </remarks>
+    private static void InsertNavAppInstalledAppRow(
+        NCLMetaTable meta, object source,
+        (Guid AppId, string Name, string Publisher, string Version) module)
+    {
+        var (major, minor, build, revision) = SplitManifestVersion(module.Version);
+
+        InsertApplicationTableRow(
+            NavAppInstalledAppSystemTableId, meta, source,
+            fill: Set =>
+            {
+                // The whole primary key of this table, and the id every reader filters on.
+                Set("App ID", module.AppId);
+                Set("Package ID", AppPackageIdentity.PackageIdFor(module.AppId));
+                Set("Name", module.Name);
+                Set("Publisher", module.Publisher);
+                Set("Version Major", major);
+                Set("Version Minor", minor);
+                Set("Version Build", build);
+                Set("Version Revision", revision);
             });
     }
 

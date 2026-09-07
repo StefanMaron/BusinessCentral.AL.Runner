@@ -55,7 +55,11 @@ public static class AlCoverageTracker
         string, System.Collections.Concurrent.ConcurrentDictionary<(Type ScopeType, int Stmt), int>> _perTestHits = new();
 
     /// <summary>Reset between coverage collections (tests). Exposed for test isolation.</summary>
-    public static void Reset() => _hits.Clear();
+    public static void Reset()
+    {
+        _hits.Clear();
+        Counts.ClearPart();
+    }
 
     /// <summary>Reset between per-test coverage collections — the per-test analogue of
     /// <see cref="Reset"/>, kept SEPARATE so a caller that only wants aggregate
@@ -77,20 +81,16 @@ public static class AlCoverageTracker
     public static void EndTest() => _currentTestKey = null;
 
     /// <summary>
-    /// Issue #2481's behavioural regression gate: incremented UNCONDITIONALLY, first
-    /// thing, on every call — proving the Cecil-rewritten call site actually fires on
-    /// every AL statement, independent of <see cref="Enabled"/>. Paired with <see
-    /// cref="HasRecordedAnyHits"/> (which stays false whenever <see cref="Enabled"/>
-    /// stays false): a plain run must show <c>CallCount &gt; 0</c> (the hook fired) AND
-    /// <c>HasRecordedAnyHits == false</c> (it did no bookkeeping work) — see
+    /// Issue #2481's behavioural regression gate. <c>Total</c> is incremented UNCONDITIONALLY,
+    /// first thing, on every call — proving the Cecil-rewritten call site actually fires on
+    /// every AL statement, independent of <see cref="Enabled"/>. <c>Part</c> counts entries
+    /// recorded into <see cref="_hits"/> and stays zero whenever <see cref="Enabled"/> stays
+    /// false: a plain run must show <c>Total &gt; 0</c> (the hook fired) AND <c>Part == 0</c>
+    /// (it did no bookkeeping work). One value, not a counter plus a dictionary read, so the
+    /// dump line reports a pair that existed (#3169). See
     /// AlRunner.Tests/PlainRunInstrumentationGateTests.cs.
     /// </summary>
-    internal static long CallCount;
-
-    /// <summary>True once <see cref="_hits"/> has recorded at least one entry — i.e. real
-    /// coverage bookkeeping actually happened. Stays false for the lifetime of a process
-    /// that never sets <see cref="Enabled"/>, however many statements ran.</summary>
-    internal static bool HasRecordedAnyHits => !_hits.IsEmpty;
+    internal static readonly CountPair Counts = new();
 
     /// <summary>
     /// Hook target for the Cecil-rewritten NavMethodScope.StmtHit(int). Public static,
@@ -107,7 +107,7 @@ public static class AlCoverageTracker
     /// </summary>
     public static void OnStmtHit(NavMethodScope scope, int currentStatementNumber)
     {
-        System.Threading.Interlocked.Increment(ref CallCount);
+        Counts.IncrementTotal();
         AlCurrentStatement.Update(scope, currentStatementNumber);
         var observed = AlValueCapture.OnStmtHit(scope, currentStatementNumber);
         // NavMethodScope.ExitStatementNumber (int.MaxValue) is written directly by
@@ -119,7 +119,10 @@ public static class AlCoverageTracker
         if (AlIterationTracker.Enabled)
             AlIterationTracker.OnStmtHit(scope, currentStatementNumber, observed);
         if (Enabled)
+        {
             _hits.AddOrUpdate((scope.GetType(), currentStatementNumber), 1, static (_, c) => c + 1);
+            Counts.IncrementPart();
+        }
         // #2135: per-test attribution — a SEPARATE flag/dictionary from the aggregate
         // one above, so the two opt-ins are priced independently (see PerTestEnabled's
         // doc comment). _currentTestKey is null outside any test's window (e.g. the
