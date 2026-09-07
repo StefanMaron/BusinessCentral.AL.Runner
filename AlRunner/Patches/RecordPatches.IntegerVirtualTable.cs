@@ -83,16 +83,39 @@ public static partial class RecordPatches
     internal const int IntegerVirtualTableId = 2000000026;
 
     /// <summary>
-    /// Materialised window of Number. Real BC spans the signed integer range; we cannot.
-    /// Chosen to cover every realistic synthetic-dataset use (report row generators,
-    /// loop drivers) with headroom, while staying cheap enough to insert eagerly.
-    /// A request beyond the window throws rather than returning a short answer.
-    /// Override with AL_RUNNER_INTEGER_WINDOW_MAX for a one-off larger run.
+    /// Materialised window of Number. Real BC serves [-1e9..1e9] computed per request; we
+    /// cannot materialise 2,000,000,001 rows. Chosen to cover every realistic synthetic-dataset
+    /// use (report row generators, loop drivers) with headroom, while staying cheap enough to
+    /// insert eagerly. A request that CLOSES a bound beyond the window throws rather than
+    /// returning a short answer.
+    ///
+    /// <para>Both edges are overridable, and symmetrically so. The lower edge was a hard
+    /// <c>const</c> while the upper one already read an environment variable — invisible while
+    /// nothing compared a request against either edge, and a dead end the moment #2350's guard
+    /// started refusing: a filter naming -250000 was refused with a message advising the reader
+    /// to raise <c>AL_RUNNER_INTEGER_WINDOW_MAX</c>, which could not widen the edge that had
+    /// actually refused it. Measured: with <c>AL_RUNNER_INTEGER_WINDOW_MAX=300000</c> the
+    /// upper-range corpus test passed and the lower-range one still failed.</para>
     /// </summary>
-    internal const int IntegerWindowMin = -1000;
+    internal const int IntegerWindowMinDefault = -1000;
     internal const int IntegerWindowMaxDefault = 100000;
 
+    private static int? _ivtWindowMin;
     private static int? _ivtWindowMax;
+
+    internal static int IntegerWindowMin
+    {
+        get
+        {
+            if (_ivtWindowMin.HasValue) return _ivtWindowMin.Value;
+            var raw = Environment.GetEnvironmentVariable("AL_RUNNER_INTEGER_WINDOW_MIN");
+            // Only a value that WIDENS the window is honoured: a "min" above the default would
+            // narrow the materialised set and start refusing reads that work today.
+            _ivtWindowMin = int.TryParse(raw, out var v) && v < IntegerWindowMinDefault
+                ? v : IntegerWindowMinDefault;
+            return _ivtWindowMin.Value;
+        }
+    }
 
     internal static int IntegerWindowMax
     {
@@ -365,7 +388,13 @@ public static partial class RecordPatches
                 $"[{IntegerWindowMin}..{IntegerWindowMax}]. ")
             + "Real BC computes this table per request and serves [-1000000000..1000000000], so "
             + "the rows between the window and the bound asked for are rows a service tier would "
-            + "have returned. Raise AL_RUNNER_INTEGER_WINDOW_MAX, or narrow the filter");
+            + "have returned. "
+            // Name the variable that moves the edge that actually refused. Advising
+            // AL_RUNNER_INTEGER_WINDOW_MAX for a bound below the window sends the reader to a
+            // setting that cannot widen it, and the advice fails silently.
+            + (requested < IntegerWindowMin
+                ? "Lower AL_RUNNER_INTEGER_WINDOW_MIN, or narrow the filter"
+                : "Raise AL_RUNNER_INTEGER_WINDOW_MAX, or narrow the filter"));
 
     /// <summary>
     /// The lowest closed low bound and the highest closed high bound this request's "Number"

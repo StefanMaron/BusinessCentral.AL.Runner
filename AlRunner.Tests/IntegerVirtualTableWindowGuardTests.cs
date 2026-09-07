@@ -113,7 +113,7 @@ public sealed class IntegerVirtualTableWindowGuardTests
         // Pins the two constants the refusal quotes, so a change to either has to be
         // deliberate. -1000 is the edge the AL suite's below-the-window test rests on, and
         // it is the one a guard written only against IntegerWindowMax would leave open.
-        Assert.Equal(-1000, RecordPatches.IntegerWindowMin);
+        Assert.Equal(-1000, RecordPatches.IntegerWindowMinDefault);
         Assert.Equal(100000, RecordPatches.IntegerWindowMaxDefault);
 
         // Real BC clamps rather than refuses, at bounds three orders of magnitude wider:
@@ -143,5 +143,30 @@ public sealed class IntegerVirtualTableWindowGuardTests
         // docs/scope.md is the permanently-out-of-scope manifest and names no table; citing it
         // here would tell the next reader the surface will never work (#2945).
         Assert.DoesNotContain("docs/scope.md", gap.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BothWindowEdges_AreOverridable_SoTheRefusalsAdviceCanBeFollowed()
+    {
+        // The lower edge was a hard `const` while the upper one read an environment variable.
+        // Harmless while nothing compared a request against either edge; a dead end as soon as
+        // the guard began refusing, because the refusal advised raising
+        // AL_RUNNER_INTEGER_WINDOW_MAX for a bound the MIN edge had rejected — advice that
+        // cannot work. Measured against the corpus tests on the upstream branch: with
+        // AL_RUNNER_INTEGER_WINDOW_MAX=300000 the far-above test passed and the far-below one
+        // still failed; with both variables set, all seven passed.
+        //
+        // Asserting the property rather than the plumbing: an override must be able to widen
+        // each edge past the bound the corpus tests name.
+        var minProp = typeof(RecordPatches).GetProperty("IntegerWindowMin",
+            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static);
+        var maxProp = typeof(RecordPatches).GetProperty("IntegerWindowMax",
+            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static);
+
+        Assert.True(minProp != null,
+            "IntegerWindowMin must be a property reading AL_RUNNER_INTEGER_WINDOW_MIN, not a "
+            + "const — otherwise the refusal for a below-window bound names a variable that "
+            + "cannot widen the edge that refused it.");
+        Assert.True(maxProp != null, "IntegerWindowMax must stay overridable.");
     }
 }

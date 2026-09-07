@@ -740,7 +740,15 @@ by `MaxIteration` rather than by the filter. Real BC serves that shape too, from
 yields 101,001 rows here against 2,000,000,001 on a service tier. Code that iterates an
 unbounded `Integer` range to the end stops at the window edge instead of at 1,000,000,000.
 
-`AL_RUNNER_INTEGER_WINDOW_MAX` raises the upper edge for a one-off run.
+`AL_RUNNER_INTEGER_WINDOW_MAX` raises the upper edge for a one-off run, and
+`AL_RUNNER_INTEGER_WINDOW_MIN` lowers the lower one. Both only ever **widen** the window:
+a `MIN` above the default, or a non-positive `MAX`, is ignored rather than narrowing the
+materialised set and refusing reads that work today.
+
+The lower edge was a hard constant until #2350. That was invisible while nothing compared a
+request against either edge, and became a dead end the moment the guard started refusing —
+a filter naming -250000 was refused with a message telling the reader to raise
+`AL_RUNNER_INTEGER_WINDOW_MAX`, which cannot widen the edge that rejected it.
 
 ---
 
