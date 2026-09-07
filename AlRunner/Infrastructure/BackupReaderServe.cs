@@ -230,7 +230,10 @@ internal static class BackupReaderServe
             if (_disabled) return false;
             if (!TryBuildReadRequest(args, _nextId + 1, out var request) || request == null) return false;
 
-            var key = request.Backup + " " + (request.Symbols ?? "");
+            // "\0" as an escape, not a literal NUL byte: written literally it makes this file
+            // read as binary to ripgrep, which then skips it silently -- see
+            // AlRunner.Tests/SourceFilesAreSearchableGuardTests. Same separator, same key.
+            var key = request.Backup + "\0" + (request.Symbols ?? "");
             try
             {
                 if (_sessionKey != key) Start(request.Backup, request.Symbols, key);

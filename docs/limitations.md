@@ -1357,8 +1357,11 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   no `[MessageHandler]` declared the test sees BC's `Unhandled UI: Message …` refusal, exactly
   as a service tier produces it. With a `[MessageHandler]` declared the handler consumes the
   text and control returns to a page real BC has left open, which the runner has no model for;
-  it raises `RunnerOutOfScopeException` with reason `testpage-close-refused-after-message`
-  rather than force the page shut and report a close BC did not perform
+  it raises `RunnerOutOfScopeException` with reason
+  `not-yet-implemented — testpage-close-refused-after-message` rather than force the page shut
+  and report a close BC did not perform. The `not-yet-implemented` prefix is load-bearing: it is
+  what stops an AL `[TryFunction]` from swallowing the refusal into `false`, since this surface
+  is an open gap rather than a permanent boundary
   ([#3057](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3057),
   [#3179](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3179)).
 

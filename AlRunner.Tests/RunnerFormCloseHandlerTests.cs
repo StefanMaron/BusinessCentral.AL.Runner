@@ -13,6 +13,7 @@
 //   branch into "show a message" would look identical to it while quietly rewriting the
 //   envelope of a connection loss, a missing UI handler, or a runner-internal failure.
 using System;
+using AlRunner;
 using AlRunner.Infrastructure;
 using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Types;
@@ -131,5 +132,64 @@ public class RunnerFormCloseHandlerTests
 
         Assert.Same(original, thrown);
         Assert.Null(probe.Seen);
+    }
+    // ── The refusal's CLASSIFICATION, not its text (#3179) ───────────────────────────────
+    //
+    // RunnerOutOfScopeException carries two kinds of refusal, and which kind decides whether an
+    // AL [TryFunction] may swallow it (ApplicationObjectBasePatches.IsPermanentOutOfScope):
+    //
+    //   permanent ("SMTP does not exist here")  -> TryInvoke returns false, matching a real BC
+    //                                              environment that also lacks the surface
+    //   "not-yet-implemented" (an in-scope gap) -> tears through, so a gap can never read green
+    //
+    // The test is a STRING PREFIX on the reason, so a gap whose reason merely says
+    // not-implemented in prose is classified permanent and silently swallowed. That is the
+    // defect issue #2966 was filed and closed for; this surface is a later instance of it,
+    // introduced with the close handler itself in #3057 and therefore not covered by that sweep.
+    //
+    // A page whose close BC refuses IS in scope -- #3179 is open and tracks building it -- so
+    // the refusal must tear through a [TryFunction], not become `false`.
+
+    [Fact]
+    public void CloseRefusedAfterMessage_IsClassifiedAsAnInScopeGap_NotAPermanentRefusal()
+    {
+        var probe = new FakeTestExecution(handled: true);
+
+        var oos = Assert.Throws<RunnerOutOfScopeException>(() =>
+            RunnerFormCloseHandler.RefuseCloseAfter(new NavNCLDialogException("boom"), probe));
+
+        // The prefix IS the classification. Asserting the surface name too, so a rewording that
+        // kept the prefix but lost the surface still fails here.
+        Assert.StartsWith("not-yet-implemented", oos.Reason, StringComparison.Ordinal);
+        Assert.Contains("testpage-close-refused-after-message", oos.Reason, StringComparison.Ordinal);
+    }
+
+    // The property the classification exists to produce, asserted through the real decision
+    // point rather than by re-reading the string: a [TryFunction] must NOT swallow this refusal.
+    [Fact]
+    public void CloseRefusedAfterMessage_TearsThroughATryFunction()
+    {
+        var probe = new FakeTestExecution(handled: true);
+
+        var oos = Assert.Throws<RunnerOutOfScopeException>(() =>
+            BcRuntime.NavApplicationObjectBase_TryInvoke(
+                null,
+                () => RunnerFormCloseHandler.RefuseCloseAfter(new NavNCLDialogException("boom"), probe)));
+
+        Assert.Contains("testpage-close-refused-after-message", oos.Reason, StringComparison.Ordinal);
+    }
+
+    // Negative control for the pair above, and the reason they are two tests rather than one:
+    // a genuinely permanent refusal must still be trapped into `false`. An "everything tears
+    // through" change would pass both tests above and fail this one.
+    [Fact]
+    public void APermanentRefusal_IsStillTrappedByATryFunction()
+    {
+        var trapped = BcRuntime.NavApplicationObjectBase_TryInvoke(
+            null,
+            () => throw new RunnerOutOfScopeException(
+                "NavEmail.Send", "email-smtp — see docs/scope.md#email", "email"));
+
+        Assert.False(trapped);
     }
 }
