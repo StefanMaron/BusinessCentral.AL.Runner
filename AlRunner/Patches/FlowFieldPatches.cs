@@ -2,6 +2,12 @@
 // directly against the in-memory TempTableDataProvider store, bypassing the broken async
 // FlowFieldsHelper pipeline.
 //
+// One exception, and it is BC's own split rather than a special case of ours: a CalcFormula
+// whose source table is served by a COMPUTED provider — Integer (2000000026) and Date
+// (2000000007), which have no store to read — is handed to BC's
+// FlowFieldsHelper.CalcSingleFieldFromVirtualTableAsync, exactly as BC's CalcFieldsAsync hands
+// its virtual-sourced half to it. See the call site in CalcFlowFieldValuesCore (#3507).
+//
 // Strategy:
 //   The decompiled BC code path is
 //     NavRecord.CalcFieldsAsync(DataError,int[])  [async ValueTask<bool>]
@@ -254,8 +260,12 @@ public static class FlowFieldPatches
             "GetFilterFromMetaFilterCollection", BindingFlags.NonPublic | BindingFlags.Static);
         // #3507 — BC's own FlowField path for a source table whose provider computes its rows
         // instead of storing them. See the call site in CalcFlowFieldValuesCore.
-        _mCalcSingleFieldFromVirtualTable = tFlowFieldsHelper?.GetMethod(
-            "CalcSingleFieldFromVirtualTableAsync", BindingFlags.NonPublic | BindingFlags.Static);
+        _mCalcSingleFieldFromVirtualTable = tFlowFieldsHelper == null ? null : BcShape.FindMethod(
+            tFlowFieldsHelper, "CalcSingleFieldFromVirtualTableAsync",
+            BindingFlags.NonPublic | BindingFlags.Static,
+            "AL FlowField calculation", "FlowFieldsHelper.CalcSingleFieldFromVirtualTableAsync",
+            "it is the path BC itself takes for a CalcFormula whose source table is served by a "
+            + "computed data provider, and without it such a formula cannot be answered at all (#3507)");
         // #2970 — internal static void CheckFlowFieldProperties(NCLMetaField). Internal on a
         // runtime-engine DLL, which precompiled-dll-respect.md puts squarely on the "ours to
         // work with" side: nothing about it is rewritten, it is only called from the place BC
@@ -950,27 +960,26 @@ public static class FlowFieldPatches
     }
 
     /// <summary>
-    /// The value out of a <c>ValueTask&lt;NavValue&gt;</c> BC handed back, blocking if it has
+    /// The value out of the <c>ValueTask&lt;NavValue&gt;</c> BC handed back, blocking if it has
     /// not completed. Blocking is correct here for the reason
     /// <c>CodeunitEventDispatcher.ObserveAsyncResult</c> gives: the runner drives AL
     /// synchronously and every read this task makes is against an in-process provider, so it is
     /// already complete or completes inline. <c>GetAwaiter().GetResult()</c> also rethrows BC's
     /// ORIGINAL exception rather than an AggregateException, which is what AL must observe.
     /// </summary>
-    private static object? AwaitValueTaskResult(object valueTask)
+    /// <remarks>
+    /// Cast, not reflection: <c>NavValue</c> is a public Ncl type this file already references,
+    /// so the return type is known at compile time and a rename becomes a build error here
+    /// rather than a name-only lookup that answers null at runtime.
+    /// </remarks>
+    private static NavValue AwaitValueTaskResult(object valueTask)
     {
-        var ty = valueTask.GetType();
-        if (!ty.IsGenericType || ty.GetGenericTypeDefinition() != typeof(ValueTask<>))
+        if (valueTask is not ValueTask<NavValue> vt)
             throw new InvalidOperationException(
-                $"[FlowFieldPatches] expected ValueTask<T> from BC, got {ty.FullName} — BC shape changed (#3507).");
+                "[FlowFieldPatches] FlowFieldsHelper.CalcSingleFieldFromVirtualTableAsync returned "
+                + $"{valueTask.GetType().FullName}, not ValueTask<NavValue> — BC shape changed (#3507).");
 
-        var asTask = ty.GetMethod("AsTask", BindingFlags.Public | BindingFlags.Instance)
-            ?? throw new InvalidOperationException(
-                "[FlowFieldPatches] ValueTask<T>.AsTask not found — runtime shape changed (#3507).");
-        var task = (Task)asTask.Invoke(valueTask, null)!;
-        task.GetAwaiter().GetResult();
-        return task.GetType().GetProperty("Result", BindingFlags.Public | BindingFlags.Instance)
-            ?.GetValue(task);
+        return vt.GetAwaiter().GetResult();
     }
 
     /// <summary>
@@ -1133,7 +1142,7 @@ public static class FlowFieldPatches
                         + "shape is unavailable on this artifact. Answering from the empty store "
                         + "would report 0 for a formula a service tier answers (#3507)");
 
-                object? virtualValue;
+                NavValue? virtualValue;
                 try
                 {
                     var vt = _mCalcSingleFieldFromVirtualTable.Invoke(null, new object?[]
@@ -1160,8 +1169,8 @@ public static class FlowFieldPatches
                     throw; // unreachable
                 }
 
-                if (virtualValue is NavValue navValue)
-                    results.Add(Tuple.Create((INavFieldMetadata)(NCLMetaField)fieldObj, navValue));
+                if (virtualValue != null)
+                    results.Add(Tuple.Create((INavFieldMetadata)(NCLMetaField)fieldObj, virtualValue));
                 continue;
             }
 
