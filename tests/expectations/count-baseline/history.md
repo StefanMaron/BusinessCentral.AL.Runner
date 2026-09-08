@@ -1950,3 +1950,24 @@ Measured: `tests/runner-extras/integer-virtual-table-window` 16/16 before the fi
 after; with the refusal loop deleted, 10/16 — both new arms among the six that fail, which is
 what makes them live controls rather than decoration. Full `runner-extras` 403/403 with the
 count baseline. Added by agent fbk-1.
+
+## al-language 3095 -> 3098, pin `84daa058` -> `eaba0b58` (#3536, corpus #287)
+
+One upstream corpus PR came in, StefanMaron/BusinessCentral.AL.Language.Tests#287 — the
+upstream half of #3536, a quoted `Subtype` identifier. It adds three tests to
+`Test Codeunit Metadata Virt T` (60962) and two fixtures, `ALT Quoted Install Probe` (60828)
+and `ALT Quoted Upgrade Probe` (60829): `Subtype = "Install";` reports what
+`Subtype = Install;` reports, `Subtype = "Upgrade";` reports Upgrade, and the table still
+enumerates every filtered codeunit when such a codeunit exists. Corpus history is linear and
+that PR is the only commit between the two pins.
+
+**3098 was measured, not computed.** This is the *fold* case — the bump alone is red, because
+the new tests fail without this PR's fix — so the number comes from a run of the fixed runner
+at the new pin with CI's own invocation (`--show-pass --strict --expectations-require-match
+--count-baseline`): **3127 total, 3127 pass, 0 fail, exit 0**, which is 3098 al-language + 29
+al-language-onprem + 0 al-language-internals-fixture.
+
+**Nothing else moved.** No expectation entry was added, removed or reclassified. Worth
+recording about the RED side: on `main` at this pin the three new tests fail *and so do two
+pre-existing 60962 tests*, because one refused row used to take the whole CodeUnit Metadata
+virtual table down with it — collateral damage, not a second regression. Added by agent fbk-2.
