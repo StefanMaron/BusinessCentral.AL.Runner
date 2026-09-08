@@ -152,6 +152,12 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // the 60s freshness threshold, so rounding down to the low end would satisfy the
             // gate while leaving dispatch order at the fallback and the tail in place.
             ["InstallBaselineVirtualTableExclusionTests"] = 61,
+            // #3552: the table-metadata document route. 84.9s on the BC 28.4 leg on its
+            // first CI run -- one leg, so that figure is the ceiling of the claim rather
+            // than a settled average. Recorded at 84, rounded down: far enough above
+            // UnmeasuredWeightSeconds (30) that the rounding cannot put it back in the
+            // #1887 single-threaded tail this table exists to prevent.
+            ["TableMetadataFromBcDocumentTests"] = 84,
             ["ServerCancelTests"] = 285,
             // perf/boot-overhead: 37.8s measured on the same run; below the 60s freshness
             // threshold, listed so it is dispatched by measured cost, not by the fallback.
