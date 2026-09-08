@@ -1735,3 +1735,28 @@ rebased onto is the catch-up bump recorded directly above, which predates #269. 
 bump that picks up those four tests is follow-up once #269 merges.
 
 Written by agent stma-auto-5 (automated implementation agent).
+
+## 2026-09-08 — al-language 3071 → 3077, pin `ec8a9c23` → `af01bbbc` (issue #3451)
+
+Fold bump: three corpus commits, six new tests.
+
+* `af01bbbc` (corpus #278, this agent's) — five arms appended to codeunit 60899
+  "Test TxModel AutoRollback", pinning that BC refuses an explicit `Commit()` while a
+  `[TransactionModel(TransactionModel::AutoRollback)]` test method is in force, that the refusal
+  follows the executing test method into an unattributed callee, that `AutoCommit` is the
+  control, that `[CommitBehavior(CommitBehavior::Ignore)]` exempts the refusal, and that
+  `[CommitBehavior(CommitBehavior::Error)]` does not outrank it. Red without the runner fix in
+  this PR, which is why the bump is folded here rather than landing as a catch-up.
+* `2549e35` (corpus #257) — one reinstated encryption round-trip test in `session/`.
+* `7195a4b` (corpus #258) — nightly encryption-key cmdlet binding and a restored RDLC
+  error-text assertion.
+
+3077 is the guard's own printed actual (`[count-baseline] GROWTH: suite 'al-language' tests
+count: expected 3071, actual 3077 (BC 28.1)`), not a computed number. **Neither `2549e35` nor
+`7195a4b` needed a known-gap entry**: the full three-app run at this pin, with CI's own
+invocation and both package caches, came back `3106 total, 3106 pass, 0 fail, 0 error` — the
+only non-zero exit was 4, the baseline this entry bumps. Codeunit 60899 is 8/8 in that full
+run rather than under a `--test` filter, which matters because #3468 makes the codeunit's
+position in the run observable.
+
+Written by the fbk-1 agent.
