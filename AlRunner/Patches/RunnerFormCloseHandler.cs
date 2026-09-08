@@ -52,6 +52,26 @@
 //   TestPageMessageHelper.ShowErrorMessage, which throws NavTestWrappedException carrying the
 //   same text), so rethrowing the original preserves the observable AL outcome — the text —
 //   without the runner claiming to model a force-close-and-continue it has no path to.
+//
+// WHAT THE REFUSAL MEANS TO EACH CALLER
+//   `false` from RefuseCloseAfter says only "BC did not perform this close". What that leaves
+//   the AL observing is the CALLER's decision, because the two close routes leave the test
+//   holding different things, and both are measured by corpus codeunit 60602 (#272, bd168356):
+//
+//     RunnerModalDispatch.TryQueryCloseForm  — the test holds no page handle after RunModal()
+//       returns, so "still open" is not observable. What IS observable is the Action, and a
+//       refused close completed none: the caller drops the handler's result and the AL reads
+//       back FormResult.None. Measured: Action::None, against Action::OK on the same codeunit's
+//       negative control where the close succeeds.
+//
+//     MockTestPage.Close / RunnerPageInstance.RaiseOnClosePage — the test still holds the
+//       TestPage variable, so BC's open page IS observable. Close() returns without tearing the
+//       page down, leaving it drivable, which is what a real tier leaves behind.
+//
+//   Neither route discards the page's uncommitted write, and that is measured rather than
+//   incidental: corpus 60677 asserts the write IS rolled back on the no-[MessageHandler] arm and
+//   passes on the same leg of the same run. What unwinds it there is the framework tearing down
+//   a PROPAGATED error; a consumed message propagates nothing, so nothing unwinds.
 using System.Reflection;
 
 namespace AlRunner.Patches;
@@ -88,9 +108,11 @@ internal static class RunnerFormCloseHandler
     /// as a message either propagates or is replaced by a louder one.
     /// </returns>
     /// <remarks>
-    /// The common case does not return at all. With no <c>[MessageHandler]</c> declared,
+    /// With no <c>[MessageHandler]</c> declared this does not return at all:
     /// <c>TestHandleMessage</c> raises BC's own "Unhandled UI: Message {text}" refusal from
-    /// inside the call — exactly the outcome a real service tier produces for this shape.
+    /// inside the call — exactly the outcome a real service tier produces for that shape. With
+    /// one declared the handler consumes the text and this returns <c>false</c>, which is BC's
+    /// own <c>return false</c>; see the "WHAT THE REFUSAL MEANS TO EACH CALLER" note above.
     /// </remarks>
     internal static bool RefuseCloseAfter(Exception ex, object? testExecution)
     {
@@ -117,28 +139,14 @@ internal static class RunnerFormCloseHandler
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(ex).Throw();
 
         // A [MessageHandler] consumed the text, so BC's `return false` is reached: the close is
-        // refused and the page is STILL OPEN, waiting for a user who does not exist here. That
-        // is the same boundary MockTestPage.Close already names for an OnQueryClosePage veto
-        // (#2999) — the runner has no model for a page that refuses to close and keeps running.
-        // Throwing says so; returning false would let the caller force the page shut and report
-        // a close BC did not perform.
-        //
-        // The reason MUST start "not-yet-implemented", and the prefix is load-bearing rather
-        // than cosmetic: ApplicationObjectBasePatches.IsPermanentOutOfScope classifies by that
-        // string prefix, and anything else is treated as PERMANENTLY out of scope, which an AL
-        // [TryFunction] then swallows into `false`. This surface is in scope and tracked open in
-        // #3179, so swallowing it would turn the gap into a green test that lies
-        // (.claude/rules/loud-failures.md). It read "testpage-close-refused-after-message …"
-        // until #3179 — the same defect #2966 was filed for, on a site created after that sweep.
-        // docs/limitations.md, not docs/scope.md, for the same reason: this is a gap, not a
-        // permanent boundary.
-        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-            "TestPage page close (OnQueryClosePage)",
-            "not-yet-implemented — testpage-close-refused-after-message: OnQueryClosePage raised "
-            + "an error, a [MessageHandler] consumed it, and BC then leaves the page OPEN. The "
-            + "runner has no model for a page that outlives its own close. "
-            + "See docs/limitations.md#testpage-shape-gaps",
-            "todo");
+        // refused. Observably equivalent (loud-failures.md audit): a real service tier hands
+        // control straight back to the caller here, raising nothing — measured by corpus
+        // codeunit 60602 "QCM Query Close Msg Tests", green on all eight cloud legs and on the
+        // Windows nightly reference tier. So `false` IS BC's answer on this path, and the
+        // RunnerOutOfScopeException this replaced was itself the divergence: it raised an error
+        // on a path BC completes without one. See docs/limitations.md#testpage-shape-gaps for
+        // what each caller does with the refusal and what is still not reproduced.
+        return false;
     }
 
     private static bool IsNavBaseException(Exception ex)
