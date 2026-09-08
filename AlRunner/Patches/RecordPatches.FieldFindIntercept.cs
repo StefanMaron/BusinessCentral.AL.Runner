@@ -134,9 +134,9 @@ public static partial class RecordPatches
     /// The find request is the first and only place the runner sees that filter, so it is the
     /// only place the check can happen. See RecordPatches.DateVirtualTable.cs.
     ///
-    /// Table 2000000026 (Integer) passes through here the same way and takes the same side effect:
-    /// EnsureIntegerWindowCoversRequest materialises the span this find's "Number" filter closes,
-    /// or refuses when that would exceed the row cap. See RecordPatches.IntegerVirtualTable.cs.
+    /// Table 2000000026 (Integer) does NOT pass through here at all since #3485: it is served by
+    /// BC's own IntegerDataProvider, whose rows are computed per request, so this method never
+    /// sees a DataAccess of that table's.
     /// </summary>
     public static bool DataAccess_IsManagedFindRequest(object self, object request)
     {
@@ -144,15 +144,6 @@ public static partial class RecordPatches
         if (tableId == DateVirtualTableId)
         {
             EnsureDateWindowCoversRequest(self, request);
-            return false;
-        }
-        if (tableId == IntegerVirtualTableId)
-        {
-            // Issues #2350 and #3438. The find request is the first and only place the runner
-            // sees this filter, so it is the only place the rows it names can be materialised.
-            // Then fall through to the ORIGINAL InnerFindAsync, which now reads a store that
-            // holds them.
-            EnsureIntegerWindowCoversRequest(self, request);
             return false;
         }
         if (tableId == AggregatePermissionSetVirtualTableId)

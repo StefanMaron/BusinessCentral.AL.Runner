@@ -2020,3 +2020,46 @@ this bundle still answer 1 and 3, so the fix is scoped to reports nothing descri
 was clamped.
 
 Written by the coord-1 agent.
+
+## runner-extras `integer-virtual-table-window` 16 -> 10 (#3485)
+
+The suite SHRANK, which is why it needs an entry: six arms did not move to another bundle,
+they stopped being assertable.
+
+Until #3485 the Integer virtual table (2000000026) was materialised into an in-memory store,
+and this suite pinned the two limits that forced: a 500,000-row cap refused by name on each of
+the four request paths, and a half-open range whose closed end lay outside the base window
+`[-1000..100000]` refused rather than answered with zero rows. The table is now served by
+Microsoft's own `IntegerDataProvider`, which computes rows per request and stores none, so
+there is no cap and no window and nothing to refuse.
+
+The ten arms, so the accounting is checkable rather than a sum in prose:
+
+| # | arm | was |
+|---|---|---|
+| 1 | 900,000-row range is counted | row-cap refusal, count path |
+| 2 | 900,000-row range is not empty | row-cap refusal, IsEmpty path |
+| 3 | `'>=249000'` is answered | half-open refusal, high side |
+| 4 | `'..-249000'` is answered | half-open refusal, low side |
+| 5 | `'>=1'` reaches past 100000 | INVERTED — it asserted the opposite, that the walk stopped inside the window |
+| 6 | `'1..50\|200000..'` answered on find and count | two multi-range refusals, high and low |
+| 7 | `[10..14]` still answers 5 rows in order | unchanged control |
+| 8 | `Get(999999999)` answers | NEW — a row no store the runner could hold would have contained |
+| 9 | `Record Integer temporary` holds nothing | NEW — the #2524 carve-out, the invariant most at risk from changing where rows come from |
+| 10 | a `[TryFunction]` over 900,000 rows completes | INVERTED — it asserted the refusal tore through the TryFunction |
+
+Six of the sixteen old arms were the row-cap refusal on the find path, the two closed-span
+controls that only existed to keep those refusals from reading as "anything far out is
+refused", and the three multi-range/sibling refusal arms whose claim is now the same as arm 6's.
+
+Each remaining arm asserts a LOWER BOUND past a number the runner used to impose — a count
+above 500,000, a last row above 100000 — rather than an exact count, because the exact counts
+are BC's claim and are pinned upstream in codeunit 60368. That codeunit's
+`Record_Integer_MultiRangeFilter_YieldsEveryRangeNotJustTheFirst` carried the `expect-oos`
+entry this change deletes.
+
+10 is the number the run reported (10 pass, 0 fail), not one computed from 16 minus a count of
+deleted arms, and it is confirmed by the full `tests/runner-extras` run with `--strict
+--count-baseline`: 401P/0F/0E, exit 0.
+
+Written by the fbk-1 agent.

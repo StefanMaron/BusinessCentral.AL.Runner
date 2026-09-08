@@ -203,8 +203,10 @@ internal static partial class BcAppSymbolCache
     // that was never looked at now is. The bump states the second half, which no structural
     // hash can see. Without a new key a stale payload answers MaxIteration = 0 for every
     // data item — which BC's DataItemIterator reads as "no limit", so a `MaxIteration = 1`
-    // loop over the Integer virtual table runs 101,001 times instead of once and the test
-    // never finishes. A wrong answer replayed from cache rather than a cache miss.
+    // loop over the Integer virtual table runs to that table's end instead of once and the
+    // test never finishes. A wrong answer replayed from cache rather than a cache miss.
+    // Since #3485 that end is BC's own [-1000000000..1000000000] rather than a materialised
+    // window of 101,001 rows, so the loop no longer terminates in any useful time at all.
     private const int CacheVersion = 34;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
@@ -646,8 +648,9 @@ internal static partial class BcAppSymbolCache
         string? DataItemLink = null, string? DataItemLinkReference = null,
         bool PrintOnlyIfDetail = false,
         // The loop bound. BC treats 0 as NO LIMIT, so dropping a declared MaxIteration = 1
-        // over the Integer virtual table runs the data item across the whole Integer window
-        // instead of once — 101,001 iterations, which reads as a hang (#3370).
+        // over the Integer virtual table runs the data item across that whole table instead of
+        // once — every Number in [-1000000000..1000000000] since #3485 — which reads as a hang
+        // (#3370).
         int MaxIteration = 0);
 
     /// <summary>
