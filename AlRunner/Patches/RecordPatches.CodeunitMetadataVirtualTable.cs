@@ -302,7 +302,16 @@ public static partial class RecordPatches
                 ? $", which this resolver looks up as '{effectiveSubtype}' because the AL compiler "
                   + $"emits '{AlSubtypeTheCompilerDoesNotEmit}' as '{AlDefaultCodeunitSubtype}', and that"
                 : ", which")
-            + $" is not a member of that column's own option set ('{optionString}')");
+            + $" is not a member of that column's own option set ('{optionString}')"
+            // Why "not in the option string" is the right test for THIS column, when it is the
+            // wrong test for Page Metadata's PageType. Stated as the standing fact it is, not
+            // as something that happened to this value — see above.
+            + (translated
+                ? string.Empty
+                : $". The one subtype AL accepts that this column does not name — "
+                  + $"'{AlSubtypeTheCompilerDoesNotEmit}' — is looked up as "
+                  + $"'{AlDefaultCodeunitSubtype}' before it reaches here, so a miss is not an "
+                  + "AL codeunit subtype at all"));
     }
 
     /// <summary>
