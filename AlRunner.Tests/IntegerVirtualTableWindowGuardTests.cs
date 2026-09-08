@@ -108,22 +108,85 @@ public sealed class IntegerVirtualTableWindowGuardTests
     }
 
     [Fact]
-    public void TheWindowIsInclusiveAtBothEdges_AndTheRefusalNamesBoundAndWindow()
+    public void TheBaseWindowAndTheRowCap_AreTheTwoNumbersTheRefusalsQuote()
     {
-        // Pins the two constants the refusal quotes, so a change to either has to be
-        // deliberate. -1000 is the edge the AL suite's below-the-window test rests on, and
-        // it is the one a guard written only against IntegerWindowMax would leave open.
+        // Pins what each number now decides, because #3438 moved the boundary a request is judged
+        // against. The base window is no longer a limit on which rows are reachable -- rows are
+        // materialised per request -- it is what an OPEN bound is answered from, and -1000 is the
+        // edge the AL suite's low half-open refusal rests on.
         Assert.Equal(-1000, RecordPatches.IntegerWindowMinDefault);
         Assert.Equal(100000, RecordPatches.IntegerWindowMaxDefault);
 
+        // The cap is what refuses now, and it must be big enough that the base window itself
+        // cannot trip it -- a cap below 101,001 rows would refuse the handout that populates it.
+        Assert.Equal(500_000, RecordPatches.IntegerWindowMaxRowsDefault);
+        Assert.True(
+            RecordPatches.IntegerWindowMaxRowsDefault
+                > (long)RecordPatches.IntegerWindowMaxDefault - RecordPatches.IntegerWindowMinDefault + 1,
+            "The row cap must exceed the base window, or handing the table out refuses itself.");
+
         // Real BC clamps rather than refuses, at bounds three orders of magnitude wider:
-        // IntegerDataProvider.GetValuesWithinRangeForKeyField and CountValuesWithinRange both
-        // call GetInclusiveIntegerBounds(-1000000000, 1000000000, ...) — decompiled from
-        // Ncl.dll, byte-identical in 27.0 and 28.4. So the window is a runner limit, and the
-        // refusal must say so rather than reading as a statement about BC.
-        Assert.True(RecordPatches.IntegerWindowMaxDefault < 1_000_000_000,
-            "The materialised window must stay inside the range a service tier serves; past "
-            + "that the refusal would be claiming BC cannot answer something it can.");
+        // IntegerDataProvider.GetValuesWithinRangeForKeyField and CountValuesWithinRange both call
+        // GetInclusiveIntegerBounds(-1000000000, 1000000000, ...) -- decompiled from Ncl.dll,
+        // byte-identical in 27.0 and 28.4. The runner clamps to the same pair, so a span outside it
+        // materialises nothing rather than being refused for rows BC does not serve either.
+        Assert.Equal(-1_000_000_000, RecordPatches.IntegerBcRangeMin);
+        Assert.Equal(1_000_000_000, RecordPatches.IntegerBcRangeMax);
+    }
+
+    [Theory]
+    // A fresh ledger: the whole span is missing.
+    [InlineData(new int[0], 5, 9, new[] { 5, 9 })]
+    // Wholly covered: nothing to materialise, which is what makes a repeat request cheap.
+    [InlineData(new[] { 0, 100 }, 5, 9, new int[0])]
+    // A hole between two covered spans is the only part re-materialised -- re-inserting a covered
+    // row would collide on the primary key.
+    [InlineData(new[] { 0, 10, 20, 30 }, 5, 25, new[] { 11, 19 })]
+    // Reaching past the top of what is held.
+    [InlineData(new[] { -1000, 100000 }, 249000, 250000, new[] { 249000, 250000 })]
+    // Inverted: selects nothing, so it materialises nothing.
+    [InlineData(new int[0], 10, 4, new int[0])]
+    public void IntegerMissingSpans_ReturnsExactlyWhatIsNotHeld(
+        int[] coveredFlat, int wantLow, int wantHigh, int[] expectedFlat)
+    {
+        // The ledger decides both how many rows a request inserts and what the cap is checked
+        // against, so an over-count refuses a request that fits and an under-count lets one
+        // through that does not. The third case is the one that matters: it must return the hole
+        // [11..19] alone, never the whole [5..25], which would re-insert covered rows.
+        var covered = new List<(int Low, int High)>();
+        for (var i = 0; i < coveredFlat.Length; i += 2) covered.Add((coveredFlat[i], coveredFlat[i + 1]));
+
+        var got = RecordPatches.IntegerMissingSpans(covered, wantLow, wantHigh);
+
+        var expected = new List<(int Low, int High)>();
+        for (var i = 0; i < expectedFlat.Length; i += 2) expected.Add((expectedFlat[i], expectedFlat[i + 1]));
+
+        Assert.Equal(expected, got);
+    }
+
+    [Fact]
+    public void IntegerAddCovered_MergesAdjacentSpans_SoNoRowIsInsertedTwice()
+    {
+        // Two requests that meet exactly ([0..10] then [11..20]) must read back as one span. Left
+        // as two, the next request over [0..20] finds no gap between them and inserts nothing --
+        // right by luck -- while the cap accounting double-counts the boundary.
+        var covered = new List<(int Low, int High)>();
+        RecordPatches.IntegerAddCovered(covered, 0, 10);
+        RecordPatches.IntegerAddCovered(covered, 11, 20);
+        Assert.Equal(new List<(int, int)> { (0, 20) }, covered);
+
+        // Disjoint spans stay disjoint and sorted, which IntegerMissingSpans relies on.
+        RecordPatches.IntegerAddCovered(covered, 249000, 250000);
+        RecordPatches.IntegerAddCovered(covered, -1000, -500);
+        Assert.Equal(
+            new List<(int, int)> { (-1000, -500), (0, 20), (249000, 250000) },
+            covered);
+
+        // An overlapping span collapses into what is already there rather than adding a duplicate.
+        RecordPatches.IntegerAddCovered(covered, 15, 249500);
+        Assert.Equal(
+            new List<(int, int)> { (-1000, -500), (0, 250000) },
+            covered);
     }
 
     [Fact]
@@ -146,27 +209,27 @@ public sealed class IntegerVirtualTableWindowGuardTests
     }
 
     [Fact]
-    public void BothWindowEdges_AreOverridable_SoTheRefusalsAdviceCanBeFollowed()
+    public void BothWindowEdges_AndTheRowCap_AreOverridable_SoTheRefusalsAdviceCanBeFollowed()
     {
-        // The lower edge was a hard `const` while the upper one read an environment variable.
-        // Harmless while nothing compared a request against either edge; a dead end as soon as
-        // the guard began refusing, because the refusal advised raising
-        // AL_RUNNER_INTEGER_WINDOW_MAX for a bound the MIN edge had rejected — advice that
-        // cannot work. Measured against the corpus tests on the upstream branch: with
-        // AL_RUNNER_INTEGER_WINDOW_MAX=300000 the far-above test passed and the far-below one
-        // still failed; with both variables set, all seven passed.
-        //
-        // Asserting the property rather than the plumbing: an override must be able to widen
-        // each edge past the bound the corpus tests name.
+        // Each refusal names a variable, and each named variable has to be able to move the thing
+        // that refused. The lower window edge was a hard `const` until #2350, so a below-window
+        // bound was refused with advice to raise AL_RUNNER_INTEGER_WINDOW_MAX -- which cannot
+        // widen the edge that rejected it. #3438 adds the row cap, which is now what refuses a
+        // closed span, so it needs the same property.
         var minProp = typeof(RecordPatches).GetProperty("IntegerWindowMin",
             BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static);
         var maxProp = typeof(RecordPatches).GetProperty("IntegerWindowMax",
             BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static);
+        var capProp = typeof(RecordPatches).GetProperty("IntegerWindowMaxRows",
+            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static);
 
         Assert.True(minProp != null,
             "IntegerWindowMin must be a property reading AL_RUNNER_INTEGER_WINDOW_MIN, not a "
-            + "const — otherwise the refusal for a below-window bound names a variable that "
+            + "const -- otherwise the refusal for a low half-open filter names a variable that "
             + "cannot widen the edge that refused it.");
         Assert.True(maxProp != null, "IntegerWindowMax must stay overridable.");
+        Assert.True(capProp != null,
+            "IntegerWindowMaxRows must be a property reading AL_RUNNER_INTEGER_WINDOW_MAX_ROWS: "
+            + "the cap refusal tells the reader to raise it.");
     }
 }

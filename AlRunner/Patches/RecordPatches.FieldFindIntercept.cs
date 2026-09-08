@@ -134,10 +134,9 @@ public static partial class RecordPatches
     /// The find request is the first and only place the runner sees that filter, so it is the
     /// only place the check can happen. See RecordPatches.DateVirtualTable.cs.
     ///
-    /// Table 2000000026 (Integer) passes through here the same way, for the narrower reason that
-    /// its window is materialised eagerly: there is nothing to widen, so the side effect is only
-    /// EnsureIntegerWindowCoversRequest refusing a find whose "Number" filter closes a bound past
-    /// the window. See RecordPatches.IntegerVirtualTable.cs.
+    /// Table 2000000026 (Integer) passes through here the same way and takes the same side effect:
+    /// EnsureIntegerWindowCoversRequest materialises the span this find's "Number" filter closes,
+    /// or refuses when that would exceed the row cap. See RecordPatches.IntegerVirtualTable.cs.
     /// </summary>
     public static bool DataAccess_IsManagedFindRequest(object self, object request)
     {
@@ -149,10 +148,10 @@ public static partial class RecordPatches
         }
         if (tableId == IntegerVirtualTableId)
         {
-            // Issue #2350. The Integer window is materialised eagerly, so unlike Date there is
-            // nothing to widen — the only thing a find can need here is a refusal when its
-            // "Number" filter closes a bound past the window. Fall through to the ORIGINAL
-            // InnerFindAsync when it does not, which is every request inside the window.
+            // Issues #2350 and #3438. The find request is the first and only place the runner
+            // sees this filter, so it is the only place the rows it names can be materialised.
+            // Then fall through to the ORIGINAL InnerFindAsync, which now reads a store that
+            // holds them.
             EnsureIntegerWindowCoversRequest(self, request);
             return false;
         }

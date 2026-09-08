@@ -41,18 +41,19 @@
 //   every request to [-1e9 .. 1e9] and serves an UNBOUNDED filter as exactly that range;
 //   it never refuses one. 2,000,000,001 rows is not something we can materialise.
 //
-//   We materialise [IntegerWindowMin .. IntegerWindowMax] and — this is the load-bearing
-//   part — a request whose filter CLOSES a bound past the window THROWS
-//   RunnerOutOfScopeException naming the requested bound and the window (see
-//   DataAccess_IntegerWindowGuardFor* below). Answering a larger request with fewer rows
-//   would reproduce, one level up, the exact silent wrong answer this file exists to remove.
+//   So the rows are materialised PER REQUEST, the way Date's are (#2648): a filter closed
+//   at both ends materialises exactly the span it names, clamped to BC's [-1e9..1e9]. A base
+//   window [IntegerWindowMin .. IntegerWindowMax] is materialised at handout and is what
+//   answers a request that does NOT close both ends -- an unbounded filter, a shape we cannot
+//   read -- because such a request is answered FROM the window and no narrower store returns
+//   the same rows.
 //
-//   An UNBOUNDED filter is served from the window instead of refused, because that is the
-//   shape BC itself answers by inventing a bound, and because BaseApp leans on it: 18 of its
-//   658 reports drive a `dataitem(x; Integer)` with no upper bound and stop via MaxIteration
-//   (#3374). Refusing there would turn working reports into hard failures while diverging
-//   from the service tier. The residual divergence — 101,001 rows where BC yields
-//   2,000,000,001 — is real and is recorded in docs/limitations.md, not papered over.
+//   Two refusals remain, and both are limits of materialising rather than statements about BC:
+//   a span that would push the store past AL_RUNNER_INTEGER_WINDOW_MAX_ROWS, and a half-open
+//   filter whose closed end lies outside the span the base window can answer from, where the
+//   rows BC would return are unbounded in number and answering with none would be the silent
+//   wrong answer this file exists to remove.
+//   See docs/limitations.md#integer-virtual-table.
 //
 // PRECOMPILED-DLL RESPECT
 //   No BC business-logic body is touched. VirtualDataProvider, NCLMetaTable, NavValue,
@@ -83,22 +84,47 @@ public static partial class RecordPatches
     internal const int IntegerVirtualTableId = 2000000026;
 
     /// <summary>
-    /// Materialised window of Number. Real BC serves [-1e9..1e9] computed per request; we
-    /// cannot materialise 2,000,000,001 rows. Chosen to cover every realistic synthetic-dataset
-    /// use (report row generators, loop drivers) with headroom, while staying cheap enough to
-    /// insert eagerly. A request that CLOSES a bound beyond the window throws rather than
-    /// returning a short answer.
+    /// The BASE window: the span materialised at handout, and the span a request that does not
+    /// close both of its bounds is answered from. Rows outside it are materialised on demand by
+    /// <see cref="PopulateIntegerSpan"/>, so this is a floor rather than a limit.
     ///
-    /// <para>Both edges are overridable, and symmetrically so. The lower edge was a hard
-    /// <c>const</c> while the upper one already read an environment variable — invisible while
-    /// nothing compared a request against either edge, and a dead end the moment #2350's guard
-    /// started refusing: a filter naming -250000 was refused with a message advising the reader
-    /// to raise <c>AL_RUNNER_INTEGER_WINDOW_MAX</c>, which could not widen the edge that had
-    /// actually refused it. Measured: with <c>AL_RUNNER_INTEGER_WINDOW_MAX=300000</c> the
-    /// upper-range corpus test passed and the lower-range one still failed.</para>
+    /// <para>Both edges are overridable, and only ever widen. They are no longer the boundary a
+    /// closed-bound request is judged against -- <see cref="IntegerWindowMaxRows"/> is -- but they
+    /// still decide what an OPEN bound is answered from, which is the one shape no store can
+    /// materialise its way out of.</para>
     /// </summary>
     internal const int IntegerWindowMinDefault = -1000;
     internal const int IntegerWindowMaxDefault = 100000;
+
+    /// <summary>
+    /// BC's own clamp, from <c>IntegerDataProvider.GetValuesWithinRangeForKeyField</c> and
+    /// <c>CountValuesWithinRange</c>: <c>range.GetInclusiveIntegerBounds(-1000000000, 1000000000,
+    /// ...)</c>, decompiled from Ncl.dll and byte-identical in 27.0 and 28.4. A bound outside it
+    /// names rows a service tier does not serve either, so the span is clamped here exactly as BC
+    /// clamps it rather than refused.
+    /// </summary>
+    internal const int IntegerBcRangeMin = -1_000_000_000;
+    internal const int IntegerBcRangeMax = 1_000_000_000;
+
+    /// <summary>
+    /// Cap on how many rows this table may materialise, checked before an extension is attempted
+    /// so the refusal names a number instead of running out of memory. Same shape and default as
+    /// the Date table's (#2648). Overridable with AL_RUNNER_INTEGER_WINDOW_MAX_ROWS.
+    /// </summary>
+    internal const int IntegerWindowMaxRowsDefault = 500_000;
+
+    private static int? _ivtWindowMaxRows;
+
+    internal static int IntegerWindowMaxRows
+    {
+        get
+        {
+            if (_ivtWindowMaxRows.HasValue) return _ivtWindowMaxRows.Value;
+            var raw = Environment.GetEnvironmentVariable("AL_RUNNER_INTEGER_WINDOW_MAX_ROWS");
+            _ivtWindowMaxRows = int.TryParse(raw, out var v) && v > 0 ? v : IntegerWindowMaxRowsDefault;
+            return _ivtWindowMaxRows.Value;
+        }
+    }
 
     private static int? _ivtWindowMin;
     private static int? _ivtWindowMax;
@@ -140,19 +166,38 @@ public static partial class RecordPatches
     // Number's AL field number, read off the metatable itself (never hardcoded).
     private static int? _ivtNumberFieldNo;
 
-    // Populated-once guard per in-memory provider: the window is fixed, so unlike
-    // AllObj there is nothing to top up on later handouts.
-    private static readonly ConditionalWeakTable<object, object> _ivtPopulatedProviders = new();
+    /// <summary>
+    /// What each in-memory provider already holds, as disjoint sorted spans of Number plus their
+    /// row count. Rows are materialised per request, so "does this provider already hold that
+    /// span" is the question every path asks, and the count is what the row cap is checked
+    /// against.
+    /// </summary>
+    private sealed class IntegerPopulatedSpan
+    {
+        internal readonly List<(int Low, int High)> Covered = new();
+        internal long CoveredCount;
+    }
+
+    private static readonly ConditionalWeakTable<object, IntegerPopulatedSpan> _ivtSpanByProvider = new();
 
     /// <summary>True if <paramref name="table"/> is the Integer system virtual table (2000000026).</summary>
     private static bool IsIntegerVirtualTable(NCLMetaTable? table)
         => table != null && table.TableId == IntegerVirtualTableId;
 
     /// <summary>
-    /// Populate the in-memory store behind the Integer (2000000026) data access with one
-    /// row per Number in the materialised window. Idempotent per provider.
+    /// Materialise the base window into the store behind this data access. Called at handout;
+    /// idempotent, and after the first call it is a span lookup and a return.
     /// </summary>
     private static void PopulateIntegerVirtualTable(object dataAccess, NCLMetaTable integerMetaTable)
+        => PopulateIntegerSpan(dataAccess, integerMetaTable, IntegerWindowMin, IntegerWindowMax);
+
+    /// <summary>
+    /// Materialise every Number in [<paramref name="wantLow"/>..<paramref name="wantHigh"/>] this
+    /// provider does not already hold, clamped to BC's own [-1e9..1e9], and record it as covered.
+    /// Refuses -- loudly -- to grow the store past <see cref="IntegerWindowMaxRows"/>.
+    /// </summary>
+    private static void PopulateIntegerSpan(
+        object dataAccess, NCLMetaTable integerMetaTable, int wantLow, int wantHigh)
     {
         EnsureIntegerReflection(integerMetaTable);
         EnsureDataAccessProviderReflection(dataAccess);
@@ -160,18 +205,117 @@ public static partial class RecordPatches
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
             ?? throw IntegerShapeGap("Integer data access has no in-memory provider");
 
-        // Fixed window ⇒ populate exactly once per provider.
-        if (_ivtPopulatedProviders.TryGetValue(provider, out _)) return;
+        // BC clamps rather than refuses, so a bound outside its range names rows that do not
+        // exist on a service tier either: clamping here reproduces its answer instead of
+        // inventing one. An inverted span selects nothing, so it materialises nothing.
+        if (wantLow < IntegerBcRangeMin) wantLow = IntegerBcRangeMin;
+        if (wantHigh > IntegerBcRangeMax) wantHigh = IntegerBcRangeMax;
+        if (wantHigh < wantLow) return;
 
-        // Same rationale as the Field table: make our metatable report IsVirtualTable=false
-        // so BC's find takes the NORMAL temp-table DataAccess path over our populated store.
-        ClearVirtualBit(integerMetaTable);
+        var span = _ivtSpanByProvider.GetValue(provider, static _ => new IntegerPopulatedSpan());
 
-        var numberFieldNo = EnsureIntegerNumberFieldNo(integerMetaTable);
-        for (int n = IntegerWindowMin; n <= IntegerWindowMax; n++)
-            InsertIntegerRow(provider, integerMetaTable, numberFieldNo, n);
+        lock (span)
+        {
+            var missing = IntegerMissingSpans(span.Covered, wantLow, wantHigh);
+            if (missing.Count == 0) return;
 
-        _ivtPopulatedProviders.Add(provider, new object());
+            // Checked against what is already there PLUS what this request adds, never against the
+            // envelope -- otherwise a narrow request is refused purely because an earlier one sat
+            // far away.
+            long adding = 0;
+            foreach (var (lo0, hi0) in missing) adding += (long)hi0 - lo0 + 1;
+            var total = span.CoveredCount + adding;
+            if (total > IntegerWindowMaxRows)
+                throw IntegerRowCapRefusal(wantLow, wantHigh, adding, total, span);
+
+            // Same rationale as the Field table: make our metatable report IsVirtualTable=false
+            // so BC's find takes the NORMAL temp-table DataAccess path over our populated store.
+            ClearVirtualBit(integerMetaTable);
+
+            var numberFieldNo = EnsureIntegerNumberFieldNo(integerMetaTable);
+            foreach (var (lo0, hi0) in missing)
+                for (int n = lo0; n <= hi0; n++)
+                    InsertIntegerRow(provider, integerMetaTable, numberFieldNo, n);
+
+            IntegerAddCovered(span.Covered, wantLow, wantHigh);
+            span.CoveredCount = total;
+        }
+    }
+
+    /// <summary>
+    /// The refusal for a span that would push the store past the row cap: the span asked for, what
+    /// it would add, the resulting total and the cap. A limit of materialising rows, never a claim
+    /// that BC cannot answer the request -- which is why it says what BC serves.
+    /// </summary>
+    private static RunnerOutOfScopeException IntegerRowCapRefusal(
+        int wantLow, int wantHigh, long adding, long total, IntegerPopulatedSpan span)
+        => IntegerShapeGap(
+            System.FormattableString.Invariant(
+                $"an Integer filter asks for Number in [{wantLow}..{wantHigh}], which would add ")
+            + System.FormattableString.Invariant(
+                $"{adding:N0} rows for {total:N0} in all, past the {IntegerWindowMaxRows:N0}-row cap ")
+            + "for the materialised table "
+            + (span.Covered.Count > 0
+                ? System.FormattableString.Invariant(
+                      $"(currently {span.CoveredCount:N0} rows in {span.Covered.Count} span(s), ")
+                  + System.FormattableString.Invariant(
+                      $"[{span.Covered[0].Low}..{span.Covered[^1].High}]). ")
+                : "(nothing is materialised yet -- Integer rows are materialised per request). ")
+            + "Real BC computes this table per request and serves [-1000000000..1000000000], so "
+            + "these are rows a service tier would have returned. "
+            + "Raise AL_RUNNER_INTEGER_WINDOW_MAX_ROWS, or narrow the filter");
+
+    /// <summary>
+    /// The sub-spans of [<paramref name="wantLow"/>..<paramref name="wantHigh"/>] that
+    /// <paramref name="covered"/> does not already hold, in order. <paramref name="covered"/> must
+    /// be disjoint and sorted by Low, which <see cref="IntegerAddCovered"/> maintains.
+    /// </summary>
+    internal static List<(int Low, int High)> IntegerMissingSpans(
+        IReadOnlyList<(int Low, int High)> covered, int wantLow, int wantHigh)
+    {
+        var gaps = new List<(int Low, int High)>();
+        if (wantHigh < wantLow) return gaps;
+
+        var cursor = wantLow;
+        foreach (var (low, high) in covered)
+        {
+            if (high < cursor) continue;            // entirely before what is still wanted
+            if (low > wantHigh) break;              // sorted, so nothing later can overlap either
+            if (low > cursor) gaps.Add((cursor, low - 1));
+            if (high >= cursor)
+            {
+                if (high == int.MaxValue) return gaps;   // nothing above it is left to want
+                cursor = high + 1;
+            }
+            if (cursor > wantHigh) return gaps;
+        }
+        if (cursor <= wantHigh) gaps.Add((cursor, wantHigh));
+        return gaps;
+    }
+
+    /// <summary>
+    /// Record [<paramref name="low"/>..<paramref name="high"/>] as covered, keeping
+    /// <paramref name="covered"/> disjoint, sorted by Low and merged across spans that touch or
+    /// overlap -- so a window materialised as two adjacent halves reads as one span rather than as
+    /// two with a zero-row gap between them.
+    /// </summary>
+    internal static void IntegerAddCovered(List<(int Low, int High)> covered, int low, int high)
+    {
+        if (high < low) return;
+
+        var i = 0;
+        while (i < covered.Count && covered[i].High != int.MaxValue && covered[i].High + 1 < low) i++;
+
+        var newLow = low;
+        var newHigh = high;
+        while (i < covered.Count
+               && (covered[i].Low == int.MinValue || covered[i].Low - 1 <= newHigh))
+        {
+            if (covered[i].Low < newLow) newLow = covered[i].Low;
+            if (covered[i].High > newHigh) newHigh = covered[i].High;
+            covered.RemoveAt(i);
+        }
+        covered.Insert(i, (newLow, newHigh));
     }
 
     /// <summary>
@@ -309,99 +453,123 @@ public static partial class RecordPatches
     //   get     InternalTryGetByPrimaryKeyAsync(...)      — Record.Get(), which reaches
     //                                                       neither find nor count
     //
-    // Unlike Date's guard this one never widens anything: the Integer window is materialised
-    // eagerly and in full at handout, so there is nothing to top up. The only question a
-    // guard can answer here is "does this request reach past what we hold", and the only
-    // honest answer when it does is a refusal.
+    // Each one WIDENS the materialised set to cover the request, exactly as Date's does, and
+    // refuses only when it cannot: past the row cap, or where a half-open filter's closed end
+    // lies outside the span an open bound is answered from.
 
     /// <summary>
-    /// Field number of Integer's "Number" column as BC's own metadata declares it. Bound at
-    /// populate time from the metatable (<see cref="EnsureIntegerNumberFieldNo"/>) rather than
-    /// hardcoded; this cache lets the guard read a filter without re-walking the field list on
-    /// every request. Null until the table has been handed out once, which is also the only
-    /// state in which there is nothing to protect.
-    /// </summary>
-    private static int? IntegerNumberFieldNoOrNull => _ivtNumberFieldNo;
-
-    /// <summary>
-    /// Refuse when <paramref name="cacheRequest"/>'s "Number" filter closes a bound outside
-    /// [<see cref="IntegerWindowMin"/> .. <see cref="IntegerWindowMax"/>].
+    /// Materialise whatever this request needs before it is answered, and refuse when that
+    /// cannot be done.
     ///
-    /// <para>THE RULE, and why it is about CLOSED bounds only. BC's own
-    /// <c>Range.GetInclusiveIntegerBounds(min, max, ...)</c> substitutes its <c>min</c> for an
-    /// open low bound and its <c>max</c> for an open high one, then clamps whatever the filter
-    /// did name into that interval. We mirror the first half exactly — an open bound means "as
-    /// far as this provider goes", which is the window — and deliberately diverge on the
-    /// second: where BC silently clamps a closed bound of 2e9 down to 1e9, we refuse a closed
-    /// bound of 250000 rather than clamp it to 100000. Clamping is safe for BC because the
-    /// rows between its clamp and the request are rows that do not exist; clamping here would
-    /// drop rows a service tier would have returned.</para>
+    /// <para>WHICH SPAN. Every non-empty range of the "Number" filter closed at BOTH ends means
+    /// the rows in [lowest low .. highest high] are the only rows the filter can select, so those
+    /// are the only rows materialised -- BC's own filter engine excludes everything outside them
+    /// regardless of what the store holds. Anything else -- no "Number" filter, an OPEN bound, a
+    /// shape ToRangeList cannot express, a request we cannot read -- is answered from the BASE
+    /// window, widened by whichever bound IS closed. An open bound is the one shape a materialising
+    /// provider cannot follow: BC substitutes its own -1e9 / +1e9 for it
+    /// (<c>Range.GetInclusiveIntegerBounds</c>), and 2,000,000,001 rows is not on the table.</para>
     ///
-    /// <para>Every non-empty range in the filter is checked, so <c>'1..50|200000..300000'</c>
-    /// is refused on its second range even though its first is comfortably inside. A filter we
-    /// cannot read at all falls through to being served: that is the pre-existing behaviour,
-    /// and a refusal we cannot justify from a bound we actually read would be a worse failure
-    /// than the one this guard removes.</para>
+    /// <para>THE HALF-OPEN REFUSAL. When a filter's closed end falls outside the span the base
+    /// window can answer from -- <c>SetFilter(Number, '>=249000')</c> -- there is no honest span to
+    /// materialise: BC returns 249000..1e9 and we would return nothing while reporting success.
+    /// That silent zero is refused instead. It is a new refusal, replacing a wrong answer rather
+    /// than a working read.</para>
     /// </summary>
     internal static void EnsureIntegerWindowCoversRequest(object dataAccess, object cacheRequest)
     {
-        // A `Record Integer temporary` holds exactly the rows AL inserted, and the real table's
-        // rows were never injected into its private store. Refusing on its filter would refuse a
-        // read that has nothing to do with the virtual table. Same carve-out as Date's (#2524).
+        // A `Record Integer temporary` holds exactly the rows AL inserted, and materialising into
+        // its private store would inject rows AL never wrote. Same carve-out as Date's (#2524).
         if (IsTemporaryRecordDataAccess(dataAccess)) return;
 
-        // Nothing has been materialised yet, so the "Number" field number is not bound and there
-        // is no populated store whose limits could be exceeded. PrepareIntegerVirtualTable
-        // populates before any request is served.
-        if (IntegerNumberFieldNoOrNull is not int numberFieldNo) return;
-
-        int? closedLow, closedHigh;
+        NCLMetaTable meta;
+        int numberFieldNo;
         try
         {
+            if (_pReqMaoLight?.GetValue(cacheRequest) is not NCLMetaTable m) return;
+            meta = m;
+            EnsureIntegerReflection(meta);
             EnsureIntegerGuardReflection(dataAccess, cacheRequest);
-            if (!TryReadClosedNumberBounds(cacheRequest, dataAccess, numberFieldNo, out closedLow, out closedHigh))
-                return;
+            numberFieldNo = EnsureIntegerNumberFieldNo(meta);
         }
         catch (RunnerOutOfScopeException) { throw; }
         catch
         {
-            // Reading the filter is best-effort. A shape we cannot parse is served from the
-            // window exactly as it was before this guard existed — see the class comment: a
-            // refusal must rest on a bound we actually read.
+            // We could not identify the request or the store behind it, so there is nothing to
+            // materialise against and no answer to protect.
             return;
         }
 
-        if (closedLow is int lo && lo < IntegerWindowMin) throw IntegerWindowRefusal(lo);
-        if (closedHigh is int hi && hi > IntegerWindowMax) throw IntegerWindowRefusal(hi);
+        int? closedLow, closedHigh;
+        bool fullyBounded;
+        try
+        {
+            fullyBounded = TryReadClosedNumberBounds(
+                cacheRequest, dataAccess, numberFieldNo, out closedLow, out closedHigh);
+        }
+        catch (RunnerOutOfScopeException) { throw; }
+        catch
+        {
+            // Reading the filter is best-effort. A shape we cannot parse falls back to the base
+            // window -- the widest thing such a request can be answered from -- never to a
+            // narrower store.
+            fullyBounded = false;
+            closedLow = closedHigh = null;
+        }
+
+        if (fullyBounded && closedLow is int lo && closedHigh is int hi)
+        {
+            PopulateIntegerSpan(dataAccess, meta, lo, hi);
+            return;
+        }
+
+        // The base window, WIDENED by whichever bound the filter did close. Both sides are clamped
+        // to the window rather than substituted for it, because a range list like `'..%1|%2..'`
+        // closes a HIGH bound on its first range and a LOW bound on its second: taking those as the
+        // span would invert it and materialise nothing.
+        var lowBound = closedLow is int cl && cl < IntegerWindowMin ? cl : IntegerWindowMin;
+        var highBound = closedHigh is int ch && ch > IntegerWindowMax ? ch : IntegerWindowMax;
+
+        // The closed end sits outside the span we are about to materialise, so that span answers
+        // the request with no rows at all while BC answers it with up to a billion. Nothing here
+        // can be materialised honestly; say so.
+        if (closedLow is int lo2 && lo2 > highBound) throw IntegerOpenEndedRefusal(lo2, openHigh: true);
+        if (closedHigh is int hi2 && hi2 < lowBound) throw IntegerOpenEndedRefusal(hi2, openHigh: false);
+
+        PopulateIntegerSpan(dataAccess, meta, lowBound, highBound);
     }
 
     /// <summary>
-    /// The refusal, naming the bound that was asked for and the window that could not answer
-    /// it — the two facts a reader needs to decide between raising
-    /// <c>AL_RUNNER_INTEGER_WINDOW_MAX</c> and narrowing the filter.
+    /// The refusal for a half-open filter whose closed end lies outside the base window. Names the
+    /// bound, the window it fell outside, and what BC would have answered -- so the reader can
+    /// choose between closing the other end of the filter (which is then materialised exactly) and
+    /// widening the window.
     /// </summary>
-    private static RunnerOutOfScopeException IntegerWindowRefusal(int requested)
+    private static RunnerOutOfScopeException IntegerOpenEndedRefusal(int requested, bool openHigh)
         => IntegerShapeGap(
             System.FormattableString.Invariant(
-                $"an Integer filter names Number {requested}, past the materialised window ")
+                $"an Integer filter names Number {requested} with its other end open, outside the ")
             + System.FormattableString.Invariant(
-                $"[{IntegerWindowMin}..{IntegerWindowMax}]. ")
-            + "Real BC computes this table per request and serves [-1000000000..1000000000], so "
-            + "the rows between the window and the bound asked for are rows a service tier would "
-            + "have returned. "
-            // Name the variable that moves the edge that actually refused. Advising
-            // AL_RUNNER_INTEGER_WINDOW_MAX for a bound below the window sends the reader to a
-            // setting that cannot widen it, and the advice fails silently.
-            + (requested < IntegerWindowMin
-                ? "Lower AL_RUNNER_INTEGER_WINDOW_MIN, or narrow the filter"
-                : "Raise AL_RUNNER_INTEGER_WINDOW_MAX, or narrow the filter"));
+                $"base window [{IntegerWindowMin}..{IntegerWindowMax}] an open bound is answered ")
+            + "from. Real BC substitutes "
+            + (openHigh ? "1000000000 for the open end" : "-1000000000 for the open end")
+            + ", so it answers with rows this request would otherwise be told there are none of. "
+            + "Close the other end of the filter, or "
+            + (openHigh
+                ? "raise AL_RUNNER_INTEGER_WINDOW_MAX"
+                : "lower AL_RUNNER_INTEGER_WINDOW_MIN"));
 
     /// <summary>
     /// The lowest closed low bound and the highest closed high bound this request's "Number"
     /// filter names, read through BC's own <c>FilterExpression.ToRangeList</c>. An open bound
     /// contributes nothing, exactly as <c>GetInclusiveIntegerBounds</c> treats it.
     /// </summary>
-    /// <returns>False when there is no readable "Number" filter, so nothing can be judged.</returns>
+    /// <returns>
+    /// True only when the filter names at least one non-empty range AND every non-empty range is
+    /// closed at both ends, i.e. when [low..high] provably contains every row the filter can
+    /// select. False means the request reaches past any bounded span, so the caller answers it
+    /// from the base window instead.
+    /// </returns>
     private static bool TryReadClosedNumberBounds(
         object cacheRequest, object dataAccess, int numberFieldNo, out int? low, out int? high)
     {
@@ -417,23 +585,31 @@ public static partial class RecordPatches
         if (rangeList == null) return false;
         if (_ivtRangeListRanges!.GetValue(rangeList) is not System.Collections.IEnumerable ranges) return false;
 
+        var sawRange = false;
+        var allClosed = true;
+
         foreach (var range in ranges)
         {
             if (range == null) continue;
             if ((bool)_ivtRangeIsEmpty!.GetValue(range)!) continue;
+            sawRange = true;
 
             // IsLowIsMinimum / IsHighMaximum are the same two flags BC's own
             // GetInclusiveIntegerBounds branches on before substituting its own limits.
             if (!(bool)_ivtRangeLowIsMin!.GetValue(range)!
                 && ToInt32OrNull(_ivtRangeLowValue!.GetValue(range)) is int lo)
                 low = low == null || lo < low ? lo : low;
+            else
+                allClosed = false;
 
             if (!(bool)_ivtRangeHighIsMax!.GetValue(range)!
                 && ToInt32OrNull(_ivtRangeHighValue!.GetValue(range)) is int hi)
                 high = high == null || hi > high ? hi : high;
+            else
+                allClosed = false;
         }
 
-        return low != null || high != null;
+        return sawRange && allClosed && low != null && high != null;
     }
 
     /// <summary>The "Number" FilterExpression inside a <c>FiltersAndMarks</c>, if any.</summary>
@@ -565,10 +741,10 @@ public static partial class RecordPatches
 
     /// <summary>
     /// Prepended to DataAccess.CountAsync(CountCacheRequest) for every table. <c>Record.Count()</c>
-    /// builds a CountCacheRequest, not a FindCacheRequest, so the find guard never sees it —
-    /// without this, a Count over [1..250000] answers 100000, a number that looks entirely real
-    /// and is short by 150000. For every table but 2000000026 this is one integer comparison
-    /// and a return.
+    /// builds a CountCacheRequest, not a FindCacheRequest, so the find guard never sees it --
+    /// without this, a Count over [1..250000] answers whatever the store happens to hold, a number
+    /// that looks entirely real. For every table but 2000000026 this is one integer comparison and
+    /// a return.
     /// </summary>
     public static void DataAccess_IntegerWindowGuardForCount(object self, object request)
     {
@@ -581,9 +757,9 @@ public static partial class RecordPatches
     /// <c>Record.IsEmpty()</c> does not take the count path: RecordImplementation.IsEmptyAsync
     /// builds its own ExistsCacheRequest and reaches DataAccess.ExistsAsync, never CountAsync —
     /// established for the Date table in #3006, where the same omission had IsEmpty() answering
-    /// TRUE on a range Count() answered 7 for. Without this guard IsEmpty() over [1..250000]
-    /// answers FALSE from the rows the window happens to hold: true by accident, and a statement
-    /// about a range nobody asked about.
+    /// TRUE on a range Count() answered 7 for. Without this guard IsEmpty() over [249000..250000]
+    /// answers TRUE from a store that holds none of those rows -- a statement about what has been
+    /// materialised, dressed as one about the table.
     /// </summary>
     public static void DataAccess_IntegerWindowGuardForExists(object self, object request)
     {
@@ -593,34 +769,52 @@ public static partial class RecordPatches
 
     /// <summary>
     /// Prepended to DataAccess.InternalTryGetByPrimaryKeyAsync for every table. A full-primary-key
-    /// <c>Record.Get()</c> reaches neither the find path nor the count path — DataAccess has its
+    /// <c>Record.Get()</c> reaches neither the find path nor the count path -- DataAccess has its
     /// own primary-key route straight to the provider, which is why #2504 needed a separate guard
     /// there for Aggregate Permission Set and #2648 another for Date. Integer was left behind by
     /// both: <c>Get(250000)</c> answered FALSE, which reads as "no such row" when a service tier
     /// plainly has one.
     ///
-    /// <para>The bound comes from the RECORD ID rather than from a filter, because a keyed Get
-    /// carries its key there and may carry no "Number" filter at all.</para>
+    /// <para>The row comes from the RECORD ID rather than from a filter, because a keyed Get
+    /// carries its key there and may carry no "Number" filter at all. One row is all it needs, so
+    /// this path never reaches the cap; a key outside BC's own [-1e9..1e9] materialises nothing and
+    /// falls through to FALSE, which is what a service tier answers for it too.</para>
     /// </summary>
     public static void DataAccess_IntegerWindowGuardForGet(object self, object request)
     {
         if (FindRequestTableId(request) != IntegerVirtualTableId) return;
         if (IsTemporaryRecordDataAccess(self)) return;
 
+        NCLMetaTable meta;
         int? wanted;
+        bool hasRecordId;
         try
         {
+            if (_pReqMaoLight?.GetValue(request) is not NCLMetaTable m) return;
+            meta = m;
+            EnsureIntegerReflection(meta);
             EnsureIntegerGuardReflection(self, request);
-            wanted = PrimaryKeyNumber(request, out _);
+            wanted = PrimaryKeyNumber(request, out hasRecordId);
         }
         catch (RunnerOutOfScopeException) { throw; }
         catch
         {
-            // Unreadable request — served from the window, as before this guard existed.
+            // Unreadable request -- nothing to materialise against.
             return;
         }
 
-        if (wanted is not int n) return;
-        if (n < IntegerWindowMin || n > IntegerWindowMax) throw IntegerWindowRefusal(n);
+        if (wanted is int n)
+        {
+            PopulateIntegerSpan(self, meta, n, n);
+            return;
+        }
+
+        // A SystemId-keyed Get names no Number, and cannot name one the store does not already
+        // hold: the SystemId of a row that was never materialised has never been handed out.
+        if (!hasRecordId) return;
+
+        // A primary-key Get whose key we could not read: answer it from the base window, which is
+        // what every Get was answered from before rows became per-request.
+        PopulateIntegerSpan(self, meta, IntegerWindowMin, IntegerWindowMax);
     }
 }
