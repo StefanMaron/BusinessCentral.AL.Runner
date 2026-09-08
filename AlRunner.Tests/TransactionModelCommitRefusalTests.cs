@@ -131,30 +131,6 @@ public class TransactionModelCommitRefusalTests
                 Helpers: Codeunit "TXM Helpers";
                 RefusalTxt: Label 'Tests cannot call the Commit function if TransactionModel property is set to AutoRollback.', Locked = true;
 
-            // The guard is BC's, and BC writes it into ALDatabase.ALCommit only. A guarded
-            // Codeunit.Run ends its nested transaction through EndTransactionWorldAndTransaction
-            // instead, which is not an AL Commit() statement and is not refused — so the runner
-            // must not route that internal commit through the refusal.
-            [Test]
-            [TransactionModel(TransactionModel::AutoRollback)]
-            procedure AutoRollback_GuardedCodeunitRunIsNotRefused()
-            var
-                Runnable: Codeunit "TXM Runnable";
-                Probe: Record "TXM Probe";
-            begin
-                // DECLARED FIRST ON PURPOSE, and do not reorder: AlRunner#3468 — the runner's
-                // write-transaction flag survives a test-method boundary, so any arm below that
-                // writes without committing leaves this guarded Codeunit.Run refused with "the
-                // transaction is stopped" instead of measuring what it is here to measure. It
-                // also writes nothing itself, for the same reason within the method (corpus
-                // TestCodeunitRunWriteTransaction). Entry 20 is used here and nowhere else.
-                if not Runnable.Run() then
-                    Error('TXM7 FAIL: a guarded Codeunit.Run inside an AutoRollback test must succeed, got [%1]', GetLastErrorText());
-
-                if not Probe.Get(20) then
-                    Error('TXM7 FAIL: the run codeunit''s row must be visible after a successful guarded run');
-            end;
-
             // Arm (a): the refusal itself.
             [Test]
             [TransactionModel(TransactionModel::AutoRollback)]
@@ -222,6 +198,33 @@ public class TransactionModelCommitRefusalTests
 
                 if Probe.Get(11) then
                     Error('TXM4 FAIL: an ignored Commit() must not move the rollback boundary, so the unrelated error must undo the Insert');
+            end;
+
+            // The guard is BC's, and BC writes it into ALDatabase.ALCommit only. A guarded
+            // Codeunit.Run ends its nested transaction through EndTransactionWorldAndTransaction
+            // instead, which is not an AL Commit() statement and is not refused — so the runner
+            // must not route that internal commit through the refusal.
+            //
+            // DECLARED HERE ON PURPOSE (AlRunner#3468), directly behind the arm above, which
+            // ends with an Insert that is rolled back and never committed. Until #3468 this arm
+            // had to be declared FIRST in the codeunit: the runner's write-transaction flag
+            // survived the test-method boundary, so the guarded Codeunit.Run was refused with
+            // "the transaction is stopped" before it could measure anything. Sitting behind a
+            // pending write is now the point — a regression in the boundary reset fails here as
+            // well as in WriteTransactionTestBoundaryTests. Entry 20 is used here and nowhere
+            // else.
+            [Test]
+            [TransactionModel(TransactionModel::AutoRollback)]
+            procedure AutoRollback_GuardedCodeunitRunIsNotRefused()
+            var
+                Runnable: Codeunit "TXM Runnable";
+                Probe: Record "TXM Probe";
+            begin
+                if not Runnable.Run() then
+                    Error('TXM7 FAIL: a guarded Codeunit.Run inside an AutoRollback test must succeed, got [%1]', GetLastErrorText());
+
+                if not Probe.Get(20) then
+                    Error('TXM7 FAIL: the run codeunit''s row must be visible after a successful guarded run');
             end;
 
             // Arm (e): both guards apply, and the TransactionModel one is evaluated first, so

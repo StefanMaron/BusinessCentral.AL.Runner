@@ -1573,9 +1573,10 @@ public sealed class TestExecutor
         _testAttrCache = new();
 
     /// <summary>
-    /// Roll the row store back to this test's own commit point (RunOne's own MarkCommitPoint()
-    /// call, right before m.Invoke) in the two cases BC's own
-    /// NavTestCodeunit.ExecuteTestMethodAsync does.
+    /// Apply what BC's own NavTestCodeunit.ExecuteTestMethodAsync does at the END of a test
+    /// method: roll the row store back to this test's own commit point (RunOne's own
+    /// MarkCommitPoint() call, right before m.Invoke) in the two cases BC does, and end the
+    /// session's write transaction in every arm BC ends it (#3468 — see the inline comment).
     ///
     /// <para>1. <paramref name="m"/> carries [TransactionModel(TransactionModel::AutoRollback)]
     /// — the `case TestTransactionModel.AutoRollback: activeSession.Rollback();` arm on the
@@ -1611,6 +1612,20 @@ public sealed class TestExecutor
     {
         if (threw || IsAutoRollback(m))
             AlRunner.Patches.RecordPatches.RollbackToCommitPoint(BcRuntime.SkeletonSession);
+
+        // #3468: whichever of those arms BC takes, it ENDS the session's transaction here —
+        // Commit() under AutoCommit, Rollback() under AutoRollback, Rollback() from the catch
+        // when the method threw. So the next [Test] in this codeunit starts with no write
+        // transaction pending and its guarded Codeunit.Run is allowed. The runner's flag is
+        // separate from the row store, so ending it is its own call.
+        //
+        // TransactionModel::None is the one arm that does NOT end it: BC's switch has no None
+        // case, and the transaction handling None does get (`while (IsTransactionActive())
+        // EndTransaction(commit: false)`) runs BEFORE the method body, not after it. The
+        // runner does not model that pre-body loop, so leaving the flag alone here is the
+        // honest answer rather than a half-modelled one.
+        if (threw || TransactionModelName(m) != "None")
+            AlRunner.Patches.ALDatabasePatches.EndWriteTransactionAtTestBoundary();
     }
 
     /// <summary>
@@ -1625,20 +1640,28 @@ public sealed class TestExecutor
     /// in-process engine bootstrap ApplyTestTransactionModel's own RollbackToCommitPoint call
     /// requires.
     /// </summary>
-    internal static bool IsAutoRollback(MethodInfo m)
+    internal static bool IsAutoRollback(MethodInfo m) => TransactionModelName(m) == "AutoRollback";
+
+    /// <summary>
+    /// <paramref name="m"/>'s declared TransactionModel as its enum member NAME
+    /// (<c>AutoCommit</c> / <c>AutoRollback</c> / <c>None</c>), or <c>null</c> when the method
+    /// carries no [Test] attribute at all. A [Test] with no explicit model answers
+    /// <c>AutoCommit</c>, which is the attribute's own default and BC's.
+    ///
+    /// TestTransactionModel.AutoRollback = 1 (AutoCommit=0, AutoRollback=1, None=2) — read by
+    /// NAME, not by casting to the real enum type, for the same assembly-load-context reason
+    /// as the attribute-name lookup (a multi-bundle run can have more than one Ncl loaded).
+    /// </summary>
+    internal static string? TransactionModelName(MethodInfo m)
     {
         var attr = _testAttrCache.GetOrAdd(m, static mi =>
             mi.GetCustomAttributes(inherit: false)
               .FirstOrDefault(a => a.GetType().Name is "NavTestAttribute" or "TestAttribute"));
-        if (attr == null) return false;
+        if (attr == null) return null;
 
         var prop = attr.GetType().GetProperty("TransactionModel",
             BindingFlags.Public | BindingFlags.Instance);
-        var value = prop?.GetValue(attr);
-        // TestTransactionModel.AutoRollback = 1 (AutoCommit=0, AutoRollback=1, None=2) —
-        // compared by NAME, not by casting to the real enum type, for the same
-        // assembly-load-context reason as the attribute-name lookup above.
-        return value != null && value.ToString() == "AutoRollback";
+        return prop?.GetValue(attr)?.ToString();
     }
 
     // Issue #2070 root cause: this watchdog's clock is WALL-CLOCK time on the AL
