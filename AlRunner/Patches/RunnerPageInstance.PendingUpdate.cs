@@ -21,7 +21,9 @@ internal sealed partial class RunnerPageInstance
     /// Only <c>NavFormUpdateTypes.Update</c> arms the refresh. BC raises the same event from
     /// <c>SaveRecordAsync</c> with <c>RecordSaved</c> alone, which is a plain "the record was
     /// written" notification and not a request to re-load the form — treating the two alike
-    /// would refresh after every <c>CurrPage.SaveRecord</c>, which nothing has measured.
+    /// would refresh after every <c>CurrPage.SaveRecord</c>, which nothing has measured. What
+    /// <c>RecordSaved</c> DOES arm is the before-image half of the same client behaviour, which
+    /// raises no trigger at all — see <see cref="RefreshBeforeImageAfterSave"/>.
     ///
     /// <para><c>UpdateParent</c> is read as a no-op ON PURPOSE, not overlooked. BC ORs it in
     /// when the page declares <c>UpdatePropagation = Both</c>, and it asks the client to

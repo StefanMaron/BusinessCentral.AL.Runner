@@ -2316,10 +2316,19 @@ internal class LiveNavTestPage : MockITestPage
     /// <c>NavForm.AfterGetCurrRecordAsync</c> — both end with
     /// <c>OldRecord.ALAssign(SourceTable)</c>, and <c>NavForm.OldRecord</c> is literally
     /// <c>SafeSourceTable.OldRecord</c>, so the target is this record's own xRec slot. Those two
-    /// are exactly the pair of triggers RaiseOnAfterGetRecord above fires, which is why the
-    /// snapshot belongs here and nowhere else: "a row became the current row" is the only moment
-    /// BC takes it, and nothing on the page-write path overwrites it (see FlushPendingModify),
-    /// so by the time OnModify runs xRec still holds the row AS FETCHED.
+    /// are exactly the pair of triggers RaiseOnAfterGetRecord above fires, which is why a row
+    /// becoming the current row is one of the moments BC takes it.
+    ///
+    /// <para>It is not the only one, and this method now has FOUR callers — issue #3440. BC also
+    /// retakes the before-image after every successful page-driven WRITE, so a second write in
+    /// one page session sees the first write's row as its xRec: <c>NavForm.InsertAsync</c> does
+    /// it inline (mirrored in <see cref="FlushPendingNewRow"/>), and <c>SaveRecordAsync</c>
+    /// leaves it to the client, which re-reads and lands in <c>AfterGetCurrRecordAsync</c>'s own
+    /// tail — mirrored in <see cref="FlushPendingModify"/> for the runner's own write path and in
+    /// <c>RunnerPageInstance.RefreshBeforeImageAfterSave</c> for <c>CurrPage.SaveRecord()</c> /
+    /// <c>Update(true)</c>. Removing any one of the four puts the stale before-image back on
+    /// that path. What still holds is the OTHER half of the old sentence: nothing overwrites it
+    /// BETWEEN the write's start and its trigger, so OnModify sees the row as fetched.</para>
     ///
     /// Without this the page had no before-image at all: <c>ALModifyAsync</c>'s own
     /// <c>OldRecord.ALAssign(this)</c> was the only thing that ever populated xRec, which is
