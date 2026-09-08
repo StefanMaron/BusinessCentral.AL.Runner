@@ -752,6 +752,25 @@ whole window rather than something narrower. `FindFirst` on such a filter is una
 the closed end — and that is the shape production AL uses. Iterating an open-ended range
 to the end stops at the window edge instead of year 9999.
 
+That truncation holds only while the range's **closed** end is inside the window. A range
+that is open at one end with its closed end **outside** the window is refused loudly
+instead — `SetFilter("Period Start", '..%1', 18500101)`. The window holds no period on or
+before 1850, so serving that request from it reports success with no rows at all, where a
+service tier answers 675,332 (measured on BC 28.4.53241.0), the first of them 0001-01-03.
+That is a silent zero rather than a truncation, so it raises `RunnerOutOfScopeException`
+naming the bound, which end is open and the window. Close the other end of the filter, or
+move the window with the environment variables below.
+
+The test is applied to **each range of the filter separately**, not to the outermost bounds
+the filter spans. A filter may name several ranges —
+`SetFilter("Period Start", '%1..%2|%3..', 20000101, 20000110, 23000101)` — and BC answers
+their union, 2,812,377 rows on the same tier. Read from the outermost closed bounds alone
+that filter looks answerable at 2000-01-01 and 2000-01-10 and is served with the 10 rows of
+its first range, dropping the second whole
+([#3483](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3483)). A
+multi-range filter whose ranges are all closed is materialised as usual, including when one
+of them lies past the window.
+
 Three environment variables move all three numbers for a one-off run:
 `AL_RUNNER_DATE_WINDOW_MIN_YEAR`, `AL_RUNNER_DATE_WINDOW_MAX_YEAR`,
 `AL_RUNNER_DATE_WINDOW_MAX_ROWS`.
