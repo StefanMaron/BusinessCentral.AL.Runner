@@ -2944,7 +2944,7 @@ internal static class TestPageMinMaxValue
 ///
 /// <para><b>The number of decimals is the CONTROL's, not a constant (#3406).</b> This helper
 /// used to apply <c>"0.00"</c> to every Decimal on every page, so a control declaring
-/// <c>DecimalPlaces = 3 : 3</c> or <c>AutoFormatType = 10</c> read back with two decimals and
+/// <c>DecimalPlaces = 3 : 3</c> or <c>AutoFormatType = 11</c> read back with two decimals and
 /// nothing said so. The format string is BC's own: <c>NavForm.GetDecimalString</c> runs to
 /// completion inside the runner and publishes its result as the control's
 /// <c>Control&lt;id&gt;_Format</c> source expression, which

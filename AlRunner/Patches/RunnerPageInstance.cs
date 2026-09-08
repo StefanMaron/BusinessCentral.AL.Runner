@@ -1139,7 +1139,7 @@ internal sealed partial class RunnerPageInstance
     /// <code>
     /// AutoFormatType = 0                                 -&gt; #,##0.00
     /// AutoFormatType = 1,  expression 'EUR'              -&gt; #,##0.00
-    /// AutoFormatType = 10, expression '&lt;Precision,3:3&gt;…' -&gt; #,##0.000
+    /// AutoFormatType = 11, expression '&lt;Precision,3:3&gt;…' -&gt; #,##0.000
     /// DecimalPlaces  = 3 : 3                             -&gt; #,##0.000
     /// </code>
     /// <para>Never throws: a page that published no format table, a control with no format

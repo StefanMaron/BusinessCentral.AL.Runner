@@ -607,7 +607,7 @@ without any further setup.
 A `TestPage` control bound to a Decimal reads back with **the number of decimals the control
 declares**, not a fixed two ([#3406](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3406)).
 Before that fix `TestPageNumericValue` applied `"0.00"` to every Decimal on every page, so
-`DecimalPlaces = 3 : 3` and `AutoFormatType = 10` both read back with two decimals and nothing
+`DecimalPlaces = 3 : 3` and `AutoFormatType = 11` both read back with two decimals and nothing
 said so.
 
 ### Where the format comes from
@@ -637,15 +637,16 @@ property they declare:
 |---|---|---|---|
 | `AutoFormatType = 0` | `#,##0.00` | `1234.50` | `1,234.50` |
 | `AutoFormatType = 1`, expression `'EUR'` | `#,##0.00` | `1234.50` | `1,234.50` |
-| `AutoFormatType = 10`, expression `<Precision,3:3>…` | `#,##0.000` | `1234.50` | `1,234.500` |
+| `AutoFormatType = 11`, expression `<Precision,3:3>…` | `#,##0.000` | `1234.50` | `1,234.500` |
 | `DecimalPlaces = 3 : 3` | `#,##0.000` | `1234.50` | `1,234.500` |
 | page-variable-bound, `DecimalPlaces = 3 : 3` | `#,##0.000` | `1234.50` | `1,234.500` |
 
 The upstream corpus suite that asks a real service tier what these strings should be is
 `ALT AutoFormat Tests` (codeunit 60605), corpus PR
-[#277](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/277). Until that
-merges, the values above are what BC's own code computed **inside the runner** — which is
-strictly better than a runner-invented constant, and still not a service-tier verdict.
+[#277](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/277), which has
+**merged** as `466dd466` — the pin this PR moves to. So the values above are no longer only
+what BC's own code computed inside the runner: a real service tier has adjudicated them, on
+all eight cloud legs.
 
 ### What is still not covered
 
