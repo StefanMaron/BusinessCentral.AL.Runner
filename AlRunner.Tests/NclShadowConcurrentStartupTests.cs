@@ -28,11 +28,14 @@ public sealed class NclShadowConcurrentStartupTests
     private static void WriteCompleteShadowDir(string dir, string origFull, byte[]? dllBytes = null)
     {
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, MarkerFileName), origFull);
         File.WriteAllBytes(Path.Combine(dir, EntryDllName), dllBytes ?? new byte[] { 1, 2, 3 });
         File.WriteAllBytes(Path.Combine(dir, NclFileName), new byte[] { 4, 5, 6 });
         File.WriteAllText(Path.Combine(dir, "al-runner.deps.json"), "{}");
         File.WriteAllText(Path.Combine(dir, "al-runner.runtimeconfig.json"), "{}");
+        // #3559: manifest then marker, last — the order a real build publishes in, and what
+        // makes this dir "complete" rather than merely launchable.
+        NclShadowRuntime.WriteManifest(dir);
+        File.WriteAllText(Path.Combine(dir, MarkerFileName), origFull);
     }
 
     // ─────────────────────────────────────────────────────────────────────────
