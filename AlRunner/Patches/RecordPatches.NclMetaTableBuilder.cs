@@ -138,16 +138,11 @@ public static partial class RecordPatches
 
         try
         {
-            // Merge any tableextension fields for this base table. Read ONCE, ahead of the
-            // route choice below, because #3600 needs it on BOTH routes now: a same-app
-            // add-only extension's fields are already inside BC's document (nothing to splice
-            // into the field ARRAY), but ApplyRunnerFieldWiring still needs the PARSE-TIME
-            // ParsedField (TypeName for the enum fixup, IsAutoIncrement for counter
-            // registration) for those same fields — neither is recoverable from the built
-            // NCLMetaTable. Before #3600 no bc-document-routed table ever had an extension
-            // (any extension forced the derivation), so this gap was unreachable; passing
-            // Array.Empty<ParsedField>() here silently dropped both for the first extension
-            // relaxation ever lets through.
+            // #3600 — read once, ahead of the route choice below, and fed to
+            // ApplyRunnerFieldWiring on BOTH routes: a same-app add-only extension's fields
+            // are already inside BC's document, so bc-document needs nothing spliced into the
+            // field ARRAY, but the enum-type-name / AutoIncrement side info those fields carry
+            // lives only in this parse-time ParsedField list, not on the built NCLMetaTable.
             //
             // De-duplicate by field id: precompiled .app SymbolReference.json sometimes lists
             // extension fields both in the base table's Tables[].Fields entry AND in

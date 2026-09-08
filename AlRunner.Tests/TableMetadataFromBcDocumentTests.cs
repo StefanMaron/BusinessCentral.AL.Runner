@@ -606,24 +606,36 @@ public class TableMetadataFromBcDocumentTests
         }
         """);
 
-        var (output, exit) = RunRunner(appDir, Path.Combine(scratch, "al-out"));
-        Assert.True(exit == 0 && output.Contains("1P/0F/0E"), $"run must pass:\n{output}");
+        // Cold, then warm on the SAME --cache dir: Emit (which registers the document) runs
+        // only on a compile-cache MISS, and DependencyLoader/AL-output-cache replay is a
+        // separate path from the cold Emit one — see TableMetadataFromBcDocumentTests's own
+        // header. A warm-only assertion would miss a replay that silently lost the extension's
+        // field/key; a cold-only one would miss a replay that silently lost the ROUTE.
+        void AssertExtensionSurvivesViaBcsDocument(string output, string phase)
+        {
+            Assert.True(output.Contains($"[table-metadata] {TableId} source=bc-document"),
+                $"{phase}: table {TableId} was not built from BC's document.\n{output}");
 
-        // NOT DoesNotContain(source=derived): the FIRST build of every compiled table runs
-        // during AddSourceDir, before Emit has registered any document (see
-        // RebuildTablesFromBcMetadataAll's own header), so a "derived" trace line is emitted
-        // for this table regardless of the eventual route. The claim is about where the run
-        // ENDS UP, which is what the field/key assertions below (read from the LAST matching
-        // trace line, exactly like AssertCompiledTableCameFromBcDocument does) actually pin.
-        Assert.Contains($"[table-metadata] {TableId} source=bc-document", output);
+            var lines = output.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+            var field50 = lines.LastOrDefault(
+                l => l.StartsWith($"[table-metadata] {TableId} field=50 ", StringComparison.Ordinal))
+                ?? throw new Xunit.Sdk.XunitException(
+                    $"{phase}: no trace line for the extension's field 50.\n{output}");
+            Assert.True(
+                field50.Contains(" editable=False") && field50.Contains(" dataClassification=EndUserIdentifiableInformation"),
+                $"{phase}: the extension's field 50 must carry its own declared "
+                + $"Editable/DataClassification, read straight off BC's document.\n{field50}");
+        }
 
-        var lines = output.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
-        var field50 = lines.LastOrDefault(
-            l => l.StartsWith($"[table-metadata] {TableId} field=50 ", StringComparison.Ordinal))
-            ?? throw new Xunit.Sdk.XunitException($"no trace line for the extension's field 50.\n{output}");
-        Assert.True(field50.Contains(" editable=False") && field50.Contains(" dataClassification=EndUserIdentifiableInformation"),
-            $"the extension's field 50 must carry its own declared Editable/DataClassification, " +
-            $"read straight off BC's document — not defaults.\n{field50}");
+        var alCacheDir = Path.Combine(scratch, "al-out");
+        var (cold, coldExit) = RunRunner(appDir, alCacheDir);
+        Assert.True(coldExit == 0 && cold.Contains("1P/0F/0E"), $"cold run must pass:\n{cold}");
+        AssertExtensionSurvivesViaBcsDocument(cold, "cold run");
+
+        var (warm, warmExit) = RunRunner(appDir, alCacheDir);
+        Assert.True(warmExit == 0 && warm.Contains("1P/0F/0E"), $"warm run must pass:\n{warm}");
+        Assert.Contains("[cache] HIT", warm);
+        AssertExtensionSurvivesViaBcsDocument(warm, "warm run (AL-output cache HIT)");
     }
 
     /// <summary>

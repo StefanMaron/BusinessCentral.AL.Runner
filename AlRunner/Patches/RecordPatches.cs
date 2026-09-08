@@ -154,56 +154,40 @@ public static partial class RecordPatches
     internal static readonly Dictionary<string, List<int>> _extensionIdsByBaseTable = new();
 
     /// <summary>
-    /// #3600 — one entry per tableextension merged onto a base table, recording what
-    /// <see cref="RecordPatches.NclMetaTableFromBcDocument.ShouldBuildTableFromBcDocument"/>
-    /// needs to decide whether BC's OWN document for the base table already carries this
-    /// extension (same app, add-only — BC folds it at compile time) or must be excluded in
-    /// favor of the derivation (a <c>modify(...)</c> block, which lands only in the delta
-    /// document; or a different declaring app, whose <c>FieldAdd</c> delta the base table's
-    /// own document — emitted by ITS app's compile — cannot see). <c>OwningAppId</c> is null
-    /// for a precompiled <c>.app</c> dependency's extension (never resolvable to an app.json
-    /// this runner reads) and for any AL-source extension whose declaring app.json could not
-    /// be found; either reads as "does not match" against the base table's own app, which is
-    /// the conservative direction on unknown input.
+    /// #3600 — one entry per tableextension merged onto a base table: its declaring app id
+    /// (null for a precompiled <c>.app</c>'s extension or an unresolvable <c>app.json</c> —
+    /// reads as "does not match", the conservative direction) and whether it declares
+    /// <c>modify(...)</c>. Feeds
+    /// <see cref="RecordPatches.NclMetaTableFromBcDocument.ShouldBuildTableFromBcDocument"/>;
+    /// see docs/object-metadata-from-bc.md#scope for what each case means. Written only from
+    /// inside <see cref="MergeExtensionFields"/>, never at a call site.
     /// </summary>
     internal static readonly Dictionary<string, List<(Guid? OwningAppId, bool HasModify)>>
         _extensionSourceInfo = new();
 
-    /// <summary>Record one tableextension's source signal for <see cref="_extensionSourceInfo"/>.
-    /// Called once per merged extension by both writers that funnel through
-    /// <see cref="MergeExtensionFields"/> — see that method's own header for why there are
-    /// exactly two.</summary>
-    internal static void RecordExtensionSource(string baseTableName, Guid? owningAppId, bool hasModify)
-    {
-        if (string.IsNullOrEmpty(baseTableName)) return;
-        var key = baseTableName.ToLowerInvariant();
-        if (!_extensionSourceInfo.TryGetValue(key, out var list))
-            _extensionSourceInfo[key] = list = new();
-        list.Add((owningAppId, hasModify));
-    }
-
     /// <summary>
-    /// Merge <paramref name="fields"/> into <c>_parsedExtensionFields[baseTableName]</c>,
-    /// record <paramref name="extensionId"/> in <c>_extensionIdsByBaseTable</c>, and evict
-    /// any already-built NCLMetaTable for the base table so the next lookup rebuilds it with
-    /// these fields merged in.
+    /// Merge <paramref name="fields"/>/<paramref name="keys"/> into
+    /// <c>_parsedExtensionFields</c>/<c>_parsedExtensionKeys</c>, record
+    /// <paramref name="extensionId"/> in <c>_extensionIdsByBaseTable</c> and this extension's
+    /// app/modify signal in <see cref="_extensionSourceInfo"/> (#3600), and evict any
+    /// already-built NCLMetaTable for the base table so the next lookup rebuilds it.
     ///
-    /// This is the single writer both tableextension-field sources funnel through — the
-    /// AL-source parser (<c>TryParseTableExtensionFile</c> in
-    /// RecordPatches.AlSourceParser.cs) and the precompiled-.app symbol merge
-    /// (<c>EnsureBcSymbolExtensionIndex</c> in RecordPatches.BcAppFallback.cs) — so the
-    /// eviction happens exactly once, in one place, and any future third writer inherits it
-    /// automatically instead of needing to remember to call it. See #2126: before this,
-    /// only the AL-source path evicted, so a base table whose NCLMetaTable had already been
-    /// materialized (e.g. referenced by AL source parsed earlier in the dependency graph)
-    /// before EnsureBcSymbolExtensionIndex ran stayed frozen forever without the precompiled
-    /// extension's fields.
+    /// The single writer both tableextension-field sources — the AL-source parser
+    /// (<c>TryParseTableExtensionFile</c>) and the precompiled-.app symbol merge
+    /// (<c>EnsureBcSymbolExtensionIndex</c>) — funnel through, so a future third writer
+    /// inherits the eviction (#2126) and the source recording (#3600) automatically instead
+    /// of needing to remember either. <paramref name="owningAppId"/>/<paramref name="hasModify"/>
+    /// are recorded HERE rather than through a second call a writer could forget.
     /// </summary>
     private static void MergeExtensionFields(string baseTableName, int extensionId, IEnumerable<ParsedField> fields,
-        IEnumerable<ParsedExtensionKey>? keys = null)
+        IEnumerable<ParsedExtensionKey>? keys = null, Guid? owningAppId = null, bool hasModify = false)
     {
         if (string.IsNullOrEmpty(baseTableName)) return;
         var key = baseTableName.ToLowerInvariant();
+
+        if (!_extensionSourceInfo.TryGetValue(key, out var sourceInfo))
+            _extensionSourceInfo[key] = sourceInfo = new();
+        sourceInfo.Add((owningAppId, hasModify));
 
         // De-dup by field id: the same extension can legitimately be scanned/merged more than
         // once (a dependency app's source dir registered both by its own suite AND by

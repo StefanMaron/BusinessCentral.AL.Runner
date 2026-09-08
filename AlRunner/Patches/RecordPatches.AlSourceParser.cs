@@ -901,7 +901,7 @@ public static partial class RecordPatches
 
             // #3600 — a modify(...) block changes an existing field's properties only in the
             // extension's OWN delta document (BC's <FieldChange>), never in the base table's
-            // document; see RecordExtensionSource / ShouldBuildTableFromBcDocument. True even
+            // document; see MergeExtensionFields / ShouldBuildTableFromBcDocument. True even
             // for a mixed extension that ALSO adds fields, because the field list above cannot
             // tell "no modify" from "modify, but this extractor discards it" — it has to be
             // asked directly.
@@ -941,21 +941,15 @@ public static partial class RecordPatches
             // Merge into _parsedExtensionFields, record the extension id (so its emitted
             // TableExtension{extId} CLR type can be instantiated and registered on each
             // record of the base table — record-level triggers + field-validate dispatch),
-            // and evict any already-built NCLMetaTable for the base table so a rebuild picks
-            // up these fields. All three steps — including the eviction, whose necessity is
-            // explained on MergeExtensionFields itself (#2126) — happen atomically in the
-            // shared helper so a second writer (RecordPatches.BcAppFallback.cs's
-            // EnsureBcSymbolExtensionIndex) can't repeat this file's own former omission of it.
-            MergeExtensionFields(baseName, extId, fields, extKeys);
-
-            // #3600 — the declaring app (from this file's own app.json, walked up from
-            // filePath) plus whether this extension declares modify(...). Recorded even for
-            // an extension that contributes no field and no key (a modify-only, or a
-            // key-only, extension) — see BaseTableWithAKeyOnlyExtensionInAnotherApp_Keeps-
-            // TheDerivation in AlRunner.Tests/TableMetadataFromBcDocumentTests.cs for why that
-            // case cannot be read off _parsedExtensionFields/_parsedExtensionKeys alone.
-            RecordExtensionSource(baseName,
-                filePath != null ? ResolveOwningApp(filePath)?.AppId : null, hasModify);
+            // record this extension's declaring app (from this file's own app.json, walked up
+            // from filePath) and whether it declares modify(...) (#3600), and evict any
+            // already-built NCLMetaTable for the base table so a rebuild picks up these
+            // fields. All these steps happen atomically in the shared helper so a second
+            // writer (RecordPatches.BcAppFallback.cs's EnsureBcSymbolExtensionIndex) can't
+            // repeat this file's own former omission of the eviction (#2126).
+            MergeExtensionFields(baseName, extId, fields, extKeys,
+                owningAppId: filePath != null ? ResolveOwningApp(filePath)?.AppId : null,
+                hasModify: hasModify);
         }
     }
 
