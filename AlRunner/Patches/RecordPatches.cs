@@ -271,6 +271,12 @@ public static partial class RecordPatches
         // document, so it is meaningless the moment the line above drops them, and leaving it
         // populated would make the next cycle's tables keep the derivation in silence.
         ClearBcDocumentBackedTables();
+        // #3607, the same statement for reports: the memo holds properties parsed out of the
+        // PREVIOUS bundle's metadata documents, and a --watch cycle that edits a report's
+        // ProcessingOnly would otherwise keep answering the old value with nothing to show
+        // for it. Report ids repeat across reloads, so a stale entry is a wrong answer rather
+        // than a miss.
+        ClearBcReportDocuments();
         // #3121: every table is rebuilt from scratch below, so carrying the previous bundle's
         // pending CalcFormula rebuilds forward only buys a wasted repopulate pass on the next
         // .app registration.
