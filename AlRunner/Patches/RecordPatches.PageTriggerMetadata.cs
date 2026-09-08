@@ -4,9 +4,9 @@
 // (ApplicationObjectClrType) and then over each NCLPageExtension in orderedExtensionObjects.
 // The runner builds its NCLMetaForm through CreateEmptyNCLMetaForm and never populates that
 // extension list, so a trigger a PAGEEXTENSION declares read false. This replacement keeps BC's
-// algorithm — including its own IsTriggerImplemented, so the "…Async" fallback and the
-// DeclaringType comparison stay BC's — and supplies the extensions from the runner's own
-// pageextension registry instead. See docs/page-rowset-triggers.md#page-trigger-metadata.
+// algorithm — same names off BC's own PageTriggers, the same "…Async" fallback and DeclaringType
+// comparison, the same page-only exclusion — and supplies the extensions from the runner's own
+// pageextension registry. See docs/page-rowset-triggers.md#page-trigger-metadata.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -52,7 +52,7 @@ public static partial class RecordPatches
         EnsurePageTriggerNames(self.GetType());
 
         int mask = 0;
-        var extensionTypes = PageExtensionTypesFor(self);
+        var extensionTypes = PageExtensionTypesFor(self, out var allExtensionsResolved);
         foreach (var trigger in _pageTriggerNames!)
         {
             if (IsTriggerImplemented(typeof(Microsoft.Dynamics.Nav.Runtime.NavForm),
@@ -72,7 +72,11 @@ public static partial class RecordPatches
         }
 
         PageTriggerAudit.Record(self, pageClrType, extensionTypes, _pageTriggerNames!, mask);
-        _definedTriggersCache.AddOrUpdate(self, new StrongBox<int>(mask));
+        // Cache only an answer computed over EVERY extension this page has. One whose compiled
+        // class has not loaded yet is the same lazily-resolving-type problem the page arm guards
+        // against above, and caching around it would freeze a mask missing that extension's
+        // triggers for the life of the process.
+        if (allExtensionsResolved) _definedTriggersCache.AddOrUpdate(self, new StrongBox<int>(mask));
         return mask;
     }
 
@@ -87,10 +91,12 @@ public static partial class RecordPatches
     /// receiver. Resolving it and answering "no triggers" when it is absent is what made every
     /// flag false on the 27.0 leg of PR #3557 while 28.x passed.</para>
     ///
-    /// <para>The body below is BC's <c>CheckTrigger</c> local function verbatim, and it is
+    /// <para>The body below is BC's <c>CheckTrigger</c> local function, whose decision is
     /// identical on 27.0, 27.5 and 28.4: look the name up, then the <c>…Async</c> spelling, and
     /// answer whether the resolved method was declared somewhere OTHER than
-    /// <paramref name="platformBase"/>.</para>
+    /// <paramref name="platformBase"/>. Not a transcription character for character — the guard
+    /// before the throw is the runner's, and it is what decides that an absent name is a BC-shape
+    /// gap rather than an ordinary "this page declares nothing".</para>
     /// </summary>
     private static bool IsTriggerImplemented(Type platformBase, Type clrType, string triggerName, bool isPublic)
         => CheckTrigger(platformBase, clrType, triggerName, isPublic)
@@ -129,17 +135,33 @@ public static partial class RecordPatches
                   + "see docs/page-rowset-triggers.md#page-trigger-metadata");
 
     /// <summary>The compiled <c>PageExtension{id}</c> classes extending this page, in id order.</summary>
-    private static List<Type> PageExtensionTypesFor(object metaForm)
+    private static List<Type> PageExtensionTypesFor(object metaForm, out bool allResolved)
     {
         var types = new List<Type>();
+        allResolved = true;
         if (!TryGetMetaObjectNumber(metaForm, out _, out var pageId)) return types;
+
         foreach (var extensionId in GetPageExtensionIdsForPage(pageId))
         {
             var t = FindClrTypeByName("PageExtension" + extensionId);
-            if (t != null) types.Add(t);
+            if (t != null) { types.Add(t); continue; }
+
+            allResolved = false;
+            // Loud, once per (page, extension): the flags would otherwise report this page as
+            // declaring fewer triggers than it does, and the reader has no way to tell that
+            // answer apart from a page whose extension genuinely declares none.
+            // `[warn]` on stdout, the shape this file's neighbours use - see the tag note in
+            // RunnerPageInstance.TryCreate.
+            if (_unresolvedExtensionTypesWarned.Add((pageId, extensionId)))
+                Console.Out.WriteLine(
+                    $"[warn] RecordPatches: page {pageId}: pageextension {extensionId} extends it, but no "
+                    + $"compiled PageExtension{extensionId} type is loaded, so the triggers it declares are "
+                    + "missing from this page's Is<Trigger>Defined flags");
         }
         return types;
     }
+
+    private static readonly HashSet<(int Page, int Extension)> _unresolvedExtensionTypesWarned = new();
 
     /// <summary>The twelve <c>PageTriggers</c> members, read off BC's own private nested enum.</summary>
     private static void EnsurePageTriggerNames(Type metaFormType)

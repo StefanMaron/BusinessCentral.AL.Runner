@@ -99,6 +99,19 @@ internal sealed partial class RunnerPageInstance
         var extensionIds = RecordPatches.GetPageExtensionIdsForPage(_pageId);
         if (extensionIds.Count == 0) return;
 
+        if (_record == null)
+        {
+            // Loud rather than silent: GetOrCreateExtensionInstance needs a record for the
+            // extension's (NavForm, NavRecord) ctor, so a record-less page binds none of its
+            // extensions and every trigger they declare quietly does not run - the exact silence
+            // this whole change exists to remove. `[warn]` - see the tag note in TryCreate.
+            Console.Out.WriteLine(
+                $"[warn] RunnerPageInstance: page {_pageId} was built without a record, so its "
+                + $"{extensionIds.Count} pageextension(s) are not bound to it and the page triggers "
+                + "they declare will not run");
+            return;
+        }
+
         var register = BcShape.FindMethod(_form.GetType(), "RegisterPageExtension",
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
             surface: "page extension triggers", member: "NavForm.RegisterPageExtension",
