@@ -176,6 +176,13 @@ public sealed class LoudDiagnosisReachesTheUserTests
         // so this line is the only account of it. See docs/limitations.md#codeunit-metadata-subtype.
         { "AlRunner/Patches/RecordPatches.CodeunitMetadataVirtualTable.cs", "CodeUnit Metadata has NO ROW for codeunit" },
 
+        // #3540 — the sibling condition in the same file, and the only account of a column
+        // value the runner answers WRONG on purpose. A declared TableNo the resolver cannot
+        // turn into a table id makes that row answer TableNo = 0, which is also the truthful
+        // answer for a codeunit declaring no TableNo at all — so the read cannot tell the two
+        // apart and nothing else in the run records which one it was.
+        { "AlRunner/Patches/RecordPatches.CodeunitMetadataVirtualTable.cs", "could not be resolved to a table id" },
+
         // #2963, and named in #3068 as the same class: System Application module-ownership
         // checks silently decline for the whole run when this row set is not seeded.
         { "AlRunner/Patches/RecordPatches.PublishedApplicationSystemTable.cs", "Published Application rows" },
@@ -220,6 +227,29 @@ public sealed class LoudDiagnosisReachesTheUserTests
             || message.Contains("will refuse", StringComparison.OrdinalIgnoreCase)
             || message.Contains("will decline", StringComparison.OrdinalIgnoreCase),
             $"{relativePath} (\"{anchor}\") no longer tells the reader what stops working: {message}");
+    }
+
+    /// <summary>
+    /// #3540, the wording rather than the tag. `RunFatalDiagnosis_NamesTheConsequence` accepts
+    /// any of three verbs, so it cannot pin WHICH consequence this line names. This one does:
+    /// the message has to say the affected rows answer TableNo = 0, and that this is the same
+    /// value a codeunit declaring no TableNo answers — without both halves the reader is told
+    /// a resolution failed but not that a column now carries a value they cannot interpret.
+    /// Read out of the production source, never typed here, for the reason at the top of this
+    /// file.
+    /// </summary>
+    [Fact]
+    public void UnresolvedTableNo_NamesTheValueTheRowsAnswer_AndWhyItIsAmbiguous()
+    {
+        var message = ExtractEmittedMessage(
+            "AlRunner/Patches/RecordPatches.CodeunitMetadataVirtualTable.cs",
+            "could not be resolved to a table id");
+
+        Assert.StartsWith("[warn] ", message);
+        Assert.Contains("TableNo = 0", message);
+        Assert.Contains("declares no TableNo", message);
+        // And it still survives the real filter with that wording.
+        Assert.Contains(message, FilterOnce(message, verbose: false));
     }
 
     /// <summary>
