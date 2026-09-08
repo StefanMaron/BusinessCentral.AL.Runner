@@ -98,6 +98,10 @@ public static class Reporter
     /// If it ever did, the failure mode is over-marking — the pre-review behaviour — not a real
     /// failure hidden.</para>
     /// </summary>
+    internal static bool IsNamedCauseOfASuiteError(BucketResult b, TestResult t)
+        => b.CompileErrors.Any(e =>
+            Infrastructure.BundleFailureStage.AbortReasonNamesTest(e, t.Codeunit, t.Method));
+
     /// <summary>
     /// Every company-initialization abort in the run, in bucket order (#3538). One place, so
     /// the summary, --out, --output-json and the JUnit report cannot describe the same
@@ -112,10 +116,6 @@ public static class Reporter
     public static string DescribeCompanyInitFailure(CompanyInitFailure f)
         => $"codeunit {f.CodeunitId} \"{f.CodeunitName}\" did not complete: "
             + $"{f.ExceptionType}: {f.Message}";
-
-    internal static bool IsNamedCauseOfASuiteError(BucketResult b, TestResult t)
-        => b.CompileErrors.Any(e =>
-            Infrastructure.BundleFailureStage.AbortReasonNamesTest(e, t.Codeunit, t.Method));
 
     /// <summary>Whether anything in this bucket is marked — i.e. whether the notes that
     /// introduce the marker have anything below them to introduce.</summary>
