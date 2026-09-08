@@ -39,7 +39,8 @@
 //
 // THE AL ASSERTION IS THE NON-VACUITY GUARD
 //   The bundle's test reads the seeded rows back by VALUE — the marker text, a positive
-//   decimal, a negative decimal, and the row count. A cache that restored nothing, or restored
+//   decimal, a negative decimal, the row count, and (#3380) the record link the trigger
+//   attached to SEED-1, through both HasLinks and the Record Link table. A cache that restored nothing, or restored
 //   a truncated or re-lengthened value, fails that test rather than merely running fast. It is
 //   deliberately not an `Assert.IsTrue(true)`-shaped "the row exists" check: see
 //   .claude/rules/tdd.md.

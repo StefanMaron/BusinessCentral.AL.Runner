@@ -24,8 +24,10 @@ namespace AlRunner.Tests;
 ///      process captured, value for value. Asserted on the <c>digest=</c> the two processes
 ///      log: a SHA-256 over every persisted table's every row's every field slot, carrying
 ///      that value's own NclType, its own defined length, its NULL flag and the exact bytes
-///      BC's <c>NavValue.GetBytes()</c> produces, plus the isolated-storage / record-link /
-///      auto-increment state. Two independent fresh computations do NOT produce the same
+///      BC's <c>NavValue.GetBytes()</c> produces, plus the isolated-storage and
+///      auto-increment state. Record links are in there as ordinary table rows: the seed's
+///      install trigger attaches one, and the Record Link table (2000000068) is persisted
+///      like any other (#3380). Two independent fresh computations do NOT produce the same
 ///      digest (BC assigns a new SystemId GUID and SystemCreatedAt on every Insert), so an
 ///      equal digest across two processes is only obtainable by genuinely reloading the
 ///      first one's values — it cannot be faked by recomputing.
