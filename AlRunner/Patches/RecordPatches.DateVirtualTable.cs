@@ -898,9 +898,11 @@ public static partial class RecordPatches
         // reported as success, not the documented truncation. Refuse it (#3483).
         //
         // Compared against the window CONSTANTS, never against lowBound/highBound: those two are
-        // widened by the filter's envelope, so a sibling range far from the window would move the
-        // bar the half-open range is judged against and defeat the per-range decision. See the PR
-        // body for the measured filter that does it.
+        // widened by the filter's envelope, so a sibling range would otherwise move the bar this
+        // range is judged against. No "Period Start" filter was found that actually reaches that
+        // — BC's ToRangeList merges a sibling wide enough to widen the bound, because such a
+        // sibling overlaps the half-open range — so what holds the invariant here is the
+        // constant, not that merge.
         foreach (var (value, openHigh) in halfOpenEnds)
         {
             if (openHigh && value > new DateTime(DateWindowMaxYear, 12, 31))

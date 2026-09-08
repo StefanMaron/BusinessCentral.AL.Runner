@@ -318,13 +318,13 @@ codeunit 64561 "Dvtw Tests"
     var
         DateRec: Record Date;
     begin
-        // Reviewer finding on #3483. The refusal has to be judged against the WINDOW, not
-        // against the span this request is about to materialise. Here the second range is
-        // closed at both ends and starts in 1800, so the span widens to 1800-01-01 and the
-        // first range's closed end, 1850-01-01, falls INSIDE it — a per-range test that
-        // compares against the widened span therefore lets this filter through and answers it
-        // with about 18,300 rows, where a service tier answers 675,332 plus the ten days of
-        // the second range. A sibling range must not be able to move the bar.
+        // A CONTROL, not a RED -> GREEN: this passes on both sides of #3483's follow-up commit.
+        // It pins that a sibling range cannot move the bar the half-open range is judged
+        // against. Two things hold that, and only one of them is ours: the refusal compares
+        // against the window constants rather than the envelope-widened span, and BC's own
+        // ToRangeList merges this filter's second range into its first — a range wide enough to
+        // widen the envelope's low bound below 1850-01-01 necessarily overlaps `..1850-01-01`.
+        // Measured on 511d5b7f, before that commit: already refused, naming 1850-01-01.
         DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
         DateRec.SetFilter("Period Start", '..%1|%2..%3',
             DMY2Date(1, 1, 1850), DMY2Date(1, 1, 1800), DMY2Date(10, 1, 1800));
@@ -351,6 +351,8 @@ codeunit 64561 "Dvtw Tests"
 
         asserterror CountRows(DateRec);
         Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
+        Assert.ExpectedError('date-virtual-table');
+        Assert.ExpectedError('1850-01-01');
         Assert.ExpectedError('for the period type');
         Assert.ExpectedError('0002-01-01 for Year');
     end;
