@@ -821,11 +821,20 @@ by `MaxIteration` rather than by the filter. Real BC serves that shape too, from
 yields 100,000 rows here against 1,000,000,000 on a service tier, and code that iterates an
 unbounded `Integer` range to the end stops at the base window's edge.
 
-The one case that *is* refused is a **half-open filter whose closed end falls outside the
-base window** — `SetFilter(Number, '>=249000')`. The window holds no row at or above
+The one case that *is* refused is a **range that is half-open with its closed end outside
+the base window** — `SetFilter(Number, '>=249000')`. The window holds no row at or above
 249000, so serving the request from it would report success with no rows where BC returns
 751,000,001. Close the other end of the filter and the span is materialised exactly, or
 widen the base window.
+
+That test is applied to **each range of the filter separately**, not to the outermost bounds
+the filter spans. A filter may name several ranges — `SetFilter(Number, '1..50|200000..')` —
+and BC answers the union of them, so a range whose closed end lies outside the window is
+refused even when another range keeps the filter's outermost bounds inside it. Read from the
+outermost bounds alone, that filter looks answerable at 1 and 50 and is served with the 50
+rows of its first range, dropping the second whole
+([#3471](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3471)). A
+multi-range filter whose ranges all sit inside the window is answered normally.
 
 `AL_RUNNER_INTEGER_WINDOW_MAX` raises the base window's upper edge for a one-off run, and
 `AL_RUNNER_INTEGER_WINDOW_MIN` lowers the lower one. Both only ever **widen** it: a `MIN`

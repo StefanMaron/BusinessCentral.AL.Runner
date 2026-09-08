@@ -1810,3 +1810,58 @@ codeunit's neighbours in the run being observable. Full run at this pin: `3118 t
 pass, 5 fail, 0 error`, the five being the declared known gaps above.
 
 Written by the fbk-1 agent.
+
+## runner-extras `integer-virtual-table-window` 10 -> 13 (#3471)
+
+Three arms added to codeunit 64591: a multi-range filter whose half-open range's closed end
+lies above the base window (`'1..50|200000..'`) and its low-open mirror (`'..-200000|1..50'`)
+are refused rather than served from the base window, plus a control proving a multi-range
+filter entirely inside the window is still answered (8 rows from `'1..5|90..92'`).
+
+RED at `de220146`: both refusal arms fail with `An error was expected inside an ASSERTERROR
+statement` -- the runner answered them from the base window with 50 rows -- and the control
+already passed. GREEN after the per-range fix: 13/13, with both package caches.
+
+No corpus pin bump here. BC's own answer for these shapes is asserted upstream in corpus PR
+280 (the union of the ranges, measured on a real BC 28.4 tier), which had not merged when
+this landed.
+
+Written by the fbk-1 agent.
+
+## al-language 3089 -> 3092, pin 24106565 -> 3b5dd7be (#3471, corpus #280)
+
+One corpus commit: `3b5dd7be` (corpus PR 280), three arms on codeunit 60368 asking what a filter
+naming several ranges selects and how far the Integer table reaches by key. Folded into the
+#3471 fix PR rather than landing as a catch-up bump, because one of the three arms is red at this
+pin without that fix -- before it, `'1..50|200000..'` was served from the base window with the 50
+rows of its first range.
+
+3092 is the guard's own printed actual (`[count-baseline] GROWTH: suite 'al-language' tests count:
+expected 3089, actual 3092 (BC 28.1)`), not a computed number.
+
+One of the three is declared, in the new `tests/expectations/oos-integer-virtual-table.json`:
+`Record_Integer_MultiRangeFilter_YieldsEveryRangeNotJustTheFirst` is `expect-oos` against the
+`not-yet-implemented` anchor, because the runner refuses an alternative that is open at one end
+rather than materialising the 999,800,051 rows a service tier answers with. It points at **#3485**,
+which tracks answering an open-ended Integer range the way BC does and stays open after this PR
+merges. The other two arms pass: `Record_Integer_TwoClosedRanges_CountTheirUnion` (60 rows) and
+`Record_Integer_KeyedGetPastOneBillion_AnswersFalse` (the +-1e9 clamp the runner already matches).
+
+Full three-app run at this pin with CI's own invocation: **3121 total, 3121 pass, 0 fail, 0 error**
+(4 pass-oos, 22 pass-known-gap, 1 pass-divergence); the only non-zero exit was the count-baseline
+growth this entry records.
+
+Written by the fbk-1 agent.
+
+## runner-extras `integer-virtual-table-window` 13 -> 14 (#3471, reviewer follow-up)
+
+A fourth arm on codeunit 64591 at the reviewer's request: `'1..50|200000..200009'` counts 60 and
+`FindLast` lands on 200009. Every range is closed, so the union is provable however far out the
+second range sits, and it is materialised rather than refused -- the other side of the per-range
+decision the two refusal arms pin. The in-window control (`'1..5|90..92'`) cannot show that,
+because it never reaches past the base window at all.
+
+Suite at this commit: 395 total, 395 pass.
+
+Written by the fbk-1 agent.
+
