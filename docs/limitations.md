@@ -1625,7 +1625,12 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   the offending codeunit then vanished silently from later handouts. Codeunit 2
   `Company-Initialize` reads this table, so one such codeunit anywhere in any loaded app left
   the company half-initialized and the run failed a long way from the cause
-  ([#3536](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3536)).
+  ([#3536](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3536)). A company
+  that half-initializes for any reason is now a run-level result rather than a `[warn]` line
+  beside a green exit — the summary, `--out`, `--output-json` and the JUnit document all carry
+  it, and the run exits 2 when it would otherwise have been clean. See
+  [`docs/partial-company-initialization.md`](partial-company-initialization.md)
+  ([#3538](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3538)).
 
   Note what can still reach the refusal: essentially nothing the AL compiler will produce. AL
   accepts five codeunit subtypes; four are named by the column and the fifth, `Install`, is

@@ -664,7 +664,11 @@ internal static partial class ProgramSupport
         w.WriteLine("                            1  at least one test FAILED or ERRORED");
         w.WriteLine("                            2  a bundle could not execute (process-level error;");
         w.WriteLine("                               also a bad invocation — unknown flag, or a bundle");
-        w.WriteLine("                               path that does not exist)");
+        w.WriteLine("                               path that does not exist), an output file the run");
+        w.WriteLine("                               was asked for could not be written, or company");
+        w.WriteLine("                               initialization did not complete so the tests ran");
+        w.WriteLine("                               against a partially initialized company");
+        w.WriteLine("                               (docs/partial-company-initialization.md)");
         w.WriteLine("                            3  a bundle could not compile");
         w.WriteLine("                            4  --count-baseline: a suite's test or app-group count did");
         w.WriteLine("                               not exactly match its declared baseline (see --count-baseline)");

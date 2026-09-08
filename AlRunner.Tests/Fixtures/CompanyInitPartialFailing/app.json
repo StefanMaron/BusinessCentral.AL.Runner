@@ -1,0 +1,24 @@
+{
+  "id": "a1b2c3d4-e5f6-4708-9a1b-2c3d4e5f6012",
+  "name": "Runner Tests Fixture - Company Init Partial Failing",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "A bundle with one FAILING test, used to prove a company-init abort never lowers an earned exit code (#3538).",
+  "description": "The failing test is the point: the run has earned exit 1, a statement about the AL, and PartialCompanyInitializationTests asserts the partial-company notice does not overwrite that with 2 while still being recorded in the summary. No \"application\" dependency by design (.claude/rules/no-base-app-in-csharp-tests.md); the abort is injected through AL_RUNNER_TEST_FAIL_COMPANY_INIT.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 70700,
+      "to": 70719
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

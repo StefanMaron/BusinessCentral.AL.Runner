@@ -164,6 +164,15 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // producing a 73s single-threaded tail (it is 3rd-heaviest at ~196s of serial
             // work; see the file header and issue #1887 for the measured timeline).
             ["InstallSeedDepCompanyCacheTests"] = 196,
+            // #3538: every arm spawns the runner, and two of them spawn it twice to get a
+            // cold-then-warm pair out of one private --cache. Measured 113.5 s on PR #3554's
+            // BC 27.5 / 28.4 legs (run 34230660996) and recorded rounded DOWN per the header —
+            // 113 is far above UnmeasuredWeightSeconds, so it changes dispatch order, which is
+            // the test that makes an entry worth having. The round of review that followed that
+            // measurement added one more spawn (the exit-1 arm re-runs with --output-json), so
+            // the true figure is a little higher; re-measure with scripts/trx-occupancy.py
+            // rather than trusting this line if the class changes shape again.
+            ["PartialCompanyInitializationTests"] = 113,
             // #2348: EmptySetupTable_Get/EmptySetupTable_TestField now call DeleteAll() on
             // "Source Code Setup" before asserting it's empty (fixing IncludeSender's
             // sender-position dispatch also fixed a latent install-time bug that used to

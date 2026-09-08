@@ -183,6 +183,12 @@ public sealed class LoudDiagnosisReachesTheUserTests
         // apart and nothing else in the run records which one it was.
         { "AlRunner/Patches/RecordPatches.CodeunitMetadataVirtualTable.cs", "could not be resolved to a table id" },
 
+        // #3538 — the end-of-run counterpart of the CompanyInitializer line above. It fires
+        // once, after the summary, and is the only thing that explains why a run whose every
+        // test passed did not exit 0; a reader who does not see it has an exit code with no
+        // stated cause. See docs/partial-company-initialization.md.
+        { "AlRunner/Program.cs", "every test in this run used a PARTIALLY initialized company" },
+
         // #2963, and named in #3068 as the same class: System Application module-ownership
         // checks silently decline for the whole run when this row set is not seeded.
         { "AlRunner/Patches/RecordPatches.PublishedApplicationSystemTable.cs", "Published Application rows" },
