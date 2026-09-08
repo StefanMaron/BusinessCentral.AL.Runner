@@ -408,7 +408,11 @@ public sealed class TestPageRefusalClaimTests
         Assert.Equal(4, Regex.Matches(mock, @"throw new AlRunner\.Infrastructure\.BcShapeGapException\(").Count);
 
         Assert.Equal(4, Regex.Matches(page, @"throw TestPageShapeGap\.").Count);
-        Assert.Equal(1, Regex.Matches(page, @"throw new AlRunner\.Infrastructure\.BcShapeGapException\(").Count);
+        // 2: the OnLookup-trigger read whose three-valued answer came back "could not determine"
+        // (#2946/#2995), and #3447's NavForm.RegisterPageExtension lookup - the method BC's own
+        // RaiseOn<trigger>Async loops depend on, so a build that stops declaring it would make
+        // every pageextension-declared page trigger silently not run.
+        Assert.Equal(2, Regex.Matches(page, @"throw new AlRunner\.Infrastructure\.BcShapeGapException\(").Count);
     }
 
     /// <summary>
