@@ -232,6 +232,78 @@ codeunit 64561 "Dvtw Tests"
         Assert.IsFalse(Reached, 'TryFindFirst must not have completed.');
     end;
 
+    [Test]
+    procedure Date_OpenLowRangeClosedBeforeTheWindow_IsRefused()
+    var
+        DateRec: Record Date;
+    begin
+        // Issue #3483. `'..1850-01-01'` is closed at its HIGH end only, and that closed end sits
+        // before the window starts. The window holds no period on or before 1850, so answering
+        // the request from it returns no rows at all while a service tier returns 675,332
+        // (measured on BC 28.4.53241.0, container fbk1-probe: first row 0001-01-03, last
+        // 1850-01-01). A silent zero, reported as success.
+        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
+        DateRec.SetFilter("Period Start", '..%1', DMY2Date(1, 1, 1850));
+
+        asserterror CountRows(DateRec);
+        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
+        Assert.ExpectedError('with its other end open');
+    end;
+
+    [Test]
+    procedure Date_OpenLowRangeClosedBeforeTheWindow_IsRefusedOnTheFindPathToo()
+    var
+        DateRec: Record Date;
+    begin
+        // The refusal is decided in the one helper all four request paths funnel into, so the
+        // find path has to raise it as well. Reached through FindSet(), which would otherwise
+        // answer FALSE — "there is no period on or before 1850" — and read as a fact.
+        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
+        DateRec.SetFilter("Period Start", '..%1', DMY2Date(1, 1, 1850));
+
+        asserterror DateRec.FindSet();
+        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
+        Assert.ExpectedError('with its other end open');
+    end;
+
+    [Test]
+    procedure Date_MultiRangeWithAHalfOpenRangePastTheWindow_IsRefused()
+    var
+        DateRec: Record Date;
+    begin
+        // Issue #3483, the multi-range half. A filter may name several ranges and BC answers
+        // their union: `'2000-01-01..2000-01-10|2300-01-01..'` is 2,812,377 rows on a service
+        // tier (measured on BC 28.4.53241.0, container fbk1-probe). The first range sits inside
+        // the window and the second reaches past it, so reading only the filter's outermost
+        // closed bounds — 2000-01-01 and 2000-01-10 — makes the request look answerable and
+        // drops the second range whole, for a plausible-looking 10.
+        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
+        DateRec.SetFilter("Period Start", '%1..%2|%3..',
+            DMY2Date(1, 1, 2000), DMY2Date(10, 1, 2000), DMY2Date(1, 1, 2300));
+
+        asserterror CountRows(DateRec);
+        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
+        Assert.ExpectedError('with its other end open');
+    end;
+
+    [Test]
+    procedure Date_MultiRangeClosedPastTheWindow_IsMaterialisedNotRefused()
+    var
+        DateRec: Record Date;
+    begin
+        // The other side of the per-range decision, and the reason it is per RANGE rather than
+        // "any range outside the window". Both ranges here are CLOSED, and one of them lies
+        // entirely past the window's 2099 edge, so the span is materialised on demand and the
+        // union is answered exactly — 10 days in 2000 plus 10 days in 2150.
+        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
+        DateRec.SetFilter("Period Start", '%1..%2|%3..%4',
+            DMY2Date(1, 1, 2000), DMY2Date(10, 1, 2000), DMY2Date(1, 1, 2150), DMY2Date(10, 1, 2150));
+
+        Assert.AreEqual(20, DateRec.Count(), 'Expected the union of two closed ranges: 10 days in 2000 and 10 in 2150.');
+        Assert.IsTrue(DateRec.FindLast(), 'Record Date found no row for the second closed range.');
+        Assert.AreEqual(DMY2Date(10, 1, 2150), DateRec."Period Start", 'Expected the last row to be 10 January 2150.');
+    end;
+
     local procedure CountRows(var DateRec: Record Date): Integer
     begin
         exit(DateRec.Count());
