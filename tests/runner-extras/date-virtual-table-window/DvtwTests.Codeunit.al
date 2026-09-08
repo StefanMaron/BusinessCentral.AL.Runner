@@ -149,6 +149,44 @@ codeunit 64561 "Dvtw Tests"
     end;
 
     [Test]
+    procedure Date_KeyedGetAtTheRepresentableBoundary_AnswersInsteadOfOverflowing()
+    var
+        DateRec: Record Date;
+    begin
+        // A CONTROL, not a RED -> GREEN: measured, it passes on origin/main too.
+        //
+        // #3513 reports 30 Microsoft-surface failures where a keyed Get reached
+        // RecordPatches.DateMissingSpans — which added or subtracted a day from a requested
+        // boundary to work out what was not materialised yet — and threw
+        // ArgumentOutOfRangeException, "The added or subtracted value results in an
+        // un-representable DateTime". That method is deleted with the store, so the arithmetic
+        // cannot overflow any more; but this AL does not reproduce the throw on the old code
+        // (checked against origin/main: PASS), so it does not close that issue and must not
+        // claim to. What it does pin is the boundary itself, so a store-backed Date table
+        // cannot come back without something failing here.
+        //
+        // BC's own DateDataProvider has no window to diff, so both boundary periods are ordinary
+        // rows: 0001-01-03 is its FIRST Date period start and 9999-12-31 its last
+        // (DateTimeHelper.DatePeriodStartMinimumDate / DatePeriodStartMaximumDate).
+        Assert.IsTrue(
+            DateRec.Get(DateRec."Period Type"::Date, DMY2Date(3, 1, 1)),
+            'Record Date.Get found no row for 0001-01-03, the first Date period start.');
+        Assert.AreEqual(DMY2Date(3, 1, 1), DateRec."Period Start", 'Get returned a different period at the low boundary.');
+
+        Assert.IsTrue(
+            DateRec.Get(DateRec."Period Type"::Date, DMY2Date(31, 12, 9999)),
+            'Record Date.Get found no row for 9999-12-31, the last Date period start.');
+        Assert.AreEqual(DMY2Date(31, 12, 9999), DateRec."Period Start", 'Get returned a different period at the high boundary.');
+
+        // The negative arm, one day past each edge: those are NOT period starts, so Get must
+        // answer false rather than throw and rather than inventing a row. 0001-01-02 precedes the
+        // platform's first Date period.
+        Assert.IsFalse(
+            DateRec.Get(DateRec."Period Type"::Date, DMY2Date(2, 1, 1)),
+            'Record Date.Get returned a row for 0001-01-02, which is before the first Date period start.');
+    end;
+
+    [Test]
     procedure Date_RangeInsideTheOldWindow_StillAnswersNormally()
     var
         DateRec: Record Date;
