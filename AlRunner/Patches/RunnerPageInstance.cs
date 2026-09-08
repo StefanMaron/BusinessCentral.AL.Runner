@@ -1860,6 +1860,18 @@ internal sealed partial class RunnerPageInstance
            && form.MasterPage?.PageProperties?.SourceObject?.AutoSplitKey == true;
 
     /// <summary>
+    /// Whether the page declares <c>DelayedInsert</c> — read off the same
+    /// <c>MasterPage.PageProperties.SourceObject</c> metadata as
+    /// <see cref="NeedsAutoSplitKey"/>. The property's whole meaning is WHEN the row is
+    /// written: <c>true</c> holds the insert back until the user leaves the line, which is the
+    /// runner's existing flush-on-leave behaviour; <c>false</c> lets the platform write the row
+    /// as soon as it can (issue #3441 — see MockTestPage.InsertOnCompletePrimaryKey).
+    /// </summary>
+    internal bool DelaysInsertUntilTheRowIsLeft
+        => _form is NavForm form
+           && form.MasterPage?.PageProperties?.SourceObject?.DelayedInsert == true;
+
+    /// <summary>
     /// Hand BC's <c>NavForm.SplitKey()</c> the key the CLIENT proposes for the row about to be
     /// inserted — <c>NavForm.AutoKeyValue</c>, the first thing SplitKey consults.
     ///

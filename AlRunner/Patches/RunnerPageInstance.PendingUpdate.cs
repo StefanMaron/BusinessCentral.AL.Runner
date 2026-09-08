@@ -41,6 +41,12 @@ internal sealed partial class RunnerPageInstance
         if (_form is not NavForm form) return;
         form.UpdateRequest += (_, e) =>
         {
+            // RecordSaved is the client's cue to re-read the row it just saved — see
+            // RefreshBeforeImageAfterSave. It is a different flag from Update and arrives on
+            // its own from SaveRecordAsync, so it is handled before the Update filter below
+            // rather than instead of it.
+            if ((e.UpdateRequestType & NavFormUpdateTypes.RecordSaved) != 0)
+                RefreshBeforeImageAfterSave();
             if ((e.UpdateRequestType & NavFormUpdateTypes.Update) == 0) return;
             // A request raised while the refresh itself is running is dropped. Realising it
             // would set the flag again from inside the refresh and refresh again, without
@@ -74,6 +80,34 @@ internal sealed partial class RunnerPageInstance
             }
             _updateRequested = true;
         };
+    }
+
+    /// <summary>
+    /// Retake the page's before-image after BC's own page-write path has written the row —
+    /// issue #3440.
+    ///
+    /// <c>NavForm.SaveRecordAsync</c> (what <c>CurrPage.SaveRecord()</c> and
+    /// <c>CurrPage.Update(true)</c> reach) deliberately does NOT assign <c>OldRecord</c>: it
+    /// ends by raising <c>UpdateRequest(NavFormUpdateTypes.RecordSaved)</c> and leaves the
+    /// refresh to the client, whose re-read lands in <c>AfterGetCurrRecordAsync</c> — and that
+    /// method's tail IS <c>OldRecord.ALAssign(SourceTable)</c>. The runner is the client, so
+    /// without this the before-image stayed at the value the row was LOADED with and a second
+    /// write in one page session reported the pre-first-write value as its xRec.
+    ///
+    /// Only the assignment, not <c>AfterGetCurrRecordAsync</c> itself: re-firing
+    /// OnAfterGetCurrRecord here would add a trigger run that the corpus pins the count of
+    /// (codeunit 60636 OpenAndCloseEvents / AfterGetCurrRecordEvent). The Update flag, handled
+    /// above, is the one that legitimately re-runs triggers.
+    ///
+    /// Measured upstream: corpus codeunit 60636
+    /// <c>ModifyRecordEvent_ManuallyBoundSubscriber_FiresOnlyWhileBound</c>, green on all eight
+    /// cloud legs, reads xRec as the first write's value on the second write.
+    /// </summary>
+    private void RefreshBeforeImageAfterSave()
+    {
+        // OldRecord is null-guarded through the record: a recordless page (TryCreateRecordless)
+        // has no source table and BC's own tail is likewise inside `if (SourceTable != null)`.
+        _record?.OldRecord.ALAssign(_record);
     }
 
     private void BeginTrigger()
