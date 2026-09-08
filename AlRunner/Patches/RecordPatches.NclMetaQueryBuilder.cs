@@ -134,6 +134,17 @@ public static partial class RecordPatches
     // columns in dataitem order, matching what the projection layer expects.
     private static object? BuildMetaQueryDesign(int queryId)
     {
+        // BC's own document first, when the runner compiled this query (#3608). Chosen on
+        // AVAILABILITY, before any parse is attempted, and a parse failure throws rather than
+        // dropping back here — see RecordPatches.MetaQueryFromBcDocument.cs for what the
+        // derivation below could not state and why falling back on error would be wrong.
+        if (HasBcQueryMetadataDocument(queryId))
+        {
+            var fromDocument = BuildMetaQueryDesignFromBcDocument(queryId);
+            TraceQueryMetadataSource(queryId, "bc-document", fromDocument);
+            return fromDocument;
+        }
+
         var sym = TryGetQuerySymbol(queryId);
         if (sym == null) { QLog($"BuildMetaQueryDesign({queryId}): no SymbolReference query definition found in any registered .app"); return null; }
 
@@ -297,6 +308,7 @@ public static partial class RecordPatches
         // each named column → its column id. Unknown columns are skipped (best-effort).
         AddOrderBys(mq, sym.OrderBy, columnIdByName);
 
+        TraceQueryMetadataSource(queryId, "symbol-reference", mq);
         return mq;
     }
 
@@ -313,7 +325,14 @@ public static partial class RecordPatches
         }
     }
 
-    private static string MapSqlJoinType(string? sqlJoinType) => (sqlJoinType ?? "InnerJoin") switch
+    // AL's default for an undeclared SqlJoinType is LeftOuterJoin, NOT InnerJoin — measured on
+    // BC 28.1 from the query metadata document BC's own emitter produces for a nested dataitem
+    // that declares no SqlJoinType (<DataItemLinkType>Left Outer Join</DataItemLinkType>), and
+    // adjudicated on a real service tier by corpus PR #297. Defaulting to InnerJoin dropped
+    // every parent row with no matching child. This arm now serves only queries with no BC
+    // document — a precompiled dependency's — since a compiled query takes the document route;
+    // both routes must agree on the default or the same query answers differently by provenance.
+    private static string MapSqlJoinType(string? sqlJoinType) => (sqlJoinType ?? "LeftOuterJoin") switch
     {
         "InnerJoin" => "InnerJoin",
         "LeftOuterJoin" => "LeftOuterJoin",
@@ -322,7 +341,7 @@ public static partial class RecordPatches
         "CrossJoin" => "CrossJoin",
         "CrossApply" => "CrossApply",
         "OuterApply" => "OuterApply",
-        _ => "InnerJoin",
+        _ => "LeftOuterJoin",
     };
 
     // Build a case-insensitive field-NAME → field-no map for a table from the parsed table
@@ -466,6 +485,11 @@ public static partial class RecordPatches
         SetProp(col, "Name", name);
         SetProp(col, "FieldNo", fieldNo);
         SetProp(col, "FilterOnly", true);
+        // -1, not the design object's default 0, which is a REAL result slot: BC's own document
+        // states QueryColumnIndex -1 for a filter-only column (measured on BC 28.1), and this
+        // arm must agree with the document route or a dependency query's filter column claims
+        // the first result column's slot.
+        SetProp(col, "QueryColumnIndex", -1);
         GetList(dataItem, "QueryColumns").Add(col);
     }
 }
