@@ -1810,3 +1810,20 @@ codeunit's neighbours in the run being observable. Full run at this pin: `3118 t
 pass, 5 fail, 0 error`, the five being the declared known gaps above.
 
 Written by the fbk-1 agent.
+
+## runner-extras `integer-virtual-table-window` 10 -> 13 (#3471)
+
+Three arms added to codeunit 64591: a multi-range filter whose half-open range's closed end
+lies above the base window (`'1..50|200000..'`) and its low-open mirror (`'..-200000|1..50'`)
+are refused rather than served from the base window, plus a control proving a multi-range
+filter entirely inside the window is still answered (8 rows from `'1..5|90..92'`).
+
+RED at `de220146`: both refusal arms fail with `An error was expected inside an ASSERTERROR
+statement` -- the runner answered them from the base window with 50 rows -- and the control
+already passed. GREEN after the per-range fix: 13/13, with both package caches.
+
+No corpus pin bump here. BC's own answer for these shapes is asserted upstream in corpus PR
+280 (the union of the ranges, measured on a real BC 28.4 tier), which had not merged when
+this landed.
+
+Written by the fbk-1 agent.

@@ -470,7 +470,7 @@ public static partial class RecordPatches
     /// provider cannot follow: BC substitutes its own -1e9 / +1e9 for it
     /// (<c>Range.GetInclusiveIntegerBounds</c>), and 2,000,000,001 rows is not on the table.</para>
     ///
-    /// <para>THE HALF-OPEN REFUSAL. When a filter's closed end falls outside the span the base
+    /// <para>THE HALF-OPEN REFUSAL, decided per RANGE (#3471). When a range's closed end falls outside the span the base
     /// window can answer from -- <c>SetFilter(Number, '>=249000')</c> -- there is no honest span to
     /// materialise: BC returns 249000..1e9 and we would return nothing while reporting success.
     /// That silent zero is refused instead. It is a new refusal, replacing a wrong answer rather
