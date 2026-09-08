@@ -32,12 +32,101 @@ A corpus test green on a real service tier beats, in this order, every one of:
 3. Microsoft's documentation,
 4. the name of a BC codeunit, or a comment naming one.
 
+**And one thing outranks the corpus CI itself: the Windows nightly.** The eight cloud legs
+run on `MsDyn365Bc.On.Linux`, which is one particular patched container rather than Business
+Central; the nightly runs an official Microsoft container on Windows. Where the two disagree,
+Windows is right by definition and the Linux result is an image bug — see the next section
+for the dispatch and the three outcomes.
+
 **One qualifier on that ranking**, and it is not a footnote: the tier is patched. On a
 surface an unfaithful patch covers, a corpus result measures the patch, not BC — read
 "The tier is patched, so check before quoting it on a UI surface" below before resting a
 UI-side claim on a corpus result.
 
-## The two incidents this rule is made of
+## When the Linux tier is the thing in doubt, ask Windows — do not reason about it
+
+The qualifier above says a corpus result can be measuring the patch rather than BC. It does
+not say what to do about it, and the answer is not more reading: **dispatch the Windows
+nightly against the branch and let it adjudicate.**
+
+The ordering, which is the repository owner's standing instruction:
+
+> **The corpus pins what the Windows pipeline says. `MsDyn365Bc.On.Linux` and AL Runner
+> follow it — never the reverse.**
+
+This is not new policy. `.github/workflows/nightly-windows.yml`'s own header has carried it
+since corpus issue #213:
+
+> any test that fails on windows needs to be first fixed on
+> https://github.com/StefanMaron/MsDyn365Bc.On.Linux
+
+So: **a Windows failure is a real failure. A Linux-only failure is an image bug.**
+
+```bash
+gh workflow run 351779742 --repo StefanMaron/BusinessCentral.AL.Language.Tests \
+  --ref <branch> -f bc_version=28.4 -f artifact_type=sandbox -f country=w1
+```
+
+Four outcomes, and only the first two need anyone to do anything here:
+
+| Windows | meaning | fix goes |
+|---|---|---|
+| fails too | the assertion does not match BC | **the corpus test** — change the assertion |
+| passes, Linux fails | Linux-only ⇒ image bug | **`MsDyn365Bc.On.Linux`** — the assertion stands, the PR waits |
+| passes, Linux passes | settled | merge |
+| **errored before running tests** | **no verdict at all** | **nothing here — the tier is broken; file it** |
+
+None of the first three rows is a judgement call. Which is the point: a red corpus leg on a
+UI-adjacent surface looks like it needs analysis, and it usually needs a dispatch.
+
+**The fourth row is the one that will bite, and it bit on this rule's first use.** A run that
+dies before executing a test still reports `conclusion: failure`. Read that as a verdict and
+you land on row 1 — *change the corpus assertion* — which is precisely what the last paragraph
+of this section forbids, arrived at by following the table. So the conclusion is not the thing
+to read:
+
+```
+##[error]parsed 0 tests from the supplied XUnit files. That is not a green run -- it means the
+         tests never executed, or the result file never got written. Refusing to report a verdict.
+```
+
+That refusal is the signal. **A `failure` with zero tests parsed is not Windows disagreeing
+with you; it is Windows not having been asked.** Measured 2026-09-08: two dispatches against
+corpus PRs #272 and #273 both died in the nightly's tenant-encryption-key step, before any test
+ran (corpus #288). Three runs earlier the same day had succeeded, so this is a thing that
+happens to a working workflow, not a permanent state — which is exactly why it has to be
+recognised rather than assumed away.
+
+Do not re-dispatch to see whether it clears: two runs twelve minutes apart failing identically
+is a deterministic fault, and another attempt spends an hour of the account's shared Actions
+queue reproducing it.
+
+**It adjudicates; it does not gate.** The nightly takes 1-2 hours and is deliberately not a
+required status context — a nightly that gates merges stalls the repository. The eight
+`BC <ver> / test` legs remain the merge gate, so a PR stays blocked on those either way.
+
+**Do not adjust a corpus assertion to match the Linux tier, and never to match the runner.**
+The second is the more tempting error, because it turns a red leg green and looks like
+progress; it is how the corpus stops being evidence about BC at all.
+
+### The cost of not reaching for this first
+
+Measured 2026-09-08. Two corpus PRs (#272, #273) sat red on their cloud legs. A Linux tier
+defect had just been fixed upstream (`2b0d91f8`, forcing `CommunicationBroker.Async = false`
+and so disabling BC's own notification coalescing), and the failures matched its shape
+closely — one of them read `Expected:<1> Actual:<2>`, a message delivered twice, which is
+exactly what disabled coalescing produces.
+
+The inference was written up on both PRs as a hypothesis, with single-leg re-runs attached.
+Both re-runs failed **identically** on the fixed tier, and the hypothesis was retracted.
+
+The reasoning was sound and the conclusion was wrong: **a symptom matching a mechanism is not
+evidence that mechanism produced it.** What made it recoverable was attaching the check to the
+claim rather than publishing a finding. What would have avoided it entirely was dispatching
+Windows first — one command, against a documented authority, instead of an argument about
+which tier to believe.
+
+## The incidents this rule is made of
 
 **#2144 — the container differential lost, and a self-inflicted failure got classified
 instead of reverted.** The differential said `TestIsolation = Codeunit` rolls the database
@@ -93,6 +182,9 @@ worked case, what remains out of reach, and the `SingleInstance`-probe technique
 observable a rollback would otherwise destroy.
 
 ## When no verdict is available
+
+This covers the fourth row of the table above — a reference-tier run that errored before
+executing anything is *no verdict*, not a negative one, and the rules here apply unchanged.
 
 Say so plainly, name what would settle it, and land the runner change with whatever coverage
 is legitimately available — the escape hatch in `bc-behavior-tests-go-upstream.md` applies
