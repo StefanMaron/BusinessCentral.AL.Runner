@@ -45,7 +45,9 @@ public static class ALDatabasePatches
     // committed". BC opens the write transaction on the first write of the AL call and
     // ends it at Commit (or when the invocation unwinds). That is exactly what this flag
     // models — set from the same AL write entry points that move the row-version clock,
-    // cleared by Commit and at the per-test isolation boundary.
+    // cleared by Commit, at the end of every test METHOD (see
+    // TestExecutor.ApplyTestTransactionModel and EndWriteTransactionAtTestBoundary below),
+    // and at the per-test-CODEUNIT isolation boundary (ResetWriteTransactionState).
     //
     // NOT faithful for: rollback semantics (the runner's store has none — see
     // docs/limitations.md) and nested/explicit transaction scopes.
@@ -477,6 +479,25 @@ public static class ALDatabasePatches
                 + $"(runner could not build BC's own message: {ex.GetType().Name})");
         }
     }
+
+    /// <summary>
+    /// End the session's write transaction at a TEST-METHOD boundary, the way BC's
+    /// NavTestCodeunit.ExecuteTestMethodAsync does — <c>case TestTransactionModel.AutoCommit:
+    /// activeSession.Commit();</c>, <c>case TestTransactionModel.AutoRollback:
+    /// activeSession.Rollback();</c>, and the surrounding <c>catch (Exception) { if
+    /// (activeSession.IsTransactionActive()) activeSession.Rollback(); }</c> when the method
+    /// threw (decompiled Ncl.dll 28.4.53241.54039). All three end the transaction, so the next
+    /// [Test] in the codeunit starts with nothing pending for
+    /// <see cref="ThrowIfWriteTransactionStarted"/> to fire on. AlRunner#3468.
+    ///
+    /// <para>Flag only — deliberately NOT a commit point, and deliberately not a rollback.
+    /// Which rows survive is decided separately by TestExecutor.ApplyTestTransactionModel
+    /// (rollback on AutoRollback/threw) and by RunOne's own MarkCommitPoint() at the start of
+    /// the next test; folding either into this method would change row visibility, which the
+    /// corpus pins independently ("Test Isolation Rollback Scope", 60897).</para>
+    /// </summary>
+    public static void EndWriteTransactionAtTestBoundary()
+        => System.Threading.Volatile.Write(ref _inWriteTransaction, false);
 
     /// <summary>Clear write-transaction state at the per-test isolation boundary, so one
     /// test's uncommitted write cannot make the next test start "in a transaction".</summary>
