@@ -92,6 +92,18 @@ different evidence and conflating them is how a recoverable difference gets a pe
 | `oracleLimitation: true` | the ground truth is the wrong shape for this member | a `Doc` pointer |
 | `cannotExpress: true` | the symbol file cannot express it **and** it cannot be derived | evidence about derivability |
 
+An entry may also set `direction` to `runner-only` or `bc-only`, and ten do. An entry covers both
+directions unless it says otherwise, and **a reason that justifies one direction must not license
+the other**. All three `oracleLimitation` entries are `runner-only`: they exist because the runner
+shows a merged runtime view, so BC-absent / runner-present is what they justify — while the
+reverse, BC emitting a field the runner never builds, is a hard reader defect that must still
+fail. Undirected, that defect was covered on every table by a permanent, uncapped licence.
+
+There is deliberately **no occurrence cap**. One was implemented and used by nothing, which is a
+ratchet nobody turns. No entry here has a bound that survives a rebuild — the counts move with the
+BC build and with which apps are bundled — so any cap would be a number nobody measured. Direction
+narrows *categorically* instead, which is build-independent and checkable per difference.
+
 Enforced at load by `MetadataDifferenceAllowlist`, so a malformed entry fails the run rather than
 sitting in the file granting cover nobody reviewed. `Doc` is spelled that way on purpose:
 `tools/test_doc_pointers.py` already validates every `Doc` value under `tests/expectations`,
@@ -155,15 +167,53 @@ Two consequences worth meeting before a non-empty diff is:
   holds after deltas are applied — which is not obtainable without a tier. That is the ceiling on
   how empty this diff can ever get.
 
-Verified across BC 27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54044 and 28.4.53241.53989:
-the same 74 entries cover every difference on all four, with none stale. The counts move
-(System Application `DataClassification` is 661 / 661 / 663 / 617 and `EnumTypeId` 76 / 76 / 76 /
-75), the membership does not.
+Verified across four BC builds: the same 74 entries cover every difference on all four, with none
+stale. The membership does not move; the counts do, which is the whole reason nothing asserts one.
+
+| BC build | differences | members | System App tables | `Editable` | `DataClassification` | `EnumTypeId` |
+|---|---:|---:|---:|---:|---:|---:|
+| 27.5.46862.53931 | 65,505 | 74 | 127 | 78 | 617 | 75 |
+| 28.1.49838.53910 | 70,728 | 74 | 138 | 78 | 661 | 76 |
+| 28.1.49838.54044 | 70,728 | 74 | 138 | 78 | 661 | 76 |
+| 28.4.53241.53989 | 70,836 | 74 | 138 | 78 | 663 | 76 |
+
+The last three columns are System Application's own declared fields. They are recorded here and
+asserted nowhere — see the next section.
 
 `maxOccurrences` is unused in the current file. The mechanism is right for a difference whose
 count is bounded independently of the build; a count measured on one BC build and one set of apps
 is not that, because the unit legs run 27.5 and 28.4 while the current numbers were measured on
 28.1.
+
+<a id="a-check-that-cannot-fail-reads-like-a-check-that-passed"></a>
+## A check that cannot fail reads exactly like a check that passed
+
+Three defects in this harness have now had the same shape, and it is the shape to watch for in
+anything added to it.
+
+1. **A reason category that could not be wrong.** Seven `TranslationKey` entries claimed a
+   permanent limit of the symbol file — 36% of the diff — on evidence about *storage*, which says
+   nothing about *derivability*. Fixed by making the kind of reason an explicit field with its own
+   evidence requirement.
+2. **A licence that covered both directions.** The three merged-runtime entries were written for
+   "the runner has a field BC's build-time emit does not", and silently also covered "BC emitted a
+   field and the runner built none" — a hard reader defect, on every table, permanently. Fixed by
+   `direction`.
+3. **An assertion that went inert when the build moved.** The known-defect counts were pinned per
+   four-part BC build. CI resolves 28.4 to a build that moves, so the lookup missed, the four
+   numbers went unasserted, and the test passed green having checked nothing.
+
+The third is worth dwelling on, because the fix was not to pick a failure mode. Pinning tighter
+goes inert; pinning looser asserts a number that held once. **The counts move and the shape does
+not**, so the test asserts the shape: the reader answers a *constant* — `Editable` `True` where BC
+says `False`, `DataClassification` `CustomerContent`, `EnumTypeId` `0` — on every occurrence, on
+every build measured. That is stronger than a count (a count passes if the reader answers a
+different constant) and it cannot disappear. The counts live in the table above, where a
+measurement belongs.
+
+The general rule: **an answer a check could not have failed to give is not evidence.** When adding
+an assertion here, ask what would have to be true for it to fail, and make sure that state is
+reachable.
 
 <a id="what-is-compared"></a>
 ## What is compared, and what is not

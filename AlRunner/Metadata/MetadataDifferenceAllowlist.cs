@@ -8,8 +8,15 @@
 //     runner deliberately does not implement, or a limitation of the oracle itself;
 //   * an entry that stops matching anything is an ERROR, not a tidy-up — that is how a
 //     landed fix forces the allowlist to shrink instead of leaving stale cover behind;
-//   * an entry may cap how many differences it covers, so a defect getting WORSE fails even
-//     though its shape is declared.
+//   * an entry may narrow itself to ONE direction, so a reason that justifies "the runner
+//     states something BC does not" cannot also license the reverse.
+//
+// There is deliberately no occurrence CAP. One was implemented and never used, which made the
+// PR claim a ratchet the code did not keep. No entry here has a bound that survives a rebuild:
+// the counts move with the BC build and with which apps are bundled (System Application's
+// DataClassification is 661 / 663 / 617 across 28.1 / 28.4 / 27.5), so any cap would be a
+// number nobody measured. `direction` narrows CATEGORICALLY instead, which is build-independent
+// and checkable per difference.
 //
 // The four kinds are separate because they need DIFFERENT evidence, and conflating them is
 // how a recoverable difference gets a permanent licence. Seven TranslationKey entries — 36%
@@ -64,32 +71,57 @@ public sealed class MetadataAllowlistEntry
     /// </summary>
     [JsonPropertyName("Doc")] public string? Doc { get; init; }
 
+    /// <summary>
+    /// Narrow the entry to ONE direction, so a reason that justifies one does not license the
+    /// other. <c>runner-only</c> covers a difference where BC's side is absent or null and the
+    /// runner states something; <c>bc-only</c> is the reverse. Null covers both.
+    ///
+    /// This is why it exists. The three merged-runtime entries are a permanent, uncapped
+    /// licence, and every difference they were written for is BC-absent / runner-present. Left
+    /// undirected they also covered "BC emitted a field and the runner built none" — a hard
+    /// reader defect, on every table, and the single class of defect the #3545 rewrite is most
+    /// likely to introduce. A check that cannot fail reads exactly like a check that passed.
+    /// </summary>
+    [JsonPropertyName("direction")] public string? Direction { get; init; }
+
     /// <summary>Only cover differences on this object, e.g. <c>Table 2000000120</c>.</summary>
     [JsonPropertyName("objectKey")] public string? ObjectKey { get; init; }
 
     /// <summary>Only cover differences whose path starts with this.</summary>
     [JsonPropertyName("pathPrefix")] public string? PathPrefix { get; init; }
 
-    /// <summary>Fail if more than this many differences match. Null means uncapped.</summary>
-    [JsonPropertyName("maxOccurrences")] public int? MaxOccurrences { get; init; }
+    public const string RunnerOnly = "runner-only";
+    public const string BcOnly = "bc-only";
 
     public bool Covers(MetadataDifference d)
         => string.Equals(Member, d.Signature, StringComparison.Ordinal)
            && (ObjectKey is null || string.Equals(ObjectKey, d.ObjectKey, StringComparison.Ordinal))
-           && (PathPrefix is null || d.Path.StartsWith(PathPrefix, StringComparison.Ordinal));
+           && (PathPrefix is null || d.Path.StartsWith(PathPrefix, StringComparison.Ordinal))
+           && DirectionCovers(d);
+
+    private bool DirectionCovers(MetadataDifference d) => Direction switch
+    {
+        null => true,
+        RunnerOnly => IsAbsentOrNull(d.Expected),
+        BcOnly => IsAbsentOrNull(d.Actual),
+        _ => false,   // unreachable: the constructor refuses an unknown direction
+    };
+
+    private static bool IsAbsentOrNull(string value)
+        => value == MetadataObjectDiff.Absent || value == MetadataObjectDiff.Null;
 
     public string Describe()
-        => Member + (ObjectKey is null ? "" : $" @{ObjectKey}") + (PathPrefix is null ? "" : $" ~{PathPrefix}");
+        => Member + (Direction is null ? "" : $" [{Direction}]")
+           + (ObjectKey is null ? "" : $" @{ObjectKey}") + (PathPrefix is null ? "" : $" ~{PathPrefix}");
 }
 
 /// <summary>What the allowlist made of one comparison.</summary>
 public sealed record MetadataAllowlistVerdict(
     IReadOnlyList<MetadataDifference> Undeclared,
     IReadOnlyList<string> UnusedEntries,
-    IReadOnlyList<string> ExceededEntries,
     IReadOnlyDictionary<string, int> OccurrencesByEntry)
 {
-    public bool Ok => Undeclared.Count == 0 && UnusedEntries.Count == 0 && ExceededEntries.Count == 0;
+    public bool Ok => Undeclared.Count == 0 && UnusedEntries.Count == 0;
 }
 
 public sealed class MetadataDifferenceAllowlist
@@ -122,6 +154,13 @@ public sealed class MetadataDifferenceAllowlist
                 throw new InvalidDataException(
                     $"metadata allowlist: entry '{e.Member}' claims more than one kind of reason. " +
                     "They need different evidence, so exactly one applies.");
+            if (e.Direction is not null
+                && e.Direction != MetadataAllowlistEntry.RunnerOnly
+                && e.Direction != MetadataAllowlistEntry.BcOnly)
+                throw new InvalidDataException(
+                    $"metadata allowlist: entry '{e.Member}' has direction '{e.Direction}'. " +
+                    $"Use '{MetadataAllowlistEntry.RunnerOnly}' or '{MetadataAllowlistEntry.BcOnly}', " +
+                    "or omit it to cover both.");
             if ((e.OutOfScope || e.OracleLimitation) && string.IsNullOrWhiteSpace(e.Doc))
                 throw new InvalidDataException(
                     $"metadata allowlist: entry '{e.Member}' declares a scope or oracle boundary " +
@@ -163,11 +202,7 @@ public sealed class MetadataDifferenceAllowlist
 
         var unused = Entries.Where(e => counts[e.Describe()] == 0)
             .Select(e => e.Describe()).ToArray();
-        var exceeded = Entries
-            .Where(e => e.MaxOccurrences is int cap && counts[e.Describe()] > cap)
-            .Select(e => $"{e.Describe()}: {counts[e.Describe()]} occurrences, declared max {e.MaxOccurrences}")
-            .ToArray();
 
-        return new MetadataAllowlistVerdict(undeclared, unused, exceeded, counts);
+        return new MetadataAllowlistVerdict(undeclared, unused, counts);
     }
 }

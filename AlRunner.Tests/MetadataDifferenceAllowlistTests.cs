@@ -16,8 +16,8 @@ public sealed class MetadataDifferenceAllowlistTests
     private static MetadataDifference Diff(string type, string member, string objectKey = "Table 5")
         => new(objectKey, member, type, member, "bc", "ours");
 
-    private static MetadataAllowlistEntry Entry(string member, int? max = null, string? objectKey = null)
-        => new() { Member = member, Reason = "measured; tracked", Issue = 3545, MaxOccurrences = max, ObjectKey = objectKey };
+    private static MetadataAllowlistEntry Entry(string member, string? objectKey = null)
+        => new() { Member = member, Reason = "measured; tracked", Issue = 3545, ObjectKey = objectKey };
 
     [Fact]
     public void An_undeclared_difference_is_undeclared()
@@ -54,33 +54,106 @@ public sealed class MetadataDifferenceAllowlistTests
     }
 
     [Fact]
-    public void Exceeding_a_declared_occurrence_cap_fails()
+    public void A_runner_only_entry_does_not_cover_the_BC_only_direction()
     {
-        var list = new MetadataDifferenceAllowlist(new[] { Entry("MetaField.Editable", max: 1) });
-
-        var verdict = list.Classify(new[]
+        // The blocking defect this fixes. The three merged-runtime entries are a permanent,
+        // uncapped licence written for "the runner has a field BC's per-app emit does not".
+        // Undirected they also covered the reverse — BC emitted a field and the runner built
+        // none — which is a hard reader defect on every table.
+        var list = new MetadataDifferenceAllowlist(new[]
         {
-            Diff("MetaField", "Editable", "Table 5"),
-            Diff("MetaField", "Editable", "Table 6"),
+            new MetadataAllowlistEntry
+            {
+                Member = "MetaTable.Fields.<presence>", Reason = "runtime-merged versus build-time emit",
+                OracleLimitation = true, Direction = MetadataAllowlistEntry.RunnerOnly,
+                Doc = "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata",
+            },
         });
 
-        Assert.Empty(verdict.Undeclared);
-        Assert.Contains("2 occurrences, declared max 1", Assert.Single(verdict.ExceededEntries), StringComparison.Ordinal);
-        Assert.False(verdict.Ok);
+        var runnerOnly = new MetadataDifference("Table 242", "Fields[id=10]",
+            "MetaTable", "Fields.<presence>", MetadataObjectDiff.Absent, "present");
+        var bcOnly = new MetadataDifference("Table 242", "Fields[id=10]",
+            "MetaTable", "Fields.<presence>", "present", MetadataObjectDiff.Absent);
+
+        Assert.Empty(list.Classify(new[] { runnerOnly }).Undeclared);
+
+        var undeclared = Assert.Single(list.Classify(new[] { runnerOnly, bcOnly }).Undeclared);
+        Assert.Equal("present", undeclared.Expected);
+        Assert.Equal(MetadataObjectDiff.Absent, undeclared.Actual);
     }
 
     [Fact]
-    public void Staying_within_a_declared_occurrence_cap_passes()
+    public void A_bc_only_entry_does_not_cover_the_runner_only_direction()
     {
-        var list = new MetadataDifferenceAllowlist(new[] { Entry("MetaField.Editable", max: 2) });
+        var list = new MetadataDifferenceAllowlist(new[]
+        {
+            new MetadataAllowlistEntry
+            {
+                Member = "MetaField.Relations.<presence>", Reason = "BC relates SystemCreatedBy to User; the runner does not",
+                Issue = 3568, Direction = MetadataAllowlistEntry.BcOnly,
+            },
+        });
 
-        Assert.True(list.Classify(new[] { Diff("MetaField", "Editable") }).Ok);
+        var bcOnly = new MetadataDifference("Table 5", "Fields[id=2000000002].Relations[0]",
+            "MetaField", "Relations.<presence>", "present", MetadataObjectDiff.Absent);
+        var runnerInvented = new MetadataDifference("Table 5", "Fields[id=7].Relations[0]",
+            "MetaField", "Relations.<presence>", MetadataObjectDiff.Absent, "present");
+
+        Assert.Empty(list.Classify(new[] { bcOnly }).Undeclared);
+        Assert.Single(list.Classify(new[] { bcOnly, runnerInvented }).Undeclared);
+    }
+
+    [Fact]
+    public void An_unknown_direction_is_refused()
+    {
+        var ex = Assert.Throws<InvalidDataException>(() => new MetadataDifferenceAllowlist(
+            new[]
+            {
+                new MetadataAllowlistEntry
+                {
+                    Member = "MetaField.Editable", Reason = "measured; tracked",
+                    Issue = 3545, Direction = "sideways",
+                },
+            }));
+        Assert.Contains("direction 'sideways'", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("MetaTable.Fields.<presence>", "Fields[id=10]")]
+    [InlineData("MetaTable.FieldsById.<presence>", "FieldsById[key=10]")]
+    [InlineData("MetaTable.#fieldsById.<presence>", "#fieldsById[key=10]")]
+    public void The_CHECKED_IN_allowlist_leaves_a_missing_field_undeclared(string signature, string path)
+    {
+        // Against the real file, not a constructed one. "BC emitted this field and the runner
+        // built none" must still fail on the very members whose permanent licence covers the
+        // opposite direction — that is the whole point of scoping them.
+        var list = MetadataDifferenceAllowlist.Load(MetadataEquivalencePaths.AllowlistFile());
+        var i = signature.IndexOf('.', StringComparison.Ordinal);
+
+        var runnerBuiltNothing = new MetadataDifference(
+            "Table 242", path, signature[..i], signature[(i + 1)..],
+            Expected: "present", Actual: MetadataObjectDiff.Absent);
+
+        var undeclared = Assert.Single(list.Classify(new[] { runnerBuiltNothing }).Undeclared);
+        Assert.Equal(signature, undeclared.Signature);
+    }
+
+    [Fact]
+    public void Every_permanent_licence_in_the_checked_in_allowlist_is_direction_scoped()
+    {
+        // outOfScope and oracleLimitation never expire, so an undirected one licenses a defect
+        // in the direction its reason says nothing about. The TranslationKey entries are a
+        // value difference in both directions at once and are exempt.
+        var list = MetadataDifferenceAllowlist.Load(MetadataEquivalencePaths.AllowlistFile());
+
+        foreach (var e in list.Entries.Where(e => e.OracleLimitation))
+            Assert.Equal(MetadataAllowlistEntry.RunnerOnly, e.Direction);
     }
 
     [Fact]
     public void An_entry_narrowed_to_one_object_does_not_cover_another()
     {
-        var list = new MetadataDifferenceAllowlist(new[] { Entry("MetaField.Editable", objectKey: "Table 5") });
+        var list = new MetadataDifferenceAllowlist(new[] { Entry("MetaField.Editable", "Table 5") });
 
         var verdict = list.Classify(new[]
         {

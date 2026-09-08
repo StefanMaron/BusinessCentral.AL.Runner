@@ -152,13 +152,10 @@ public sealed class MetadataEquivalenceHarnessTests
 
         Assert.True(verdict.UnusedEntries.Count == 0,
             "these allowlist entries no longer match any difference — the derivation now agrees " +
-            "with BC on them, so remove the entries (leaving them grants cover nobody reviewed):" +
+            "with BC on them, so remove the entries (leaving them grants cover nobody reviewed). " +
+            "A direction-scoped entry also lands here when every difference has flipped to the " +
+            "direction it does NOT cover, which is a finding rather than a tidy-up:" +
             Environment.NewLine + string.Join(Environment.NewLine, verdict.UnusedEntries));
-
-        Assert.True(verdict.ExceededEntries.Count == 0,
-            "these declared differences occur more often than the allowlist says — the defect got " +
-            "WORSE, which a membership-only allowlist would have hidden:" + Environment.NewLine +
-            string.Join(Environment.NewLine, verdict.ExceededEntries));
     }
 
     [SkippableFact]
@@ -175,38 +172,30 @@ public sealed class MetadataEquivalenceHarnessTests
         }
     }
 
-    /// <summary>
-    /// Counts measured on one exact app build. Pinned per build because they MOVE with it: the
-    /// app's own AL changes between BC releases, so a number measured on 28.1 is not a
-    /// prediction about 28.4. A build that is not in here still gets the version-portable
-    /// assertions below; adding one is a measurement, not a guess.
-    /// </summary>
-    private static readonly IReadOnlyDictionary<string, (int Editable, int DataClassification, int EnumTypeId, int Tables)>
-        PinnedSystemApplicationCounts = new Dictionary<string, (int, int, int, int)>(StringComparer.Ordinal)
-        {
-            // Measured by running this harness on each build. They MOVE — DataClassification
-            // is 661 / 663 / 617 and EnumTypeId 76 / 76 / 75 across the three below — which is
-            // why they are pinned per build rather than asserted as constants.
-            ["28.1.49838.53910"] = (78, 661, 76, 138),
-            ["28.1.49838.54044"] = (78, 661, 76, 138),
-            ["28.4.53241.53989"] = (78, 663, 76, 138),
-            ["27.5.46862.53931"] = (78, 617, 75, 127),
-        };
-
     [SkippableFact]
     public void The_current_reader_reproduces_the_known_defect_shapes()
     {
         // This is the test that shows the harness can FAIL. A metadata gate that was green
-        // against a reader answering 5,241 wrong Editable values would be proving nothing, so
-        // the first thing to establish about this harness is that it sees those defects.
+        // against a reader answering 5,241 wrong Editable values would be proving nothing.
         //
-        // Two tiers, deliberately. The portable claims hold on every BC build and are exact —
-        // "on EVERY table", not "on some" — so they cannot be satisfied by a differ that has
-        // started reporting almost nothing. The pinned counts are the sharper claim and apply
-        // only on the build they were measured on.
-        var reports = RunAll();
-
-        foreach (var report in reports)
+        // Every claim here is exact AND build-independent, and that combination is deliberate.
+        // An earlier version pinned the COUNTS per four-part BC build (78 / 661 / 76 / 138 on
+        // 28.1.49838.54044) and returned silently on a build it did not know. CI resolves
+        // 28.4 to a build that moves, so the lookup missed and all four numbers went unasserted
+        // — green, with nothing to say it had checked nothing. A pin that disappears when the
+        // build moves is worse than no pin, because it reads as covered.
+        //
+        // The fix is not to choose which way that fails. The counts genuinely move with the
+        // build (System Application's DataClassification is 661 / 663 / 617 across 28.1 / 28.4
+        // / 27.5, and its table count 138 / 138 / 127), so ANY key is either too tight and goes
+        // inert or too loose and asserts a number that held once. The SHAPE does not move: the
+        // reader answers a constant, which is what the defect IS. Measured on all three builds,
+        // BC says False on 87 of 87 Editable differences and the runner says True on 87 of 87;
+        // the runner says CustomerContent on 620-666 of 620-666 DataClassification differences
+        // and 0 on every EnumTypeId one. Asserting the constant is both stronger than a count
+        // and incapable of going inert. The counts themselves are recorded in
+        // docs/metadata-equivalence.md, where a measurement belongs.
+        foreach (var report in RunAll())
         {
             int MissingRelation(int fieldId) => report.Differences
                 .Where(d => d.Member == "Relations." + MetadataObjectDiff.PresenceMember
@@ -214,35 +203,50 @@ public sealed class MetadataEquivalenceHarnessTests
                             && d.Actual == MetadataObjectDiff.Absent)
                 .Select(d => d.ObjectKey).Distinct().Count();
 
-            // BC gives both of these a TableRelation to User (2000000120) and the runner gives
-            // them none — on every table, in every app, which is why this is expressed against
-            // the number of tables compared rather than as a constant.
+            // BC gives both a TableRelation to User (2000000120) and the runner gives them
+            // none — on EVERY table, which is why this is against the number compared rather
+            // than a constant.
             Assert.Equal(report.ObjectsCompared, MissingRelation(2000000002));
             Assert.Equal(report.ObjectsCompared, MissingRelation(2000000004));
 
-            int Declared(string signature) => report.Differences
-                .Count(d => d.Signature == signature && IsDeclaredField(d.Path));
+            MetadataDifference[] Declared(string signature) => report.Differences
+                .Where(d => d.Signature == signature && IsDeclaredField(d.Path)).ToArray();
 
-            Assert.True(Declared("MetaField.Editable") > 0,
-                $"{report.Bundle.Label}: the reader now agrees with BC on Editable for every " +
-                "declared field. If #3545 landed, update this test with the new measurement; " +
-                "if it did not, the harness has stopped seeing a defect it used to see.");
-            Assert.True(Declared("MetaField.DataClassification") > 0,
-                $"{report.Bundle.Label}: the reader now agrees with BC on field DataClassification.");
+            AssertConstantAnswer(report, Declared("MetaField.Editable"), "MetaField.Editable",
+                bc: "False", runner: "True");
+            AssertConstantAnswer(report, Declared("MetaField.DataClassification"),
+                "MetaField.DataClassification", bc: null, runner: "CustomerContent");
+            AssertConstantAnswer(report, Declared("MetaField.EnumTypeId"), "MetaField.EnumTypeId",
+                bc: null, runner: "0");
         }
+    }
 
-        var systemApp = reports.FirstOrDefault(r => r.Bundle.AppName == "System Application");
-        Skip.If(systemApp is null, "no System Application ground truth on this box.");
-        if (!PinnedSystemApplicationCounts.TryGetValue(systemApp!.Bundle.AppVersion, out var pinned))
-            return;   // a build nobody has measured; the portable claims above still ran
+    /// <summary>
+    /// Every difference on <paramref name="signature"/> answers the same constant on the
+    /// runner's side (and optionally on BC's), and there is at least one. Non-emptiness is half
+    /// the assertion: "all zero of them agree" is how this would pass having checked nothing.
+    /// </summary>
+    private static void AssertConstantAnswer(
+        MetadataEquivalenceReport report, MetadataDifference[] differences,
+        string signature, string? bc, string runner)
+    {
+        Assert.True(differences.Length > 0,
+            $"{report.Bundle.Label}: the reader now agrees with BC on {signature} for every " +
+            "declared field. If the reader fix landed, this test is what must be updated in the " +
+            "same change; if it did not, the harness has stopped seeing a defect it used to see.");
 
-        int DeclaredIn(string signature) => systemApp.Differences
-            .Count(d => d.Signature == signature && IsDeclaredField(d.Path));
+        var runnerAnswers = differences.Select(d => d.Actual).Distinct().ToArray();
+        Assert.True(runnerAnswers.Length == 1 && runnerAnswers[0] == runner,
+            $"{report.Bundle.Label}: {signature} — the runner should answer the constant " +
+            $"'{runner}' on all {differences.Length} differences (that constant IS the defect: " +
+            "it is the value the reader falls back to). It answers: " +
+            string.Join(", ", runnerAnswers.Take(10)));
 
-        Assert.Equal(pinned.Editable, DeclaredIn("MetaField.Editable"));
-        Assert.Equal(pinned.DataClassification, DeclaredIn("MetaField.DataClassification"));
-        Assert.Equal(pinned.EnumTypeId, DeclaredIn("MetaField.EnumTypeId"));
-        Assert.Equal(pinned.Tables, systemApp.ObjectsCompared);
+        if (bc is null) return;
+        var bcAnswers = differences.Select(d => d.Expected).Distinct().ToArray();
+        Assert.True(bcAnswers.Length == 1 && bcAnswers[0] == bc,
+            $"{report.Bundle.Label}: {signature} — BC should answer '{bc}' on all " +
+            $"{differences.Length} differences. It answers: " + string.Join(", ", bcAnswers.Take(10)));
     }
 
     [SkippableFact]

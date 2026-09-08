@@ -23,11 +23,16 @@
     "reproduced), and the runner reads no translation files anyway, so it is out of scope rather",
     "than impossible. 'Nothing is stored' is evidence about storage, never about derivability.",
     "",
-    "No entry sets maxOccurrences. The mechanism exists (see MetadataDifferenceAllowlist) and",
-    "is worth using for a difference whose count is bounded independently of the build, but a",
-    "count measured on one BC build and one set of apps is not that: the unit legs run 27.5 and",
-    "28.4 while these numbers were measured on 28.1, and the totals move with both the BC build",
-    "and which apps have a ground-truth bundle.",
+    "Ten entries are DIRECTION-SCOPED. An entry covers both directions unless it says otherwise,",
+    "and a reason that justifies one direction must not license the other. All three",
+    "oracleLimitation entries are runner-only: they exist because the runner shows a merged",
+    "runtime view, so BC-absent / runner-present is what they justify \u2014 while the reverse, BC",
+    "emitting a field the runner never builds, is a hard reader defect that must still fail.",
+    "",
+    "There is deliberately NO occurrence cap. One was implemented and used by nothing, which made",
+    "the PR claim a ratchet the code did not keep. No entry here has a bound that survives a",
+    "rebuild \u2014 the counts move with the BC build and with which apps are bundled \u2014 so any cap",
+    "would be a number nobody measured. Direction narrows categorically instead.",
     "",
     "Measured on BC 28.1.49838.54044 over Business Foundation (12 tables) and System Application",
     "(138 tables): 70,728 differences across 74 members. Per-member counts and examples are on",
@@ -178,8 +183,9 @@
     },
     {
       "member": "MetaField.CaptionML.<presence>",
-      "reason": "BC builds a MultiLanguage caption for the field; the runner builds none. The symbol file carries Caption (2,743 occurrences in System Application) \u2014 the MultiLanguage object is its runtime form.",
-      "issue": 3568
+      "reason": "BC builds a MultiLanguage caption for the field; the runner builds none. The symbol file carries Caption (2,743 occurrences in System Application) \u2014 the MultiLanguage object is its runtime form. Direction-scoped to BC-present / runner-absent; the runner inventing a caption BC does not have is a different defect.",
+      "issue": 3568,
+      "direction": "bc-only"
     },
     {
       "member": "MetaField.ExtendedDatatype",
@@ -208,8 +214,9 @@
     },
     {
       "member": "MetaField.Relations.<presence>",
-      "reason": "BC gives SystemCreatedBy and SystemModifiedBy a TableRelation to User (2000000120); the runner gives them none. This is the difference already observable from plain AL as FieldRef.Relation() answering 0 \u2014 see #3549.",
-      "issue": 3568
+      "reason": "BC gives SystemCreatedBy and SystemModifiedBy a TableRelation to User (2000000120); the runner gives them none. This is the difference already observable from plain AL as FieldRef.Relation() answering 0 \u2014 see #3549. Direction-scoped to BC-present / runner-absent; the runner inventing a relation BC does not have would be a different defect and is not covered.",
+      "issue": 3568,
+      "direction": "bc-only"
     },
     {
       "member": "MetaField.ValidateRelation",
@@ -275,19 +282,22 @@
       "member": "MetaTable.#fieldsById.<presence>",
       "reason": "The private backing storage behind MetaTable.FieldsById, holding the same merged tableextension fields as MetaTable.Fields.<presence>; same runtime-merged-versus-build-time-emit boundary, same consequence for an empty diff.",
       "oracleLimitation": true,
-      "Doc": "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata"
+      "Doc": "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata",
+      "direction": "runner-only"
     },
     {
       "member": "MetaTable.Fields.<presence>",
-      "reason": "The runner models the MERGED RUNTIME state a running system has \u2014 every registered app's tableextension fields present on the base table. The ground truth is BC's BUILD-TIME per-app emit, which by construction sees only the app being compiled. Two different things, so this is a limitation of the oracle and not evidence about the runner: 115 fields on four Business Foundation tables (230, 242, 308, 6635). In BC 29 everything is merged at database level anyway, which makes the runner's merged view the forward-looking one. CONSEQUENCE: a multi-app bundle can never produce an empty diff, so a non-empty diff here is expected and must not be read as noise or as a bug.",
+      "reason": "The runner models the MERGED RUNTIME state a running system has \u2014 every registered app's tableextension fields present on the base table. The ground truth is BC's BUILD-TIME per-app emit, which by construction sees only the app being compiled. Two different things, so this is a limitation of the oracle and not evidence about the runner: 115 fields on four Business Foundation tables (230, 242, 308, 6635). In BC 29 everything is merged at database level anyway, which makes the runner's merged view the forward-looking one. CONSEQUENCE: a multi-app bundle can never produce an empty diff, so a non-empty diff here is expected and must not be read as noise or as a bug. DIRECTION-SCOPED: covers only BC-absent / runner-present, which is the merged-runtime direction this reason justifies. The reverse \u2014 BC emitted a field and the runner built none \u2014 is a hard reader defect and is NOT covered.",
       "oracleLimitation": true,
-      "Doc": "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata"
+      "Doc": "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata",
+      "direction": "runner-only"
     },
     {
       "member": "MetaTable.FieldsById.<presence>",
       "reason": "The by-id index of the same merged tableextension fields as MetaTable.Fields.<presence>; same runtime-merged-versus-build-time-emit boundary, same consequence for an empty diff.",
       "oracleLimitation": true,
-      "Doc": "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata"
+      "Doc": "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata",
+      "direction": "runner-only"
     },
     {
       "member": "MetaTable.ReplicateData",
@@ -321,13 +331,15 @@
     },
     {
       "member": "MetaTable.Caption",
-      "reason": "The reverse direction: BC's table Caption is null and the runner carries a real caption. The runner resolves it from AL and BC leaves the runtime object's Caption unset, answering through CaptionML instead.",
-      "issue": 3568
+      "reason": "The reverse direction: BC's table Caption is null and the runner carries a real caption. The runner resolves it from AL and BC leaves the runtime object's Caption unset, answering through CaptionML instead. Direction-scoped to BC-null / runner-present, which is the direction this reason describes; BC stating a caption the runner drops is not covered.",
+      "issue": 3568,
+      "direction": "runner-only"
     },
     {
       "member": "MetaTable.CaptionOriginal",
-      "reason": "The CaptionOriginal half of MetaTable.Caption, same cause.",
-      "issue": 3568
+      "reason": "The CaptionOriginal half of MetaTable.Caption, same cause. Direction-scoped to BC-null / runner-present, which is the direction this reason describes; BC stating a caption the runner drops is not covered.",
+      "issue": 3568,
+      "direction": "runner-only"
     },
     {
       "member": "MetaTable.DataClassification",
@@ -341,8 +353,9 @@
     },
     {
       "member": "MetaField.OptionCaptionML.<presence>",
-      "reason": "The option-caption half of MetaField.CaptionML.<presence>.",
-      "issue": 3568
+      "reason": "The option-caption half of MetaField.CaptionML.<presence>. Direction-scoped to BC-present / runner-absent.",
+      "issue": 3568,
+      "direction": "bc-only"
     },
     {
       "member": "MetaField.NotBlank",
@@ -351,8 +364,9 @@
     },
     {
       "member": "MetaTable.FieldGroups.<presence>",
-      "reason": "BC builds the declared field groups (Brick, DropDown); the runner builds none anywhere. The symbol file carries FieldGroups.",
-      "issue": 3568
+      "reason": "BC builds the declared field groups (Brick, DropDown); the runner builds none anywhere. The symbol file carries FieldGroups. Direction-scoped to BC-present / runner-absent.",
+      "issue": 3568,
+      "direction": "bc-only"
     },
     {
       "member": "MetaKey.Clustered",
@@ -361,8 +375,9 @@
     },
     {
       "member": "MetaKey.SumIndexFields.<presence>",
-      "reason": "BC builds the declared SumIndexFields; the runner builds none.",
-      "issue": 3568
+      "reason": "BC builds the declared SumIndexFields; the runner builds none. Direction-scoped to BC-present / runner-absent.",
+      "issue": 3568,
+      "direction": "bc-only"
     },
     {
       "member": "MetaField.Lookup",
