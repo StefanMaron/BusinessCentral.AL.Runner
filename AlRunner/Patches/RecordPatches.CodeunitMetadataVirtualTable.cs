@@ -105,6 +105,11 @@ public static partial class RecordPatches
     // field option string — same technique AllObj uses for its "Object Type" column.
     private static Dictionary<string, int>? _cmvSubtypeOrdinals;
 
+    // The same column's own OptionString, kept so the ordinal can be resolved BEFORE a row is
+    // handed to InsertVirtualRow — see PopulateCodeunitMetadataVirtualTable. Set in the same
+    // breath as _cmvSubtypeOrdinals and read only after it.
+    private static string? _cmvSubtypeOptionString;
+
     /// <summary>
     /// Populate the in-memory store behind CodeUnit Metadata (2000000137) with one row per
     /// codeunit the runner knows about. Idempotent per (provider, codeunit id); called on
@@ -125,9 +130,37 @@ public static partial class RecordPatches
         foreach (var row in EnumerateKnownCodeunitMetadata())
         {
             if (!done.TryAdd(row.Id, 0)) continue;
+
+            // Resolved HERE rather than from inside the per-field builder, so a subtype this
+            // column cannot name costs the one row it belongs to instead of the whole table
+            // (#3536). It used to throw out of InsertVirtualRow, which escapes
+            // GetDataAccessForTable — no row of the table was served, and because TryAdd above
+            // latches before the insert, the next handout omitted the offending codeunit
+            // silently. Codeunit 2 "Company-Initialize" reads this table, so one such codeunit
+            // anywhere in any loaded app left the company half-initialized.
+            //
+            // Still loud (loud-failures.md): the refusal's own message is printed, naming the
+            // codeunit and the reason, once per codeunit per provider — TryAdd has latched the
+            // id, so this row is not attempted again. What is contained is the blast radius,
+            // not the report.
+            int subtypeOrdinal;
+            try
+            {
+                subtypeOrdinal = ResolveCodeunitSubtypeOrdinal(
+                    subtypeOrdinals, _cmvSubtypeOptionString, row.Subtype, row.Id);
+            }
+            catch (RunnerOutOfScopeException ex)
+            {
+                Console.Error.WriteLine(
+                    $"[RecordPatches] CodeUnit Metadata: codeunit {row.Id} \"{row.Name}\" is NOT in the "
+                    + $"table — its SubType could not be resolved: {ex.Message}. Every other codeunit "
+                    + "is still reported; AL that reads this one's row will find none.");
+                continue;
+            }
+
             InsertVirtualRow(provider, metaTable,
                 new object[] { CodeunitMetadataVirtualTableId, row.Id, 0, 0 },
-                field => BuildCodeunitMetadataValue(field, row, subtypeOrdinals));
+                field => BuildCodeunitMetadataValue(field, row, subtypeOrdinal));
         }
     }
 
@@ -137,7 +170,7 @@ public static partial class RecordPatches
     /// rather than a hardcoded field-number table.
     /// </summary>
     private static object? BuildCodeunitMetadataValue(
-        NCLMetaField field, CodeunitMetaRow row, Dictionary<string, int> subtypeOrdinals)
+        NCLMetaField field, CodeunitMetaRow row, int subtypeOrdinal)
     {
         object? Text(string s) => _aovNavTextCreateTruncated!.Invoke(
             null, new object?[] { field.FieldDefinedLength, s ?? string.Empty });
@@ -153,11 +186,11 @@ public static partial class RecordPatches
             case "singleinstance":
                 return NavBoolean(row.SingleInstance);
             case "subtype":
+                // Already resolved by the caller, which is what keeps a refusal from escaping
+                // mid-insert and taking the whole table with it (#3536).
                 return _aovNavOptionCreate!.Invoke(null, new object?[]
                 {
-                    field.FieldOptionMetadata,
-                    ResolveCodeunitSubtypeOrdinal(
-                        subtypeOrdinals, field.FieldOptionMetadata?.OptionString, row.Subtype, row.Id)
+                    field.FieldOptionMetadata, subtypeOrdinal
                 });
             default:
                 return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
@@ -258,12 +291,18 @@ public static partial class RecordPatches
         }
         if (ordinals.TryGetValue(NormalizeObjectTypeName(effectiveSubtype), out var ordinal))
             return ordinal;
+        // The message names the value that was LOOKED UP, and says so only when it differs
+        // from the declared one. Before #3536 it claimed the Install translation unconditionally,
+        // so a declared subtype that had merely failed to match — a quoted identifier, at the
+        // time — was reported as though the translation had been applied and had still missed.
+        var translated = !string.Equals(effectiveSubtype, declaredSubtype, StringComparison.Ordinal);
         throw CodeunitMetadataShapeGap(
-            $"codeunit {codeunitId} declares Subtype = '{declaredSubtype}', which is not a member of "
-            + $"that column's own option set ('{optionString}'). AL accepts one subtype the column "
-            + $"does not name — '{AlSubtypeTheCompilerDoesNotEmit}', which the compiler emits as "
-            + $"'{AlDefaultCodeunitSubtype}' and this resolver translates — so this is not an AL "
-            + "codeunit subtype at all");
+            $"codeunit {codeunitId} declares Subtype = '{declaredSubtype}'"
+            + (translated
+                ? $", which this resolver looks up as '{effectiveSubtype}' because the AL compiler "
+                  + $"emits '{AlSubtypeTheCompilerDoesNotEmit}' as '{AlDefaultCodeunitSubtype}', and that"
+                : ", which")
+            + $" is not a member of that column's own option set ('{optionString}')");
     }
 
     /// <summary>
@@ -379,6 +418,7 @@ public static partial class RecordPatches
         if (map.Count == 0)
             throw CodeunitMetadataShapeGap("\"Subtype\" option string is empty");
 
+        _cmvSubtypeOptionString = optionMetadata.OptionString;
         _cmvSubtypeOrdinals = map;
         return map;
     }
