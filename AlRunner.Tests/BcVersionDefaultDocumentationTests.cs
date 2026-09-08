@@ -41,24 +41,10 @@ public sealed class BcVersionDefaultDocumentationTests
     /// <summary>
     /// Wall-clock cap for one spawned runner, in milliseconds.
     ///
-    /// This class is the HEAVIEST collection in the suite, and an xUnit collection is
-    /// strictly serial: on the BC 27.5 leg of run 34187276963 — a leg where every test
-    /// here PASSED — it summed 136.8s of runtime across 191.5s dispatched. Its spawns
-    /// include a cold, no-package-cache, two-bundle compile, which is close to the most
-    /// expensive thing any test here asks the runner to do.
-    ///
-    /// At the previous 120s that cap sat in the bottom sixth of the suite (18 spawns cap
-    /// at 120s; 132 of 152 cap at 180s or more) while doing more work than most, so what
-    /// it measured was how loaded the CI box was, not whether the runner works: issue
-    /// #3435 recorded the same test timing out on a different subset of legs on each run,
-    /// passing on 27.0 and 27.5 while failing on 28.4 within one run of one commit.
-    ///
-    /// 180s is the suite's modal cap (47 spawns), so this brings the heaviest collection
-    /// up to the value the rest of the suite already uses for ordinary work rather than
-    /// inventing a number. The claim under test is that the documented shape RUNS — a
-    /// correctness claim — so a cap only has to be loose enough that load cannot
-    /// masquerade as failure; it is not a performance budget, and nothing here asserts
-    /// that a run is fast. Startup cost is measured by its own tests.
+    /// 180s is the suite's modal cap, raised from 120s for issue #3435. The claim under
+    /// test is that the documented shape RUNS — a correctness claim — so this only has to
+    /// be loose enough that CI load cannot masquerade as failure. It is not a performance
+    /// budget: nothing here asserts a run is fast, and startup cost has its own tests.
     /// </summary>
     private const int SpawnTimeoutMs = 180_000;
 
@@ -268,11 +254,27 @@ public sealed class BcVersionDefaultDocumentationTests
         // And the source itself must derive the message from the constant rather than
         // reintroducing a literal — the defect above is invisible to the string check
         // whenever the hardcoded number happens to match the current cap.
+        //
+        // Anchored on the throw STATEMENT, not on the message text. The phrase "did not
+        // exit within" also appears in this file's comments and in the expected-value line
+        // above, so scanning for it and taking the FIRST hit would pass as soon as a doc
+        // line mentioning it moved above the throw site — a false negative that depends
+        // only on where the comments sit.
+        //
+        // The anchor is assembled below rather than written as one literal, so that this
+        // very comment — and any future prose quoting the throw site — cannot itself match
+        // it. Writing the anchor out in full here is what broke the first attempt.
         var source = File.ReadAllText(Path.Combine(
             RepoRoot, "AlRunner.Tests", "BcVersionDefaultDocumentationTests.cs"));
-        var throwIdx = source.IndexOf("did not exit within", StringComparison.Ordinal);
-        Assert.True(throwIdx >= 0, "expected the timeout message to still exist.");
-        var throwLine = source[throwIdx..source.IndexOf('\n', throwIdx)];
-        Assert.Contains("SpawnTimeoutMs", throwLine, StringComparison.Ordinal);
+        var ThrowAnchor = "throw new " + nameof(TimeoutException) + "(";
+        var throwIdx = source.IndexOf(ThrowAnchor, StringComparison.Ordinal);
+        Assert.True(throwIdx >= 0, "expected the timeout throw site to still exist.");
+        Assert.Equal(throwIdx, source.LastIndexOf(ThrowAnchor, StringComparison.Ordinal));
+
+        var stmtEnd = source.IndexOf(");", throwIdx, StringComparison.Ordinal);
+        Assert.True(stmtEnd > throwIdx, "expected the throw statement to terminate.");
+        var throwStmt = source[throwIdx..stmtEnd];
+        Assert.Contains("did not exit within", throwStmt, StringComparison.Ordinal);
+        Assert.Contains("SpawnTimeoutMs", throwStmt, StringComparison.Ordinal);
     }
 }
