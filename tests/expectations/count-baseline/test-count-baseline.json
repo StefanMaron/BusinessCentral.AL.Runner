@@ -28,7 +28,7 @@
         "http-egress-boundary-oos": { "tests": 4 },
         "install-trigger-seed": { "tests": 3 },
         "install-trigger-text-constant": { "tests": 2 },
-        "integer-virtual-table-window": { "tests": 13 },
+        "integer-virtual-table-window": { "tests": 14 },
         "manual-binding-dep": { "tests": 3, "absentOn": ["27.0", "27.3", "27.5"] },
         "microsoft-dependencies": { "tests": 26 },
         "microsoft-test-library": { "tests": 3, "absentOn": ["27.0", "27.3", "27.5"] },

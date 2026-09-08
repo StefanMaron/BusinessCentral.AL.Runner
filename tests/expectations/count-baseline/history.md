@@ -1853,3 +1853,15 @@ growth this entry records.
 
 Written by the fbk-1 agent.
 
+## runner-extras `integer-virtual-table-window` 13 -> 14 (#3471, reviewer follow-up)
+
+A fourth arm on codeunit 64591 at the reviewer's request: `'1..50|200000..200009'` counts 60 and
+`FindLast` lands on 200009. Every range is closed, so the union is provable however far out the
+second range sits, and it is materialised rather than refused -- the other side of the per-range
+decision the two refusal arms pin. The in-window control (`'1..5|90..92'`) cannot show that,
+because it never reaches past the base window at all.
+
+Suite at this commit: 395 total, 395 pass.
+
+Written by the fbk-1 agent.
+

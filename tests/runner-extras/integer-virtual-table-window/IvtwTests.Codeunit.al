@@ -286,6 +286,29 @@ codeunit 64591 "Ivtw Tests"
         Assert.AreEqual(92, IntRec.Number, 'Expected the last row of 1..5|90..92 to be Number 92.');
     end;
 
+    [Test]
+    procedure Integer_MultiRangeFilterClosedPastTheWindow_IsMaterialisedRatherThanRefused()
+    var
+        IntRec: Record Integer;
+    begin
+        // The other side of the per-range decision (#3471), and the arm that keeps the two
+        // refusals above from reading as "a filter reaching past the base window is refused".
+        // Every range here is CLOSED, so the union is provably 60 rows however far out the second
+        // range sits: 50 from 1..50 and 10 from 200000..200009, the second entirely above the base
+        // window's upper edge 100000. Nothing is open, so nothing has to be guessed at, and both
+        // ranges are materialised on demand.
+        //
+        // The row counts are BC's claim and are pinned upstream (codeunit 60368,
+        // Record_Integer_TwoClosedRanges_CountTheirUnion); what is runner-specific here is that a
+        // span outside the base window is materialised at all rather than refused.
+        IntRec.SetFilter(Number, '1..50|200000..200009');
+
+        Assert.AreEqual(60, CountRows(IntRec), 'A closed multi-range filter reaching past the base window must be materialised.');
+        Assert.IsTrue(IntRec.FindLast(), 'A closed multi-range filter reaching past the base window returned no last row.');
+        Assert.AreEqual(200009, IntRec.Number, 'Expected the last row of 1..50|200000..200009 to be Number 200009.');
+        Assert.IsTrue(IntRec.Get(200000), 'Number 200000 must be readable after the span was materialised.');
+    end;
+
     local procedure CountRows(var IntRec: Record Integer): Integer
     begin
         exit(IntRec.Count());
