@@ -1535,21 +1535,30 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   and `RunModal()` reports `Action::None`
   ([#3050](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3050)).
 
-  A ninth refusal joins them on the same surface, this one on **both** close paths. An
-  `OnQueryClosePage` that raises an AL *error* — as opposed to vetoing — is shown by BC's own
-  client-side close handler as a **message**, after which the close is refused and the page
-  stays open. The runner reproduces the message half through BC's own
-  `NavTestExecution.TestHandleMessage` (`AlRunner/Patches/RunnerFormCloseHandler.cs`), so with
-  no `[MessageHandler]` declared the test sees BC's `Unhandled UI: Message …` refusal, exactly
-  as a service tier produces it. With a `[MessageHandler]` declared the handler consumes the
-  text and control returns to a page real BC has left open, which the runner has no model for;
-  it raises `RunnerOutOfScopeException` with reason
-  `not-yet-implemented — testpage-close-refused-after-message` rather than force the page shut
-  and report a close BC did not perform. The `not-yet-implemented` prefix is load-bearing: it is
-  what stops an AL `[TryFunction]` from swallowing the refusal into `false`, since this surface
-  is an open gap rather than a permanent boundary
-  ([#3057](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3057),
-  [#3179](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3179)).
+  An `OnQueryClosePage` that raises an AL *error* — as opposed to vetoing — is not a refusal
+  here at all, and used to be. BC's own client-side close handler shows the text as a
+  **message** and then refuses the close. The runner reproduces the message half through BC's
+  own `NavTestExecution.TestHandleMessage`
+  (`AlRunner/Patches/RunnerFormCloseHandler.cs`), so with no `[MessageHandler]` declared the
+  test sees BC's `Unhandled UI: Message …` refusal, exactly as a service tier produces it
+  ([#3057](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3057)). With one
+  declared the handler consumes the text and the close is refused, which the runner now
+  reports rather than raising over
+  ([#3179](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3179)). Corpus
+  codeunit 60602 "QCM Query Close Msg Tests"
+  ([#272](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/272)) measured
+  what a real tier leaves behind, green on all eight cloud legs and on the Windows nightly:
+  the caller regains control with nothing raised, `RunModal()` reports `Action::None` rather
+  than the action the `[ModalPageHandler]` chose, and the page's uncommitted write survives.
+  Each close route reproduces its own half — `RunModal` drops the handler's result so the AL
+  reads back `Action::None`, and `TestPage.Close()` returns with the page still open and
+  drivable.
+
+  **Still not reproduced on this surface, and tracked separately:** BC delivers the close-time
+  message **twice** on the `RunModal` route and once on the `TestPage.Close()` route, because
+  its round trip attempts the close twice. The runner attempts it once on both, so a
+  `[MessageHandler]` that counts deliveries sees one where BC would show two
+  ([#3593](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3593)).
 
 <a id="virtual-table-shape-gaps"></a>
 

@@ -1772,7 +1772,17 @@ internal sealed partial class RunnerPageInstance
     /// unsaved work; NavForm's base returns true, so a page declaring none closes normally.
     /// </summary>
     internal bool RaiseOnClosePage(Microsoft.Dynamics.Nav.Types.FormResult closeAction)
+        => RaiseOnClosePage(closeAction, out _);
+
+    /// <inheritdoc cref="RaiseOnClosePage(Microsoft.Dynamics.Nav.Types.FormResult)"/>
+    /// <param name="refusal">
+    /// Why the close was refused, when it was. The two refusals are not interchangeable and the
+    /// callers do different things with them — see <see cref="CloseRefusal"/>.
+    /// </param>
+    internal bool RaiseOnClosePage(
+        Microsoft.Dynamics.Nav.Types.FormResult closeAction, out CloseRefusal refusal)
     {
+        refusal = CloseRefusal.None;
         object? queryClose;
         try
         {
@@ -1788,12 +1798,51 @@ internal sealed partial class RunnerPageInstance
             // path in RunnerModalDispatch — TestPageProxy.InternalClose reaches
             // NavFormCloseHandler.ExecuteCloseCore too, so both shapes must agree. See
             // RunnerFormCloseHandler and issue #3057.
-            return RunnerFormCloseHandler.RefuseCloseAfter(ex, TestExecutionOrNull());
+            //
+            // RefuseCloseAfter either does not return (no [MessageHandler]: BC's own
+            // "Unhandled UI: Message …" comes out of it) or answers false, which is BC's
+            // `return false` after a handler consumed the text. Only the second reaches here.
+            var mayClose = RunnerFormCloseHandler.RefuseCloseAfter(ex, TestExecutionOrNull());
+            if (!mayClose) refusal = CloseRefusal.ErrorShownAsMessage;
+            return mayClose;
         }
 
-        if (queryClose is false) return false;
+        if (queryClose is false)
+        {
+            refusal = CloseRefusal.TriggerReturnedFalse;
+            return false;
+        }
         InvokeRecordTrigger("OnClosePage", Type.EmptyTypes, Array.Empty<object>());
         return true;
+    }
+
+    /// <summary>
+    /// Why <see cref="RaiseOnClosePage(Microsoft.Dynamics.Nav.Types.FormResult, out CloseRefusal)"/>
+    /// refused a close. Both mean "BC did not perform this close", and they are kept apart
+    /// because what the runner can faithfully do next differs between them.
+    /// </summary>
+    internal enum CloseRefusal
+    {
+        /// <summary>The close happened.</summary>
+        None,
+
+        /// <summary>
+        /// <c>OnQueryClosePage</c> returned <c>false</c> — a plain veto. On the explicit
+        /// <c>TestPage.Close()</c> path this stays a refusal (docs/scope.md): BC leaves the page
+        /// open awaiting a user, and no service tier has been asked what a test observes after
+        /// one. It is NOT the same question as the arm below, which has been asked.
+        /// </summary>
+        TriggerReturnedFalse,
+
+        /// <summary>
+        /// <c>OnQueryClosePage</c> raised an AL error and a <c>[MessageHandler]</c> consumed the
+        /// text, so BC's close handler reached its own <c>return false</c>. Measured on a real
+        /// service tier — corpus codeunit 60602 "QCM Query Close Msg Tests"
+        /// (StefanMaron/BusinessCentral.AL.Language.Tests#272), green on all eight cloud legs
+        /// and on the Windows nightly: the caller regains control, nothing is raised, and the
+        /// page stays open and drivable. See docs/limitations.md#testpage-shape-gaps.
+        /// </summary>
+        ErrorShownAsMessage,
     }
 
     /// <summary>
