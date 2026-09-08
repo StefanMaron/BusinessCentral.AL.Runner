@@ -12,7 +12,7 @@ The PR sanity-review is a quick read, not a deep audit. Goal: catch PRs that are
 
 **GitHub access:** `gh` does not exist in web/remote sessions. Detect once at the start and use `gh` or the `mcp__github__*` tools accordingly — `.claude/rules/github-access.md` has the operation→tool map. The MCP tools arrive *deferred*: load their schemas with `ToolSearch` (e.g. `ToolSearch("select:mcp__github__list_pull_requests,mcp__github__pull_request_read,mcp__github__merge_pull_request")`) before calling them, and pass `owner: StefanMaron`, `repo: BusinessCentral.AL.Runner`. Never `curl` `api.github.com` — the token is not in the environment and an unauthenticated 404 is indistinguishable from "this does not exist". The `gh` commands below are the local-CLI spelling; with `gh`, pass `--repo StefanMaron/BusinessCentral.AL.Runner` on every command.
 
-**Public posting needs approval** for anything editorial — review comments, issue comments, anything on another repo (`.claude/rules/public-posting-approval.md`).
+**Issue and PR comments on these two repositories are ungated**; a formal PR review and anything on another repository still need approval (`.claude/rules/public-posting-approval.md`).
 
 ## Execution model
 Repeat Steps 1–4. After any action, restart from Step 1. Exit only after a full pass with no actions (Step 5).
