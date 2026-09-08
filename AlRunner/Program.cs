@@ -2242,6 +2242,24 @@ static string ExclusionDiagnosticAdvice(IReadOnlyList<string> diagnostics, bool 
             ? " The AL diagnostics that identified them follow."
             : " Re-run with --verbose for the AL diagnostics that identified them.";
 
+// #3476: which refusal the EMIT-EXCLUDED branch made. "Refused because a survivor names a
+// dropped object" and "refused because nothing identified what was dropped" are different
+// facts, and only the first is about the module's AL — a reader who cannot tell them apart
+// cannot tell a real dependency from a runner that gave up.
+static string DescribeRefusals(
+    IReadOnlyList<ProgramSupport.ExcludedObjectVerdict> verdicts,
+    IReadOnlyList<string> excludedObjects)
+{
+    var blocking = verdicts.Where(v => !v.Droppable).ToList();
+    if (blocking.Count == 0)
+        return $"no per-object detail was captured for the {excludedObjects.Count} dropped "
+             + "object(s), so none of them could be cleared of being needed by a survivor.";
+    return string.Join("; ", blocking.Select(v =>
+        v.ReferencedBy.Count > 0
+            ? $"{v.Label} — {v.Reason}: [{string.Join(", ", v.ReferencedBy.Select(Path.GetFileName))}]"
+            : $"{v.Label} — {v.Reason}")) + ".";
+}
+
 // Console.KeyAvailable can still throw on some terminals even when stdin isn't
 // flagged redirected; treat any failure as "no key" so the watch loop never crashes.
 static bool SafeKeyAvailable()
@@ -3011,6 +3029,11 @@ foreach (var bundle in bundles)
             // above with a synthetic FAILED test each), so the guard must subtract this
             // count before deciding there is an unexplained gap left.
             int tddExcludedCount = 0;
+            // #3476: objects the non-tdd EMIT-EXCLUDED branch dropped DELIBERATELY, having
+            // cleared each one as unreferenced. Same role as tddExcludedCount for the
+            // PARTIAL-EMIT-DROP guard below — a reported, accounted-for drop is not the
+            // silent one that guard exists to catch.
+            int safeExcludedCount = 0;
             // Emit-phase timeout: default 120 s, override via AL_RUNNER_EMIT_TIMEOUT_SEC. Under
             // --jobs, ParallelFanOut.WorkerEnvironment sets AL_RUNNER_EMIT_TIMEOUT_SEC on each
             // worker's environment to DefaultEmitTimeoutSec scaled by the shard count (#2715),
@@ -3219,6 +3242,30 @@ foreach (var bundle in bundles)
                             var allProfiles = emitOutput.ExcludedObjects.All(
                                 o => o.StartsWith("Profile ", StringComparison.Ordinal));
 
+                            // #3476: the same question the profile carve-out answers, asked per
+                            // object instead of once for the whole module. Refusing the WHOLE
+                            // module over three dropped test codeunits is what costs Tests-Misc
+                            // (3,215 tests) and Tests-Integration (340) every result they have.
+                            // ExcludedObjectTriage's header has the two measurements the decision
+                            // rests on; docs/emit-exclusion-triage.md has the long form.
+                            var exclDetails = emitOutput.ExcludedObjectDetails
+                                ?? Array.Empty<TddExcludedObjectDetail>();
+                            var moduleAlFiles = allPaths
+                                .Where(pth => File.Exists(pth)
+                                    && pth.EndsWith(".al", StringComparison.OrdinalIgnoreCase))
+                                .Concat(allPaths.Where(Directory.Exists)
+                                    .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")))
+                                .Distinct(StringComparer.Ordinal)
+                                .ToList();
+                            // A detail per excluded object is the precondition, not a nicety: a
+                            // shorter list means some object was dropped without its file being
+                            // recorded, and an object we cannot look at cannot be cleared.
+                            var verdicts = exclDetails.Count == emitOutput.ExcludedObjects.Count
+                                ? ProgramSupport.ExcludedObjectTriage.Triage(exclDetails, moduleAlFiles)
+                                : Array.Empty<ProgramSupport.ExcludedObjectVerdict>();
+                            var everyDropSafe = verdicts.Count == emitOutput.ExcludedObjects.Count
+                                && verdicts.Count > 0 && verdicts.All(v => v.Droppable);
+
                             // #2207: the message below promises the AL diagnostics — actually
                             // print them, gated on Log.Verbose directly (not
                             // Console.Error.WriteLine's usual [Component] path) so a developer
@@ -3241,16 +3288,34 @@ foreach (var bundle in bundles)
                             // a failure, so the same output would be noise.
                             var printExclDiagsNow = (!allProfiles || AlRunner.Log.Verbose) && exclDiags.Count > 0;
 
+                            // #3476: the tests the dropped objects declared. Counted from their
+                            // own sources (they never reached Emit, so there is no IL to
+                            // reflect over) and reported as SKIPPED when the module runs
+                            // anyway, so the number that did not run is in the totals, the
+                            // JUnit and --output-json — never merely absent.
+                            var skippedForDrops = everyDropSafe && !allProfiles
+                                ? TddSupport.BuildSkippedTests(exclDetails)
+                                : Array.Empty<TestResult>();
+
                             // Untagged on purpose: a `[Component]` prefix would be swallowed by
                             // Log's filter at default verbosity, which is the original defect.
+                            var exclHeadline =
+                                $"<bundled>: EMIT-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} object(s) " +
+                                $"could not be compiled and were dropped from the module, so any tests they declare " +
+                                $"are MISSING from this run: [{names}].";
                             Console.Error.WriteLine((allProfiles
                                 ? $"<bundled>: EMIT-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} " +
                                   $"profile object(s) could not be compiled and were dropped from the module: " +
                                   $"[{names}]. A profile declares no executable AL and no [Test] procedures, so " +
                                   $"the module compiles and runs without it."
-                                : $"<bundled>: EMIT-EXCLUDED — {moduleName}: {emitOutput.ExcludedObjects.Count} object(s) " +
-                                  $"could not be compiled and were dropped from the module, so any tests they declare " +
-                                  $"are MISSING from this run: [{names}].")
+                                : everyDropSafe
+                                ? exclHeadline +
+                                  $" Every dropped object is a test codeunit no surviving object in this module " +
+                                  $"references, by name or by object id, so the remaining {sources.Count} object(s) " +
+                                  $"still run — the {skippedForDrops.Count} [Test] procedure(s) the dropped object(s) " +
+                                  $"declare are reported as SKIPPED."
+                                : exclHeadline +
+                                  $" The module was NOT run: {DescribeRefusals(verdicts, emitOutput.ExcludedObjects)}")
                                 + ExclusionDiagnosticAdvice(exclDiags, printExclDiagsNow));
                             if (printExclDiagsNow)
                             {
@@ -3261,10 +3326,38 @@ foreach (var bundle in bundles)
                             }
                             if (!allProfiles)
                             {
+                                // The suite error stands either way — the run covers less than
+                                // it discovered, which is exit code 3 and a `partial` bucket
+                                // whether or not the survivors ran. What changes with #3476 is
+                                // only whether the survivors ran, and the sentence saying so.
                                 bundleErrors.Add(
                                     $"<bundled>: EMIT-EXCLUDED for {moduleName}: {emitOutput.ExcludedObjects.Count} " +
-                                    $"object(s) dropped from the module — tests they declare are missing: [{names}].");
-                                sources = Array.Empty<EmittedSource>(); // do not run a module that is missing objects
+                                    $"object(s) dropped from the module — tests they declare are missing: [{names}]. "
+                                    + (everyDropSafe
+                                        ? $"{skippedForDrops.Count} [Test] procedure(s) did not run and are reported "
+                                          + $"as SKIPPED; the module's surviving {sources.Count} object(s) ran because "
+                                          + $"nothing surviving references a dropped object."
+                                        : $"The module was NOT run: {DescribeRefusals(verdicts, emitOutput.ExcludedObjects)}"));
+                                if (everyDropSafe)
+                                {
+                                    bundleTests.AddRange(skippedForDrops);
+                                    safeExcludedCount = emitOutput.ExcludedObjects.Count;
+                                    // Refuse to cache a module that is missing objects. The
+                                    // cache stores the compiled assembly and nothing else, so a
+                                    // later HIT skips Emit entirely — and with it this whole
+                                    // branch, the suite error, the SKIPPED results and exit 3.
+                                    // Measured while writing this: the second run of
+                                    // Fixtures/EmitExclusion in one `dotnet test` invocation
+                                    // reported `1 test, 1 pass, exit 0` off a warm entry, which
+                                    // is the silent-loss outcome this issue exists to remove.
+                                    // Before #3476 the case could not arise, because `sources`
+                                    // was cleared and nothing was ever compiled to cache.
+                                    // Both write sites are guarded on cachePath, so clearing it
+                                    // is the whole mechanism (same lever as #2954's NOKEY path).
+                                    cachePath = null;
+                                }
+                                else
+                                    sources = Array.Empty<EmittedSource>(); // a survivor may need what was dropped
                             }
                             // allProfiles: keep `sources` as BcCompiler returned it (the
                             // recovered set with only the broken profile(s) dropped) and do
@@ -3330,8 +3423,12 @@ foreach (var bundle in bundles)
                 // #1997: the gap is not silent when it exactly matches tddExcludedCount — the
                 // TDD-EXCLUDED branch above already reported those objects loudly, with a
                 // synthetic FAILED test each. Only a gap BEYOND that is the unexplained,
-                // genuinely silent drop this guard exists to catch.
-                if (declaredObjects.Count > sources.Count + tddExcludedCount)
+                // genuinely silent drop this guard exists to catch. #3476 adds
+                // safeExcludedCount for the same reason on the non-tdd path: without it this
+                // guard fires on the very objects EMIT-EXCLUDED just accounted for and wipes
+                // the survivors it deliberately kept — measured, and it cost the one healthy
+                // test in Fixtures/EmitExclusion.
+                if (declaredObjects.Count > sources.Count + tddExcludedCount + safeExcludedCount)
                 {
                     var emittedNames = sources.Select(s => s.Name).ToList();
                     bundleErrors.Add(

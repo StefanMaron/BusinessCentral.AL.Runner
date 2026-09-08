@@ -37,11 +37,16 @@ public sealed class EmitExclusionLoudnessTests
         RepoRoot, "AlRunner.Tests", "Fixtures", "EmitExclusion");
 
     private static (string Output, int Exit) RunRunner(bool verbose = false)
+        => RunRunnerOn(FixturePath, verbose);
+
+    private static (string Output, int Exit) RunRunnerOn(
+        string bundlePath, bool verbose = false, string? cacheDir = null)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
         if (verbose) args.Append(" --verbose");
-        args.Append($" \"{FixturePath}\"");
+        if (cacheDir != null) args.Append($" --cache \"{cacheDir}\"");
+        args.Append($" \"{bundlePath}\"");
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet", Arguments = args.ToString(),
@@ -150,6 +155,112 @@ public sealed class EmitExclusionLoudnessTests
 
         // And, having printed them, it must not also tell the reader to go and fetch them.
         Assert.DoesNotContain("Re-run with --verbose", output, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Issue #3476. The dropped object is a test codeunit nothing else in the module names, so
+    /// the module still RUNS: the healthy sibling's test executes, the dropped codeunit's test
+    /// is reported SKIPPED, and the run still fails (exit 3) because it covers less than it
+    /// discovered.
+    ///
+    /// Before this change the same fixture reported `0P/0F/0E across 0 tests` and COMPILE FAIL:
+    /// one unbuildable object cost the whole module. On Microsoft's buckets that was
+    /// Tests-Misc reporting 0 instead of 3,215 and Tests-Integration 0 instead of 340.
+    ///
+    /// Every assertion here is load-bearing in a different direction. Drop the PASS and the
+    /// test passes against the old refusal; drop the SKIP and it passes against a runner that
+    /// quietly discards the dropped tests; drop the exit-code check and it passes against one
+    /// that has stopped reporting the loss at all.
+    /// </summary>
+    [SkippableFact]
+    public void ExcludedTestCodeunit_NothingElseNamesIt_SurvivorsRunAndTheLostTestsAreCounted()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (output, exit) = RunRunner();
+
+        Assert.Contains("PASS", output, StringComparison.Ordinal);
+        Assert.Contains("Healthy_Addition_StillRuns", output, StringComparison.Ordinal);
+        Assert.Contains("SKIP", output, StringComparison.Ordinal);
+        Assert.Contains("Broken_NeverRuns", output, StringComparison.Ordinal);
+
+        // The counts, not just the lines: a number that cannot be reached by discarding a test.
+        Assert.Contains("Tests:         2 total", output, StringComparison.Ordinal);
+        Assert.Contains("  pass:        1", output, StringComparison.Ordinal);
+        Assert.Contains("  skipped:     1", output, StringComparison.Ordinal);
+        Assert.Contains("partial:     1", output, StringComparison.Ordinal);
+
+        // Still a failure. Running the survivors is not a licence to call the run clean.
+        Assert.Equal(3, exit);
+        Assert.Contains("did not run and are reported as SKIPPED", output, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Issue #3476, the trap the first draft of that change fell into. Keeping the survivors
+    /// makes the recovered module COMPILABLE, and a compiled module is cacheable — so the
+    /// second run served the assembly from the AL-output cache, skipped Emit, and with it the
+    /// exclusion branch, the suite error, the SKIPPED result and exit 3. Measured: a warm run
+    /// reported `Tests: 1 total, pass: 1` and exit 0, byte-identical to a clean fixture.
+    ///
+    /// Before #3476 this could not happen — `sources` was cleared, so nothing was compiled and
+    /// nothing was ever written. The fix withholds the cache entry for a module that is missing
+    /// objects, which is what this test pins. A private --cache directory makes it a real cold
+    /// then warm pair rather than a guess about the shared one's state.
+    /// </summary>
+    [SkippableFact]
+    public void ExcludedTestCodeunit_SecondRunOffAWarmCache_StillReportsTheLoss()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var cache = TestScratch.Dir("al-runner-excl-warm");
+        Directory.CreateDirectory(cache);
+        try
+        {
+            var (cold, coldExit) = RunRunnerOn(FixturePath, cacheDir: cache);
+            Assert.Equal(3, coldExit);
+            Assert.Contains("  skipped:     1", cold, StringComparison.Ordinal);
+
+            var (warm, warmExit) = RunRunnerOn(FixturePath, cacheDir: cache);
+            Assert.Equal(3, warmExit);
+            Assert.Contains("EMIT-EXCLUDED", warm, StringComparison.Ordinal);
+            Assert.Contains("  skipped:     1", warm, StringComparison.Ordinal);
+            Assert.Contains("  pass:        1", warm, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { Directory.Delete(cache, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Issue #3476, the other direction. `Codeunit.Run(60621)` binds to an Integer, so excluding
+    /// the callee does not make the caller fail to compile and BC's emit-retry loop leaves the
+    /// caller in the survivor set — measured: 1 excluded object, not 2. Running that module
+    /// would call a codeunit that is not in it, so the module must be refused, and the refusal
+    /// must say WHICH file reaches the dropped object.
+    ///
+    /// Note what makes this non-vacuous. "Refused" alone was already the behaviour before
+    /// #3476, so the assertions that matter are the reason and the named file: they fail both
+    /// against the old blanket refusal, which gave none, and against a triage that missed the
+    /// id reference and ran the module anyway.
+    /// </summary>
+    [SkippableFact]
+    public void ExcludedTestCodeunit_ReachedByASurvivorsObjectId_ModuleIsRefusedAndTheFileIsNamed()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (output, exit) = RunRunnerOn(Path.Combine(
+            RepoRoot, "AlRunner.Tests", "Fixtures", "EmitExclusionReferencedById"));
+
+        Assert.Equal(3, exit);
+        Assert.Contains("EMIT-EXCLUDED", output, StringComparison.Ordinal);
+        Assert.Contains("The module was NOT run:", output, StringComparison.Ordinal);
+        Assert.Contains("name it or its object id", output, StringComparison.Ordinal);
+        Assert.Contains("HealthyTests.Codeunit.al", output, StringComparison.Ordinal);
+
+        // Refused means refused: no survivor ran, so no test result of any kind appears.
+        Assert.Contains("Tests:         0 total", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("ExclRef_ReachesTheDroppedCodeunitById (", output, StringComparison.Ordinal);
     }
 
     /// <summary>

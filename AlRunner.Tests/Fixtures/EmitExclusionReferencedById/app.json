@@ -1,0 +1,23 @@
+{
+  "id": "c8dae2f3-4051-4b62-9c73-8d9eaf102b3c",
+  "name": "Runner Tests Fixture - Emit Exclusion Referenced By Id",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "The negative half of #3476: the dropped test codeunit IS reached by a survivor, so the module must still be refused.",
+  "description": "A healthy test codeunit calls the broken one through Codeunit.Run(<id>). An object-id call is not compile-checked, so BC's emit-retry loop does NOT cascade the exclusion onto the caller the way a by-name reference does — the survivor compiles cleanly while calling a codeunit that is no longer in the module. That is the one case the reference scan has to catch, and the run must refuse the module and name the file that reaches it.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 60600,
+      "to": 60699
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

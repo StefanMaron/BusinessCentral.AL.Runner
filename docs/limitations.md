@@ -600,6 +600,73 @@ without any further setup.
 
 ---
 
+<a id="testpage-decimal-formatting"></a>
+
+## `TestPage` Decimal formatting — the control's own format, and what still is not covered
+
+A `TestPage` control bound to a Decimal reads back with **the number of decimals the control
+declares**, not a fixed two ([#3406](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3406)).
+Before that fix `TestPageNumericValue` applied `"0.00"` to every Decimal on every page, so
+`DecimalPlaces = 3 : 3` and `AutoFormatType = 11` both read back with two decimals and nothing
+said so.
+
+### Where the format comes from
+
+It is **BC's**, not the runner's. For every Decimal control the AL compiler emits a
+registration of this shape onto the page class:
+
+```csharp
+RegisterSourceExpression("Control773217788_Format", …,
+    () => ALCompiler.ConvertToDotNetFormatString(
+              this.Session, this.GetDecimalString(this.Rec, 2, 773217788)), null);
+```
+
+Evaluating it runs `NavForm.GetDecimalString`'s whole cascade — the page's own
+`GetAutoFormatString` override (which is where `AutoFormatType` / `AutoFormatExpression` reach
+the AutoFormat system codeunit through `ALCompiler.InvokeAutoFormatTranslate`), then the
+record's, then `GetDecimalPlaces` on each — and converts BC's format into a .NET one. All of
+that already executes correctly inside the runner. `RunnerPageInstance.TryGetControlFormat`
+reads the result; the runner only applies it.
+
+### Measured
+
+BC 28.1, one Decimal field of value `1234.5` shown through five controls differing only in the
+property they declare:
+
+| control property | format string BC computed | before | after |
+|---|---|---|---|
+| `AutoFormatType = 0` | `#,##0.00` | `1234.50` | `1,234.50` |
+| `AutoFormatType = 1`, expression `'EUR'` | `#,##0.00` | `1234.50` | `1,234.50` |
+| `AutoFormatType = 11`, expression `<Precision,3:3>…` | `#,##0.000` | `1234.50` | `1,234.500` |
+| `DecimalPlaces = 3 : 3` | `#,##0.000` | `1234.50` | `1,234.500` |
+| page-variable-bound, `DecimalPlaces = 3 : 3` | `#,##0.000` | `1234.50` | `1,234.500` |
+
+The upstream corpus suite that asks a real service tier what these strings should be is
+`ALT AutoFormat Tests` (codeunit 60605), corpus PR
+[#277](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/277), which has
+**merged** as `466dd466` — the pin this PR moves to. So the values above are no longer only
+what BC's own code computed inside the runner: a real service tier has adjudicated them, on
+all eight cloud legs.
+
+### What is still not covered
+
+- **A control with no page behind it.** `LiveNavTestField`'s record-only constructor has no
+  control and so no format expression; it keeps the historical `0.00` spelling. Every existing
+  assertion in the corpus and in Microsoft's own buckets is written against that, so the
+  fallback is deliberate rather than residual.
+- **A page whose format table could not be read.** `TryGetControlFormat` answers null rather
+  than throwing, and the caller falls back. A refusal there would turn every `Field.Value` read
+  on an unusual page into a hard failure — a worse answer than the default it replaces.
+- **The MinValue/MaxValue bound message** (`TestPageMinMaxValue.FormatValue`) still renders the
+  offending value with two decimals for any Decimal, and that is **correct**: it was measured
+  against real BC in [#2490](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2490)
+  arm A2, where the value reads `-1.00` while the bound reads `0` for the identical field. It
+  is not the same question as how a control renders, and must not be unified with it.
+- **`NavForm.GetAutoFormatStringAsync` remains Cecil-rewritten to `""`.** It is unreachable in
+  the runner (the emitted AL is non-async, so `GetDecimalString` takes its sync branch) and `""`
+  is what BC's own body would answer anyway, because `NavForm.PageExtensions` is rewritten to an
+  empty list. See the comment at that rewrite for why it is kept rather than deleted.
+
 ## Behavioural differences — same API, different semantics
 
 These don't crash, but they behave differently from real BC. Tests that assert on
