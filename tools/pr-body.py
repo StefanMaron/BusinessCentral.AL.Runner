@@ -249,7 +249,11 @@ def gh(args: list[str], attempts: int = 4, sleep: Callable[[float], None] | None
     sleep = sleep or time.sleep
     last = ""
     for i in range(attempts):
-        p = subprocess.run(["gh", *args], capture_output=True, text=True)
+        # UTF-8 explicitly, never the locale codec: GitHub bodies are UTF-8, and
+        # under cp1252 an em dash comes back as three characters, so an anchor
+        # copied verbatim out of the body matches 0 times (#3434).
+        p = subprocess.run(["gh", *args], capture_output=True, text=True,
+                           encoding="utf-8", errors="strict")
         out = (p.stdout or "") + (p.stderr or "")
         # mise prints a banner on stdout; drop it so JSON parses.
         out = "\n".join(l for l in out.split("\n") if not l.startswith("mise "))
@@ -258,6 +262,17 @@ def gh(args: list[str], attempts: int = 4, sleep: Callable[[float], None] | None
         last = out
         sleep(3 * (i + 1))
     return 1, last.strip()
+
+
+def write_body_tempfile(text: str) -> str:
+    """Write `text` to a temp file for `gh --body-file`, and return its path."""
+    fd, path = tempfile.mkstemp(prefix="pr-body-", suffix=".md")
+    # `gh --body-file` reads UTF-8; encoding it as cp1252 would put bytes in the
+    # file that are not valid UTF-8, and re-reading through the same wrong codec
+    # would still compare equal, so the verify step could not see it (#3434).
+    with os.fdopen(fd, "w", encoding="utf-8", errors="strict") as f:
+        f.write(text + "\n")
+    return path
 
 
 class FetchError(Exception):
@@ -592,14 +607,14 @@ def collect_edits(args) -> list[Edit]:
 
 def build_new_body(orig: str, args, edits: list[Edit]) -> tuple[str, list[Result]]:
     if args.body_file:
-        with open(args.body_file) as f:
+        with open(args.body_file, encoding="utf-8", errors="strict") as f:
             return norm(f.read()), [Result("whole-body replacement", True, args.body_file)]
     new, results = apply_edits(orig, edits)
     tail = ""
     if args.append:
         tail += args.append
     if args.append_file:
-        with open(args.append_file) as f:
+        with open(args.append_file, encoding="utf-8", errors="strict") as f:
             tail += f.read()
     if tail:
         new = norm(new + "\n\n" + norm(tail))
@@ -738,10 +753,8 @@ def main(argv: list[str] | None = None) -> int:
     print(d)
 
     def writer(text: str) -> tuple[int, str]:
-        fd, path = tempfile.mkstemp(prefix="pr-body-", suffix=".md")
+        path = write_body_tempfile(text)
         try:
-            with os.fdopen(fd, "w") as f:
-                f.write(text + "\n")
             return gh(["pr", "edit", args.pr, "--repo", args.repo, "--body-file", path])
         finally:
             os.unlink(path)

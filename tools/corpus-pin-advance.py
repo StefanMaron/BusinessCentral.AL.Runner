@@ -111,7 +111,9 @@ class MeasurementError(Exception):
 
 
 def git(corpus: str, *args: str, check: bool = True) -> str:
-    p = subprocess.run(["git", "-C", corpus, *args], capture_output=True, text=True)
+    # UTF-8, never the locale codec (#3434): git writes commit subjects as UTF-8.
+    p = subprocess.run(["git", "-C", corpus, *args], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace")
     if check and p.returncode != 0:
         raise MeasurementError(
             f"git {' '.join(args)} failed in {corpus} (exit {p.returncode}): "

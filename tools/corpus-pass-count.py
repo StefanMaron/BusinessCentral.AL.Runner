@@ -77,7 +77,12 @@ def gh(args: list[str], attempts: int = 4) -> tuple[int, str]:
     """Run gh, retrying transient network failures. Returns (rc, stdout)."""
     last = ""
     for i in range(attempts):
-        p = subprocess.run(["gh", *args], capture_output=True, text=True)
+        # UTF-8, never the locale codec: a CI log or a JSON body decoded as
+        # cp1252 on Windows either mangles text or raises on an undefined byte,
+        # and a mangled log reads as "no matches" (#3434). errors="replace"
+        # because reading a verdict must not fail on one odd byte.
+        p = subprocess.run(["gh", *args], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
         out = (p.stdout or "") + (p.stderr or "")
         # mise prints a banner on stdout; drop it so JSON parses.
         out = "\n".join(l for l in out.split("\n") if not l.startswith("mise "))
