@@ -32,10 +32,77 @@ A corpus test green on a real service tier beats, in this order, every one of:
 3. Microsoft's documentation,
 4. the name of a BC codeunit, or a comment naming one.
 
+**And one thing outranks the corpus CI itself: the Windows nightly.** The eight cloud legs
+run on `MsDyn365Bc.On.Linux`, which is one particular patched container rather than Business
+Central; the nightly runs an official Microsoft container on Windows. Where the two disagree,
+Windows is right by definition and the Linux result is an image bug — see the next section
+for the dispatch and the three outcomes.
+
 **One qualifier on that ranking**, and it is not a footnote: the tier is patched. On a
 surface an unfaithful patch covers, a corpus result measures the patch, not BC — read
 "The tier is patched, so check before quoting it on a UI surface" below before resting a
 UI-side claim on a corpus result.
+
+## When the Linux tier is the thing in doubt, ask Windows — do not reason about it
+
+The qualifier above says a corpus result can be measuring the patch rather than BC. It does
+not say what to do about it, and the answer is not more reading: **dispatch the Windows
+nightly against the branch and let it adjudicate.**
+
+The ordering, which is the repository owner's standing instruction:
+
+> **The corpus pins what the Windows pipeline says. `MsDyn365Bc.On.Linux` and AL Runner
+> follow it — never the reverse.**
+
+This is not new policy. `.github/workflows/nightly-windows.yml`'s own header has carried it
+since corpus issue #213:
+
+> any test that fails on windows needs to be first fixed on
+> https://github.com/StefanMaron/MsDyn365Bc.On.Linux
+
+So: **a Windows failure is a real failure. A Linux-only failure is an image bug.**
+
+```bash
+gh workflow run 351779742 --repo StefanMaron/BusinessCentral.AL.Language.Tests \
+  --ref <branch> -f bc_version=28.4 -f artifact_type=sandbox -f country=w1
+```
+
+Three outcomes, and only the first two need anyone to do anything:
+
+| Windows | meaning | fix goes |
+|---|---|---|
+| fails too | the assertion does not match BC | **the corpus test** — change the assertion |
+| passes, Linux fails | Linux-only ⇒ image bug | **`MsDyn365Bc.On.Linux`** — the assertion stands, the PR waits |
+| passes, Linux passes | settled | merge |
+
+None of those rows is a judgement call. Which is the point: a red corpus leg on a
+UI-adjacent surface looks like it needs analysis, and it usually needs a dispatch.
+
+**It adjudicates; it does not gate.** The nightly takes 1-2 hours and is deliberately not a
+required status context — a nightly that gates merges stalls the repository. The eight
+`BC <ver> / test` legs remain the merge gate, so a PR stays blocked on those either way.
+
+**Do not adjust a corpus assertion to match the Linux tier, and never to match the runner.**
+The second is the more tempting error, because it turns a red leg green and looks like
+progress; it is how the corpus stops being evidence about BC at all.
+
+### The cost of not reaching for this first
+
+Measured 2026-09-08. Two corpus PRs (#272, #273) sat red on their cloud legs. A Linux tier
+defect had just been fixed upstream (`2b0d91f8`, forcing `CommunicationBroker.Async = false`
+and so disabling BC's own notification coalescing), and the failures matched its shape
+closely — one of them read `Expected:<1> Actual:<2>`, a message delivered twice, which is
+exactly what disabled coalescing produces.
+
+The inference was written up on both PRs as a hypothesis, with single-leg re-runs attached.
+Both re-runs failed **identically** on the fixed tier, and the hypothesis was retracted.
+
+The reasoning was sound and the conclusion was wrong: **a symptom matching a mechanism is not
+evidence that mechanism produced it.** What made it recoverable was attaching the check to the
+claim rather than publishing a finding. What would have avoided it entirely was dispatching
+Windows first — one command, against a documented authority, instead of an argument about
+which tier to believe.
+
 
 ## The two incidents this rule is made of
 
