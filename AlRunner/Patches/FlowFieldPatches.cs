@@ -54,7 +54,10 @@ public static class FlowFieldPatches
     private static PropertyInfo? _pRecImplCurrentBufferOrDefault;
 
     private static FieldInfo? _fTableStateCompanyNameToken;
-    private static PropertyInfo? _pDataAccessDataProvider;     // DataAccess.DataProvider
+    private static PropertyInfo? _pDataAccessDataProvider;    // DataAccess.DataProvider
+    // #3507 — the two BC handles the computed-provider branch needs.
+    private static Type? _tTempTableDataProvider;
+    private static MethodInfo? _mCalcSingleFieldFromVirtualTable;
     private static FieldInfo? _fSessionDataAccessSource;
     private static MethodInfo? _mDataAccessSourceGetDataAccessForTable;
     private static FieldInfo? _fEmptyFiltersAndMarks;          // FiltersAndMarks.Empty (internal static readonly)
@@ -188,6 +191,7 @@ public static class FlowFieldPatches
 
         // TempTableDataProvider.Filter + primaryKeySortingFields + TryGetValue (for blob CalcFields)
         var tTtdp = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.TempTableDataProvider");
+        _tTempTableDataProvider = tTtdp;
         _fTtdpPrimaryKeySortingFields = tTtdp?.GetField("primaryKeySortingFields",
             BindingFlags.NonPublic | BindingFlags.Instance);
         _mTtdpFilter = tTtdp?.GetMethods(BindingFlags.NonPublic | BindingFlags.Instance)
@@ -248,6 +252,10 @@ public static class FlowFieldPatches
         var tFlowFieldsHelper = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.FlowFieldsHelper");
         _mGetFilterFromMetaFilterCollection = tFlowFieldsHelper?.GetMethod(
             "GetFilterFromMetaFilterCollection", BindingFlags.NonPublic | BindingFlags.Static);
+        // #3507 — BC's own FlowField path for a source table whose provider computes its rows
+        // instead of storing them. See the call site in CalcFlowFieldValuesCore.
+        _mCalcSingleFieldFromVirtualTable = tFlowFieldsHelper?.GetMethod(
+            "CalcSingleFieldFromVirtualTableAsync", BindingFlags.NonPublic | BindingFlags.Static);
         // #2970 — internal static void CheckFlowFieldProperties(NCLMetaField). Internal on a
         // runtime-engine DLL, which precompiled-dll-respect.md puts squarely on the "ours to
         // work with" side: nothing about it is rewritten, it is only called from the place BC
@@ -942,6 +950,30 @@ public static class FlowFieldPatches
     }
 
     /// <summary>
+    /// The value out of a <c>ValueTask&lt;NavValue&gt;</c> BC handed back, blocking if it has
+    /// not completed. Blocking is correct here for the reason
+    /// <c>CodeunitEventDispatcher.ObserveAsyncResult</c> gives: the runner drives AL
+    /// synchronously and every read this task makes is against an in-process provider, so it is
+    /// already complete or completes inline. <c>GetAwaiter().GetResult()</c> also rethrows BC's
+    /// ORIGINAL exception rather than an AggregateException, which is what AL must observe.
+    /// </summary>
+    private static object? AwaitValueTaskResult(object valueTask)
+    {
+        var ty = valueTask.GetType();
+        if (!ty.IsGenericType || ty.GetGenericTypeDefinition() != typeof(ValueTask<>))
+            throw new InvalidOperationException(
+                $"[FlowFieldPatches] expected ValueTask<T> from BC, got {ty.FullName} — BC shape changed (#3507).");
+
+        var asTask = ty.GetMethod("AsTask", BindingFlags.Public | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                "[FlowFieldPatches] ValueTask<T>.AsTask not found — runtime shape changed (#3507).");
+        var task = (Task)asTask.Invoke(valueTask, null)!;
+        task.GetAwaiter().GetResult();
+        return task.GetType().GetProperty("Result", BindingFlags.Public | BindingFlags.Instance)
+            ?.GetValue(task);
+    }
+
+    /// <summary>
     /// The shared FlowField evaluation both entry points run: the
     /// <see cref="RecordImpl_CalcFieldsAsync_3"/> hook (which then writes the values into the
     /// record's buffer) and the <see cref="FlowFieldsHelper_CalcFieldsAsync"/> hook (which
@@ -1066,6 +1098,72 @@ public static class FlowFieldPatches
             }
             catch { }
             if (srcTtdp == null) continue;
+
+            // ── Source table served by a COMPUTED provider (#3507) ──────────────────────────
+            // Everything below this point reads the source rows out of a TempTableDataProvider:
+            // `primaryKeySortingFields`, then TempTableDataProvider.Filter. Two system virtual
+            // tables are not backed by one — Integer (2000000026) since #3485 and Date
+            // (2000000007) since #3506 are served by BC's own IntegerDataProvider /
+            // DateDataProvider, which compute rows per request and store none. Against those the
+            // field read below throws ArgumentException ("'primaryKeySortingFields' … is not a
+            // field on the target object"), and before the handout changed it answered a silent
+            // 0 from a store the request could not reach.
+            //
+            // BC has its own answer for exactly this shape and dispatches to it FIRST:
+            // FlowFieldsHelper.CalcFieldsAsync splits `fieldsToCalc` on
+            // `field.SourceTableField.Parent.IsVirtualTable` and sends that half to
+            // CalcFieldsFromVirtualTablesAsync → CalcSingleFieldFromVirtualTableAsync, which
+            // opens a NavRecord over the source table, applies the resolved where-conditions with
+            // SetFieldFilter, and then uses the ORDINARY AL reads — GetALCountAsync,
+            // GetALIsEmptyAsync, ALFindFirstAsync — instead of the provider's CalcNumeric, which
+            // VirtualDataProvider defines as `throw new NotSupportedException()`. Calling BC's
+            // own method is what keeps the two agreeing about a Count over a half-open range.
+            //
+            // The discriminator here is the PROVIDER, not BC's IsVirtualTable flag. Every other
+            // virtual table the runner serves — AllObj, Field, Page Metadata, … — is materialised
+            // into a TempTableDataProvider and is answered correctly by the code below; routing
+            // those through BC's helper too would be a much wider change than the defect needs.
+            if (_tTempTableDataProvider != null && !_tTempTableDataProvider.IsInstanceOfType(srcTtdp))
+            {
+                if (_mCalcSingleFieldFromVirtualTable == null)
+                    throw new RunnerOutOfScopeException(
+                        "FlowFieldsHelper.CalcSingleFieldFromVirtualTableAsync",
+                        "not-yet-implemented — the CalcFormula source table is served by a computed "
+                        + "data provider that stores no rows, and BC's own FlowField path for that "
+                        + "shape is unavailable on this artifact. Answering from the empty store "
+                        + "would report 0 for a formula a service tier answers (#3507)");
+
+                object? virtualValue;
+                try
+                {
+                    var vt = _mCalcSingleFieldFromVirtualTable.Invoke(null, new object?[]
+                    {
+                        session, companyToken, parentBuffer,
+                        parentFiltersAndMarks ?? _emptyFm,
+                        securityFiltering
+                            ?? Enum.ToObject(_mCalcSingleFieldFromVirtualTable.GetParameters()[4].ParameterType, 0),
+                        fieldObj,
+                        alIsolationLevel
+                            ?? Enum.ToObject(_mCalcSingleFieldFromVirtualTable.GetParameters()[6].ParameterType, 0),
+                    })!;
+                    // ValueTask<NavValue>: completed synchronously here, because every read it
+                    // makes is against an in-process provider. `.Result` on the underlying task
+                    // is what BC's own await would observe.
+                    virtualValue = AwaitValueTaskResult(vt);
+                }
+                catch (TargetInvocationException tie) when (tie.InnerException != null)
+                {
+                    // BC's own error — a type mismatch between the FlowField and its source field,
+                    // a rejected filter — must reach AL with its own stack, not this frame's.
+                    System.Runtime.ExceptionServices.ExceptionDispatchInfo
+                        .Capture(tie.InnerException).Throw();
+                    throw; // unreachable
+                }
+
+                if (virtualValue is NavValue navValue)
+                    results.Add(Tuple.Create((INavFieldMetadata)(NCLMetaField)fieldObj, navValue));
+                continue;
+            }
 
             // Resolve the formula's where-conditions into a FiltersAndMarks over the SOURCE
             // table, using BC's own FlowFieldsHelper.GetFilterFromMetaFilterCollection.
