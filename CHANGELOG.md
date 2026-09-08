@@ -6,7 +6,15 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-09-08
+
 ### Added
+- **tools:** answer the corpus pin from the tree, not the shared submodule checkout
+- **ms-buckets:** let a workflow ask for the prepared company, so the comparison can be measured
+- **test-data:** opt-in company normalization, blanking the restored Additional Reporting Currency
+- **installed-apps:** seed NAV App Installed App from the loaded-app closure
+- **ci:** run the whole Microsoft surface (40,530 tests) from one manual dispatch
+- **corpus:** measure how far the pin can advance, on a schedule, and report it
 - **expectations:** report an expectations entry that matched no test instead of ignoring it
 - **preflight:** check that the code-navigation tools answer, not that they exist
 - **testpage:** perform an action's RunObject instead of refusing it as out-of-scope
@@ -25,6 +33,56 @@ All notable changes to this project are documented here. Format based on
 - **all-profile:** populate the All Profile system virtual table (2000000178)
 
 ### Fixed
+- **release:** tag the tested commit first, so a branch that moved cannot discard a green release
+- **date-vt:** refuse a half-open Period Start range whose closed end is outside the window, per range
+- **tests:** cap the suite's heaviest collection at its modal timeout, and stop the message lying about it
+- **emit-exclusion:** decide per dropped object whether the module can still run
+- **testpage:** render a Decimal control with its own format, not a hardcoded two decimals
+- **integer-vt:** decide the half-open refusal per range, so a multi-range filter cannot drop a range silently
+- **transactions:** end the write transaction at the test-method boundary BC ends it at
+- **integer-virtual-table:** materialise rows per request so an ordinary row outside the window is readable
+- **commit:** refuse an explicit Commit() inside an AutoRollback test, the way BC does
+- **permissions:** answer the effective-permission question instead of dereferencing a null cache
+- **testpage:** do not write a row whose values did not move
+- **testpage:** ask the page for its rows when it declares OnFindRecord/OnNextRecord
+- **testpage:** name a fault in BC's value evaluator instead of reporting BC's date refusal
+- **testpage:** name a RunObject target in its own object kind's id space, not the page's
+- **recursion:** enforce BC's own MaxStackDepth instead of a hardcoded 500
+- **testpage:** render a blank Date, Time or DateTime control as '', the way BC does
+- **testpage:** classify the refused-close refusal as the gap it is, so a TryFunction cannot swallow it
+- **ms-surface:** coerce the per-test timeout, so GitHub will create the run at all
+- **commit:** honor the CommitBehavior attribute instead of always committing
+- **page-events:** register page trigger-event subscribers where BC looks for them
+- **ms-buckets:** give the Microsoft bucket workflows a per-test timeout above the hosted runner's speed
+- **testpage:** evaluate a Date, DateTime or Time control write instead of validating it as text
+- **prepass:** keep the provisioning-gap report when a source pre-pass wraps the failure
+- **integer-virtual-table:** implement the window guard the file promised, on all four request paths
+- **testpage:** realise CurrPage.Update's refresh, so the host's OnAfterGetCurrRecord runs
+- **diagnostics:** report paired counters from one snapshot, not two loads
+- **agents:** give each agent a private scratchpad path, and refuse a shared one
+- **recordlink:** back the AL link surface with the Record Link table instead of a second store
+- **permissions:** serve the Permission Set system table from permission-set metadata
+- **tests:** fence NclShadowPublishDiagnosisTests in the console-serial collection
+- **rad:** stop the incremental fast path shipping a caller bound to a moved object id
+- **testpage:** announce the navigation-mock demotion where the run log will show it
+- **cli:** create an output path's parent before the run, and never lose a run to a failed write
+- **junit:** mark a collateral failure and name a lost suite in the XML report
+- **provisioning:** stop an unanswered CDN probe from demoting a provisioning tier
+- **shadow:** name the rename's real failure, and refuse to hand back a directory that cannot be exec'd
+- **report-metadata:** carry a precompiled dependency dataitem's MaxIteration
+- **tools:** refuse when nothing vouches for the running copy, and make --timeout 0 a real single pass
+- **tablerelation:** refuse an unrepresentable relation shape instead of dropping it silently
+- **record:** report AreFieldsLoaded from the load set BC keeps, not the always-full buffer
+- **shadow:** retry the shadow-dir publish when the source is locked, instead of crashing
+- **testfilter:** apply the key and the direction TestFilter is given, and name the key's fields
+- **preflight:** verify the corpus baseline against its own numbers, not the exit code
+- **permissions:** store the effective-permission set instead of NREing on a null permission cache
+- **pbt:** stop refusing a page background task worker's write to a temporary record
+- **encryption:** give the tenant encryption key a real ledger, so CREATEKEY/DELETEKEY/EXPORTKEY/IMPORTKEY stop raising a bare ArgumentException
+- **testpage:** refuse a part BC does not render, and an id outside GetField's id space
+- **testpart:** resolve a part's page id from its client, and resume a control-field search from the cursor
+- **cecil:** give the zero-parameter no-op its own shim, and refuse an arity mismatch
+- **tablerelation:** refuse a relation the runner could not resolve, instead of dropping it
 - **tools:** count a corpus run's per-leg passes correctly, and write down the five false zeros
 - **calcformula:** resolve SystemRowVersion, which BC puts at field id 0
 - **testpage:** give the PAGE its own validation-error ledger, so AL stops reading a hardcoded 0
@@ -308,6 +366,17 @@ All notable changes to this project are documented here. Format based on
 - **alsid:** answer Sid(name) with BC's not-mapped empty string on a host with no Windows identity store
 
 ### Documentation
+- **skill:** say what Microsoft's data recipe is, that it cannot be replicated, and how to capture a difference
+- **limitations:** audit every claim against a run, and correct sixteen stale ones
+- **count-baseline:** correct a history entry that recorded three false claims
+- **testpage:** drop a merge-order note whose two pull requests have both landed
+- **countpair:** the halves share one word, so a carry lands in Total rather than wrapping
+- **scope:** audit the §4 gap table row by row; drop seven rows the runner has since closed
+- **prose:** bound the audit justification's form, and pilot a comment reduction on three files
+- six documentation corrections, each verified against the thing it describes
+- **rules:** read a CI verdict, never block on one
+- **count-baseline:** correct two figures that went stale in the pin-catch-up entry
+- **agents:** ask where a comment's reader is, and stop reviews asking for more prose
 - **impl-agent:** stop gating comments the posting rule says are ungated
 - **weights:** correct why AlOutputCacheDoNotCacheTests is recorded at 64s
 - **ci:** state the BC matrix and required checks this repo actually has, and guard the numbers
@@ -332,6 +401,12 @@ All notable changes to this project are documented here. Format based on
 - **agents:** opening a corpus PR needs no approval
 
 ### Changed
+- **test-matrix:** skip the BC matrix on a docs-only pull request, keep the required context reporting
+- **docs:** gate doc-pointer checks from tools/test_doc_pointers.py so docs-only PRs still run them
+- **corpus:** advance the pin to e6a0a0c, where the SingleInstance fixtures stop sharing
+- **isolation:** fence every console swapper, not just the Log.Install() ones
+- **corpus:** advance the pin to 9ee6bbc, where the count goes down by one
+- **corpus:** advance the pin to 0bbe376, the newest prefix that is green
 - **corpus:** advance the pin seven commits, as far as it goes green
 - **runner-extras:** pin the source-parsed reader for a tableextension's TableRelation
 - **runner-extras:** pin precompiled-dependency subscriber dispatch on the User system table
