@@ -21,6 +21,7 @@
 // docs) fails loud here instead of shipping silently a fourth time.
 using System.Diagnostics;
 using System.Text;
+using System.Linq;
 using System.Text.RegularExpressions;
 using AlRunner.Infrastructure;
 using Xunit;
@@ -276,5 +277,29 @@ public sealed class BcVersionDefaultDocumentationTests
         var throwStmt = source[throwIdx..stmtEnd];
         Assert.Contains("did not exit within", throwStmt, StringComparison.Ordinal);
         Assert.Contains("SpawnTimeoutMs", throwStmt, StringComparison.Ordinal);
+
+        // Co-occurrence is weaker than derivation, and the gap between them is reachable
+        // by accident: appending the constant to an otherwise-hardcoded message ("...within
+        // 180s... (cap {SpawnTimeoutMs})") satisfies both assertions above while the figure
+        // a reader acts on is still a literal. Nobody has to be trying to defeat the test
+        // to write that.
+        //
+        // So require that the statement carries NO standalone number other than the 1000
+        // that converts milliseconds to seconds. A hardcoded cap — in any spelling, at any
+        // position, interpolated or concatenated — is a digit run, and this refuses it.
+        // No trailing (?![\w.]) guard: the literal that matters is spelled "180s", glued to a
+        // letter, so requiring a non-word character after the digits would skip exactly the
+        // case being forbidden. Only a LEADING guard is needed — it is what keeps the digits
+        // inside identifiers like `Join`/`args` from matching.
+        //
+        // "1000" is the ms-to-seconds divisor; "0" and "1" are string.Format placeholders,
+        // which carry no cap and must not be read as one.
+        var digitRuns = Regex.Matches(throwStmt, @"(?<![\w.])\d+")
+            .Select(m => m.Value)
+            .Where(v => v is not ("1000" or "0" or "1"))
+            .ToArray();
+        Assert.True(digitRuns.Length == 0,
+            "the timeout message must DERIVE its figure from SpawnTimeoutMs, not carry a literal. " +
+            $"Unexpected number(s) in the throw statement: {string.Join(", ", digitRuns)}");
     }
 }
