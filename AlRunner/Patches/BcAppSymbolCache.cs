@@ -677,9 +677,14 @@ internal static partial class BcAppSymbolCache
     /// at their defaults — which is also what a codeunit declaring none of them means.
     /// <c>TableNo</c> is the reference AS WRITTEN (a bare id in text form, or a table name);
     /// resolving it to an id needs the run's table inventory, so the consumer does that.</para>
+    /// <para><c>TargetObjectName</c> is populated for the *extension kinds only — the object
+    /// the extension extends, module qualifier stripped, name AS STATED. AllObjWithCaption's
+    /// Object Subtype reports its ID for those kinds; see
+    /// docs/virtual-tables-allobj.md#object-subtype.</para>
     /// </summary>
     internal sealed record ObjectSymbol(string Kind, int Id, string Name, string? Caption = null,
-        string? TableNo = null, bool SingleInstance = false, string? Subtype = null);
+        string? TableNo = null, bool SingleInstance = false, string? Subtype = null,
+        string? TargetObjectName = null);
 
     // SymbolReference.json container name → the AllObj "Object Type" option name the
     // objects inside it map to. Matched against the live option string by name, so a
@@ -1099,7 +1104,8 @@ internal static partial class BcAppSymbolCache
                         Subtype: string.IsNullOrWhiteSpace(cuSubtype) ? null : cuSubtype.Trim()));
                     continue;
                 }
-                objects.TryAdd((kind, objId), new ObjectSymbol(kind, objId, objName, objCaption));
+                objects.TryAdd((kind, objId), new ObjectSymbol(kind, objId, objName, objCaption,
+                    TargetObjectName: ExtensionTargetName(kind, el)));
             }
         }
 
@@ -1322,6 +1328,30 @@ internal static partial class BcAppSymbolCache
 
         return new PageExtensionSymbol(extId, name!, StripModuleQualifierPrefix(target!),
             memberNames, actionRefTargets, runObjects);
+    }
+
+    /// <summary>
+    /// The object an *extension symbol extends, as the .app's SymbolReference.json states it,
+    /// with any <c>#&lt;appid&gt;#</c> module qualifier stripped. Null for a non-extension kind
+    /// and when the file states no target.
+    ///
+    /// <para>MEASURED against Base Application 28.1, because the compiler does NOT spell this
+    /// one element the same way in every container: <c>TableExtensions</c> (90),
+    /// <c>PageExtensions</c> (156), <c>EnumExtensionTypes</c> (39) and
+    /// <c>PermissionSetExtensions</c> (55) all carry <c>TargetObject</c> and every entry has
+    /// one — while all 14 <c>ReportExtensions</c> carry <c>Target</c> instead and NOT ONE
+    /// carries <c>TargetObject</c>. Reading only the first spelling leaves every
+    /// reportextension's target null, which reaches AllObjWithCaption as an empty Object
+    /// Subtype and looks exactly like the gap this exists to close. Both are NAMES; neither is
+    /// an id.</para>
+    /// </summary>
+    private static string? ExtensionTargetName(string kind, JsonElement el)
+    {
+        if (!kind.EndsWith("Extension", StringComparison.Ordinal)) return null;
+        var target = el.TryGetProperty("TargetObject", out var t) ? t.GetString() : null;
+        if (string.IsNullOrWhiteSpace(target))
+            target = el.TryGetProperty("Target", out var t2) ? t2.GetString() : null;
+        return string.IsNullOrWhiteSpace(target) ? null : StripModuleQualifierPrefix(target.Trim());
     }
 
     /// <summary>

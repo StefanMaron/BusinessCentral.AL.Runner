@@ -209,15 +209,19 @@ public static partial class RecordPatches
             // ParsedPage.PageType already carries AL's own default ("Card") for a page
             // declaring none, applied at parse time — the same value Page Metadata reports.
             yield return ("Page", p.Id, p.Name, SourceCaptionFor("Page", p.Id), p.PageType);
+        // The *extension kinds hand their `extends` TARGET NAME through the subtype slot;
+        // ObjectSubtypeTextFor resolves it to the id BC reports. See that method, and
+        // docs/virtual-tables-allobj.md#object-subtype.
         foreach (var p in _parsedPageExtensions.Values)
-            yield return ("PageExtension", p.Id, p.Name, SourceCaptionFor("PageExtension", p.Id), null);
+            yield return ("PageExtension", p.Id, p.Name, SourceCaptionFor("PageExtension", p.Id), p.BaseName);
         foreach (var r in _parsedReports.Values)
             // SourceCaptionFor("Report", …) reads r.Caption itself — AlReportParser is the
             // only pass that parses a report's Caption (#1714). Going through the same
             // accessor as every other kind is what keeps that single source uniform.
             yield return ("Report", r.Id, r.Name, SourceCaptionFor("Report", r.Id), null);
         foreach (var r in _parsedReportExtensions.Values)
-            yield return ("ReportExtension", r.Id, r.Name, SourceCaptionFor("ReportExtension", r.Id), null);
+            yield return ("ReportExtension", r.Id, r.Name, SourceCaptionFor("ReportExtension", r.Id),
+                r.BaseObjectName);
         foreach (var q in _parsedQueries.Values)
         {
             var kind = q.IsExtension ? "QueryExtension" : "Query";
@@ -227,9 +231,12 @@ public static partial class RecordPatches
             yield return ("XMLport", x.Id, x.Name, SourceCaptionFor("XMLport", x.Id), null);
         // Codeunits / enums / *extension kinds — see RecordPatches.AlObjectDeclParser.cs.
         // ParsedAlObjectDecl.Subtype is populated for Codeunit only and is null for a
-        // codeunit declaring none, which is exactly what BC blanks (Normal → empty).
+        // codeunit declaring none, which is exactly what BC blanks (Normal → empty);
+        // BaseObjectName for the *extension kinds only. The two never coexist on one
+        // declaration, so one slot carries whichever the kind has.
         foreach (var d in _parsedObjectDecls.Values)
-            yield return (d.Kind, d.Id, d.Name, SourceCaptionFor(d.Kind, d.Id), d.Subtype);
+            yield return (d.Kind, d.Id, d.Name, SourceCaptionFor(d.Kind, d.Id),
+                d.Subtype ?? d.BaseObjectName);
         // Enums registered by the emit pipeline and by dependency .app scans.
         foreach (var e in AlEnumMetadataRegistry.Snapshot())
             yield return ("Enum", e.Id, e.Name, SourceCaptionFor("Enum", e.Id), null);
@@ -270,7 +277,10 @@ public static partial class RecordPatches
             // ObjectSymbol.Subtype is populated for Codeunit only; null means the symbol file
             // stated none, which is Normal, which BC blanks.
             "codeunit" => o.Subtype,
-            _ => null,
+            // The *extension kinds: the TARGET NAME, which ObjectSubtypeTextFor resolves to
+            // the id BC reports. ObjectSymbol.TargetObjectName is populated for those kinds
+            // alone, so this arm needs no kind list of its own to keep in step with BC's.
+            _ => o.TargetObjectName,
         };
 
     // Table type by id across the registered dependency .apps. Built once per run: the walk
