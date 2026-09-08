@@ -106,6 +106,9 @@ codeunit 64591 "Ivtw Tests"
         Assert.ExpectedError('out-of-scope: Integer (virtual table 2000000026)');
         Assert.ExpectedError('integer-virtual-table');
         Assert.ExpectedError('with its other end open');
+        // The bound itself, not just the fact of a refusal: a message naming a different
+        // number would mean the refusal came from the wrong end of the filter.
+        Assert.ExpectedError('249000');
     end;
 
     [Test]
@@ -121,6 +124,7 @@ codeunit 64591 "Ivtw Tests"
         Assert.ExpectedError('out-of-scope: Integer (virtual table 2000000026)');
         Assert.ExpectedError('integer-virtual-table');
         Assert.ExpectedError('with its other end open');
+        Assert.ExpectedError('-249000');
     end;
 
     [Test]
