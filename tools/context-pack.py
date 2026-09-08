@@ -46,6 +46,9 @@ def run_lsp(mode: str, symbol: str, timeout: int) -> tuple[int, str]:
         p = subprocess.run(
             [sys.executable, LSP_QUERY, mode, symbol],
             cwd=REPO, capture_output=True, text=True, timeout=timeout,
+            # UTF-8, never the locale codec (#3434): source excerpts carry
+            # non-ASCII characters, and cp1252 mangles or raises on them.
+            encoding="utf-8", errors="replace",
         )
     except subprocess.TimeoutExpired:
         return 2, f"(timed out after {timeout}s)"

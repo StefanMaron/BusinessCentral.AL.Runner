@@ -107,7 +107,9 @@ class PinError(Exception):
 
 
 def _default_runner(args: list[str], cwd: str | None = None):
-    return subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+    # UTF-8, never the locale codec (#3434): git writes commit subjects as UTF-8.
+    return subprocess.run(args, cwd=cwd, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
 
 
 def git(runner, root: str | None, *args: str) -> tuple[int, str]:
