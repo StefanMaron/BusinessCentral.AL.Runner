@@ -51,6 +51,7 @@ codeunit 64591 "Ivtw Tests"
         // reads the short number as the real one.
         asserterror IntRec.FindSet();
         Assert.ExpectedError('out-of-scope: Integer (virtual table 2000000026)');
+        Assert.ExpectedError('integer-virtual-table');
         Assert.ExpectedError('row cap');
     end;
 
@@ -66,6 +67,7 @@ codeunit 64591 "Ivtw Tests"
 
         asserterror CountRows(IntRec);
         Assert.ExpectedError('out-of-scope: Integer (virtual table 2000000026)');
+        Assert.ExpectedError('integer-virtual-table');
         Assert.ExpectedError('row cap');
     end;
 
@@ -82,6 +84,7 @@ codeunit 64591 "Ivtw Tests"
 
         asserterror IsEmptyRows(IntRec);
         Assert.ExpectedError('out-of-scope: Integer (virtual table 2000000026)');
+        Assert.ExpectedError('integer-virtual-table');
         Assert.ExpectedError('row cap');
     end;
 
@@ -101,6 +104,7 @@ codeunit 64591 "Ivtw Tests"
 
         asserterror IntRec.FindSet();
         Assert.ExpectedError('out-of-scope: Integer (virtual table 2000000026)');
+        Assert.ExpectedError('integer-virtual-table');
         Assert.ExpectedError('with its other end open');
     end;
 
@@ -115,6 +119,7 @@ codeunit 64591 "Ivtw Tests"
 
         asserterror CountRows(IntRec);
         Assert.ExpectedError('out-of-scope: Integer (virtual table 2000000026)');
+        Assert.ExpectedError('integer-virtual-table');
         Assert.ExpectedError('with its other end open');
     end;
 
@@ -226,6 +231,7 @@ codeunit 64591 "Ivtw Tests"
 
         asserterror Reached := TryFindSet(IntRec);
         Assert.ExpectedError('out-of-scope: Integer (virtual table 2000000026)');
+        Assert.ExpectedError('integer-virtual-table');
         Assert.IsFalse(Reached, 'TryFindSet must not have completed.');
     end;
 
@@ -247,6 +253,7 @@ codeunit 64591 "Ivtw Tests"
 
         asserterror IntRec.FindSet();
         Assert.ExpectedError('out-of-scope: Integer (virtual table 2000000026)');
+        Assert.ExpectedError('integer-virtual-table');
         Assert.ExpectedError('with its other end open');
         Assert.ExpectedError('200000');
     end;
@@ -265,6 +272,7 @@ codeunit 64591 "Ivtw Tests"
 
         asserterror CountRows(IntRec);
         Assert.ExpectedError('out-of-scope: Integer (virtual table 2000000026)');
+        Assert.ExpectedError('integer-virtual-table');
         Assert.ExpectedError('with its other end open');
         Assert.ExpectedError('-200000');
     end;
@@ -307,6 +315,48 @@ codeunit 64591 "Ivtw Tests"
         Assert.IsTrue(IntRec.FindLast(), 'A closed multi-range filter reaching past the base window returned no last row.');
         Assert.AreEqual(200009, IntRec.Number, 'Expected the last row of 1..50|200000..200009 to be Number 200009.');
         Assert.IsTrue(IntRec.Get(200000), 'Number 200000 must be readable after the span was materialised.');
+    end;
+
+    [Test]
+    procedure Integer_HalfOpenRangeWithASiblingRangeFurtherOut_IsStillRefused()
+    var
+        IntRec: Record Integer;
+    begin
+        // Issue #3528, and a CONTROL rather than a RED -> GREEN: this arm is refused on
+        // a3fb61d5 too, before the comparison was moved onto the window. It pins that a sibling
+        // range cannot move the bar the half-open range is judged against. Two things hold that
+        // and only one of them is ours -- the refusal compares against the base window rather
+        // than against the envelope-widened span, and BC's own FilterExpression.ToRangeList
+        // merges this filter's second range into its first, because a range wide enough to widen
+        // the envelope's high bound past 200000 necessarily overlaps `200000..`.
+        IntRec.SetFilter(Number, '200000..|300000..300010');
+
+        // The bound is asserted, not just the fact of a refusal: a refusal naming 300000 or
+        // 300010 would mean the per-range decision landed on the wrong range.
+        asserterror CountRows(IntRec);
+        Assert.ExpectedError('out-of-scope: Integer (virtual table 2000000026)');
+        Assert.ExpectedError('integer-virtual-table');
+        Assert.ExpectedError('with its other end open');
+        Assert.ExpectedError('200000');
+    end;
+
+    [Test]
+    procedure Integer_HalfOpenLowRangeWithASiblingRangeFurtherOut_IsStillRefused()
+    var
+        IntRec: Record Integer;
+    begin
+        // The mirror, on the low side and on the find path. `..-200000|-300010..-300000` is open
+        // at the LOW end of its first range, and its sibling reaches further down still -- the
+        // shape that would widen lowBound below -200000 if the envelope were what this range was
+        // judged against. Refused on a3fb61d5 as well, for the merge reason above; what makes it
+        // hold without that merge is the window comparison.
+        IntRec.SetFilter(Number, '..-200000|-300010..-300000');
+
+        asserterror IntRec.FindSet();
+        Assert.ExpectedError('out-of-scope: Integer (virtual table 2000000026)');
+        Assert.ExpectedError('integer-virtual-table');
+        Assert.ExpectedError('with its other end open');
+        Assert.ExpectedError('-200000');
     end;
 
     local procedure CountRows(var IntRec: Record Integer): Integer
