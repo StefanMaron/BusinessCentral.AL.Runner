@@ -1084,6 +1084,17 @@ public static partial class RecordPatches
                 // text the symbol read carried along.
                 MergeExtensionFields(ext.TargetTableName, ext.ExtensionId,
                     ResolveExtensionCalcFormulas(ext), ext.Keys);
+
+                // #3600 — a PRECOMPILED .app's extension is, by construction, never in the
+                // same app as a table this runner holds a document for: HasBcTableMetadataDocument
+                // is only ever true for a table WE compiled from source (the bundle under test
+                // or a source-compiled dependency — see AlObjectMetadataRegistry's writers), and
+                // a table living in a precompiled .app never gets a document at all. So this
+                // extension's base table, whenever ShouldBuildTableFromBcDocument asks, was
+                // compiled by a DIFFERENT app than this one — cross-app, unconditionally. Recording
+                // owningAppId as null (never equal to any real app id) encodes exactly that,
+                // without needing this .app's own identity.
+                RecordExtensionSource(ext.TargetTableName, owningAppId: null, hasModify: false);
                 merged++;
             }
         }

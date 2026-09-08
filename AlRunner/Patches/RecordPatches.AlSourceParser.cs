@@ -788,7 +788,7 @@ public static partial class RecordPatches
         return parts.Count > 0 ? parts[^1] : Unquote(fallbackText?.Trim() ?? "");
     }
 
-    private static void TryParseTableFile(string text)
+    private static void TryParseTableFile(string text, string? filePath = null)
     {
         foreach (var obj in ParseAlObjects(text))
         {
@@ -872,11 +872,12 @@ public static partial class RecordPatches
                 secondaryKeys, isTableTypeTemporary, dataPerCompany, lookupPage, drillDownPage,
                 TableTypeName: string.IsNullOrWhiteSpace(tableTypeName) ? null : tableTypeName.Trim(),
                 DataClassificationName: string.IsNullOrWhiteSpace(dataClassification) ? null : dataClassification,
-                ExternalName: string.IsNullOrWhiteSpace(externalName) ? null : externalName);
+                ExternalName: string.IsNullOrWhiteSpace(externalName) ? null : externalName,
+                OwningAppId: filePath != null ? ResolveOwningApp(filePath)?.AppId : null);
         }
     }
 
-    private static void TryParseTableExtensionFile(string text)
+    private static void TryParseTableExtensionFile(string text, string? filePath = null)
     {
         foreach (var obj in ParseAlObjects(text))
         {
@@ -889,12 +890,23 @@ public static partial class RecordPatches
             // ParseFieldSyntax for what they used to lose (#1711).
             var fields = new List<ParsedField>();
             // OfType<FieldSyntax>: a tableextension's field list also holds `modify(...)`
-            // entries, which declare no new field. The regex only ever matched
-            // `field(N; Name; Type)` either, so this keeps the same set.
+            // entries (NavSyntax.FieldModificationSyntax), which declare no new field. The
+            // regex only ever matched `field(N; Name; Type)` either, so this keeps the same
+            // set. #3600 reads that same list a second time below for the OPPOSITE purpose —
+            // not to skip modify(...), but to know one is there.
             if (ext.Fields != null)
                 foreach (var f in ext.Fields.Fields.OfType<NavSyntax.FieldSyntax>())
                     if (ParseFieldSyntax(f) is { } pf)
                         fields.Add(pf);
+
+            // #3600 — a modify(...) block changes an existing field's properties only in the
+            // extension's OWN delta document (BC's <FieldChange>), never in the base table's
+            // document; see RecordExtensionSource / ShouldBuildTableFromBcDocument. True even
+            // for a mixed extension that ALSO adds fields, because the field list above cannot
+            // tell "no modify" from "modify, but this extractor discards it" — it has to be
+            // asked directly.
+            var hasModify = ext.Fields != null
+                && ext.Fields.Fields.OfType<NavSyntax.FieldModificationSyntax>().Any();
 
             // #3216 — the keys a tableextension declares. Every one is a SECONDARY key on the
             // extended table: a tableextension cannot restate the primary key, so unlike
@@ -935,6 +947,15 @@ public static partial class RecordPatches
             // shared helper so a second writer (RecordPatches.BcAppFallback.cs's
             // EnsureBcSymbolExtensionIndex) can't repeat this file's own former omission of it.
             MergeExtensionFields(baseName, extId, fields, extKeys);
+
+            // #3600 — the declaring app (from this file's own app.json, walked up from
+            // filePath) plus whether this extension declares modify(...). Recorded even for
+            // an extension that contributes no field and no key (a modify-only, or a
+            // key-only, extension) — see BaseTableWithAKeyOnlyExtensionInAnotherApp_Keeps-
+            // TheDerivation in AlRunner.Tests/TableMetadataFromBcDocumentTests.cs for why that
+            // case cannot be read off _parsedExtensionFields/_parsedExtensionKeys alone.
+            RecordExtensionSource(baseName,
+                filePath != null ? ResolveOwningApp(filePath)?.AppId : null, hasModify);
         }
     }
 
@@ -1597,9 +1618,16 @@ internal record ParsedColumnFilter(string FieldName, ParsedColumnFilterKind Kind
 /// Application 28.1's 1523 tables state one, e.g. "CDS BC Table Relation" ->
 /// <c>dyn365bc_syntheticrelation</c>). Null when the table declares none, which is the blank
 /// the Table Metadata column must then report (#2938).</param>
+/// <param name="OwningAppId">The <c>id</c> of the <c>app.json</c> that owns the file this table
+/// was declared in, or null when the file's path was not supplied (a precompiled-.app
+/// source-text reparse, or a --tdd in-memory regeneration — see the callers of
+/// <c>TryParseTableFile</c>) or no app.json was found above it. #3600's table-metadata-source
+/// guard uses this to tell a same-app tableextension from a cross-app one; see
+/// <see cref="RecordPatches._extensionSourceInfo"/>.</param>
 internal record ParsedTable(int TableId, string TableName,
     List<ParsedField> Fields, List<int> PkFieldIds, List<ParsedKey>? SecondaryKeys = null,
     bool IsTableTypeTemporary = false, bool DataPerCompany = true,
     string? LookupPageName = null, string? DrillDownPageName = null,
     string? TableTypeName = null,
-    string? DataClassificationName = null, string? ExternalName = null);
+    string? DataClassificationName = null, string? ExternalName = null,
+    Guid? OwningAppId = null);

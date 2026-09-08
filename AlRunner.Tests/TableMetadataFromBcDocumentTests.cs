@@ -506,6 +506,223 @@ public class TableMetadataFromBcDocumentTests
         Assert.DoesNotContain($"[table-metadata] {DepTableId} source=bc-document", output);
     }
 
+    /// <summary>
+    /// #3600 — a SAME-app, add-only tableextension no longer forces the derivation: BC's
+    /// compiler already folded its field AND its key into the base table's own document, so
+    /// excluding it was sending a table the document already answered correctly through the
+    /// hand-derivation. Measured on <c>ObjectMetadataCapture</c> (see the issue): 5 of the
+    /// al-language corpus's 6 previously-excluded tables are exactly this shape.
+    ///
+    /// Both halves are asserted, not just the route: a route-only check would also pass if the
+    /// field or the key had silently vanished on the way to the document, which is the exact
+    /// failure this guard exists to avoid (see the key-only regression test above). The field's
+    /// Editable/DataClassification are set to NON-default values for the same reason
+    /// <see cref="AssertCompiledTableCameFromBcDocument"/> does it: a default-valued assertion
+    /// would still pass if the field came from nowhere at all.
+    /// </summary>
+    [SkippableFact]
+    public void SameAppAddOnlyExtension_TakesBcsDocument_WithItsFieldAndKeyIntact()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var scratch = TestScratch.Dir("al-runner-table-metadata-sameapp-addonly");
+        var appDir = Path.Combine(scratch, "app");
+        Directory.CreateDirectory(appDir);
+        const int TableId = 70681;
+
+        File.WriteAllText(Path.Combine(appDir, "app.json"), $$"""
+        {
+          "id": "{{Guid.NewGuid()}}",
+          "name": "TME App",
+          "publisher": "TME",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 70681, "to": 70689 } ],
+          "runtime": "14.0"
+        }
+        """);
+        // Table and tableextension in the SAME app.json — the shape that must now relax.
+        File.WriteAllText(Path.Combine(appDir, "Objects.al"), """
+        table 70681 "TME Base Thing"
+        {
+            DataClassification = CustomerContent;
+            fields
+            {
+                field(1; "Entry No."; Integer) { }
+                field(2; Description; Text[50]) { }
+            }
+            keys { key(PK; "Entry No.") { Clustered = true; } }
+        }
+
+        tableextension 70682 "TME Add Only Ext" extends "TME Base Thing"
+        {
+            fields
+            {
+                field(50; "Extra Note"; Text[30])
+                {
+                    DataClassification = EndUserIdentifiableInformation;
+                    Editable = false;
+                }
+            }
+            keys
+            {
+                key(ByExtraNote; "Extra Note") { }
+            }
+        }
+
+        codeunit 70681 "TME Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure ExtensionFieldAndKeySurviveViaBcsDocument()
+            var
+                Thing: Record "TME Base Thing";
+                RRef: RecordRef;
+                KRef: KeyRef;
+                FRef: FieldRef;
+            begin
+                Thing.Init();
+                Thing."Entry No." := 1;
+                Thing."Extra Note" := 'Hello';
+                Thing.Insert();
+                Thing.Get(1);
+                if Thing."Extra Note" <> 'Hello' then
+                    Error('Extra Note=%1, expected Hello — the extension field did not round-trip.',
+                          Thing."Extra Note");
+
+                RRef.Open(70681);
+                if RRef.KeyCount() <> 3 then
+                    Error('KeyCount=%1, expected 3 (PK, ByExtraNote, and the platform key). ' +
+                          'A lower count means the extension''s key was dropped.', RRef.KeyCount());
+                KRef := RRef.KeyIndex(2);
+                FRef := KRef.FieldIndex(1);
+                if FRef.Number() <> 50 then
+                    Error('Key 2 starts on field %1, expected 50 (Extra Note) — the extension''s key.',
+                          FRef.Number());
+                RRef.Close();
+            end;
+        }
+        """);
+
+        var (output, exit) = RunRunner(appDir, Path.Combine(scratch, "al-out"));
+        Assert.True(exit == 0 && output.Contains("1P/0F/0E"), $"run must pass:\n{output}");
+
+        // NOT DoesNotContain(source=derived): the FIRST build of every compiled table runs
+        // during AddSourceDir, before Emit has registered any document (see
+        // RebuildTablesFromBcMetadataAll's own header), so a "derived" trace line is emitted
+        // for this table regardless of the eventual route. The claim is about where the run
+        // ENDS UP, which is what the field/key assertions below (read from the LAST matching
+        // trace line, exactly like AssertCompiledTableCameFromBcDocument does) actually pin.
+        Assert.Contains($"[table-metadata] {TableId} source=bc-document", output);
+
+        var lines = output.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+        var field50 = lines.LastOrDefault(
+            l => l.StartsWith($"[table-metadata] {TableId} field=50 ", StringComparison.Ordinal))
+            ?? throw new Xunit.Sdk.XunitException($"no trace line for the extension's field 50.\n{output}");
+        Assert.True(field50.Contains(" editable=False") && field50.Contains(" dataClassification=EndUserIdentifiableInformation"),
+            $"the extension's field 50 must carry its own declared Editable/DataClassification, " +
+            $"read straight off BC's document — not defaults.\n{field50}");
+    }
+
+    /// <summary>
+    /// #3600's other half: a tableextension declaring <c>modify(...)</c> keeps the table on the
+    /// derivation even though it is same-app and even though it also ADDS a field — a mixed
+    /// extension is not "mostly safe", because <c>modify(...)</c>'s <c>&lt;FieldChange&gt;</c>
+    /// only ever lands in the extension's own delta document, never in the base table's.
+    ///
+    /// What this does NOT claim: that the runner applies <c>modify(...)</c>'s property change
+    /// (here, Description's ToolTip) at all — it does not, on either route, before
+    /// or after this change; nothing in the AL-source parser keeps a
+    /// <c>FieldModificationSyntax</c>'s property list past detecting its PRESENCE (see
+    /// <c>TryParseTableExtensionFile</c>). That is a separate, pre-existing gap, filed
+    /// separately. What this test proves is narrower and is the thing #3600 could get wrong:
+    /// that detecting the modify(...) still routes to the derivation, and that doing so does not
+    /// cost the extension's OTHER, legitimately-applied content — its added field.
+    /// </summary>
+    [SkippableFact]
+    public void SameAppExtensionDeclaringModify_StillTakesTheDerivation_AndKeepsItsAddedField()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var scratch = TestScratch.Dir("al-runner-table-metadata-sameapp-modify");
+        var appDir = Path.Combine(scratch, "app");
+        Directory.CreateDirectory(appDir);
+        const int TableId = 70691;
+
+        File.WriteAllText(Path.Combine(appDir, "app.json"), $$"""
+        {
+          "id": "{{Guid.NewGuid()}}",
+          "name": "TMM App",
+          "publisher": "TMM",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 70691, "to": 70699 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(appDir, "Objects.al"), """
+        table 70691 "TMM Base Thing"
+        {
+            DataClassification = CustomerContent;
+            fields
+            {
+                field(1; "Entry No."; Integer) { }
+                field(2; Description; Text[50]) { }
+            }
+            keys { key(PK; "Entry No.") { Clustered = true; } }
+        }
+
+        tableextension 70692 "TMM Modify Ext" extends "TMM Base Thing"
+        {
+            fields
+            {
+                field(50; "Extra Flag"; Boolean) { }
+                modify(Description)
+                {
+                    ToolTip = 'Changed by the extension.';
+                }
+            }
+        }
+
+        codeunit 70691 "TMM Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure AddedFieldSurvivesAlongsideAModifyBlock()
+            var
+                Thing: Record "TMM Base Thing";
+            begin
+                Thing.Init();
+                Thing."Entry No." := 1;
+                Thing."Extra Flag" := true;
+                Thing.Insert();
+                Thing.Get(1);
+                if not Thing."Extra Flag" then
+                    Error('Extra Flag did not round-trip — the extension''s added field was lost.');
+            end;
+        }
+        """);
+
+        var (output, exit) = RunRunner(appDir, Path.Combine(scratch, "al-out"));
+        Assert.True(exit == 0 && output.Contains("1P/0F/0E"), $"run must pass:\n{output}");
+
+        // The modify(...) block is what must keep this on the derivation, not the lack of a
+        // document: table 70691 IS compiled by this run, so #3548 captures one for it — the
+        // guard has to actively exclude it.
+        Assert.Contains($"[table-metadata] {TableId} source=derived", output);
+        Assert.DoesNotContain($"[table-metadata] {TableId} source=bc-document", output);
+
+        var lines = output.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+        var field50 = lines.LastOrDefault(
+            l => l.StartsWith($"[table-metadata] {TableId} field=50 ", StringComparison.Ordinal))
+            ?? throw new Xunit.Sdk.XunitException($"no trace line for the extension's field 50.\n{output}");
+        Assert.Contains(" dataClassification=CustomerContent", field50);
+    }
+
     [SkippableFact]
     public void TableWithNoCapturedDocument_KeepsTheDerivation()
     {

@@ -154,6 +154,35 @@ public static partial class RecordPatches
     internal static readonly Dictionary<string, List<int>> _extensionIdsByBaseTable = new();
 
     /// <summary>
+    /// #3600 — one entry per tableextension merged onto a base table, recording what
+    /// <see cref="RecordPatches.NclMetaTableFromBcDocument.ShouldBuildTableFromBcDocument"/>
+    /// needs to decide whether BC's OWN document for the base table already carries this
+    /// extension (same app, add-only — BC folds it at compile time) or must be excluded in
+    /// favor of the derivation (a <c>modify(...)</c> block, which lands only in the delta
+    /// document; or a different declaring app, whose <c>FieldAdd</c> delta the base table's
+    /// own document — emitted by ITS app's compile — cannot see). <c>OwningAppId</c> is null
+    /// for a precompiled <c>.app</c> dependency's extension (never resolvable to an app.json
+    /// this runner reads) and for any AL-source extension whose declaring app.json could not
+    /// be found; either reads as "does not match" against the base table's own app, which is
+    /// the conservative direction on unknown input.
+    /// </summary>
+    internal static readonly Dictionary<string, List<(Guid? OwningAppId, bool HasModify)>>
+        _extensionSourceInfo = new();
+
+    /// <summary>Record one tableextension's source signal for <see cref="_extensionSourceInfo"/>.
+    /// Called once per merged extension by both writers that funnel through
+    /// <see cref="MergeExtensionFields"/> — see that method's own header for why there are
+    /// exactly two.</summary>
+    internal static void RecordExtensionSource(string baseTableName, Guid? owningAppId, bool hasModify)
+    {
+        if (string.IsNullOrEmpty(baseTableName)) return;
+        var key = baseTableName.ToLowerInvariant();
+        if (!_extensionSourceInfo.TryGetValue(key, out var list))
+            _extensionSourceInfo[key] = list = new();
+        list.Add((owningAppId, hasModify));
+    }
+
+    /// <summary>
     /// Merge <paramref name="fields"/> into <c>_parsedExtensionFields[baseTableName]</c>,
     /// record <paramref name="extensionId"/> in <c>_extensionIdsByBaseTable</c>, and evict
     /// any already-built NCLMetaTable for the base table so the next lookup rebuilds it with
@@ -301,6 +330,9 @@ public static partial class RecordPatches
         // bundle's extension keys to the next bundle's tables.
         _parsedExtensionKeys.Clear();
         _extensionIdsByBaseTable.Clear();
+        // #3600 — cleared alongside the two above for the same reason: a stale entry here
+        // would attribute the PREVIOUS bundle's app boundaries to the next one's tables.
+        _extensionSourceInfo.Clear();
         // #2478: must invalidate _bcSymbolTableIndex too, not just _bcSymbolExtensionIndexBuilt —
         // EnsureBcSymbolExtensionIndex's only call site is inside EnsureBcSymbolTableIndex, gated
         // by `_bcSymbolTableIndex != null`. Leaving that index populated made the flag reset above
@@ -479,8 +511,13 @@ public static partial class RecordPatches
     /// </summary>
     private static void ParseSourceFileIntoAllExtractors(string text, string? filePath = null)
     {
-        TryParseTableFile(text);
-        TryParseTableExtensionFile(text);
+        // Table and tableextension need the file PATH too, same reason as the profile/
+        // permission-set calls below: #3600's table-metadata-source guard has to tell a
+        // same-app tableextension (BC folds its fields/keys into the base table's own
+        // document) from a cross-app one (it cannot), and "same app" is only knowable from
+        // the app.json that owns each file.
+        TryParseTableFile(text, filePath);
+        TryParseTableExtensionFile(text, filePath);
         TryParsePageFile(text);
         TryParseReportFile(text);
         TryParseQueryFile(text);

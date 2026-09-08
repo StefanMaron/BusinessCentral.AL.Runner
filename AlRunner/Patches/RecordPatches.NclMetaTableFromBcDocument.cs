@@ -28,6 +28,7 @@
 //   swallows it into "no metatable" exactly as it does for a derivation failure. That swallow
 //   predates this change and is #3590 — do not read the paragraph above as a claim that the
 //   cold path tears through, because it does not.
+using System.Linq;
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 using AlRunner.Infrastructure;
@@ -74,31 +75,53 @@ public static partial class RecordPatches
     /// conditions written twice because the two paths write the same state: a table that took
     /// one route and not the other would carry half of each answer.
     ///
-    /// <para><b>The extension clause is about BUILD-TIME versus RUNTIME-MERGED state, and that
-    /// is why it is not a field count.</b> BC's document for a table is what ONE app's compiler
-    /// emitted for it. A <c>tableextension</c> in another app contributes fields AND keys that
-    /// the service tier merges at publish time through NavAppGroup's extension registry, which
-    /// the runner does not populate — so no per-app document can express them, whichever app
-    /// emitted it. The runner's derivation does merge them, so an extended base table stays on
-    /// the derivation until TableExtension is converted too (#3562).</para>
+    /// <para><b>#3600 narrowed this from "any tableextension names the table" to the two cases
+    /// BC genuinely does not fold.</b> Measured on the <c>ObjectMetadataCapture</c> fixture: a
+    /// same-app, add-only tableextension's fields AND keys are already in the base table's own
+    /// <c>&lt;MetaTable&gt;</c> — BC's compiler folds them in at compile time — so excluding
+    /// those tables sent 5 of the al-language corpus's 6 excluded tables to a hand-derivation
+    /// the document already answered. What is genuinely NOT folded: a <c>modify(...)</c> block,
+    /// which lands only in the extension's own delta (<c>&lt;FieldChange&gt;</c>); and a
+    /// cross-app extension, whose <c>FieldAdd</c> delta the base table's own document — emitted
+    /// by ITS app's compile, before or independently of the extending app's — cannot see. See
+    /// the issue comment thread for the measurement and docs/object-metadata-from-bc.md.</para>
     ///
-    /// <para><b>Gate on the extension INDEX, never on the merged field count.</b> Fields and
-    /// keys travel separate channels into <see cref="MergeExtensionFields"/>, and a
-    /// <c>modify(...)</c>-only or key-only extension contributes no fields at all — measured:
-    /// a cross-app key-only tableextension left <c>_parsedExtensionFields</c> empty, the
-    /// count-based guard passed, the base app's own document won, and
-    /// <c>RecordRef.KeyCount()</c> silently answered 2 where the derivation answers 3. Exit 0,
-    /// no diagnostic. <c>_extensionIdsByBaseTable</c> records EVERY extension, so it is the
-    /// signal that another app has contributed anything at all; the two collections beside it
-    /// are belt-and-braces for a writer that ever registers one without an id.</para>
+    /// <para><b>Gate on <see cref="_extensionSourceInfo"/>, never on the merged field/key
+    /// count.</b> Fields and keys travel separate channels into
+    /// <see cref="MergeExtensionFields"/>, and a <c>modify(...)</c>-only or key-only extension
+    /// contributes no fields at all — measured: a cross-app key-only tableextension left
+    /// <c>_parsedExtensionFields</c> empty, a COUNT-based guard passed, the base app's own
+    /// document won, and <c>RecordRef.KeyCount()</c> silently answered 2 where the derivation
+    /// answers 3. Exit 0, no diagnostic (pinned by
+    /// <c>BaseTableWithAKeyOnlyExtensionInAnotherApp_KeepsTheDerivation</c> in
+    /// AlRunner.Tests/TableMetadataFromBcDocumentTests.cs). <see cref="_extensionSourceInfo"/>
+    /// records one entry per
+    /// extension REGARDLESS of whether it contributed any field or key, which is what keeps a
+    /// modify-only or key-only extension visible here even though the other three collections
+    /// beside it would show nothing for it.</para>
+    ///
+    /// <para><b>Unknown reads as cross-app, not as same-app.</b> A precompiled <c>.app</c>'s
+    /// extension always carries <c>OwningAppId = null</c> (see
+    /// <c>RecordPatches.BcAppFallback.EnsureBcSymbolExtensionIndex</c>), and an AL-source
+    /// extension or table whose app.json could not be resolved also carries null. Two nulls are
+    /// never treated as matching — only two RESOLVED, EQUAL app ids relax the guard — so an
+    /// unresolvable boundary keeps the table on the derivation instead of guessing it is safe.</para>
     /// </summary>
     internal static bool ShouldBuildTableFromBcDocument(int tableId, ParsedTable parsed)
     {
         if (!HasBcTableMetadataDocument(tableId)) return false;
         var key = parsed.TableName.ToLowerInvariant();
-        if (_extensionIdsByBaseTable.TryGetValue(key, out var extIds) && extIds.Count > 0) return false;
-        if (_parsedExtensionFields.TryGetValue(key, out var extFields) && extFields.Count > 0) return false;
-        if (_parsedExtensionKeys.TryGetValue(key, out var extKeys) && extKeys.Count > 0) return false;
+        if (!_extensionSourceInfo.TryGetValue(key, out var extensions) || extensions.Count == 0)
+            return true;
+
+        foreach (var (owningAppId, hasModify) in extensions)
+        {
+            if (hasModify) return false;
+            if (owningAppId is not { } extApp
+                || parsed.OwningAppId is not { } tableApp
+                || extApp != tableApp)
+                return false;
+        }
         return true;
     }
 
@@ -216,7 +239,14 @@ public static partial class RecordPatches
             if (!ShouldBuildTableFromBcDocument(kvp.Key, parsed)) continue;
 
             ReloadFromBcDocumentInPlace(built);
-            ApplyRunnerFieldWiring(built, parsed, Array.Empty<ParsedField>(), parsed.Fields);
+            // #3600 — same reasoning as BuildNCLMetaTable's cold-build call: a same-app
+            // add-only extension's fields are already inside the document BC just (re)loaded,
+            // but the enum-type-name / AutoIncrement side information ApplyRunnerFieldWiring
+            // needs for THOSE fields lives only in the parse-time ParsedField, not on the
+            // built NCLMetaTable.
+            var extFields = _parsedExtensionFields.TryGetValue(parsed.TableName.ToLowerInvariant(), out var ef)
+                ? ef : Enumerable.Empty<ParsedField>();
+            ApplyRunnerFieldWiring(built, parsed, extFields, parsed.Fields.Concat(extFields));
             _bcDocumentBackedTables[kvp.Key] = 1;
             TraceTableMetadataSource(kvp.Key, "bc-document", built);
         }
