@@ -265,6 +265,13 @@ public sealed class TestExecutor
     // it was set to isolate.
     private static readonly Dictionary<string, AlRunner.Patches.RecordPatches.InstallBaselineSnapshot>
         _depCompanyBaselineCache = new();
+    // #3538: what codeunit 2 did while the snapshot beside it was being captured. A snapshot
+    // taken after an abort IS the partial company, so restoring it puts a later app group in
+    // exactly that state — and without this the abort was reported once, by whichever app group
+    // happened to MISS, and every group after it inherited a half-initialized company in
+    // silence. Same defect the emit-exclusion cache had (#3476), where a warm run of a module
+    // missing objects came back byte-identical to a clean one.
+    private static readonly Dictionary<string, CompanyInitFailure> _depCompanyBaselineInitFailure = new();
     private static readonly object _depCompanyBaselineCacheLock = new();
 
     // ── Second tier: the same snapshot, persisted across PROCESSES ──────────────────────
@@ -495,11 +502,15 @@ public sealed class TestExecutor
             // forces every lookup to MISS, as if the cache were never populated, so the
             // fresh-computation path can always be re-run on demand for diagnosis or to
             // re-verify the speedup without a patched rebuild.
+            CompanyInitFailure? cachedInitFailure = null;
             if (Environment.GetEnvironmentVariable("AL_RUNNER_NO_DEP_COMPANY_CACHE") == "1")
                 cached = null;
             else
                 lock (_depCompanyBaselineCacheLock)
+                {
                     _depCompanyBaselineCache.TryGetValue(depKey, out cached);
+                    _depCompanyBaselineInitFailure.TryGetValue(depKey, out cachedInitFailure);
+                }
             // #2710: this log token has to be an IDENTITY, and it was not. It used to be
             // depKey[..8] — and depKey opens with InstallTriggerRunner.CurrentDependencySetKey(),
             // whose first characters are the first dependency assembly's MVID, so every app
@@ -524,6 +535,10 @@ public sealed class TestExecutor
                 // group reused a prior computation instead of re-running dependency Install
                 // triggers + Company-Initialize. See InstallSeedDepCompanyCacheTests.
                 PerfTrace.Log($"InstallBaseline.DepCompanyCache HIT {shortKey}");
+                // #3538: the restored snapshot is the partial company the original abort left
+                // behind, so this app group is in that state too and the run says so again.
+                if (cachedInitFailure != null)
+                    CompanyInitializer.ReportCachedFailure(cachedInitFailure);
             }
             else
             {
@@ -575,15 +590,29 @@ public sealed class TestExecutor
                     AlRunner.Patches.RecordPatches.EnsurePublishedApplicationDependencyRowsSeeded();
                     InstallTriggerRunner.RunDependenciesOnly();
                     CompanyInitializer.EnsureCompanyInitialized();
+                    var initFailure = CompanyInitializer.LastRecordedFailure;
                     var snapshot = AlRunner.Patches.RecordPatches.CaptureInstallBaselineSnapshot();
                     lock (_depCompanyBaselineCacheLock)
+                    {
                         _depCompanyBaselineCache[depKey] = snapshot;
+                        if (initFailure != null) _depCompanyBaselineInitFailure[depKey] = initFailure;
+                        else _depCompanyBaselineInitFailure.Remove(depKey);
+                    }
                     AlRunner.Patches.RecordPatches.SetActiveDepCompanyBaseline(snapshot);
                     PerfTrace.Log($"InstallBaseline.DepCompanyCache MISS {shortKey}");
 
                     // Persist for the next process. Refusals are logged by the codec and cost
                     // only the persistence — this run already has its snapshot either way.
-                    if (diskKey != null)
+                    //
+                    // #3538: not when codeunit 2 aborted. The disk tier carries the snapshot
+                    // and nothing else, so a later PROCESS restoring it would get the partial
+                    // company with no record of how it got that way and would report a clean
+                    // run — the #3476 cache defect exactly, one cache over. Withholding the
+                    // entry costs that process the dependency baseline it would have reused
+                    // (seconds; it re-runs the triggers and codeunit 2 itself) and buys a run
+                    // that reports the condition every time, including after a runner fix has
+                    // made the abort stop happening.
+                    if (diskKey != null && initFailure == null)
                     {
                         var payload = AlRunner.Patches.RecordPatches.TrySerializeInstallBaselineSnapshot(
                             snapshot, diskKey);

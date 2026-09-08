@@ -630,6 +630,11 @@ public static partial class BcRuntime
         AlReportLayoutRegistry.Clear();
         AlPageMetadataRegistry.Clear();
         AlXmlPortMetadataRegistry.Clear();
+        // #3548 — same lifecycle as the four registries above: bundle-derived, so a
+        // reload must drop it, and the --watch RAD shadow snapshot in
+        // BcCompiler.Incremental.cs is what puts back the entries the next cycle's
+        // partial (or skipped) Emit does not re-register.
+        AlObjectMetadataRegistry.Clear();
         NavReportSync.ResetMetadataCache();
         // Sibling patch classes with their own bundle-derived state.
         AlRunner.Patches.RecordPatches.ResetForReload();

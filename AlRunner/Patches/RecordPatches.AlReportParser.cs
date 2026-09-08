@@ -58,7 +58,13 @@ public static partial class RecordPatches
                 // (ProcessingOnly=true) into a layout-bound report → OOS at run.
                 case NavSyntax.ReportExtensionSyntax rx when ObjectIdOf(rx) is int extId:
                     _parsedReportExtensions[extId] = new ParsedReport(
-                        extId, IdentText(rx.Name), IsExtension: true, ProcessingOnly: false);
+                        extId, IdentText(rx.Name), IsExtension: true, ProcessingOnly: false)
+                    {
+                        // The `extends` target, AS WRITTEN — AllObjWithCaption's Object
+                        // Subtype reports its ID for a reportextension; see
+                        // docs/virtual-tables-allobj.md#object-subtype.
+                        BaseObjectName = LastNameSegment(rx.BaseObject?.ToString()?.Trim()),
+                    };
                     break;
             }
         }
@@ -137,6 +143,9 @@ internal record ParsedReport(int Id, string Name, bool IsExtension, bool Process
 
     /// <summary>Data-item tree, flattened in declaration order. Empty for processing-only reports.</summary>
     public List<ParsedReportDataItem> DataItems { get; init; } = new();
+
+    /// <summary>The object a reportextension extends, as written; null for a plain report.</summary>
+    public string? BaseObjectName { get; init; }
 }
 
 /// <summary>

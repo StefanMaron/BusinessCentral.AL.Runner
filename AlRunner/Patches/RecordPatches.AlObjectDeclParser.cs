@@ -89,7 +89,14 @@ public static partial class RecordPatches
                     TestHttpRequestPolicy: DeclaredIdentifierText(PropValue(props, "TestHttpRequestPolicy")));
                 continue;
             }
-            _parsedObjectDecls[(kind, id)] = new ParsedAlObjectDecl(kind, id, name);
+            // All five *extension kinds AL declares here derive from one syntax base carrying
+            // `BaseObject`, so the target is read once rather than per kind — a new extension
+            // kind is picked up without a further arm. AS WRITTEN: the id it names is resolved
+            // against the run's object inventory, which does not exist yet at parse time.
+            _parsedObjectDecls[(kind, id)] = new ParsedAlObjectDecl(kind, id, name,
+                BaseObjectName: obj is NavSyntax.ApplicationObjectExtensionSyntax ext
+                    ? LastNameSegment(ext.BaseObject?.ToString()?.Trim())
+                    : null);
         }
     }
 
@@ -125,8 +132,11 @@ public static partial class RecordPatches
 /// them means. <paramref name="TableNo"/> is the reference AS WRITTEN (a bare id in text form,
 /// or a table name) — resolving it to an id needs the run's table inventory, which does not
 /// exist yet at parse time.
+/// <para><paramref name="BaseObjectName"/> is the `extends` target of an *extension kind, also
+/// as WRITTEN and for the same reason; null for a non-extension. See
+/// docs/virtual-tables-allobj.md#object-subtype for what reads it.</para>
 /// </summary>
 internal record ParsedAlObjectDecl(
     string Kind, int Id, string Name,
     string? TableNo = null, bool SingleInstance = false, string? Subtype = null,
-    string? TestHttpRequestPolicy = null);
+    string? TestHttpRequestPolicy = null, string? BaseObjectName = null);

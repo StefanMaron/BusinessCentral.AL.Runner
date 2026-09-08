@@ -1,0 +1,24 @@
+{
+  "id": "a1b2c3d4-e5f6-4708-9a1b-2c3d4e5f6011",
+  "name": "Runner Tests Fixture - Company Init Partial",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "A bundle whose tests pass, used to prove a partially initialized company is a run-level result (#3538).",
+  "description": "The suite here is deliberately trivial and green: what PartialCompanyInitializationTests drives is the runner's reporting of a company initialization that did not complete, and the point of the assertions is that these passing results survive while the run stops being clean. No \"application\" dependency by design (.claude/rules/no-base-app-in-csharp-tests.md) — the abort is injected through AL_RUNNER_TEST_FAIL_COMPANY_INIT, so loading the Base Application floor would cost ~70s per invocation and prove nothing further about the reporting.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "idRanges": [
+    {
+      "from": 70680,
+      "to": 70699
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

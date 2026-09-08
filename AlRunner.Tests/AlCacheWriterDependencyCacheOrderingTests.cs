@@ -48,11 +48,12 @@ public sealed class AlCacheWriterDependencyCacheOrderingTests
             var pageMetadataSidecar = Path.Combine(dir, key + ".page-metadata.json");
             var xmlPortMetadataSidecar = Path.Combine(dir, key + ".xmlport-metadata.json");
             var enumRegistrySidecar = Path.Combine(dir, key + ".enum-registry.json");
+            var objectMetadataSidecar = Path.Combine(dir, key + ".object-metadata.json");
             var cachedDll = Path.Combine(dir, key + ".dll");
             var sidecarPaths = new[]
             {
                 reportSidecar, reportLayoutSidecar, pageMetadataSidecar,
-                xmlPortMetadataSidecar, enumRegistrySidecar,
+                xmlPortMetadataSidecar, enumRegistrySidecar, objectMetadataSidecar,
             };
 
             // Empty id sets everywhere — this test's claim is about ordering/atomicity of
@@ -66,7 +67,8 @@ public sealed class AlCacheWriterDependencyCacheOrderingTests
                 reportLayoutSidecar,
                 pageMetadataSidecar, Array.Empty<int>(),
                 xmlPortMetadataSidecar, Array.Empty<int>(),
-                enumRegistrySidecar, Array.Empty<int>());
+                enumRegistrySidecar, Array.Empty<int>(),
+                objectMetadataSidecar, Array.Empty<string>());
 
             Assert.Equal(0, sidecarCount);
             Assert.Equal(0, enumSidecarCount);
@@ -78,7 +80,7 @@ public sealed class AlCacheWriterDependencyCacheOrderingTests
             Assert.True(File.Exists(cachedDll));
             Assert.Equal(new byte[] { 1, 2, 3, 4 }, File.ReadAllBytes(cachedDll));
 
-            // No leftover .tmp artifacts from any of the six AtomicPublish calls.
+            // No leftover .tmp artifacts from any of the seven AtomicPublish calls.
             var leftovers = Directory.GetFiles(dir)
                 .Where(f => !sidecarPaths.Contains(f) && !string.Equals(f, cachedDll))
                 .ToArray();
@@ -90,7 +92,7 @@ public sealed class AlCacheWriterDependencyCacheOrderingTests
     // Deterministic proof of the DLL-last ORDERING invariant (not just the end state):
     // uses PublishSourceDependencyCache's onSidecarsPublishedBeforeDll test seam to
     // observe filesystem state at the EXACT point a concurrent reader gated on
-    // `File.Exists(cachedDll)` (LoadOne) could land — after all five sidecars are
+    // `File.Exists(cachedDll)` (LoadOne) could land — after all six sidecars are
     // committed, before the DLL is. No polling/timing race required: the seam runs
     // synchronously on the same call stack, between the last sidecar's AtomicPublish and
     // the DLL's.
@@ -106,11 +108,12 @@ public sealed class AlCacheWriterDependencyCacheOrderingTests
             var pageMetadataSidecar = Path.Combine(dir, key + ".page-metadata.json");
             var xmlPortMetadataSidecar = Path.Combine(dir, key + ".xmlport-metadata.json");
             var enumRegistrySidecar = Path.Combine(dir, key + ".enum-registry.json");
+            var objectMetadataSidecar = Path.Combine(dir, key + ".object-metadata.json");
             var cachedDll = Path.Combine(dir, key + ".dll");
 
             var hookRan = false;
             bool dllExistedAtHookTime = true; // start "true" so a no-op hook can't fake a pass
-            bool[] sidecarsExistedAtHookTime = new bool[5];
+            bool[] sidecarsExistedAtHookTime = new bool[6];
 
             DependencyLoader.PublishSourceDependencyCache(
                 cachedDll, new byte[] { 9 },
@@ -119,6 +122,7 @@ public sealed class AlCacheWriterDependencyCacheOrderingTests
                 pageMetadataSidecar, Array.Empty<int>(),
                 xmlPortMetadataSidecar, Array.Empty<int>(),
                 enumRegistrySidecar, Array.Empty<int>(),
+                objectMetadataSidecar, Array.Empty<string>(),
                 onSidecarsPublishedBeforeDll: () =>
                 {
                     hookRan = true;
@@ -128,6 +132,7 @@ public sealed class AlCacheWriterDependencyCacheOrderingTests
                     sidecarsExistedAtHookTime[2] = File.Exists(pageMetadataSidecar);
                     sidecarsExistedAtHookTime[3] = File.Exists(xmlPortMetadataSidecar);
                     sidecarsExistedAtHookTime[4] = File.Exists(enumRegistrySidecar);
+                    sidecarsExistedAtHookTime[5] = File.Exists(objectMetadataSidecar);
                 });
 
             Assert.True(hookRan);

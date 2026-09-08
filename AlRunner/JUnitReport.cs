@@ -101,6 +101,8 @@ public static class JUnitReport
             foreach (var cs in carriedSuites) cs.WriteTo(writer);
         }
 
+        WriteCompanyInitComments(writer, buckets);
+
         WriteLostSuiteComments(writer, buckets);
 
         foreach (var suite in suites)
@@ -229,6 +231,27 @@ public static class JUnitReport
             // "--" cannot appear inside an XML comment at all, so a compiler message carrying one
             // — `--package-cache`, a rule of dashes in a banner — would make the document
             // malformed rather than merely ugly. Same softening as the carried-file comment.
+            writer.WriteComment(text.ToString().Replace("--", "- -"));
+        }
+    }
+
+    // #3538 — see docs/partial-company-initialization.md for why a comment rather than a
+    // synthetic testsuite, which is WriteLostSuiteComments' reasoning above.
+    private static void WriteCompanyInitComments(XmlWriter writer, IReadOnlyList<BucketResult> buckets)
+    {
+        foreach (var b in buckets)
+        {
+            var failures = b.CompanyInitFailures ?? Array.Empty<CompanyInitFailure>();
+            if (failures.Count == 0) continue;
+
+            var text = new StringBuilder();
+            text.Append($" company initialization did NOT complete for {b.BucketPath}: the tests "
+                + "in this report ran against a PARTIALLY initialized company, so setup rows are "
+                + "missing and a failure reading one is caused by this; ");
+            foreach (var f in failures)
+                text.Append($"[{Reporter.DescribeCompanyInitFailure(f)}] ");
+
+            // "--" cannot appear inside an XML comment, and a BC exception message can carry one.
             writer.WriteComment(text.ToString().Replace("--", "- -"));
         }
     }

@@ -178,7 +178,7 @@ public sealed class DependencyLoader
                 {
                     // #2593/#2579: this dependency's Assembly is being reused without calling
                     // LoadOne again — but LoadOne is the ONLY place that replays this dependency's
-                    // Tier-3 metadata sidecars (report/report-layout/page/xmlport/enum) into the
+                    // Tier-3 metadata sidecars (report/report-layout/page/xmlport/enum/object) into the
                     // process-wide registries. Those registries get reset every reload cycle
                     // (BcRuntime.ResetForNewBundleReload), so on the SECOND and every later
                     // --watch/--server cycle that resolves this same AppId as a dependency, skipping
@@ -563,6 +563,10 @@ public sealed class DependencyLoader
         // enum then failed with a blank enum name / empty option list. Mirrors the
         // bundle-level `.enum-registry.json` sidecar (Program.cs SaveEnumRegistrySidecar).
         var enumRegistrySidecar = Path.Combine(cacheDir, cacheKey + ".enum-registry.json");
+        // #3548 — the general capture: BC's own metadata document for every object this
+        // dep emitted, keyed by (kind, id). Same cache-HIT hazard as the four sidecars
+        // above, and the same shape of fix.
+        var objectMetadataSidecar = Path.Combine(cacheDir, cacheKey + ".object-metadata.json");
         if (File.Exists(cachedDll))
         {
             try
@@ -579,6 +583,8 @@ public sealed class DependencyLoader
                     AlPageMetadataRegistry.LoadSidecar(pageMetadataSidecar);
                 if (File.Exists(xmlPortMetadataSidecar))
                     AlXmlPortMetadataRegistry.LoadSidecar(xmlPortMetadataSidecar);
+                if (File.Exists(objectMetadataSidecar))
+                    AlObjectMetadataRegistry.LoadSidecar(objectMetadataSidecar);
                 int replayedEnums = 0;
                 if (File.Exists(enumRegistrySidecar))
                     replayedEnums = AlEnumMetadataRegistry.LoadSidecar(enumRegistrySidecar);
@@ -633,6 +639,7 @@ public sealed class DependencyLoader
         var pageIdsBeforeEmit = new HashSet<int>(AlPageMetadataRegistry.Ids);
         var xmlPortIdsBeforeEmit = new HashSet<int>(AlXmlPortMetadataRegistry.Ids);
         var enumIdsBeforeEmit = new HashSet<int>(AlEnumMetadataRegistry.Ids);
+        var objectKeysBeforeEmit = new HashSet<string>(AlObjectMetadataRegistry.Keys, StringComparer.Ordinal);
         // Scope _currentAppId to the dep's own identity for the duration of this compile.
         // GetSharedReferences uses _currentAppId to exclude the "current app" from its
         // reference specs. Without this, the dep's resolved spec (from _resolvedDeps of
@@ -690,7 +697,9 @@ public sealed class DependencyLoader
                 xmlPortMetadataSidecar,
                 AlXmlPortMetadataRegistry.Ids.Where(i => !xmlPortIdsBeforeEmit.Contains(i)).ToArray(),
                 enumRegistrySidecar,
-                AlEnumMetadataRegistry.Ids.Where(i => !enumIdsBeforeEmit.Contains(i)));
+                AlEnumMetadataRegistry.Ids.Where(i => !enumIdsBeforeEmit.Contains(i)),
+                objectMetadataSidecar,
+                AlObjectMetadataRegistry.Keys.Where(k => !objectKeysBeforeEmit.Contains(k)).ToArray());
             Console.Error.WriteLine(
                 $"[deps] source-cache WROTE: {m.Name} v{m.Version} key={cacheKey[..12]} ({compile.AssemblyBytes!.Length} bytes, {sidecarCount} report-metadata entries, {enumSidecarCount} enum-registry entries)");
         }
@@ -709,8 +718,8 @@ public sealed class DependencyLoader
     }
 
     /// <summary>
-    /// Publishes the six on-disk artifacts of a compiled source-dependency cache entry
-    /// (five metadata sidecars + the DLL). Extracted out of <see cref="LoadOne"/> so
+    /// Publishes the seven on-disk artifacts of a compiled source-dependency cache entry
+    /// (six metadata sidecars + the DLL). Extracted out of <see cref="LoadOne"/> so
     /// AlRunner.Tests can pin the write-ordering/atomicity contract directly —
     /// see AlCacheWriterDependencyCacheOrderingTests.
     ///
@@ -733,10 +742,10 @@ public sealed class DependencyLoader
     /// ordering guarantee AlCacheWriterTests.
     /// SequencedPublish_SidecarThenDll_DllNeverVisibleBeforeSidecar pins for the
     /// AL-output cache; this mirrors it for the dependency-compile cache's larger
-    /// 5-sidecars-then-1-DLL shape.
+    /// 6-sidecars-then-1-DLL shape.
     /// </summary>
     ///
-    /// <param name="onSidecarsPublishedBeforeDll">Test-only seam: invoked after all five
+    /// <param name="onSidecarsPublishedBeforeDll">Test-only seam: invoked after all six
     /// sidecars are committed but before the DLL is published, so a test can assert the
     /// DLL-not-yet-visible ordering deterministically instead of racing a polling thread
     /// against the filesystem. Null in production and in every test that doesn't need it
@@ -749,6 +758,7 @@ public sealed class DependencyLoader
         string pageMetadataSidecar, int[] ownPageIds,
         string xmlPortMetadataSidecar, int[] ownXmlPortIds,
         string enumRegistrySidecar, IEnumerable<int> ownEnumIds,
+        string objectMetadataSidecar, IEnumerable<string> ownObjectKeys,
         Action? onSidecarsPublishedBeforeDll = null)
     {
         int sidecarCount = AlCacheWriter.AtomicPublish(reportSidecar,
@@ -761,6 +771,8 @@ public sealed class DependencyLoader
             tmp => AlXmlPortMetadataRegistry.SaveSidecar(tmp, ownXmlPortIds));
         int enumSidecarCount = AlCacheWriter.AtomicPublish(enumRegistrySidecar,
             tmp => AlEnumMetadataRegistry.SaveSidecar(tmp, ownEnumIds));
+        AlCacheWriter.AtomicPublish(objectMetadataSidecar,
+            tmp => AlObjectMetadataRegistry.SaveSidecar(tmp, ownObjectKeys));
         onSidecarsPublishedBeforeDll?.Invoke();
         AlCacheWriter.AtomicPublish(cachedDll, tmp => File.WriteAllBytes(tmp, assemblyBytes));
         return (sidecarCount, enumSidecarCount);
@@ -787,6 +799,7 @@ public sealed class DependencyLoader
         var pageMetadataSidecar = Path.Combine(cacheDir, cacheKey + ".page-metadata.json");
         var xmlPortMetadataSidecar = Path.Combine(cacheDir, cacheKey + ".xmlport-metadata.json");
         var enumRegistrySidecar = Path.Combine(cacheDir, cacheKey + ".enum-registry.json");
+        var objectMetadataSidecar = Path.Combine(cacheDir, cacheKey + ".object-metadata.json");
         try
         {
             int replayedReports = File.Exists(reportSidecar) ? AlReportMetadataRegistry.LoadSidecar(reportSidecar) : 0;
@@ -795,6 +808,17 @@ public sealed class DependencyLoader
             int replayedPages = File.Exists(pageMetadataSidecar) ? AlPageMetadataRegistry.LoadSidecar(pageMetadataSidecar) : 0;
             int replayedXmlPorts = File.Exists(xmlPortMetadataSidecar) ? AlXmlPortMetadataRegistry.LoadSidecar(xmlPortMetadataSidecar) : 0;
             int replayedEnums = File.Exists(enumRegistrySidecar) ? AlEnumMetadataRegistry.LoadSidecar(enumRegistrySidecar) : 0;
+            // LAST, deliberately. This catch logs and RETURNS -- the module is already
+            // loaded, so there is no rebuild behind it. Loading the object registry first put a
+            // new throw source ahead of the five sidecars that have live consumers, so a corrupt
+            // or future-shaped .object-metadata.json would take report, report-layout, page,
+            // xmlport and enum metadata down with it, silently, on a reused module. Nothing reads
+            // the object registry yet, so it is the one that can afford to fail. Keep it last
+            // until step 3 gives it a consumer, then it needs its own error handling rather than
+            // this position. LoadOne's HIT branch is different: its catch falls through to a full
+            // rebuild, so the call is safe anywhere in that block.
+            if (File.Exists(objectMetadataSidecar))
+                AlObjectMetadataRegistry.LoadSidecar(objectMetadataSidecar);
             if (replayedReports + replayedPages + replayedXmlPorts + replayedEnums > 0)
                 Console.Error.WriteLine(
                     $"[deps] metadata sidecar replay (reused module): {m.Name} v{m.Version} — " +
@@ -809,7 +833,7 @@ public sealed class DependencyLoader
 
     /// <summary>
     /// The Tier-3 source-compile cache key for one dependency package — the NAME of
-    /// <c>compiled-deps/&lt;key&gt;.dll</c> and its five metadata sidecars, so this string's
+    /// <c>compiled-deps/&lt;key&gt;.dll</c> and its six metadata sidecars, so this string's
     /// VALUE is persisted, shared across processes, and read by later runs. Changing what it
     /// computes for unchanged inputs orphans every existing entry on every machine; #3043's
     /// whole difficulty is that the obvious refactor does exactly that.
