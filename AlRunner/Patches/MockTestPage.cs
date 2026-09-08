@@ -2310,8 +2310,13 @@ internal class LiveNavTestPage : MockITestPage
         _newRowLineReturnPosition = null;
         // The row this draft line stood for is gone, so the NEXT draft line is a new row and
         // owes its own new-record step (#3029). Clearing here rather than only in Reset is what
-        // keeps the latch from turning "once per row" into "once per page" — the failure a
-        // count-based test catches and an assignment-based one cannot.
+        // keeps the latch from turning "once per row" into "once per page".
+        //
+        // Guarded by DraftLineAbandonedByAParentMove_MakesTheNextRowOweItsOwnFiring, and by
+        // that arm alone: every other arm stays within ONE parent row, so all of them pass with
+        // this reset removed. Review established that by removing it — the fixture and all four
+        // corpus arms stayed green. Only moving the parent between two draft lines separates
+        // "once per row" from "once per page".
         _newRowLineRecordStarted = false;
     }
 

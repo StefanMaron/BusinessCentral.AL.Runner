@@ -304,4 +304,43 @@ codeunit 70646 "ONC Tests"
         Assert.AreEqual(2, LineCountFor('H1'), 'both rows must be written for H1');
         Assert.AreEqual(1, LineCountFor('H2'), 'H2''s own line must be untouched');
     end;
+
+    // The latch is ONCE PER ROW, and this is the arm that says so. Every other arm here stays
+    // within one parent row, so all of them pass with the latch never cleared at all -- "once
+    // per page" satisfies them. Only walking onto a draft line, moving the PARENT, and walking
+    // onto a second draft line can tell the two apart: the first draft line is abandoned rather
+    // than left, so if the latch survives that, the second row silently owes no firing.
+    //
+    // Written because review found that removing BOTH latch resets left every existing arm
+    // green -- the fixture and all four corpus arms. The comment on AbandonNewRowLine claimed
+    // this was "the failure a count-based test catches"; it was not, until this arm.
+    [Test]
+    procedure DraftLineAbandonedByAParentMove_MakesTheNextRowOweItsOwnFiring()
+    var
+        Card: TestPage "ONC Card";
+    begin
+        Initialize();
+        AddHeader('H3');
+
+        OpenCardOn('H1', Card);
+        Assert.IsFalse(Card.Lines.First(), 'H1 has no lines, so First() must return false');
+        Assert.AreEqual(1, FiringCount(),
+            'landing on H1''s draft line must raise OnNewRecord exactly once');
+
+        // Re-point the part at a different parent WITHOUT writing the draft line. The part
+        // abandons that line rather than leaving it, which is the path AbandonNewRowLine owns.
+        Card.GoToKey('H3');
+        Assert.IsFalse(Card.Lines.First(), 'H3 has no lines either, so First() must return false');
+
+        Assert.AreEqual(2, FiringCount(),
+            'the draft line under the NEW parent is a different row and owes its own firing -- if the latch survived the parent move this reads 1, which is "once per page" rather than once per row');
+
+        Card.Lines.Descr.SetValue('written under H3');
+        Assert.AreEqual(2, FiringCount(),
+            'writing into a draft line already started must not raise OnNewRecord again');
+
+        Card.Close();
+        Assert.AreEqual(0, LineCountFor('H1'), 'H1''s abandoned draft line must not have been written');
+        Assert.AreEqual(1, LineCountFor('H3'), 'exactly one line must have been written for H3');
+    end;
 }
