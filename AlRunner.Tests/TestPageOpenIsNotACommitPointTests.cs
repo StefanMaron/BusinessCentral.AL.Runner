@@ -153,7 +153,9 @@ public sealed class TestPageOpenIsNotACommitPointTests
     /// <summary>
     /// Negative control for the test above: the same scan DOES find the commit points that are
     /// meant to be there, so "found none" in MarkOpened means the call is absent rather than
-    /// the scan being blind. ALDatabase_ALCommit is AL's own <c>Commit()</c> and
+    /// the scan being blind. CommitWithoutTestExecutionGuard is the body of AL's own
+    /// <c>Commit()</c> — ALDatabase_ALCommit tail-calls it, having first applied the
+    /// AutoRollback refusal that must NOT apply to the internal caller (#3451) — and
     /// ResetWriteTransactionState is the per-test isolation boundary; both must keep marking.
     /// </summary>
     [Fact]
@@ -166,7 +168,7 @@ public sealed class TestPageOpenIsNotACommitPointTests
         var sites = CallSitesOf(module, "AlRunner.Patches.ALDatabasePatches",
             nameof(AlRunner.Patches.RecordPatches.MarkCommitPoint));
 
-        Assert.Contains("AlRunner.Patches.ALDatabasePatches::ALDatabase_ALCommit", sites);
+        Assert.Contains("AlRunner.Patches.ALDatabasePatches::CommitWithoutTestExecutionGuard", sites);
         Assert.Contains("AlRunner.Patches.ALDatabasePatches::ResetWriteTransactionState", sites);
     }
 }

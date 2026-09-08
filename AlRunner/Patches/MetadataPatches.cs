@@ -119,25 +119,42 @@ public static partial class BcRuntime
     }
 
     /// <summary>
-    /// The <c>[Test]</c> method currently executing, or <c>null</c> outside one — read straight
+    /// The <c>[Test]</c> method currently executing, or <c>null</c> when none is — read straight
     /// off BC's own <c>NavTestExecution.executingTestMethod</c>, the field
     /// <see cref="EnterTestExecutionScope(object, MethodInfo?)"/> pokes and
     /// <see cref="LeaveTestExecutionScope"/> clears, for the same reason
     /// <see cref="InTestExecutionScope"/> is: one copy of the state, not two that can drift.
+    /// See ALDatabasePatches.ALDatabase_ALCommit for what consults it.
     ///
-    /// <para>BC's ALDatabase.ALCommit consults the executing test's transaction model through
-    /// <c>session.TestExecution.CurrentTransactionModel</c>, which NavTestCodeunit sets from
-    /// this very method's [Test] attribute before invoking it. Reading the attribute back off
-    /// the method is therefore the same fact by the same route — see
-    /// ALDatabasePatches.ALDatabase_ALCommit.</para>
+    /// <para><c>null</c> means exactly one thing here — no test method is executing. A seam that
+    /// could not be resolved throws <see cref="AlRunner.Infrastructure.BcShapeGapException"/>
+    /// instead, because the two are not the same answer and the caller cannot tell them apart:
+    /// degrading a missing seam to <c>null</c> would silently reinstate the accepted-Commit()
+    /// defect this exists to fix. Same split ALDatabasePatches.CurrentCommitBehaviorName draws
+    /// between "no session" and "the property is gone".</para>
+    ///
+    /// <para>Deliberately unlike <see cref="InTestExecutionScope"/>, which answers <c>false</c> on
+    /// an unresolved seam: that one gates a REFUSAL (#2805 StartSession), where failing to know
+    /// must let the call through. This one gates a refusal too, but its "safe" direction is the
+    /// defect, so it cannot borrow that reasoning.</para>
     /// </summary>
     public static MethodInfo? ExecutingTestMethod
     {
         get
         {
-            if (_testExecutionInstance == null || _fExecutingTestMethod == null) return null;
-            try { return _fExecutingTestMethod.GetValue(_testExecutionInstance) as MethodInfo; }
-            catch { return null; }
+            if (_testExecutionInstance == null)
+                throw new AlRunner.Infrastructure.BcShapeGapException(
+                    "NavTestExecution", "NavSession.TestExecution",
+                    "the test-execution seam did not resolve, so no caller can tell whether a "
+                    + "[Test] method is executing");
+
+            EnsureExecutingTestMethodFields();
+            if (_fExecutingTestMethod == null)
+                throw new AlRunner.Infrastructure.BcShapeGapException(
+                    "NavTestExecution", "NavTestExecution.executingTestMethod",
+                    "field not found, so the executing [Test] method cannot be identified");
+
+            return _fExecutingTestMethod.GetValue(_testExecutionInstance) as MethodInfo;
         }
     }
 
@@ -161,6 +178,25 @@ public static partial class BcRuntime
     private static bool _executingTestMethodFieldsResolved;
 
     /// <summary>
+    /// Resolve NavTestExecution's executingTestMethod/executingTestAttr once. Called from both
+    /// <see cref="SetExecutingTestMethod"/> and <see cref="ExecutingTestMethod"/> — the latter can
+    /// be reached by an AL <c>Commit()</c> before any test method has started (install and upgrade
+    /// triggers), so it cannot rely on the poke having run the resolution first.
+    /// </summary>
+    private static void EnsureExecutingTestMethodFields()
+    {
+        if (_executingTestMethodFieldsResolved || _testExecutionInstance == null) return;
+        _executingTestMethodFieldsResolved = true;
+        var t = _testExecutionInstance.GetType();
+        _fExecutingTestMethod = t.GetField("executingTestMethod", BindingFlags.NonPublic | BindingFlags.Instance);
+        _fExecutingTestAttr = t.GetField("executingTestAttr", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (_fExecutingTestMethod == null || _fExecutingTestAttr == null)
+            Console.Error.WriteLine(
+                "[BcRuntime] NavTestExecution.executingTestMethod/executingTestAttr NOT FOUND — "
+                + "[HandlerFunctions] dispatch will not work");
+    }
+
+    /// <summary>
     /// Poke NavTestExecution's executingTestMethod/executingTestAttr — BC's own EnterTestMethod
     /// (and LeaveTestMethod, when <paramref name="testMethod"/> is null). The attribute is read
     /// off the method itself: the AL compiler emits [HandlerFunctions('A,B')] as
@@ -169,17 +205,7 @@ public static partial class BcRuntime
     private static void SetExecutingTestMethod(MethodInfo? testMethod)
     {
         if (_testExecutionInstance == null) return;
-        if (!_executingTestMethodFieldsResolved)
-        {
-            _executingTestMethodFieldsResolved = true;
-            var t = _testExecutionInstance.GetType();
-            _fExecutingTestMethod = t.GetField("executingTestMethod", BindingFlags.NonPublic | BindingFlags.Instance);
-            _fExecutingTestAttr = t.GetField("executingTestAttr", BindingFlags.NonPublic | BindingFlags.Instance);
-            if (_fExecutingTestMethod == null || _fExecutingTestAttr == null)
-                Console.Error.WriteLine(
-                    "[BcRuntime] NavTestExecution.executingTestMethod/executingTestAttr NOT FOUND — "
-                    + "[HandlerFunctions] dispatch will not work");
-        }
+        EnsureExecutingTestMethodFields();
         if (_fExecutingTestMethod == null || _fExecutingTestAttr == null) return;
 
         object? attr = null;
