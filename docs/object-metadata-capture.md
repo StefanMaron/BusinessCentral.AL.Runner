@@ -71,6 +71,13 @@ registry uses the same three rather than inventing a fourth.
 | source-dependency compile cache HIT | `AlObjectMetadataRegistry.LoadSidecar` replays `<key>.object-metadata.json`; written by `PublishSourceDependencyCache`, scoped to the keys that dependency's own emit added | `AlRunner/DependencyLoader.cs` |
 | `--watch` / `--server` RAD fast path | `BcRuntime.ResetForNewBundleReload` clears the registry each cycle; the per-module shadow snapshot survives the reset and is replayed on every fast-path return | `AlRunner/BcCompiler.Incremental.cs` |
 
+The first two are pinned by `AlRunner.Tests/ObjectMetadataCaptureTests.cs`; the RAD one by
+`AlRunner.Tests/RadObjectMetadataSnapshotReloadTests.cs`, which drives the two calls `--watch`
+drives (`ResetForNewBundleReload`, then `TryEmitIncremental`) and reads the registry back per
+(kind, id). It covers the destructive direction too — an object whose file is deleted between
+cycles must stop being answerable, and one whose source changed must answer the new document
+rather than the snapshot's.
+
 Consequences worth knowing before changing any of this:
 
 - The bundle sidecar's shape is part of the AL-output cache key (`schema:v14`,
