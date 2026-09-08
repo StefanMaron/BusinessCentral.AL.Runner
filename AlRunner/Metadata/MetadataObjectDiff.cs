@@ -364,23 +364,18 @@ public static class MetadataObjectDiff
         var list = new List<object?>();
         if (v is null) return list;
         if (v is IEnumerable en && v is not string)
-        {
             foreach (var it in en) list.Add(Unwrap(it));
-            return list;
-        }
-        // ImmutableArray<T> / any generic-only enumerable.
-        var m = v.GetType().GetMethod("GetEnumerator", BindingFlags.Public | BindingFlags.Instance);
-        if (m is not null)
-        {
-            var e = m.Invoke(v, null);
-            if (e is not null)
-            {
-                var moveNext = e.GetType().GetMethod("MoveNext")!;
-                var current = e.GetType().GetProperty("Current")!;
-                while ((bool)(moveNext.Invoke(e, null) ?? false)) list.Add(Unwrap(current.GetValue(e)));
-            }
-        }
         return list;
+
+        // There used to be a reflective GetEnumerator/MoveNext/Current fallback here for
+        // "ImmutableArray<T> / any generic-only enumerable". It could not run: IEnumerable<T>
+        // DERIVES from IEnumerable, so every value IsCollection accepts satisfies the branch
+        // above — including ImmutableArray<T>, whose boxed struct implements both. Probed to be
+        // certain rather than reasoned alone: instrumented, it was reached zero times across the
+        // whole MetaTable graph of 150 tables. And a value that is genuinely not enumerable
+        // cannot reach here for a same-typed member anyway, because both sides are the same
+        // MetaTable member and MetaTable's collection members are all ImmutableArray or
+        // ImmutableDictionary; Walk reports a runtime-type mismatch before this is called.
     }
 
     /// <summary>A dictionary enumerates as KeyValuePair; the value is what gets compared.</summary>
