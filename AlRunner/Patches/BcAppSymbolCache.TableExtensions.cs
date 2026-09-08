@@ -287,9 +287,9 @@ internal static partial class BcAppSymbolCache
                     && (vtr == "0" || vtr.Equals("false", StringComparison.OrdinalIgnoreCase)));
                 // #3545 — read exactly as the base-table loop reads them, for the same reason
                 // the TableRelation gate above gives: the two loops must not disagree about
-                // the same JSON. An extension field's DataClassification inherits the EXTENDED
-                // table's when it declares none, which is resolved in BuildMetaField where the
-                // base table is in hand.
+                // the same JSON. DataClassificationName is the field's OWN declaration here;
+                // ApplyOwnerDataClassification below resolves the effective value, and which
+                // object counts as the owner is the thing to read there before changing it.
                 var editable = SymbolEditable(props);
                 props.TryGetValue("DataClassification", out var fieldDataClassification);
                 var (enumTypeId, enumTypeName) = SymbolEnumType(
