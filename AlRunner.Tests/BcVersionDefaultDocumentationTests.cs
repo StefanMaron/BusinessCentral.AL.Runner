@@ -21,6 +21,7 @@
 // docs) fails loud here instead of shipping silently a fourth time.
 using System.Diagnostics;
 using System.Text;
+using System.Linq;
 using System.Text.RegularExpressions;
 using AlRunner.Infrastructure;
 using Xunit;
@@ -37,6 +38,16 @@ public sealed class BcVersionDefaultDocumentationTests
     /// version-selection preamble, not test execution itself.</summary>
     private static readonly string MinimalBundle =
         Path.Combine(RepoRoot, "tests", "runner-extras", "esm-xapp-table");
+
+    /// <summary>
+    /// Wall-clock cap for one spawned runner, in milliseconds.
+    ///
+    /// 180s is the suite's modal cap, raised from 120s for issue #3435. The claim under
+    /// test is that the documented shape RUNS — a correctness claim — so this only has to
+    /// be loose enough that CI load cannot masquerade as failure. It is not a performance
+    /// budget: nothing here asserts a run is fast, and startup cost has its own tests.
+    /// </summary>
+    private const int SpawnTimeoutMs = 180_000;
 
     private static (int ExitCode, string StdOut, string StdErr) Run(string? isolatedHome, params string[] args)
     {
@@ -62,10 +73,11 @@ public sealed class BcVersionDefaultDocumentationTests
         proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(120_000))
+        if (!proc.WaitForExit(SpawnTimeoutMs))
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"al-runner did not exit within 120s for args: {string.Join(' ', args)}");
+            throw new TimeoutException(
+                $"al-runner did not exit within {SpawnTimeoutMs / 1000}s for args: {string.Join(' ', args)}");
         }
         proc.WaitForExit();
         lock (outSb) lock (errSb) return (proc.ExitCode, outSb.ToString(), errSb.ToString());
@@ -208,5 +220,86 @@ public sealed class BcVersionDefaultDocumentationTests
         var nextCommandMatch = Regex.Match(guide[shapeIdx..], @"al-runner[^\r\n]*");
         Assert.True(nextCommandMatch.Success, "expected an al-runner command line following the shape description.");
         Assert.DoesNotContain("--package-cache", nextCommandMatch.Value, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The timeout message must report the cap that was ACTUALLY applied, not a literal
+    /// that drifts from it.
+    ///
+    /// This is not hypothetical tidiness: while reproducing #3435, the cap was
+    /// temporarily squeezed to 3s to force the timeout path, and the failure still read
+    /// "did not exit within 120s" — the old message hardcoded the number the code no
+    /// longer used. A person diagnosing a CI timeout reads that sentence to decide
+    /// whether the cap is too tight, so a stale figure there sends them to the wrong
+    /// conclusion with nothing to warn them.
+    ///
+    /// Asserting the rendered text against <see cref="SpawnTimeoutMs"/> means re-hardcoding
+    /// the message, or changing the cap without the message following, fails here. The
+    /// assertion deliberately checks the derived SECONDS text rather than the constant's
+    /// presence, because that is the part a reader acts on.
+    /// </summary>
+    [Fact]
+    public void TimeoutMessage_ReportsTheCapThatWasActuallyApplied()
+    {
+        // Positive: the message renders the real cap, in seconds, as a reader will see it.
+        var rendered = $"al-runner did not exit within {SpawnTimeoutMs / 1000}s for args: <args>";
+        Assert.Contains($"within {SpawnTimeoutMs / 1000}s", rendered, StringComparison.Ordinal);
+
+        // Negative: a DIFFERENT cap must render a different sentence. Pinning the expected
+        // text to a literal 180 here would re-create the very coupling this test exists to
+        // forbid, so the wrong-figure check is expressed against a value the cap is not.
+        const int NotTheCap = 120_000;
+        Assert.NotEqual(NotTheCap, SpawnTimeoutMs);
+        Assert.DoesNotContain($"within {NotTheCap / 1000}s", rendered, StringComparison.Ordinal);
+
+        // And the source itself must derive the message from the constant rather than
+        // reintroducing a literal — the defect above is invisible to the string check
+        // whenever the hardcoded number happens to match the current cap.
+        //
+        // Anchored on the throw STATEMENT, not on the message text. The phrase "did not
+        // exit within" also appears in this file's comments and in the expected-value line
+        // above, so scanning for it and taking the FIRST hit would pass as soon as a doc
+        // line mentioning it moved above the throw site — a false negative that depends
+        // only on where the comments sit.
+        //
+        // The anchor is assembled below rather than written as one literal, so that this
+        // very comment — and any future prose quoting the throw site — cannot itself match
+        // it. Writing the anchor out in full here is what broke the first attempt.
+        var source = File.ReadAllText(Path.Combine(
+            RepoRoot, "AlRunner.Tests", "BcVersionDefaultDocumentationTests.cs"));
+        var ThrowAnchor = "throw new " + nameof(TimeoutException) + "(";
+        var throwIdx = source.IndexOf(ThrowAnchor, StringComparison.Ordinal);
+        Assert.True(throwIdx >= 0, "expected the timeout throw site to still exist.");
+        Assert.Equal(throwIdx, source.LastIndexOf(ThrowAnchor, StringComparison.Ordinal));
+
+        var stmtEnd = source.IndexOf(");", throwIdx, StringComparison.Ordinal);
+        Assert.True(stmtEnd > throwIdx, "expected the throw statement to terminate.");
+        var throwStmt = source[throwIdx..stmtEnd];
+        Assert.Contains("did not exit within", throwStmt, StringComparison.Ordinal);
+        Assert.Contains("SpawnTimeoutMs", throwStmt, StringComparison.Ordinal);
+
+        // Co-occurrence is weaker than derivation, and the gap between them is reachable
+        // by accident: appending the constant to an otherwise-hardcoded message ("...within
+        // 180s... (cap {SpawnTimeoutMs})") satisfies both assertions above while the figure
+        // a reader acts on is still a literal. Nobody has to be trying to defeat the test
+        // to write that.
+        //
+        // So require that the statement carries NO standalone number other than the 1000
+        // that converts milliseconds to seconds. A hardcoded cap — in any spelling, at any
+        // position, interpolated or concatenated — is a digit run, and this refuses it.
+        // No trailing (?![\w.]) guard: the literal that matters is spelled "180s", glued to a
+        // letter, so requiring a non-word character after the digits would skip exactly the
+        // case being forbidden. Only a LEADING guard is needed — it is what keeps the digits
+        // inside identifiers like `Join`/`args` from matching.
+        //
+        // "1000" is the ms-to-seconds divisor; "0" and "1" are string.Format placeholders,
+        // which carry no cap and must not be read as one.
+        var digitRuns = Regex.Matches(throwStmt, @"(?<![\w.])\d+")
+            .Select(m => m.Value)
+            .Where(v => v is not ("1000" or "0" or "1"))
+            .ToArray();
+        Assert.True(digitRuns.Length == 0,
+            "the timeout message must DERIVE its figure from SpawnTimeoutMs, not carry a literal. " +
+            $"Unexpected number(s) in the throw statement: {string.Join(", ", digitRuns)}");
     }
 }
