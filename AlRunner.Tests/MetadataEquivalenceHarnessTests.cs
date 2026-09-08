@@ -192,9 +192,11 @@ public sealed class MetadataEquivalenceHarnessTests
         // answers BC exactly. Both are asserted here, and neither can go inert. The counts
         // themselves are recorded in docs/metadata-equivalence.md, where a measurement belongs.
         //
-        // The three members #3545 fixed — Editable, DataClassification, EnumTypeId — moved
-        // from the first list to the second in that change, and their allowlist entries were
-        // deleted with it. Their agreement is re-asserted below rather than left to
+        // The two members #3545 fixed — Editable and DataClassification — moved from the first
+        // list to the second in that change, and their allowlist entries were deleted with it.
+        // EnumTypeId did NOT move and is still asserted as a defect below: the value is
+        // readable and stating it is what is blocked, on #3594. Their agreement is re-asserted
+        // rather than left to
         // Every_difference_is_declared_with_a_reason, which would report a regression as an
         // undeclared member and say nothing about which reader rule broke.
         foreach (var report in RunAll())
@@ -223,12 +225,16 @@ public sealed class MetadataEquivalenceHarnessTests
             AssertConstantAnswer(report, Declared("MetaField.CaptionML." + MetadataObjectDiff.PresenceMember),
                 "MetaField.CaptionML", bc: "present", runner: MetadataObjectDiff.Null);
 
+            // Still wrong for a reason that is not a reading defect: the id is known and
+            // stating it needs a metadata object BC can resolve (#3594).
+            AssertConstantAnswer(report, Declared("MetaField.EnumTypeId"), "MetaField.EnumTypeId",
+                bc: null, runner: "0");
+
             // Fixed by #3545, and asserted over EVERY field rather than only the declared
             // ones: the same change corrected BC's six platform-added fields, whose Editable
             // and DataClassification come from SystemFieldsHelper's boilerplate.
             AssertReaderAgrees(report, "MetaField.Editable");
             AssertReaderAgrees(report, "MetaField.DataClassification");
-            AssertReaderAgrees(report, "MetaField.EnumTypeId");
         }
     }
 

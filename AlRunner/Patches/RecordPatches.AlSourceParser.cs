@@ -1535,8 +1535,10 @@ internal record ParsedRelationArm(string TableName, string? FieldName, List<Pars
 /// hand, so consumers never re-derive it; that method carries the rule and its two exceptions.
 /// See docs/metadata-equivalence.md#field-dataclassification-inherits-its-owner (#3545).</param>
 /// <param name="EnumTypeId">The object id of the enum an <c>Enum "X"</c>-typed field names, or
-/// 0 when the field is not enum-typed. <c>MetaField.EnumTypeId</c> is what resolves such a
-/// field back to its enum object (#3545).</param>
+/// 0 when the field is not enum-typed. Read from the symbol file and NOT yet passed to
+/// <c>MetaField.enumTypeId</c> — BC then resolves the id through NCLMetadata and the runner
+/// registers no metadata object for a precompiled app's enum (#3594). Carried here so the
+/// reading is in place when it is.</param>
 /// <param name="EnumTypeName">The enum's name, paired with <see cref="EnumTypeId"/>; null when
 /// the field is not enum-typed.</param>
 internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false, string ObsoleteState = "No", string? ObsoleteReason = null, string? MinValue = null, string? MaxValue = null, bool? Editable = null, string? DataClassificationName = null, int EnumTypeId = 0, string? EnumTypeName = null);

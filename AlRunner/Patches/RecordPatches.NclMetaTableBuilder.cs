@@ -566,15 +566,16 @@ public static partial class RecordPatches
                 args[i] = dcVal;
                 continue;
             }
-            // #3545 — the enum object an `Enum "X"`-typed field names. Both halves come from
-            // the symbol file's TypeDefinition.Subtype and are passed together or not at all:
-            // an id with no name (or the reverse) is a shape BC never produces.
-            if (p.Name == "enumTypeId" && f.EnumTypeId != 0) { args[i] = f.EnumTypeId; continue; }
-            if (p.Name == "enumTypeName" && f.EnumTypeId != 0 && !string.IsNullOrEmpty(f.EnumTypeName))
-            {
-                args[i] = f.EnumTypeName;
-                continue;
-            }
+            // The enum object an `Enum "X"`-typed field names is deliberately NOT passed, even
+            // though ParsedField now carries it. Passing enumTypeId makes BC's own
+            // FieldDataProvider.GetFieldRecordBuffer resolve that id through NCLMetadata, and
+            // for a PRECOMPILED app's enum the runner registers no metadata object for it —
+            // measured on the corpus: every read of the Field virtual table (2000000041) for
+            // Base Application table 1366 then threw NavMetadataNotFoundException("Enum 8889"),
+            // which aborted codeunit 2 Company-Initialize and took the whole corpus app's
+            // 2,900 tests with it. Reading the id is the easy half; making it resolvable is
+            // the work, and it is tracked on #3594 with MetaField.EnumTypeId still declared in
+            // the metadata-equivalence allowlist.
             if (p.Name == "fieldClass" && _tFieldClass != null && (f.IsFlowField || f.IsFlowFilter))
             {
                 // #1716 — FlowFilter must reach the metadata as FlowFilter. NCLMetaTable

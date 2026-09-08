@@ -197,6 +197,16 @@ all stated in `SymbolReference.json`, and the reader read none of them. Together
 classification the Field and Table Metadata virtual tables report, and whether an enum-typed
 field can be resolved back to its enum object at all.
 
+**Two of the three landed.** The enum id did not, and the reason is the useful part: reading it
+was never the problem. Stating `enumTypeId` on the `MetaField` makes BC's own
+`FieldDataProvider.GetFieldRecordBuffer` resolve that id through `NCLMetadata`, and the runner
+registers no metadata object for a **precompiled** app's enum — so every read of the Field
+virtual table for Base Application table 1366 threw `NavMetadataNotFoundException("Enum 8889")`,
+which aborted codeunit 2 `Company-Initialize` and reported the corpus app as `EXEC-FAIL` with 0
+of ~2,900 tests run. Registering the metadata is the work, and it is #3594; `MetaField.EnumTypeId`
+stays declared in the allowlist until then, with the measurement below recorded on it so nobody
+re-derives it.
+
 The rules below are measurements, not readings of the AL documentation. Each was checked by
 joining every field of Business Foundation and System Application in `SymbolReference.json`
 to the same field in BC's own emitted metadata, on four BC builds — **3,848 field
@@ -204,22 +214,15 @@ observations, zero counterexamples for all three rules**.
 
 | | rule |
 |---|---|
-| `Editable` | stated only where it is `0`; silence means true. So only the false is carried, and `MetaField`'s own null default decides the rest. |
-| `EnumTypeId` / `EnumTypeName` | `TypeDefinition.Subtype.Id` and `.Name`, when `TypeDefinition.Name == "Enum"`. Presence of the subtype and presence of BC's emitted `EnumTypeId` agree on every observation. |
-| field `DataClassification` | see the next section — it is the one with exceptions. |
+| `Editable` | stated only where it is `0`; silence means true. So only the false is carried, and `MetaField`'s own null default decides the rest. **Landed.** |
+| field `DataClassification` | see the next section — it is the one with exceptions. **Landed.** |
+| `EnumTypeId` / `EnumTypeName` | `TypeDefinition.Subtype.Id` and `.Name`, when `TypeDefinition.Name == "Enum"`. Presence of the subtype and presence of BC's emitted `EnumTypeId` agree on every observation. **Read, not stated — #3594.** |
 
-Two things deliberately not done.
-
-**`EnumTypeId`/`EnumTypeName` are not read from AL source.** The enum's OBJECT ID is not in the
-type text, and the name alone would produce a pair BC never emits — an id of 0 beside a real
-name. A source-compiled enum field is served by `FixupEnumFieldOptionMetadata`, a different
-mechanism, and half of this pair is worse than none of it.
-
-**`MetaField.EnumTypeName` stays declared in the allowlist**, down from 1,888 to 1,811. What
-remains is not this defect: it is BC answering `null` where the runner answers the empty
-string on the ~1,800 fields that are not enum-typed at all, the same null-versus-empty shape
-twenty other `MetaField` members carry. That is #3568's, and folding it in here would have
-let a real difference ride out under a fixed member's name.
+**`EnumTypeId`/`EnumTypeName` are not read from AL source either**, independently of #3594. The
+enum's OBJECT ID is not in the type text, and the name alone would produce a pair BC never emits
+— an id of 0 beside a real name. A source-compiled enum field is served by
+`FixupEnumFieldOptionMetadata`, a different mechanism, and half of this pair is worse than none
+of it.
 
 <a id="field-dataclassification-inherits-its-owner"></a>
 ## A field's DataClassification inherits its OWNER, with two exceptions
@@ -259,12 +262,12 @@ builds them by parsing boilerplate XML: `Editable="0"` on all six, and
 
 | | before | after |
 |---|---:|---:|
-| differences | 70,728 | 68,023 |
-| members differing | 74 | 71 |
+| differences | 70,728 | 68,177 |
+| members differing | 74 | 72 |
 | `MetaField.Editable` | 987 | **0** |
 | `MetaField.DataClassification` | 1,564 | **0** |
-| `MetaField.EnumTypeId` | 77 | **0** |
-| `MetaField.EnumTypeName` | 1,888 | 1,811 |
+| `MetaField.EnumTypeId` | 77 | 77 (#3594) |
+| `MetaField.EnumTypeName` | 1,888 | 1,888 (#3568) |
 
 No other member moved in either direction, and no new member appeared.
 
