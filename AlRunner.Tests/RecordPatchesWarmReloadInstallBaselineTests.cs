@@ -147,7 +147,7 @@ public sealed class RecordPatchesWarmReloadInstallBaselineTests : IDisposable
                     new(tableId, v1, Array.Empty<NavValue[]>()),
                 }),
             },
-            IsolatedStorage: null, RecordLinks: null, AutoIncrement: null);
+            IsolatedStorage: null, AutoIncrement: null);
 
         // ── SIMULATE THE --server / --watch PER-REQUEST RESET ──────────────────────────
         // TestExecutor._depCompanyBaselineCache (holding `snapshot` above) is a process
@@ -203,7 +203,7 @@ public sealed class RecordPatchesWarmReloadInstallBaselineTests : IDisposable
                     new(tableId, v1, Array.Empty<NavValue[]>()),
                 }),
             },
-            IsolatedStorage: null, RecordLinks: null, AutoIncrement: null);
+            IsolatedStorage: null, AutoIncrement: null);
 
         RecordPatches.ResetForReload();
 

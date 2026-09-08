@@ -81,7 +81,7 @@ public sealed class InstallBaselineAppendConcurrencyTests : IDisposable
     }
 
     private static RecordPatches.InstallBaselineSnapshot EmptySnapshot()
-        => new(new List<RecordPatches.BaselineSource>(), null, null, null);
+        => new(new List<RecordPatches.BaselineSource>(), null, null);
 
     private static NavValue[][] Rows(params string[] values)
         => values.Select(v => new NavValue[] { new NavText(0, v) }).ToArray();
@@ -161,7 +161,7 @@ public sealed class InstallBaselineAppendConcurrencyTests : IDisposable
             {
                 new(source, new List<RecordPatches.BaselineTable>()),
             },
-            null, null, null);
+            null, null);
         RecordPatches.SetActiveDepCompanyBaseline(depCompany);
 
         using var firstIsParked = new ManualResetEventSlim(false);
@@ -274,7 +274,7 @@ public sealed class InstallBaselineAppendConcurrencyTests : IDisposable
             }),
         };
         RecordPatches.SetActiveDepCompanyBaseline(
-            new RecordPatches.InstallBaselineSnapshot(sources, null, null, null));
+            new RecordPatches.InstallBaselineSnapshot(sources, null, null));
 
         var walkedTables = new List<int>();
         var appends = 0;

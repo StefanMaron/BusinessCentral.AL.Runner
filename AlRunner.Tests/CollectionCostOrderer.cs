@@ -137,7 +137,10 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // 125.6s on the first CI run of that branch (BC 28.4 leg), where it was absent
             // from this table, fell back to UnmeasuredWeightSeconds and was dispatched at
             // t=181s of a 309s run — a 77s single-threaded tail, the #1887 pattern again.
-            ["InstallBaselineDiskCacheTests"] = 125,
+            // #3380 added a fifth case (an entry from the previous schema version, three more
+            // runner spawns). Locally 3m13s for the class against the 5 cases; recorded as
+            // 165 rather than re-measured on a CI leg, which is the number this table wants.
+            ["InstallBaselineDiskCacheTests"] = 165,
             // #2272: 3 tests, each spawning a real runner subprocess (the app-group one runs
             // two bundles in a single invocation), all with AL_RUNNER_NO_DEP_COMPANY_CACHE=1
             // so every spawn pays the dependency Install triggers + Company-Initialize

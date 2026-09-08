@@ -12,8 +12,8 @@
 //   reloaded from disk.
 //
 // WHAT IS PERSISTED
-//   Exactly the four things InstallBaselineSnapshot holds — table rows, isolated storage,
-//   record links, auto-increment counters — MINUS the self-populating virtual system tables
+//   Exactly the three things InstallBaselineSnapshot holds — table rows, isolated storage,
+//   auto-increment counters — MINUS the self-populating virtual system tables
 //   (see IsSelfPopulatingVirtualTableId). Everything else round-trips through BC's OWN
 //   NavValue byte codec (NavValue.GetBytes / NavValue.CreateNavValueFromBytes, the pair the
 //   service tier itself uses to move field values in and out of binary), so the runner is not
@@ -55,7 +55,13 @@ public static partial class RecordPatches
     // deserialises cleanly under new semantics is the one failure mode a cache cannot
     // detect for itself.
     private const uint InstallBaselineDiskMagic = 0x42494C41;
-    internal const int InstallBaselineDiskSchemaVersion = 2;
+    // 2 -> 3 (#3380): the record-link section is gone. Link rows are not lost with it — they
+    // live in the Record Link table (2000000068), which this file persists as an ordinary
+    // table; the section held a second, never-written copy of the same store and was always
+    // zero-length. A version-2 file is structurally readable under version-3 semantics right
+    // up to the trailing-bytes check, which is exactly the "old file that still deserialises"
+    // case the comment above says a cache cannot detect for itself.
+    internal const int InstallBaselineDiskSchemaVersion = 3;
 
     // Pool-entry kinds. Kind is stored per DISTINCT NavValue instance, not per row slot.
     private const byte KindBytes = 1;       // NavValue.GetBytes() + NavValue.CreateNavValueFromBytes
@@ -254,7 +260,6 @@ public static partial class RecordPatches
                 }
 
             TenantStoragePatches.SerializeInstallBaseline(w, snapshot.IsolatedStorage);
-            RecordLinkPatches.SerializeInstallBaseline(w, snapshot.RecordLinks);
 
             var ai = snapshot.AutoIncrement;
             w.Write(ai?.Count ?? 0);
@@ -407,7 +412,15 @@ public static partial class RecordPatches
             var version = r.ReadInt32();
             if (version != InstallBaselineDiskSchemaVersion)
             {
-                DiskLog($"cannot restore: schema version {version}, this build writes {InstallBaselineDiskSchemaVersion}");
+                // Loud about WHICH gate refused. An entry from another build's codec and a
+                // truncated one are different events with the same remedy, and reading one as
+                // the other has already cost a diagnosis here; the two version numbers are what
+                // tell them apart. The entry is deleted and recomputed by the caller either
+                // way, so this costs the run a cache hit and nothing else — which is why it
+                // stays on the [InstallBaselineDisk] component rather than becoming a [warn].
+                DiskLog($"cannot restore: schema version {version}, this build writes "
+                      + $"{InstallBaselineDiskSchemaVersion} — the entry was written by a "
+                      + "different build's codec; deleting it and recomputing");
                 return null;
             }
             var storedKey = r.ReadString();
@@ -487,7 +500,6 @@ public static partial class RecordPatches
             }
 
             var isolatedStorage = TenantStoragePatches.DeserializeInstallBaseline(r);
-            var recordLinks = RecordLinkPatches.DeserializeInstallBaseline(r);
 
             var aiCount = r.ReadInt32();
             var autoIncrement = new Dictionary<int, long>(aiCount);
@@ -505,7 +517,7 @@ public static partial class RecordPatches
 
             return new InstallBaselineSnapshot(
                 new List<BaselineSource> { new BaselineSource(sourceObject, baselineTables) },
-                isolatedStorage, recordLinks, autoIncrement);
+                isolatedStorage, autoIncrement);
         }
         catch (Exception ex)
         {
@@ -612,8 +624,6 @@ public static partial class RecordPatches
                 }
             }
         foreach (var line in TenantStoragePatches.DescribeInstallBaseline(snapshot.IsolatedStorage))
-            sb.Append(line).Append('\n');
-        foreach (var line in RecordLinkPatches.DescribeInstallBaseline(snapshot.RecordLinks))
             sb.Append(line).Append('\n');
         foreach (var (k, v) in (snapshot.AutoIncrement ?? new Dictionary<int, long>()).OrderBy(p => p.Key))
             sb.Append("ai|").Append(k).Append('|').Append(v).Append('\n');

@@ -70,7 +70,7 @@ public sealed class BackupRowProvenanceTests : IDisposable
     }
 
     private static RecordPatches.InstallBaselineSnapshot EmptySnapshot()
-        => new(new List<RecordPatches.BaselineSource>(), null, null, null);
+        => new(new List<RecordPatches.BaselineSource>(), null, null);
 
     private static NavValue[][] Rows(params string[] values)
         => values.Select(v => new NavValue[] { new NavText(0, v) }).ToArray();

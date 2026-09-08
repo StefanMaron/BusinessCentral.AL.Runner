@@ -414,7 +414,6 @@ public static partial class RecordPatches
         _installBaseline = null;
         SetActiveDepCompanyBaseline(null);
         _isolatedStorageBaseline = null;
-        _recordLinkBaseline = null;
         _autoIncrementBaseline = null;
         // Drop the in-memory table rows so an edited re-run starts clean instead of
         // seeing Inserts from the previous run (which would e.g. throw "already exists").
@@ -1783,9 +1782,9 @@ public static partial class RecordPatches
         foreach (var (_, perTable) in _dataAccessByTable)
             perTable.Clear();
 
-        // RecordLink polyfill store is also per-test — BC's RecordLink table is part
-        // of the per-test transaction (records' links go away on rollback).
-        AlRunner.Patches.RecordLinkPatches.ResetForTest();
+        // Record links need no store of their own to reset: they live in the Record Link
+        // table (2000000068), whose rows are cleared by the _dataAccessByTable drain above
+        // and put back by the install-baseline restore, exactly like any other table (#3378).
 
         // IsolatedStorage in-memory store — per-test reset matches BC semantics where
         // a test's writes are rolled back on completion.

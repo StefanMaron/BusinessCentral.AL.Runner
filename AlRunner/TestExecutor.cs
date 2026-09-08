@@ -222,14 +222,14 @@ public sealed class TestExecutor
     // group's very first codeunit — calls RecordPatches.RestoreInstallBaseline() (see the
     // TestIsolation.Codeunit / TestIsolation.Test branches further down in this file), and
     // that call begins with ResetPerTestState() (RecordPatches.cs), which unconditionally
-    // wipes exactly those things: _dataAccessByTable per-table rows,
-    // RecordLinkPatches.ResetForTest(), TenantStoragePatches.ResetForTest(),
+    // wipes exactly those things: _dataAccessByTable per-table rows (which is where record
+    // links live — the Record Link table, #3378), TenantStoragePatches.ResetForTest(),
     // MediaSetPatches.ResetForTest(), ALDatabasePatches.ResetWriteTransactionState(),
     // BcRuntime.DisposeSkeletonSharedObjectContainerChildren(), and
     // BcRuntime.ResetSingleInstanceCache(). So the set of install-seed state that can ever
     // survive to the moment ANY test body runs is exactly
-    // {table rows, isolated storage, record links, auto-increment} — precisely the four
-    // things InstallBaselineSnapshot captures. A non-table side effect of a dependency
+    // {table rows (record links among them), isolated storage, auto-increment} — precisely
+    // the three things InstallBaselineSnapshot captures. A non-table side effect of a dependency
     // Install trigger was already unobservable to every test BEFORE this cache existed;
     // caching the snapshot doesn't create a new gap, it caches the only part of the
     // dependency Install/Company-Initialize output that was ever able to reach a test in

@@ -39,7 +39,8 @@
 //
 // THE AL ASSERTION IS THE NON-VACUITY GUARD
 //   The bundle's test reads the seeded rows back by VALUE — the marker text, a positive
-//   decimal, a negative decimal, and the row count. A cache that restored nothing, or restored
+//   decimal, a negative decimal, the row count, and (#3380) the record link the trigger
+//   attached to SEED-1, through both HasLinks and the Record Link table. A cache that restored nothing, or restored
 //   a truncated or re-lengthened value, fails that test rather than merely running fast. It is
 //   deliberately not an `Assert.IsTrue(true)`-shaped "the row exists" check: see
 //   .claude/rules/tdd.md.
@@ -212,6 +213,12 @@ internal static class InstallSeedClosure
                 SeedRow.Description := '{{marker}}';
                 SeedRow.Amount := 42.5;
                 SeedRow.Insert(true);
+                // #3380: one record link, written through the AL surface inside the same
+                // install-trigger window. It lands in the Record Link table (2000000068),
+                // which the baseline captures as an ordinary table — the bundle's test reads
+                // it back through both surfaces, so a baseline tier that dropped the table
+                // fails there instead of passing quietly.
+                SeedRow.AddLink('https://al-runner.test/{{marker}}', 'seed link {{marker}}');
 
                 SeedRow.Init();
                 SeedRow.Code := 'SEED-2';
@@ -263,6 +270,7 @@ internal static class InstallSeedClosure
             procedure DependencyInstallSeedIsPresentWithItsValues()
             var
                 SeedRow: Record "Seed {{seedTag}} Table";
+                RecLink: Record "Record Link";
             begin
                 // [THEN] Both rows the dependency's OnInstallAppPerCompany trigger inserted are
                 // present, with the values it wrote. Asserted value-by-value rather than as a
@@ -282,6 +290,33 @@ internal static class InstallSeedClosure
                     Error('SEED-2 Description was ''%1''', SeedRow.Description);
                 if SeedRow.Amount <> -7.25 then
                     Error('SEED-2 Amount was %1', SeedRow.Amount);
+
+                // [THEN] #3380 — the record link the install trigger attached to SEED-1
+                // survived whichever baseline tier answered, and it is visible through BOTH
+                // link surfaces: HasLinks, and the Record Link table an AL record opens.
+                // Read by VALUE (the URL and the description the trigger wrote), so a tier
+                // that restored an empty or truncated Record Link table fails here.
+                SeedRow.Get('SEED-1');
+                if not SeedRow.HasLinks() then
+                    Error('SEED-1 has no links after the install baseline was applied');
+
+                RecLink.SetRange("Record ID", SeedRow.RecordId());
+                if RecLink.Count() <> 1 then
+                    Error('expected 1 Record Link row for SEED-1, found %1', RecLink.Count());
+                RecLink.FindFirst();
+                if RecLink.URL1 <> 'https://al-runner.test/{{marker}}' then
+                    Error('SEED-1 link URL1 was ''%1''', RecLink.URL1);
+                if RecLink.Description <> 'seed link {{marker}}' then
+                    Error('SEED-1 link Description was ''%1''', RecLink.Description);
+                if RecLink."Link ID" <= 0 then
+                    Error('SEED-1 link ID was %1', RecLink."Link ID");
+
+                // [THEN] …and SEED-2, which the trigger did not link, still has none. Without
+                // this the whole block would pass on a store that answered "yes" for every
+                // record.
+                SeedRow.Get('SEED-2');
+                if SeedRow.HasLinks() then
+                    Error('SEED-2 was never linked but reports links');
             end;
         }
         """);

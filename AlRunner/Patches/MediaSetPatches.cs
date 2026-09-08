@@ -86,7 +86,7 @@
 //   The old ConditionalWeakTable bought automatic cleanup when a NavRecord became
 //   unreachable, at the cost of being the actual bug (see above). A plain
 //   Guid-keyed ConcurrentDictionary doesn't get that for free, but MediaSet membership is
-//   per-test mutable state exactly like RecordLinkPatches' polyfill store or
+//   per-test mutable state exactly like the Record Link table's rows or
 //   TenantStoragePatches' isolated-storage store — real BC rolls it back at the end of
 //   every test's transaction. ResetForTest() below is wired into
 //   RecordPatches.ResetPerTestState() (called before every test method — see
