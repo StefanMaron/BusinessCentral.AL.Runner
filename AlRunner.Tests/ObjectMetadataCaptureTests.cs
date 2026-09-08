@@ -56,6 +56,7 @@ public class ObjectMetadataCaptureTests
         ("PageExtension", 70663),
         ("EnumExtension", 70664),
         ("PermissionSetExtension", 70665),
+        ("ReportExtension", 70666),
     };
 
     private static void CopyDir(string src, string dst)

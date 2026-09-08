@@ -26,8 +26,9 @@ Measured on the `ObjectMetadataCapture` fixture (`AlRunner.Tests/Fixtures/`), BC
 | `Report` | ✓ | `PermissionSetExtension` | ✓ |
 | `XmlPort` | ✓ | `TableExtension` | ✓ |
 | `Query` | ✓ | `PageExtension` | ✓ |
+| `ReportExtension` | ✓ | | |
 
-Two things that a list of kinds written by hand would have got wrong:
+Three things that a list of kinds written by hand would have got wrong:
 
 - **`Query` is not in issue #3548's own table of twelve** — that table was measured from
   runtime packages of twelve ISV apps, none of which declares a query. It arrives here
@@ -42,9 +43,20 @@ Two things that a list of kinds written by hand would have got wrong:
   than something this repository pins -- add a profile and a role-center page to the fixture
   if you want a future BC that starts emitting `PROFILE` to show up as a new trace line.
 
-So this path covers eleven of the issue's twelve kinds plus one it did not know about.
-Interface and profile metadata are only available from a runtime package (#3537) or from
-`SymbolReference.json` (#3533, #3545).
+- **`ReportExtension` arrives and was missing from this document**, because the fixture
+  declared none. The doc was describing the fixture rather than the compiler. Base
+  Application emits **14** `ReportExtension` documents, so the kind was always arriving and
+  nothing here could see it. The fixture now declares one, so the count is pinned rather
+  than asserted -- which is the only reason the other rows in this table are worth trusting.
+
+So **thirteen** kinds arrive. `Interface` and `Profile` do not, and their metadata is
+available only from a runtime package (#3537) or from `SymbolReference.json` (#3533, #3545).
+
+A caution for anyone extending this table: the metadata document's **root element is not the
+`SymbolKind`**. `MetadataRuntimeDeltas` is the root emitted for `TableExtension`,
+`PageExtension` and `PermissionSetExtension` alike, and `<Enum>` covers both `Enum` and
+`EnumExtension`. Counting root elements produces kinds that do not exist -- it is what put a
+non-existent `MetadataRuntimeDeltas` kind into #3562's first table.
 
 Every kind that does arrive is id-bearing, and ids repeat across kinds — the fixture
 deliberately declares a table, a page, a codeunit, an enum, a report, an xmlport and a

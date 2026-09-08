@@ -117,6 +117,22 @@ enumextension 70664 "OMR Kind Ext" extends "OMR Kind"
     value(2; Extended) { Caption = 'Extended kind'; }
 }
 
+reportextension 70666 "OMR Report Ext" extends "OMR Report"
+{
+    // The thirteenth kind. It was missing here, and its absence made
+    // docs/object-metadata-capture.md report twelve kinds arriving when thirteen do --
+    // the doc was describing this fixture rather than the compiler. Base Application
+    // emits 14 ReportExtension documents, so the kind was always arriving; nothing here
+    // could see it.
+    dataset
+    {
+        add(Thing)
+        {
+            column(DescriptionExt; Description) { }
+        }
+    }
+}
+
 permissionsetextension 70665 "OMR PS Ext" extends "OMR PS"
 {
     Permissions = tabledata "OMR Thing" = RIMD;
