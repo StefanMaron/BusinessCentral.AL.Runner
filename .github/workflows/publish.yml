@@ -579,12 +579,28 @@ jobs:
             # The tag is already on origin and this checkout IS that tag. Reuse its
             # CHANGELOG section rather than generating a second [x.y.z] heading — that
             # happened on 2026-08-05 (two duplicate v2.0.0 sections, cleaned up by hand).
-            echo "Reusing the CHANGELOG section already committed at $TAG."
-            SECTION=$(git show "$TAG:CHANGELOG.md" | awk -v ver="## [$VERSION]" '
-              $0 == ver { found=1 }
-              found && /^## \[/ && $0 != ver { exit }
-              found { print }
-            ')
+            # The tag points at the TESTED commit, which does not carry the release
+            # section (the CHANGELOG commit is pushed to the branch separately, below).
+            # So look on the branch first and fall back to the tag, which is where the
+            # section lived before this ordering changed. Refuse rather than ship empty
+            # notes if neither has it.
+            echo "Reusing the CHANGELOG section already recorded for $TAG."
+            git fetch --quiet origin "${{ needs.plan.outputs.branch }}" || true
+            read_section() {
+              git show "$1:CHANGELOG.md" 2>/dev/null | awk -v ver="## [$VERSION]" '
+                $0 == ver { found=1 }
+                found && /^## \[/ && $0 != ver { exit }
+                found { print }
+              '
+            }
+            SECTION=$(read_section "origin/${{ needs.plan.outputs.branch }}")
+            if [ -z "$SECTION" ]; then
+              SECTION=$(read_section "$TAG")
+            fi
+            if [ -z "$SECTION" ]; then
+              echo "::error::$TAG exists but no '## [$VERSION]' section was found on ${{ needs.plan.outputs.branch }} or at the tag. Refusing to publish a release with empty notes."
+              exit 1
+            fi
           else
             PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
             if [ -n "$PREV_TAG" ]; then
@@ -595,6 +611,16 @@ jobs:
 
             SECTION=$(VERSION="$VERSION" DATE="$(date +%Y-%m-%d)" COMMITS="$COMMITS" \
               python3 .github/scripts/generate_changelog.py)
+
+            # The commit the matrix, the build and the pack all ran against. THIS is
+            # what gets tagged: it is on the branch's history and stays reachable there
+            # after the branch moves, so the next release's
+            # `git describe --tags --abbrev=0` still finds it. Tagging the CHANGELOG
+            # commit instead would put the tag off-history the moment the retry path
+            # below regenerates onto a moved branch, and the NEXT release would then
+            # compute its commit range from the wrong baseline -- a failure that would
+            # not appear until one release later.
+            TESTED_SHA=$(git rev-parse HEAD)
 
             git add CHANGELOG.md
             git commit -m "chore: release v${VERSION}"
@@ -607,17 +633,59 @@ jobs:
               # to prevent, just self-inflicted during a test.
               echo "dry_run: skipping push of the release commit and tag to origin."
             else
-              # Push the release commit BEFORE creating the tag, and deliberately without
-              # --force, to the branch that was actually dispatched (needs.plan.outputs.branch
-              # — "main" for the ordinary path, a release branch for a patch release; #2060).
-              # HEAD is the commit build-and-pack just built plus a CHANGELOG-only diff, so
-              # this is a fast-forward exactly when that branch is still where the matrix
-              # found it. If someone pushed to it during the run this fails here — and NO
-              # tag is created, which is the whole point of #1978. Re-dispatch against the
-              # branch's new head.
-              git push origin HEAD:${{ needs.plan.outputs.branch }}
-              git tag "$TAG"
+              # WE RELEASE A COMMIT, NOT A BRANCH STATE (#3494).
+              #
+              # This used to push the CHANGELOG commit to the branch FIRST and create the
+              # tag only if that push was a fast-forward, so anything merging during the
+              # run killed the release outright. v2.11.0 died that way with all eight legs
+              # green, built, signed and packed: PRs #3484 and #3469 merged mid-run and the
+              # push was rejected as non-fast-forward, so no tag, no NuGet, no release.
+              #
+              # That guard was defended as "the whole point of #1978". It is not. #1978's
+              # property is NEVER TAG A COMMIT WHOSE TESTS DID NOT PASS, and that is
+              # satisfied by the matrix, the build and the pack all running before this
+              # step. "The branch has not moved" is a DIFFERENT property, and it says
+              # nothing about whether the commit being shipped is good. Commits merged
+              # after the tested one are, by definition, not in this release.
+              #
+              # So: the tag is the release, and it goes first. A tag push needs no
+              # fast-forward, so a branch that moved cannot block it.
+              git tag "$TAG" "$TESTED_SHA"
               git push origin "$TAG"
+
+              # The CHANGELOG commit is BOOKKEEPING. It goes to the branch afterwards, and
+              # failing to land it must not fail a release that is already tagged.
+              #
+              # Retry by REGENERATING onto the branch's current head, never by rebasing:
+              # $COMMITS is fixed to the tested commit's range, so regenerating replays the
+              # same section, whereas a rebase would drag in commits that merged after the
+              # release and put them under this version's heading.
+              #
+              # Emptying [Unreleased] here is correct and self-healing: the next ordinary
+              # push to the branch triggers sync-changelog-unreleased.yml, which recomputes
+              # it from the new tag forward and so restores anything that merged during the
+              # run. That workflow also refuses to run on this very commit, recognising it
+              # from its own "chore: release" message rather than from tag visibility, so
+              # pushing the tag before the commit does not disturb the #2109 race it guards.
+              CHANGELOG_PUSHED=false
+              for attempt in 1 2 3; do
+                if git push origin HEAD:${{ needs.plan.outputs.branch }}; then
+                  CHANGELOG_PUSHED=true
+                  break
+                fi
+                echo "::notice::${{ needs.plan.outputs.branch }} moved under the release commit; regenerating the section onto its new head (attempt $attempt)."
+                git fetch origin ${{ needs.plan.outputs.branch }}
+                git reset --hard "origin/${{ needs.plan.outputs.branch }}"
+                VERSION="$VERSION" DATE="$(date +%Y-%m-%d)" COMMITS="$COMMITS" \
+                  python3 .github/scripts/generate_changelog.py >/dev/null
+                git add CHANGELOG.md
+                git commit -m "chore: release v${VERSION}" || break
+              done
+
+              if [ "$CHANGELOG_PUSHED" != "true" ]; then
+                echo "::warning::$TAG is pushed and this release will publish, but the CHANGELOG commit could not be landed on ${{ needs.plan.outputs.branch }} after 3 attempts. The release is NOT affected -- add the '## [$VERSION]' section by hand or let the next sync run pick it up."
+              fi
+              echo "changelog-pushed=$CHANGELOG_PUSHED" >> "$GITHUB_OUTPUT"
             fi
           fi
 
