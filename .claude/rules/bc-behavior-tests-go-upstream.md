@@ -80,6 +80,7 @@ one day (#3330), each pinned in `test_check_corpus_linkage.sh`:
 | `Corpus-PR:` on one line, the URL on the next | the marker and the URL must share a line — a brief saying "a bare full URL on its own line" produces this |
 | `**Corpus-PR:** https://…/pull/226` | bold markers break the marker |
 | `Corpus-PR: <https://…/pull/226>` | angle-bracket autolinks break the URL |
+| `Corpus-PR: StefanMaron/BusinessCentral.AL.Language.Tests#293` | GitHub's own cross-repo shorthand renders as a link and reads correctly, but it is not a URL |
 
 A `Corpus-PR:` line that fails the regex is reported as *malformed*, not absent, so the log
 says which of the two you have. Check before pushing — the script takes the body and the
