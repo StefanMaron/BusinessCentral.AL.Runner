@@ -1,75 +1,49 @@
 // RecordPatches.PageMetadataProperties — the eleven "Page Metadata" (2000000138) columns
 // that come off a page's <Properties> element (ten of them) or the page definition itself
-// (ALNamespace), read from BC's OWN parsed metadata (#3601).
+// (ALNamespace), read from BC's OWN parsed metadata (#3601). Full derivation — the census
+// that motivated this, why one object serves both page origins, and the AL-compiler probes
+// behind the two non-obvious claims below — is in docs/page-metadata-properties.md.
 //
-// ── THE DEFECT ───────────────────────────────────────────────────────────────────────────
-//   BuildPageMetadataValue's switch fell through eleven of its columns to
-//   NavValue.GetDefaultNavValue — a hardcoded default, never the page's own declaration.
-//   Measured at main 9a0dd368 (issue #3601): eleven of the twelve defaulted columns are
-//   stated outright in BC's own emitted <Properties> document — RefreshOnActivate in 236 of
-//   236 pages, ALNamespace in 236 of 236, InherentEntitlements in 94, InherentPermissions in
-//   92, APIVersion in 39 on Base App, DataCaptionExpr. in 32, EntityName/EntitySetName in 10,
-//   APIPublisher/APIGroup in 8, ChangeTrackingAllowed in 2.
+// CLAIM: all eleven are stated on the SAME MetaPageDefinition/MetaPageProperties object
+// EnsureRealPageMetadata already loads for the nine <SourceObject> columns one element down
+// (#3063), and reading it here is faithful to BC's own PageDataProvider — verified against
+// BC 28.1's decompiled PageDataProvider.<GetValuesWithinRangeForKeyField>d__3.MoveNext(),
+// which reads every one of them off this same object. See docs/page-metadata-properties.md
+// §"one object not two".
 //
-// ── WHERE THE VALUES COME FROM, AND WHY NOT FROM THE TWO OBVIOUS PLACES ──────────────────
-//   #3063 established the pattern one element down, on <SourceObject>: BOTH page origins —
-//   a page this run source-compiled, and a page declared by a precompiled dependency .app —
-//   already converge on ONE object, BC's own MetaPageDefinition, loaded through
-//   EnsureRealPageMetadata's NCLMetaForm.LoadMetadata(). This file reads the same object one
-//   layer up: MetaPageDefinition.Properties (a MetaPageProperties) for ten of the eleven, and
-//   MetaPageDefinition.ALNamespace itself for the eleventh — verified against BC 28.1's real
-//   PageDataProvider.<GetValuesWithinRangeForKeyField>d__3.MoveNext() (decompiled): it reads
-//   `properties.RefreshOnActivate` / `.APIPublisher` / `.APIGroup` / `.APIVersion` /
-//   `.EntitySetName` / `.EntityName` / `.DataCaptionExpr` / `.ChangeTrackingAllowed` and
-//   `item.ALNamespace` (via `GetNormalizedNamespace`, which is `NavText.Create(fieldValue)` —
-//   no further transform) directly off this same object, so there is nothing left for either
-//   row source (ParsedPage / BcAppSymbolCache.PageSymbol) to add.
+// CLAIM: InherentPermissions/InherentEntitlements are rendered through BC's OWN
+// PermissionDefinition.ExpandDirectPermissionToIndirect and
+// MetadataDataProvider.CreatePermissionMaskString (reflection, same pattern as
+// PageDataProvider.GenerateSourceTableViewString in the sibling <SourceObject> file), not
+// reimplemented (precompiled-dll-respect.md). TRAP: a page can only ever declare `X`
+// (Execute) for either — the AL compiler rejects anything else with AL0195 — so do not
+// "simplify" this to a literal-string special case; the call graph is what makes it correct
+// if BC ever allows more. See docs/page-metadata-properties.md §"InherentPermissions".
 //
-// ── InherentPermissions / InherentEntitlements ARE NOT A DIRECT FIELD READ ───────────────
-//   BC's real column value is NOT `properties.InherentPermissions` printed as text — it is
-//   that raw declared mask, expanded and formatted through two of BC's OWN runtime-engine
-//   methods, reused here rather than reimplemented (precompiled-dll-respect.md):
-//     PermissionDefinition.ExpandDirectPermissionToIndirect(PermissionMask) — sets the
-//       matching INDIRECT bit for every DIRECT bit a page declares (NCLMetaForm.LoadMetadata
-//       does exactly this before storing InherentPermissionsAndEntitlements);
-//     MetadataDataProvider.CreatePermissionMaskString(PermissionMask) — renders the mask as
-//       the letters columns 30/31 carry: uppercase for a DIRECT bit, lowercase for an
-//       INDIRECT-only one, empty for PermissionMask.None.
-//   Both are internal members of internal-but-loadable types in Ncl.dll, resolved by
-//   reflection the same way PageDataProvider.GenerateSourceTableViewString is in
-//   RecordPatches.PageMetadataSourceObject.cs. A PAGE can only ever declare `X` (Execute) for
-//   either property — the AL compiler rejects `rimd` on a page with "Invalid permission kind.
-//   Expected: 'X'" — so the expand step never changes the OBSERVABLE letters for a page (a
-//   direct bit always wins the uppercase branch before its own indirect twin is checked), but
-//   it is still BC's real call graph, not a shortcut that happens to agree with it today.
+// CLAIM: DataCaptionExpr. is BC's fixed placeholder "DataCaptionExprCode", never the AL
+// source text — confirmed with two different declared expressions producing the identical
+// column value, and adjudicated on a real service tier by corpus PR #298 (merged, 8/8 cloud
+// legs green). See docs/page-metadata-properties.md §"data-caption-expr".
 //
-// ── DataCaptionExpr. IS A FIXED PLACEHOLDER, NOT THE AL SOURCE TEXT ──────────────────────
-//   Measured against the real AL compiler (BC 28.1): a page declaring
-//   `DataCaptionExpression = 'Probe Page Fixture';` and one declaring
-//   `DataCaptionExpression = 'Some Other Totally Different Text Value XYZ';` both compile to
-//   the identical <Properties DataCaptionExpr="DataCaptionExprCode" .../> — BC compiles the
-//   expression to a generated method and the document merely names that there is one, not
-//   what it evaluates to. properties.DataCaptionExpr is exactly that fixed string, so reading
-//   it verbatim is correct; there is no formatting step to reproduce.
+// TRAP: APIVersion's "declares none" default is the literal "beta", not "", per
+// MetaPageProperties.APIVersion's own [DefaultValue("beta")] — needs no code here since it
+// falls out of reading the property directly, but do not "correct" a future refactor's
+// default to "" for this one column. See docs/page-metadata-properties.md §"api-version-default".
 //
-// ── WHAT IS REFUSED RATHER THAN DEFAULTED (loud-failures.md) ─────────────────────────────
-//   Same policy as the sibling <SourceObject> file: a page whose real metadata will not load
-//   gets a named refusal naming the column, never BC's default. Unlike <SourceObject>,
-//   MetaPageDefinition.Properties itself is not null for any page shape the compiler
-//   produces — verified against every corpus page BC 28.1 compiles — so a null there is
-//   refused as a BC-shape gap rather than treated as a real, if unusual, answer.
+// REFUSAL POLICY (loud-failures.md): same as the sibling <SourceObject> file — a page whose
+// real metadata will not load gets a named refusal, never BC's default. Unlike
+// <SourceObject>, MetaPageDefinition.Properties is never null for any page shape the
+// compiler produces, so a null one here is refused as a BC-shape gap, not treated as a real
+// answer.
 //
-// ── AppID IS DELIBERATELY NOT HERE ────────────────────────────────────────────────────────
-//   BC's real column reads MetadataDataProvider.GetAppId(metaFormById), computed from the
-//   page's owning app-identity/app-group, not from <Properties> at all — the one column of
-//   the twelve the issue's own measurement found unstated on the document. Left on
-//   NavValue.GetDefaultNavValue in RecordPatches.PageMetadataVirtualTable.cs, unchanged.
+// AppID is deliberately NOT here — BC reads it from MetadataDataProvider.GetAppId, an
+// app-identity surface unrelated to <Properties>. See
+// docs/page-metadata-properties.md §"app-id".
 //
-// ── PRECOMPILED-DLL RESPECT ──────────────────────────────────────────────────────────────
-//   Runtime-engine and metadata types only (NCLMetaForm, MetaPageDefinition,
-//   MetaPageProperties, PermissionDefinition, MetadataDataProvider — all reached the same way
-//   the sibling <SourceObject> file reaches PageDataProvider). No AL business-logic body is
-//   touched, and nothing here re-implements a BC behaviour BC itself is present to perform.
+// PRECOMPILED-DLL RESPECT: runtime-engine and metadata types only (NCLMetaForm,
+// MetaPageDefinition, MetaPageProperties, PermissionDefinition, MetadataDataProvider — all
+// reached the same way the sibling file reaches PageDataProvider). No AL business-logic
+// body is touched.
 
 using System.Reflection;
 using AlRunner.Infrastructure;
@@ -165,8 +139,12 @@ public static partial class RecordPatches
     /// InherentEntitlements int) rendered exactly as BC's own
     /// InherentObjectPermissionAndEntitlementsHelper/MetadataDataProvider chain renders it —
     /// empty for a page declaring neither (PermissionMask.None formats to NavText.Empty).
+    /// Internal rather than private so <c>PageMetadataPropertiesFormattingTests</c> can pin
+    /// this reflection call reaching BC's own runtime-engine formatter without needing a
+    /// compiled page: the BC-behaviour claim (what a page's declared mask MEANS) is
+    /// adjudicated upstream by corpus PR #298; this is the runner-side wiring underneath it.
     /// </summary>
-    private static string FormatInherentMask(int declaredMask, int pageId, string column)
+    internal static string FormatInherentMask(int declaredMask, int pageId, string column)
     {
         var formatter = ResolvePermissionFormatter()
             ?? throw PageMetadataPropertiesGap(pageId, column,
