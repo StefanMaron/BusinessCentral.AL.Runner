@@ -322,6 +322,16 @@ public static partial class NclCecilRewrite
         }
 
         // NavForm.GetAutoFormatStringAsync → return default/empty (R2R-trapped; cluster #2 in CORPUS-CLASSIFICATION-2026-05-19-FINAL.md)
+        //
+        // #3406: this is NOT the silent default that hides AutoFormatType from a TestPage, and
+        // it is not observable at all — the emitted AL is non-async, so GetDecimalString takes
+        // its sync branch and never calls this. "" is also what BC's own body would answer
+        // here, because PageExtensions is rewritten to an empty list ~50 lines above.
+        //
+        // DO NOT DELETE IT AS DEAD CODE. get_ServerForm below hands out an UNINITIALISED
+        // NavForm and rests its safety on this body never dereferencing `this`; BC's real body
+        // does (EnsureGlobalVariablesInitialized, PageExtensions). See
+        // docs/limitations.md#testpage-decimal-formatting.
         int getAutoFormatRewroteCount = 0;
         foreach (var method in navFormType.Methods.Where(mm => mm.Name == "GetAutoFormatStringAsync").ToList())
         {
@@ -385,6 +395,10 @@ public static partial class NclCecilRewrite
         // NavForm via RuntimeHelpers.GetUninitializedObject and caches it in the field. The
         // uninitialised object has valid type metadata (vtable dispatch works) and the rewritten
         // GetAutoFormatStringAsync body never dereferences `this`, so the call is safe.
+        //
+        // That last clause is a load-bearing dependency on the rewrite above, not an
+        // observation about it: BC's own body DOES dereference `this`. Restoring the real body
+        // there without also changing this fallback reintroduces the NRE (#3406).
         var navTestPageBaseType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavTestPageBase")
             ?? throw new InvalidOperationException("NavTestPageBase type not found in Ncl.dll — Ncl shape changed; do not commit");
         var serverformField = navTestPageBaseType.Fields
