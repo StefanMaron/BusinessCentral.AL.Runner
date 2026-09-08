@@ -97,31 +97,33 @@ public sealed class RecordLinkStoreWiringTests
     }
 
     [Fact]
-    public void TheLivePatchTypeKeepsNoPrivateLinkDictionaryBesideTheTable()
+    public void NoTypeInTheRunnerKeepsAPrivateLinkDictionaryBesideTheTable()
     {
-        // The #3378 shape: a static dictionary of link entries in the type that owns the
-        // Cecil-rewritten RecordLink helpers, which the Record Link table never sees. That
-        // type is AlRunner.BcRuntime (NavRecordRefPatches.cs is one of its partials), so it
-        // is the one place where such a field is live rather than merely present.
-        //
-        // Deliberately NOT asserted across the whole assembly: AlRunner.Patches.RecordLinkPatches
-        // still holds an ALRecordId-keyed dictionary of its own, registered through the JmpHook
-        // layer that is off by default, so nothing writes to it and nothing but the
-        // install-baseline serializer reads it. Removing it changes the on-disk baseline format,
-        // which is a separate change with its own cache-invalidation question — tracked as
-        // follow-up on #3378 rather than folded in here.
-        var offenders = BcRuntimeType
-            .GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)
-            .Where(f => f.Name.Contains("ink", StringComparison.Ordinal)
-                        && f.FieldType.IsGenericType
-                        && (f.FieldType.GetGenericTypeDefinition().Name.StartsWith("Dictionary", StringComparison.Ordinal)
-                            || f.FieldType.GetGenericTypeDefinition().Name.StartsWith("ConcurrentDictionary", StringComparison.Ordinal)))
-            .Select(f => $"{f.Name} : {f.FieldType.Name}")
+        // The #3378 shape: a static dictionary of link entries somewhere in the runner, which
+        // the Record Link table never sees. It was two types at once — AlRunner.BcRuntime,
+        // which owns the Cecil-rewritten RecordLink helpers, and AlRunner.Patches
+        // .RecordLinkPatches, whose copy was registered through the JmpHook layer that is off
+        // by default. #3380 removed the second, so this asserts across the WHOLE assembly
+        // rather than on BcRuntime alone; the narrower scope only ever existed because
+        // RecordLinkPatches was still there.
+        var offenders = typeof(AlRunner.Patches.RecordPatches).Assembly
+            .GetTypes()
+            .SelectMany(t => t.GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)
+                              .Select(f => (Type: t, Field: f)))
+            .Where(x => x.Field.Name.Contains("ink", StringComparison.Ordinal)
+                        && x.Field.FieldType.IsGenericType
+                        && (x.Field.FieldType.GetGenericTypeDefinition().Name.StartsWith("Dictionary", StringComparison.Ordinal)
+                            || x.Field.FieldType.GetGenericTypeDefinition().Name.StartsWith("ConcurrentDictionary", StringComparison.Ordinal))
+                        // The offending shape is keyed by the RECORD — a per-record list of
+                        // links held outside the table. A dictionary merely containing "ink"
+                        // in its name (hyperlink, linker, …) is not it.
+                        && x.Field.FieldType.GetGenericArguments()[0].Name.Contains("RecordId", StringComparison.Ordinal))
+            .Select(x => $"{x.Type.FullName}.{x.Field.Name} : {x.Field.FieldType.Name}")
             .OrderBy(x => x, StringComparer.Ordinal)
             .ToList();
 
         Assert.True(offenders.Count == 0,
-            "a static link dictionary is back on the type that owns the live RecordLink helpers "
-            + "(#3378): " + string.Join(", ", offenders));
+            "a static record-keyed link dictionary is back beside the Record Link table "
+            + "(#3378 / #3380): " + string.Join(", ", offenders));
     }
 }

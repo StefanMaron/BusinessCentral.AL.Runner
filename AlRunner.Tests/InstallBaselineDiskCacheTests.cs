@@ -288,6 +288,104 @@ public class InstallBaselineDiskCacheTests
         }
     }
 
+    // ── 3b. an entry written by the PREVIOUS build's codec ────────────────────────────
+
+    /// <summary>
+    /// #3380 — the on-disk layout changed (the record-link section is gone; link rows now ride
+    /// in the Record Link table like any other table), so a file the previous build wrote must
+    /// be REJECTED, not decoded under the new semantics.
+    ///
+    /// <para>Two independent mechanisms stand between those bytes and this run, and the test
+    /// exists because only one of them is testable end to end. The first is the cache KEY:
+    /// <c>InstallBaselineDiskCache.BuildKeyText</c> folds in both the schema version and
+    /// <c>RunnerFingerprint</c>'s SHA-256 of the runner assembly, and the filename is that key's
+    /// hash — so a previous build's file sits under a different name and is never opened. That
+    /// is unreachable by construction and cannot be asserted by running the runner. The second
+    /// is the in-file version check, which is what a filename collision or a hand-copied file
+    /// would meet, and is what this plants.</para>
+    ///
+    /// <para>Schema version 2 is hardcoded on purpose: it is the historical format that carried
+    /// the record-link section, not a value that tracks the current one.</para>
+    /// </summary>
+    [SkippableFact]
+    public void EntryFromThePreviousSchemaVersion_IsRejectedByVersionAndRebuilt()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.Dir("al-runner-ib-disk-oldformat");
+        try
+        {
+            var main = WriteUniqueClosure(root, 62100, "of");
+
+            var (out1, exit1) = RunRunner(null, main);
+            Assert.Equal(0, exit1);
+            var paths = WrittenPaths(out1);
+            Assert.True(paths.Count >= 1, $"expected the first run to write an entry, got:\n{out1}");
+
+            // Plant, at the key this closure resolves to, a file whose header says schema
+            // version 2 — the format that carried RecordLinkPatches' section. The magic is
+            // right, so File.Exists and the magic gate both pass and the version gate is the
+            // thing under test.
+            foreach (var path in paths)
+            {
+                var planted = new byte[512];
+                planted[0] = (byte)'A'; planted[1] = (byte)'L'; planted[2] = (byte)'I'; planted[3] = (byte)'B';
+                BitConverter.GetBytes(PreviousSchemaVersion).CopyTo(planted, 4);
+                for (var i = 8; i < planted.Length; i++) planted[i] = 0x5A;
+                File.WriteAllBytes(path, planted);
+            }
+
+            var (out2, exit2) = RunRunner(null, main);
+
+            // [THEN] Rejected BY VERSION, naming both the file's and this build's — not
+            // decoded and not diagnosed as some downstream shape error. That distinction is
+            // the whole claim: an old file that still parses under new semantics is the one
+            // failure a cache cannot detect for itself.
+            Assert.Contains(
+                $"[InstallBaselineDisk] cannot restore: schema version {PreviousSchemaVersion}, this build writes {CurrentSchemaVersion}",
+                out2);
+            Assert.DoesNotContain("[InstallBaselineDisk] cannot restore: EndOfStreamException", out2);
+
+            // [THEN] Rebuilt, not fatal, and the app group's own AL test — which reads the
+            // seeded rows AND the seeded record link back by value — still passes.
+            Assert.Equal(0, exit2);
+            Assert.True(Count(out2, "1P/0F/0E") >= 1, $"main app group should still pass, got:\n{out2}");
+            Assert.True(Count(out2, "InstallBaseline.DepCompanyCache MISS") >= 1,
+                $"expected a fresh computation after the old-format entry, got:\n{out2}");
+
+            var rewritten = WriteDigests(out2);
+            Assert.True(rewritten.Count >= 1, $"expected the old-format entry to be rewritten, got:\n{out2}");
+
+            // [THEN] And the replacement is usable: a third process restores from it.
+            var (out3, exit3) = RunRunner(null, main);
+            Assert.Equal(0, exit3);
+            Assert.Equal(0, Count(out3, "InstallBaseline.DepCompanyCache MISS"));
+            var hits = HitDigests(out3);
+            foreach (var (key, digest) in rewritten)
+            {
+                Assert.True(hits.ContainsKey(key), $"rewritten key {key} was not restored:\n{out3}");
+                Assert.Equal(digest, hits[key]);
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch { }
+        }
+    }
+
+    /// <summary>The format that carried the record-link section — a historical constant, not a
+    /// tracker of the current version.</summary>
+    private const int PreviousSchemaVersion = 2;
+
+    /// <summary>Read off the production constant rather than restated here, so a future bump
+    /// does not need this file edited and cannot leave it asserting a stale number.</summary>
+    private static int CurrentSchemaVersion =>
+        (int)typeof(AlRunner.Patches.RecordPatches)
+            .GetField("InstallBaselineDiskSchemaVersion",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.Static)!
+            .GetRawConstantValue()!;
+
     // ── 4. scoping: a different dependency closure gets a different file ───────────────
 
     [SkippableFact]
