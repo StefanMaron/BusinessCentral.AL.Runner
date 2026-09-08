@@ -62,6 +62,19 @@ since corpus issue #213:
 
 So: **a Windows failure is a real failure. A Linux-only failure is an image bug.**
 
+**On a corpus PR, label it:**
+
+```bash
+gh pr edit <N> --repo StefanMaron/BusinessCentral.AL.Language.Tests \
+  --add-label run-nightly-windows
+```
+
+A `pull_request` event reads the workflow **file** from the base branch and runs it against
+**your PR's merge commit** — so the label adjudicates your tests using `master`'s CI.
+`workflow_dispatch` takes both from the ref, so on a branch that predates a fix to the nightly
+it re-runs the broken version and the failure looks like a tier fault. Dispatch only for a ref
+with no pull request:
+
 ```bash
 gh workflow run 351779742 --repo StefanMaron/BusinessCentral.AL.Language.Tests \
   --ref <branch> -f bc_version=28.4 -f artifact_type=sandbox -f country=w1
