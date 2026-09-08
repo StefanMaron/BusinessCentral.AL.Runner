@@ -1802,8 +1802,9 @@ _OTHER = "17b015efdc6cd52aed789cbbfc522d7cf1040155"
 _STAGED = "9ee6bbcd12d433547f230d36d017231d53a17937"
 
 
-def pin_readings(pin=_PIN, index=None, worktree=None, error=""):
-    return {"pin": pin, "index": index, "worktree": worktree, "error": error}
+def pin_readings(pin=_PIN, index=None, worktree=None, error="", head=None):
+    return {"pin": pin, "index": index, "head": head,
+            "worktree": worktree, "error": error}
 
 
 # ---- agreement is a PASS, and it says which commit it verified
@@ -1829,21 +1830,43 @@ check("the WARN says why it is not a FAIL",
       "always available" in (_res.remedy or ""), _res.remedy)
 
 # ---- the three-way case measured live on this box while #3404 was open
-_res = pf.classify_corpus_pin(pin_readings(index=_STAGED, worktree=_OTHER))
+_res = pf.classify_corpus_pin(pin_readings(index=_STAGED, head=_STAGED, worktree=_OTHER))
 check("a third value belonging to neither end still WARNs",
       _res.status == "WARN", f"{_res.status}: {_res.summary}")
 check("...and compares against the STAGED pin, which is what that checkout owes",
       _STAGED[:8] in _res.summary, _res.summary)
-check("...and reports all three readings, never collapsing them to one",
-      sum(1 for d in _res.detail
-          if _PIN[:8] in d or _STAGED[:8] in d or _OTHER[:8] in d) == 3, _res.detail)
+check("...and reports every reading, never collapsing them to one",
+      all(any(v[:8] in d for d in _res.detail)
+          for v in (_PIN, _STAGED, _OTHER)), _res.detail)
 
 # ---- a bump in progress is correct work and must not be flagged
 # The branch has moved its own gitlink AND its submodule checkout together. A
 # check that fires on this trains the reader to ignore it.
-_res = pf.classify_corpus_pin(pin_readings(index=_STAGED, worktree=_STAGED))
+_res = pf.classify_corpus_pin(pin_readings(index=_STAGED, head=_STAGED, worktree=_STAGED))
 check("a staged bump whose checkout matches it is not a finding",
       _res.status == "PASS", f"{_res.status}: {_res.summary}")
+
+# ---- BEHIND is not MID-BUMP, and the wrong one must not be called "the pin"
+# The index carries a gitlink at all times, so an UNSTAGED index pin equal to this
+# checkout's own HEAD is just a behind worktree -- the common case. Calling that
+# value "the pin" in the summary is a second wrong statement on the same line, and
+# it is the value the reader is being told to trust.
+_res = pf.classify_corpus_pin(pin_readings(head=_STAGED, worktree=_STAGED))
+check("a behind checkout whose submodule matches its own HEAD is not a hazard",
+      _res.status == "PASS", f"{_res.status}: {_res.summary}")
+check("...and is reported as behind rather than as agreement with origin/main",
+      "behind" in _res.summary.lower(), _res.summary)
+check("...and never calls this checkout's stale HEAD pin 'the pin'",
+      f"not the pin {_STAGED[:8]}" not in _res.summary, _res.summary)
+
+# A behind checkout whose SHARED directory has also drifted is still a hazard, and
+# the reference it names is this checkout's own HEAD pin -- not origin/main's,
+# which this checkout does not claim to be at.
+_res = pf.classify_corpus_pin(pin_readings(head=_STAGED, worktree=_OTHER))
+check("a behind checkout with a drifted shared directory still WARNs",
+      _res.status == "WARN", f"{_res.status}: {_res.summary}")
+check("...naming the commit this checkout expects, not origin/main's",
+      _STAGED[:8] in _res.summary and _OTHER[:8] in _res.summary, _res.summary)
 
 # ---- "could not read" is not "they agree"
 _res = pf.classify_corpus_pin(pin_readings(worktree=None,
@@ -1915,8 +1938,10 @@ try:
           _read["pin"] != _second, f"{_read}")
     check("the gatherer reads the working directory as what it is",
           _read["worktree"] == _second, f"{_read}")
-    check("the gatherer reads the INDEX pin from the index, not from HEAD",
-          _read["index"] == _first, f"{_read}")
+    check("the gatherer reads THIS checkout's HEAD pin separately from origin/main's",
+          _read["head"] == _first, f"{_read}")
+    check("...and reads no STAGED pin, because nothing was staged",
+          _read["index"] is None, f"{_read}")
     check("...and the two genuinely disagree, so the fixture proves the point",
           _first != _second)
     check("a poisoned checkout is classified as a WARN end to end",

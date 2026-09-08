@@ -25,8 +25,26 @@ real SHA.
 Measured in the repository root while this was written, all three live at once:
 
     origin/main pin        af01bbbc      what CI actually replays
-    index (staged) pin     9ee6bbcd      this checkout's own gitlink
+    this checkout's HEAD   9ee6bbcd      stale: the checkout is 45 commits behind
     shared working dir     17b015ef      left by some earlier process
+
+BEHIND IS NOT MID-BUMP, AND CONFUSING THEM PUT A WRONG PIN ON STDOUT
+--------------------------------------------------------------------
+The index carries a gitlink for the submodule at ALL times -- normally just a
+copy of HEAD's -- so "the index differs from origin/main" does not mean a bump is
+in progress. It usually means the checkout is behind, which is the ordinary state
+of an agent worktree, while a genuinely staged bump is rare.
+
+The first version of this tool preferred the index pin for `--quiet` on the
+reasoning that a worktree mid-bump works against its own pin. On the box above
+that printed 9ee6bbcd -- the stale one -- while origin/main's pin was af01bbbc,
+and the `--help` promised the opposite in as many words. So the headline reading
+was the one it should have trusted least: the same silent-wrong-answer shape this
+tool exists to abolish, sitting inside its own documented safety guarantee.
+Caught by the coordinator running it, not by any test here.
+
+`git diff --cached` is what tells the two apart -- empty unless the index really
+differs from HEAD -- so only a genuinely STAGED bump now outranks origin/main.
 
 WHY IT DOES NOT ANNOUNCE ITSELF
 -------------------------------
@@ -49,10 +67,11 @@ answer would discard it.
 
 EXIT CODES
 ----------
-  0  the readings agree, or they differ only in ways that are not a hazard (see
-     --explain). The pin is on stdout in --quiet form.
-  1  the shared submodule working directory is NOT at the pin. Anything measured
-     from it -- a gap, a commit range, a diff -- is about the wrong commit.
+  0  the shared checkout is at the commit this checkout expects, or is absent. A
+     checkout merely BEHIND origin/main is exit 0: it is un-refreshed, not poisoned.
+     --quiet still answers origin/main's pin.
+  1  the shared working directory is at a commit nothing here accounts for. Anything
+     measured from it -- a gap, a commit range, a diff -- is about the wrong commit.
   2  the pin could not be read (not a git repository, no gitlink, no origin/main).
      NEVER a verdict about the pin.
 
@@ -77,8 +96,8 @@ CORPUS_REMOTE = "https://github.com/StefanMaron/BusinessCentral.AL.Language.Test
 CORPUS_DEFAULT_BRANCH = "master"
 
 EXIT_MEANING = {
-    0: "the shared submodule checkout agrees with the pin (or is absent)",
-    1: "the shared submodule checkout is NOT at the pin - measurements from it are wrong",
+    0: "the shared submodule checkout is at the commit this checkout expects (or is absent)",
+    1: "the shared submodule checkout is NOT at that commit - measurements from it are wrong",
     2: "the pin could not be read - never a verdict about the pin",
 }
 
@@ -126,12 +145,27 @@ def read_pin(runner, root: str, rev: str) -> str | None:
 
 
 def read_index_pin(runner, root: str) -> str | None:
-    """The gitlink staged in THIS checkout's index.
+    """The gitlink DELIBERATELY STAGED in this checkout's index, or None.
 
-    Distinct from both other readings, and the one that is easiest to forget
-    exists. A worktree mid-bump legitimately differs from origin/main here; that
-    is a pin bump in progress, not a hazard.
+    STAGED, not merely recorded, and the distinction is the whole point. The index
+    carries a gitlink for the submodule at all times -- normally just a copy of
+    HEAD's -- so `git ls-files -s` alone cannot tell "somebody is bumping the pin"
+    from "this checkout is simply behind". `git diff --cached` can: it is empty
+    unless the index actually differs from HEAD.
+
+    Reading it the other way was a real defect in this tool, caught by the
+    coordinator running it on this box rather than by any test here. `--quiet`
+    preferred the index pin, so on a checkout 45 commits behind it answered that
+    checkout's own stale pin (9ee6bbcd) while origin/main's was af01bbbc -- and the
+    --help promised the opposite in as many words. A behind worktree is the COMMON
+    case for an agent and a staged bump is rare, so the tool's headline reading was
+    the one it should have trusted least: exactly the silent-wrong-answer shape it
+    exists to abolish, sitting in its own documented safety guarantee.
     """
+    staged = git(runner, root, "diff", "--cached", "--name-only", "--",
+                 SUBMODULE_PATH)[1]
+    if not staged.strip():
+        return None
     rc, out = git(runner, root, "ls-files", "-s", SUBMODULE_PATH)
     if rc != 0 or not out:
         return None
@@ -140,6 +174,16 @@ def read_index_pin(runner, root: str) -> str | None:
     if len(parts) < 2 or parts[0] != "160000":
         return None
     return parts[1] or None
+
+
+def read_head_pin(runner, root: str) -> str | None:
+    """The pin recorded in THIS checkout's own HEAD tree.
+
+    Not a fourth thing to trust -- it exists so the report can distinguish "this
+    checkout is behind origin/main" from "somebody is bumping the pin", which look
+    identical if you only compare the index against origin/main.
+    """
+    return read_pin(runner, root, "HEAD")
 
 
 def read_worktree_head(runner, root: str) -> str | None:
@@ -178,34 +222,59 @@ def short(sha: str | None) -> str:
 
 
 class Readings:
-    """The three readings, kept apart on purpose."""
+    """The readings, kept apart on purpose."""
 
     def __init__(self, pin: str | None, index: str | None, worktree: str | None,
-                 pin_rev: str):
-        self.pin = pin
-        self.index = index
-        self.worktree = worktree
+                 pin_rev: str, head: str | None = None):
+        self.pin = pin            # origin/main's tree -- what CI replays
+        self.index = index        # STAGED gitlink, or None. A real bump in progress.
+        self.head = head          # this checkout's own HEAD tree
+        self.worktree = worktree  # the shared submodule directory
         self.pin_rev = pin_rev
 
     @property
-    def worktree_diverged(self) -> bool:
-        """The hazard: the shared directory is present and NOT at the pin.
+    def effective(self) -> str | None:
+        """The pin a caller should USE, and the value --quiet prints.
 
-        Compared against the INDEX pin when there is one, because a branch that is
-        mid-bump has legitimately moved its own gitlink and its submodule checkout
-        together -- flagging that would fire on correct work and train the reader
-        to ignore this. Absent an index pin, origin/main's is the reference.
+        A genuinely STAGED bump wins, because that worktree is working against its
+        own pin rather than origin/main's. Nothing else does -- notably NOT this
+        checkout's HEAD pin, which is stale on any behind worktree and is what the
+        first version of this wrongly preferred.
+        """
+        return self.index or self.pin or self.head
+
+    @property
+    def behind(self) -> bool:
+        """This checkout's own recorded pin is older than origin/main's, unstaged.
+
+        The COMMON case for an agent worktree, and not a hazard: it means the
+        checkout has not been refreshed, not that anybody left a wrong commit
+        lying around. Distinguished from a bump only by whether anything is staged.
+        """
+        return (self.index is None and self.head is not None
+                and self.pin is not None and self.head != self.pin)
+
+    @property
+    def worktree_diverged(self) -> bool:
+        """The hazard: the shared directory is at a commit nothing here accounts for.
+
+        The reference is what THIS checkout legitimately expects the submodule to
+        sit at: a staged bump if there is one, otherwise its own HEAD pin, and
+        origin/main's only as a last resort. A behind worktree whose submodule
+        matches its own HEAD is in an ordinary, self-consistent state -- flagging
+        that would fire on most worktrees on the box and train the reader to
+        ignore this, which is how a guard dies.
         """
         if self.worktree is None:
             return False
-        reference = self.index or self.pin
+        reference = self.index or self.head or self.pin
         if reference is None:
             return False
         return self.worktree != reference
 
     @property
     def index_ahead_of_main(self) -> bool:
-        """This checkout stages a different pin than origin/main - a bump in progress."""
+        """A STAGED pin differing from origin/main's - a genuine bump in progress."""
         return (self.index is not None and self.pin is not None
                 and self.index != self.pin)
 
@@ -213,22 +282,29 @@ class Readings:
 def gather(runner, root: str, pin_rev: str) -> Readings:
     pin = read_pin(runner, root, pin_rev)
     index = read_index_pin(runner, root)
+    head = read_head_pin(runner, root)
     worktree = read_worktree_head(runner, root)
-    if pin is None and index is None:
+    if pin is None and index is None and head is None:
         raise PinError(
-            f"no {SUBMODULE_PATH} gitlink in {pin_rev}'s tree or in the index of {root}. "
-            f"Either this is not the AL Runner repository, or {pin_rev} does not exist "
-            f"here -- run `git fetch origin main` first. There is no corpus pin to read.")
-    return Readings(pin, index, worktree, pin_rev)
+            f"no {SUBMODULE_PATH} gitlink in {pin_rev}'s tree, in HEAD's tree, or in the "
+            f"index of {root}. Either this is not the AL Runner repository, or {pin_rev} "
+            f"does not exist here -- run `git fetch origin main` first. "
+            f"There is no corpus pin to read.")
+    return Readings(pin, index, worktree, pin_rev, head=head)
 
 
 def render(r: Readings) -> list[str]:
-    label_w = max(24, len(f"pin on {r.pin_rev}"))
+    label_w = max(25, len(f"pin on {r.pin_rev}"))
     L = [f"corpus pin ({SUBMODULE_PATH})", ""]
     L.append(f"  {f'pin on {r.pin_rev}':<{label_w}}  {short(r.pin)}   "
              f"<- THE PIN: what CI replays")
-    L.append(f"  {'pin staged in this index':<{label_w}}  {short(r.index)}   "
-             f"{'(a bump in progress)' if r.index_ahead_of_main else ''}".rstrip())
+    head_note = ""
+    if r.behind:
+        head_note = "   <- this checkout is BEHIND; not a bump"
+    L.append(f"  {'pin in this checkout HEAD':<{label_w}}  {short(r.head)}{head_note}")
+    if r.index is not None:
+        L.append(f"  {'pin STAGED in this index':<{label_w}}  {short(r.index)}   "
+                 f"{'(a bump in progress)' if r.index_ahead_of_main else ''}".rstrip())
     if r.worktree is None:
         L.append(f"  {'shared working directory':<{label_w}}  <absent>   "
                  f"(submodule not initialised here)")
@@ -236,13 +312,25 @@ def render(r: Readings) -> list[str]:
         flag = "   <- NOT THE PIN" if r.worktree_diverged else ""
         L.append(f"  {'shared working directory':<{label_w}}  {short(r.worktree)}{flag}")
     L.append("")
+    if r.behind:
+        L.append(f"This checkout is BEHIND origin/main: its own pin is {short(r.head)} while "
+                 f"origin/main's is {short(r.pin)}, and nothing is staged. That is an "
+                 f"un-refreshed worktree, not a bump in progress -- so `--quiet` answers "
+                 f"{short(r.effective)}, origin/main's pin, which is what CI replays. "
+                 f"Refresh with `git fetch origin main`.")
+        L.append("")
     if not r.worktree_diverged:
-        L.append("The shared submodule checkout agrees with the pin. Anything measured from "
-                 "it is about the pinned commit.")
+        L.append("The shared submodule checkout is at the commit this checkout expects. "
+                 "Anything measured from it is about that commit.")
         return L
-    reference = "the pin staged in this index" if r.index else f"the pin on {r.pin_rev}"
+    if r.index:
+        reference = "the pin STAGED in this index"
+    elif r.head:
+        reference = "the pin this checkout's HEAD records"
+    else:
+        reference = f"the pin on {r.pin_rev}"
     L.append(f"HAZARD: {SUBMODULE_PATH} is checked out at {short(r.worktree)}, which is not "
-             f"{reference} ({short(r.index or r.pin)}).")
+             f"{reference} ({short(r.index or r.head or r.pin)}).")
     L.append("")
     L.append("A submodule working directory is shared by EVERY worktree of this repository, "
              "like refs/stash. Some other process left this one here; it has no owner and "
@@ -324,10 +412,7 @@ def main(argv: list[str] | None = None, runner=None) -> int:
         print(f"corpus-pin: {e}", file=sys.stderr)
         return 2
 
-    # The pin a caller should USE is the one this checkout stages when it has one
-    # -- a worktree mid-bump is working against its own pin, not origin/main's --
-    # falling back to origin/main's tree otherwise.
-    effective = r.index or r.pin
+    effective = r.effective
 
     if args.quiet:
         print(effective)

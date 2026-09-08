@@ -46,6 +46,14 @@ PIN=$(tools/corpus-pin.py --quiet)   # always the pin, never the shared checkout
 `--quiet` prints the pin even when it exits 1, so a caller that ignores the exit code still
 captures the right value. `tools/preflight.py` reports the same divergence as a WARN.
 
+**Behind is not mid-bump**, and the tool distinguishes them because getting it wrong put a
+wrong pin on stdout. The index carries a gitlink for the submodule at *all* times — normally
+just a copy of `HEAD`'s — so "the index differs from `origin/main`" usually means the checkout
+is behind, which is the ordinary state of an agent worktree, not that anyone is bumping the
+pin. `git diff --cached` is what tells them apart. Only a genuinely **staged** bump outranks
+`origin/main`, so `--quiet` on a behind checkout answers `origin/main`'s pin — what CI
+replays — rather than that checkout's stale one.
+
 **Why it does not announce itself.** A stale checkout shows as `M tests/al-language`, which
 reads as an ordinary dirty submodule; `git log` inside it prints a real history, because it
 *is* a real repository at a real commit; and every commit it lists genuinely exists. Nothing

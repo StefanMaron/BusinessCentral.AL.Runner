@@ -2286,17 +2286,29 @@ def corpus_pin_readings(repo: str) -> dict:
     report. Each is None when it could not be read, which is distinct from "they
     disagree" and is reported as such.
     """
-    out = {"pin": None, "index": None, "worktree": None, "error": ""}
-    line = run(["git", "-C", repo, "ls-tree", "refs/remotes/origin/main",
-                CORPUS_SUBMODULE]).out.strip()
-    parts = line.split()
-    if len(parts) >= 3 and parts[0] == "160000" and parts[1] == "commit":
-        out["pin"] = parts[2]
+    out = {"pin": None, "index": None, "head": None, "worktree": None, "error": ""}
 
-    staged = run(["git", "-C", repo, "ls-files", "-s", CORPUS_SUBMODULE]).out.strip()
-    sparts = staged.split()
-    if len(sparts) >= 2 and sparts[0] == "160000":
-        out["index"] = sparts[1]
+    def tree_pin(rev):
+        parts = run(["git", "-C", repo, "ls-tree", rev, CORPUS_SUBMODULE]).out.strip().split()
+        if len(parts) >= 3 and parts[0] == "160000" and parts[1] == "commit":
+            return parts[2]
+        return None
+
+    out["pin"] = tree_pin("refs/remotes/origin/main")
+    out["head"] = tree_pin("HEAD")
+
+    # STAGED, not merely recorded. The index carries a gitlink for the submodule at
+    # ALL times -- normally just a copy of HEAD's -- so `ls-files -s` alone cannot
+    # tell "somebody is bumping the pin" from "this checkout is behind", and the
+    # second is the COMMON case for an agent worktree while the first is rare.
+    # Reading it the other way made this check WARN on every behind worktree and
+    # call that checkout's stale HEAD pin "the pin" (#3404, caught in review).
+    if run(["git", "-C", repo, "diff", "--cached", "--name-only", "--",
+            CORPUS_SUBMODULE]).out.strip():
+        sparts = run(["git", "-C", repo, "ls-files", "-s",
+                      CORPUS_SUBMODULE]).out.strip().split()
+        if len(sparts) >= 2 and sparts[0] == "160000":
+            out["index"] = sparts[1]
 
     sub = os.path.join(repo, CORPUS_SUBMODULE)
     if not os.path.isdir(sub):
@@ -2324,12 +2336,20 @@ def corpus_pin_readings(repo: str) -> dict:
 def classify_corpus_pin(readings: dict) -> CheckResult:
     """PASS/WARN on whether the shared corpus checkout is at the pin."""
     pin, index, worktree = readings["pin"], readings["index"], readings["worktree"]
-    ref = index or pin
+    head = readings.get("head")
+    # What THIS checkout legitimately expects the submodule to sit at: a staged
+    # bump if there is one, otherwise its own HEAD pin. origin/main's is the last
+    # resort, because a behind checkout does not claim to be at it.
+    ref = index or head or pin
+    behind = index is None and head is not None and pin is not None and head != pin
     detail = [
         f"pin on origin/main       {(pin or '<unreadable>')[:8]}   <- what CI replays",
-        f"pin staged in the index  {(index or '<none>')[:8]}",
+        f"pin in this checkout HEAD {(head or '<none>')[:8]}"
+        + ("   <- BEHIND; not a bump" if behind else ""),
         f"shared working directory {(worktree or '<absent>')[:8]}",
     ]
+    if index is not None:
+        detail.insert(2, f"pin STAGED in the index  {index[:8]}   (a bump in progress)")
     if readings["error"] or ref is None or worktree is None:
         # "could not read" is not "they agree". A submodule nobody has initialised
         # cannot mislead anyone, so this is not a finding -- but it must not be
@@ -2339,20 +2359,36 @@ def classify_corpus_pin(readings: dict) -> CheckResult:
             summary="no shared corpus checkout to disagree with the pin"
                     + (f" ({readings['error']})" if readings["error"] else ""),
             command=CORPUS_PIN_TOOL, detail=detail, data=readings)
+    if behind:
+        detail.append(
+            f"This checkout is BEHIND origin/main on the corpus pin ({head[:8]} vs "
+            f"{pin[:8]}), and nothing is staged -- an un-refreshed worktree, not a bump. "
+            f"`{CORPUS_PIN_TOOL} --quiet` answers origin/main's pin, which is what CI "
+            f"replays. Refresh with `git fetch origin main`.")
     if worktree == ref:
+        expected = ("the commit this checkout expects" if behind
+                    else "the pin")
         return CheckResult(
             name="corpus-pin", status="PASS",
-            summary=f"the shared {CORPUS_SUBMODULE} checkout is at the pin ({ref[:8]})",
+            summary=f"the shared {CORPUS_SUBMODULE} checkout is at {expected} ({ref[:8]})"
+                    + (f"; this checkout is behind origin/main ({pin[:8]})" if behind else ""),
             command=CORPUS_PIN_TOOL, detail=detail, data=readings)
     detail.append(
         "A submodule working directory is shared by EVERY worktree of this repository, like "
         "refs/stash. Some other process left this one behind; it has no owner and nothing "
         "resets it. It does not announce itself: `git status` shows it as an ordinary dirty "
         "submodule, and `git log` inside it prints a real history of the wrong commit.")
+    # Name the reference for what it is. Calling this checkout's own HEAD pin "the
+    # pin" was a second wrong statement on the same line, about the value the reader
+    # is being told to trust.
+    ref_label = ("the pin STAGED here" if index
+                 else "the pin this checkout's HEAD records" if head
+                 else "the pin on origin/main")
     return CheckResult(
         name="corpus-pin", status="WARN",
-        summary=f"the shared {CORPUS_SUBMODULE} checkout is at {worktree[:8]}, not the pin "
-                f"{ref[:8]} - anything measured from it is about the wrong commit",
+        summary=f"the shared {CORPUS_SUBMODULE} checkout is at {worktree[:8]}, not "
+                f"{ref_label} ({ref[:8]}) - anything measured from it is about the "
+                f"wrong commit",
         command=CORPUS_PIN_TOOL,
         detail=detail,
         remedy="Do not read the pin from the submodule's HEAD. Read it from a tree:\n"

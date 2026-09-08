@@ -146,7 +146,7 @@ with tempfile.TemporaryDirectory() as tmp:
     rc, out = run_tool(["--rev", "HEAD"], sup)
     check("agreeing readings exit 0", rc == 0, f"rc={rc}")
     check("an agreeing report says so",
-          "agrees with the pin" in out, out)
+          "is at the commit this checkout expects" in out, out)
     check("an agreeing report does not cry hazard", "HAZARD" not in out, out)
 
     rc, out = run_tool(["--rev", "HEAD", "--quiet"], sup)
@@ -218,6 +218,66 @@ with tempfile.TemporaryDirectory() as tmp:
     rc, out = run_tool(["--rev", "HEAD"], sup)
     check("a staged bump with a drifted checkout is still a hazard",
           rc == 1, f"rc={rc}: {out}")
+
+    # ------------------------------------ BEHIND is not MID-BUMP (coordinator, #3404)
+    # The index records a gitlink whether or not anybody staged one, so "differs
+    # from origin/main" does NOT mean "a bump in progress". The common case for an
+    # agent worktree is the opposite: a checkout some commits behind, whose index
+    # pin equals its own HEAD's tree pin because nothing was staged at all.
+    #
+    # Getting this wrong is not cosmetic. --quiet preferred the index pin, so on
+    # any behind checkout it printed a STALE pin while its own --help promised the
+    # right one -- the exact silent-wrong-answer class this tool exists to abolish,
+    # in the property documented as its safety guarantee. Measured on the live box:
+    # --quiet answered 9ee6bbcd with origin/main's pin at af01bbbc, 45 commits back.
+    git(sup, "reset", "-q", "HEAD", "--")
+    git(sub, "checkout", "-q", pin_sha)
+
+    # Advance origin/main's pin WITHOUT touching this checkout: the superproject
+    # moves on, our HEAD does not. Nothing is staged here -- this is "behind".
+    git(sup, "branch", "-f", "other", "HEAD")
+    git(sub, "checkout", "-q", later_sha)
+    git(sup, "add", "tests/al-language")
+    git(sup, "commit", "-qm", "bump the corpus pin on main")
+    advanced = git(sup, "rev-parse", "HEAD")
+    git(sup, "update-ref", "refs/remotes/origin/main", advanced)
+    # Put the checkout back where it was: HEAD behind origin/main, nothing staged.
+    git(sup, "reset", "-q", "--hard", "other")
+    git(sub, "checkout", "-q", pin_sha)
+
+    check("the fixture is genuinely BEHIND, with nothing staged",
+          git(sup, "diff", "--cached", "--name-only", "--", "tests/al-language") == ""
+          and cp.read_pin(cp._default_runner, sup, "refs/remotes/origin/main") == later_sha
+          and cp.read_pin(cp._default_runner, sup, "HEAD") == pin_sha,
+          "the fixture does not reproduce a behind checkout")
+
+    check("an UNSTAGED index pin is not read as a staged bump",
+          cp.read_index_pin(cp._default_runner, sup) is None,
+          f"got {cp.read_index_pin(cp._default_runner, sup)!r} - nothing was staged")
+
+    rc, out = run_tool(["--rev", "refs/remotes/origin/main", "--quiet"], sup)
+    check("--quiet on a BEHIND checkout answers origin/main's pin, not the stale one",
+          out.strip() == later_sha,
+          f"{out.strip()!r} != origin/main pin {later_sha!r} (stale was {pin_sha!r})")
+    check("--quiet on a behind checkout does not print the stale pin",
+          pin_sha not in out, out)
+
+    rc, out = run_tool(["--rev", "refs/remotes/origin/main"], sup)
+    check("a behind checkout is never labelled as a bump in progress",
+          "(a bump in progress)" not in out, out)
+    check("...and is not shown a STAGED-pin row it does not have",
+          "STAGED in this index" not in out, out)
+    check("...and says it is behind, so the reader knows why the pins differ",
+          "behind" in out.lower(), out)
+    # The submodule sits at this checkout's own recorded pin, which is a perfectly
+    # ordinary state for a behind worktree. Calling that a poisoned checkout would
+    # fire on every worktree that has not been refreshed.
+    check("a behind checkout whose submodule matches its own HEAD is not a hazard",
+          rc == 0, f"rc={rc}: {out}")
+
+    # Restore the fixture for the gap tests below.
+    git(sup, "update-ref", "-d", "refs/remotes/origin/main")
+    git(sup, "branch", "-D", "other")
 
     # ---------------------------------------------------------------- the gap
     git(sup, "reset", "-q", "HEAD", "--")     # unstage the bump
