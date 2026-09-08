@@ -29,8 +29,14 @@ BC raises the same event from two places with different flags:
 | `SaveRecordAsync` | `RecordSaved` |
 | `UpdateCoreAsync` | `Update`, plus `RecordSaved` when `saveRecord`, plus `UpdateParent` when `UpdatePropagation == Both` |
 
-Only `Update` means "re-load the form". Arming on `RecordSaved` as well would refresh after every
-`CurrPage.SaveRecord`, which no measurement covers.
+Only `Update` means "re-load the form". Arming the REFRESH on `RecordSaved` as well would re-run
+the page's triggers after every `CurrPage.SaveRecord`, which no measurement covers.
+
+`RecordSaved` is not ignored, though: it drives the before-image half of what the client does
+after a save, and nothing else. `RunnerPageInstance.RefreshBeforeImageAfterSave` takes
+`OldRecord.ALAssign(SourceTable)` — the tail of `AfterGetCurrRecordAsync`, which a real client
+reaches by re-reading the row — without raising a single trigger. Issue #3440: without it a
+second write in one page session reported the value from before the first write as its `xRec`.
 
 ## The measured trigger orders
 

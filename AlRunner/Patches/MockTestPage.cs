@@ -1293,6 +1293,12 @@ internal class LiveNavTestPage : MockITestPage
         // Non-null: _pendingNewRow is only ever set true by InsertEmptyRow, which refuses by
         // name first when the page has no record — see RequireRecord there.
         _record!.ALInsertAsync(DataError.TrapError, true, false).GetAwaiter().GetResult();
+        // The row is now the page's own row, so it is also its own before-image — BC's
+        // NavForm.InsertAsync does exactly this, under exactly this guard
+        // (`if (SourceTable.HasBeenInserted) OldRecord.ALAssign(SourceTable)`). Without it the
+        // next write on the same page instance would compare against, and report as xRec, the
+        // blank row New() started (issue #3440).
+        if (_record!.HasBeenInserted) SnapshotBeforeImage();
     }
 
     /// <summary>
@@ -1635,7 +1641,60 @@ internal class LiveNavTestPage : MockITestPage
 
         // A new row is already going to be written by FlushPendingNewRow; marking it modified
         // as well would try to Modify a row that does not exist yet.
-        if (!_pendingNewRow) _pendingModify = true;
+        if (!_pendingNewRow) { _pendingModify = true; return; }
+
+        InsertOnCompletePrimaryKey();
+    }
+
+    /// <summary>
+    /// Write a page-driven insert as soon as the row's PRIMARY KEY is complete, rather than
+    /// holding it back until the page is left — issue #3441.
+    ///
+    /// Measured on real BC 28.4 and adjudicated on eight cloud legs (corpus codeunit 60636
+    /// <c>NewAndInsertRecordEvents_PageDrivenInsert_FireForTheKeyOnly</c>): typing the key of a
+    /// new row on a <c>DelayedInsert = false</c> list inserts the row THERE, so
+    /// <c>OnInsertRecord</c> and <c>OnInsertRecordEvent</c> see the key set and every later
+    /// control still blank, and the next control write is an ordinary page-driven MODIFY with
+    /// its own trigger and event. The runner deferred the whole thing to the flush, so the
+    /// insert trigger saw a finished row and the modify never happened at all.
+    ///
+    /// <para>Three limits. A page that saves one RECORD rather than rows keeps the
+    /// flush-on-leave timing — see RunnerPageInstance.WritesRowsAsTheyAreCompleted, where both
+    /// directions are measured. <c>DelayedInsert = true</c> keeps it too, which is that
+    /// property's own definition. And "complete" is BC's own emptiness test —
+    /// <c>NavValue.IsZeroOrEmpty</c>, what <c>NavForm.SplitKey</c> uses on the last key field —
+    /// so a page whose last key field is filled in BY <c>AutoSplitKey</c> reads as incomplete
+    /// while that field is still 0 and keeps the deferred path. Every editable line grid in BC
+    /// is that shape, and moving them would change insert timing for the draft-line tests
+    /// (corpus 60358/60648) on no evidence.</para>
+    /// </summary>
+    private void InsertOnCompletePrimaryKey()
+    {
+        // No page: record-only mode has no DelayedInsert property to read and no page triggers
+        // to get the timing wrong, so it keeps the flush-time insert.
+        if (_page == null || _page.DelaysInsertUntilTheRowIsLeft) return;
+        // A Card saves its one record when the page is left, not when its key is typed — corpus
+        // codeunit 60844 Close_WithoutOK_StillPersistsTheNewRow asserts the row is absent right
+        // up to Close(), and says in its own message that it is there to catch an eager insert.
+        if (!_page.WritesRowsAsTheyAreCompleted) return;
+        if (!PrimaryKeyIsComplete(_record!)) return;
+        // The same call the flush points make, so the insert keeps BC's order — the write gate,
+        // SplitKey, OnInsertRecord's veto, then the record's own Insert — and clears
+        // _pendingNewRow, which is what makes the NEXT control write a Modify.
+        FlushPendingNewRow();
+    }
+
+    /// <summary>Every primary-key field holds a value. <c>NavValue.IsZeroOrEmpty</c> is BC's own
+    /// spelling of "this key field has not been filled in" — <c>NavForm.SplitKey</c> tests the
+    /// last key field with it before computing an AutoSplitKey value.</summary>
+    private static bool PrimaryKeyIsComplete(NavRecord record)
+    {
+        var primaryKey = record.MetaTable?.PrimaryKey;
+        if (primaryKey == null || primaryKey.KeyFieldCount == 0) return false;
+        for (var i = 0; i < primaryKey.KeyFieldCount; i++)
+            if (record.GetFieldValue(primaryKey.KeyFieldsList[i].FieldNo).IsZeroOrEmpty)
+                return false;
+        return true;
     }
 
     internal void FlushPendingModify()
@@ -1694,6 +1753,16 @@ internal class LiveNavTestPage : MockITestPage
         // to succeed and quietly went nowhere; and both trigger flags on, because a page write
         // runs the table's OnModify and the global-trigger hook exactly like Rec.Modify(true).
         record.ModifyAsync(DataError.ThrowError, true, true).GetAwaiter().GetResult();
+
+        // The write has landed, so the row IS the before-image from here on. BC gets this from
+        // the client: SaveRecordAsync ends by raising UpdateRequest(RecordSaved), the client
+        // re-reads, and AfterGetCurrRecordAsync's tail assigns OldRecord. This method is the
+        // runner's own write path and never reaches SaveRecordAsync, so it takes the snapshot
+        // itself — see RunnerPageInstance.RefreshBeforeImageAfterSave for the other half, which
+        // covers CurrPage.SaveRecord()/Update(true). Without both, a second write in one page
+        // session reported the value from before the FIRST write as its xRec (issue #3440), and
+        // the RowValuesChangedSinceLoad gate above measured that same stale row.
+        SnapshotBeforeImage();
     }
 
     // Order matters at every flush point: an in-progress new row is finished by an Insert, an
@@ -2247,10 +2316,19 @@ internal class LiveNavTestPage : MockITestPage
     /// <c>NavForm.AfterGetCurrRecordAsync</c> — both end with
     /// <c>OldRecord.ALAssign(SourceTable)</c>, and <c>NavForm.OldRecord</c> is literally
     /// <c>SafeSourceTable.OldRecord</c>, so the target is this record's own xRec slot. Those two
-    /// are exactly the pair of triggers RaiseOnAfterGetRecord above fires, which is why the
-    /// snapshot belongs here and nowhere else: "a row became the current row" is the only moment
-    /// BC takes it, and nothing on the page-write path overwrites it (see FlushPendingModify),
-    /// so by the time OnModify runs xRec still holds the row AS FETCHED.
+    /// are exactly the pair of triggers RaiseOnAfterGetRecord above fires, which is why a row
+    /// becoming the current row is one of the moments BC takes it.
+    ///
+    /// <para>It is not the only one, and this method now has FOUR callers — issue #3440. BC also
+    /// retakes the before-image after every successful page-driven WRITE, so a second write in
+    /// one page session sees the first write's row as its xRec: <c>NavForm.InsertAsync</c> does
+    /// it inline (mirrored in <see cref="FlushPendingNewRow"/>), and <c>SaveRecordAsync</c>
+    /// leaves it to the client, which re-reads and lands in <c>AfterGetCurrRecordAsync</c>'s own
+    /// tail — mirrored in <see cref="FlushPendingModify"/> for the runner's own write path and in
+    /// <c>RunnerPageInstance.RefreshBeforeImageAfterSave</c> for <c>CurrPage.SaveRecord()</c> /
+    /// <c>Update(true)</c>. Removing any one of the four puts the stale before-image back on
+    /// that path. What still holds is the OTHER half of the old sentence: nothing overwrites it
+    /// BETWEEN the write's start and its trigger, so OnModify sees the row as fetched.</para>
     ///
     /// Without this the page had no before-image at all: <c>ALModifyAsync</c>'s own
     /// <c>OldRecord.ALAssign(this)</c> was the only thing that ever populated xRec, which is
