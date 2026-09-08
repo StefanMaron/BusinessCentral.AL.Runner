@@ -189,6 +189,11 @@ public sealed class LoudDiagnosisReachesTheUserTests
         // stated cause. See docs/partial-company-initialization.md.
         { "AlRunner/Program.cs", "every test in this run used a PARTIALLY initialized company" },
 
+        // #3559 — the only account of a shadow runtime dir being refused. Without it the run
+        // silently rebuilds a directory that a sibling emptied under a live process, and the
+        // next such directory takes a run down inside Roslyn twenty minutes later.
+        { "AlRunner/Infrastructure/NclShadowRuntime.cs", "is INCOMPLETE" },
+
         // #2963, and named in #3068 as the same class: System Application module-ownership
         // checks silently decline for the whole run when this row set is not seeded.
         { "AlRunner/Patches/RecordPatches.PublishedApplicationSystemTable.cs", "Published Application rows" },

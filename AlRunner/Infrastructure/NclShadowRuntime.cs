@@ -235,8 +235,8 @@ public static class NclShadowRuntime
             if (why.Length > 0)
                 Console.Error.WriteLine(
                     $"[warn] Ncl shadow runtime: the published dir at {shadowDir} is INCOMPLETE " +
-                    $"(missing: {why}) - refusing to run from it and rebuilding it now. If this " +
-                    "repeats, a concurrent runner process pruned it while it was in use.");
+                    $"(missing: {why}) - this run will refuse it and rebuild it now. " +
+                    "See docs/ncl-shadow-runtime.md for the shapes that produce this.");
         }
 
         Console.Error.WriteLine($"[Cecil] Building Ncl shadow runtime dir at {shadowDir}");
@@ -891,14 +891,16 @@ public static class NclShadowRuntime
             // path. See docs/ncl-shadow-runtime.md.
             if (IsInUse(dir))
             {
-                Console.Error.WriteLine(
-                    $"[reexec] Not pruning shadow dir {dir}: another runner process is running from it");
+                if (AlRunner.Log.Verbose)
+                    Console.Error.WriteLine(
+                        $"[reexec] Not pruning shadow dir {dir}: another runner process is running from it");
                 continue;
             }
             if (IsYoungerThan(dir, MinPruneAge))
             {
-                Console.Error.WriteLine(
-                    $"[reexec] Not pruning shadow dir {dir}: published less than {MinPruneAge.TotalMinutes:0} minutes ago");
+                if (AlRunner.Log.Verbose)
+                    Console.Error.WriteLine(
+                        $"[reexec] Not pruning shadow dir {dir}: published less than {MinPruneAge.TotalMinutes:0} minutes ago");
                 continue;
             }
 

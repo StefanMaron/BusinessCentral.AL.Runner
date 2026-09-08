@@ -181,9 +181,12 @@ public sealed class NclShadowInUseAndManifestTests
         {
             var live = Path.Combine(root, "published-live");
             WriteCompleteShadowDir(live);
-            Directory.SetLastWriteTimeUtc(live, DateTime.UtcNow.AddDays(-30));
             held = NclShadowRuntime.AcquireInUseLock(live);
             Assert.NotNull(held);
+            // Back-date AFTER taking the lock: writing the lock file bumps the dir's mtime,
+            // and a dir that looks young is protected by the age floor instead — which would
+            // let this test pass with the in-use probe removed entirely.
+            Directory.SetLastWriteTimeUtc(live, DateTime.UtcNow.AddDays(-30));
 
             for (var i = 0; i < 3; i++)
             {
