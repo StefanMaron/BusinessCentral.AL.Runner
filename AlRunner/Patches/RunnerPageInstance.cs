@@ -1135,13 +1135,11 @@ internal sealed partial class RunnerPageInstance
     /// <c>AutoFormatType</c>/<c>AutoFormatExpression</c> reach the AutoFormat system
     /// codeunit), then the record's, then <c>GetDecimalPlaces</c> on each — and converts the
     /// BC format it produces into a .NET one. All of that already executes correctly inside
-    /// the runner; measured on BC 28.1 against a four-control probe page (#3406):</para>
-    /// <code>
-    /// AutoFormatType = 0                                 -&gt; #,##0.00
-    /// AutoFormatType = 1,  expression 'EUR'              -&gt; #,##0.00
-    /// AutoFormatType = 11, expression '&lt;Precision,3:3&gt;…' -&gt; #,##0.000
-    /// DecimalPlaces  = 3 : 3                             -&gt; #,##0.000
-    /// </code>
+    /// the runner. The measured format strings live in
+    /// <c>docs/limitations.md#testpage-decimal-formatting</c>, adjudicated upstream by corpus
+    /// codeunit 60605 "ALT AutoFormat Tests" on all eight cloud legs — deliberately not
+    /// restated here, because that table was copied into four places and the
+    /// custom-expression arm was mislabelled in every one of them (#3406).</para>
     /// <para>Never throws: a page that published no format table, a control with no format
     /// expression, and an expression whose evaluation fails all answer null, and the caller
     /// falls back to its own historical spelling. A refusal here would turn every
