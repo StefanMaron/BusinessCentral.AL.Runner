@@ -3,12 +3,20 @@
 // difference from failing the run.
 //
 // The contract (issue #3533):
-//   * every declared difference carries a reason and, where it is a defect rather than a
-//     permanent limit, the issue tracking it;
+//   * every declared difference carries a reason AND says which KIND of reason it is —
+//     exactly one of: a tracked defect, a permanent limit of the symbol file, a surface the
+//     runner deliberately does not implement, or a limitation of the oracle itself;
 //   * an entry that stops matching anything is an ERROR, not a tidy-up — that is how a
 //     landed fix forces the allowlist to shrink instead of leaving stale cover behind;
 //   * an entry may cap how many differences it covers, so a defect getting WORSE fails even
 //     though its shape is declared.
+//
+// The four kinds are separate because they need DIFFERENT evidence, and conflating them is
+// how a recoverable difference gets a permanent licence. Seven TranslationKey entries — 36%
+// of the whole diff — were first declared a permanent limit of the symbol file on the
+// evidence that it stores no translation keys. True, and the wrong conclusion: the key is
+// computed from names rather than stored, and the computation reproduces all 2,153 of them.
+// "Nothing is stored" is evidence about storage, never about derivability.
 //
 // Drift is loud in both directions, the same way tests/expectations/ already works for
 // out-of-scope corpus tests (docs/expectations.md).
@@ -31,10 +39,30 @@ public sealed class MetadataAllowlistEntry
     [JsonPropertyName("issue")] public int? Issue { get; init; }
 
     /// <summary>
-    /// True when the difference is a permanent limit of the symbol file rather than a defect —
-    /// the "cannot express" set. Such an entry needs no issue.
+    /// The symbol file genuinely cannot express this and it cannot be derived either. Needs
+    /// evidence about DERIVABILITY, not merely that nothing is stored.
     /// </summary>
     [JsonPropertyName("cannotExpress")] public bool CannotExpress { get; init; }
+
+    /// <summary>
+    /// The runner deliberately does not implement the surface this member serves, so no AL
+    /// test can observe it. A scope declaration, not a capability limit — it says nothing
+    /// about whether the value could be produced. Requires <see cref="Doc"/>.
+    /// </summary>
+    [JsonPropertyName("outOfScope")] public bool OutOfScope { get; init; }
+
+    /// <summary>
+    /// The GROUND TRUTH is the wrong shape for this member, so the difference is expected by
+    /// construction and is not evidence about the runner at all. Requires <see cref="Doc"/>.
+    /// </summary>
+    [JsonPropertyName("oracleLimitation")] public bool OracleLimitation { get; init; }
+
+    /// <summary>
+    /// Where the claim is written down, as <c>docs/&lt;file&gt;.md#anchor</c>. Named
+    /// <c>Doc</c> so tools/test_doc_pointers.py validates the path AND the anchor — the same
+    /// convention the out-of-scope corpus expectations use.
+    /// </summary>
+    [JsonPropertyName("Doc")] public string? Doc { get; init; }
 
     /// <summary>Only cover differences on this object, e.g. <c>Table 2000000120</c>.</summary>
     [JsonPropertyName("objectKey")] public string? ObjectKey { get; init; }
@@ -81,11 +109,25 @@ public sealed class MetadataDifferenceAllowlist
                 throw new InvalidDataException(
                     $"metadata allowlist: entry '{e.Member}' has a placeholder reason " +
                     $"('{e.Reason}'). Every declared difference states why it is tolerated.");
-            if (e.Issue is null && !e.CannotExpress)
+            var kinds = (e.Issue is not null ? 1 : 0) + (e.CannotExpress ? 1 : 0)
+                        + (e.OutOfScope ? 1 : 0) + (e.OracleLimitation ? 1 : 0);
+            if (kinds == 0)
                 throw new InvalidDataException(
-                    $"metadata allowlist: entry '{e.Member}' names no issue and is not marked " +
-                    "'cannotExpress'. A tolerated DEFECT is tracked; only a permanent limit of " +
-                    "the symbol file is not.");
+                    $"metadata allowlist: entry '{e.Member}' says nothing about WHY it is " +
+                    "tolerated. Set exactly one of: 'issue' (a tracked defect), 'cannotExpress' " +
+                    "(the symbol file cannot express it and it cannot be derived), 'outOfScope' " +
+                    "(the runner does not implement the surface, so no AL test can see it), or " +
+                    "'oracleLimitation' (the ground truth is the wrong shape for it).");
+            if (kinds > 1)
+                throw new InvalidDataException(
+                    $"metadata allowlist: entry '{e.Member}' claims more than one kind of reason. " +
+                    "They need different evidence, so exactly one applies.");
+            if ((e.OutOfScope || e.OracleLimitation) && string.IsNullOrWhiteSpace(e.Doc))
+                throw new InvalidDataException(
+                    $"metadata allowlist: entry '{e.Member}' declares a scope or oracle boundary " +
+                    "with no 'Doc' pointer. Those two are permanent licences to differ, so the " +
+                    "claim has to be written down somewhere a reader can find and a reviewer can " +
+                    "disagree with — tools/test_doc_pointers.py checks the pointer resolves.");
         }
     }
 

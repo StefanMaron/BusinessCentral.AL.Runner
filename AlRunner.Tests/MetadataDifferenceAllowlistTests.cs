@@ -103,11 +103,28 @@ public sealed class MetadataDifferenceAllowlistTests
     }
 
     [Fact]
-    public void A_tolerated_defect_with_no_issue_is_refused()
+    public void An_entry_that_says_nothing_about_WHY_is_refused()
     {
         var ex = Assert.Throws<InvalidDataException>(() => new MetadataDifferenceAllowlist(
             new[] { new MetadataAllowlistEntry { Member = "MetaField.Editable", Reason = "we think it is fine" } }));
-        Assert.Contains("names no issue", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("says nothing about WHY", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void An_entry_claiming_two_kinds_of_reason_is_refused()
+    {
+        // The four kinds need different evidence, so an entry hedging between them has
+        // established none of them.
+        var ex = Assert.Throws<InvalidDataException>(() => new MetadataDifferenceAllowlist(
+            new[]
+            {
+                new MetadataAllowlistEntry
+                {
+                    Member = "TranslationKey.#Id1", Reason = "both, somehow",
+                    Issue = 3568, CannotExpress = true,
+                },
+            }));
+        Assert.Contains("more than one kind of reason", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -117,13 +134,76 @@ public sealed class MetadataDifferenceAllowlistTests
         {
             new MetadataAllowlistEntry
             {
-                Member = "TranslationKey.#Id1",
-                Reason = "translation keys are assigned by the compiler and are not in SymbolReference.json",
+                Member = "SomeType.SomeMember",
+                Reason = "not in the symbol file and not derivable from anything in it",
                 CannotExpress = true,
             },
         });
 
+        Assert.True(list.Classify(new[] { Diff("SomeType", "SomeMember") }).Ok);
+    }
+
+    [Fact]
+    public void A_scope_or_oracle_boundary_without_a_Doc_pointer_is_refused()
+    {
+        // Both are PERMANENT licences to differ, unlike a tracked defect, so the claim has to
+        // be somewhere a reviewer can find and disagree with. test_doc_pointers.py then keeps
+        // the pointer resolving.
+        foreach (var entry in new[]
+                 {
+                     new MetadataAllowlistEntry { Member = "TranslationKey.#Id1", Reason = "the runner reads no translation files", OutOfScope = true },
+                     new MetadataAllowlistEntry { Member = "MetaTable.Fields.<presence>", Reason = "runtime-merged versus build-time emit", OracleLimitation = true },
+                 })
+        {
+            var ex = Assert.Throws<InvalidDataException>(
+                () => new MetadataDifferenceAllowlist(new[] { entry }));
+            Assert.Contains("no 'Doc' pointer", ex.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void A_scope_boundary_with_a_Doc_pointer_covers_its_difference()
+    {
+        var list = new MetadataDifferenceAllowlist(new[]
+        {
+            new MetadataAllowlistEntry
+            {
+                Member = "TranslationKey.#Id1",
+                Reason = "the runner reads no translation files, so no AL test can observe this",
+                OutOfScope = true,
+                Doc = "docs/metadata-equivalence.md#translation-keys-are-out-of-scope",
+            },
+        });
+
         Assert.True(list.Classify(new[] { Diff("TranslationKey", "#Id1") }).Ok);
+    }
+
+    [Fact]
+    public void The_checked_in_allowlist_claims_no_permanent_symbol_file_limit()
+    {
+        // Not decoration. 36% of the diff was declared cannotExpress on evidence that turned
+        // out to be about storage rather than derivability, and both TranslationKey and
+        // ClrType proved recoverable. If a future entry claims one, it should have to change
+        // this test and say why in the same commit.
+        var list = MetadataDifferenceAllowlist.Load(MetadataEquivalencePaths.AllowlistFile());
+
+        Assert.Empty(list.Entries.Where(e => e.CannotExpress).Select(e => e.Member));
+    }
+
+    [Fact]
+    public void Every_scope_and_oracle_entry_in_the_checked_in_allowlist_points_at_docs()
+    {
+        var list = MetadataDifferenceAllowlist.Load(MetadataEquivalencePaths.AllowlistFile());
+
+        foreach (var e in list.Entries.Where(e => e.OutOfScope || e.OracleLimitation))
+        {
+            Assert.StartsWith("docs/", e.Doc!, StringComparison.Ordinal);
+            Assert.Contains('#', e.Doc!);
+            Assert.True(File.Exists(Path.Combine(
+                    Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..")),
+                    e.Doc!.Split('#')[0])),
+                $"{e.Member} points at '{e.Doc}', which does not exist.");
+        }
     }
 
     [Fact]

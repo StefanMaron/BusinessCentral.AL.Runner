@@ -82,10 +82,78 @@ make it that:
 | an entry that matches nothing | fails — so a landed fix must delete its entries |
 | an entry exceeding its `maxOccurrences` | fails — so a declared defect getting worse still fails |
 
-Every entry states a reason. An entry tolerating a **defect** names the issue tracking it; only a
-permanent limit of the symbol file may set `cannotExpress` instead and skip the issue. Both rules
-are enforced at load time by `MetadataDifferenceAllowlist`, so a malformed entry fails the run
-rather than sitting in the file granting cover nobody reviewed.
+Every entry states a reason **and exactly one kind of reason**, because the four kinds need
+different evidence and conflating them is how a recoverable difference gets a permanent licence:
+
+| kind | means | needs |
+|---|---|---|
+| `issue: N` | a defect, tracked, expected to go away | the issue |
+| `outOfScope: true` | the runner does not implement the surface, so no AL test can observe it | a `Doc` pointer |
+| `oracleLimitation: true` | the ground truth is the wrong shape for this member | a `Doc` pointer |
+| `cannotExpress: true` | the symbol file cannot express it **and** it cannot be derived | evidence about derivability |
+
+Enforced at load by `MetadataDifferenceAllowlist`, so a malformed entry fails the run rather than
+sitting in the file granting cover nobody reviewed. `Doc` is spelled that way on purpose:
+`tools/test_doc_pointers.py` already validates every `Doc` value under `tests/expectations`,
+path and anchor, so a scope claim cannot point at a section that has been renamed away.
+
+**No entry currently claims `cannotExpress`**, and the way that changed is the reason the
+distinction exists. The seven `TranslationKey` entries — 25,721 of the 70,728 differences, 36% of
+the diff — were first declared a permanent limit of the symbol file, on the evidence that
+`SymbolReference.json` contains the string `TranslationKey` zero times in both packages. That
+observation is true. The conclusion drawn from it was wrong twice over, and both corrections are
+below. **"Nothing is stored" is evidence about storage, never about derivability.**
+
+<a id="translation-keys-are-out-of-scope"></a>
+## Translation keys are out of scope, and separately are derivable
+
+A `CaptionTranslationKey` is a lookup id into a translation file. It means something only to
+something that reads those files, and **the runner reads none**: there is no `.xlf` or
+`Translations/` handling anywhere in `AlRunner/`, and `docs/limitations.md` already records that
+the runner installs no BC translation resources. So no AL test can observe this member, and the
+honest declaration is a scope boundary. What would invalidate it is the runner gaining
+translation support — not anything about BC.
+
+It is also **derivable**, which matters because it means the entry can never become a permanent
+limit. BC's own `LanguageKeyHelper.ConstructObjectHash` is
+
+```
+(uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue)
+```
+
+and a key is `<Kind> <hash>` components joined by `" - "`, ending in the property. Measured
+against the ground truth: **2,153 of 2,153 keys reproduced exactly**, with the property component
+decomposing to `Caption` (1,138), `ToolTip` (988) and `OptionCaption` (27) and nothing left
+unexplained. `MetadataEquivalenceHarnessTests.TranslationKeysAreDerivable_NotAPermanentLimit`
+pins that, so the claim under the allowlist reason is checked rather than asserted.
+
+**`CaptionML` is a different member and is not covered by any of this.** It is the caption
+*text*, it is AL-observable — `Format()` on an option with an `OptionCaption`, field captions in
+error messages — and `MetaField.CaptionML.<presence>` (988) is declared separately as a tracked
+defect. The two must not be folded together: doing so would license a real difference behind a
+scope declaration that does not apply to it.
+
+<a id="the-oracle-is-build-time-per-app-metadata"></a>
+## The oracle is build-time per-app metadata, not runtime merged metadata
+
+The ground truth is what BC's compiler emits **for one app at build time**. A running BC system
+holds something else: metadata with every installed app's tableextension deltas applied. The
+runner models the second, because that is the state AL actually executes against.
+
+So where the runner shows a merged view, a difference is **expected by construction and is not
+evidence about the runner**. Measured: 115 fields on four Business Foundation tables (230, 242,
+308, 6635), which are tableextension fields other registered apps contribute. In BC 29 everything
+is merged at database level anyway, which makes the runner's merged view the forward-looking one
+rather than a deviation.
+
+Two consequences worth meeting before a non-empty diff is:
+
+- **A multi-app bundle can never produce an empty diff.** That is a limitation of this oracle, not
+  a wart in the runner. Do not read the residue as normal noise, and do not read it as a bug —
+  read the three `oracleLimitation` entries and check the difference is one of them.
+- **The faithful comparison would need BC's post-publish runtime metadata** — what a service tier
+  holds after deltas are applied — which is not obtainable without a tier. That is the ceiling on
+  how empty this diff can ever get.
 
 Verified across BC 27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54044 and 28.4.53241.53989:
 the same 74 entries cover every difference on all four, with none stale. The counts move

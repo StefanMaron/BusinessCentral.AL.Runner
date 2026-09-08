@@ -8,8 +8,20 @@
     "fix must delete its entries in the same change, and a BC version that introduces a new",
     "property surfaces as a new undeclared difference rather than passing silently.",
     "",
-    "Every entry carries a reason. An entry that tolerates a DEFECT names the issue tracking",
-    "it; only a permanent limit of the symbol file may set cannotExpress instead.",
+    "Every entry carries a reason AND exactly one KIND of reason, because the four kinds need",
+    "different evidence:",
+    "  issue            a defect, tracked, expected to go away",
+    "  outOfScope       the runner does not implement the surface, so no AL test can see it",
+    "                   (needs a Doc pointer)",
+    "  oracleLimitation the ground truth is the wrong shape for this member, so the difference",
+    "                   says nothing about the runner (needs a Doc pointer)",
+    "  cannotExpress    the symbol file cannot express it AND it cannot be derived",
+    "",
+    "NO ENTRY CURRENTLY CLAIMS cannotExpress. Seven TranslationKey entries did, on the evidence",
+    "that SymbolReference.json stores no translation keys. That was true and the conclusion was",
+    "wrong twice over: the key is COMPUTED from names rather than stored (2,153 of 2,153",
+    "reproduced), and the runner reads no translation files anyway, so it is out of scope rather",
+    "than impossible. 'Nothing is stored' is evidence about storage, never about derivability.",
     "",
     "No entry sets maxOccurrences. The mechanism exists (see MetadataDifferenceAllowlist) and",
     "is worth using for a difference whose count is bounded independently of the build, but a",
@@ -18,44 +30,51 @@
     "and which apps have a ground-truth bundle.",
     "",
     "Measured on BC 28.1.49838.54044 over Business Foundation (12 tables) and System Application",
-    "(138 tables): 70,728 differences across 73 members. Per-member counts and examples are on",
+    "(138 tables): 70,728 differences across 74 members. Per-member counts and examples are on",
     "issue #3568."
   ],
   "differences": [
     {
       "member": "TranslationKey.#Id2",
-      "reason": "Same as TranslationKey.#Id1: the symbol file records no translation keys at all.",
-      "cannotExpress": true
+      "reason": "The field-name or property-name component of a translation-file lookup id. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
       "member": "TranslationKey.#NavSymbolKind1",
-      "reason": "The symbol-kind half of a translation key the symbol file does not carry.",
-      "cannotExpress": true
+      "reason": "The symbol kind of a translation key's first component (BC: Table, runner: Module). A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
       "member": "TranslationKey.#NavSymbolKind2",
-      "reason": "The symbol-kind half of a translation key the symbol file does not carry.",
-      "cannotExpress": true
+      "reason": "The symbol kind of a translation key's second component. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
       "member": "TranslationKey.#NavSymbolKind3",
-      "reason": "The symbol-kind half of a translation key the symbol file does not carry.",
-      "cannotExpress": true
+      "reason": "The symbol kind of a translation key's third component. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
       "member": "TranslationKey.#NavSymbolKind4",
-      "reason": "The symbol-kind half of a translation key the symbol file does not carry.",
-      "cannotExpress": true
+      "reason": "The symbol kind of a translation key's fourth component. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
       "member": "TranslationKey.#Id3",
-      "reason": "Same as TranslationKey.#Id1: the symbol file records no translation keys at all.",
-      "cannotExpress": true
+      "reason": "The property-name component of a field's translation-file lookup id. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
       "member": "TranslationKey.#Id1",
-      "reason": "Translation keys are hashes the AL compiler assigns at compile time. SymbolReference.json contains the string 'TranslationKey' zero times in either measured package, so there is nothing to read and nothing to derive.",
-      "cannotExpress": true
+      "reason": "The object-name component of a translation-file lookup id. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
       "member": "MetaField.Caption",
@@ -79,7 +98,7 @@
     },
     {
       "member": "MetaField.ClrType",
-      "reason": "BC states the field's real CLR type (System.Int64, System.Guid, System.String, ...); the runner states the empty string on every field. Not in the symbol file under that name, but derivable from the declared field type.",
+      "reason": "BC states the field's real CLR type and the runner states the empty string on all 1,888 fields. ClrType is not an XML attribute at all \u2014 BC derives it itself \u2014 and it is a PURE FUNCTION of Datatype, which the symbol file does carry and the runner already reads: measured over 988 observations, all 16 Datatypes map to exactly one ClrType each (BigInteger->System.Int64, GUID->System.Guid, Code/Text/DateFormula->System.String, Option/Integer->System.Int32, BLOB/RecordID->System.Byte[], Media->NSMediaWrapper, and so on). Recoverable with no app data.",
       "issue": 3568
     },
     {
@@ -254,18 +273,21 @@
     },
     {
       "member": "MetaTable.#fieldsById.<presence>",
-      "reason": "The private backing storage behind MetaTable.FieldsById, carrying the same merged fields.",
-      "issue": 3568
+      "reason": "The private backing storage behind MetaTable.FieldsById, holding the same merged tableextension fields as MetaTable.Fields.<presence>; same runtime-merged-versus-build-time-emit boundary, same consequence for an empty diff.",
+      "oracleLimitation": true,
+      "Doc": "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata"
     },
     {
       "member": "MetaTable.Fields.<presence>",
-      "reason": "The runner merges every REGISTERED app's tableextension fields into the base table; BC's emit sees only the app being compiled. 115 fields on four Business Foundation tables. A difference in what is being asked rather than a value being wrong, and it cannot be empty while another app is loaded.",
-      "issue": 3568
+      "reason": "The runner models the MERGED RUNTIME state a running system has \u2014 every registered app's tableextension fields present on the base table. The ground truth is BC's BUILD-TIME per-app emit, which by construction sees only the app being compiled. Two different things, so this is a limitation of the oracle and not evidence about the runner: 115 fields on four Business Foundation tables (230, 242, 308, 6635). In BC 29 everything is merged at database level anyway, which makes the runner's merged view the forward-looking one. CONSEQUENCE: a multi-app bundle can never produce an empty diff, so a non-empty diff here is expected and must not be read as noise or as a bug.",
+      "oracleLimitation": true,
+      "Doc": "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata"
     },
     {
       "member": "MetaTable.FieldsById.<presence>",
-      "reason": "The by-id index of the same merged tableextension fields as MetaTable.Fields.<presence>.",
-      "issue": 3568
+      "reason": "The by-id index of the same merged tableextension fields as MetaTable.Fields.<presence>; same runtime-merged-versus-build-time-emit boundary, same consequence for an empty diff.",
+      "oracleLimitation": true,
+      "Doc": "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata"
     },
     {
       "member": "MetaTable.ReplicateData",

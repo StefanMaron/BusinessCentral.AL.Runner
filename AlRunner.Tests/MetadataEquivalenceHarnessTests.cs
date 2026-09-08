@@ -245,6 +245,99 @@ public sealed class MetadataEquivalenceHarnessTests
         Assert.Equal(pinned.Tables, systemApp.ObjectsCompared);
     }
 
+    [SkippableFact]
+    public void TranslationKeysAreDerivable_NotAPermanentLimit()
+    {
+        // Why this test exists rather than a sentence in the allowlist.
+        //
+        // Seven TranslationKey entries account for 25,721 of the 70,728 differences, and they
+        // were first declared as a PERMANENT limit of the symbol file on the evidence that
+        // SymbolReference.json contains the string "TranslationKey" zero times. That
+        // observation is true and the conclusion drawn from it was wrong: the key is COMPUTED
+        // from names, not stored, so "nothing is stored" says nothing about whether anything
+        // can be derived. A permanent-limit reason is a licence to differ forever, so the
+        // claim underneath it is pinned here instead of asserted in prose.
+        //
+        // The algorithm is BC's own LanguageKeyHelper.ConstructObjectHash:
+        //     (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue)
+        // and a key is "<Kind> <hash>" components joined by " - ", ending in the property.
+        //
+        // This is evidence, not an implementation. The reader fix (#3568) is where it lands.
+        var bundles = MetadataEquivalenceHarness.LoadBundles(
+            MetadataEquivalencePaths.GroundTruthDirForThisBuild());
+        Skip.If(bundles.Count == 0, "no metadata ground-truth bundle for this BC build.");
+
+        Assert.Equal(2879900210u, TranslationKeyHash("Caption"));
+        Assert.Equal(1295455071u, TranslationKeyHash("ToolTip"));
+        Assert.Equal(62802879u, TranslationKeyHash("OptionCaption"));
+
+        int attempted = 0, reproduced = 0, tables = 0;
+        var counterExamples = new List<string>();
+        foreach (var bundle in bundles)
+            foreach (var obj in bundle.Objects.Where(o => o.Kind == "MetaTable"))
+            {
+                var doc = new System.Xml.XmlDocument();
+                doc.Load(Path.Combine(bundle.Directory, obj.File));
+                var table = doc.DocumentElement!;
+                var tableName = table.GetAttribute("Name");
+                tables++;
+
+                Check(table.GetAttribute("CaptionTranslationKey"), tableName, null);
+                foreach (System.Xml.XmlNode field in table.GetElementsByTagName("Field"))
+                {
+                    var e = (System.Xml.XmlElement)field;
+                    var fieldName = e.GetAttribute("Name");
+                    foreach (var attr in new[]
+                             { "CaptionTranslationKey", "ToolTipTranslationKey", "OptionCaptionTranslationKey" })
+                        Check(e.GetAttribute(attr), tableName, fieldName);
+                }
+
+                void Check(string emitted, string owner, string? field)
+                {
+                    if (string.IsNullOrEmpty(emitted)) return;
+                    attempted++;
+                    var parts = emitted.Split(" - ", StringSplitOptions.None);
+                    var expected = new List<string> { "Table " + TranslationKeyHash(owner) };
+                    if (field is not null) expected.Add("Field " + TranslationKeyHash(field));
+
+                    var prefixMatches = parts.Length == expected.Count + 1
+                        && expected.Zip(parts).All(p => p.First == p.Second)
+                        && parts[^1].StartsWith("Property ", StringComparison.Ordinal);
+                    if (prefixMatches) reproduced++;
+                    else if (counterExamples.Count < 5)
+                        counterExamples.Add($"{obj.Name}: emitted '{emitted}', derived '{string.Join(" - ", expected)} - Property …'");
+                }
+            }
+
+        Assert.True(counterExamples.Count == 0,
+            "the translation-key derivation does not reproduce BC's own keys, so declaring them " +
+            "recoverable is wrong and the allowlist reasons must say so:" + Environment.NewLine +
+            string.Join(Environment.NewLine, counterExamples));
+        // Non-vacuity, measured rather than guessed. An earlier version asserted a flat
+        // `> 2000`, which was a number nobody had measured: 27.5's System Application has 127
+        // tables against 28.x's 138, so it carries 1,964 keys and the test failed on a run
+        // where the derivation had in fact reproduced every single one. The floor now comes
+        // from the bundle itself — every table document carries a CaptionTranslationKey, so
+        // fewer keys than tables means this stopped finding them.
+        Assert.Equal(attempted, reproduced);
+        Assert.True(attempted >= tables && tables > 0,
+            $"only {attempted} translation keys were found across {tables} table document(s); " +
+            "every table carries a CaptionTranslationKey, so this test has stopped measuring " +
+            "what it claims to.");
+    }
+
+    /// <summary>
+    /// BC's <c>LanguageKeyHelper.ConstructObjectHash</c>: FNV-1a-32 over the name's UTF-16LE
+    /// bytes, plus <see cref="int.MaxValue"/>, wrapped to <see cref="uint"/>.
+    /// </summary>
+    private static uint TranslationKeyHash(string name)
+    {
+        uint hash = 2166136261;
+        foreach (var b in System.Text.Encoding.Unicode.GetBytes(name))
+            hash = unchecked((hash ^ b) * 16777619);
+        return unchecked(hash + int.MaxValue);
+    }
+
     private static bool IsDeclaredField(string path)
     {
         const string marker = "Fields[id=";
