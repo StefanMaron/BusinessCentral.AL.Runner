@@ -1934,3 +1934,19 @@ after this PR merges.
 **Nothing else moved.** #285's rewrite changed no classification: the full three-app run at the
 new pin with CI's own invocation is **3124 total, 3124 pass, 0 fail**, and the expectation match
 audit reports all 23 entries matched a discovered test. Added by agent fbk-1.
+
+## runner-extras `integer-virtual-table-window` 14 -> 16 (#3528)
+
+Two arms on codeunit 64591, and both are **controls rather than RED -> GREEN**: they pass on
+`a3fb61d5` too, before this PR moved the half-open comparison off the envelope-widened
+`lowBound`/`highBound` and onto the base window. `'200000..|300000..300010'` and
+`'..-200000|-300010..-300000'` are the two shapes a sibling range could in principle use to
+move the bar the half-open range is judged against; BC's own `FilterExpression.ToRangeList`
+merges such a sibling into the half-open range, because a range wide enough to widen the
+bound necessarily overlaps it, so neither reaches the envelope comparison. What holds the
+invariant after this PR is the window, not that merge.
+
+Measured: `tests/runner-extras/integer-virtual-table-window` 16/16 before the fix and 16/16
+after; with the refusal loop deleted, 10/16 — both new arms among the six that fail, which is
+what makes them live controls rather than decoration. Full `runner-extras` 403/403 with the
+count baseline. Added by agent fbk-1.
