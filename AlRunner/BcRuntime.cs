@@ -520,6 +520,15 @@ public static partial class BcRuntime
         HookXmlPortInitializeComponents(asm);
         AlRunner.PerfTrace.Log($"SetTestAssembly.HookXmlPortInitializeComponents {sw.ElapsedMilliseconds}ms");
 
+        // #3552 — BC's own metadata document for a compiled table is registered by Emit,
+        // which runs AFTER the AddSourceDir pass that first built the table. Rebuild those
+        // through BC's loader now the documents exist; a table first touched after this
+        // point takes that route on its single build. Ahead of the two wiring passes below,
+        // which must run against the tables that will actually serve the run.
+        sw.Restart();
+        AlRunner.Patches.RecordPatches.RebuildTablesFromBcMetadataAll();
+        AlRunner.PerfTrace.Log($"SetTestAssembly.RebuildTablesFromBcMetadataAll {sw.ElapsedMilliseconds}ms");
+
         // Field-level OnValidate/OnLookup wiring. NCLMetaField.EventTriggerDataValue
         // must point at the AL-emitted [FieldTriggerHandler] methods on the Record CLR
         // class. The NCLMetaTable was built during AddSourceDir (before AL emit), so
