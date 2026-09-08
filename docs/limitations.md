@@ -742,18 +742,23 @@ filter with an open bound as exactly that range rather than refusing it —
 `maximum` for an open high one.
 
 2,000,000,001 rows is not something the runner can materialise into an in-memory store.
-What it does instead:
+What it does instead, since #3438:
 
-- The window **[-1000 .. 100000]** (101,001 rows) is materialised eagerly when the table
-  is first handed out. Unlike `Record Date` there is no lazy narrowing and nothing to
-  widen: the window is fixed for the run.
-- A filter that **closes** a bound outside that window raises
-  `RunnerOutOfScopeException`, naming the bound asked for and the window. It never
-  answers a wider request with fewer rows. `SetRange(Number, 1, 250000)` is refused
-  rather than answered with 100,000 rows, because the 150,000 rows in between are rows a
-  service tier would have returned.
-- The refusal covers all **four** request paths a `Record Integer` read can take, since
-  each carries a different request type and no single guard sees them all:
+- Rows are materialised **per request**, the way `Record Date`'s are. A filter whose every
+  non-empty range is closed at both ends materialises exactly the span it names, clamped to
+  BC's own [-1e9 .. 1e9] — so `SetRange(Number, 249000, 250000)` yields 1001 rows and
+  `Get(250000)` succeeds, as they do on a service tier.
+- A **base window** of `[-1000 .. 100000]` (101,001 rows) is materialised when the table is
+  first handed out. It is what answers a request that does *not* close both bounds: an
+  unbounded filter, an open bound, a filter shape the runner cannot read.
+- The materialised set is capped at **500,000 rows**
+  (`AL_RUNNER_INTEGER_WINDOW_MAX_ROWS`), counted across every span a run has materialised.
+  A request that would push it past the cap raises `RunnerOutOfScopeException` naming the
+  span, what it would add, the resulting total and the cap. It never answers a wider request
+  with fewer rows.
+- The refusal, and the materialising, cover all **four** request paths a `Record Integer`
+  read can take, since each carries a different request type and no single guard sees them
+  all:
 
   | AL | `DataAccess` method | request type |
   |---|---|---|
@@ -766,23 +771,26 @@ What it does instead:
   described the guard as existing for a full release — the identifier it named appeared
   exactly once in the repository, in that comment.
 
-The one case the window does not cover is an **unbounded** filter, and the runner
+An **open** bound is the one shape no store can materialise its way out of, and the runner
 deliberately serves it rather than refusing it: `dataitem(Number; Integer)` with no upper
 bound is a standard idiom, and 18 of the Base Application's 658 reports drive one, bounded
 by `MaxIteration` rather than by the filter. Real BC serves that shape too, from its own
-±1e9 bound. So the divergence is a **row count, not a refusal**: an unbounded enumeration
-yields 101,001 rows here against 2,000,000,001 on a service tier. Code that iterates an
-unbounded `Integer` range to the end stops at the window edge instead of at 1,000,000,000.
+±1e9 bound. So the divergence is a **row count, not a refusal**: `SetFilter(Number, '>=1')`
+yields 100,000 rows here against 1,000,000,000 on a service tier, and code that iterates an
+unbounded `Integer` range to the end stops at the base window's edge.
 
-`AL_RUNNER_INTEGER_WINDOW_MAX` raises the upper edge for a one-off run, and
-`AL_RUNNER_INTEGER_WINDOW_MIN` lowers the lower one. Both only ever **widen** the window:
-a `MIN` above the default, or a non-positive `MAX`, is ignored rather than narrowing the
-materialised set and refusing reads that work today.
+The one case that *is* refused is a **half-open filter whose closed end falls outside the
+base window** — `SetFilter(Number, '>=249000')`. The window holds no row at or above
+249000, so serving the request from it would report success with no rows where BC returns
+751,000,001. Close the other end of the filter and the span is materialised exactly, or
+widen the base window.
 
-The lower edge was a hard constant until #2350. That was invisible while nothing compared a
-request against either edge, and became a dead end the moment the guard started refusing —
-a filter naming -250000 was refused with a message telling the reader to raise
-`AL_RUNNER_INTEGER_WINDOW_MAX`, which cannot widen the edge that rejected it.
+`AL_RUNNER_INTEGER_WINDOW_MAX` raises the base window's upper edge for a one-off run, and
+`AL_RUNNER_INTEGER_WINDOW_MIN` lowers the lower one. Both only ever **widen** it: a `MIN`
+above the default, or a non-positive `MAX`, is ignored. Neither is needed to reach an
+ordinary row any more — that is what per-request materialising does — they decide only how
+far an OPEN bound is answered, and the row cap bounds them: a base window wider than
+`AL_RUNNER_INTEGER_WINDOW_MAX_ROWS` is refused when the table is handed out, naming the cap.
 
 ---
 

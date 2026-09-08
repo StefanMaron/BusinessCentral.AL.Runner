@@ -1760,3 +1760,15 @@ run rather than under a `--test` filter, which matters because #3468 makes the c
 position in the run observable.
 
 Written by the fbk-1 agent.
+
+## 2026-09-08 — runner-extras 390 → 391 (`integer-virtual-table-window` 9 → 10)
+
+Issue #3438. `tests/runner-extras/integer-virtual-table-window` (codeunit 64591) is rewritten
+around what the Integer virtual table refuses now that rows are materialised per request: the
+four window refusals it used to pin no longer exist, and the suite pins the row cap on three
+request paths, the two half-open refusals, and a closed span past the base window being
+answered rather than refused. Nine tests out, ten in. The al-language counts are untouched —
+this fix adds no corpus test, it makes two existing ones pass and deletes their known-gap
+entries.
+
+Written by the fbk-1 agent.
