@@ -449,7 +449,15 @@ internal static partial class ProgramSupport
         //        code. A v12 entry and a v13 entry are not interchangeable in EITHER
         //        direction (v13 HITs where v12 MISSed, for a byte-identical package with a
         //        fresh mtime), so v12 entries must not be served under the new shape.
-        WriteLine("schema:v13");
+        //    v14 (issue #3548): the sidecar also carries `objectMetadata` — BC's own
+        //        metadata document for EVERY object the emitter produced, keyed by (kind,
+        //        id). A v13 entry has no such array, so a HIT served under the old key
+        //        shape would leave AlObjectMetadataRegistry empty on warm runs only, which
+        //        is the silent-empty-registry failure the capture exists to avoid. (The
+        //        runner fingerprint on the next line already forces a miss across a runner
+        //        rebuild; this line is what makes the sidecar-shape change explicit rather
+        //        than incidental.)
+        WriteLine("schema:v14");
         WriteLine($"tdd:{(AlRunner.BcCompiler.IsTddMode() ? "1" : "0")}");
 
         // 1. Runner assembly fingerprint (content hash, not mtime — see v10 note above) +

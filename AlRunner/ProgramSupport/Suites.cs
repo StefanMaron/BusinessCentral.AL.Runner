@@ -69,6 +69,14 @@ internal static partial class ProgramSupport
                     id = i,
                     xml = AlXmlPortMetadataRegistry.TryGet(i, out var x) ? x : string.Empty,
                 }).ToArray(),
+            // v14 (#3548): BC's own metadata document for EVERY object it emitted, keyed
+            // by (kind, id). Overlaps the three arrays above on purpose — those keep their
+            // consumers, this one is the general capture. Same emit-only hazard: without
+            // it a cache HIT leaves the registry empty and every future consumer takes its
+            // not-found branch on warm runs only.
+            objectMetadata = AlObjectMetadataRegistry.Snapshot()
+                .Select(e => new { kind = e.Kind, id = e.Id, name = e.Name, xml = e.Xml })
+                .ToArray(),
         };
         var json = System.Text.Json.JsonSerializer.Serialize(dto, new System.Text.Json.JsonSerializerOptions
         {
@@ -199,6 +207,12 @@ internal static partial class ProgramSupport
                     e.GetProperty("id").GetInt32(),
                     e.GetProperty("xml").GetString() ?? string.Empty);
             }
+        }
+        // v14: replay the general per-object metadata capture (#3548).
+        if (doc.RootElement.TryGetProperty("objectMetadata", out var objArr)
+            && objArr.ValueKind == System.Text.Json.JsonValueKind.Array)
+        {
+            AlObjectMetadataRegistry.LoadFromJsonArray(objArr);
         }
         return count;
     }
