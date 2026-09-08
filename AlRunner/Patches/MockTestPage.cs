@@ -2150,7 +2150,7 @@ internal class LiveNavTestPage : MockITestPage
 
     // ONE NEW-RECORD STEP PER DRAFT-LINE ROW (issue #3029). Set the moment the platform's
     // new-record step has run for the draft line the cursor is on, and cleared whenever that
-    // line stops being the current one. See docs/testpage-onnewrecord-count.md#the-invariant.
+    // line stops being the current one.
     //
     // The invariant it holds is that starting a record is a ONE-TIME event for a row, while
     // the two things that reach it are not: EnterNewRowLine is re-entered by page plumbing
