@@ -19,12 +19,11 @@
 //   ctor, not from a guess — see the per-column notes.
 //
 // ATTRIBUTE-NAME TRAP: the compiler emits TestIsolation, BC's parser reads RequiredTestIsolation
-//   The compiler writes TestIsolation="Disabled". MetaCodeunit's ctor switches on attribute
-//   name and matches the string "RequiredTestIsolation" — a different name, so its own parse
-//   never assigns the property and leaves it at 0 (None). This file reads the name the
-//   COMPILER writes, because that is the value the declaration states; see the note on
-//   ReadRequiredTestIsolationOrdinal for why that is the faithful answer and what would
-//   settle it if BC ever changed either name.
+//   BC's own MetaCodeunit(XmlNode) matches "RequiredTestIsolation", which the compiler never
+//   writes, so its parse leaves the property at None for everything. This file reads the name
+//   the COMPILER writes, because that is what a service tier's row reflects — the tier reads
+//   an NCLMetaCodeunit built from the compiled attribute, not from this document. Adjudicated
+//   by corpus PR 296; derivation in docs/codeunit-metadata-from-bc.md#the-attribute-name-trap.
 using System.Xml.Linq;
 using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
@@ -64,11 +63,21 @@ public static partial class RecordPatches
     /// </summary>
     internal static BcCodeunitDocumentValues? TryReadCodeunitMetadataDocument(
         int codeunitId, IReadOnlyDictionary<string, int>? isolationOrdinals)
-    {
-        if (!AlObjectMetadataRegistry.TryGet(BcCodeunitMetadataKind, codeunitId, out var xml)
-            || string.IsNullOrEmpty(xml))
-            return null;
+        => AlObjectMetadataRegistry.TryGet(BcCodeunitMetadataKind, codeunitId, out var xml)
+           && !string.IsNullOrEmpty(xml)
+            ? ParseCodeunitMetadataDocument(xml, codeunitId, isolationOrdinals)
+            : null;
 
+    /// <summary>
+    /// The parse itself, split from the registry lookup so the four column values can be
+    /// driven with a document the caller chooses. The cases that matter — an isolation member
+    /// the column does not name, a permission mask no codeunit can legally declare, a
+    /// namespace that is stated versus one that is absent — are ones no single compiled
+    /// bundle can present at once.
+    /// </summary>
+    internal static BcCodeunitDocumentValues ParseCodeunitMetadataDocument(
+        string xml, int codeunitId, IReadOnlyDictionary<string, int>? isolationOrdinals)
+    {
         XElement root;
         try
         {
@@ -99,13 +108,10 @@ public static partial class RecordPatches
 
     /// <summary>
     /// The five permission characters CodeUnit Metadata's two Text[5] mask columns are spelled
-    /// with, in bit order: bit 0 Read, 1 Insert, 2 Modify, 3 Delete, 4 Execute. The indirect
-    /// half of the mask (bits 5..9) uses the same letters lowercased.
-    /// <para>Read out of Ncl.dll rather than assumed: <c>MetadataDataProvider.permissions</c> is
-    /// a static <c>char[5]</c> whose initializer blob decodes to R, I, M, D, X (BC 28.1,
-    /// 52 00 49 00 4D 00 44 00 58 00). <c>CreatePermissionMaskString</c> walks bits 0..4 and
-    /// emits <c>permissions[n]</c> for a direct bit or <c>permissions[n] + 32</c> — the
-    /// lowercase letter — for the matching indirect bit at n+5.</para>
+    /// with, in bit order: bit 0 Read, 1 Insert, 2 Modify, 3 Delete, 4 Execute; the indirect
+    /// half (bits 5..9) uses the same letters lowercased. Read out of Ncl.dll's own
+    /// <c>MetadataDataProvider.permissions</c> rather than assumed — see
+    /// docs/codeunit-metadata-from-bc.md#permission-mask-spelling.
     /// </summary>
     private const string PermissionMaskLetters = "RIMDX";
 
@@ -113,23 +119,17 @@ public static partial class RecordPatches
     /// One inherent-permission column, spelled the way BC's own provider spells it.
     ///
     /// <para><b>Observably equivalent</b> to <c>MetadataDataProvider.CreatePermissionMaskString</c>,
-    /// which is what fills these two columns on a service tier: it returns
-    /// <c>NavText.Empty</c> for <c>PermissionMask.None</c>, and otherwise one character per set
-    /// bit in 0..4, uppercase for the direct bit and lowercase for the indirect bit at n+5. The
-    /// loop below is that method's shape, over the same letters read out of its own static
-    /// array. What it does NOT reproduce is the ORDER-INDEPENDENT part of BC's implementation —
-    /// BC sizes a stack buffer with <c>PopCount((num &gt;&gt; 5) | (num &amp; 0x1F))</c> and
-    /// fills it in bit order, so direct and indirect bits for the same permission cannot both
-    /// appear; this walks the same bits in the same order and takes the direct bit first, which
-    /// is the same choice.</para>
+    /// which is what fills these two columns on a service tier: empty for
+    /// <c>PermissionMask.None</c>, otherwise one character per set bit in 0..4, uppercase for
+    /// the direct bit and lowercase for the indirect bit at n+5, in bit order — so one
+    /// permission never contributes two characters. Both the numeric and the member-name
+    /// spelling are accepted because BC's own parser uses <c>Enum.Parse</c>, which takes
+    /// either. See docs/codeunit-metadata-from-bc.md#permission-mask-spelling.</para>
     ///
-    /// <para>The attribute BC emits is the mask's NUMERIC value ("16"), and BC's own document
-    /// parser reads it with <c>Enum.Parse(typeof(PermissionMask), value)</c>, which accepts
-    /// both a numeric string and a member name. Both spellings are accepted here for the same
-    /// reason. On a codeunit AL only permits X (Execute, 16) for either property — anything
-    /// else is AL0195 — so 16 is the only value observed in practice; the full walk is written
-    /// out anyway because the same two columns exist on Table and Page Metadata, where the
-    /// mask is not restricted, and a half-implementation here would be the wrong thing to copy.</para>
+    /// <para>On a codeunit AL permits only X for either property (AL0195), so 16 is the only
+    /// value reachable from AL. The full bit walk is written out anyway because the same two
+    /// columns exist on Table and Page Metadata, where the mask is not restricted — a
+    /// half-implementation here is what the next conversion would copy.</para>
     /// </summary>
     private static string ReadPermissionMaskString(XElement root, string attributeName, int codeunitId)
     {
@@ -198,38 +198,21 @@ public static partial class RecordPatches
     /// The RequiredTestIsolation column's ordinal for one codeunit, or -1 when BC's document
     /// states nothing this column can carry.
     ///
-    /// <para><b>The attribute name is the compiler's, not BC's parser's, and that is deliberate.</b>
-    /// The AL compiler emits <c>TestIsolation="Disabled"</c>; BC's own
-    /// <c>Types.Metadata.MetaCodeunit(XmlNode)</c> switches on attribute name and compares
-    /// against the string <c>"RequiredTestIsolation"</c>, which the compiler never writes. So
-    /// BC's document parse leaves <c>MetaCodeunit.RequiredTestIsolation</c> at its field
-    /// initializer, 0 = None, for every codeunit — including one that declares
-    /// <c>TestIsolation = Codeunit</c>.</para>
+    /// <para><b>The attribute name read here is the COMPILER's</b> — <c>TestIsolation</c> — not
+    /// the one BC's own document parser matches, <c>RequiredTestIsolation</c>. That is
+    /// deliberate: a service tier's row comes from an <c>NCLMetaCodeunit</c> built from the
+    /// compiled attribute rather than from this document, so reading the compiler's name is
+    /// what makes the runner track the DECLARATION, which is what the tier reports. Adjudicated
+    /// by corpus PR 296 on eight service tiers; if a tier ever disagrees, the corpus is right
+    /// and this method changes. docs/codeunit-metadata-from-bc.md#the-attribute-name-trap.</para>
     ///
-    /// <para>That is a fact about BC's XML path, which is not the path a service tier's
-    /// CodeUnit Metadata row travels: <c>CodeUnitDataProvider</c> reads
-    /// <c>NclMetadata.GetMetaCodeunitById(...).RequiredTestIsolation</c>, an
-    /// <c>NCLMetaCodeunit</c> built from the published app's compiled attribute rather than
-    /// from this document — the same asymmetry <see cref="AlSubtypeTheCompilerDoesNotEmit"/>
-    /// records for SubType. Reading the compiler's own attribute is what makes the runner's
-    /// answer track the DECLARATION, which is what the tier reports.</para>
-    ///
-    /// <para>Corpus PR 296 puts that claim in front of eight real service tiers:
-    /// <c>Record_CodeunitMetadata_Get_TestRunnerCodeunits_ReportEachDeclaredTestIsolation</c>
-    /// asserts a TestRunner declaring each of Disabled / Codeunit / Function reports the
-    /// matching member, and
-    /// <c>Record_CodeunitMetadata_Get_CodeunitStatingNoTestIsolation_ReportsTheUnstatedValue</c>
-    /// asserts that a codeunit stating none reports something DIFFERENT from an explicit
-    /// Disabled. If a tier disagrees, the corpus is right and this method is what changes.</para>
-    ///
-    /// <para><b>The absent case is left to BC's default, never mapped to a member.</b> AL
-    /// permits TestIsolation only on Subtype = TestRunner (AL0223), so the compiler omits the
-    /// attribute for every ordinary codeunit — and for a Subtype = Test codeunit, which is the
-    /// 32-of-1690 group on Base Application. Returning -1 here means the column keeps
-    /// <c>NavValue.GetDefaultNavValue</c>, ordinal 0, which is the member the column names
-    /// None and the value BC's own field initializer holds. Substituting Disabled instead —
-    /// the value BC emits for a plain codeunit's document — would make a declared Disabled and
-    /// an unstated property indistinguishable.</para>
+    /// <para><b>The absent case is left to BC's default, never mapped to a member.</b> -1 means
+    /// the document states nothing this column can carry, and the row builder then keeps
+    /// <c>NavValue.GetDefaultNavValue</c>. The compiler omits the attribute for exactly one
+    /// shape — a <c>Subtype = Test</c> codeunit, the 32-of-1,690 group on Base Application —
+    /// and supplies <c>Disabled</c> for every other, including a TestRunner that declares
+    /// nothing. Mapping the absent case onto Disabled here would therefore be wrong twice
+    /// over: docs/codeunit-metadata-from-bc.md#what-the-compiler-emits.</para>
     /// </summary>
     private static int ReadRequiredTestIsolationOrdinal(
         XElement root, IReadOnlyDictionary<string, int>? ordinals, int codeunitId)

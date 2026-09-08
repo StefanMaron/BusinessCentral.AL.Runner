@@ -44,25 +44,14 @@
 //   ships no metadata XML, and every codeunit on a compile-cache HIT with no replayed
 //   sidecar.
 //
-// COLUMNS STILL NOT IMPLEMENTED, AND WHY THESE TWO ARE DIFFERENT FROM THE FOUR ABOVE
-//   App ID and TestType get BC's own NavValue.GetDefaultNavValue, and neither is waiting on
-//   the conversion above, because neither is in the document to convert:
-//
-//     * App ID is not an object property at all. BC's provider fills it with
-//       MetadataDataProvider.GetAppId(metaCodeunit) — the id of the app the object was
-//       PUBLISHED from, which is per-run state and not something a compiler can emit.
-//       Answering it needs per-object app attribution, the same data #2326 tracks for
-//       AllObj's "Object Subtype".
-//     * TestType is emitted 0 times in Base Application's 1,690 codeunit documents (#3606's
-//       measurement, re-confirmed here on a source-compiled Subtype = Test codeunit: the
-//       document carries Subtype="Test" and no TestType attribute). BC does not read it from
-//       the document either — Types.Metadata.MetaCodeunit's ctor DERIVES it, setting
-//       TestType = UnitTest when SubType == Test and TestType is still 0. Reproducing that
-//       derivation is a separate claim about BC, needing its own corpus test, and is not
-//       part of #3606.
-//
-//   Inventing a value for either would be a silent wrong answer, so they stay at BC's
-//   default and are named here.
+// COLUMNS STILL NOT IMPLEMENTED, AND WHY NEITHER IS WAITING ON THE CONVERSION ABOVE
+//   App ID and TestType get BC's own NavValue.GetDefaultNavValue, because neither is in the
+//   document to convert: App ID is not an object property at all (BC fills it from the
+//   PUBLISHING app, per-run state a compiler cannot emit — the same data #2326 tracks for
+//   AllObj), and TestType is emitted 0 times in Base Application's 1,690 codeunit documents
+//   because BC DERIVES it rather than reading it. Deriving it is a separate claim about BC
+//   needing its own corpus test. Inventing a value for either would be a silent wrong answer.
+//   docs/codeunit-metadata-from-bc.md#the-two-columns-left-at-bcs-default.
 //
 // PRECOMPILED-DLL RESPECT
 //   Runtime-engine types only (NCLMetaTable, NCLMetaField, NavValue, ReadOnlyRecordBuffer,
