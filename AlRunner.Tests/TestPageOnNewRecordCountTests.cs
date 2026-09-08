@@ -35,6 +35,19 @@
 // WHY IT MATTERS. An OnNewRecord that only assigns defaults cannot tell. One with a side effect
 // — a number-series draw, a log row, a counter, a call into a setup codeunit — is silently
 // multiplied by five, and the finished row does not say so.
+//
+// WHAT THIS SUITE DOES AND DOES NOT CLAIM ABOUT BC. The claim it makes is that landing on an
+// EXISTING DATA ROW costs zero firings, that stepping onto the draft line costs +1, that writing
+// into an already-started draft line costs +0, and that a second row costs +1 more. Two real
+// service tiers agree on every one of those: bc-linux on all 8 cloud legs (corpus run
+// 34140530877) and the official Microsoft Windows container (nightly run 34182689878).
+//
+// What it deliberately does NOT claim is the absolute cost of opening a card over an EMPTY part,
+// where the two tiers answer 6 and 3 respectively and which of them is right is under
+// investigation. The runner answers 1 there. That number appears in the arms below only as the
+// baseline they happen to compare against, and it is not asserted as BC behaviour anywhere —
+// which is why ExistingDataRows_WalkedAcross_RaiseOnNewRecordNotAtAll exists: it is the arm that
+// states the portable claim as a delta, so it stays true whatever the opening cost settles at.
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -109,6 +122,13 @@ public sealed class TestPageOnNewRecordCountTests
             // also asserts 0 firings while standing on an existing row, which is what stops the
             // rest from being read as "any cursor move fires the trigger".
             Assert.Contains("PASS  Codeunit70646.DraftLine_ReachedByNextThenWritten_RaisesOnNewRecordOnce", stdout);
+
+            // THE ARM THAT DOES NOT REST ON THE RUNNER'S OWN OPENING COST, and the only one
+            // whose numbers both service tiers agree with. It asserts the existing-row walk as
+            // a DELTA of zero and the step onto the draft line as +1, so it holds whatever the
+            // empty-part opening cost turns out to be. Was: opening a card over a part that
+            // already HAS rows raised the trigger once, where both tiers raise it not at all.
+            Assert.Contains("PASS  Codeunit70646.ExistingDataRows_WalkedAcross_RaiseOnNewRecordNotAtAll", stdout);
 
             // THE NEGATIVE DIRECTION, and the one that makes the fix a de-duplication rather
             // than a suppression: two rows must still cost two firings. A latch that never

@@ -211,6 +211,70 @@ codeunit 70646 "ONC Tests"
             'AutoSplitKey must still number the promoted line past the line already there: de-duplicating the firing must not cost the insert-position capture');
     end;
 
+    // THE ARM THAT DOES NOT REST ON THE OPENING COST, and the one the two service tiers agree
+    // with exactly. Every other arm in this file compares against 1, which is the RUNNER's own
+    // cost of opening a card over an EMPTY part; the tiers answer 6 (bc-linux, corpus run
+    // 34140530877) and 3 (Microsoft Windows container, nightly run 34182689878) for that same
+    // step, and which of those is right is under investigation. So the opening cost is not a
+    // portable claim and is deliberately not asserted here.
+    //
+    // What IS portable is this: a part that already HAS rows never renders a blank draft line
+    // while opening, so opening it costs ZERO -- both tiers measured 0 -- and walking across its
+    // existing rows adds nothing, because standing on a row that is already there is not
+    // starting a record. This arm asserts the whole walk as a DELTA of zero from a baseline it
+    // captures itself, so it holds whatever the empty-part opening cost turns out to be.
+    //
+    // Three seeded rows rather than one: a single row cannot distinguish "landing costs zero"
+    // from "the first landing is free and every later one is not", which is exactly the shape
+    // the defect had.
+    [Test]
+    procedure ExistingDataRows_WalkedAcross_RaiseOnNewRecordNotAtAll()
+    var
+        Card: TestPage "ONC Card";
+        AfterOpen: Integer;
+    begin
+        Initialize();
+        AddLine('H1', 10000, 'first');
+        AddLine('H1', 20000, 'second');
+        AddLine('H1', 30000, 'third');
+        AddLine('H2', 10000, 'foreign');
+
+        OpenCardOn('H1', Card);
+
+        // Opening over a part that HAS rows lands on real data, not on a draft line. Both
+        // service tiers measured exactly 0 here, so this one absolute IS portable.
+        AfterOpen := FiringCount();
+        Assert.AreEqual(0, AfterOpen,
+            'opening a card whose part already has rows must not raise OnNewRecord at all -- the part lands on real data, never on a draft line');
+
+        Assert.IsTrue(Card.Lines.First(), 'the part must land on H1''s first seeded line');
+        Assert.AreEqual(AfterOpen, FiringCount(),
+            'First() onto an existing data row must add nothing -- standing on a row that is already there is not starting a record');
+
+        Assert.IsTrue(Card.Lines.Next(), 'Next() must reach the second seeded line');
+        Assert.AreEqual(AfterOpen, FiringCount(),
+            'Next() onto a second existing data row must add nothing');
+
+        Assert.IsTrue(Card.Lines.Next(), 'Next() must reach the third seeded line');
+        Assert.AreEqual(AfterOpen, FiringCount(),
+            'Next() onto a third existing data row must add nothing -- so this is "every existing row is free", not "the first one is"');
+
+        // THE OTHER DIRECTION IN THE SAME ARM. One more Next() steps off the data and onto the
+        // draft line, which DOES start a row: exactly +1 over the same baseline. Without this
+        // the zeros above would also be satisfied by an implementation that never fires at all.
+        Assert.IsTrue(Card.Lines.Next(), 'Next() past the last data row must land on the draft line');
+        Assert.AreEqual(AfterOpen + 1, FiringCount(),
+            'stepping off the last data row onto the draft line must raise OnNewRecord exactly once');
+
+        Card.Close();
+
+        Assert.AreEqual(AfterOpen + 1, FiringCount(),
+            'closing over an untouched draft line must not raise OnNewRecord again');
+        Assert.AreEqual(3, LineCountFor('H1'),
+            'walking across rows and stopping on an untouched draft line must not write a fourth row');
+        Assert.AreEqual(1, LineCountFor('H2'), 'H2''s own line must be untouched');
+    end;
+
     // THE NEGATIVE DIRECTION, and what stops every "exactly once" above from being satisfied by
     // an implementation that simply latched after the first firing. Two rows, two firings.
     [Test]
