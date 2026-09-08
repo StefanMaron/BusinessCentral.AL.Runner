@@ -24,8 +24,8 @@
 // WHY BC'S DOCUMENT AND NOT THE AL TEXT
 //   BC's own providers for these two tables read BC's compiled metadata, so the document is
 //   not merely another source for the same values — it is the source, and it differs from AL
-//   source text in ways a caller can observe. Measured on the corpus fixture report 60360
-//   (BC 28.1); the emitted document is quoted in full in docs/report-metadata-from-bc.md:
+//   source text in ways a caller can observe. Measured on the test fixture report 90311
+//   (BC 28.1); docs/report-metadata-from-bc.md has the fixture and the measurement:
 //
 //     DataItemTableView   AL text  sorting("Entry No.") order(descending)
 //                         document SORTING(1) ORDER(1)               <- BC's normal form
