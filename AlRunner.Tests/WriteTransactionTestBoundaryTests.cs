@@ -384,4 +384,230 @@ public class WriteTransactionTestBoundaryTests
         Assert.Contains("PASS  Codeunit62481.I_ARunCodeunitMayWriteUnderNone", output);
         Assert.Contains("PASS  Codeunit62481.J_ADefaultModelTestAfterANoneTestCanStillWrite", output);
     }
+    /// <summary>
+    /// Issue #3543, the sibling surfaces. <c>Codeunit.Run</c> is not the only AL construct
+    /// that begins a transaction, so the #3480 scope above refused writes BC allows: a report's
+    /// dataitem trigger and a page field's <c>OnValidate</c> both run inside a transaction the
+    /// construct itself begins.
+    ///
+    /// BC's own bodies, decompiled: <c>NavReport.RunReportInternalCoreAsync</c> calls
+    /// <c>Session.BeginTransaction()</c> immediately before <c>GetReportRecords()</c> and
+    /// <c>Session.EndTransaction(...)</c> after the data-item iterator;
+    /// <c>NavRecord.ValidateFieldsAsync</c> opens one per field around
+    /// <c>ValidateAsync</c>; <c>NavForm.ModifyAsync</c> the same around the page's Modify.
+    ///
+    /// The BC claim is pinned upstream (corpus 60878 Test11 and Test13, PR body's
+    /// <c>Corpus-PR:</c> line). This pins the runner's own brackets.
+    ///
+    /// The negative arm is the one that makes this prove something: <c>K_</c> shows the test
+    /// BODY is still refused. Without it every assertion here would also pass if the brackets
+    /// simply disabled the no-transaction scope outright.
+    /// </summary>
+    [SkippableFact]
+    public void UnderTransactionModelNone_AReportAndAPageFieldValidateMayWrite()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.Dir("al-runner-writetx-none-surfaces-3543");
+        Directory.CreateDirectory(root);
+
+        File.WriteAllText(Path.Combine(root, "app.json"), """
+        {
+          "id": "b3543000-0000-4000-8000-000000003543",
+          "name": "WriteTxNoneSurfaces3543",
+          "publisher": "Repro3543",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 62540, "to": 62549 } ],
+          "runtime": "14.0"
+        }
+        """);
+
+        File.WriteAllText(Path.Combine(root, "TxnSurfaces.al"), """
+        table 62540 "TXS Probe"
+        {
+            DataClassification = SystemMetadata;
+
+            fields
+            {
+                field(1; "Entry No."; Integer) { }
+                field(2; "Text Field"; Text[100])
+                {
+                    // Writes a DIFFERENT row from the one the page sits on, so "did the write
+                    // land" cannot be satisfied by the page's own Modify of the current record.
+                    trigger OnValidate()
+                    var
+                        Marker: Record "TXS Probe";
+                    begin
+                        if Rec."Entry No." <> 9414 then begin
+                            Marker."Entry No." := 9414;
+                            Marker.Insert();
+                        end;
+                    end;
+                }
+            }
+
+            keys
+            {
+                key(PK; "Entry No.") { Clustered = true; }
+            }
+        }
+
+        report 62541 "TXS Report Inserter"
+        {
+            ProcessingOnly = true;
+            UseRequestPage = false;
+
+            dataset
+            {
+                dataitem(Loop; Integer)
+                {
+                    DataItemTableView = sorting(Number) where(Number = const(1));
+
+                    trigger OnAfterGetRecord()
+                    var
+                        Probe: Record "TXS Probe";
+                    begin
+                        Probe."Entry No." := 9412;
+                        Probe.Insert();
+                    end;
+                }
+            }
+        }
+
+        page 62543 "TXS Card"
+        {
+            PageType = Card;
+            SourceTable = "TXS Probe";
+            ApplicationArea = All;
+
+            layout
+            {
+                area(Content)
+                {
+                    group(General)
+                    {
+                        field("Entry No."; Rec."Entry No.") { ApplicationArea = All; }
+                        field("Text Field"; Rec."Text Field") { ApplicationArea = All; }
+                    }
+                }
+            }
+        }
+
+        codeunit 62544 "TXS Tests"
+        {
+            Subtype = Test;
+            TestPermissions = Disabled;
+
+            // Declaration order IS the fixture.
+
+            local procedure MarkerCount(EntryNo: Integer): Integer
+            var
+                Probe: Record "TXS Probe";
+            begin
+                Probe.Reset();
+                Probe.SetRange("Entry No.", EntryNo);
+                exit(Probe.Count());
+            end;
+
+            [Test]
+            [TransactionModel(TransactionModel::None)]
+            procedure A_ReportMayWriteUnderNone()
+            var
+                Rep: Report "TXS Report Inserter";
+            begin
+                if MarkerCount(9412) <> 0 then
+                    Error('TXS1 FAIL: the report marker must not exist before the report runs');
+
+                Rep.UseRequestPage(false);
+                Rep.RunModal();
+
+                if MarkerCount(9412) <> 1 then
+                    Error('TXS1 FAIL: a report run from a None test must be able to write; got %1 row(s)', MarkerCount(9412));
+                if Database.IsInWriteTransaction() then
+                    Error('TXS1 FAIL: the transaction the report began must end with the report');
+            end;
+
+            // The page arm needs a row to open on, and a None body cannot write one for itself
+            // (#3480). A default-model test writes it; the platform commits it at this boundary.
+            [Test]
+            procedure B_SeedsTheRowThePageOpensOn()
+            var
+                Probe: Record "TXS Probe";
+            begin
+                Probe."Entry No." := 9415;
+                Probe.Insert();
+
+                if not Database.IsInWriteTransaction() then
+                    Error('TXS2 FAIL: an uncommitted Insert must open a write transaction inside the test that made it');
+            end;
+
+            [Test]
+            [TransactionModel(TransactionModel::None)]
+            procedure C_PageFieldValidateMayWriteUnderNone()
+            var
+                Probe: Record "TXS Probe";
+                Card: TestPage "TXS Card";
+            begin
+                if MarkerCount(9414) <> 0 then
+                    Error('TXS3 FAIL: the OnValidate marker must not exist before the edit');
+                if not Probe.Get(9415) then
+                    Error('TXS3 FAIL: the previous default-model test''s seed row must be visible here');
+
+                Card.OpenEdit();
+                Card.GoToKey(9415);
+                Card."Text Field".SetValue('EDITED-UNDER-NONE');
+                Card.Close();
+
+                if MarkerCount(9414) <> 1 then
+                    Error('TXS3 FAIL: a page field''s OnValidate driven from a None test must be able to write; got %1 row(s)', MarkerCount(9414));
+                if Database.IsInWriteTransaction() then
+                    Error('TXS3 FAIL: the transaction the page began must end with the page');
+            end;
+
+            // The negative arm, and the reason the three above prove anything: the brackets must
+            // make a write legal INSIDE those constructs WITHOUT reopening the test body itself.
+            // Delete either bracket's Exit and this test starts passing writes BC refuses.
+            [Test]
+            [TransactionModel(TransactionModel::None)]
+            procedure D_TheTestBodyItselfIsStillRefused()
+            var
+                Probe: Record "TXS Probe";
+            begin
+                Probe."Entry No." := 9416;
+                asserterror Probe.Insert();
+
+                if GetLastErrorText() <> 'A transaction must be started before changes can be made to the database.' then
+                    Error('TXS4 FAIL: expected BC''s no-transaction refusal, got [%1]', GetLastErrorText());
+                if MarkerCount(9416) <> 0 then
+                    Error('TXS4 FAIL: a refused write must not have written a row');
+            end;
+
+            // And the scope must not outlive the None tests that opened it.
+            [Test]
+            procedure E_ADefaultModelTestAfterwardsCanStillWrite()
+            var
+                Probe: Record "TXS Probe";
+            begin
+                Probe."Entry No." := 9417;
+                Probe.Insert();
+
+                if not Database.IsInWriteTransaction() then
+                    Error('TXS5 FAIL: a default-model test after the None tests must still be able to write');
+            end;
+        }
+        """);
+
+        var (output, exitCode) = RunRunner(root);
+
+        Assert.True(exitCode == 0,
+            $"Expected all five tests to pass (exit 0); got exit {exitCode}.\n{output}");
+        Assert.DoesNotContain("FAIL", output);
+        Assert.Contains("PASS  Codeunit62544.A_ReportMayWriteUnderNone", output);
+        Assert.Contains("PASS  Codeunit62544.B_SeedsTheRowThePageOpensOn", output);
+        Assert.Contains("PASS  Codeunit62544.C_PageFieldValidateMayWriteUnderNone", output);
+        Assert.Contains("PASS  Codeunit62544.D_TheTestBodyItselfIsStillRefused", output);
+        Assert.Contains("PASS  Codeunit62544.E_ADefaultModelTestAfterwardsCanStillWrite", output);
+    }
 }

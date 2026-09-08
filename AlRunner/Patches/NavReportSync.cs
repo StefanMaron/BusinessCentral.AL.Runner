@@ -681,9 +681,32 @@ public static partial class NavReportSync
             // ResultSetProcessor.RequireDataColumnEval and NREs on a null one. Installing it
             // inside InvokeDataItems, as this used to, put it one step too late.
             var datasetProcessor = EnsureResultSetProcessor(navReport, FindDataItemIteratorType(navReport));
-            RunOnPreTrigger(navReport, navReportBase);
-            bool datasetWritten = InvokeDataItems(navReport, datasetProcessor);
-            RunLifecycleTrigger(navReport, navReportBase, "OnPostReport");
+
+            // #3543: BC's RunReportInternalCoreAsync calls Session.BeginTransaction()
+            // immediately before GetReportRecords() and Session.EndTransaction(...) after the
+            // data-item iterator returns, so a report's triggers run inside a transaction the
+            // report itself began. That is what makes a write from a report legal inside a
+            // TransactionModel::None test body, whose own writes are refused (#3480).
+            //
+            // Bracketed from here rather than from the top of the method to match where BC
+            // puts it: the request page above runs OUTSIDE this transaction, which is BC's
+            // own ordering and not an approximation.
+            //
+            // Observably equivalent: the counter only makes a write legal that BC also makes
+            // legal. It grants nothing outside a None scope, where ThrowIfNoTransactionForWrite
+            // returns before reading it at all.
+            AlRunner.Patches.ALDatabasePatches.EnterRunTransaction();
+            bool datasetWritten;
+            try
+            {
+                RunOnPreTrigger(navReport, navReportBase);
+                datasetWritten = InvokeDataItems(navReport, datasetProcessor);
+                RunLifecycleTrigger(navReport, navReportBase, "OnPostReport");
+            }
+            finally
+            {
+                AlRunner.Patches.ALDatabasePatches.ExitRunTransaction();
+            }
 
             // Strict AL semantics: when the report declares `ProcessingOnly =
             // false` (the AL default) — in its own AL source, or in the symbol

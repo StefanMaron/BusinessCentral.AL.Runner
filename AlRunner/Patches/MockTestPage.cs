@@ -3757,18 +3757,37 @@ internal sealed class LiveNavTestField : ITestField
         // again, so the assignment must not outlive this one validate call.
         var previousCurrFieldNo = _record.CurrFieldNo;
         _record.CurrFieldNo = _fieldNo;
+        // #3543: BC brackets a page-driven field validate in a transaction of its own —
+        // NavRecord.ValidateFieldsAsync opens Session.BeginTransaction() per field and closes
+        // it with Session.EndTransaction(commit) in a finally, and NavForm.ModifyAsync does
+        // the same around the page's own Modify. So an OnValidate that writes is legal even
+        // when the CALLER holds no transaction, which under TransactionModel::None is the
+        // whole test body (#3480). Without this bracket the runner refused a write BC allows.
+        //
+        // Observably equivalent: the counter grants a write nothing outside a None scope,
+        // where ThrowIfNoTransactionForWrite returns before it is read at all, and it changes
+        // no commit point — which is a separate question, tracked by NoteTransactionEnd and
+        // deliberately left alone here (#2413 measured that conflating the two is wrong).
+        AlRunner.Patches.ALDatabasePatches.EnterRunTransaction();
         try
         {
-            _record.ALValidateAsync(_fieldNo, navValue, null).GetAwaiter().GetResult();
+            try
+            {
+                _record.ALValidateAsync(_fieldNo, navValue, null).GetAwaiter().GetResult();
+            }
+            finally
+            {
+                _record.CurrFieldNo = previousCurrFieldNo;
+            }
+
+            // Then the control's own OnValidate, which is a second and independent trigger: the
+            // table field's runs first, the page's after it.
+            if (_page != null && _controlId != 0) _page.RaiseOnValidate(_controlId);
         }
         finally
         {
-            _record.CurrFieldNo = previousCurrFieldNo;
+            AlRunner.Patches.ALDatabasePatches.ExitRunTransaction();
         }
-
-        // Then the control's own OnValidate, which is a second and independent trigger: the
-        // table field's runs first, the page's after it.
-        if (_page != null && _controlId != 0) _page.RaiseOnValidate(_controlId);
 
         _onEdited?.Invoke();
     }
