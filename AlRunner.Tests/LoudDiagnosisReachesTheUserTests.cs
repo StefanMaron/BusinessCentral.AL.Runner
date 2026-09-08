@@ -170,6 +170,12 @@ public sealed class LoudDiagnosisReachesTheUserTests
         { "AlRunner/Patches/RecordPatches.UserSystemTable.cs", "exposes no user identity" },
         { "AlRunner/Patches/RecordPatches.UserSystemTable.cs", "was REFUSED and is NOT present" },
 
+        // #3536 — the same class again. A codeunit whose SubType this column cannot name is
+        // omitted from CodeUnit Metadata (2000000137) rather than taking the whole table down;
+        // the omission is silent at the read (Get() false, FindSet/Count one short, no error),
+        // so this line is the only account of it. See docs/limitations.md#codeunit-metadata-subtype.
+        { "AlRunner/Patches/RecordPatches.CodeunitMetadataVirtualTable.cs", "CodeUnit Metadata has NO ROW for codeunit" },
+
         // #2963, and named in #3068 as the same class: System Application module-ownership
         // checks silently decline for the whole run when this row set is not seeded.
         { "AlRunner/Patches/RecordPatches.PublishedApplicationSystemTable.cs", "Published Application rows" },

@@ -105,6 +105,11 @@ public static partial class RecordPatches
     // field option string — same technique AllObj uses for its "Object Type" column.
     private static Dictionary<string, int>? _cmvSubtypeOrdinals;
 
+    // The same column's own OptionString, kept so the ordinal can be resolved BEFORE a row is
+    // handed to InsertVirtualRow — see PopulateCodeunitMetadataVirtualTable. Set in the same
+    // breath as _cmvSubtypeOrdinals and read only after it.
+    private static string? _cmvSubtypeOptionString;
+
     /// <summary>
     /// Populate the in-memory store behind CodeUnit Metadata (2000000137) with one row per
     /// codeunit the runner knows about. Idempotent per (provider, codeunit id); called on
@@ -125,9 +130,31 @@ public static partial class RecordPatches
         foreach (var row in EnumerateKnownCodeunitMetadata())
         {
             if (!done.TryAdd(row.Id, 0)) continue;
+
+            // Keep this resolution OUT of the per-field builder: a throw from inside
+            // InsertVirtualRow escapes GetDataAccessForTable and no row of the table is served
+            // at all (#3536, docs/limitations.md#codeunit-metadata-subtype). The `[warn]` tag
+            // is load-bearing too — any other tag is dropped at default verbosity by Log.cs.
+            int subtypeOrdinal;
+            try
+            {
+                subtypeOrdinal = ResolveCodeunitSubtypeOrdinal(
+                    subtypeOrdinals, _cmvSubtypeOptionString, row.Subtype, row.Id);
+            }
+            catch (RunnerOutOfScopeException ex)
+            {
+                Console.Error.WriteLine(
+                    $"[warn] RecordPatches: CodeUnit Metadata has NO ROW for codeunit {row.Id} "
+                    + $"\"{row.Name}\" — its SubType could not be resolved: {ex.Message}. Every other "
+                    + "codeunit is still reported, but AL asking for this one will fail to find "
+                    + "it: Get() answers false and a FindSet/Count is one row short, with no "
+                    + "error raised at the read.");
+                continue;
+            }
+
             InsertVirtualRow(provider, metaTable,
                 new object[] { CodeunitMetadataVirtualTableId, row.Id, 0, 0 },
-                field => BuildCodeunitMetadataValue(field, row, subtypeOrdinals));
+                field => BuildCodeunitMetadataValue(field, row, subtypeOrdinal));
         }
     }
 
@@ -137,7 +164,7 @@ public static partial class RecordPatches
     /// rather than a hardcoded field-number table.
     /// </summary>
     private static object? BuildCodeunitMetadataValue(
-        NCLMetaField field, CodeunitMetaRow row, Dictionary<string, int> subtypeOrdinals)
+        NCLMetaField field, CodeunitMetaRow row, int subtypeOrdinal)
     {
         object? Text(string s) => _aovNavTextCreateTruncated!.Invoke(
             null, new object?[] { field.FieldDefinedLength, s ?? string.Empty });
@@ -153,11 +180,11 @@ public static partial class RecordPatches
             case "singleinstance":
                 return NavBoolean(row.SingleInstance);
             case "subtype":
+                // Already resolved by the caller, which is what keeps a refusal from escaping
+                // mid-insert and taking the whole table with it (#3536).
                 return _aovNavOptionCreate!.Invoke(null, new object?[]
                 {
-                    field.FieldOptionMetadata,
-                    ResolveCodeunitSubtypeOrdinal(
-                        subtypeOrdinals, field.FieldOptionMetadata?.OptionString, row.Subtype, row.Id)
+                    field.FieldOptionMetadata, subtypeOrdinal
                 });
             default:
                 return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
@@ -258,12 +285,24 @@ public static partial class RecordPatches
         }
         if (ordinals.TryGetValue(NormalizeObjectTypeName(effectiveSubtype), out var ordinal))
             return ordinal;
+        // Name the value LOOKED UP, and only when it differs from the declared one: claiming
+        // the translation unconditionally makes the message false for a value it never touched.
+        var translated = !string.Equals(effectiveSubtype, declaredSubtype, StringComparison.Ordinal);
         throw CodeunitMetadataShapeGap(
-            $"codeunit {codeunitId} declares Subtype = '{declaredSubtype}', which is not a member of "
-            + $"that column's own option set ('{optionString}'). AL accepts one subtype the column "
-            + $"does not name — '{AlSubtypeTheCompilerDoesNotEmit}', which the compiler emits as "
-            + $"'{AlDefaultCodeunitSubtype}' and this resolver translates — so this is not an AL "
-            + "codeunit subtype at all");
+            $"codeunit {codeunitId} declares Subtype = '{declaredSubtype}'"
+            + (translated
+                ? $", which this resolver looks up as '{effectiveSubtype}' because the AL compiler "
+                  + $"emits '{AlSubtypeTheCompilerDoesNotEmit}' as '{AlDefaultCodeunitSubtype}', and that"
+                : ", which")
+            + $" is not a member of that column's own option set ('{optionString}')"
+            // Why "not in the option string" is the right test for THIS column and the wrong
+            // one for Page Metadata's PageType. A standing fact, not an event.
+            + (translated
+                ? string.Empty
+                : $". The one subtype AL accepts that this column does not name — "
+                  + $"'{AlSubtypeTheCompilerDoesNotEmit}' — is looked up as "
+                  + $"'{AlDefaultCodeunitSubtype}' before it reaches here, so a miss is not an "
+                  + "AL codeunit subtype at all"));
     }
 
     /// <summary>
@@ -379,6 +418,7 @@ public static partial class RecordPatches
         if (map.Count == 0)
             throw CodeunitMetadataShapeGap("\"Subtype\" option string is empty");
 
+        _cmvSubtypeOptionString = optionMetadata.OptionString;
         _cmvSubtypeOrdinals = map;
         return map;
     }

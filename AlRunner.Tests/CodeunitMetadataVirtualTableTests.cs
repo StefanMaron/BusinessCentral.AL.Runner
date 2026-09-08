@@ -98,6 +98,14 @@ public sealed class CodeunitMetadataVirtualTableTests
             // string, not a hardcoded ordinal table.
             Assert.Contains(
                 "PASS  Codeunit60764.CodeunitMetadata_TestCodeunit_ReportsSubtypeTest", stdout);
+            // #3536: a quoted Subtype identifier is the same declaration as the bare one...
+            Assert.Contains(
+                "PASS  Codeunit60764.CodeunitMetadata_QuotedSubtype_IsReadAsTheIdentifierItIs", stdout);
+            // ...and a row the resolver cannot answer may not take the rest of the table with
+            // it. This one asserts the containment through the runner's real populate path,
+            // which is where the whole-table abort lived.
+            Assert.Contains(
+                "PASS  Codeunit60764.CodeunitMetadata_QuotedSubtypeCodeunit_DoesNotSuppressTheOtherRows", stdout);
             // Negative: an id no codeunit uses still answers false, not a silent success.
             Assert.Contains(
                 "PASS  Codeunit60764.CodeunitMetadata_UnknownCodeunitId_ReturnsFalse", stdout);

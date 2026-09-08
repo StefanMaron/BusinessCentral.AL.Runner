@@ -72,7 +72,12 @@ public static partial class RecordPatches
                     // AL's default is false; only an explicit `= true` sets it.
                     SingleInstance: PropIs(props, "SingleInstance", "true"),
                     // AL's default is Normal when the codeunit declares no Subtype.
-                    Subtype: PropValue(props, "Subtype")?.ToString()?.Trim(),
+                    // Unquoted: AL accepts `Subtype = "Install";` for `Subtype = Install;`,
+                    // and the compiler erases the difference before anything downstream sees
+                    // it — measured in the .app SymbolReference.json, which carries the bare
+                    // name for both spellings, so leaving the quotes on would make this source
+                    // path disagree with BcAppSymbolCache about the same AL text (#3536).
+                    Subtype: DeclaredIdentifierText(PropValue(props, "Subtype")),
                     // #2547. BC's AL->C# emit does not put this property on the generated
                     // type at all (measured: the emitted assembly carries NavCodeunitOptions
                     // and NavTestAttribute, and no trace of TestHttpRequestPolicy), and
@@ -81,12 +86,22 @@ public static partial class RecordPatches
                     // arrives through the XML object metadata the runner never loads for AL it
                     // compiles itself, so source is the only place it exists here.
                     // Null means "declares none", which the consumer reads as AL's default.
-                    TestHttpRequestPolicy: PropValue(props, "TestHttpRequestPolicy")?.ToString()?.Trim());
+                    TestHttpRequestPolicy: DeclaredIdentifierText(PropValue(props, "TestHttpRequestPolicy")));
                 continue;
             }
             _parsedObjectDecls[(kind, id)] = new ParsedAlObjectDecl(kind, id, name);
         }
     }
+
+    /// <summary>
+    /// The AL text of an identifier-valued object property, with any quoting removed —
+    /// `Subtype = "Install";` and `Subtype = Install;` state the same subtype, so they must
+    /// reach the consumer as the same string. `TableNo` needs no call here because
+    /// <c>LastNameSegment</c> already unquotes; the page parser makes the same call for
+    /// <c>PageType</c> and <c>SourceTable</c>.
+    /// </summary>
+    private static string? DeclaredIdentifierText(NavSyntax.PropertyValueSyntax? value)
+        => value?.ToString()?.Trim() is { } text ? Unquote(text) : null;
 
     /// <summary>Snapshot of every non-table/page/report/query/xmlport AL object declaration parsed from source.</summary>
     internal static IReadOnlyCollection<ParsedAlObjectDecl> ParsedObjectDecls => _parsedObjectDecls.Values;

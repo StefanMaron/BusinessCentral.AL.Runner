@@ -291,6 +291,47 @@ public class SiblingParserSyntaxTreeTests
     }
 
     [Fact]
+    public void ObjectDecl_QuotedPropertyIdentifiers_ReachTheConsumerUnquoted()
+    {
+        // #3536. AL accepts `Subtype = "Install";` for `Subtype = Install;` — the quoting is
+        // lexical. The compiler agrees: SymbolReference.json inside a .app built from either
+        // spelling carries the bare name, so a parser that kept the quotes would make the two
+        // row sources of CodeUnit Metadata disagree about the same AL text.
+        var src = """
+            codeunit 61971 "Quoted Subtype Probe"
+            {
+                Subtype = "Install";
+                TestHttpRequestPolicy = "Allow";
+            }
+
+            codeunit 61972 "Bare Subtype Probe"
+            {
+                Subtype = Install;
+                TestHttpRequestPolicy = Allow;
+            }
+            """;
+        try
+        {
+            Parse("TryParseObjectDeclFile", src);
+
+            var quoted = Get("_parsedObjectDecls", ("Codeunit", 61971))!;
+            var bare = Get("_parsedObjectDecls", ("Codeunit", 61972))!;
+
+            // Concrete values, not merely "the two agree": a parser that dropped both
+            // properties would satisfy an equality-only assertion.
+            Assert.Equal("Install", Prop(quoted, "Subtype"));
+            Assert.Equal("Allow", Prop(quoted, "TestHttpRequestPolicy"));
+            Assert.Equal(Prop(bare, "Subtype"), Prop(quoted, "Subtype"));
+            Assert.Equal(Prop(bare, "TestHttpRequestPolicy"), Prop(quoted, "TestHttpRequestPolicy"));
+        }
+        finally
+        {
+            Dict("_parsedObjectDecls").Remove(("Codeunit", 61971));
+            Dict("_parsedObjectDecls").Remove(("Codeunit", 61972));
+        }
+    }
+
+    [Fact]
     public void ObjectCaption_ReadsTheObjectsOwnCaption_NotANestedOne()
     {
         // The nested `field`'s Caption must not become the table's. Absent Caption stays null

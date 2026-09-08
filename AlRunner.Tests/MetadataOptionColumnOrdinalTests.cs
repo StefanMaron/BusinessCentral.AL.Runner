@@ -310,6 +310,38 @@ public sealed class MetadataOptionColumnOrdinalTests
         Assert.Contains("'Install'", ex3.Message);
     }
 
+    [Fact]
+    public void RefusalNamesTheValueActuallyLookedUp_AndClaimsTheTranslationOnlyWhenItApplied()
+    {
+        // #3536. The refusal used to state the Install -> Normal translation unconditionally,
+        // so a declared subtype that had simply failed to match was reported as though the
+        // translation had been applied and had still missed. It read as an explanation and was
+        // one only by coincidence.
+        const string WithoutNormal = "Test,TestRunner,Upgrade";
+        var mapWithoutNormal = RecordPatches.BuildMetadataOptionOrdinals(WithoutNormal, null);
+
+        // Applied: declared Install IS looked up as Normal, and the message says so.
+        var translated = Assert.Throws<RunnerOutOfScopeException>(() =>
+            RecordPatches.ResolveCodeunitSubtypeOrdinal(
+                mapWithoutNormal, WithoutNormal, "Install", codeunitId: 60963));
+        Assert.Contains("declares Subtype = 'Install'", translated.Message);
+        Assert.Contains("looks up as 'Normal'", translated.Message);
+
+        // Not applied: a name that is not Install is looked up as itself, and the message must
+        // not offer the translation as the reason it missed.
+        var untranslated = Assert.Throws<RunnerOutOfScopeException>(() =>
+            RecordPatches.ResolveCodeunitSubtypeOrdinal(
+                SubTypeMap(), RealSubTypeOptions, "Wat", codeunitId: 60963));
+        Assert.Contains("declares Subtype = 'Wat'", untranslated.Message);
+        Assert.Contains(RealSubTypeOptions, untranslated.Message);
+        // The standing explanation stays (SubtypeTheColumnDoesNotName_IsRefusedNotDefaulted
+        // pins that it is there), but it may not be phrased as something that happened to
+        // THIS value: nothing was translated on the way to this refusal.
+        Assert.Contains("Install", untranslated.Message);
+        Assert.DoesNotContain("declares Subtype = 'Wat', which this resolver looks up as",
+            untranslated.Message);
+    }
+
     // ── The copies above, checked against the artifact this leg actually built with ──────
 
     /// <summary>BC's runtime enum behind CodeUnit Metadata's SubType column. Not a constant in

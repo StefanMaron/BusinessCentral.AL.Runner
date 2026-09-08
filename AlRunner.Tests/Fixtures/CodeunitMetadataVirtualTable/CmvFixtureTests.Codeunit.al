@@ -80,6 +80,40 @@ codeunit 60764 "CMV Fixture Tests"
     end;
 
     [Test]
+    procedure CodeunitMetadata_QuotedSubtype_IsReadAsTheIdentifierItIs()
+    var
+        CodeunitMetadata: Record "CodeUnit Metadata";
+    begin
+        // #3536. "CMV Quoted" declares Subtype = "Upgrade" — a quoted identifier, which AL
+        // accepts for Subtype = Upgrade. The runner used to hand the column the quote
+        // characters, which matched no member of its option string.
+        Assert.IsTrue(
+            CodeunitMetadata.Get(Codeunit::"CMV Quoted"),
+            'CodeUnit Metadata has no row for a codeunit declaring a quoted Subtype.');
+        Assert.AreEqual(
+            'Upgrade', Format(CodeunitMetadata.Subtype),
+            'A codeunit declaring Subtype = "Upgrade" must report Subtype::Upgrade.');
+    end;
+
+    [Test]
+    procedure CodeunitMetadata_QuotedSubtypeCodeunit_DoesNotSuppressTheOtherRows()
+    var
+        CodeunitMetadata: Record "CodeUnit Metadata";
+    begin
+        // The second half of #3536, and the one that hurt: resolving one row's Subtype used
+        // to happen while the table was being populated, so a row the resolver refused took
+        // the WHOLE table down — every other codeunit included, Company-Initialize's reads
+        // among them. A filter naming three codeunits of this bundle must select three rows
+        // even though one of them declares its Subtype the awkward way.
+        CodeunitMetadata.SetFilter(
+            ID, '%1|%2|%3', Codeunit::"CMV Quoted", Codeunit::"CMV Bound", Codeunit::"CMV Single");
+        Assert.AreEqual(
+            3, CodeunitMetadata.Count(),
+            'Every filtered codeunit must be served, including the one declaring a quoted Subtype.');
+        Assert.IsTrue(CodeunitMetadata.FindSet(), 'FindSet must succeed across the three rows.');
+    end;
+
+    [Test]
     procedure CodeunitMetadata_FilterOnId_DiscriminatesBetweenRows()
     var
         CodeunitMetadata: Record "CodeUnit Metadata";

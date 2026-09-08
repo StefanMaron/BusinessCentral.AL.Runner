@@ -1566,6 +1566,33 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   and Windows Language have documented *divergences* as well — see their own sections above —
   and those are answers the runner gives on purpose, not refusals.
 
+  <a id="codeunit-metadata-subtype"></a>
+
+  **`CodeUnit Metadata` (2000000137) refuses per row, not per table**, and what a refusal
+  costs is worth stating exactly. The `SubType` column is resolved against that column's own
+  option string before the row is inserted, so a subtype the column cannot name loses **that
+  one row** and nothing else: `Get(<that id>)` answers `false`, a `FindSet`/`Count` over a
+  filter including it comes back one row short, and **no error is raised at the read** —
+  column values are materialised when the table is populated, so there is no per-read hook a
+  deferred throw could use. The refusal is reported instead, once per codeunit, as a `[warn]`
+  line naming the codeunit and the reason; that tag matters, because `AlRunner/Log.cs` drops
+  any other `[Tag]` prefix at default verbosity.
+
+  This replaced a whole-table failure. The resolution used to happen inside the per-field
+  builder, so the throw escaped `GetDataAccessForTable` and **no row of the table was served
+  to anybody** — and since the per-provider "already inserted" latch is set before the insert,
+  the offending codeunit then vanished silently from later handouts. Codeunit 2
+  `Company-Initialize` reads this table, so one such codeunit anywhere in any loaded app left
+  the company half-initialized and the run failed a long way from the cause
+  ([#3536](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3536)).
+
+  Note what can still reach the refusal: essentially nothing the AL compiler will produce. AL
+  accepts five codeunit subtypes; four are named by the column and the fifth, `Install`, is
+  translated to `Normal` in front of the lookup, in either spelling — `Subtype = Install;` and
+  `Subtype = "Install";` are the same declaration and now answer the same. So the contained
+  branch is **not covered by a test**: it is unreachable from compiling AL, and reaching it
+  would take an injected declaration carrying a subtype no compiler emits.
+
   `Date` and `Integer` refuse for a second, different reason on top of that one: both are
   computed per request on the service tier over a range too large to materialise, so a filter
   reaching past the window each one materialises is refused rather than answered short. See
