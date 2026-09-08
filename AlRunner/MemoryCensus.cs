@@ -47,7 +47,7 @@ internal static class MemoryCensus
 
         var (daSources, daTables) = Patches.RecordPatches.CensusDataAccessByTable();
         var mediaEntries = Patches.MediaSetPatches.CensusEntryCount();
-        var linkEntries = Patches.RecordLinkPatches.CensusEntryCount();
+        var linkEntries = Patches.RecordPatches.CensusRecordLinkRowCount();
         var storageEntries = Patches.TenantStoragePatches.CensusEntryCount();
         var sharedChildren = BcRuntime.CensusSharedObjectContainerChildCount();
 

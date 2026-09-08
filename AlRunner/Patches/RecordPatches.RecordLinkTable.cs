@@ -130,6 +130,15 @@ public static partial class RecordPatches
         return (provider, ResolveRecordLinkColumns(meta));
     }
 
+    // TEMPORARY (memory-census diagnostic) — how many link rows the store is holding.
+    // See MemoryCensus.cs. #3380 moved this off RecordLinkPatches' dictionary, which was
+    // never written and so reported 0 for every run the census has ever taken.
+    internal static int CensusRecordLinkRowCount()
+    {
+        var store = GetRecordLinkStore(create: false);
+        return store == null ? 0 : ReadRecordLinkRows(store.Value.Provider).Count;
+    }
+
     /// <summary>Every Record Link row currently stored, as the provider holds them.</summary>
     private static List<NavValue[]> ReadRecordLinkRows(object provider)
     {

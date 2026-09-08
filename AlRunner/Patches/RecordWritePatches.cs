@@ -41,10 +41,10 @@ public static partial class BcRuntime
         // NclMetaTableBuilder / NclMetadataCachePopulator without extra plumbing.
         AlRunner.Patches.EventSubscriberPatches.Register(navNcl);
 
-        // RecordLink (table 2000000068) in-memory polyfill — AL `Rec.AddLink/HasLinks/
-        // DeleteLinks/CopyLinks` paths. Real BC body NREs in NavRecord..ctor because
-        // our skeleton lacks a TenantDataAccess for system tables (see docs/scope.md §2).
-        AlRunner.Patches.RecordLinkPatches.Register(navNcl);
+        // The AL link surface (Rec.AddLink/HasLinks/DeleteLink/DeleteLinks/CopyLinks) needs
+        // no registration here: it is Cecil-rewritten onto RecordPatches.RecordLinkTable's
+        // table-backed store (#3378). The JmpHook-registered polyfill that used to sit here
+        // was a second, never-written copy of that store and went with #3380.
 
         // NavRecordId.get_CollationAwareStringComparer — real getter walks
         // Session.Database.CollationAwareStringComparer which NREs on the skeleton

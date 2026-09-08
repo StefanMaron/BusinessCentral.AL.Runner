@@ -65,7 +65,6 @@ public static partial class RecordPatches
     internal sealed record InstallBaselineSnapshot(
         List<BaselineSource> Sources,
         object? IsolatedStorage,
-        object? RecordLinks,
         IReadOnlyDictionary<int, long>? AutoIncrement);
 
     /// <summary>
@@ -127,7 +126,6 @@ public static partial class RecordPatches
 
     private static List<BaselineSource>? _installBaseline;
     private static object? _isolatedStorageBaseline;
-    private static object? _recordLinkBaseline;
     private static IReadOnlyDictionary<int, long>? _autoIncrementBaseline;
     private static ConstructorInfo? _ibMutableBufferCtor;
 
@@ -285,14 +283,13 @@ public static partial class RecordPatches
     public static void CaptureInstallBaseline()
     {
         // The capture itself walks the live store and must NOT hold the lock; only the
-        // publication of the four fields does (#2914), so the set is swapped in as a unit and a
+        // publication of the three fields does (#2914), so the set is swapped in as a unit and a
         // reader cannot pair this capture's rows with the previous one's isolated storage.
         var snapshot = CaptureInstallBaselineSnapshot();
         lock (_baselineMutationLock)
         {
             _installBaseline = snapshot.Sources;
             _isolatedStorageBaseline = snapshot.IsolatedStorage;
-            _recordLinkBaseline = snapshot.RecordLinks;
             _autoIncrementBaseline = snapshot.AutoIncrement;
         }
     }
@@ -300,7 +297,7 @@ public static partial class RecordPatches
     public static void RestoreInstallBaseline()
     {
         ResetPerTestState();
-        // Read the four as one (#2914), for the same reason CaptureInstallBaseline publishes
+        // Read the three as one (#2914), for the same reason CaptureInstallBaseline publishes
         // them as one. The restore then runs against the locals, outside the lock.
         InstallBaselineSnapshot pending;
         lock (_baselineMutationLock)
@@ -308,7 +305,7 @@ public static partial class RecordPatches
             if (_installBaseline == null)
                 return;
             pending = new InstallBaselineSnapshot(
-                _installBaseline, _isolatedStorageBaseline, _recordLinkBaseline, _autoIncrementBaseline);
+                _installBaseline, _isolatedStorageBaseline, _autoIncrementBaseline);
         }
         RestoreInstallBaselineSnapshot(pending, resetFirst: false);
     }
@@ -412,7 +409,6 @@ public static partial class RecordPatches
         var snapshot = new InstallBaselineSnapshot(
             sources,
             TenantStoragePatches.CaptureInstallBaseline(),
-            RecordLinkPatches.CaptureInstallBaseline(),
             BcRuntime.CaptureAutoIncrementBaseline());
         skippedVirtual.Sort();
         PerfTrace.Log($"InstallBaseline.Capture {sources.Sum(s => s.Tables.Count)} table(s), " +
@@ -557,7 +553,6 @@ public static partial class RecordPatches
         }
 
         TenantStoragePatches.RestoreInstallBaseline(snapshot.IsolatedStorage);
-        RecordLinkPatches.RestoreInstallBaseline(snapshot.RecordLinks);
         BcRuntime.RestoreAutoIncrementBaseline(snapshot.AutoIncrement);
         PerfTrace.Log($"InstallBaseline.Restore {restoredRows} row(s)");
     }

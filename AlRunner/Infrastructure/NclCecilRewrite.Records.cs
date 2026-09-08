@@ -1813,16 +1813,15 @@ public static partial class NclCecilRewrite
         set.Add("Microsoft.Dynamics.Nav.Runtime.RecordLink::MoveLinksAsync/2");
         // RecordLink::HasLinks/1 is ALSO Cecil-rewritten (ReplaceWithStaticHelper below, "RecordLink
         // — rewrite all link-management methods") but was missing from this list (#1883 follow-up).
-        // RecordLinkPatches.cs separately JmpHook's the same static with its own replacement
-        // (RecordLink_HasLinks) — kept as defense-in-depth (same precedent as NavXmlPort::Run
-        // below), but the missing key here meant the audit misclassified it as "orphaned" instead
-        // of "redundant", and — more importantly — meant JmpHook.Apply would have actually
-        // installed the native patch on top of the Cecil-rewritten body if AL_RUNNER_ENABLE_JMPHOOK=1
-        // ever re-enabled the JmpHook layer: the exact JmpHook+Cecil COEXISTENCE double-dispatch
-        // spin this registry exists to prevent (see NCLEnumMetadata::Create/1 above). Registering
-        // the key here makes JmpHook.Apply skip installing the native patch entirely (see
-        // JmpHook.Apply's CecilOwned check) — the redundant registration becomes provably inert
-        // under BOTH JmpHook-enabled and JmpHook-disabled configurations, not just the default.
+        // RecordLinkPatches.cs used to JmpHook the same static with a replacement of its own,
+        // and the missing key here meant the audit misclassified it as "orphaned" instead of
+        // "redundant" — and, more importantly, meant JmpHook.Apply would have installed the
+        // native patch on top of the Cecil-rewritten body if AL_RUNNER_ENABLE_JMPHOOK=1 ever
+        // re-enabled the JmpHook layer: the exact JmpHook+Cecil COEXISTENCE double-dispatch
+        // spin this registry exists to prevent (see NCLEnumMetadata::Create/1 above). That
+        // file is gone (#3380 — it was a second, never-written copy of the link store), so
+        // the coexistence question no longer arises here; the key stays because the method IS
+        // Cecil-owned, which is what this registry records.
         set.Add("Microsoft.Dynamics.Nav.Runtime.RecordLink::HasLinks/1");
         set.Add("Microsoft.Dynamics.Nav.Runtime.NavManagementTasks::CopyCompany/2");
         // NCLMetaTable.CreateObjectInstance — concrete-type-aware record construction so
