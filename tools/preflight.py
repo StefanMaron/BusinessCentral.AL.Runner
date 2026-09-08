@@ -2248,6 +2248,127 @@ def corpus_expected_counts(doc: dict, suites: Iterable[str]) -> tuple[dict, list
     return counts, problems
 
 
+# --------------------------------------------------------------------------
+# the shared corpus submodule checkout (issue #3404)
+# --------------------------------------------------------------------------
+# SEVERITY: WARN, and the argument is worth stating because the FAIL case is
+# genuinely arguable.
+#
+# The doctrine at the top of this file keeps FAIL for "this box produces wrong
+# answers", and a poisoned submodule checkout does produce wrong answers -- a
+# 1-commit corpus gap read as 17, three times in one session by three different
+# actors. What decides it against FAIL is the OTHER half of the same doctrine:
+# a condition earns FAIL when it has no fallback that still produces correct
+# work. The stray graphify graph, the one thing here that can FAIL, has none --
+# no rebuild reaches it, so every query after it is wrong and nothing an agent
+# does helps.
+#
+# This one has a fallback, and it is always available: `git ls-tree` reads the
+# pin out of a tree and cannot see the working directory at all. An agent that
+# uses it -- or tools/corpus-pin.py, or the CI scripts, which already do -- works
+# correctly on a poisoned box. So this makes an agent WRONG only if it reaches
+# for the other read, which is a choice the warning exists to redirect.
+#
+# The second reason is about what FAIL costs: it halts the autonomous cycle, and
+# the condition is REPOSITORY-WIDE and NOT SELF-HEALING. One stray checkout would
+# then stop every agent on the box from starting any work at all, including work
+# that never touches the corpus, until a human intervened -- for a hazard that a
+# single documented command sidesteps. A check that can halt everything for a
+# condition most cycles do not care about is a check people route around.
+CORPUS_PIN_TOOL = "tools/corpus-pin.py"
+
+
+def corpus_pin_readings(repo: str) -> dict:
+    """The pin from origin/main's tree, the pin in the index, and the shared checkout.
+
+    Three readings kept apart, because the DIVERGENCE is the finding. Collapsing
+    them to one number would discard exactly the fact this check exists to
+    report. Each is None when it could not be read, which is distinct from "they
+    disagree" and is reported as such.
+    """
+    out = {"pin": None, "index": None, "worktree": None, "error": ""}
+    line = run(["git", "-C", repo, "ls-tree", "refs/remotes/origin/main",
+                CORPUS_SUBMODULE]).out.strip()
+    parts = line.split()
+    if len(parts) >= 3 and parts[0] == "160000" and parts[1] == "commit":
+        out["pin"] = parts[2]
+
+    staged = run(["git", "-C", repo, "ls-files", "-s", CORPUS_SUBMODULE]).out.strip()
+    sparts = staged.split()
+    if len(sparts) >= 2 and sparts[0] == "160000":
+        out["index"] = sparts[1]
+
+    sub = os.path.join(repo, CORPUS_SUBMODULE)
+    if not os.path.isdir(sub):
+        out["error"] = f"{CORPUS_SUBMODULE} is not initialised"
+        return out
+    # An UNPOPULATED submodule directory is not a checkout, and asking it for HEAD
+    # does not fail -- `git -C <empty dir> rev-parse HEAD` walks UP to the
+    # superproject and returns the SUPERPROJECT's commit, exit 0. `git worktree
+    # add` does not populate submodules, so that is the state of every fresh
+    # worktree: measured, a new worktree at 4e4abbcb reported `4e4abbcb` as its
+    # "corpus checkout". Warning on that would fire in every new worktree, and a
+    # check that is wrong by default is one people learn to skip.
+    top = run(["git", "-C", sub, "rev-parse", "--show-toplevel"]).out.strip()
+    if not top or os.path.realpath(top) != os.path.realpath(sub):
+        out["error"] = f"{CORPUS_SUBMODULE} is not populated in this checkout"
+        return out
+    head = run(["git", "-C", sub, "rev-parse", "HEAD"]).out.strip()
+    if head:
+        out["worktree"] = head
+    else:
+        out["error"] = f"could not read HEAD in {CORPUS_SUBMODULE}"
+    return out
+
+
+def classify_corpus_pin(readings: dict) -> CheckResult:
+    """PASS/WARN on whether the shared corpus checkout is at the pin."""
+    pin, index, worktree = readings["pin"], readings["index"], readings["worktree"]
+    ref = index or pin
+    detail = [
+        f"pin on origin/main       {(pin or '<unreadable>')[:8]}   <- what CI replays",
+        f"pin staged in the index  {(index or '<none>')[:8]}",
+        f"shared working directory {(worktree or '<absent>')[:8]}",
+    ]
+    if readings["error"] or ref is None or worktree is None:
+        # "could not read" is not "they agree". A submodule nobody has initialised
+        # cannot mislead anyone, so this is not a finding -- but it must not be
+        # reported as a verified agreement either.
+        return CheckResult(
+            name="corpus-pin", status="PASS",
+            summary="no shared corpus checkout to disagree with the pin"
+                    + (f" ({readings['error']})" if readings["error"] else ""),
+            command=CORPUS_PIN_TOOL, detail=detail, data=readings)
+    if worktree == ref:
+        return CheckResult(
+            name="corpus-pin", status="PASS",
+            summary=f"the shared {CORPUS_SUBMODULE} checkout is at the pin ({ref[:8]})",
+            command=CORPUS_PIN_TOOL, detail=detail, data=readings)
+    detail.append(
+        "A submodule working directory is shared by EVERY worktree of this repository, like "
+        "refs/stash. Some other process left this one behind; it has no owner and nothing "
+        "resets it. It does not announce itself: `git status` shows it as an ordinary dirty "
+        "submodule, and `git log` inside it prints a real history of the wrong commit.")
+    return CheckResult(
+        name="corpus-pin", status="WARN",
+        summary=f"the shared {CORPUS_SUBMODULE} checkout is at {worktree[:8]}, not the pin "
+                f"{ref[:8]} - anything measured from it is about the wrong commit",
+        command=CORPUS_PIN_TOOL,
+        detail=detail,
+        remedy="Do not read the pin from the submodule's HEAD. Read it from a tree:\n"
+               f"    PIN=$({CORPUS_PIN_TOOL} --quiet)\n"
+               f"    # or: git ls-tree origin/main {CORPUS_SUBMODULE} | awk '{{print $3}}'\n"
+               "To measure against the corpus, give your worktree its OWN clone -- checking "
+               f"out inside {CORPUS_SUBMODULE} is the act that poisons it for everyone else. "
+               "This is a WARN rather than a FAIL because the correct read is always "
+               "available, so the box still produces correct work for an agent that uses it.",
+        data=readings)
+
+
+def check_corpus_pin(repo: str) -> CheckResult:
+    return classify_corpus_pin(corpus_pin_readings(repo))
+
+
 def check_corpus(repo: str, enabled: bool) -> CheckResult:
     """The skill's step 1: the corpus is the known-good baseline, and its expected
     count is checked in at tests/expectations/count-baseline/.
@@ -2643,6 +2764,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         check_push(repo, identity),
         check_commit(repo),
         check_github(slug),
+        check_corpus_pin(repo),
         check_corpus(repo, args.with_corpus),
     ]
     if args.no_tools:

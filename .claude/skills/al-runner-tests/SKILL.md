@@ -94,6 +94,8 @@ Today the reporter prints raw PASS / FAIL / ERROR per test plus aggregate counts
 
 Drift is loud in every direction: a test passing despite an entry fails with "remove the entry"; a test raising an OOS signal without an entry fails with "add an entry"; a wrong or near-miss `Reason` still fails. See `docs/expectations.md`.
 
+**A wholesale EXEC-FAIL sweep on one identical missing path is another agent, not a regression.** Concurrent agents on one box drive the runner against a shared shadow cache under `~/.cache/al-runner/ncl-shadow/`, and one publishing into it while another loads from it produced **18 bundles failing with the same `Could not load file or assembly '…/ncl-shadow/<hash>/AlRunner.QueryJoin.dll'`** — the directory was gone by the time it was looked at, and it cleared on re-run. The tell is *every* bundle failing on one identical path, rather than a scattered set failing on their own assertions. Check for other runner processes (`pgrep -af 'dotnet.*AlRunner'`) and re-run before concluding anything; an unattended loop that files issues from that sweep files spectacular nonsense. `f461e5bf` addresses the publish side of this race; the consumer side is what you see.
+
 ## If a run dies with no output (exit 139 / 134)
 
 An exit of 139 is SIGSEGV and 134 is SIGABRT — the process was killed by a signal, so there
@@ -202,14 +204,50 @@ v1 tracked AL-language coverage in a hand-curated `docs/coverage.yaml`, and the 
 
 ## Bumping the corpus pin
 
-The submodule is read-only. To pull in new tests from upstream:
+The submodule is read-only. **First: `HEAD` inside `tests/al-language/` is not the pin.**
+
+A submodule working directory is shared by every worktree of this repository, exactly like
+`refs/stash`. Any process that checks out a corpus commit in there leaves it for everyone;
+it has no owner and nothing resets it. So the two obvious reads answer different questions:
 
 ```bash
+git ls-tree origin/main tests/al-language     # THE PIN — what CI replays
+git -C tests/al-language rev-parse HEAD       # whatever the last process left behind
+```
+
+Ask the tool rather than choosing between them (#3404):
+
+```bash
+tools/corpus-pin.py            # all three readings; exit 1 if the checkout has drifted
+PIN=$(tools/corpus-pin.py --quiet)   # always the pin, never the shared checkout
+```
+
+Nothing about the wrong read announces itself: `git status` shows a stale checkout as an
+ordinary dirty submodule, `git log` inside it prints a real history, and every commit it
+lists genuinely exists. It answers a question nobody asked. Measured on 2026-09-07 the pin
+was one commit behind `master` and the shared directory made it read as **17**, which is the
+dangerous direction — it justifies a large measurement run and invites bisecting a range
+whose predecessors are already pinned. `tools/preflight.py` now WARNs when they disagree.
+
+To review and bump:
+
+```bash
+PIN=$(tools/corpus-pin.py --quiet)
 git -C tests/al-language fetch
-git -C tests/al-language log --oneline HEAD..origin/master
-git -C tests/al-language diff HEAD..origin/master   # review
+git -C tests/al-language log --oneline "$PIN..origin/master"
+git -C tests/al-language diff "$PIN..origin/master"   # review
 git -C tests/al-language checkout origin/master
 git add tests/al-language
+```
+
+That `checkout` is the step that poisons the shared directory for every other worktree, so
+it belongs only in the bump itself — where you immediately `git add` it, making the checkout
+and the pin agree again. **Never run it just to measure.** To measure, give your worktree its
+own clone:
+
+```bash
+git clone https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests /tmp/corpus
+git -C /tmp/corpus rev-list --count "$PIN..origin/master"
 ```
 
 **A pin bump that pulls in a test needing a new fix cannot be its own PR — it
