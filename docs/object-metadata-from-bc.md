@@ -101,21 +101,54 @@ AL-observable on the same shape: `FieldRef.Relation()` for `SystemCreatedBy` ans
 now answers `2000000120`. That claim is adjudicated by a real service tier in corpus PR #292,
 not here.
 
-Across the pinned corpus (`19560bd3`), 172 of its 178 own tables take the document route and
-the whole suite stays green. The six that do not are the scope boundary below.
+**Wherever a compile happened, the document wins — including a dependency's.**
+`AlObjectMetadataRegistry` is keyed `(kind, id)` with no notion of which app compiled the
+object, so a source-compiled dependency's table takes this route exactly like the app under
+test's. Measured on a dependency shipping source and no DLL: table 70670 reported
+`source=bc-document` with `editable=False`, `dataClassification=EndUserIdentifiableInformation`
+and `enumTypeId=70670` — cold, and again across the dependency's own `source-cache HIT`, which
+is the separate replay path (`DependencyLoader`'s `.object-metadata.json` sidecar) that could
+have failed on its own. On the pinned corpus, three of the 175 tables taking the route are
+outside the corpus app's own id range for the same reason.
+
+What is still out of reach is a dependency shipped as a **precompiled `.app`**: it never
+compiles here, so no document exists for it at all. That is #3549.
+
+Across the pinned corpus (`19560bd3`), 172 of the corpus app's own 178 tables take the document
+route and the whole suite stays green. The six that do not are the scope boundary below.
 
 <a id="scope"></a>
 
 ## What still takes the derivation, and why
 
-- **A base table a `tableextension` extends.** BC merges an extension through `NavAppGroup`'s
-  own extension registry, which the runner does not populate, so BC's document for the *base*
-  table alone would silently drop the extension's fields and keys. Those tables keep the
-  derivation until `TableExtension` is converted too (#3562). Measured: 6 of the corpus's 178.
+- **A base table any `tableextension` extends.** BC's document for a table is what **one**
+  app's compiler emitted. An extension in another app contributes fields *and keys* that the
+  service tier merges at publish time through `NavAppGroup`'s extension registry, which the
+  runner does not populate — build-time state versus runtime-merged state, and no per-app
+  document can express the second. The derivation does merge it, so an extended base table
+  keeps the derivation until `TableExtension` is converted too (#3562). Measured: 6 of the
+  corpus's 178.
+
+  **The gate is `_extensionIdsByBaseTable`, never the merged field count.** Fields and keys
+  reach `MergeExtensionFields` through separate channels (#3216), and a key-only — or
+  `modify(...)`-only — extension contributes no fields, so a count-based guard passes on it.
+  Measured on a cross-app key-only extension over a source-compiled dependency's table:
+  `RecordRef.KeyCount()` answered **3 where the derivation answers 4**, exit 0, no diagnostic,
+  the extension's key simply gone. Nothing existing could have caught it — at corpus pin
+  `19560bd3` all eight `tableextension` declarations add fields, so neither the corpus nor a
+  same-app fixture reaches the branch. Pinned by
+  `BaseTableWithAKeyOnlyExtensionInAnotherApp_KeepsTheDerivation`.
 - **Every table with no captured document** — a precompiled dependency's (#3549), a virtual
-  system table, or a bundle served from an AL-output cache written before #3548. Availability
-  decides the route; a *failure* after that decision propagates rather than falling back, so a
-  document that cannot be loaded is loud (`.claude/rules/loud-failures.md`).
+  system table, or a bundle served from an AL-output cache written before #3548.
+
+Availability decides the route, and a failure is never re-routed to the derivation: a weaker
+answer substituted on error is what `.claude/rules/loud-failures.md` exists to prevent. **How
+far that failure travels differs by call site, and only one of the two is loud.** The post-emit
+sweep has no handler over it and aborts bundle load naming the member. The cold build sits
+inside `BuildNCLMetaTable`'s pre-existing `catch → Console.Error → return null`, which swallows
+it into "no metatable" exactly as it does a derivation failure — and that write is
+`[RecordPatches]`-tagged, so the default log filter drops it. That swallow predates this work
+and is tracked as **#3590**; it is not a claim this page makes about the cold path.
 
 <a id="reading-the-values-back"></a>
 

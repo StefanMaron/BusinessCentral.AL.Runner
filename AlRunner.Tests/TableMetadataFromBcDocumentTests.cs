@@ -242,6 +242,270 @@ public class TableMetadataFromBcDocumentTests
         """);
     }
 
+    /// <summary>
+    /// A table in a source-compiled DEPENDENCY takes BC's document too, cold and across the
+    /// dependency's own compile-cache HIT.
+    ///
+    /// <c>AlObjectMetadataRegistry</c> is keyed <c>(kind, id)</c> with no notion of which app
+    /// compiled the object, so coverage was never limited to the app under test — but the
+    /// replay path is different and could fail on its own: a dependency served from
+    /// <c>compiled-deps</c> skips its own Emit, and its documents reach the run only through
+    /// <c>DependencyLoader</c>'s <c>.object-metadata.json</c> sidecar. Losing that would show
+    /// up on the second run only, with the first one green. Same two-process shape as
+    /// <see cref="ObjectMetadataCaptureTests"/>'s dependency case, which is where it comes
+    /// from.
+    ///
+    /// What is NOT covered by this, and is #3549: a dependency shipped as a precompiled
+    /// <c>.app</c>, which never compiles here and so has no document at all.
+    /// </summary>
+    [SkippableFact]
+    public void SourceCompiledDependencyTable_TakesBcsDocument_AcrossItsOwnCacheHit()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var scratch = TestScratch.Dir("al-runner-table-metadata-dep");
+        var depDir = Path.Combine(scratch, "dep-app");
+        var testsDir = Path.Combine(scratch, "tests-app");
+        var alCacheDir = Path.Combine(scratch, "al-out");
+        Directory.CreateDirectory(depDir);
+        Directory.CreateDirectory(testsDir);
+
+        var depId = Guid.NewGuid();
+        var testsId = Guid.NewGuid();
+        const int DepTableId = 70670;
+        const int DepEnumId = 70670;
+
+        File.WriteAllText(Path.Combine(depDir, "app.json"), $$"""
+        {
+          "id": "{{depId}}",
+          "name": "TMDep App",
+          "publisher": "TMDep",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 70670, "to": 70674 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(depDir, "Dep.al"), """
+        enum 70670 "TMDep Kind"
+        {
+            Extensible = true;
+            value(0; Plain) { }
+            value(5; Fancy) { }
+        }
+
+        table 70670 "TMDep Thing"
+        {
+            DataClassification = CustomerContent;
+            fields
+            {
+                field(1; "Entry No."; Integer) { }
+                field(2; Description; Text[50])
+                {
+                    DataClassification = EndUserIdentifiableInformation;
+                    Editable = false;
+                }
+                field(3; Kind; Enum "TMDep Kind") { DataClassification = SystemMetadata; }
+            }
+            keys { key(PK; "Entry No.") { Clustered = true; } }
+        }
+        """);
+
+        File.WriteAllText(Path.Combine(testsDir, "app.json"), $$"""
+        {
+          "id": "{{testsId}}",
+          "name": "TMDep Tests",
+          "publisher": "TMDep",
+          "version": "1.0.0.0",
+          "dependencies": [
+            { "id": "{{depId}}", "name": "TMDep App", "publisher": "TMDep", "version": "1.0.0.0" }
+          ],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 70675, "to": 70679 } ],
+          "runtime": "14.0"
+        }
+        """);
+        var testsAlPath = Path.Combine(testsDir, "Tests.al");
+        File.WriteAllText(testsAlPath, """
+        codeunit 70675 "TMDep Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure DepThingRoundTrips()
+            var
+                Thing: Record "TMDep Thing";
+            begin
+                Thing.Init();
+                Thing."Entry No." := 1;
+                Thing.Insert();
+                Thing.Get(1);
+            end;
+        }
+        """);
+
+        void AssertDepTableCameFromBcDocument(string output, string phase)
+        {
+            Assert.True(output.Contains($"[table-metadata] {DepTableId} source=bc-document"),
+                $"{phase}: dependency table {DepTableId} did not take BC's document.\n{output}");
+
+            var lines = output.Split('\n').Select(l => l.TrimEnd('\r')).ToArray();
+            string Field(int no) => lines.LastOrDefault(
+                l => l.StartsWith($"[table-metadata] {DepTableId} field={no} ", StringComparison.Ordinal))
+                ?? throw new Xunit.Sdk.XunitException(
+                    $"{phase}: no trace line for dependency field {no}.\n{output}");
+
+            Assert.True(Field(2).Contains(" editable=False")
+                        && Field(2).Contains(" dataClassification=EndUserIdentifiableInformation"),
+                $"{phase}: the dependency's field 2 declares Editable = false and "
+                + "EndUserIdentifiableInformation.\n" + Field(2));
+            Assert.True(Field(3).Contains($" enumTypeId={DepEnumId} enumTypeName=TMDep Kind"),
+                $"{phase}: the dependency's field 3 is Enum \"TMDep Kind\".\n" + Field(3));
+        }
+
+        var (run1, exit1) = RunRunner(testsDir, alCacheDir);
+        Assert.True(exit1 == 0 && run1.Contains("1P/0F/0E"), $"run 1 (all cold) must pass:\n{run1}");
+        AssertDepTableCameFromBcDocument(run1, "run 1 (cold)");
+
+        // Touch the tests bundle only: its key changes (bundle MISS) while the dep's
+        // synthesized .app stays byte-identical, so the dep is served from compiled-deps and
+        // its Emit never runs.
+        File.AppendAllText(testsAlPath, "\n// touched\n");
+
+        var (run2, exit2) = RunRunner(testsDir, alCacheDir);
+        Assert.True(exit2 == 0 && run2.Contains("1P/0F/0E"), $"run 2 (dep HIT) must pass:\n{run2}");
+        Assert.Contains("source-cache HIT", run2);
+        AssertDepTableCameFromBcDocument(run2, "run 2 (dependency compile-cache HIT)");
+    }
+
+    /// <summary>
+    /// A base table extended by a KEY-ONLY tableextension in another app keeps the derivation.
+    ///
+    /// This is the case the merged-field count could not see. Fields and keys reach
+    /// <c>MergeExtensionFields</c> through separate channels (#3216), and a key-only —
+    /// or <c>modify(...)</c>-only — extension contributes no fields, so
+    /// <c>_parsedExtensionFields</c> stays empty. A count-based guard therefore passed, the
+    /// base app's own document won, and the extension's key vanished: measured on this
+    /// fixture, <c>RecordRef.KeyCount()</c> answered 3 instead of 4, exit 0, no diagnostic.
+    ///
+    /// The claim is about a KEY the runner merges at runtime, so the count is the assertion
+    /// and the trace line is the mechanism behind it — both are checked, because either alone
+    /// can be satisfied by the wrong thing: the count alone would pass if the key came back by
+    /// some other route, and the route alone says nothing about the key surviving.
+    ///
+    /// Cross-app on purpose. A same-app extension is merged into the emitting app's own
+    /// document by BC's compiler; one contributed by a DIFFERENT app is runtime-merged state
+    /// that no per-app document can express, which is the whole distinction the guard encodes.
+    /// </summary>
+    [SkippableFact]
+    public void BaseTableWithAKeyOnlyExtensionInAnotherApp_KeepsTheDerivation()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var scratch = TestScratch.Dir("al-runner-table-metadata-keyonly");
+        var depDir = Path.Combine(scratch, "dep-app");
+        var testsDir = Path.Combine(scratch, "tests-app");
+        Directory.CreateDirectory(depDir);
+        Directory.CreateDirectory(testsDir);
+
+        var depId = Guid.NewGuid();
+        var testsId = Guid.NewGuid();
+        const int DepTableId = 70670;
+
+        File.WriteAllText(Path.Combine(depDir, "app.json"), $$"""
+        {
+          "id": "{{depId}}",
+          "name": "TMK Dep App",
+          "publisher": "TMK",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 70670, "to": 70674 } ],
+          "runtime": "14.0"
+        }
+        """);
+        // Two declared keys, so the count below distinguishes "the extension's key is missing"
+        // from "keys are missing altogether".
+        File.WriteAllText(Path.Combine(depDir, "Dep.al"), """
+        table 70670 "TMK Dep Thing"
+        {
+            fields
+            {
+                field(1; "Entry No."; Integer) { }
+                field(2; Description; Text[50]) { }
+                field(3; Rank; Integer) { }
+            }
+            keys
+            {
+                key(PK; "Entry No.") { Clustered = true; }
+                key(ByDescription; Description) { }
+            }
+        }
+        """);
+
+        File.WriteAllText(Path.Combine(testsDir, "app.json"), $$"""
+        {
+          "id": "{{testsId}}",
+          "name": "TMK Tests",
+          "publisher": "TMK",
+          "version": "1.0.0.0",
+          "dependencies": [
+            { "id": "{{depId}}", "name": "TMK Dep App", "publisher": "TMK", "version": "1.0.0.0" }
+          ],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 70675, "to": 70679 } ],
+          "runtime": "14.0"
+        }
+        """);
+        // Keys only — no fields block at all, which is what leaves _parsedExtensionFields empty.
+        File.WriteAllText(Path.Combine(testsDir, "Tests.al"), """
+        tableextension 70675 "TMK Key Only Ext" extends "TMK Dep Thing"
+        {
+            keys
+            {
+                key(ByRank; Rank) { }
+            }
+        }
+
+        codeunit 70675 "TMK Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure ExtensionKeyIsStillThere()
+            var
+                RRef: RecordRef;
+                KRef: KeyRef;
+                FRef: FieldRef;
+            begin
+                RRef.Open(70670);
+                if RRef.KeyCount() <> 4 then
+                    Error('KeyCount=%1, expected 4 (PK, ByDescription, ByRank, and the ' +
+                          'platform key). A lower count means the extension''s key was dropped.',
+                          RRef.KeyCount());
+
+                // Name the key by the field it starts on: a count alone would be satisfied by
+                // any third key at all.
+                KRef := RRef.KeyIndex(3);
+                FRef := KRef.FieldIndex(1);
+                if FRef.Number() <> 3 then
+                    Error('Key 3 starts on field %1, expected 3 (Rank) — the extension''s key.',
+                          FRef.Number());
+                RRef.Close();
+            end;
+        }
+        """);
+
+        var (output, exit) = RunRunner(testsDir, Path.Combine(scratch, "al-out"));
+        Assert.True(exit == 0 && output.Contains("1P/0F/0E"),
+            $"the extension's key must survive:\n{output}");
+
+        // ...and it survived because the table kept the derivation, not by some other route.
+        Assert.Contains($"[table-metadata] {DepTableId} source=derived", output);
+        Assert.DoesNotContain($"[table-metadata] {DepTableId} source=bc-document", output);
+    }
+
     [SkippableFact]
     public void TableWithNoCapturedDocument_KeepsTheDerivation()
     {

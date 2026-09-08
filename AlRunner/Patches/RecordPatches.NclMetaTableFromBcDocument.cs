@@ -15,11 +15,19 @@
 //   makes this path reachable for a table the runner compiled.
 //   See docs/object-metadata-from-bc.md for the decompiled chain and what each step supplies.
 //
-// AVAILABILITY DECIDES, FAILURE DOES NOT
-//   The route is taken only when a document is registered for (Table, id). Anything that
-//   goes wrong AFTER that decision propagates: dropping to the hand-derivation on error
-//   would answer a subtly different table under a green build, which is the failure mode
+// AVAILABILITY DECIDES THE ROUTE, AND A FAILURE IS NEVER RE-ROUTED
+//   The route is taken only when a document is registered for (Table, id), and nothing here
+//   catches a failure and tries the derivation instead: a weaker answer substituted on error
+//   would be wrong metadata under a green build, which is what
 //   .claude/rules/loud-failures.md exists to prevent.
+//
+//   How far a failure then travels differs by call site, and only one of the two is loud:
+//   the post-emit sweep (RebuildTablesFromBcMetadataAll ← BcRuntime.SetTestAssembly) has no
+//   handler over it, so a throw there aborts bundle load naming the member; the cold build
+//   sits inside BuildNCLMetaTable's pre-existing `catch → Console.Error → return null`, which
+//   swallows it into "no metatable" exactly as it does for a derivation failure. That swallow
+//   predates this change and is #3590 — do not read the paragraph above as a claim that the
+//   cold path tears through, because it does not.
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 using AlRunner.Infrastructure;
@@ -63,19 +71,36 @@ public static partial class RecordPatches
     /// The one predicate both routes into BC's document consult — the cold build in
     /// <c>BuildNCLMetaTable</c> and the post-emit reload in
     /// <see cref="RebuildTablesFromBcMetadataAll"/>. It is a single method rather than the same
-    /// two conditions written twice because the two paths write the same state: a table that
-    /// took one route and not the other would carry half of each answer.
+    /// conditions written twice because the two paths write the same state: a table that took
+    /// one route and not the other would carry half of each answer.
     ///
-    /// The extension clause is scope, not caution. BC merges a <c>tableextension</c> through
-    /// NavAppGroup's own extension registry, which the runner does not populate, so BC's
-    /// document for the BASE table alone would silently drop the extension's fields and keys —
-    /// the derivation already merges them (<c>_parsedExtensionFields</c>), so it stays in
-    /// charge of those tables until TableExtension is converted too (#3562).
+    /// <para><b>The extension clause is about BUILD-TIME versus RUNTIME-MERGED state, and that
+    /// is why it is not a field count.</b> BC's document for a table is what ONE app's compiler
+    /// emitted for it. A <c>tableextension</c> in another app contributes fields AND keys that
+    /// the service tier merges at publish time through NavAppGroup's extension registry, which
+    /// the runner does not populate — so no per-app document can express them, whichever app
+    /// emitted it. The runner's derivation does merge them, so an extended base table stays on
+    /// the derivation until TableExtension is converted too (#3562).</para>
+    ///
+    /// <para><b>Gate on the extension INDEX, never on the merged field count.</b> Fields and
+    /// keys travel separate channels into <see cref="MergeExtensionFields"/>, and a
+    /// <c>modify(...)</c>-only or key-only extension contributes no fields at all — measured:
+    /// a cross-app key-only tableextension left <c>_parsedExtensionFields</c> empty, the
+    /// count-based guard passed, the base app's own document won, and
+    /// <c>RecordRef.KeyCount()</c> silently answered 2 where the derivation answers 3. Exit 0,
+    /// no diagnostic. <c>_extensionIdsByBaseTable</c> records EVERY extension, so it is the
+    /// signal that another app has contributed anything at all; the two collections beside it
+    /// are belt-and-braces for a writer that ever registers one without an id.</para>
     /// </summary>
     internal static bool ShouldBuildTableFromBcDocument(int tableId, ParsedTable parsed)
-        => HasBcTableMetadataDocument(tableId)
-           && !(_parsedExtensionFields.TryGetValue(parsed.TableName.ToLowerInvariant(), out var ext)
-                && ext.Count > 0);
+    {
+        if (!HasBcTableMetadataDocument(tableId)) return false;
+        var key = parsed.TableName.ToLowerInvariant();
+        if (_extensionIdsByBaseTable.TryGetValue(key, out var extIds) && extIds.Count > 0) return false;
+        if (_parsedExtensionFields.TryGetValue(key, out var extFields) && extFields.Count > 0) return false;
+        if (_parsedExtensionKeys.TryGetValue(key, out var extKeys) && extKeys.Count > 0) return false;
+        return true;
+    }
 
     /// <summary>
     /// Construct the table through BC: an empty NCLMetaTable bound to

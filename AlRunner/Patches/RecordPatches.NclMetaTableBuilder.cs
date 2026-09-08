@@ -140,10 +140,12 @@ public static partial class RecordPatches
         {
             // #3552 — when BC's emitter handed the runner its own metadata document for this
             // table (#3548), let BC construct the NCLMetaTable from it rather than deriving one
-            // below. AVAILABILITY decides the route; a failure past this point propagates
-            // rather than dropping to the derivation, because a weaker answer under a green
-            // build is what .claude/rules/loud-failures.md exists to prevent. What each step
-            // supplies, and which tables are deliberately left on the derivation:
+            // below. AVAILABILITY decides the route, and a failure is never re-routed to the
+            // derivation: a weaker answer substituted on error is what
+            // .claude/rules/loud-failures.md exists to prevent. It is not LOUD here, though —
+            // this site is inside the catch below, which swallows any throw into `return null`
+            // for both routes alike (pre-existing, #3590). What each step supplies, and which
+            // tables are deliberately left on the derivation:
             // docs/object-metadata-from-bc.md#the-seam.
             if (ShouldBuildTableFromBcDocument(tableId, parsed))
             {
