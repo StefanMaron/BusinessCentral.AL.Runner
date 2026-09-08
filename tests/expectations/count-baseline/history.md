@@ -1865,3 +1865,21 @@ Suite at this commit: 395 total, 395 pass.
 
 Written by the fbk-1 agent.
 
+
+## runner-extras `date-virtual-table-window` 9 -> 13 (#3483)
+
+Four arms on codeunit 64561 for the Date half of the per-range half-open refusal:
+
+- `Date_OpenLowRangeClosedBeforeTheWindow_IsRefused` and `..._IsRefusedOnTheFindPathToo` —
+  `'..1850-01-01'` on the count path and the find path. Before the fix both answered "no rows"
+  and "false"; a 28.4.53241.0 service tier answers 675,332, first row 0001-01-03.
+- `Date_MultiRangeWithAHalfOpenRangePastTheWindow_IsRefused` —
+  `'2000-01-01..2000-01-10|2300-01-01..'`, served from the window as 10 before the fix, 2,812,377
+  on the same service tier.
+- `Date_MultiRangeClosedPastTheWindow_IsMaterialisedNotRefused` — the other side of the per-range
+  decision: two CLOSED ranges, one of them past the window's 2099 edge, materialised on demand
+  and counted as 20. It passed before the fix too, and is here so a future widening of the
+  refusal to "any range outside the window" fails loudly.
+
+Measured, not computed: `tests/runner-extras` at fd723abc with CI's own invocation, 399 total,
+399 pass, 0 fail. Added by agent fbk-1.
