@@ -166,4 +166,97 @@ public class AllObjWithCaptionObjectSubtypeTests
         Assert.Equal("NormalX", RecordPatches.ObjectSubtypeTextFor("Codeunit", "NormalX"));
         Assert.Equal("Abnormal", RecordPatches.ObjectSubtypeTextFor("Codeunit", "Abnormal"));
     }
+
+    // ----------------------------------------------------------------------------------
+    // Issue #3392 — the five *extension kinds, whose rule differs in KIND and not in value:
+    // BC answers the TARGET OBJECT'S ID as a decimal string, never a type name.
+    //
+    // The BC-behaviour claim is asserted upstream (corpus PR
+    // StefanMaron/BusinessCentral.AL.Language.Tests#291). What is pinned here is the
+    // runner-local mapping deciding WHICH id namespace each kind's target is resolved in.
+    // Getting that wrong does not fail loudly: AL gives every object kind its own id
+    // namespace, so resolving a pageextension's target among tables answers a plausible
+    // WRONG NUMBER rather than nothing — the hazard TryGetObjectNameOfKind exists for in
+    // the other direction (#2943), here in the direction nothing was guarding.
+    // ----------------------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("PageExtension", "Page")]
+    [InlineData("TableExtension", "Table")]
+    [InlineData("EnumExtension", "Enum")]
+    [InlineData("PermissionSetExtension", "PermissionSet")]
+    [InlineData("ReportExtension", "Report")]
+    public void ExtensionKind_ResolvesItsTargetInThatKindsOwnNamespace(string kind, string targetKind)
+    {
+        Assert.Equal(targetKind, RecordPatches.ExtensionTargetObjectKind(kind));
+    }
+
+    [Theory]
+    [InlineData("pageextension")]
+    [InlineData("PAGEEXTENSION")]
+    [InlineData("PageExtension")]
+    public void ExtensionKindMatch_IsSpellingInsensitive(string kind)
+    {
+        // Same NormalizeObjectTypeName route as the codeunit rule above. A spelling
+        // mismatch here would leave the column empty, which is indistinguishable from the
+        // pre-fix behaviour and so would pass every "is it non-empty" style check.
+        Assert.Equal("Page", RecordPatches.ExtensionTargetObjectKind(kind));
+    }
+
+    [Theory]
+    // NOT every kind whose name ends in "Extension". These two are the reason the mapping
+    // is an explicit list rather than a suffix test:
+    //   * QueryExtension is absent from BC's shared switch arm AND from
+    //     AllObjWithCaption's own "Object Type" option set.
+    //   * ProfileExtension IS in that option set but is NOT in the switch arm, so BC
+    //     leaves it on the initial `string.Empty`.
+    [InlineData("QueryExtension")]
+    [InlineData("ProfileExtension")]
+    // ...and the kinds that carry a real subtype must not be diverted into id resolution.
+    [InlineData("Table")]
+    [InlineData("Page")]
+    [InlineData("Query")]
+    [InlineData("Codeunit")]
+    [InlineData("Report")]
+    [InlineData("XMLport")]
+    [InlineData("Enum")]
+    public void KindsBcDoesNotAnswerWithATargetId_HaveNoTargetNamespace(string kind)
+    {
+        Assert.Null(RecordPatches.ExtensionTargetObjectKind(kind));
+    }
+
+    [Fact]
+    public void ExtensionWithAnUnresolvableTarget_IsEmptyRatherThanEchoingTheName()
+    {
+        // BC's arm ends in `?? string.Empty` — a target the app group cannot summarise
+        // yields the empty string. The runner must do the same rather than fall through to
+        // the non-extension path, which would put the target's NAME in a column whose value
+        // is documented to be an id. No object of any kind carries this name, so nothing
+        // resolves and the fallback is what is being read.
+        Assert.Equal(
+            string.Empty,
+            RecordPatches.ObjectSubtypeTextFor("TableExtension", "AXS No Such Object Anywhere"));
+    }
+
+    [Fact]
+    public void ExtensionDeclaringNoTarget_IsEmpty()
+    {
+        // Null and empty reach here from an extension whose target the parse could not read.
+        Assert.Equal(string.Empty, RecordPatches.ObjectSubtypeTextFor("PageExtension", null));
+        Assert.Equal(string.Empty, RecordPatches.ObjectSubtypeTextFor("PageExtension", string.Empty));
+    }
+
+    [Fact]
+    public void ExtensionKindDoesNotTakeTheCodeunitNormalRule()
+    {
+        // A tableextension over a table literally named "Normal" resolves as a name like any
+        // other. Written because the codeunit blanking test sits directly above this one and
+        // is the edit most likely to be widened by mistake; the empty answer here is the
+        // unresolvable-target fallback, NOT the Normal rule, which is why the assertion
+        // below distinguishes them.
+        Assert.Equal(string.Empty, RecordPatches.ObjectSubtypeTextFor("TableExtension", "Normal"));
+        // The codeunit rule, by contrast, blanks the WORD without consulting any inventory —
+        // so it still blanks it when an object of that name would have resolved.
+        Assert.Equal(string.Empty, RecordPatches.ObjectSubtypeTextFor("Codeunit", "Normal"));
+    }
 }

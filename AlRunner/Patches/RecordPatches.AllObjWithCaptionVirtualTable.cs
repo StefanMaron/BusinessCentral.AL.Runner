@@ -157,14 +157,30 @@ public static partial class RecordPatches
     /// <para>Observably equivalent to AllObjWithCaptionDataProvider.GetCaptionAndSubtype: a
     /// per-kind switch answering the member name, except that a CODEUNIT whose subtype is
     /// <c>Normal</c> answers the empty string — a table or query whose type is Normal
-    /// answers the word. Editing this method without that asymmetry in hand gets it wrong in
-    /// two directions at once. Per-kind table, the decompiled bodies, why <c>Install</c>
-    /// lands on empty, and the five *extension kinds this deliberately leaves empty:
-    /// see docs/virtual-tables-allobj.md#object-subtype.</para>
+    /// answers the word — and the five *extension kinds answer the TARGET OBJECT'S ID as a
+    /// decimal string instead of any name at all. Editing this method without both of those
+    /// in hand gets it wrong in several directions at once. Per-kind table, the decompiled
+    /// bodies, and why <c>Install</c> lands on empty: see
+    /// docs/virtual-tables-allobj.md#object-subtype.</para>
     /// </summary>
     internal static string ObjectSubtypeTextFor(string kind, string? subtype)
     {
         if (string.IsNullOrEmpty(subtype)) return string.Empty;
+
+        // The *extension kinds: `subtype` is the TARGET NAME the inventory carried, not a
+        // subtype. BC reads TargetObjectId off the app group's object summary and renders it
+        // invariantly; the runner has no app-group summary, so it resolves the same target
+        // through the object inventory it does have. An unresolvable target answers the empty
+        // string, which is BC's own `?? string.Empty` on that arm rather than a runner
+        // invention.
+        if (ExtensionTargetObjectKind(kind) is string targetKind)
+        {
+            var targetId = ResolveObjectIdOfKindByName(targetKind, subtype);
+            return targetId > 0
+                ? targetId.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : string.Empty;
+        }
+
         if (NormalizeObjectTypeName(kind) != "codeunit") return subtype;
 
         // What the COMPILER wrote, not what the author declared — the same translation, in
@@ -179,6 +195,102 @@ public static partial class RecordPatches
         return string.Equals(effective, AlDefaultCodeunitSubtype, StringComparison.OrdinalIgnoreCase)
             ? string.Empty
             : effective;
+    }
+
+    /// <summary>
+    /// For one of the five object kinds BC answers with a target id, the kind that target is
+    /// resolved in; null for every other kind.
+    ///
+    /// <para>The mapping is the point: AL gives every object kind its OWN id namespace, so a
+    /// pageextension's target must be looked up among PAGES and a tableextension's among
+    /// TABLES. Resolving by name alone answers whichever object happens to match first, which
+    /// is a plausible wrong number rather than a failure — the same hazard
+    /// TryGetObjectNameOfKind exists for in the other direction (#2943).</para>
+    /// <para>The set is BC's, taken from GetCaptionAndSubtype's shared switch arm, NOT
+    /// "every kind whose name ends in Extension": <c>QueryExtension</c> is absent from that
+    /// arm and from AllObjWithCaption's own Object Type option set, and
+    /// <c>ProfileExtension</c> is in the option set but not in the arm. Both therefore keep
+    /// the empty string.</para>
+    /// </summary>
+    internal static string? ExtensionTargetObjectKind(string kind)
+        => NormalizeObjectTypeName(kind) switch
+        {
+            "pageextension" => "Page",
+            "tableextension" => "Table",
+            "enumextension" => "Enum",
+            "permissionsetextension" => "PermissionSet",
+            "reportextension" => "Report",
+            _ => null,
+        };
+
+    /// <summary>
+    /// The id of the object named <paramref name="objectName"/> WITHIN the kind
+    /// <paramref name="kind"/>, or -1 when this run knows no such object.
+    ///
+    /// <para>Deliberately not <c>ResolveObjectIdByKindAndName</c>, which is otherwise the same
+    /// question: that one walks <see cref="EnumerateKnownAlObjects"/>, and every caller of this
+    /// method is ITSELF inside that walk — building an AllObjWithCaption row from an inventory
+    /// item. Re-entering a running iterator over the same dictionaries is what
+    /// <c>InvalidOperationException: Collection was modified</c> is made of, because
+    /// ResolveTableIdByName writes to <c>_parsedTables</c> when it faults a dependency table
+    /// in. So this reads the per-kind dictionaries directly and never the shared walk.</para>
+    /// <para>Name comparison is exact and case-insensitive, matching how the dependency page
+    /// index and BuildObjectIndexes compare — never the space-stripping NamesEqual, which
+    /// would let "Item Attribute" and a hypothetical "ItemAttribute" answer for each other.</para>
+    /// </summary>
+    private static int ResolveObjectIdOfKindByName(string kind, string objectName)
+    {
+        if (string.IsNullOrWhiteSpace(objectName)) return -1;
+
+        static bool Same(string? a, string b) => string.Equals(a, b, StringComparison.OrdinalIgnoreCase);
+
+        switch (NormalizeObjectTypeName(kind))
+        {
+            case "table":
+                foreach (var t in _parsedTables.Values)
+                    if (Same(t.TableName, objectName)) return t.TableId;
+                foreach (var t in EnumerateBcAppTableSymbols())
+                    if (Same(t.TableName, objectName)) return t.TableId;
+                return -1;
+            case "page":
+                foreach (var p in _parsedPages.Values)
+                    if (Same(p.Name, objectName)) return p.Id;
+                return ResolveDependencyObjectIdByName("Page", objectName);
+            case "report":
+                foreach (var r in _parsedReports.Values)
+                    if (Same(r.Name, objectName)) return r.Id;
+                return ResolveDependencyObjectIdByName("Report", objectName);
+            case "enum":
+                // AlEnumMetadataRegistry already merges this bundle's own enums with those
+                // scanned out of dependency .apps, so it needs no dependency fallback.
+                foreach (var e in AlEnumMetadataRegistry.Snapshot())
+                    if (Same(e.Name, objectName)) return e.Id;
+                return -1;
+            case "permissionset":
+                foreach (var d in _parsedObjectDecls.Values)
+                    if (NormalizeObjectTypeName(d.Kind) == "permissionset" && Same(d.Name, objectName))
+                        return d.Id;
+                return ResolveDependencyObjectIdByName("PermissionSet", objectName);
+            default:
+                return -1;
+        }
+    }
+
+    /// <summary>
+    /// The id of a precompiled dependency object of <paramref name="kind"/> named
+    /// <paramref name="objectName"/>, read off the registered .apps' flat object lists. -1
+    /// when none matches. Used only for the kinds with no dedicated per-kind dependency index.
+    /// </summary>
+    private static int ResolveDependencyObjectIdByName(string kind, string objectName)
+    {
+        var wanted = NormalizeObjectTypeName(kind);
+        foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("extension target (AllObjWithCaption)"))
+            foreach (var o in symbols.Objects)
+                if (o.Id > 0
+                    && NormalizeObjectTypeName(o.Kind) == wanted
+                    && string.Equals(o.Name, objectName, StringComparison.OrdinalIgnoreCase))
+                    return o.Id;
+        return -1;
     }
 
     private static Dictionary<string, int>? _awcObjectTypeOrdinals;

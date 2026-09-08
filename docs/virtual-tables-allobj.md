@@ -103,15 +103,55 @@ Both codeunit sources state the *declared* property, so `ObjectSubtypeTextFor` a
 A `null` from any of those means "declares none", which the AL defaults turn into `Normal`
 for a table or query and into the empty string for a codeunit — matching BC.
 
-### Known gap: the five *extension kinds
+### The five *extension kinds: the target object's id (#3392)
 
 BC answers a `PageExtension` / `TableExtension` / `EnumExtension` /
 `PermissionSetExtension` / `ReportExtension` row's Object Subtype with the **target
-object's id** as a decimal string, read from `NavAppGroup.GetObjectSummary`. The runner has
-no equivalent of that app-group object summary, so those kinds carry a null subtype through
-the inventory and land on the empty string — the value they had before #2326.
+object's id** as a decimal string, read from `NavAppGroup.GetObjectSummary`. This section
+described that as a known gap until #3392; it is now implemented, and what follows is how.
 
-This is deliberate rather than overlooked. The runner does resolve extension targets
-elsewhere, but that is a different fact reached a different way, and writing it into this
-column would put a value there that BC derives from a structure the runner does not model.
-Tracked separately; see the issue linked from the PR that added this document.
+The runner models no app-group object summary, so it cannot copy BC's route. What it does
+instead is resolve **the same target** through the object inventory it already has, in two
+steps that are deliberately separate:
+
+1. **The inventory carries the target NAME.** Every extension's `extends` target reaches
+   `EnumerateKnownAlObjects` through the same slot that carries a subtype for the other
+   kinds — the two never coexist on one object, so one slot serves both. Source-parsed
+   extensions read it off `ApplicationObjectExtensionSyntax.BaseObject`, which all five AL
+   extension node types derive from; precompiled ones read it off the `.app`'s
+   `SymbolReference.json` (see the spelling note below).
+2. **`ObjectSubtypeTextFor` resolves that name to an id**, in the target kind's **own id
+   namespace** — `ExtensionTargetObjectKind` is the mapping, and it is the part worth
+   reading before editing. AL gives every object kind a separate id namespace, so
+   resolving a pageextension's target among tables answers a plausible **wrong number**
+   rather than nothing.
+
+An unresolvable target answers the empty string, which is BC's own `?? string.Empty` on
+that arm rather than a runner invention.
+
+**The mapping is BC's list, not a suffix test.** `QueryExtension` is absent from BC's
+switch arm *and* from AllObjWithCaption's Object Type option set; `ProfileExtension` is in
+the option set but not in the arm. Both therefore keep the empty string, and
+`AllObjWithCaptionObjectSubtypeTests` pins both — a `kind.EndsWith("Extension")`
+simplification fails on exactly those two.
+
+#### One element the AL compiler does not spell consistently
+
+Measured against Base Application 28.1, because this is the trap that makes a
+reportextension look like an unfixed gap:
+
+| container | count | target element |
+|---|---|---|
+| `TableExtensions` | 90 | `TargetObject` |
+| `PageExtensions` | 156 | `TargetObject` |
+| `EnumExtensionTypes` | 39 | `TargetObject` |
+| `PermissionSetExtensions` | 55 | `TargetObject` |
+| **`ReportExtensions`** | **14** | **`Target`** — not one carries `TargetObject` |
+
+Both are names, neither is an id. `BcAppSymbolCache.ExtensionTargetName` reads
+`TargetObject` and falls back to `Target` for that reason; reading only the first spelling
+leaves every reportextension's target null, which reaches this column as an empty Object
+Subtype and is indistinguishable from the pre-fix behaviour.
+
+The BC-behaviour claim is adjudicated upstream in corpus codeunit 60802
+`"Test AllObj Virtual Table"`.
