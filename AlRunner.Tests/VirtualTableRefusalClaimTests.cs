@@ -59,7 +59,10 @@ public sealed class VirtualTableRefusalClaimTests
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
-    /// <summary>The seventeen files covered. ObjectMetadataSystemTable is #2894's and keeps its
+    /// <summary>The files covered. RecordPatches.IntegerVirtualTable.cs left the set at #3485:
+    /// the Integer table is served by BC's own IntegerDataProvider and raises no refusal at all.
+    /// The original note follows.
+    /// The seventeen files covered. ObjectMetadataSystemTable is #2894's and keeps its
     /// own factory. DateVirtualTable joined under #2965 — it was held back from #2945 only
     /// because #2648 was changing it concurrently, not because it classified differently.</summary>
     private static readonly string[] CoveredFiles =
@@ -72,7 +75,6 @@ public sealed class VirtualTableRefusalClaimTests
         "RecordPatches.DateVirtualTable.cs",
         "RecordPatches.FeatureKeyVirtualTable.cs",
         "RecordPatches.FieldVirtualTable.cs",
-        "RecordPatches.IntegerVirtualTable.cs",
         "RecordPatches.MetadataPermissionSetVirtualTable.cs",
         "RecordPatches.NavAppExtraVirtualTable.cs",
         "RecordPatches.PageControlFieldVirtualTable.cs",
@@ -113,7 +115,6 @@ public sealed class VirtualTableRefusalClaimTests
         new object[] { "FeatureKeyShapeGap",             "Feature Key (system table 2000000211)",               "feature-key-virtual-table",               GapDoc },
         new object[] { "FeatureKeyModifyShapeGap",       "Feature Key (system table 2000000211): Modify",       "feature-key-modify",                      GapDoc },
         new object[] { "FieldVirtualShapeGap",           "Field (virtual table 2000000041)",                    "field-virtual-table",                     GapDoc },
-        new object[] { "IntegerShapeGap",                "Integer (virtual table 2000000026)",                  "integer-virtual-table",                   GapDoc },
         new object[] { "MetadataPermissionSetShapeGap",  "Metadata Permission Set (virtual table 2000000250)",  "metadata-permission-set-virtual-table",   GapDoc },
         new object[] { "NavAppExtraShapeGap",            "NAV App Extra (virtual table 2000000157)",            "nav-app-extra-virtual-table",             GapDoc },
         new object[] { "PageControlFieldShapeGap",       "Page Control Field (virtual table 2000000192)",       "page-control-field-virtual-table",        GapDoc },
@@ -415,7 +416,13 @@ public sealed class VirtualTableRefusalClaimTests
         //
         // Per the note above: 85 was READ OUT of this test's own failure message
         // ("Expected: 82, Actual: 85"), not arrived at by adding 3 to 82.
-        Assert.Equal(85, total);
+        // -1 (#3485): the Integer (2000000026) factory left, because the table stopped
+        // refusing anything -- it is served by BC's own IntegerDataProvider, which computes
+        // rows per request, so there is no materialised window a filter can reach past. This
+        // is the one direction the note above does not cover: a refusal deleted because the
+        // surface it guarded no longer exists, rather than because someone stopped raising it.
+        // 84 was READ OUT of this test's own failure message ("Expected: 85, Actual: 84").
+        Assert.Equal(84, total);
     }
 
 

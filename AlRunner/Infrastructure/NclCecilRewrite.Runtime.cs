@@ -1038,19 +1038,10 @@ public static partial class NclCecilRewrite
                 H(recordPatches, "DataAccess_FieldGuardForCount"),
                 argSlots: 2); // `this` — the DataAccess — and the count request
 
-            // ── DataAccess.CountAsync — Integer virtual table (2000000026) window guard ───
-            // Issue #2350. The Integer window ([-1000..100000] by default) is materialised
-            // eagerly, and until now nothing compared an incoming filter against it on ANY
-            // path — the file's own header spent a release claiming otherwise, naming an
-            // "IntegerWindowGuard" that did not exist. Record.Count() over Number in
-            // [1..250000] answered 100000: short by 150000, and a number that looks real.
-            // A service tier computes this table per request and clamps to [-1e9..1e9]
-            // (IntegerDataProvider.CountValuesWithinRange, decompiled), so the missing rows
-            // are rows BC would have returned.
-            PrependStaticCall(nclMod,
-                ByParams(Rt + "DataAccess", "CountAsync", "CountCacheRequest"),
-                H(recordPatches, "DataAccess_IntegerWindowGuardForCount"),
-                argSlots: 2); // `this` — the DataAccess — and the count request
+            // No Integer (2000000026) prepend on any of these three paths: since #3485 the table
+            // is served by BC's own IntegerDataProvider, which computes rows per request, so
+            // there is no materialised window for a guard to widen. See
+            // RecordPatches.IntegerVirtualTable.cs.
 
             // ── DataAccess.InternalTryGetByPrimaryKeyAsync — Aggregate Permission Set live
             //    redrive (issue #2504) ──────────────────────────────────────────────────
@@ -1092,17 +1083,6 @@ public static partial class NclCecilRewrite
             PrependStaticCall(nclMod,
                 ByParams(Rt + "DataAccess", "InternalTryGetByPrimaryKeyAsync", "PrimaryKeyCacheRequest"),
                 H(recordPatches, "DataAccess_FieldGuardForGet"),
-                argSlots: 2); // `this` — the DataAccess — and the primary-key request
-
-            // ── DataAccess.InternalTryGetByPrimaryKeyAsync — Integer window guard (#2350) ────
-            // The Integer table shares the primary-key path described above and was left behind
-            // by both #2504 and #2648. A keyed Get reaches neither the find guard nor the count
-            // one, so Record.Get(250000) answered FALSE — indistinguishable from "no such row",
-            // when a service tier plainly has one. The bound comes from the RECORD ID, because a
-            // keyed Get carries its key there and may name no "Number" filter at all.
-            PrependStaticCall(nclMod,
-                ByParams(Rt + "DataAccess", "InternalTryGetByPrimaryKeyAsync", "PrimaryKeyCacheRequest"),
-                H(recordPatches, "DataAccess_IntegerWindowGuardForGet"),
                 argSlots: 2); // `this` — the DataAccess — and the primary-key request
 
             // ── DataAccess.ExistsAsync — Date virtual table (2000000007), the FOURTH path ───
@@ -1162,18 +1142,6 @@ public static partial class NclCecilRewrite
             PrependStaticCall(nclMod,
                 ByParams(Rt + "DataAccess", "ExistsAsync", "ExistsCacheRequest"),
                 H(recordPatches, "DataAccess_FieldGuardForExists"),
-                argSlots: 2); // `this` — the DataAccess — and the exists request
-
-            // ── DataAccess.ExistsAsync — Integer virtual table (2000000026), the FOURTH path ──
-            // Issue #2350, and the same omission #3006 found for Date and Field. Record.IsEmpty()
-            // never reaches CountAsync, so with the find, count and Get guards all in place
-            // IsEmpty() over Number in [1..250000] still answered FALSE from the 100000 rows the
-            // window happens to hold — true by accident, and a statement about a range nobody
-            // asked about. ExistsAsync is a large async state machine, so unlike the tiny
-            // FindAsync it is not R2R-inlined past the prepend.
-            PrependStaticCall(nclMod,
-                ByParams(Rt + "DataAccess", "ExistsAsync", "ExistsCacheRequest"),
-                H(recordPatches, "DataAccess_IntegerWindowGuardForExists"),
                 argSlots: 2); // `this` — the DataAccess — and the exists request
 
             // ── Why there is NO DataAccess.GetBlobContentAsync prepend here (#2771) ─────────
