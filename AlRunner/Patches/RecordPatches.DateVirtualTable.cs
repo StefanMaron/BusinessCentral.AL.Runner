@@ -194,11 +194,12 @@ public static partial class RecordPatches
 
     /// <summary>
     /// The refusal for a "Period Start" range closed at one end only, with that closed end
-    /// outside the window about to be materialised. Real BC runs the open end out to its own
-    /// first or last period start for the period type — 0001-01-03 and 9999-12-31 for
-    /// <c>Date</c>, from <c>DateTimeHelper.datePeriodStartMinimumDate</c> /
-    /// <c>datePeriodStartMaximumDate</c> (Ncl 28.4.53241.54318) — so it answers such a range
-    /// with rows the window holds none of.
+    /// outside the materialised window. Real BC runs the open end out to its own first or last
+    /// period start, which is PER PERIOD TYPE — <c>DateTimeHelper.datePeriodStartMinimumDate</c>
+    /// is 0001-01-03 for <c>Date</c> but 0002-01-01 for <c>Year</c>, and the maxima differ the
+    /// same way — so the message names the range of possibilities rather than one type's pair.
+    /// The request's own period type is not read here: the refusal is about the "Period Start"
+    /// filter, which is evaluated for whichever types the request selects.
     /// </summary>
     internal static RunnerOutOfScopeException DateOpenEndedRefusal(DateTime requested, bool openHigh)
         => DateShapeGap(
@@ -208,8 +209,8 @@ public static partial class RecordPatches
                 $"outside the window [{DateWindowMinYear}-01-01..{DateWindowMaxYear}-12-31] an open ")
             + "bound is answered from. Real BC runs the open end out to "
             + (openHigh
-                ? "its last period start (9999-12-31 for period type Date)"
-                : "its first period start (0001-01-03 for period type Date)")
+                ? "its own last period start for the period type (9999-12-31 for Date, 9999-01-01 for Year)"
+                : "its own first period start for the period type (0001-01-03 for Date, 0002-01-01 for Year)")
             + ", so it answers with rows this request would otherwise be told there are none of. "
             + "Close the other end of the filter, or "
             + (openHigh
@@ -892,22 +893,20 @@ public static partial class RecordPatches
         var highBound = closedHigh is DateTime ch && ch > new DateTime(DateWindowMaxYear, 12, 31)
             ? ch : new DateTime(DateWindowMaxYear, 12, 31);
 
-        // A half-open range whose closed end lies OUTSIDE the span about to be materialised
-        // selects nothing from it, while BC answers it out to year 1 or year 9999 with rows.
-        // That is not the documented truncation — a truncation returns the near end of the range
-        // and stops early — it is a zero, or a total missing a whole range, reported as success.
-        // Refuse it instead (#3483).
+        // A half-open range whose closed end lies outside the WINDOW selects nothing the window
+        // holds, while BC answers it out to its own first or last period start; that is a zero
+        // reported as success, not the documented truncation. Refuse it (#3483).
         //
-        // Decided per RANGE, never from the envelope: `'2000-01-01..2000-01-10|2300-01-01..'` has
-        // its outermost closed bounds at 2000-01-01 and 2000-01-10, both inside the window, and
-        // serving it from the window drops the second range whole for a plausible 10 — measured
-        // 2,812,377 on a 28.4.53241.0 service tier. A half-open range whose closed end is INSIDE
-        // the window is unaffected and still answered from it: that is the documented
-        // approximation corpus codeunit 60983 pins green upstream.
+        // Compared against the window CONSTANTS, never against lowBound/highBound: those two are
+        // widened by the filter's envelope, so a sibling range far from the window would move the
+        // bar the half-open range is judged against and defeat the per-range decision. See the PR
+        // body for the measured filter that does it.
         foreach (var (value, openHigh) in halfOpenEnds)
         {
-            if (openHigh && value > highBound) throw DateOpenEndedRefusal(value, openHigh: true);
-            if (!openHigh && value < lowBound) throw DateOpenEndedRefusal(value, openHigh: false);
+            if (openHigh && value > new DateTime(DateWindowMaxYear, 12, 31))
+                throw DateOpenEndedRefusal(value, openHigh: true);
+            if (!openHigh && value < new DateTime(DateWindowMinYear, 1, 1))
+                throw DateOpenEndedRefusal(value, openHigh: false);
         }
 
         // PopulateDateSpan only ever widens, and returns immediately when the span already

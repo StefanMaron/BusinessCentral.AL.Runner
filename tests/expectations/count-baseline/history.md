@@ -1883,3 +1883,19 @@ Four arms on codeunit 64561 for the Date half of the per-range half-open refusal
 
 Measured, not computed: `tests/runner-extras` at fd723abc with CI's own invocation, 399 total,
 399 pass, 0 fail. Added by agent fbk-1.
+
+## runner-extras `date-virtual-table-window` 13 -> 15 (#3483, reviewer follow-up)
+
+Two more arms on codeunit 64561, from the review of PR #3511:
+
+- `Date_HalfOpenRangeWithASiblingRangeFurtherOut_IsStillRefused` — `'..1850-01-01|1800-01-01..1800-01-10'`.
+  A control, not a RED→GREEN: it passes on both sides of the same PR's fix. It pins that a
+  sibling range cannot move the bar the half-open range is judged against, which the fix now
+  guarantees by construction (the comparison is against the window constants) and which BC's own
+  `ToRangeList` also happens to deliver here by merging the subsumed range.
+- `Date_HalfOpenRangeOnAYearTypeRead_IsRefusedWithoutClaimingDatesBounds` — a genuine RED→GREEN:
+  before the reviewer follow-up the refusal told a Year-type reader that BC runs the open end
+  back to 0001-01-03, which is the first *Date* period; Year starts at 0002-01-01.
+
+Measured: `tests/runner-extras/date-virtual-table-window` 15/15 with the fix, 14/15 without it
+(the Year arm is the one that fails). Added by agent fbk-1.

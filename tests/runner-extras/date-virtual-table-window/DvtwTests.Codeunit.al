@@ -247,6 +247,8 @@ codeunit 64561 "Dvtw Tests"
 
         asserterror CountRows(DateRec);
         Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
+        Assert.ExpectedError('date-virtual-table');
+        Assert.ExpectedError('1850-01-01');
         Assert.ExpectedError('with its other end open');
     end;
 
@@ -263,6 +265,8 @@ codeunit 64561 "Dvtw Tests"
 
         asserterror DateRec.FindSet();
         Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
+        Assert.ExpectedError('date-virtual-table');
+        Assert.ExpectedError('1850-01-01');
         Assert.ExpectedError('with its other end open');
     end;
 
@@ -281,8 +285,13 @@ codeunit 64561 "Dvtw Tests"
         DateRec.SetFilter("Period Start", '%1..%2|%3..',
             DMY2Date(1, 1, 2000), DMY2Date(10, 1, 2000), DMY2Date(1, 1, 2300));
 
+        // The bound is asserted, not just the fact of a refusal: this arm has two ranges and
+        // only the second one is refusable, so a refusal naming 2000-01-01 or 2000-01-10 would
+        // mean the per-range decision landed on the wrong range.
         asserterror CountRows(DateRec);
         Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
+        Assert.ExpectedError('date-virtual-table');
+        Assert.ExpectedError('2300-01-01');
         Assert.ExpectedError('with its other end open');
     end;
 
@@ -302,6 +311,48 @@ codeunit 64561 "Dvtw Tests"
         Assert.AreEqual(20, DateRec.Count(), 'Expected the union of two closed ranges: 10 days in 2000 and 10 in 2150.');
         Assert.IsTrue(DateRec.FindLast(), 'Record Date found no row for the second closed range.');
         Assert.AreEqual(DMY2Date(10, 1, 2150), DateRec."Period Start", 'Expected the last row to be 10 January 2150.');
+    end;
+
+    [Test]
+    procedure Date_HalfOpenRangeWithASiblingRangeFurtherOut_IsStillRefused()
+    var
+        DateRec: Record Date;
+    begin
+        // Reviewer finding on #3483. The refusal has to be judged against the WINDOW, not
+        // against the span this request is about to materialise. Here the second range is
+        // closed at both ends and starts in 1800, so the span widens to 1800-01-01 and the
+        // first range's closed end, 1850-01-01, falls INSIDE it — a per-range test that
+        // compares against the widened span therefore lets this filter through and answers it
+        // with about 18,300 rows, where a service tier answers 675,332 plus the ten days of
+        // the second range. A sibling range must not be able to move the bar.
+        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
+        DateRec.SetFilter("Period Start", '..%1|%2..%3',
+            DMY2Date(1, 1, 1850), DMY2Date(1, 1, 1800), DMY2Date(10, 1, 1800));
+
+        asserterror CountRows(DateRec);
+        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
+        Assert.ExpectedError('date-virtual-table');
+        Assert.ExpectedError('1850-01-01');
+        Assert.ExpectedError('with its other end open');
+    end;
+
+    [Test]
+    procedure Date_HalfOpenRangeOnAYearTypeRead_IsRefusedWithoutClaimingDatesBounds()
+    var
+        DateRec: Record Date;
+    begin
+        // The refusal reads the "Period Start" filter and never the period type, so the same
+        // shape on a Year-type read has to raise the same way — and the message must not tell
+        // the reader that BC would run the open end back to 0001-01-03, which is the FIRST
+        // Date period. Year starts at 0002-01-01
+        // (DateTimeHelper.datePeriodStartMinimumDate, Ncl 28.4.53241.54318, cited in #3506).
+        DateRec.SetRange("Period Type", DateRec."Period Type"::Year);
+        DateRec.SetFilter("Period Start", '..%1', DMY2Date(1, 1, 1850));
+
+        asserterror CountRows(DateRec);
+        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
+        Assert.ExpectedError('for the period type');
+        Assert.ExpectedError('0002-01-01 for Year');
     end;
 
     local procedure CountRows(var DateRec: Record Date): Integer
