@@ -25,8 +25,6 @@ public static partial class RecordPatches
 
     private static readonly ConditionalWeakTable<object, StrongBox<int>> _definedTriggersCache = new();
 
-    private static MethodInfo? _mIsTriggerImplementedOnForm;
-    private static MethodInfo? _mIsTriggerImplementedOnFormExtension;
     private static KeyValuePair<string, int>[]? _pageTriggerNames;
 
     /// <summary>
@@ -35,9 +33,9 @@ public static partial class RecordPatches
     /// as its underlying <see cref="int"/>.
     /// </summary>
     /// <remarks>
-    /// Observably equivalent to BC's own body — it runs BC's <c>IsTriggerImplemented</c> over the
-    /// same names, with the same page-only exclusion — for a page whose extensions BC would have
-    /// loaded (NCLMetaForm.DefinedTriggers, BC 27.5 and 28.4). One deliberate difference: the
+    /// Observably equivalent to BC's own body — same names off BC's own <c>PageTriggers</c>, same
+    /// declaration check, same page-only exclusion — for a page whose extensions BC would have
+    /// loaded (NCLMetaForm.DefinedTriggers, BC 27.0, 27.5 and 28.4). One deliberate difference: the
     /// answer is cached only once the page's CLR type resolves, because the runner resolves that
     /// type lazily from the loaded assemblies and BC's unconditional cache would freeze an
     /// all-false answer taken too early.
@@ -51,20 +49,22 @@ public static partial class RecordPatches
         var pageClrType = NCLMetaApplicationObject_get_ApplicationObjectClrType(self);
         if (pageClrType == null) return 0;
 
-        if (!EnsurePageTriggerReflection(self.GetType())) return 0;
+        EnsurePageTriggerNames(self.GetType());
 
         int mask = 0;
         var extensionTypes = PageExtensionTypesFor(self);
         foreach (var trigger in _pageTriggerNames!)
         {
-            if (IsTriggerImplemented(_mIsTriggerImplementedOnForm, pageClrType, trigger.Key, isPublic: false))
+            if (IsTriggerImplemented(typeof(Microsoft.Dynamics.Nav.Runtime.NavForm),
+                                     pageClrType, trigger.Key, isPublic: false))
             {
                 mask |= trigger.Value;
                 continue;
             }
             if (_pageOnlyTriggers.Contains(trigger.Key)) continue;
             foreach (var extType in extensionTypes)
-                if (IsTriggerImplemented(_mIsTriggerImplementedOnFormExtension, extType, trigger.Key, isPublic: true))
+                if (IsTriggerImplemented(typeof(Microsoft.Dynamics.Nav.Runtime.Extensions.NavFormExtension),
+                                         extType, trigger.Key, isPublic: true))
                 {
                     mask |= trigger.Value;
                     break;
@@ -76,21 +76,43 @@ public static partial class RecordPatches
         return mask;
     }
 
-    private static bool IsTriggerImplemented(MethodInfo? bcCheck, Type clrType, string triggerName, bool isPublic)
+    /// <summary>
+    /// BC's own declaration check, transcribed rather than called.
+    ///
+    /// <para>Calling BC's <c>NCLMetaApplicationObject.IsTriggerImplemented</c> is not portable
+    /// across the versions this runner supports: the <b>static</b>
+    /// <c>(Type, string, bool)</c> overload the extension arm needs — the runner holds an
+    /// extension's Type, not an NCLPageExtension instance — exists on 27.5 and 28.x and does NOT
+    /// exist on 27.0, which declares only the instance <c>(string, bool)</c> form reading its own
+    /// receiver. Resolving it and answering "no triggers" when it is absent is what made every
+    /// flag false on the 27.0 leg of PR #3557 while 28.x passed.</para>
+    ///
+    /// <para>The body below is BC's <c>CheckTrigger</c> local function verbatim, and it is
+    /// identical on 27.0, 27.5 and 28.4: look the name up, then the <c>…Async</c> spelling, and
+    /// answer whether the resolved method was declared somewhere OTHER than
+    /// <paramref name="platformBase"/>.</para>
+    /// </summary>
+    private static bool IsTriggerImplemented(Type platformBase, Type clrType, string triggerName, bool isPublic)
+        => CheckTrigger(platformBase, clrType, triggerName, isPublic)
+        || CheckTrigger(platformBase, clrType, triggerName + "Async", isPublic);
+
+    private static bool CheckTrigger(Type platformBase, Type clrType, string name, bool isPublic)
     {
-        if (bcCheck == null) return false;
-        try
-        {
-            return (bool)bcCheck.Invoke(null, new object?[] { clrType, triggerName, isPublic })!;
-        }
-        catch (TargetInvocationException)
-        {
-            // BC's CheckTrigger throws when the name is absent from the type ENTIRELY — i.e.
-            // NavForm/NavFormExtension no longer declares this trigger, or an extension class
-            // does not derive from NavFormExtension. Neither is a page that "declares the
-            // trigger", so the flag stays false and the surrounding scan continues.
-            return false;
-        }
+        var flags = BindingFlags.Instance | (isPublic ? BindingFlags.Public : BindingFlags.NonPublic);
+        var method = clrType.GetMethod(name, flags);
+        if (method != null) return method.DeclaringType != platformBase;
+
+        // BC throws here, and so must this: GetMethod searches the whole hierarchy, so a null
+        // means platformBase itself no longer declares the trigger — the shape this computation
+        // rests on. Answering false instead would silently report "declares nothing" for every
+        // page in the run, which is #3447 reappearing with no signal.
+        if (clrType.GetMethod(name + "Async", flags) != null
+         || platformBase.GetMethod(name, flags) != null) return false;
+
+        throw new AlRunner.Infrastructure.BcShapeGapException(
+            "page trigger metadata", $"{platformBase.Name}.{name}",
+            $"neither {name} nor {name}Async resolves on {clrType.Name}, so the runner cannot say "
+            + "which page triggers this page declares — see docs/page-rowset-triggers.md#page-trigger-metadata");
     }
 
     /// <summary>The compiled <c>PageExtension{id}</c> classes extending this page, in id order.</summary>
@@ -106,27 +128,16 @@ public static partial class RecordPatches
         return types;
     }
 
-    private static bool EnsurePageTriggerReflection(Type metaFormType)
+    /// <summary>The twelve <c>PageTriggers</c> members, read off BC's own private nested enum.</summary>
+    private static void EnsurePageTriggerNames(Type metaFormType)
     {
-        if (_pageTriggerNames != null) return true;
+        if (_pageTriggerNames != null) return;
 
-        var pageTriggers = metaFormType.GetNestedType("PageTriggers", BindingFlags.NonPublic | BindingFlags.Public);
-        var baseType = metaFormType.BaseType;
-        while (baseType != null && baseType.Name != "NCLMetaApplicationObject") baseType = baseType.BaseType;
-        if (pageTriggers == null || baseType == null) return false;
-
-        var generic = BcShape.FindMethod(baseType, "IsTriggerImplemented",
-            BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static,
-            surface: "page trigger metadata", member: "NCLMetaApplicationObject.IsTriggerImplemented",
-            detail: "the runner recomputes NCLMetaForm's Is<Trigger>Defined flags with BC's own "
-                  + "check — see docs/page-rowset-triggers.md#page-trigger-metadata",
-            types: new[] { typeof(Type), typeof(string), typeof(bool) });
-        if (generic == null || !generic.IsGenericMethodDefinition) return false;
-
-        _mIsTriggerImplementedOnForm = generic.MakeGenericMethod(
-            typeof(Microsoft.Dynamics.Nav.Runtime.NavForm));
-        _mIsTriggerImplementedOnFormExtension = generic.MakeGenericMethod(
-            typeof(Microsoft.Dynamics.Nav.Runtime.Extensions.NavFormExtension));
+        var pageTriggers = metaFormType.GetNestedType("PageTriggers", BindingFlags.NonPublic | BindingFlags.Public)
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                "page trigger metadata", "NCLMetaForm.PageTriggers",
+                "BC no longer declares the enum whose members name the twelve page triggers, so the "
+                + "runner cannot compute the Is<Trigger>Defined flags at all");
 
         var names = new List<KeyValuePair<string, int>>();
         foreach (var v in Enum.GetValues(pageTriggers))
@@ -135,8 +146,13 @@ public static partial class RecordPatches
             if (string.IsNullOrEmpty(name) || name == "Unknown") continue;
             names.Add(new KeyValuePair<string, int>(name!, Convert.ToInt32(v)));
         }
+
+        if (names.Count == 0)
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "page trigger metadata", "NCLMetaForm.PageTriggers",
+                "BC's page-trigger enum declares no members besides Unknown");
+
         _pageTriggerNames = names.ToArray();
-        return _pageTriggerNames.Length > 0;
     }
 
     /// <summary>
@@ -165,6 +181,7 @@ public static partial class RecordPatches
             ?.GetValue(objId)?.ToString();
         return true;
     }
+
 }
 
 /// <summary>
