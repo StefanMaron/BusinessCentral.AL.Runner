@@ -789,7 +789,8 @@ widen the base window.
 `AL_RUNNER_INTEGER_WINDOW_MIN` lowers the lower one. Both only ever **widen** it: a `MIN`
 above the default, or a non-positive `MAX`, is ignored. Neither is needed to reach an
 ordinary row any more — that is what per-request materialising does — they decide only how
-far an OPEN bound is answered.
+far an OPEN bound is answered, and the row cap bounds them: a base window wider than
+`AL_RUNNER_INTEGER_WINDOW_MAX_ROWS` is refused when the table is handed out, naming the cap.
 
 ---
 
