@@ -734,7 +734,7 @@ if enc.lower().replace("-", "") in ("utf8", "cp65001"):
     print(json.dumps({"skipped": enc})); raise SystemExit(0)
 spec = importlib.util.spec_from_file_location("pr_body", sys.argv[1])
 pb = importlib.util.module_from_spec(spec); spec.loader.exec_module(pb)
-payload = json.dumps({"body": "an em dash — here"}, ensure_ascii=False).encode("utf-8")
+payload = json.dumps({"body": "an em dash \u2014 here"}, ensure_ascii=False).encode("utf-8")
 real = subprocess.run
 pb.subprocess.run = lambda args, **kw: real(
     [sys.executable, "-c", "import sys;sys.stdout.buffer.write(%r)" % payload], **kw)
@@ -744,12 +744,16 @@ try:
 except Exception as e:
     out["read"] = "raised: %s" % type(e).__name__
 try:
-    p = pb.write_body_tempfile("an em dash — here")
+    p = pb.write_body_tempfile("an em dash \u2014 here")
     out["written"] = open(p, "rb").read().decode("utf-8", "replace"); os.unlink(p)
 except Exception as e:
     out["written"] = "raised: %s" % type(e).__name__
 sys.stdout.buffer.write(json.dumps(out).encode("utf-8"))
 '''
+# argv is decoded with the filesystem encoding, which under LC_ALL=C on Linux is
+# ASCII: a literal em dash here would reach the child as surrogates and raise
+# before it could report anything. The escape survives as source text instead.
+assert CHILD.isascii(), "CHILD must survive an ASCII argv"
 env = dict(os.environ, PYTHONUTF8="0", PYTHONCOERCECLOCALE="0", LC_ALL="C", LANG="C")
 env.pop("PYTHONIOENCODING", None)
 child = subprocess.run([sys.executable, "-c", CHILD, os.path.join(HERE, "pr-body.py")],
