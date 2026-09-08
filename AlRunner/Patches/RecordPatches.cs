@@ -2490,24 +2490,9 @@ public static partial class RecordPatches
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static Type? NCLMetaApplicationObject_get_ApplicationObjectClrType(object self)
     {
-        // objectId is declared on base NCLMetaApplicationObject. Non-public fields are not
-        // discovered through inheritance by GetField — walk up the type chain manually.
-        FieldInfo? objIdField = null;
-        for (var t = self?.GetType(); t != null && objIdField == null; t = t.BaseType)
-            objIdField = t.GetField("objectId", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        if (objIdField == null) return null;
-        var objId = objIdField.GetValue(self);
-        if (objId == null) return null;
-        var numProp = objId.GetType().GetProperty("ObjectNumber",
-            BindingFlags.Public | BindingFlags.Instance);
-        if (numProp == null) return null;
-        int id = (int)numProp.GetValue(objId)!;
-
         // Branch on ObjectType so this getter resolves correctly when the receiver
         // is an NCLMetaForm / NCLMetaReport (§P).  Tables are the §O default.
-        var typeProp = objId.GetType().GetProperty("ObjectType",
-            BindingFlags.Public | BindingFlags.Instance);
-        var ot = typeProp?.GetValue(objId)?.ToString();
+        if (!TryGetMetaObjectNumber(self, out var ot, out var id)) return null;
         return ot switch
         {
             // Page{id} first: that is what the AL compiler emits for a page, and answering
@@ -2515,6 +2500,11 @@ public static partial class RecordPatches
             // unguarded and NREs (#3436). Form{id} stays as a fallback rather than being
             // replaced, since it predates this and nothing measured which builds need it.
             "Page"     => FindClrTypeByName($"Page{id}") ?? FindClrTypeByName($"Form{id}"),
+            // PageExtension{id} — what the AL compiler emits for a pageextension, and what
+            // NCLPageExtension.IsTriggerImplemented<NavFormExtension> reads (#3447). Without
+            // this arm a pageextension receiver fell to the table default and resolved
+            // Record{id}, so BC's own CheckTrigger threw "OnOpenPage missing on Record{id}".
+            "PageExtension" => FindClrTypeByName($"PageExtension{id}"),
             "Report"   => FindClrTypeByName($"Report{id}"),
             "CodeUnit" => FindClrTypeByName($"Codeunit{id}"),
             _          => FindRecordType(id),

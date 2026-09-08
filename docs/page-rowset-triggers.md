@@ -103,21 +103,64 @@ for the runner to anchor the way the client does — not to change these two val
 The *number* of calls is a separate matter and is not a divergence anyone can depend on: no
 page can observe it and no corpus test asserts it.
 
-Where the page declares neither trigger, nothing changes: the six navigation sites in
-`AlRunner/Patches/MockTestPage.cs` fall back to `NavRecord.ALFindFirstAsync` /
-`ALFindLastAsync` / `ALNextAsync` exactly as before.
+## The declaration check reads BC's metadata
 
-## Why the declaration check does not use BC's metadata
+<a id="page-trigger-metadata"></a>
 
 `NavForm.OnFindRecord` and `NavForm.OnNextRecord` are virtuals whose **base** bodies are the
 platform find and the platform step, so "does this page declare the trigger" cannot be answered
 by looking a method up — every page resolves one, and invoking it always returns a plausible
-answer. The check has to be `DeclaredOnly` against the compiled page class.
+answer.
 
-BC itself answers the question from page metadata, `NCLMetaForm.IsFindRecordTriggerDefined` and
-`IsNextRecordTriggerDefined`. Those are not usable in the runner: measured on the reproducer in
-issue #3439, a page whose compiled class carries an `OnFindRecord` override reads
-`IsFindRecordTriggerDefined` **false**, because the runner's page metadata does not record a
-page's triggers. That is tracked separately as #3447, and it is also why the runner passes
-`setSize = 0` to `RaiseOnNextRecordAsync` — a non-zero value asks BC to consult that same false
-flag and take a platform path instead.
+BC answers it from page metadata: `NCLMetaForm.IsFindRecordTriggerDefined` and
+`IsNextRecordTriggerDefined`, two of twelve `Is<Trigger>Defined` flags, all of them
+`(DefinedTriggers & PageTriggers.X) != 0`. `NCLMetaForm.DefinedTriggers` is **reflection**, not a
+read of the page's metadata document:
+
+```csharp
+string triggerName = pageTriggers2.ToString();
+pageTriggers |= (IsTriggerImplemented<NavForm>(triggerName, isPublic: false) ? pageTriggers2 : 0);
+if (pageTriggers2 == OnFindRecord || pageTriggers2 == OnNextRecord || pageTriggers2 == OnInit) continue;
+foreach (NCLPageExtension ext in orderedExtensionObjects)
+    if ((pageTriggers & pageTriggers2) == 0 && ext.IsTriggerImplemented<NavFormExtension>(triggerName, isPublic: true))
+        pageTriggers |= pageTriggers2;
+```
+
+`IsTriggerImplemented` is `GetMethod(name)` / `GetMethod(name + "Async")` on
+`ApplicationObjectClrType` with `DeclaringType != typeof(NavForm)` — the same `DeclaredOnly`
+question, asked by BC.
+
+`RunnerPageInstance.DeclaresRowsetTrigger` reads those two flags. It used to reflect over the
+compiled page class instead, because they answered **false** for a page that did declare the
+trigger (#3439, #3447): `IsTriggerImplemented` returns false for every name without throwing
+when `clrType == null`, and the runner's Cecil replacement of `get_ApplicationObjectClrType`
+resolved `Form{id}` where the AL compiler emits `Page{id}`. PR #3445 fixed that arm, and #3447
+fixed what was left — `orderedExtensionObjects` is empty on a `CreateEmptyNCLMetaForm`-built
+metaform, so a trigger a **pageextension** declared read false. The runner now replaces
+`get_DefinedTriggers` with a body that runs BC's declaration check against its own pageextension
+registry (`AlRunner/Patches/RecordPatches.PageTriggerMetadata.cs`). That check is transcribed
+rather than called: BC's own static `IsTriggerImplemented(Type, string, bool)` — the form the
+extension arm needs, because the runner holds an extension's `Type` and not an `NCLPageExtension`
+— does not exist on 27.0, which declares only the instance form reading its own receiver.
+Resolving it and answering "no triggers" when it was absent is what made every flag false on the
+27.0 leg of #3557.
+
+Registering the extensions is a separate step from counting them, and BC does both: every
+`RaiseOn<trigger>Async` ends with a pass over `NavForm.pageExtensions`, filled only by
+`RegisterPageExtension`, which BC calls from `NCLPageExtension.CreateExtensionInstanceAndBindToParent`
+inside `NCLMetaForm.CreateObjectInstance` — a path the runner replaces. `RunnerPageInstance` binds
+them at construction so BC's own loops run each extension's copy of the trigger; corpus codeunit
+60658 (BusinessCentral.AL.Language.Tests#290) is what measures it.
+
+`setSize` stays 0 on `RaiseOnNextRecordAsync`. Not because the flag is wrong any more — BC would
+read the same value this caller already read — but because a non-zero value asks BC to make the
+routing decision a second time, and one decision is better than two agreeing.
+
+`AL_RUNNER_PAGE_TRIGGER_AUDIT=1` prints what the runner computed, one line per page, at process
+exit. An inspection channel like `AL_RUNNER_HOOK_AUDIT`, not a diagnosis; it is what
+`AlRunner.Tests/PageTriggerMetadataTests.cs` asserts against, because the flags have no
+AL-observable of their own.
+
+Where the page declares neither rowset trigger, nothing changes: the six navigation sites in
+`AlRunner/Patches/MockTestPage.cs` fall back to `NavRecord.ALFindFirstAsync` /
+`ALFindLastAsync` / `ALNextAsync` exactly as before.

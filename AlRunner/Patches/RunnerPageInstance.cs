@@ -74,6 +74,72 @@ internal sealed partial class RunnerPageInstance
         _pageId = pageId;
         _sourceExpressions = sourceExpressions;
         _expressionValuesAtOpen = SnapshotExpressionValues(sourceExpressions);
+        RegisterPageExtensionsOnTheForm();
+    }
+
+    /// <summary>
+    /// Bind this page's pageextension instances to the form the way BC does, so BC's own
+    /// <c>NavForm.RaiseOn&lt;trigger&gt;Async</c> runs each extension's copy of the trigger.
+    ///
+    /// <para>Every <c>RaiseOn…Async</c> ends with a <c>PageExtensions.ForEachAsync(ext =&gt;
+    /// ext.On…())</c> pass over <c>NavForm.pageExtensions</c>, which only
+    /// <c>RegisterPageExtension</c> fills — called by
+    /// <c>NCLPageExtension.CreateExtensionInstanceAndBindToParent</c> inside
+    /// <c>NCLMetaForm.CreateObjectInstance</c>, a path the runner replaces. Nothing registered
+    /// them, so a pageextension's <c>OnOpenPage</c> / <c>OnAfterGetRecord</c> and the seven
+    /// others never ran (corpus codeunit 60658, BusinessCentral.AL.Language.Tests#290).</para>
+    ///
+    /// <para>Registration is eager and happens here rather than at first trigger lookup because
+    /// <c>OnOpenPage</c> is raised before anything asks for a trigger. A record-less page
+    /// registers none: <see cref="GetOrCreateExtensionInstance"/> needs a record for the
+    /// extension's <c>(NavForm, NavRecord)</c> ctor.</para>
+    /// </summary>
+    private void RegisterPageExtensionsOnTheForm()
+    {
+        var extensionIds = RecordPatches.GetPageExtensionIdsForPage(_pageId);
+        if (extensionIds.Count == 0) return;
+
+        if (_record == null)
+        {
+            // Loud rather than silent: GetOrCreateExtensionInstance needs a record for the
+            // extension's (NavForm, NavRecord) ctor, so a record-less page binds none of its
+            // extensions and every trigger they declare quietly does not run - the exact silence
+            // this whole change exists to remove. `[warn]` - see the tag note in TryCreate.
+            Console.Out.WriteLine(
+                $"[warn] RunnerPageInstance: page {_pageId} was built without a record, so its "
+                + $"{extensionIds.Count} pageextension(s) are not bound to it and the page triggers "
+                + "they declare will not run");
+            return;
+        }
+
+        var register = BcShape.FindMethod(_form.GetType(), "RegisterPageExtension",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            surface: "page extension triggers", member: "NavForm.RegisterPageExtension",
+            detail: "the runner binds a page's extensions to the form so BC's own "
+                  + "RaiseOn<trigger>Async runs each extension's copy of the trigger");
+        if (register == null)
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "page extension triggers", "NavForm.RegisterPageExtension",
+                "BC no longer declares it, so the runner cannot bind this page's extensions and "
+                + "every trigger they declare would silently not run");
+
+        foreach (var extensionId in extensionIds)
+        {
+            var instance = GetOrCreateExtensionInstance(extensionId);
+            if (instance == null) continue;
+            try { register.Invoke(_form, new[] { instance }); }
+            catch (Exception ex)
+            {
+                var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+                // Loud, not fatal, for the same reason GetOrCreateExtensionInstance is: the page
+                // still works, this extension's triggers do not, and saying so beats a silent
+                // no-op. `[warn]` - see the tag note in TryCreate.
+                Console.Out.WriteLine(
+                    $"[warn] RunnerPageInstance: pageextension {extensionId} on page {_pageId}: could "
+                    + $"not bind it to the page ({inner.GetType().Name}: {inner.Message}); the page "
+                    + "triggers it declares will not run");
+            }
+        }
     }
 
     /// <summary>

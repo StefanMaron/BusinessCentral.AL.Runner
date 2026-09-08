@@ -1,0 +1,12 @@
+{
+  "id": "9c3a71e6-4d18-4f52-8b0a-2c6d5f91ae07",
+  "name": "Runner Tests Fixture - Page Trigger Metadata",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3447: NCLMetaForm's twelve Is<Trigger>Defined flags must answer true exactly when the page - or, for the nine BC counts, a pageextension over it - declares the trigger.",
+  "description": "Runner-mechanism fixture. The flags are page METADATA, not an AL surface: BC's own consumers of them sit on dispatch paths the runner serves itself, so there is nothing a corpus test could observe. The runner prints what it computed under AL_RUNNER_PAGE_TRIGGER_AUDIT=1 and PageTriggerMetadataTests asserts the exact set per page. Declares no application floor: everything it needs is its own.",
+  "dependencies": [],
+  "platform": "1.0.0.0",
+  "idRanges": [ { "from": 70660, "to": 70679 } ],
+  "runtime": "14.0"
+}

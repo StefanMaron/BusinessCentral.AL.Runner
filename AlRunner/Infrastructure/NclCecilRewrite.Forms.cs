@@ -1107,6 +1107,47 @@ public static partial class NclCecilRewrite
             Console.Error.WriteLine("[Cecil] Rewrote NCLMetaForm.CreateObjectInstance(NavRecord) → BcRuntime.NCLMetaForm_CreateObjectInstance");
         }
 
+        // 8b2b. NCLMetaForm.get_DefinedTriggers — #3447. The private property behind all twelve
+        //       Is<Trigger>Defined flags. BC's body reflects over the page's own class AND over
+        //       every NCLPageExtension in orderedExtensionObjects; the runner's skeleton carries
+        //       none, so a trigger a pageextension declares read false. The replacement runs BC's
+        //       own IsTriggerImplemented against the runner's pageextension registry — see
+        //       RecordPatches.PageTriggerMetadata.cs.
+        //
+        //       TRAP, for anyone adding a rewrite shaped like this one: the helper returns
+        //       System.Int32 while the target returns the private PageTriggers enum, and
+        //       ReplaceBodyWithHelper emits no conversion for a VALUE-type return — it adapts
+        //       reference returns only. That is valid here because an enum and its underlying
+        //       type are the same thing on the IL stack, and ONLY while that underlying type is
+        //       int32, which the guard below asserts rather than assumes.
+        {
+            var metaFormType = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NCLMetaForm")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLMetaForm type not found — Ncl shape changed; do not commit");
+
+            var getter = metaFormType.Methods
+                .FirstOrDefault(m => m.Name == "get_DefinedTriggers" && m.HasBody && m.Parameters.Count == 0)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLMetaForm.get_DefinedTriggers not found — Ncl shape changed; do not commit");
+
+            var enumType = getter.ReturnType.Resolve();
+            if (enumType == null || !enumType.IsEnum
+                || enumType.Fields.FirstOrDefault(f => f.Name == "value__")?.FieldType.FullName != "System.Int32")
+                throw new InvalidOperationException(
+                    "[Cecil] NCLMetaForm.get_DefinedTriggers no longer returns an Int32-backed enum "
+                    + "— do not commit");
+
+            var helper = typeof(AlRunner.Patches.RecordPatches).GetMethod(
+                nameof(AlRunner.Patches.RecordPatches.NCLMetaForm_get_DefinedTriggers),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] RecordPatches.NCLMetaForm_get_DefinedTriggers not found");
+
+            ReplaceBodyWithHelper(asm.MainModule, getter, helper);
+            Console.Error.WriteLine("[Cecil] Rewrote NCLMetaForm.get_DefinedTriggers → RecordPatches.NCLMetaForm_get_DefinedTriggers");
+        }
+
         // 8b3. NCLMetaForm.ApplyAppGroupAwareEnumMetadataToPageExpressions — #1896. Real BC
         //      resolves each Enum-typed page control's OptionString/OptionCaption/OptionValues
         //      through NCLMetadata.TryGetMetaApplicationObject(ObjectType.Enum, ...), which the
