@@ -1788,6 +1788,195 @@ check("the default is still SKIP, never folded into the passing count",
       _res.status == "SKIP", _res.status)
 
 
+# --------------------------------------------------------------------------
+# the shared corpus submodule checkout (#3404)
+# --------------------------------------------------------------------------
+# Classification is tested against captured readings rather than a live box: the
+# hazard is a state some OTHER process leaves behind, so a suite that reads the
+# real submodule passes for the wrong reason whenever the box happens to be clean
+# and cannot be made to fail on demand. The end-to-end proof that the readings
+# themselves are gathered correctly is in tools/test_corpus_pin.py, which builds a
+# real superproject and really moves its submodule off the pin.
+_PIN = "af01bbbc176b4cc5ca3d7020094103911af51a35"
+_OTHER = "17b015efdc6cd52aed789cbbfc522d7cf1040155"
+_STAGED = "9ee6bbcd12d433547f230d36d017231d53a17937"
+
+
+def pin_readings(pin=_PIN, index=None, worktree=None, error="", head=None):
+    return {"pin": pin, "index": index, "head": head,
+            "worktree": worktree, "error": error}
+
+
+# ---- agreement is a PASS, and it says which commit it verified
+_res = pf.classify_corpus_pin(pin_readings(worktree=_PIN))
+check("a shared checkout sitting at the pin PASSes",
+      _res.status == "PASS", f"{_res.status}: {_res.summary}")
+check("...and names the commit it agreed on",
+      _PIN[:8] in _res.summary, _res.summary)
+
+# ---- THE REAL SHAPE: the working directory is at a commit that is not the pin
+_res = pf.classify_corpus_pin(pin_readings(worktree=_OTHER))
+check("a shared checkout that is NOT at the pin WARNs",
+      _res.status == "WARN", f"{_res.status}: {_res.summary}")
+check("...naming both the wrong commit and the pin, so the reader can see the gap",
+      _OTHER[:8] in _res.summary and _PIN[:8] in _res.summary, _res.summary)
+check("...and it explains the sharing, which is why it has no owner",
+      any("shared by EVERY worktree" in d for d in _res.detail), _res.detail)
+check("...and the remedy is the tree read, not a checkout inside the submodule",
+      "ls-tree" in (_res.remedy or "") and "--quiet" in (_res.remedy or ""), _res.remedy)
+# The severity is deliberate and load-bearing: a FAIL here would halt every agent
+# on the box, repository-wide, for a hazard one documented command sidesteps.
+check("the WARN says why it is not a FAIL",
+      "always available" in (_res.remedy or ""), _res.remedy)
+
+# ---- the three-way case measured live on this box while #3404 was open
+_res = pf.classify_corpus_pin(pin_readings(index=_STAGED, head=_STAGED, worktree=_OTHER))
+check("a third value belonging to neither end still WARNs",
+      _res.status == "WARN", f"{_res.status}: {_res.summary}")
+check("...and compares against the STAGED pin, which is what that checkout owes",
+      _STAGED[:8] in _res.summary, _res.summary)
+check("...and reports every reading, never collapsing them to one",
+      all(any(v[:8] in d for d in _res.detail)
+          for v in (_PIN, _STAGED, _OTHER)), _res.detail)
+
+# ---- a bump in progress is correct work and must not be flagged
+# The branch has moved its own gitlink AND its submodule checkout together. A
+# check that fires on this trains the reader to ignore it.
+_res = pf.classify_corpus_pin(pin_readings(index=_STAGED, head=_STAGED, worktree=_STAGED))
+check("a staged bump whose checkout matches it is not a finding",
+      _res.status == "PASS", f"{_res.status}: {_res.summary}")
+
+# ---- BEHIND is not MID-BUMP, and the wrong one must not be called "the pin"
+# The index carries a gitlink at all times, so an UNSTAGED index pin equal to this
+# checkout's own HEAD is just a behind worktree -- the common case. Calling that
+# value "the pin" in the summary is a second wrong statement on the same line, and
+# it is the value the reader is being told to trust.
+_res = pf.classify_corpus_pin(pin_readings(head=_STAGED, worktree=_STAGED))
+check("a behind checkout whose submodule matches its own HEAD is not a hazard",
+      _res.status == "PASS", f"{_res.status}: {_res.summary}")
+check("...and is reported as behind rather than as agreement with origin/main",
+      "behind" in _res.summary.lower(), _res.summary)
+check("...and never calls this checkout's stale HEAD pin 'the pin'",
+      f"not the pin {_STAGED[:8]}" not in _res.summary, _res.summary)
+
+# A behind checkout whose SHARED directory has also drifted is still a hazard, and
+# the reference it names is this checkout's own HEAD pin -- not origin/main's,
+# which this checkout does not claim to be at.
+_res = pf.classify_corpus_pin(pin_readings(head=_STAGED, worktree=_OTHER))
+check("a behind checkout with a drifted shared directory still WARNs",
+      _res.status == "WARN", f"{_res.status}: {_res.summary}")
+check("...naming the commit this checkout expects, not origin/main's",
+      _STAGED[:8] in _res.summary and _OTHER[:8] in _res.summary, _res.summary)
+
+# ---- "could not read" is not "they agree"
+_res = pf.classify_corpus_pin(pin_readings(worktree=None,
+                                           error="tests/al-language is not initialised"))
+check("an uninitialised submodule cannot mislead anyone, so it PASSes",
+      _res.status == "PASS", f"{_res.status}: {_res.summary}")
+check("...but says so rather than claiming the readings were verified equal",
+      "no shared corpus checkout" in _res.summary, _res.summary)
+
+_res = pf.classify_corpus_pin(pin_readings(pin=None, worktree=_OTHER))
+check("an unreadable pin is not a divergence verdict",
+      _res.status == "PASS", f"{_res.status}: {_res.summary}")
+
+# ---- the gatherer reads the TREE, never the working directory
+# Proven end-to-end against a real repository: the superproject's tree says one
+# commit and the submodule checkout says another, and the `pin` reading must be
+# the tree's. This is the misreading the whole issue is about.
+_pin_tmp = tempfile.mkdtemp()
+try:
+    _sub = os.path.join(_pin_tmp, "corpus")
+    os.makedirs(_sub)
+    subprocess.run(["git", "init", "-q", "-b", "master", _sub], check=True,
+                   capture_output=True)
+
+    def _g(root, *a):
+        return subprocess.run(["git", "-C", root, *a], capture_output=True,
+                              text=True).stdout.strip()
+
+    _g(_sub, "config", "user.email", "t@example.invalid")
+    _g(_sub, "config", "user.name", "T")
+    open(os.path.join(_sub, "a"), "w").write("1\n")
+    _g(_sub, "add", "a")
+    _g(_sub, "commit", "-qm", "one")
+    _first = _g(_sub, "rev-parse", "HEAD")
+    open(os.path.join(_sub, "b"), "w").write("2\n")
+    _g(_sub, "add", "b")
+    _g(_sub, "commit", "-qm", "two")
+    _second = _g(_sub, "rev-parse", "HEAD")
+    _g(_sub, "checkout", "-q", _first)
+
+    _sup = os.path.join(_pin_tmp, "super")
+    os.makedirs(_sup)
+    subprocess.run(["git", "init", "-q", "-b", "main", _sup], check=True,
+                   capture_output=True)
+    _g(_sup, "config", "user.email", "t@example.invalid")
+    _g(_sup, "config", "user.name", "T")
+    open(os.path.join(_sup, "r"), "w").write("x\n")
+    _g(_sup, "add", "r")
+    _g(_sup, "commit", "-qm", "init")
+    _g(_sup, "-c", "protocol.file.allow=always", "submodule", "add", "-q", _sub,
+       "tests/al-language")
+    _g(_sup, "commit", "-qm", "pin the corpus")
+
+    # `origin/main` is what the gatherer reads the pin out of, so give the fixture
+    # one -- pointing at the commit that pinned the corpus at _first.
+    _g(_sup, "update-ref", "refs/remotes/origin/main", _g(_sup, "rev-parse", "HEAD"))
+
+    # Move the SHARED checkout off the pin, exactly as another process would.
+    _g(os.path.join(_sup, "tests/al-language"), "checkout", "-q", _second)
+
+    _read = pf.corpus_pin_readings(_sup)
+    # THE CLAIM, stated directly: the pin comes out of origin/main's TREE, so it is
+    # _first even though the submodule's HEAD now says _second. Read from the
+    # working directory instead and this reading becomes _second -- which is the
+    # entire defect #3404 is about, and nothing else in this suite would notice.
+    check("the gatherer reads the pin from origin/main's TREE, not from the checkout",
+          _read["pin"] == _first, f"pin={_read['pin']} first={_first} second={_second}")
+    check("...and specifically NOT the commit the shared checkout is sitting on",
+          _read["pin"] != _second, f"{_read}")
+    check("the gatherer reads the working directory as what it is",
+          _read["worktree"] == _second, f"{_read}")
+    check("the gatherer reads THIS checkout's HEAD pin separately from origin/main's",
+          _read["head"] == _first, f"{_read}")
+    check("...and reads no STAGED pin, because nothing was staged",
+          _read["index"] is None, f"{_read}")
+    check("...and the two genuinely disagree, so the fixture proves the point",
+          _first != _second)
+    check("a poisoned checkout is classified as a WARN end to end",
+          pf.classify_corpus_pin(_read).status == "WARN",
+          pf.classify_corpus_pin(_read).summary)
+
+    # An UNPOPULATED submodule directory -- the state of every fresh worktree,
+    # because `git worktree add` does not populate submodules. `git -C <empty dir>
+    # rev-parse HEAD` walks UP and returns the SUPERPROJECT's commit, exit 0, so
+    # the naive read reports a divergence in every new worktree. A check that is
+    # wrong by default is one people learn to skip, which is worse than no check.
+    _bare = os.path.join(_pin_tmp, "bare")
+    os.makedirs(_bare)
+    subprocess.run(["git", "init", "-q", "-b", "main", _bare], check=True,
+                   capture_output=True)
+    _g(_bare, "config", "user.email", "t@example.invalid")
+    _g(_bare, "config", "user.name", "T")
+    open(os.path.join(_bare, "R"), "w").write("x\n")
+    _g(_bare, "add", "R")
+    _g(_bare, "commit", "-qm", "init")
+    os.makedirs(os.path.join(_bare, "tests/al-language"))
+    _bare_head = _g(_bare, "rev-parse", "HEAD")
+    check("git really answers the SUPERPROJECT commit from an empty submodule dir",
+          _g(os.path.join(_bare, "tests/al-language"), "rev-parse", "HEAD") == _bare_head,
+          "the trap no longer reproduces; this test is no longer proving anything")
+    _bare_read = pf.corpus_pin_readings(_bare)
+    check("an unpopulated submodule is not read as a corpus checkout",
+          _bare_read["worktree"] is None, f"{_bare_read}")
+    check("...and a fresh worktree therefore does not WARN",
+          pf.classify_corpus_pin(_bare_read).status == "PASS",
+          pf.classify_corpus_pin(_bare_read).summary)
+finally:
+    shutil.rmtree(_pin_tmp, ignore_errors=True)
+
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")
