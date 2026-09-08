@@ -532,17 +532,24 @@ public static partial class RecordPatches
         var lowBound = closedLow is int cl && cl < IntegerWindowMin ? cl : IntegerWindowMin;
         var highBound = closedHigh is int ch && ch > IntegerWindowMax ? ch : IntegerWindowMax;
 
-        // The closed end of a half-open range sits outside the span we are about to materialise, so
-        // that range contributes no rows at all while BC answers it with up to a billion. Nothing
-        // here can be materialised honestly; say so.
+        // The closed end of a half-open range sits outside the span an open bound can be answered
+        // from, so that range contributes no rows at all while BC answers it with up to a billion.
+        // Nothing here can be materialised honestly; say so.
         //
         // Decided per RANGE, never from the envelope (#3471): `'1..50|200000..'` has its outermost
         // closed bounds at 1 and 50, both inside the window, and dropping the second range whole
         // is the same silent zero this refusal exists to remove.
+        //
+        // Compared against the base WINDOW, never against lowBound/highBound: those two are
+        // widened by the filter's envelope, so a sibling range would otherwise move the bar this
+        // range is judged against. No filter was found that actually reaches that -- BC's
+        // ToRangeList merges a sibling wide enough to widen the bound, because such a sibling
+        // overlaps the half-open range -- so what holds the invariant is the window, not that
+        // merge (#3528, the Integer half of #3483's follow-up).
         foreach (var (value, openHigh) in halfOpenEnds)
         {
-            if (openHigh && value > highBound) throw IntegerOpenEndedRefusal(value, openHigh: true);
-            if (!openHigh && value < lowBound) throw IntegerOpenEndedRefusal(value, openHigh: false);
+            if (openHigh && value > IntegerWindowMax) throw IntegerOpenEndedRefusal(value, openHigh: true);
+            if (!openHigh && value < IntegerWindowMin) throw IntegerOpenEndedRefusal(value, openHigh: false);
         }
 
         PopulateIntegerSpan(dataAccess, meta, lowBound, highBound);

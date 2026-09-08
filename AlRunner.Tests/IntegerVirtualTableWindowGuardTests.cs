@@ -36,6 +36,9 @@ public sealed class IntegerVirtualTableWindowGuardTests
     private static string FindInterceptSource => File.ReadAllText(
         Path.Combine(RepoRoot, "AlRunner", "Patches", "RecordPatches.FieldFindIntercept.cs"));
 
+    private static string IntegerVirtualTableSource => File.ReadAllText(
+        Path.Combine(RepoRoot, "AlRunner", "Patches", "RecordPatches.IntegerVirtualTable.cs"));
+
     // The three Cecil-prepended paths. The find path is wired differently — through the
     // DataAccess_IsManagedFindRequest predicate rather than a prepend of its own — and is
     // asserted separately below.
@@ -231,5 +234,30 @@ public sealed class IntegerVirtualTableWindowGuardTests
         Assert.True(capProp != null,
             "IntegerWindowMaxRows must be a property reading AL_RUNNER_INTEGER_WINDOW_MAX_ROWS: "
             + "the cap refusal tells the reader to raise it.");
+    }
+
+    [Fact]
+    public void TheHalfOpenRefusal_IsJudgedAgainstTheBaseWindow_NotTheEnvelopeWidenedSpan()
+    {
+        // Issue #3528, and the one claim in this file that AL genuinely cannot make. lowBound and
+        // highBound are the base window WIDENED by the filter's envelope, so comparing a half-open
+        // range's closed end against them lets a sibling range move the bar. No AL filter reaches
+        // that today -- BC's ToRangeList merges a sibling wide enough to widen the bound, because
+        // such a sibling overlaps the half-open range -- so codeunit 64591's two control arms pass
+        // either way and only the operand can be pinned. Asserted on the source, the way the
+        // wiring assertions above are, because EnsureIntegerWindowCoversRequest calls ToRangeList
+        // itself on BC runtime objects and no pre-merged range list can be handed to it without
+        // extracting the decision into a seam the Date side does not have either.
+        var source = IntegerVirtualTableSource;
+
+        Assert.Contains(
+            "if (openHigh && value > IntegerWindowMax) throw IntegerOpenEndedRefusal(value, openHigh: true);",
+            source, StringComparison.Ordinal);
+        Assert.Contains(
+            "if (!openHigh && value < IntegerWindowMin) throw IntegerOpenEndedRefusal(value, openHigh: false);",
+            source, StringComparison.Ordinal);
+
+        Assert.DoesNotContain("value > highBound", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("value < lowBound", source, StringComparison.Ordinal);
     }
 }
