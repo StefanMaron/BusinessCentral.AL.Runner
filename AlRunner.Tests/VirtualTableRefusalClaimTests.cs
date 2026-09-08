@@ -52,16 +52,15 @@ namespace AlRunner.Tests;
 public sealed class VirtualTableRefusalClaimTests
 {
     private const string GapDoc = "docs/limitations.md#virtual-table-shape-gaps";
-    private const string DateDoc = "docs/limitations.md#date-virtual-table";
     private const string TimeZoneDoc = "docs/limitations.md#time-zone-virtual-table";
     private const string WindowsLanguageDoc = "docs/limitations.md#windows-language-virtual-table";
 
     private static readonly string RepoRoot = Path.GetFullPath(
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
-    /// <summary>The files covered. RecordPatches.IntegerVirtualTable.cs left the set at #3485:
-    /// the Integer table is served by BC's own IntegerDataProvider and raises no refusal at all.
-    /// The original note follows.
+    /// <summary>The files covered. RecordPatches.IntegerVirtualTable.cs left the set at #3485
+    /// and RecordPatches.DateVirtualTable.cs at #3506: both tables are served by BC's own
+    /// computed data providers and raise no refusal at all. The original note follows.
     /// The seventeen files covered. ObjectMetadataSystemTable is #2894's and keeps its
     /// own factory. DateVirtualTable joined under #2965 — it was held back from #2945 only
     /// because #2648 was changing it concurrently, not because it classified differently.</summary>
@@ -72,7 +71,6 @@ public sealed class VirtualTableRefusalClaimTests
         "RecordPatches.AllObjWithCaptionVirtualTable.cs",
         "RecordPatches.AllProfileVirtualTable.cs",
         "RecordPatches.CodeunitMetadataVirtualTable.cs",
-        "RecordPatches.DateVirtualTable.cs",
         "RecordPatches.FeatureKeyVirtualTable.cs",
         "RecordPatches.FieldVirtualTable.cs",
         "RecordPatches.MetadataPermissionSetVirtualTable.cs",
@@ -111,7 +109,6 @@ public sealed class VirtualTableRefusalClaimTests
         new object[] { "AllObjWithCaptionShapeGap",      "AllObjWithCaption (virtual table 2000000058)",        "allobjwithcaption-virtual-table",         GapDoc },
         new object[] { "AllProfileShapeGap",             "All Profile (virtual table 2000000178)",              "all-profile-virtual-table",              GapDoc },
         new object[] { "CodeunitMetadataShapeGap",       "CodeUnit Metadata (virtual table 2000000137)",        "codeunit-metadata-virtual-table",         GapDoc },
-        new object[] { "DateShapeGap",                   "Date (virtual table 2000000007)",                     "date-virtual-table",                      DateDoc },
         new object[] { "FeatureKeyShapeGap",             "Feature Key (system table 2000000211)",               "feature-key-virtual-table",               GapDoc },
         new object[] { "FeatureKeyModifyShapeGap",       "Feature Key (system table 2000000211): Modify",       "feature-key-modify",                      GapDoc },
         new object[] { "FieldVirtualShapeGap",           "Field (virtual table 2000000041)",                    "field-virtual-table",                     GapDoc },
@@ -422,7 +419,13 @@ public sealed class VirtualTableRefusalClaimTests
         // is the one direction the note above does not cover: a refusal deleted because the
         // surface it guarded no longer exists, rather than because someone stopped raising it.
         // 84 was READ OUT of this test's own failure message ("Expected: 85, Actual: 84").
-        Assert.Equal(84, total);
+        // -9 (#3506): the Date (2000000007) factory left for the same reason one issue later,
+        // taking eight refusals in RecordPatches.DateVirtualTable.cs and the ninth in
+        // RecordPatches.cs's dispatch chain with it. The table is served by BC's own
+        // DateDataProvider, which computes rows per request, so there is no materialised window
+        // for a filter to reach past and no skeleton-session read of our own to fail.
+        // 75 was READ OUT of this test's own failure message ("Expected: 84, Actual: 75").
+        Assert.Equal(75, total);
     }
 
 
