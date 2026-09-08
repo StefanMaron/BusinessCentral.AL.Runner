@@ -192,6 +192,31 @@ public static partial class RecordPatches
             "Date (virtual table 2000000007)", "date-virtual-table", detail,
             "docs/limitations.md#date-virtual-table");
 
+    /// <summary>
+    /// The refusal for a "Period Start" range closed at one end only, with that closed end
+    /// outside the materialised window. Real BC runs the open end out to its own first or last
+    /// period start, which is PER PERIOD TYPE — <c>DateTimeHelper.datePeriodStartMinimumDate</c>
+    /// is 0001-01-03 for <c>Date</c> but 0002-01-01 for <c>Year</c>, and the maxima differ the
+    /// same way — so the message names the range of possibilities rather than one type's pair.
+    /// The request's own period type is not read here: the refusal is about the "Period Start"
+    /// filter, which is evaluated for whichever types the request selects.
+    /// </summary>
+    internal static RunnerOutOfScopeException DateOpenEndedRefusal(DateTime requested, bool openHigh)
+        => DateShapeGap(
+            System.FormattableString.Invariant(
+                $"a Date filter names \"Period Start\" {requested:yyyy-MM-dd} with its other end open, ")
+            + System.FormattableString.Invariant(
+                $"outside the window [{DateWindowMinYear}-01-01..{DateWindowMaxYear}-12-31] an open ")
+            + "bound is answered from. Real BC runs the open end out to "
+            + (openHigh
+                ? "its own last period start for the period type (9999-12-31 for Date, 9999-01-01 for Year)"
+                : "its own first period start for the period type (0001-01-03 for Date, 0002-01-01 for Year)")
+            + ", so it answers with rows this request would otherwise be told there are none of. "
+            + "Close the other end of the filter, or "
+            + (openHigh
+                ? "raise AL_RUNNER_DATE_WINDOW_MAX_YEAR"
+                : "lower AL_RUNNER_DATE_WINDOW_MIN_YEAR"));
+
     internal const int DateVirtualTableId = 2000000007;
 
     // Field numbers of the Date table, exactly as BC's own DateDataProvider hardcodes them
@@ -471,7 +496,12 @@ public static partial class RecordPatches
             if (fam == null) return false;
             filter = PeriodStartFilterIn(fam);
             if (filter == null) return false;
-            if (!TryReadClosedBoundsOfFilter(filter, session, out low, out high)) return false;
+            // The half-open ends are read but discarded here: this helper only decides whether
+            // the store ALREADY holds every row the request can select, and a filter carrying a
+            // half-open range never does, so it falls through to the whole window exactly as it
+            // did before. The refusal for such a range lives in EnsureDateWindowCoversRequest,
+            // on the four request paths that can raise it into AL (#3483).
+            if (!TryReadClosedBoundsOfFilter(filter, session, out low, out high, out _)) return false;
         }
         catch (RunnerOutOfScopeException) { throw; }
         catch
@@ -827,9 +857,11 @@ public static partial class RecordPatches
 
         DateTime? closedLow, closedHigh;
         bool fullyBounded;
+        List<(DateTime Value, bool OpenHigh)> halfOpenEnds;
         try
         {
-            fullyBounded = TryReadClosedPeriodStartBounds(cacheRequest, session, out closedLow, out closedHigh);
+            fullyBounded = TryReadClosedPeriodStartBounds(
+                cacheRequest, session, out closedLow, out closedHigh, out halfOpenEnds);
         }
         catch (RunnerOutOfScopeException) { throw; }
         catch
@@ -840,6 +872,7 @@ public static partial class RecordPatches
             // front.
             fullyBounded = false;
             closedLow = closedHigh = null;
+            halfOpenEnds = new List<(DateTime, bool)>();
         }
 
         if (fullyBounded && closedLow is DateTime lo && closedHigh is DateTime hi)
@@ -860,6 +893,24 @@ public static partial class RecordPatches
         var highBound = closedHigh is DateTime ch && ch > new DateTime(DateWindowMaxYear, 12, 31)
             ? ch : new DateTime(DateWindowMaxYear, 12, 31);
 
+        // A half-open range whose closed end lies outside the WINDOW selects nothing the window
+        // holds, while BC answers it out to its own first or last period start; that is a zero
+        // reported as success, not the documented truncation. Refuse it (#3483).
+        //
+        // Compared against the window CONSTANTS, never against lowBound/highBound: those two are
+        // widened by the filter's envelope, so a sibling range would otherwise move the bar this
+        // range is judged against. No "Period Start" filter was found that actually reaches that
+        // — BC's ToRangeList merges a sibling wide enough to widen the bound, because such a
+        // sibling overlaps the half-open range — so what holds the invariant here is the
+        // constant, not that merge.
+        foreach (var (value, openHigh) in halfOpenEnds)
+        {
+            if (openHigh && value > new DateTime(DateWindowMaxYear, 12, 31))
+                throw DateOpenEndedRefusal(value, openHigh: true);
+            if (!openHigh && value < new DateTime(DateWindowMinYear, 1, 1))
+                throw DateOpenEndedRefusal(value, openHigh: false);
+        }
+
         // PopulateDateSpan only ever widens, and returns immediately when the span already
         // covers what was asked for — the common case after the first such read.
         PopulateDateSpan(dataAccess, meta, session, lowBound, highBound);
@@ -878,14 +929,16 @@ public static partial class RecordPatches
     /// back to the documented window.
     /// </returns>
     private static bool TryReadClosedPeriodStartBounds(
-        object cacheRequest, object session, out DateTime? low, out DateTime? high)
+        object cacheRequest, object session, out DateTime? low, out DateTime? high,
+        out List<(DateTime Value, bool OpenHigh)> halfOpenEnds)
     {
         low = null;
         high = null;
+        halfOpenEnds = new List<(DateTime, bool)>();
 
         var filter = FindPeriodStartFilter(cacheRequest);
         if (filter == null) return false;
-        return TryReadClosedBoundsOfFilter(filter, session, out low, out high);
+        return TryReadClosedBoundsOfFilter(filter, session, out low, out high, out halfOpenEnds);
     }
 
     /// <summary>
@@ -895,10 +948,12 @@ public static partial class RecordPatches
     /// and the bound-reading rules must not fork between the two layers.
     /// </summary>
     private static bool TryReadClosedBoundsOfFilter(
-        object filter, object session, out DateTime? low, out DateTime? high)
+        object filter, object session, out DateTime? low, out DateTime? high,
+        out List<(DateTime Value, bool OpenHigh)> halfOpenEnds)
     {
         low = null;
         high = null;
+        halfOpenEnds = new List<(DateTime, bool)>();
 
         var rangeList = _dvtToRangeList!.Invoke(filter, new[] { session });
         if (rangeList == null) return false;
@@ -921,12 +976,14 @@ public static partial class RecordPatches
 
             var lowClosed = false;
             var highClosed = false;
+            DateTime? rangeLow = null, rangeHigh = null;
 
             if (!(bool)_dvtRangeLowIsMin!.GetValue(range)!
                 && ToDateTimeOrNull(_dvtRangeLowValue!.GetValue(range)) is DateTime lo
                 && lo > bcFirst)
             {
                 lowClosed = true;
+                rangeLow = lo;
                 low = low == null || lo < low ? lo : low;
             }
 
@@ -935,8 +992,17 @@ public static partial class RecordPatches
                 && hi < bcLast)
             {
                 highClosed = true;
+                rangeHigh = hi;
                 high = high == null || hi > high ? hi : high;
             }
+
+            // Exactly one end closed: BC runs THIS range out to its own first or last period
+            // start (0001-01-03 / 9999-12-31 for period type Date), so the range reaches past
+            // any span we materialise, and its closed end decides whether that span can answer
+            // it at all. Recorded per range, because the envelope loses it as soon as another
+            // range names a more extreme bound (#3483, the Date half of #3471).
+            if (lowClosed && !highClosed) halfOpenEnds.Add((rangeLow!.Value, true));
+            else if (highClosed && !lowClosed) halfOpenEnds.Add((rangeHigh!.Value, false));
 
             // One half-open range in a `'..%1|%2..'` shape makes the whole filter unbounded: the
             // union it selects reaches past anything [low..high] would hold.

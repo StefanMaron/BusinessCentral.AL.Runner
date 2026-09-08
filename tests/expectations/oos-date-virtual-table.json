@@ -1,0 +1,20 @@
+[
+  {
+    "codeunitId": 60983,
+    "CodeunitName": "Test Date Virtual Table",
+    "Method": "Record_Date_RangeOpenAtTheLowEnd_ReachesBackToTheFirstPeriodStart",
+    "Mode": "expect-oos",
+    "Reason": "not-yet-implemented",
+    "Doc": "docs/limitations.md#date-virtual-table",
+    "Note": "Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#286 asks what a 'Period Start' filter closed at its HIGH end only selects. Real BC runs the open end back to its own first period start for the period type - 0001-01-03 for Date, from DateTimeHelper.datePeriodStartMinimumDate (Ncl 28.4.53241.54318) - so '..1850-01-01' at period type Date is every day from 0001-01-03 to 1850-01-01: measured Count() = 675332 on a 28.4.53241.0 service tier, first row 0001-01-03, last row 1850-01-01. The runner serves this table from a materialised store windowed at 1900-01-01..2099-12-31, which holds no period on or before 1850, so the request cannot be answered from it at all. It REFUSES loudly instead - RunnerOutOfScopeException, 'out-of-scope: Date (virtual table 2000000007) - not-yet-implemented - date-virtual-table: a Date filter names \"Period Start\" 1850-01-01 with its other end open, outside the window [1900-01-01..2099-12-31] an open bound is answered from' - rather than reporting success with zero rows, which is what it did before #3483. MODE: expect-oos, because a refusal IS an out-of-scope signal; expect-divergence means 'answers differently and does not signal', and expect-fail-known-gap needs an issue that stays open after the PR merges, which #3483 does not. ANCHOR: ExpectationManifest.ReasonAnchor cuts at the first em-dash, so 'not-yet-implemented' is the anchor, which is also what makes the refusal tear through an AL [TryFunction] (ApplicationObjectBasePatches.IsPermanentOutOfScope) - right here, because a service tier DOES answer this read. WHAT WOULD REMOVE THIS ENTRY: #3506, which tracks answering an open-ended Date range the way BC does rather than from a window or with a refusal; it stays open after #3483 closes. The third arm corpus #286 adds is NOT declared and must pass: Record_Date_TwoClosedRanges_SelectTheirUnionNotTheirEnvelope (two closed ranges, 15 rows, materialised under the row cap). Added by agent fbk-1 with the pin bump for #3483."
+  },
+  {
+    "codeunitId": 60983,
+    "CodeunitName": "Test Date Virtual Table",
+    "Method": "Record_Date_ClosedRangePlusRangeOpenAtTheHighEnd_SelectsBoth",
+    "Mode": "expect-oos",
+    "Reason": "not-yet-implemented",
+    "Doc": "docs/limitations.md#date-virtual-table",
+    "Note": "The multi-range half of the same corpus PR (#286). A filter may name several ranges and BC answers their UNION: '2000-01-01..2000-01-10|2300-01-01..' is 2812377 rows on a 28.4.53241.0 service tier, first row 2000-01-01 and last row 9999-12-31, because the open end runs out to BC's own last period start (DateTimeHelper.datePeriodStartMaximumDate). The runner refuses it, naming 2300-01-01 - the closed end of the SECOND range, which is the point: the filter's outermost closed bounds are 2000-01-01 and 2000-01-10, both inside the window, so a refusal decided from the envelope would let this through and serve the first range's 10 rows while dropping the second whole. #3483 decides it per range, and tests/runner-extras/date-virtual-table-window (codeunit 64561) pins the refusal itself, including that the bound named is 2300-01-01. Same mode, anchor and tracking issue (#3506) as the sibling entry above, for the same reasons. Added by agent fbk-1 with the pin bump for #3483."
+  }
+]

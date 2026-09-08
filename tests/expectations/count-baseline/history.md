@@ -1865,3 +1865,72 @@ Suite at this commit: 395 total, 395 pass.
 
 Written by the fbk-1 agent.
 
+
+## runner-extras `date-virtual-table-window` 9 -> 13 (#3483)
+
+Four arms on codeunit 64561 for the Date half of the per-range half-open refusal:
+
+- `Date_OpenLowRangeClosedBeforeTheWindow_IsRefused` and `..._IsRefusedOnTheFindPathToo` —
+  `'..1850-01-01'` on the count path and the find path. Before the fix both answered "no rows"
+  and "false"; a 28.4.53241.0 service tier answers 675,332, first row 0001-01-03.
+- `Date_MultiRangeWithAHalfOpenRangePastTheWindow_IsRefused` —
+  `'2000-01-01..2000-01-10|2300-01-01..'`, served from the window as 10 before the fix, 2,812,377
+  on the same service tier.
+- `Date_MultiRangeClosedPastTheWindow_IsMaterialisedNotRefused` — the other side of the per-range
+  decision: two CLOSED ranges, one of them past the window's 2099 edge, materialised on demand
+  and counted as 20. It passed before the fix too, and is here so a future widening of the
+  refusal to "any range outside the window" fails loudly.
+
+Measured, not computed: `tests/runner-extras` at fd723abc with CI's own invocation, 399 total,
+399 pass, 0 fail. Added by agent fbk-1.
+
+## runner-extras `date-virtual-table-window` 13 -> 15 (#3483, reviewer follow-up)
+
+Two more arms on codeunit 64561, from the review of PR #3511:
+
+- `Date_HalfOpenRangeWithASiblingRangeFurtherOut_IsStillRefused` — `'..1850-01-01|1800-01-01..1800-01-10'`.
+  A control, not a RED→GREEN: it passes on both sides of the same PR's fix. It pins that a
+  sibling range cannot move the bar the half-open range is judged against, which the fix now
+  guarantees by construction (the comparison is against the window constants) and which BC's own
+  `ToRangeList` also happens to deliver here by merging the subsumed range.
+- `Date_HalfOpenRangeOnAYearTypeRead_IsRefusedWithoutClaimingDatesBounds` — a genuine RED→GREEN:
+  before the reviewer follow-up the refusal told a Year-type reader that BC runs the open end
+  back to 0001-01-03, which is the first *Date* period; Year starts at 0002-01-01.
+
+Measured: `tests/runner-extras/date-virtual-table-window` 15/15 with the fix, 14/15 without it
+(the Year arm is the one that fails). Added by agent fbk-1.
+
+## al-language 3092 -> 3095, pin `3b5dd7be` -> `84daa058` (#3483, corpus #286)
+
+Three corpus commits came in with the fold, and only one of them is this PR's:
+
+| corpus commit | PR | whose | what it does |
+|---|---|---|---|
+| `94c11bb` | #285 | maintainer's | rewrites `TestPublishedApplicationSysTable.al` to assert both package columns are populated rather than equal |
+| `9d76412` | #284 | maintainer's | rewrites `TestPagePartOnNewRecordCount.al` to assert the OnNewRecord draft-line deltas rather than a tier-specific open cost |
+| `84daa05` | #286 | this PR's | three arms on codeunit 60983: what a `Period Start` range open at one end selects, and the union of several ranges |
+
+Only #286 adds tests, and it adds three — 3092 -> 3095, which is the count-baseline guard's own
+printed actual on a full three-app run, not arithmetic.
+
+**Entries dropped.** One: `New_OnEmptyLinkedPart_RunsOnNewRecordOncePlusTheOpenCost` in
+`known-gaps-testpage-draft-line.json`. #284 rewrote that arm to assert `AfterOpen + 1` instead
+of an absolute firing count against `OpenOnEmptyPartFirings()`, and the runner satisfies the
+delta, so the manifest failed the run with "Test passed cleanly but manifest declares
+expect-fail-known-gap … Remove the entry". Removed, and nothing else in that file changed —
+the other four arms of codeunit 60358 still fail and still point at
+[#3029](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3029), which therefore
+stays **open**. (Open PR #3414 fixes #3029 and removes the remaining four; it will conflict
+with this one line and the four-entry file is what it should resolve to.)
+
+**Entries added.** Two, in the new `tests/expectations/oos-date-virtual-table.json`, for the two
+arms of corpus #286 that this PR's fix refuses — the third,
+`Record_Date_TwoClosedRanges_SelectTheirUnionNotTheirEnvelope`, passes and is deliberately not
+declared. Both are `expect-oos` with anchor `not-yet-implemented`, `Doc`
+`docs/limitations.md#date-virtual-table`, tracking
+[#3506](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3506), which stays open
+after this PR merges.
+
+**Nothing else moved.** #285's rewrite changed no classification: the full three-app run at the
+new pin with CI's own invocation is **3124 total, 3124 pass, 0 fail**, and the expectation match
+audit reports all 23 entries matched a discovered test. Added by agent fbk-1.

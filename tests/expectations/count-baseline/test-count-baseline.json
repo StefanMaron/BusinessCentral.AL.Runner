@@ -2,7 +2,7 @@
   "_comment": "Schema, semantics and how to bump: README.md in this directory. Per-bump rationale: history.md, never a prose line in here (#2485).",
   "suites": {
     "al-language": {
-      "tests": { "default": 3092 },
+      "tests": { "default": 3095 },
       "appGroups": { "default": 1 }
     },
     "al-language-internals-fixture": { "tests": { "default": 0 }, "appGroups": { "default": 1 } },
@@ -10,7 +10,7 @@
     "runner-extras": {
       "groups": {
         "bundle-page-over-dep-table": { "tests": 2 },
-        "date-virtual-table-window": { "tests": 9 },
+        "date-virtual-table-window": { "tests": 15 },
         "db-trigger-inject-timing": { "tests": 2 },
         "dep-tableext-invoke-dep": { "tests": 0 },
         "dep-tableext-invoke-main": { "tests": 4 },

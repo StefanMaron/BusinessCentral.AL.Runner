@@ -232,6 +232,131 @@ codeunit 64561 "Dvtw Tests"
         Assert.IsFalse(Reached, 'TryFindFirst must not have completed.');
     end;
 
+    [Test]
+    procedure Date_OpenLowRangeClosedBeforeTheWindow_IsRefused()
+    var
+        DateRec: Record Date;
+    begin
+        // Issue #3483. `'..1850-01-01'` is closed at its HIGH end only, and that closed end sits
+        // before the window starts. The window holds no period on or before 1850, so answering
+        // the request from it returns no rows at all while a service tier returns 675,332
+        // (measured on BC 28.4.53241.0, container fbk1-probe: first row 0001-01-03, last
+        // 1850-01-01). A silent zero, reported as success.
+        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
+        DateRec.SetFilter("Period Start", '..%1', DMY2Date(1, 1, 1850));
+
+        asserterror CountRows(DateRec);
+        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
+        Assert.ExpectedError('date-virtual-table');
+        Assert.ExpectedError('1850-01-01');
+        Assert.ExpectedError('with its other end open');
+    end;
+
+    [Test]
+    procedure Date_OpenLowRangeClosedBeforeTheWindow_IsRefusedOnTheFindPathToo()
+    var
+        DateRec: Record Date;
+    begin
+        // The refusal is decided in the one helper all four request paths funnel into, so the
+        // find path has to raise it as well. Reached through FindSet(), which would otherwise
+        // answer FALSE — "there is no period on or before 1850" — and read as a fact.
+        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
+        DateRec.SetFilter("Period Start", '..%1', DMY2Date(1, 1, 1850));
+
+        asserterror DateRec.FindSet();
+        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
+        Assert.ExpectedError('date-virtual-table');
+        Assert.ExpectedError('1850-01-01');
+        Assert.ExpectedError('with its other end open');
+    end;
+
+    [Test]
+    procedure Date_MultiRangeWithAHalfOpenRangePastTheWindow_IsRefused()
+    var
+        DateRec: Record Date;
+    begin
+        // Issue #3483, the multi-range half. A filter may name several ranges and BC answers
+        // their union: `'2000-01-01..2000-01-10|2300-01-01..'` is 2,812,377 rows on a service
+        // tier (measured on BC 28.4.53241.0, container fbk1-probe). The first range sits inside
+        // the window and the second reaches past it, so reading only the filter's outermost
+        // closed bounds — 2000-01-01 and 2000-01-10 — makes the request look answerable and
+        // drops the second range whole, for a plausible-looking 10.
+        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
+        DateRec.SetFilter("Period Start", '%1..%2|%3..',
+            DMY2Date(1, 1, 2000), DMY2Date(10, 1, 2000), DMY2Date(1, 1, 2300));
+
+        // The bound is asserted, not just the fact of a refusal: this arm has two ranges and
+        // only the second one is refusable, so a refusal naming 2000-01-01 or 2000-01-10 would
+        // mean the per-range decision landed on the wrong range.
+        asserterror CountRows(DateRec);
+        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
+        Assert.ExpectedError('date-virtual-table');
+        Assert.ExpectedError('2300-01-01');
+        Assert.ExpectedError('with its other end open');
+    end;
+
+    [Test]
+    procedure Date_MultiRangeClosedPastTheWindow_IsMaterialisedNotRefused()
+    var
+        DateRec: Record Date;
+    begin
+        // The other side of the per-range decision, and the reason it is per RANGE rather than
+        // "any range outside the window". Both ranges here are CLOSED, and one of them lies
+        // entirely past the window's 2099 edge, so the span is materialised on demand and the
+        // union is answered exactly — 10 days in 2000 plus 10 days in 2150.
+        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
+        DateRec.SetFilter("Period Start", '%1..%2|%3..%4',
+            DMY2Date(1, 1, 2000), DMY2Date(10, 1, 2000), DMY2Date(1, 1, 2150), DMY2Date(10, 1, 2150));
+
+        Assert.AreEqual(20, DateRec.Count(), 'Expected the union of two closed ranges: 10 days in 2000 and 10 in 2150.');
+        Assert.IsTrue(DateRec.FindLast(), 'Record Date found no row for the second closed range.');
+        Assert.AreEqual(DMY2Date(10, 1, 2150), DateRec."Period Start", 'Expected the last row to be 10 January 2150.');
+    end;
+
+    [Test]
+    procedure Date_HalfOpenRangeWithASiblingRangeFurtherOut_IsStillRefused()
+    var
+        DateRec: Record Date;
+    begin
+        // A CONTROL, not a RED -> GREEN: this passes on both sides of #3483's follow-up commit.
+        // It pins that a sibling range cannot move the bar the half-open range is judged
+        // against. Two things hold that, and only one of them is ours: the refusal compares
+        // against the window constants rather than the envelope-widened span, and BC's own
+        // ToRangeList merges this filter's second range into its first — a range wide enough to
+        // widen the envelope's low bound below 1850-01-01 necessarily overlaps `..1850-01-01`.
+        // Measured on 511d5b7f, before that commit: already refused, naming 1850-01-01.
+        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
+        DateRec.SetFilter("Period Start", '..%1|%2..%3',
+            DMY2Date(1, 1, 1850), DMY2Date(1, 1, 1800), DMY2Date(10, 1, 1800));
+
+        asserterror CountRows(DateRec);
+        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
+        Assert.ExpectedError('date-virtual-table');
+        Assert.ExpectedError('1850-01-01');
+        Assert.ExpectedError('with its other end open');
+    end;
+
+    [Test]
+    procedure Date_HalfOpenRangeOnAYearTypeRead_IsRefusedWithoutClaimingDatesBounds()
+    var
+        DateRec: Record Date;
+    begin
+        // The refusal reads the "Period Start" filter and never the period type, so the same
+        // shape on a Year-type read has to raise the same way — and the message must not tell
+        // the reader that BC would run the open end back to 0001-01-03, which is the FIRST
+        // Date period. Year starts at 0002-01-01
+        // (DateTimeHelper.datePeriodStartMinimumDate, Ncl 28.4.53241.54318, cited in #3506).
+        DateRec.SetRange("Period Type", DateRec."Period Type"::Year);
+        DateRec.SetFilter("Period Start", '..%1', DMY2Date(1, 1, 1850));
+
+        asserterror CountRows(DateRec);
+        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
+        Assert.ExpectedError('date-virtual-table');
+        Assert.ExpectedError('1850-01-01');
+        Assert.ExpectedError('for the period type');
+        Assert.ExpectedError('0002-01-01 for Year');
+    end;
+
     local procedure CountRows(var DateRec: Record Date): Integer
     begin
         exit(DateRec.Count());
