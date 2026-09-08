@@ -62,30 +62,17 @@ since corpus issue #213:
 
 So: **a Windows failure is a real failure. A Linux-only failure is an image bug.**
 
-**On a corpus PR, label it — do not `workflow_dispatch` it:**
+**On a corpus PR, label it:**
 
 ```bash
 gh pr edit <N> --repo StefanMaron/BusinessCentral.AL.Language.Tests \
   --add-label run-nightly-windows
 ```
 
-The label is the mechanism the workflow was built for, and its own header says so: it fires on
-`pull_request: [labeled]` and the gate job requires exactly `run-nightly-windows`, so an
-ordinary PR never spends a ~2h Windows run by accident.
-
-**It also runs the right workflow, which a dispatch does not.** `workflow_dispatch` executes
-the workflow **as it exists on the ref**, so a branch that predates a fix to the nightly keeps
-running the broken version indefinitely. A `pull_request` event runs it from the **base
-branch**, so labelling picks up whatever `master` has.
-
-Measured 2026-09-08: two dispatches against corpus PRs #272 and #273 both died in the
-tenant-encryption-key step before running a test, because neither branch contained corpus
-`7195a4ba` — the commit that fixed exactly that step. The same PR labelled instead passed the
-gate and reached the Windows container. The failure looked environmental and was not; it was
-old CI, faithfully re-run.
-
-For a ref that is **not** a PR — `master`, or a branch with no pull request — the dispatch is
-still the only route, and the same staleness caveat applies to it:
+A `pull_request` event runs the workflow from the **base branch**, so the label always gets
+`master`'s copy. `workflow_dispatch` runs it **as it exists on the ref**, so on a branch that
+predates a fix to the nightly it re-runs the broken version and the failure looks like a tier
+fault. Dispatch only for a ref with no pull request:
 
 ```bash
 gh workflow run 351779742 --repo StefanMaron/BusinessCentral.AL.Language.Tests \
