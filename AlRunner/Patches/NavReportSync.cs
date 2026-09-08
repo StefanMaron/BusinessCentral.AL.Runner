@@ -50,6 +50,10 @@ public static partial class NavReportSync
 
     // Reflection handles cached after first use.
     private static FieldInfo? _dataItemsField;     // DataItemIterator.dataItems : List<DataItem>
+    // The same member, resolved separately and LOUDLY for RefuseLoopOverSynthesizedDataItems.
+    // Deliberately not shared with the line above: see that method for why sharing it makes
+    // the guard silent.
+    private static FieldInfo? _refusalDataItemsField;
     private static MethodInfo? _applySetTableViewForAllDataItems; // DataItemIterator.ApplySetTableViewForAllDataItems()
     private static PropertyInfo? _objectIdProp;    // NavApplicationObjectBase.ObjectId : ApplicationObjectId
     private static PropertyInfo? _objectNumberProp;// ApplicationObjectId.ObjectNumber : int
@@ -1087,11 +1091,19 @@ public static partial class NavReportSync
         // the unbounded loop this guard exists to stop, silently and with every test green.
         // Same reasoning as LoopRootDataItemsAsync twenty lines up, which is why that one is a
         // throw too.
-        _dataItemsField ??= AlRunner.Infrastructure.BcShape.Field(
+        //
+        // Its OWN static, not the shared _dataItemsField, and that is the load-bearing part.
+        // Two other sites resolve the same member with a plain GetField and tolerate null
+        // (SyncRun, ReportAdd), and ReportAdd runs during construction — so a `_dataItemsField
+        // ??= BcShape.Field(...)` here would find the static already populated and NEVER
+        // evaluate its own guarded lookup. A guard whose loudness depends on a fail-open site
+        // having failed first is not a guard: measured, that spelling passed a deliberate
+        // break of its own field name with all four tests green.
+        _refusalDataItemsField ??= AlRunner.Infrastructure.BcShape.Field(
             dataItemIteratorType, "dataItems", BindingFlags.Instance | BindingFlags.NonPublic,
             "report-metadata-unavailable",
             "the data-item list a report with no metadata is refused against");
-        if (_dataItemsField.GetValue(navReport) is not System.Collections.ICollection dataItems)
+        if (_refusalDataItemsField.GetValue(navReport) is not System.Collections.ICollection dataItems)
             throw new InvalidOperationException(
                 "DataItemIterator.dataItems is not a countable list — Ncl shape changed; do not commit");
         if (dataItems.Count == 0) return;
