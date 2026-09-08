@@ -16,15 +16,19 @@ The runner has no SQL Server, no BC server process, and no license. It runs your
 as .NET code in a single process. This rules out anything that is inherently tied to
 the BC runtime environment:
 
-- **Permissions and entitlements** — there is no permission system. All field/table
+- **Permissions and entitlements** — there is no permission *enforcement*. All field/table
   access succeeds unconditionally. `entitlement_declaration`, `permissionset_declaration`,
   and `permissionsetextension_declaration` object types compile but have no effect at runtime.
+  The one permission surface the runner does answer is the *assignment question* — "is
+  permission set X assigned to user U" — out of `Access Control` rows; see
+  [Permission-set assignment](#permission-set-assignment) below. That answers a lookup, it
+  does not gate any access.
 - **Company context** — no active BC company. `CompanyName()` and `UserId()` are
-  seeded with fixed defaults (empty string / `"TESTUSER"`) at runtime startup —
-  not currently configurable via a CLI flag or an AL-callable API. Code that
-  only branches on whether the name is empty still takes the "empty" branch by
-  default. If your workflow needs a different value, open an issue describing
-  the use case. Both identities are also written to the table that holds them,
+  seeded with fixed defaults (`"My Company"` / `"TESTUSER"`) at runtime startup —
+  not currently configurable via a CLI flag or an AL-callable API. (This file said
+  the company name was the empty string until the 2026-09 audit; it has been
+  `"My Company"` since the skeleton `NavCompany` was introduced, `BcRuntime.cs`.)
+  If your workflow needs a different value, open an issue describing the use case. Both identities are also written to the table that holds them,
   so AL's own referential checks resolve them: one row in Company (2000000006)
   for `CompanyName()` and one in User (2000000120) for `UserId()` /
   `UserSecurityId()`, with the User Property (2000000121) companion row BC
@@ -32,7 +36,8 @@ the BC runtime environment:
   skips a check while the User table is entirely empty — `User Selection
   .ValidateUserName` is the common one — now runs that check, so a made-up user
   name is refused the way real BC refuses it. The Session virtual table
-  (2000000009) is still empty; that gap is tracked separately.
+  (2000000009) answers the reading session's own row — see the `Session` entry
+  under [Known gaps](#virtual-table-shape-gaps).
   Writes to the User table now go through BC's own system-table trigger arms:
   an insert is refused with BC's own
   `NavNCLUserTableUserNameMustBeUniqueException` ("The user name must be
@@ -63,11 +68,13 @@ the BC runtime environment:
   ([#3268](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3268));
   and under `--watch` without `--verbose` the runner silences both output streams
   to protect the dashboard, so the `[warn]` line is not shown there.
-- **Base app data** — no standard BC tables are populated. Code that reads
+- **Base app data** — no standard BC tables are populated by default. Code that reads
   `G/L Account`, `Customer`, `Vendor`, or any other base app table finds them empty
-  unless your test inserts data.
-- **Setup tables** — `General Ledger Setup`, `Sales Setup`, etc. are empty.
-  Code that reads setup fields gets type defaults.
+  unless your test inserts data, or the run is started with `--test-data`, which
+  hydrates tables on first touch from the CRONUS backup in the artifact cache (see
+  `--test-data` hydration coverage under [Known gaps](#known-gaps--in-scope-but-not-yet-implemented)).
+- **Setup tables** — `General Ledger Setup`, `Sales Setup`, etc. are empty without
+  `--test-data`. Code that reads setup fields gets type defaults.
 
 ### Transaction semantics — commit-point rollback and `Codeunit.Run`'s write-transaction scoping are modeled
 
@@ -201,7 +208,13 @@ because a real service tier ran the two tests inside one codeunit the way BC run
 ### No parallel session execution
 
 `StartSession` runs the target codeunit **synchronously, inline**, before returning.
-The implications:
+That is reachable only under `--isolation disabled`: under the default `codeunit`
+isolation (and under `test`) BC's own guard fires first, with BC's own text —
+"Sessions can only be started in tests that are run by a TestRunner that has
+TestIsolation set to Disabled." — exactly as on a service tier. Measured 2026-09-07
+on BC 28.1: under `disabled`, `StartSession` answered `true`, the row the worker
+inserted was visible to the caller on the very next statement, and
+`IsSessionActive` answered `false`. The implications:
 
 - `IsSessionActive` always returns `false` — the session is already done.
 - Session timeout logic never fires — there is no wall-clock timer or background thread.
@@ -215,9 +228,12 @@ pass here.
 
 ### Event subscribers — supported
 
-The runner dispatches event subscribers. `RunEvent()` calls are rewritten to
-`AlCompat.FireEvent(publisherCodeunitId, eventName, ...)`, which scans the compiled
-assembly for `[NavEventSubscriber]` methods at startup and calls matching subscribers.
+The runner dispatches event subscribers. BC's own `NavMethodScope.OnRunEventAsync` is
+Cecil-rewritten to call `AlRunner/Patches/CodeunitEventDispatcher.cs`, which indexes the
+`[NavEventSubscriber]` methods of every loaded assembly — the test bundle, Base Application,
+System Application and any ISV app alike — and calls the matching ones. (An earlier version
+of this section named an `AlCompat.FireEvent` rewrite; that was v1's mechanism and no longer
+exists.)
 
 **What works:**
 - Custom `[IntegrationEvent]` / `[BusinessEvent]` publishers with any subscriber signature.
@@ -242,11 +258,11 @@ dispatch, and report/request-page variables support a limited standalone surface
   `Rec` that is already in the table, with the page's `AutoSplitKey` field assigned
   (BC's own `NavForm.SplitKey`, in 10000 increments). A plain `SetValue` still does not
   save: the row is written when something leaves it (a cursor move, an action, or close).
-  The `AutoSplitKey` *values* are not yet BC's: the runner has no client cursor to take an
-  insertion point from, so an empty grid starts at 10000 where BC starts at 20000, and a
-  line appended to a grid numbered from something other than 10000 does not continue from
-  the last row. Tracked in
-  [#1755](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1755).
+  The `AutoSplitKey` *values* are BC's: an empty grid starts at 20000 and an appended line
+  continues from the last existing row, pinned upstream by
+  `handlers/TestPageAutoSplitKey_Tests.al` and `TestPageAutoSplitKeyRanges_Tests.al`
+  (fixed in #1760; this paragraph said "starts at 10000 where BC starts at 20000" and
+  "tracked in #1755" for three weeks after that issue closed).
 - `Page.Run()` (non-modal) dispatches the page the way a client would: to the test's
   `TestPage.Trap()` if one is outstanding, otherwise to the registered `[PageHandler]`,
   otherwise it raises BC's own `Unhandled UI` error. The page a trap receives stays open
@@ -256,10 +272,9 @@ dispatch, and report/request-page variables support a limited standalone surface
   (`P.SetRecord(Rec); P.RunModal();`) and the static-by-id forms
   (`Page.RunModal(id, Record)`, `Page.RunModal(Page::"X", Record)`, and Base App
   `Codeunit 700 "Page Management"` code that routes through them). The static
-  `Page.RunModal(0, Record)` form, which real BC resolves via the record table's
-  `LookupPageId`, is not yet implemented and throws
-  [#1918](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1918); pass an
-  explicit page id in the meantime.
+  `Page.RunModal(0, Record)` form resolves the page from the record table's
+  `LookupPageId`, as real BC does (#1926; pinned upstream by
+  `handlers/TestPageRunModalLookupPageId_Tests.al`).
 - Request pages can be handled via `[RequestPageHandler]`, but this is handler dispatch
   only, not real request-page rendering. `Report.Run()` / `RunModal()` open the request page
   and route it to the declared handler, exactly as a real service tier does under test:
@@ -274,11 +289,12 @@ dispatch, and report/request-page variables support a limited standalone surface
   (`RequestPage.ShowAmountsInLCY.SetValue(true)`): a request-page control is bound to one of
   the report's own globals, and it resolves through BC's own `NavForm.SourceExpressions`
   binding table, so a write lands on that global and the report body reads it back.
-  One difference from real BC remains:
-    - When no declared handler matches the request page, the runner continues WITHOUT
-      opening one rather than raising BC's `Unhandled UI` error. It cannot yet tell "the
-      test declared no handler" apart from "handler lookup did not reach us", and refusing
-      on the second would break reports that run fine today.
+  When no declared handler matches the request page, the run gets BC's own
+  `Unhandled UI: RequestPage <id>` error, as on a service tier. (This paragraph said the
+  runner "continues WITHOUT opening one" until the 2026-09 audit; measured on BC 28.1,
+  `Report.Run(Report::X, true)` with no `[RequestPageHandler]` raises
+  `NavNCLMissingUIHandlerException: Unhandled UI: RequestPage 70004`, and
+  `Report.Run(Report::X, false)` skips the request page and runs the body.)
 - Report variables support `Run()`, `RunRequestPage()`, `SetTableView()`, and
   helper procedures. Report triggers execute: `OnPreReport`, `OnPreDataItem`,
   `OnAfterGetRecord` (once per row in the in-memory table), `OnPostDataItem`, and
@@ -297,21 +313,24 @@ dispatch, and report/request-page variables support a limited standalone surface
   acted on: nothing prints. The `Report.Run(ReportRunOptions)` overload is not implemented
   and throws `out-of-scope: static NavReport.Run`.
 
-### No debugger infrastructure
+### No debugger infrastructure — and BC itself has retired most of the `Debugger` API
 
-The runner executes in a single .NET process with no attached BC debugger. Debugger API calls that require a live BC debug session cannot work:
+The runner executes in a single .NET process with no attached BC debugger. That turns out to
+matter less than this section used to claim, because on the BC builds the runner supports
+the platform has already retired nearly all of the `Debugger` codeunit: its bodies raise
+BC's own `NavObsoleteMethodException` ("The Break method is obsolete.") before any session
+state is consulted. Measured 2026-09-07 on BC 28.1, from an OnPrem-target app (the whole
+`Debugger` object is `Scope = OnPrem`, so a Cloud-target app cannot compile a call to it —
+`AL0296`):
 
-- `Debugger.Attach()` — attaches to a live session; no session infrastructure exists.
-- `Debugger.Break()`, `BreakOnError()`, `BreakOnRecordChanges()` — set breakpoints; no breakpoint mechanism.
-- `Debugger.Continue()`, `StepInto()`, `StepOut()`, `StepOver()`, `Stop()` — step/continue through debugger; no debug loop.
-- `Debugger.DebuggedSessionID()`, `DebuggingSessionID()` — query debugger session IDs; always meaningless standalone.
-- `Debugger.EnableSqlTrace()` — SQL tracing on a specific session; no SQL server exists.
-- `Debugger.GetLastErrorText()` — debugger-specific error query; not to be confused with `GetLastErrorText()` (a System function, which is covered).
-- `Debugger.IsAttached()` — always false (no attached debugger).
-- `Debugger.IsBreakpointHit()` — no breakpoints can be hit.
-- `Debugger.SkipSystemTriggers()` — controls trigger dispatch in a debug session; no debug session.
+| AL call | What happens |
+|---|---|
+| `Debugger.Attach()`, `Break()`, `BreakOnError()`, `BreakOnRecordChanges()`, `Continue()`, `StepInto()`, `StepOut()`, `StepOver()`, `Stop()`, `DebuggedSessionID()`, `DebuggingSessionID()`, `GetLastErrorText()`, `IsBreakpointHit()`, `SkipSystemTriggers()` | BC's own `NavObsoleteMethodException: The <name> method is obsolete.` — BC's body, unchanged. |
+| `Debugger.Activate()`, `Deactivate()`, `IsActive()`, `IsAttached()` | Runner shims (`BcAssembler.cs`): `Activate`/`Deactivate` return without effect, `IsActive` and `IsAttached` answer `false`. |
+| `Debugger.EnableSqlTrace(sessionId, enable)` | Returns without error — BC's own body, unchanged. There is no SQL Server, so nothing is traced. |
 
-`Debugger.Activate()`, `Debugger.Deactivate()`, and `Debugger.IsActive()` are supported — they are stripped or return `false`.
+`Debugger.GetLastErrorText()` is not to be confused with the System function
+`GetLastErrorText()`, which is fully covered.
 
 ### Task scheduler — no scheduler, and no inline substitute
 
@@ -350,13 +369,29 @@ runs. AL that needs the target codeunit's logic to actually execute should call 
 > showed neither did. The table above is now pinned by `tests/runner-extras/task-scheduler-oos`,
 > so it fails a CI leg rather than drifting again.
 
-### No DotNet interop
+### DotNet interop — the AL `DotNet` surface runs in-process, on the same terms as BC
 
-`.NET interop` requires the BC runtime, which handles `.NET` variable binding, `assembly` declarations, `dotnet` type wrappers, and the `DotNet` AL type:
+This section said "No DotNet interop … not compiled in standalone mode" until the 2026-09
+audit. That is no longer true, and the change that made it untrue is a property of the v2
+architecture rather than of any one fix: the runner compiles AL with BC's own compiler and
+runs it on BC's own `NavDotNet` runtime, so a `dotnet { assembly(...) { type(...; Alias) } }`
+declaration and a `DotNet Alias` variable resolve and execute exactly as the compiler and
+runtime define them. Measured 2026-09-07 on BC 28.1, OnPrem-target app: a
+`System.Text.StringBuilder` alias constructed, appended to and read back `hello`, and
+`CanLoadType(SB)` answered `true`.
 
-- `System.CanLoadType(DotNet)` — requires a `.NET` type reference at runtime.
-- `System.GetDotNetType(Joker)` — resolves the `.NET` type for an arbitrary AL value; no `.NET` type resolution without BC service tier.
-- `assembly_declaration`, `dotnet_declaration`, `type_declaration` — object types that wrap .NET assemblies; not compiled in standalone mode.
+What still holds, and is BC's rule rather than the runner's:
+
+- A **Cloud-target** app cannot use `DotNet` at all — `error AL0296: 'DotNet' has scope
+  'OnPrem'` — and a `DotNet` variable with no `dotnet` declaration block fails with `AL0185`
+  on either target. Both come from BC's compiler unchanged. The compilation-target matrix is
+  pinned end to end in `AlRunner.Tests` (#2902, closing #2641, which found the runner had
+  briefly accepted a Cloud-target declaration block).
+- The .NET libraries BC ships are the ones that run, on the host OS the runner is on — which
+  is why `System.Drawing` refuses on Linux (next section).
+
+`docs/scope.md` §3.14 listed the AL `DotNet` surface as out of scope for the same stale
+reason; it is corrected alongside this section.
 
 ### `System.Drawing` — Windows-only in .NET 8, so it never runs on a Linux or macOS host
 
@@ -395,7 +430,7 @@ substitute a different imaging library: the pixels would not be GDI+'s, so the t
 asserting against the runner rather than against BC — see "Why no real SA implementations"
 below and `docs/scope.md#dotnet-platform`.
 
-### Query — joins and dataset export work; aggregation does not
+### Query — joins, aggregation and dataset export work
 
 <a id="query-shape-gaps"></a>
 
@@ -429,12 +464,14 @@ cannot trap one into `false`
 These are gaps, not scope boundaries: real BC answers every one of them, and
 `docs/scope.md` no longer claims otherwise.
 
-**Not supported: aggregation.** A column with `Method = Sum` (or `Count`,
-`Average`, `Min`, `Max`) does not aggregate or group — the runner returns each
-row's own value unaggregated instead of collapsing rows per BC's SQL projection.
-This is a known gap, not the documented `NotSupportedException` this doc used to
-claim — the runner returns a wrong value silently rather than throwing. Tracked in
-[#2137](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2137).
+**Aggregation is supported.** A column with `Method = Sum` (or `Count`, `Average`,
+`Min`, `Max`) groups the result by the non-aggregated columns and aggregates per group,
+for a single dataitem and across a join (#2179, closing #2137; `HAVING`-style runtime
+filters on an aggregated column in the same change). Pinned by the upstream corpus —
+`query/TestQueryAggregation.al`, `TestQueryJoinFlowFieldGroupBy.al`,
+`TestQueryReverseSign.al` — none of which carries a `known-gaps` entry, so every one
+passes on every runner CI leg. This paragraph said "Not supported: aggregation" for
+nine days after #2179 merged.
 
 ### UI objects — out of scope
 
@@ -446,20 +483,29 @@ The following AL object types require the BC client or client-side rendering and
 
 These are classified `out-of-scope` because supporting them requires the BC client, which is architecturally outside the runner's scope (run AL unit tests in a single .NET process, no service tier, no browser, no Docker).
 
-### HTTP — partial support
+### HTTP — the types are BC's own; only egress is refused
 
-HTTP types (`HttpClient`, `HttpRequestMessage`, `HttpResponseMessage`, `HttpContent`,
-`HttpHeaders`) are replaced with in-memory mocks. The following works:
+`HttpClient`, `HttpRequestMessage`, `HttpResponseMessage`, `HttpContent` and `HttpHeaders`
+are BC's own runtime types, not runner mocks (this section said "replaced with in-memory
+mocks" until the 2026-09 audit — that was v1). Everything that does not leave the process
+therefore behaves as BC defines it: `HttpContent.WriteFrom` / `ReadAs` round-trips, header
+add/contains/remove, request method and URI, response status and content.
 
-- `HttpContent.WriteFrom(Text)` / `ReadAs(var Text)` — text round-trip
-- `HttpContent.WriteFrom(InStream)` / `ReadAs(var InStream)` — stream round-trip
-- `HttpResponseMessage.HttpStatusCode()` (default 200), `IsSuccessStatusCode()`
-- `HttpHeaders.Add()`, `Contains()`, `Remove()`
-- `HttpRequestMessage.Method()`, `SetRequestUri()`, `Content()`
-
-**Not supported:** `HttpClient.Send()`, `Get()`, `Post()`, `Put()`, `Delete()`,
-`Patch()` — these throw `NotSupportedException`. Inject HTTP dependencies via an
-AL interface if you want to unit test the logic around HTTP calls.
+**Refused: egress.** The one method every verb funnels into,
+`NavHttpClient.SendAsync(DataError, HttpRequestMessage, ByRef)`, is Cecil-rewritten to
+raise the out-of-scope signal, so `HttpClient.Get()`, `Post()`, `Put()`, `Delete()`,
+`Patch()` and `Send()` all refuse with
+`out-of-scope: HttpClient.<verb> — external-http — see docs/scope.md#external-http`
+(named after the request's HTTP method, so `Send` of a GET reports as `HttpClient.Get`).
+This is not the `NotSupportedException` this section used to name. Measured 2026-09-07 on
+BC 28.1: the statement form `C.Get(url, Resp);` raises it; the guarded form
+`Ok := C.Get(url, Resp);` follows BC's own contract for a failed send — `Ok` is `false`
+and `GetLastErrorText()` carries that message — and the run is still failed by the
+classifier as an unexpected out-of-scope signal unless an `expect-oos` entry declares it.
+The corpus's `network/TestHttpClient.al` is declared that way in
+`tests/expectations/oos-http.json`; `tests/runner-extras/http-egress-boundary-oos` pins
+the refusal from the runner side. Inject HTTP dependencies via an AL interface if you
+want to unit test the logic around HTTP calls.
 
 ---
 
@@ -467,36 +513,31 @@ AL interface if you want to unit test the logic around HTTP calls.
 
 ### What the runner ships
 
-The runner ships hand-written AL stubs and C# mock implementations **only** for objects whose sole purpose is to make test codeunits compile and execute assertions. These contain no BC business-domain logic.
-
-**Always in scope — test-automation infrastructure (approved exceptions):**
-
-| Codeunit ID | Name | File |
-|---|---|---|
-| 130 | `"Assert"` (Library Assert) | `AlRunner/stubs/LibraryAssert.al` + `AlRunner/Runtime/MockAssert.cs` |
-| 131 | `"Library Assert"` (alias) | `AlRunner/stubs/Assert.al` |
-| 130000 | Assert from BC test toolkit | routing alias, no extra file |
-| 130002 | Real BC "Library Assert" ID | routing alias, no extra file |
-| 131004 | `"Library - Variable Storage"` | `AlRunner/stubs/LibraryVariableStorage.al` + `AlRunner/Runtime/MockVariableStorage.cs` |
-| 130440 | `"Library - Random"` | `AlRunner/stubs/LibraryRandom.al` (pure AL, BC primitives only) |
-| 130500 | `"Any"` | `AlRunner/stubs/LibraryAny.al` (pure AL, BC primitives only) |
-| 131003 | `"Library - Utility"` | `AlRunner/stubs/LibraryUtility.al` (pure AL, GUID/random text) |
-| 132250 | `"Library - Test Initialize"` | `AlRunner/stubs/LibraryTestInitialize.al` (event publishers only) |
-| 131100 | `"AL Runner Config"` | `AlRunner/stubs/AlRunnerConfig.al` (runner-only; not a BC codeunit) |
-
-Adding a new entry here is a high bar: it must be a *test-automation* library (something a test codeunit uses to assert or orchestrate), not a piece of business logic.
+**No AL stubs and no C# mocks of any BC codeunit.** The `AlRunner/stubs/*.al` and
+`AlRunner/Runtime/Mock*.cs` files this section used to list — Library Assert, Library -
+Variable Storage, Library - Random, Any, Library - Utility, Library - Test Initialize,
+AL Runner Config — were deleted at the v1→v2 cutover (#1654, see
+`docs/v1-to-v2-migration.md`). The test-automation libraries a test codeunit uses now come
+from Microsoft's own precompiled test-toolkit apps in the package cache — `Library Assert`
+(130002), `Library - Variable Storage`, `Any`, `Permissions Mock` and the rest run as the
+R2R DLLs Microsoft compiled, exactly like the Base Application does.
+`tests/runner-extras/microsoft-test-library` proves that code is invocable from AL.
 
 **Always out of scope — SA business-logic implementations:**
-The runner must not ship a real implementation of any System Application codeunit (Image, FileMgt, Cryptography, Email, DocumentSharing, WebServiceMgt, …). Auto-generated blank shells are fine — C# classes that re-create SA business behaviour are not.
+The runner must not ship a real implementation of any System Application codeunit (Image, FileMgt, Cryptography, Email, DocumentSharing, WebServiceMgt, …). C# classes that re-create SA business behaviour are not permitted; the SA code that runs is Microsoft's own precompiled DLL.
 
 **Always out of scope — domain test libraries:**
-Domain test libraries such as `Library - Sales` (130509), `Library - Purchase`, etc. are auto-stubbed from BC packages, not hand-shipped. They must stay auto-stubbed only; no hand-written implementation is permitted.
+Domain test libraries such as `Library - Sales` (130509), `Library - Purchase`, etc. run from Microsoft's precompiled test-toolkit apps, never from a hand-written implementation.
 
-### What the runner auto-generates
+### What the runner does with dependencies
 
-For every codeunit/object pulled in from your dependencies (System Application, Base Application, third-party apps), the runner auto-generates a **blank shell**: every method exists with the right signature, returns the type-default, and does nothing.
-
-That is how AL compiles without those packages being present at runtime. It is not a real implementation — it is scaffolding.
+Every codeunit/object pulled in from your dependencies (System Application, Base Application,
+third-party apps) runs as the **precompiled DLL shipped inside that `.app`** — the real
+business logic, unmodified (`.claude/rules/precompiled-dll-respect.md`). There is no blank-shell
+generation any more: this section said the runner "auto-generates a blank shell … returns the
+type-default, and does nothing" until the 2026-09 audit, and that too was v1. A codeunit whose
+DLL is not loaded fails loudly, naming the codeunit and the package it belongs to
+(`CodeunitPatches.BuildMissingCodeunitMessage`), rather than answering a default.
 
 ### Why no real SA implementations
 
@@ -509,7 +550,7 @@ If your AL under test depends on real SA behaviour to mean anything, the support
 1. **AL interface + injected implementation.** Define an AL interface, have your production code take it via dependency injection, ship a real implementation that delegates to the SA codeunit, and ship a fake implementation in your test project that does just enough to make the test pass.
 2. **Test-only AL codeunit shadowing the SA call.** Add an AL codeunit in your `test/` directory with the same object ID and a hand-rolled implementation that returns the values your test expects. The runner will use your codeunit because it is in the compile unit; in real BC, your production code never sees it.
 
-Concrete example — `Image` codeunit (System Application). A test that asserts on image dimensions cannot rely on the runner's blank-shell `Image.GetWidth()` (which returns `0`). The fix is to write a small stub in your test project that parses a known fixture image, not to ask the runner to ship an `Image` implementation. If the AL pattern under test is widespread enough that everyone needs the same stub, file a runner-gap issue and we can discuss whether a shared stub belongs in `AlRunner/stubs/` (the bar is high — it must be test-automation infrastructure, not business logic).
+Concrete example — `Image` codeunit (System Application). Its real body runs here, and on a Linux host it reaches `System.Drawing`, which refuses (see [`System.Drawing`](#system-drawing) above). A test that asserts on image dimensions should put the image work behind an AL interface and pass a test double, not ask the runner to ship an `Image` implementation. If the AL pattern under test is widespread enough that everyone needs the same stub, file a runner-gap issue and we can discuss whether a shared stub belongs in `AlRunner/stubs/` (the bar is high — it must be test-automation infrastructure, not business logic).
 
 ### Document-service providers (`DOCUMENTSERVICEMOCK`)
 
@@ -566,15 +607,15 @@ the exact value will see different results.
 
 | AL call | Real BC | al-runner |
 |---|---|---|
-| `CompanyName()` | Active company name | `""` (fixed default, not currently configurable) |
+| `CompanyName()` | Active company name | `"My Company"` (fixed default, not currently configurable) |
 | `UserId()` | Authenticated user | `"TESTUSER"` (fixed default, not currently configurable) |
 | `IsSessionActive(id)` | True while session runs | Always `false` |
-| `GuiAllowed()` | False in background sessions | `false` |
+| `GuiAllowed()` | True in a client session, false in a background session | `true` — `ALSystemOperatingSystem.get_ALGuiAllowed` is Cecil-rewritten to `true` (`NclCecilRewrite.Forms.cs`), because the runner dispatches UI to test handlers and AL that checks `GuiAllowed()` before raising UI must reach them. This row said `false` until the 2026-09 audit. |
 | `GetFilter(field)` | Serialised filter expression | Returns serialised filter expression (functional) |
-| Field `InitValue` | Applied on `Init()` | Applied — parsed from AL source at pipeline start via `TableInitValueRegistry` |
-| `FieldRef.Caption` / `.Name` | Field metadata from schema | Real values for all AL-compiled tables including tableextension fields; `"FieldNN"` stub only for base-app tables not compiled in the current run |
+| Field `InitValue` | Applied on `Init()` | Applied — BC's own `Init()` over the compiled table metadata (the `TableInitValueRegistry` this row used to cite was v1 and no longer exists) |
+| `FieldRef.Caption` / `.Name` | Field metadata from schema | Real values, read from the compiled metadata for both the bundle's tables and precompiled dependency tables. A `"FieldNN"` placeholder name survives in `BcAppSymbolCache` only for a symbol-reference entry that carries no name at all — not observed on any supported artifact; unverified beyond that code reading |
 | `Commit()` | Commits current transaction | Establishes a rollback commit-point — see "Transaction semantics" above; not a no-op |
-| `FilterGroup(n)` | Scoped filter groups | Not tracked — `FilterGroup()` is a no-op; all filters apply to group 0 |
+| `FilterGroup(n)` | Scoped filter groups | Tracked — BC's own `NavRecord` filter state runs here. Pinned upstream by `record/TestFilterContracts.al` (`FilterGroup2_CombinesWithFilterGroup0_AsAND`, `Reset_AfterFilterGroup2_ClearsBothGroups`) and measured 2026-09-07: a group-2 `SetRange` intersected with a group-0 `SetFilter` answered the intersection, and `GetFilters` reported only group 0, as on BC. This row said "no-op" until the 2026-09 audit |
 
 ### Permission-set assignment — answered from `Access Control`, including the session user's own SUPER row
 
@@ -651,10 +692,11 @@ starts at 1 and increments with no gaps, that every row has a non-blank `ID`, an
 that asserts a specific zone id is asserting a property of the machine it happens to run
 on, and will not hold across hosts in either direction.
 
-Nothing in the corpus or in `tests/runner-extras/` reads this table today, which is why
-there is no `expect-divergence` entry for it in `tests/expectations/`: that mode declares
-a corpus test that **fails** on the runner, and no such test exists yet. This section is
-the record until one does.
+The corpus reads this table in `record/TestTimeZoneVirtualTable.al`, which asserts exactly
+that shape and nothing host-specific, so it passes here as well as on a Windows tier. That is
+why there is no `expect-divergence` entry for it in `tests/expectations/`: that mode declares
+a corpus test that **fails** on the runner, and none does. This section is the record of the
+id divergence a host-specific assertion would hit.
 
 ---
 
@@ -1143,15 +1185,17 @@ This is not a statement about the runner's capability. The canonical test corpus
 
 ```
 platform:     27.0.0.0
-dependencies: System Application 27.5.0.0
-              Base Application   27.5.0.0
+application:  27.0.0.0
+dependencies: System Application 27.0.0.0
+              Base Application   27.0.0.0
 ```
 
-Those are AL *minimum* versions, so a BC 26 provisioning — platform 26.0, System
-and Base Application 26.x — is rejected by the compiler before a single test
-runs. The corpus is a read-only upstream submodule pinned to 27.5-era System
-Application surface, so lowering that floor is neither this repo's call nor free:
-it would mean deleting the coverage that depends on it.
+(read from the pinned corpus at `9ee6bbc`; this section said 27.5 for the two apps,
+which is what the corpus declared when it was written). Those are AL *minimum*
+versions, so a BC 26 provisioning — platform 26.0, System and Base Application 26.x
+— is rejected by the compiler before a single test runs. The corpus is a read-only
+upstream submodule, so lowering that floor is neither this repo's call nor free: it
+would mean deleting the coverage that depends on 27.x surface.
 
 "The runner supports BC 26" and "the corpus runs on BC 26" are therefore separate
 claims, and only the second one is blocked by the above. Demonstrating the first
@@ -1465,10 +1509,6 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   The populator's "cannot answer" guard (`ordinal < 0`) therefore never fires. There is no
   authentication in the runner to observe, so this is a fixed skeleton artifact and not a
   statement about how the session authenticated.
-- **FilterGroup** — `Rec.FilterGroup(n)` has no effect; filters always apply to group 0.
-- **Query aggregation** — a query column with `Method = Sum`/`Count`/`Average`/`Min`/`Max`
-  does not aggregate or group rows; it silently returns each row's own unaggregated value.
-  Tracked in [#2137](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2137).
 - **`--test-data` hydration coverage** — `--test-data` loads the in-memory database from the
   BC backup shipped in the artifact cache (issue
   [#2258](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2258)). A table is

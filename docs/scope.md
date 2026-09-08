@@ -38,7 +38,7 @@ The runner's job is to populate enough state around them that they don't NRE.
 | **AL business logic compiled in the test run** | The user's `src/` AL that the runner compiles | Cached as `<key>.dll`, can be re-used like MS DLLs across runs. |
 | **Posting routines** | `Sales-Post`, `Purch-Post`, `Gen. Jnl.-Post`, `Item Jnl.-Post`, etc. | All real Base App posting logic; runs against in-memory tables (§2). |
 | **Validation triggers** | `OnInsert`, `OnModify`, `OnValidate(field)`, `OnDelete`, `OnRename` | **Working as of 2026-05-11.** The Insert/Modify/Delete/Rename trigger bypasses were drained (commits `ae15b158`, `c2df0bcd`, `29b5acc9`); the real Ncl `NavRecord.*Async` bodies dispatch AL `trigger On*()` overrides natively. Recursion guard at 500 frames (`f8367536`) catches recursive triggers per BC's runtime-error contract. |
-| **Event subscribers** | `[IntegrationEvent]` / `[BusinessEvent]` + subscribers | `RunEvent` is rewritten to `AlCompat.FireEvent`, real subscriber dispatch. |
+| **Event subscribers** | `[IntegrationEvent]` / `[BusinessEvent]` + subscribers | BC's `NavMethodScope.OnRunEventAsync` is Cecil-rewritten to `CodeunitEventDispatcher`, real subscriber dispatch across every loaded DLL. |
 | **.NET interop the apps use in-process** | `System.IO.MemoryStream`, `System.Text.Encoding.*`, `System.Text.RegularExpressions.Regex`, in-process `System.Security.Cryptography` primitives | These execute natively, no replacement needed. |
 | **Number / string / date primitives** | `Format`, `Evaluate`, `CalcDate`, `Date2DMY`, etc. | All real BC implementations. |
 | **Table connections — bookkeeping and the CRM test connection** | `Database.RegisterTableConnection` / `HasTableConnection` / `SetDefaultTableConnection` / `GetDefaultTableConnection` / `UnregisterTableConnection`, and `Record` access to a `TableType = CRM` table over a connection registered inside a test with the `'@@test@@'` connection string | BC's own `TableConnectionManager` on the skeleton session and BC's own `CrmTestDataProvider` (an in-memory store that assigns a Guid to an empty Guid primary key on Insert) — the mechanism Microsoft's Tests-CRM integration suite runs on. The one runtime-layer neutralisation is `TableConnectionSettingsStorage.Get` → `null` (the lookup of *persisted* connections; the runner persists none). Live connections are §3.15. |
@@ -54,7 +54,7 @@ real thing for any test that only observes documented BC behaviour.
 |---|---|---|---|
 | **Table storage** (record CRUD) | SQL Server | `TempTableDataProvider` in-memory store | Faithful for all functional reads/writes, keys, filters, ranges, modify-in-place. Different on: transaction commit/rollback (no-op), no row locking, no parallel-session isolation. |
 | **Metadata system** (`NCLMetaTable`, `NCLMetaField`, `NCLMetaCodeunit`, …) | Loaded from compiled `.app` metadata streams | `NclMetadataCachePopulator` parses AL source, builds equivalent structures via reflection | Faithful for field types, lengths, FieldClass, FlowField CalcFormula, primary keys, tableextension field merging. Boundary: anything the populator hasn't been taught about throws or NREs into the populator's logged-error channel. |
-| **Session / company / tenant / user** | Live BC session | Skeleton `NavSession`, `NavCompany`, `NavTenant` we populate with defaults | Faithful for any test that doesn't probe authentication state, license features, or telemetry identity. `UserId()` defaults to `"TESTUSER"`. `CompanyName()` defaults to `""`. Neither is currently configurable — open an issue if your workflow needs it. |
+| **Session / company / tenant / user** | Live BC session | Skeleton `NavSession`, `NavCompany`, `NavTenant` we populate with defaults | Faithful for any test that doesn't probe authentication state, license features, or telemetry identity. `UserId()` defaults to `"TESTUSER"`. `CompanyName()` defaults to `"My Company"`. Neither is currently configurable — open an issue if your workflow needs it. |
 | **Permissions** | Permission sets evaluated against entitlements | All-granted `PermissionSet` returned by `NavSession.GetPermissionSet`. `NavSession.Permissions` itself is null on the skeleton session, so the two `PermissionManagement` helpers AL can reach are computed instead: `IsPermissionSetAssignedAsync` answers from the Access Control table (#3039) and `GetEffectivePermissionForObjectAsync` answers `PermissionMask.MaxDirect` for the session's own user (#2382), matching the SUPER position `VerifyPermissions` and `HasExecutePermission*` already take. | Faithful for any test that doesn't probe permission *denial* paths. Tests asserting "access denied" must be excluded or moved to real service tier. **Asking about a user other than the session's own** is refused with `RunnerOutOfScopeException`, reason `effective-permissions-other-user` — the runner holds no per-user permission state, and answering "everything" for an arbitrary user would be a silent fake. |
 | **Time / random / GUID** | Real .NET implementations | Same — no replacement | Faithful. |
 | **Field caption / table caption / lookup-page IDs** | From metadata + language pack | From parsed AL source (real values for AL-compiled tables; falls back to `"FieldNN"` for base-app tables not compiled in this run) | Faithful for in-scope tables; documented stub for non-compiled base-app tables. |
@@ -222,7 +222,7 @@ invokes `OnInitReport` → `OnPreReport` → per-DataItem `OnPreDataItem` / `OnP
 
 | API | Reason |
 |---|---|
-| `Debugger.Attach`, `Break`, `StepInto`, etc. | No debug loop. See `docs/limitations.md#no-debugger-infrastructure`. |
+| `Debugger.Attach`, `Break`, `StepInto`, etc. | No debug loop. See `docs/limitations.md#no-debugger-infrastructure--and-bc-itself-has-retired-most-of-the-debugger-api`. |
 
 ### §3.13. NavQuery — RETIRED, NavQuery is in scope <a id="navquery"></a>
 
@@ -238,7 +238,7 @@ The section is kept as a pointer rather than deleted, because refusals raised by
 executor used to cite it and a reader may still arrive here. What remains is a **gap**, not a
 boundary: aggregation ([#2137](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2137))
 and the join sub-shapes the executor cannot take yet — see
-`docs/limitations.md#query-shape-gaps`. Both are tracked work, and the refusals now say so
+`docs/limitations.md#query--joins-aggregation-and-dataset-export-work`. Both are tracked work, and the refusals now say so
 with the `not-yet-implemented` anchor
 ([#2966](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2966)).
 
@@ -246,7 +246,7 @@ with the `not-yet-implemented` anchor
 
 | API | Reason |
 |---|---|
-| `assembly_declaration`, `dotnet_declaration`, `DotNet` variables, `GetDotNetType` | Requires BC service tier's type-resolution. In-process .NET interop the apps themselves use is **in scope** (§1) — only the AL `DotNet` surface is out. |
+| *(none — this section is retained for its anchor)* | The AL `DotNet` surface — `dotnet_declaration`, `DotNet` variables, `CanLoadType` — is **in scope** and runs on BC's own `NavDotNet` runtime, on the same terms as BC: OnPrem-target apps only (`AL0296` on Cloud, from BC's compiler). Measured 2026-09-07 on BC 28.1 and pinned in `AlRunner.Tests` (#2902). What can refuse is the .NET library underneath, on this host — §3.16. This row said the surface required the service tier's type resolution until the 2026-09 audit of `docs/limitations.md`. |
 
 ---
 
