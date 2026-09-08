@@ -69,10 +69,11 @@ gh pr edit <N> --repo StefanMaron/BusinessCentral.AL.Language.Tests \
   --add-label run-nightly-windows
 ```
 
-A `pull_request` event runs the workflow from the **base branch**, so the label always gets
-`master`'s copy. `workflow_dispatch` runs it **as it exists on the ref**, so on a branch that
-predates a fix to the nightly it re-runs the broken version and the failure looks like a tier
-fault. Dispatch only for a ref with no pull request:
+A `pull_request` event reads the workflow **file** from the base branch and runs it against
+**your PR's merge commit** — so the label adjudicates your tests using `master`'s CI.
+`workflow_dispatch` takes both from the ref, so on a branch that predates a fix to the nightly
+it re-runs the broken version and the failure looks like a tier fault. Dispatch only for a ref
+with no pull request:
 
 ```bash
 gh workflow run 351779742 --repo StefanMaron/BusinessCentral.AL.Language.Tests \
