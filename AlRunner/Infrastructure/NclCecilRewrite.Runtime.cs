@@ -831,6 +831,18 @@ public static partial class NclCecilRewrite
                          "NavSession", "Guid", "PermissionSetKey", "String"),
                 H(recordPatches, "PermissionManagement_IsPermissionSetAssignedAsync"));
 
+            // ── PermissionManagement.GetEffectivePermissionForObjectAsync (#2382) ────────
+            // The SAME null as its sibling above, one method over: the real body ends in
+            // `session.Permissions.GetEffectivePermissionForObject(...)`. It made
+            // TestPage "Company Information".OpenEdit() throw before the page opened, because
+            // page 1's OnOpenPage reaches codeunit 1392 -> codeunit 9852 -> this helper. See
+            // RecordPatches.EffectivePermissionForObject.cs for why the answer is MaxDirect for
+            // the session's own user and a refusal for any other.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "PermissionManagement", "GetEffectivePermissionForObjectAsync",
+                         "NavSession", "Guid", "String", "ApplicationObjectId"),
+                H(recordPatches, "PermissionManagement_GetEffectivePermissionForObjectAsync"));
+
             // ── TempTableDataProvider ctor (NavSession,NCLMetaTable) + CalcNumeric ──
             {
                 var ttdp = nclMod.GetType(Rt + "TempTableDataProvider")
