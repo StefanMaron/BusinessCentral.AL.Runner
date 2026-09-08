@@ -1,3 +1,24 @@
-# The repo is LF throughout. #2426: one file arrived CRLF via an editor conversion and
-# turned a 56-line change into a 2,372-line diff. Pin it so that cannot recur silently.
-*.cs text=auto eol=lf
+# The repo is LF throughout, so normalise every text file on commit and check it
+# out LF. #2426: one .cs file arrived CRLF via an editor conversion and turned a
+# 56-line change into a 2,372-line diff, which is also a merge conflict for every
+# concurrent PR touching that file. Pinning *.cs only left every other type agents
+# edit exposed, and on 2026-09-07 the same shape recurred on docs/limitations.md
+# (#3455): 25 added lines landed as 1560 insertions / 1531 deletions.
+#
+# text=auto still auto-detects binary content, so the -text lines below are belt
+# and braces for types that are unambiguously binary. A .cmd/.bat would need
+# `eol=crlf`; none is tracked today.
+* text=auto eol=lf
+
+*.app   -text
+*.dll   -text
+*.exe   -text
+*.pdb   -text
+*.nupkg -text
+*.zip   -text
+*.png   -text
+*.jpg   -text
+*.gif   -text
+*.ico   -text
+*.snk   -text
+*.bak   -text
