@@ -115,29 +115,49 @@ What is still out of reach is a dependency shipped as a **precompiled `.app`**: 
 compiles here, so no document exists for it at all. That is #3549.
 
 Across the pinned corpus (`19560bd3`), 172 of the corpus app's own 178 tables take the document
-route and the whole suite stays green. The six that do not are the scope boundary below.
+route and the whole suite stays green. The six that did not, at that pin, are the scope
+boundary below — narrowed by #3600, which is what most of them now clear.
 
 <a id="scope"></a>
 
 ## What still takes the derivation, and why
 
-- **A base table any `tableextension` extends.** BC's document for a table is what **one**
-  app's compiler emitted. An extension in another app contributes fields *and keys* that the
-  service tier merges at publish time through `NavAppGroup`'s extension registry, which the
-  runner does not populate — build-time state versus runtime-merged state, and no per-app
-  document can express the second. The derivation does merge it, so an extended base table
-  keeps the derivation until `TableExtension` is converted too (#3562). Measured: 6 of the
-  corpus's 178.
+- **A base table a `tableextension` extends with a `modify(...)` block, or from a DIFFERENT
+  app than the base table's own.** BC's document for a table is what **one** app's compiler
+  emitted. A `modify(...)` block changes an existing field's properties only in the
+  extension's own delta document (`<FieldChange>`), never in the base table's — the derivation
+  applies neither today, so nothing regresses, but nothing is gained either (a separate,
+  still-open gap: #3614 [modify(...) property changes are silently dropped by BOTH routes]). A
+  cross-app extension's `<FieldAdd>` delta likewise never reaches a base document emitted by a
+  DIFFERENT (and possibly earlier, possibly precompiled) compile — the service tier only
+  merges it at publish time through `NavAppGroup`'s extension registry, which the runner does
+  not populate. **A same-app, add-only extension has neither problem**: BC's compiler folds
+  its fields AND keys straight into the base table's own document, so #3600 relaxed the guard
+  for exactly that case, measured on the `ObjectMetadataCapture` fixture and confirmed on the
+  pinned corpus itself — of its six `tableextension` declarations touching the corpus's own
+  tables, four (60000 "ALT Universal", 60006 "ALT Keyed", 60809 "TXC Parent", 60819 "TXC Line")
+  now take the document; two do not, one for each of the reasons above: 60002 "ALT Triggered"
+  is modified by 60024's `modify("Watched Field")`, and 61001 "ALT Internal Table" (declared in
+  the `al-language-internals-fixture` app) is extended cross-app by 60205 "ALT Internal Table
+  Ext" (declared in the main corpus app) — a real cross-app case already living in the corpus,
+  not a synthetic one.
 
-  **The gate is `_extensionIdsByBaseTable`, never the merged field count.** Fields and keys
-  reach `MergeExtensionFields` through separate channels (#3216), and a key-only — or
-  `modify(...)`-only — extension contributes no fields, so a count-based guard passes on it.
-  Measured on a cross-app key-only extension over a source-compiled dependency's table:
-  `RecordRef.KeyCount()` answered **3 where the derivation answers 4**, exit 0, no diagnostic,
-  the extension's key simply gone. Nothing existing could have caught it — at corpus pin
-  `19560bd3` all eight `tableextension` declarations add fields, so neither the corpus nor a
-  same-app fixture reaches the branch. Pinned by
-  `BaseTableWithAKeyOnlyExtensionInAnotherApp_KeepsTheDerivation`.
+  **The gate is per-extension source info (`RecordPatches._extensionSourceInfo`: the
+  declaring app id plus whether it declares `modify(...)`), never the merged field count.**
+  Fields and keys reach `MergeExtensionFields` through separate channels (#3216), and a
+  key-only — or `modify(...)`-only — extension contributes no fields, so a count-based guard
+  passes on it. Measured on a cross-app key-only extension over a source-compiled dependency's
+  table: `RecordRef.KeyCount()` answered **3 where the derivation answers 4**, exit 0, no
+  diagnostic, the extension's key simply gone. Nothing existing could have caught it — at
+  corpus pin `19560bd3` all eight `tableextension` declarations add fields, so neither the
+  corpus nor a same-app fixture reaches the branch. Pinned by
+  `BaseTableWithAKeyOnlyExtensionInAnotherApp_KeepsTheDerivation`, and #3600 kept that test
+  green while relaxing the same-app add-only case — see
+  `SameAppAddOnlyExtension_TakesBcsDocument_WithItsFieldAndKeyIntact` and
+  `SameAppExtensionDeclaringModify_StillTakesTheDerivation_AndKeepsItsAddedField` in
+  `AlRunner.Tests/TableMetadataFromBcDocumentTests.cs`. An app boundary that cannot be resolved
+  (a precompiled `.app`'s extension, or an AL-source extension/table whose `app.json` cannot
+  be found) reads as non-matching, i.e. stays on the derivation, rather than being guessed safe.
 - **Every table with no captured document** — a precompiled dependency's (#3549), a virtual
   system table, or a bundle served from an AL-output cache written before #3548.
 

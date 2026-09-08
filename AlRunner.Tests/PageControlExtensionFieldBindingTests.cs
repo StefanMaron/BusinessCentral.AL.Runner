@@ -46,7 +46,7 @@ public class PageControlExtensionFieldBindingTests
 
     private static void InvokeParser(string methodName, string source)
         => RecordPatchesType.GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static)!
-            .Invoke(null, new object[] { source });
+            .InvokeStatic(source);
 
     [Fact]
     public void GetPageControlFieldMap_ControlBoundToTableExtensionField_Resolves()

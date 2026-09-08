@@ -1082,8 +1082,17 @@ public static partial class RecordPatches
                 // extended table's key list even though its fields were merged. The fields still
                 // go through ResolveExtensionCalcFormulas (#3121), which parses the CalcFormula
                 // text the symbol read carried along.
+                //
+                // #3600 — owningAppId: null (never equal to any real app id) because a
+                // PRECOMPILED .app's extension is, by construction, never in the same app as a
+                // table this runner holds a document for: HasBcTableMetadataDocument is only
+                // ever true for a table WE compiled from source, and a table living in a
+                // precompiled .app never gets a document at all — so this extension's base
+                // table was compiled by a DIFFERENT app than this one, cross-app,
+                // unconditionally, without needing this .app's own identity.
                 MergeExtensionFields(ext.TargetTableName, ext.ExtensionId,
-                    ResolveExtensionCalcFormulas(ext), ext.Keys);
+                    ResolveExtensionCalcFormulas(ext), ext.Keys,
+                    owningAppId: null, hasModify: false);
                 merged++;
             }
         }

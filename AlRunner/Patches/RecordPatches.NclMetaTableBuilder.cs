@@ -138,6 +138,21 @@ public static partial class RecordPatches
 
         try
         {
+            // #3600 — read once, ahead of the route choice below, and fed to
+            // ApplyRunnerFieldWiring on BOTH routes: a same-app add-only extension's fields
+            // are already inside BC's document, so bc-document needs nothing spliced into the
+            // field ARRAY, but the enum-type-name / AutoIncrement side info those fields carry
+            // lives only in this parse-time ParsedField list, not on the built NCLMetaTable.
+            //
+            // De-duplicate by field id: precompiled .app SymbolReference.json sometimes lists
+            // extension fields both in the base table's Tables[].Fields entry AND in
+            // TableExtensions[].Fields (e.g. BC BaseApp table 242 "Source Code Setup" already
+            // carries its extension fields in Tables[]). Duplicating them corrupts the
+            // NCLMetaTable field layout that R2R-precompiled BC code has baked offsets for.
+            // Only append ext fields whose id is NOT already present in the base table's own list.
+            var extFields = _parsedExtensionFields.TryGetValue(parsed.TableName.ToLowerInvariant(), out var ef)
+                ? ef : Enumerable.Empty<ParsedField>();
+
             // #3552 — when BC's emitter handed the runner its own metadata document for this
             // table (#3548), let BC construct the NCLMetaTable from it rather than deriving one
             // below. AVAILABILITY decides the route, and a failure is never re-routed to the
@@ -150,7 +165,7 @@ public static partial class RecordPatches
             if (ShouldBuildTableFromBcDocument(tableId, parsed))
             {
                 var fromBc = BuildNCLMetaTableFromBcDocument(tableId, ResolveNavAppBaseGroup());
-                ApplyRunnerFieldWiring(fromBc, parsed, Array.Empty<ParsedField>(), parsed.Fields);
+                ApplyRunnerFieldWiring(fromBc, parsed, extFields, parsed.Fields.Concat(extFields));
                 TraceTableMetadataSource(tableId, "bc-document", fromBc);
                 return fromBc;
             }
@@ -163,15 +178,6 @@ public static partial class RecordPatches
             // SystemParsedFields' doc comment for the citation (#3545).
             var timestampParsed       = new ParsedField(0,          "timestamp",         "BigInteger", 0,
                 Editable: false, DataClassificationName: "SystemMetadata");
-            // Merge any tableextension fields for this base table.
-            // De-duplicate by field id: precompiled .app SymbolReference.json sometimes lists
-            // extension fields both in the base table's Tables[].Fields entry AND in
-            // TableExtensions[].Fields (e.g. BC BaseApp table 242 "Source Code Setup" already
-            // carries its extension fields in Tables[]). Duplicating them corrupts the
-            // NCLMetaTable field layout that R2R-precompiled BC code has baked offsets for.
-            // Only append ext fields whose id is NOT already present in the base table's own list.
-            var extFields = _parsedExtensionFields.TryGetValue(parsed.TableName.ToLowerInvariant(), out var ef)
-                ? ef : Enumerable.Empty<ParsedField>();
             var baseFieldIds = new HashSet<int>(parsed.Fields.Select(f => f.FieldId));
             var extFieldsNew = extFields.Where(f => !baseFieldIds.Contains(f.FieldId));
             var allParsed = new[] { timestampParsed }.Concat(parsed.Fields)

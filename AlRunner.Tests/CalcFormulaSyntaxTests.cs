@@ -73,7 +73,7 @@ public class CalcFormulaSyntaxTests
     {
         var parse = RecordPatchesType.GetMethod("TryParseTableFile",
             BindingFlags.NonPublic | BindingFlags.Static)!;
-        parse.Invoke(null, new object[] { Table(calcFormula) });
+        parse.InvokeStatic(Table(calcFormula));
         Assert.True(ParsedTables.Contains(TableId), $"table {TableId} was not parsed at all");
         var table = (ParsedTable)ParsedTables[TableId]!;
         var field = table.Fields.Single(f => f.FieldId == 2);

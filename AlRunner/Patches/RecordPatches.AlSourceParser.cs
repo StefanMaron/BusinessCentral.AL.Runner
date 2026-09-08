@@ -788,7 +788,7 @@ public static partial class RecordPatches
         return parts.Count > 0 ? parts[^1] : Unquote(fallbackText?.Trim() ?? "");
     }
 
-    private static void TryParseTableFile(string text)
+    private static void TryParseTableFile(string text, string? filePath = null)
     {
         foreach (var obj in ParseAlObjects(text))
         {
@@ -872,11 +872,12 @@ public static partial class RecordPatches
                 secondaryKeys, isTableTypeTemporary, dataPerCompany, lookupPage, drillDownPage,
                 TableTypeName: string.IsNullOrWhiteSpace(tableTypeName) ? null : tableTypeName.Trim(),
                 DataClassificationName: string.IsNullOrWhiteSpace(dataClassification) ? null : dataClassification,
-                ExternalName: string.IsNullOrWhiteSpace(externalName) ? null : externalName);
+                ExternalName: string.IsNullOrWhiteSpace(externalName) ? null : externalName,
+                OwningAppId: filePath != null ? ResolveOwningApp(filePath)?.AppId : null);
         }
     }
 
-    private static void TryParseTableExtensionFile(string text)
+    private static void TryParseTableExtensionFile(string text, string? filePath = null)
     {
         foreach (var obj in ParseAlObjects(text))
         {
@@ -889,12 +890,23 @@ public static partial class RecordPatches
             // ParseFieldSyntax for what they used to lose (#1711).
             var fields = new List<ParsedField>();
             // OfType<FieldSyntax>: a tableextension's field list also holds `modify(...)`
-            // entries, which declare no new field. The regex only ever matched
-            // `field(N; Name; Type)` either, so this keeps the same set.
+            // entries (NavSyntax.FieldModificationSyntax), which declare no new field. The
+            // regex only ever matched `field(N; Name; Type)` either, so this keeps the same
+            // set. #3600 reads that same list a second time below for the OPPOSITE purpose —
+            // not to skip modify(...), but to know one is there.
             if (ext.Fields != null)
                 foreach (var f in ext.Fields.Fields.OfType<NavSyntax.FieldSyntax>())
                     if (ParseFieldSyntax(f) is { } pf)
                         fields.Add(pf);
+
+            // #3600 — a modify(...) block changes an existing field's properties only in the
+            // extension's OWN delta document (BC's <FieldChange>), never in the base table's
+            // document; see MergeExtensionFields / ShouldBuildTableFromBcDocument. True even
+            // for a mixed extension that ALSO adds fields, because the field list above cannot
+            // tell "no modify" from "modify, but this extractor discards it" — it has to be
+            // asked directly.
+            var hasModify = ext.Fields != null
+                && ext.Fields.Fields.OfType<NavSyntax.FieldModificationSyntax>().Any();
 
             // #3216 — the keys a tableextension declares. Every one is a SECONDARY key on the
             // extended table: a tableextension cannot restate the primary key, so unlike
@@ -929,12 +941,15 @@ public static partial class RecordPatches
             // Merge into _parsedExtensionFields, record the extension id (so its emitted
             // TableExtension{extId} CLR type can be instantiated and registered on each
             // record of the base table — record-level triggers + field-validate dispatch),
-            // and evict any already-built NCLMetaTable for the base table so a rebuild picks
-            // up these fields. All three steps — including the eviction, whose necessity is
-            // explained on MergeExtensionFields itself (#2126) — happen atomically in the
-            // shared helper so a second writer (RecordPatches.BcAppFallback.cs's
-            // EnsureBcSymbolExtensionIndex) can't repeat this file's own former omission of it.
-            MergeExtensionFields(baseName, extId, fields, extKeys);
+            // record this extension's declaring app (from this file's own app.json, walked up
+            // from filePath) and whether it declares modify(...) (#3600), and evict any
+            // already-built NCLMetaTable for the base table so a rebuild picks up these
+            // fields. All these steps happen atomically in the shared helper so a second
+            // writer (RecordPatches.BcAppFallback.cs's EnsureBcSymbolExtensionIndex) can't
+            // repeat this file's own former omission of the eviction (#2126).
+            MergeExtensionFields(baseName, extId, fields, extKeys,
+                owningAppId: filePath != null ? ResolveOwningApp(filePath)?.AppId : null,
+                hasModify: hasModify);
         }
     }
 
@@ -1597,9 +1612,16 @@ internal record ParsedColumnFilter(string FieldName, ParsedColumnFilterKind Kind
 /// Application 28.1's 1523 tables state one, e.g. "CDS BC Table Relation" ->
 /// <c>dyn365bc_syntheticrelation</c>). Null when the table declares none, which is the blank
 /// the Table Metadata column must then report (#2938).</param>
+/// <param name="OwningAppId">The <c>id</c> of the <c>app.json</c> that owns the file this table
+/// was declared in, or null when the file's path was not supplied (a precompiled-.app
+/// source-text reparse, or a --tdd in-memory regeneration — see the callers of
+/// <c>TryParseTableFile</c>) or no app.json was found above it. #3600's table-metadata-source
+/// guard uses this to tell a same-app tableextension from a cross-app one; see
+/// <see cref="RecordPatches._extensionSourceInfo"/>.</param>
 internal record ParsedTable(int TableId, string TableName,
     List<ParsedField> Fields, List<int> PkFieldIds, List<ParsedKey>? SecondaryKeys = null,
     bool IsTableTypeTemporary = false, bool DataPerCompany = true,
     string? LookupPageName = null, string? DrillDownPageName = null,
     string? TableTypeName = null,
-    string? DataClassificationName = null, string? ExternalName = null);
+    string? DataClassificationName = null, string? ExternalName = null,
+    Guid? OwningAppId = null);

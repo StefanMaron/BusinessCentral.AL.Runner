@@ -253,7 +253,7 @@ public sealed class CalcFormulaExtensionFieldWiringTests : IDisposable
                     BindingFlags.NonPublic | BindingFlags.Static)
                 ?? throw new InvalidOperationException(
                     "RecordPatches.MergeExtensionFields not found — this test drives it.");
-        m.Invoke(null, new object?[] { baseTableName, extensionId, fields, null });
+        m.InvokeStatic(baseTableName, extensionId, fields, null);
     }
 
     /// <summary>Assign the metadata reflection statics RecordPatches.Register() would, from the
