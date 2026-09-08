@@ -51,6 +51,23 @@ public static class TddSupport
     /// </summary>
     public static IReadOnlyList<TestResult> BuildFailedTests(
         IReadOnlyList<TddExcludedObjectDetail> details)
+        => Build(details, TestOutcome.Fail, "--tdd", "<tdd-excluded>");
+
+    /// <summary>
+    /// Issue #3476: the same enumeration, reported as <see cref="TestOutcome.Skipped"/>. Used
+    /// by the non-tdd EMIT-EXCLUDED path when every dropped object is safe to drop and the
+    /// module runs anyway — the dropped object's tests DID NOT RUN, and a run that reports a
+    /// number while quietly discarding them is worse than the refusal it replaced. Skipped,
+    /// not Fail: nothing is known about whether these tests would pass, and Fail would make
+    /// the runner assert something it did not measure.
+    /// </summary>
+    public static IReadOnlyList<TestResult> BuildSkippedTests(
+        IReadOnlyList<TddExcludedObjectDetail> details)
+        => Build(details, TestOutcome.Skipped, "emit-excluded", "<emit-excluded>");
+
+    private static IReadOnlyList<TestResult> Build(
+        IReadOnlyList<TddExcludedObjectDetail> details, TestOutcome outcome,
+        string prefix, string unreadableMethodName)
     {
         var results = new List<TestResult>();
         var parseOpts = ParseOptions;
@@ -65,8 +82,8 @@ public static class TddSupport
                 // than silently dropping it, per loud-failures.md. There is no method name
                 // to attach it to, so it becomes a single synthetic "object" result.
                 results.Add(new TestResult(
-                    detail.ObjectDisplayName, "<tdd-excluded>", TestOutcome.Fail,
-                    $"--tdd: could not re-read {detail.FilePath} to find its [Test] procedures: {ex.Message}",
+                    detail.ObjectDisplayName, unreadableMethodName, outcome,
+                    $"{prefix}: could not re-read {detail.FilePath} to find its [Test] procedures: {ex.Message}",
                     string.Join("\n", detail.Diagnostics), TimeSpan.Zero,
                     AlCallStack: null, CodeunitDisplayName: detail.ObjectDisplayName,
                     Exception: null, Expectation: null, InsideTestProc: false));
@@ -95,8 +112,8 @@ public static class TddSupport
                     if (methodName.Length == 0) methodName = "<unnamed>";
 
                     results.Add(new TestResult(
-                        objName, methodName, TestOutcome.Fail,
-                        $"--tdd: {objName} did not compile — {firstDiag}",
+                        objName, methodName, outcome,
+                        $"{prefix}: {objName} did not compile — {firstDiag}",
                         diagText, TimeSpan.Zero,
                         AlCallStack: null, CodeunitDisplayName: objName,
                         Exception: null, Expectation: null, InsideTestProc: false));

@@ -224,15 +224,22 @@ public sealed class TddModeTests : IDisposable
     }
 
     /// <summary>
-    /// Criterion 10 — the default path must not change AT ALL. This asserts the SAME
-    /// fixture, without --tdd, still exits 3, reports EMIT-EXCLUDED (not TDD-EXCLUDED),
-    /// and runs zero tests — same shape EmitExclusionLoudnessTests pins for its own
-    /// fixture. This is a second, independent proof over a DIFFERENT fixture (one with
-    /// method-body reference errors rather than an unresolvable type), which is exactly
-    /// the class of compile failure this issue is about.
+    /// Criterion 10 — --tdd must not leak into the default path. The SAME fixture, without
+    /// --tdd, still exits 3 and reports EMIT-EXCLUDED rather than TDD-EXCLUDED. A second,
+    /// independent proof over a DIFFERENT fixture from EmitExclusionLoudnessTests' — one with
+    /// method-body reference errors rather than an unresolvable type, which is the class of
+    /// compile failure #1997 is about.
+    ///
+    /// The assertion that used to carry this — "and runs zero tests" — was #3476's subject and
+    /// is gone: the five broken objects are test codeunits nothing else in the module names, so
+    /// the survivors run. What still separates the two modes, and what this now asserts, is the
+    /// OUTCOME the dropped objects' tests get. --tdd reports them FAILED, because the point of
+    /// --tdd is a red test; the default path reports them SKIPPED, because nothing measured
+    /// whether they would pass. A default run that produced a FAILED result here would be
+    /// asserting something it never ran.
     /// </summary>
     [SkippableFact]
-    public void WithoutTdd_BehaviorIsByteForByteUnchanged()
+    public void WithoutTdd_ExclusionIsEmitExcludedAndItsTestsAreSkippedNotFailed()
     {
         TestArtifacts.SkipIfMissing();
 
@@ -242,7 +249,14 @@ public sealed class TddModeTests : IDisposable
         Assert.Equal(3, exit);
         Assert.Contains("EMIT-EXCLUDED", stdout + stderr);
         Assert.DoesNotContain("TDD-EXCLUDED", stdout + stderr);
-        Assert.Contains("Tests:         0 total", stdout);
+
+        // The healthy sibling really ran, and the dropped objects' tests are SKIPPED, not
+        // FAILED and not absent. `fail: 0` is the one that separates this from a --tdd run.
+        Assert.Contains("UnrelatedTest_StillPasses", stdout);
+        Assert.Contains("  pass:        1", stdout);
+        Assert.Contains("  fail:        0", stdout);
+        Assert.Contains("  skipped:     7", stdout);
+        Assert.Contains("MissingProcedure_ReportsFailedNotVanished", stdout);
     }
 
     /// <summary>Criterion 12 — --tdd + --server is rejected, not silently ignored.</summary>

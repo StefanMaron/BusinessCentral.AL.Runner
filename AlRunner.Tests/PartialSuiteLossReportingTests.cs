@@ -23,6 +23,11 @@
 // — byte-identical to a clean one-test run. The only disagreement was the exit code, and
 // `--watch` has no exit code at all, so there the loss was completely silent.
 //
+// That block is the measurement as it was taken and stays that way. #3476 changed what the
+// same fixture reports today — the excluded suite's healthy codeunit runs, so it is 3 tests,
+// 2 pass, 1 skipped — without changing anything this file asserts about: the suite error is
+// still named, the bucket is still `partial`, and the exit code is still 3.
+//
 // This file is entirely about the RUNNER's own reporting. There is no claim about Business
 // Central anywhere in it — "what does al-runner's summary block print when it cannot emit an
 // object" is not a question a service tier can adjudicate — so nothing here belongs in the
@@ -501,6 +506,12 @@ public sealed class PartialSuiteLossReportingTests
         Assert.Contains("PartialBundleHealthy_StillRuns", output, StringComparison.Ordinal);
         Assert.Equal(3, exit);
 
+        // #3476 moved this fixture's numbers, and the move is the point: the excluded suite's
+        // own healthy codeunit now runs too, and the dropped object's test is SKIPPED rather
+        // than absent. What did NOT move is everything this file is about — the suite error,
+        // `partial: 1`, and exit 3.
+        Assert.Contains("ExcludedSuiteHealthy_StillRuns", output, StringComparison.Ordinal);
+
         // The exclusion happened, and it is the EMIT-EXCLUDED path (not EMIT-ZERO).
         Assert.Contains("EMIT-EXCLUDED", output, StringComparison.Ordinal);
 
@@ -513,8 +524,10 @@ public sealed class PartialSuiteLossReportingTests
         Assert.Contains("EMIT-EXCLUDED", summary, StringComparison.Ordinal);
         Assert.Contains("partial:     1", summary, StringComparison.Ordinal);
 
-        // The counts still say what they measured.
-        Assert.Contains("Tests:         1 total", summary, StringComparison.Ordinal);
+        // The counts still say what they measured: two survivors ran, one dropped test did not.
+        Assert.Contains("Tests:         3 total", summary, StringComparison.Ordinal);
+        Assert.Contains("  pass:        2", summary, StringComparison.Ordinal);
+        Assert.Contains("  skipped:     1", summary, StringComparison.Ordinal);
     }
 
     /// <summary>

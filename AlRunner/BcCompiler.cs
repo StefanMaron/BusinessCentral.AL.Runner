@@ -94,7 +94,14 @@ public sealed record BcEmitOutput(
     // non-empty by design there, Diagnostics now non-empty too) and wipe the recovered
     // sources it depends on. This is what the EMIT-EXCLUDED / TDD-EXCLUDED messages'
     // "re-run with --verbose" promise actually surfaces.
-    IReadOnlyList<string>? ExcludedObjectDiagnostics = null);
+    IReadOnlyList<string>? ExcludedObjectDiagnostics = null,
+    // Issue #3476: the same per-object records as TddExcludedDetails, but ALWAYS populated.
+    // Program.cs's non-tdd EMIT-EXCLUDED branch needs each dropped object's own source FILE
+    // to decide whether dropping it is safe (ExcludedObjectTriage) — the ExcludedObjects
+    // labels alone cannot answer that, because the emit-retry loop's second branch labels an
+    // object by its FILE NAME rather than its AL name. Same list instance as
+    // TddExcludedDetails when --tdd is on; a plain empty list when nothing was excluded.
+    IReadOnlyList<TddExcludedObjectDetail>? ExcludedObjectDetails = null);
 
 public sealed partial class BcCompiler
 {
@@ -1876,16 +1883,16 @@ public sealed partial class BcCompiler
         // a stderr line alone does not do that (Log's [Component] filter eats it, and
         // nothing counts it).
         var excludedObjects = new List<string>();
-        // --tdd only (issue #1997): file path + the diagnostics that identified each
-        // excluded object, captured HERE — inside the round that identifies it — because
-        // `emitResult`/`caught` get reassigned to the next (smaller) retry compile's
-        // result at the bottom of this loop, at which point the diagnostics that named
-        // an EARLIER round's excluded object are no longer reachable from any variable
-        // in scope. Left null (not merely empty) when not in --tdd mode, so the emitted
-        // BcEmitOutput.TddExcludedDetails is null on the default path exactly as before
-        // this issue — no behavioural difference for a non-tdd caller.
-        var tddDetails = _tddMode ? new List<TddExcludedObjectDetail>() : null;
-        // Issue #2207: the SAME per-object diagnostics tddDetails captures above, but
+        // File path + the diagnostics that identified each excluded object, captured HERE —
+        // inside the round that identifies it — because `emitResult`/`caught` get reassigned
+        // to the next (smaller) retry compile's result at the bottom of this loop, at which
+        // point the diagnostics that named an EARLIER round's excluded object are no longer
+        // reachable from any variable in scope. Always allocated since #3476 (it was --tdd
+        // only, #1997): Program.cs's non-tdd branch reads it as ExcludedObjectDetails to
+        // decide per object whether dropping it is safe. TddExcludedDetails still goes out
+        // null outside --tdd mode, so that field's contract is unchanged.
+        var excludedObjectDetails = new List<TddExcludedObjectDetail>();
+        // Issue #2207: the SAME per-object diagnostics excludedObjectDetails captures above, but
         // ALWAYS collected (not gated on --tdd) and folded into the returned `alDiags`
         // below. Before this, the non-tdd path's EMIT-EXCLUDED message told the user to
         // "re-run with --verbose for the AL diagnostics that identified them" — but
@@ -1991,7 +1998,7 @@ public sealed partial class BcCompiler
                                 ? locatedDiagsForFile
                                 : new List<string> { $"emit-crash: {label} — {caught.Message.Split('\n', 2)[0]}" };
                             excludedObjectDiagnosticsList.AddRange(diagsForThisObject);
-                            tddDetails?.Add(new TddExcludedObjectDetail(alFiles[i], label, diagsForThisObject));
+                            excludedObjectDetails.Add(new TddExcludedObjectDetail(alFiles[i], label, diagsForThisObject));
                         }
                         else
                             nextKeepIdx.Add(i);
@@ -2035,7 +2042,7 @@ public sealed partial class BcCompiler
                             if (objDiags.Count == 0)
                                 objDiags = DiagnosticsForFile(i);
                             excludedObjectDiagnosticsList.AddRange(objDiags);
-                            tddDetails?.Add(new TddExcludedObjectDetail(alFiles[i], label, objDiags));
+                            excludedObjectDetails.Add(new TddExcludedObjectDetail(alFiles[i], label, objDiags));
                         }
                         else
                             nextKeepIdx.Add(i);
@@ -2266,8 +2273,8 @@ public sealed partial class BcCompiler
         }
 
         var emitOutput = new BcEmitOutput(
-            outputter.Captured, alDiags, excludedObjects, tddDetails,
-            _tddMode ? tddGeneratedMembers : null, excludedObjectDiagnostics);
+            outputter.Captured, alDiags, excludedObjects, _tddMode ? excludedObjectDetails : null,
+            _tddMode ? tddGeneratedMembers : null, excludedObjectDiagnostics, excludedObjectDetails);
 
         // #1902: only a CLEAN success (nothing excluded, every source captured) is trustworthy
         // as a RAD baseline — a module that only compiled after dropping broken objects must
