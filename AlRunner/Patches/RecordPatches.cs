@@ -2497,24 +2497,9 @@ public static partial class RecordPatches
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static Type? NCLMetaApplicationObject_get_ApplicationObjectClrType(object self)
     {
-        // objectId is declared on base NCLMetaApplicationObject. Non-public fields are not
-        // discovered through inheritance by GetField — walk up the type chain manually.
-        FieldInfo? objIdField = null;
-        for (var t = self?.GetType(); t != null && objIdField == null; t = t.BaseType)
-            objIdField = t.GetField("objectId", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly);
-        if (objIdField == null) return null;
-        var objId = objIdField.GetValue(self);
-        if (objId == null) return null;
-        var numProp = objId.GetType().GetProperty("ObjectNumber",
-            BindingFlags.Public | BindingFlags.Instance);
-        if (numProp == null) return null;
-        int id = (int)numProp.GetValue(objId)!;
-
         // Branch on ObjectType so this getter resolves correctly when the receiver
         // is an NCLMetaForm / NCLMetaReport (§P).  Tables are the §O default.
-        var typeProp = objId.GetType().GetProperty("ObjectType",
-            BindingFlags.Public | BindingFlags.Instance);
-        var ot = typeProp?.GetValue(objId)?.ToString();
+        if (!TryGetMetaObjectNumber(self, out var ot, out var id)) return null;
         return ot switch
         {
             // Page{id} first: that is what the AL compiler emits for a page, and answering

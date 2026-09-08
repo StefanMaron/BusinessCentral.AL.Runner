@@ -25,7 +25,7 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     internal bool? RaiseOnFindRecord(string which)
     {
-        if (!DeclaresRowsetTrigger("OnFindRecord", new[] { typeof(NavText) })) return null;
+        if (!DeclaresRowsetTrigger("IsFindRecordTriggerDefined")) return null;
         var result = InvokeRecordTrigger("OnFindRecord", new[] { typeof(NavText) },
             new object[] { new NavText(which) });
         return result as bool? ?? throw NotDispatched("OnFindRecord", "RaiseOnFindRecordAsync(NavText)", result);
@@ -38,13 +38,13 @@ internal sealed partial class RunnerPageInstance
     /// order — the only two values BC was observed to pass (corpus codeunit 60679, BC 28.4). The
     /// return is how far it actually moved, so 0 means an end of the rowset.</para>
     ///
-    /// <para><c>setSize</c> must stay 0. A non-zero value makes BC consult the
-    /// <c>IsNextRecordTriggerDefined</c> flag this runner does not populate (#3447) and fall
-    /// back to a different platform call than the caller's — docs/page-rowset-triggers.md.</para>
+    /// <para><c>setSize</c> stays 0. BC reads <c>IsNextRecordTriggerDefined</c> for a non-zero
+    /// one and then makes its OWN routing decision; this caller has already made that decision
+    /// from the same flag, so 0 keeps one decision rather than two — docs/page-rowset-triggers.md.</para>
     /// </summary>
     internal int? RaiseOnNextRecord(int steps)
     {
-        if (!DeclaresRowsetTrigger("OnNextRecord", new[] { typeof(int) })) return null;
+        if (!DeclaresRowsetTrigger("IsNextRecordTriggerDefined")) return null;
         var result = InvokeRecordTrigger("OnNextRecord", new[] { typeof(int), typeof(int) },
             new object[] { steps, 0 });
         return result as int? ?? throw NotDispatched("OnNextRecord", "RaiseOnNextRecordAsync(int,int)", result);
@@ -67,30 +67,42 @@ internal sealed partial class RunnerPageInstance
             + "docs/page-rowset-triggers.md");
 
     /// <summary>
-    /// Whether this page overrode <paramref name="trigger"/>, in either flavour the AL compiler
-    /// emits.
+    /// Whether this page declares the trigger behind <paramref name="flag"/>, read from BC's own
+    /// page metadata — the twelve <c>NCLMetaForm.Is&lt;Trigger&gt;Defined</c> properties.
     ///
-    /// <para><c>DeclaredOnly</c> is load-bearing: both triggers are <c>NavForm</c> virtuals whose
-    /// BASE bodies are the platform find and step, so a plain <c>GetMethod</c> resolves on every
-    /// page and every page would look as though it declared them. BC asks page metadata instead;
-    /// that answers FALSE here for a page that does declare the trigger (#3447), which is why
-    /// this asks the compiled class — see docs/page-rowset-triggers.md.</para>
+    /// <para>This used to reflect over the compiled page class instead, because the flags
+    /// answered false for a page that did declare the trigger (#3447). They answer truthfully
+    /// now, so the runner and BC's own consumers of these flags decide from one value.</para>
+    ///
+    /// <para>No metaform is BC's own "not defined" — <c>NavForm.RaiseOnNextRecordAsync</c> reads
+    /// exactly this pair the same way, <c>TryGetNclMetaForm(out m) &amp;&amp; m.IsNext…</c>.</para>
     /// </summary>
-    private bool DeclaresRowsetTrigger(string trigger, Type[] types)
+    private bool DeclaresRowsetTrigger(string flag)
     {
-        const BindingFlags Declared = BindingFlags.Public | BindingFlags.NonPublic
-                                    | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+        var form = _form;
+        if (form == null) return false;
 
-        for (var t = _form?.GetType(); t != null && t != typeof(NavForm); t = t.BaseType)
-            foreach (var name in new[] { trigger, trigger + "Async" })
-                if (BcShape.FindMethod(t, name, Declared,
-                        surface: "page rowset triggers", member: $"{t.Name}.{name}",
-                        detail: "the runner asks whether this page overrode the trigger, and two "
-                              + "declarations of one name on one type leave no way to say which "
-                              + "body serves the rowset — see docs/page-rowset-triggers.md",
-                        types: types) != null)
-                    return true;
+        var tryGet = BcShape.FindMethod(form.GetType(), "TryGetNclMetaForm",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
+            surface: "page rowset triggers", member: "NavForm.TryGetNclMetaForm",
+            detail: "the runner reads the page's declared triggers off its NCLMetaForm — see "
+                  + "docs/page-rowset-triggers.md");
+        if (tryGet == null)
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "page rowset triggers", "NavForm.TryGetNclMetaForm",
+                "BC no longer declares it, so the runner cannot reach the page metadata that "
+                + "says whether this page serves its own rowset");
 
-        return false;
+        var args = new object?[] { null };
+        if (!(bool)tryGet.Invoke(form, args)! || args[0] is not object metaForm) return false;
+
+        var prop = metaForm.GetType().GetProperty(flag,
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                "page rowset triggers", $"NCLMetaForm.{flag}",
+                "BC no longer declares this page-metadata flag, so the runner cannot tell whether "
+                + "this page serves its own rowset");
+
+        return (bool)prop.GetValue(metaForm)!;
     }
 }
