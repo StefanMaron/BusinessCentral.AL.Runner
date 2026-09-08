@@ -8,18 +8,17 @@
 //
 // What this file pins is the mechanism the helper now uses, and why it is not a guess:
 // BC's own NavForm.GetDecimalString cascade already runs to completion inside the runner and
-// publishes its result as the control's "Control<id>_Format" source expression. Measured on
-// BC 28.1 against a four-control probe page, all four format strings computed by BC's own code:
+// publishes its result as the control's "Control<id>_Format" source expression. The measured
+// format strings live in docs/limitations.md#testpage-decimal-formatting and are adjudicated
+// upstream by corpus codeunit 60605 "ALT AutoFormat Tests", green on all eight cloud legs.
 //
-//     AutoFormatType = 0                                  -> #,##0.00
-//     AutoFormatType = 1,  expression 'EUR'               -> #,##0.00
-//     AutoFormatType = 10, expression '<Precision,3:3>…'  -> #,##0.000
-//     DecimalPlaces  = 3 : 3                              -> #,##0.000
+// They are deliberately NOT restated here. That table was copied into three places and the
+// custom-expression arm was mislabelled in all of them; correcting it in four left two behind,
+// which is the argument against the fourth copy rather than for it.
 //
 // So the format string is BC's answer, not the runner's, and the helper's job is only to apply
 // it rather than to invent one. Before this change the helper ignored it and hardcoded "0.00"
-// for every Decimal on every page, which is why AutoFormatType = 10 and DecimalPlaces = 3 : 3
-// both read back as two decimals.
+// for every Decimal on every page, so a control declaring a format read back as two decimals.
 using System.Globalization;
 using AlRunner;
 using Microsoft.Dynamics.Nav.Runtime;
