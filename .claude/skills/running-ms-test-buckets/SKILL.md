@@ -1,6 +1,6 @@
 ---
 name: running-ms-test-buckets
-description: Run Microsoft's BaseApp test buckets through AL Runner to find real gaps — where the sources come from, the configuration that must be exact, how to size a run, and how to turn failures into issues worth filing. --test-data is mandatory; without it roughly 40% of failures are missing setup data rather than defects. And even with it, --test-data presents a RESTORED CRONUS, not one prepared the way Microsoft's pipelines prepare it, so some failures are an incomplete data recipe on our side rather than runner defects — triage for that before filing. Use when generating work from the Microsoft surface, when triaging a bucket failure, or when measuring where the runner stands against it.
+description: Run Microsoft's BaseApp test buckets through AL Runner to find real gaps — where the sources come from, the configuration that must be exact, how to size a run, and how to turn failures into issues worth filing. --test-data is mandatory; without it roughly 40% of failures are missing setup data rather than defects. And even with it, --test-data presents a RESTORED CRONUS, not one prepared the way Microsoft's pipelines prepare it, so some failures are a company-configuration difference on our side rather than runner defects — triage for that before filing, and capture a real difference as a normalization rule rather than proposing to replicate Microsoft's DemoTool, whose executing code they do not publish. Use when generating work from the Microsoft surface, when triaging a bucket failure, or when measuring where the runner stands against it.
 ---
 
 # Running Microsoft's BaseApp test buckets
@@ -58,19 +58,71 @@ a container-passing cluster against the patch table in `docs/upstream-corpus-wor
 
 ### …and `--test-data` still gives a restored CRONUS, not a *prepared* one
 
-The 40% above is the coarse form of a sharper fact. **Microsoft's pipelines run independent
-data-preparation steps on top of CRONUS before their tests execute.** The blueprint for those
-steps lives in those pipelines, and we have not replicated it. `--test-data` hydrates from the
-demo backup, so it presents the company **as restored** — not as Microsoft's tests were written
-against.
+The 40% above is the coarse form of a sharper fact. **Microsoft does not restore the demo backup
+at all — it generates the test company from scratch**, and `--test-data` presents the company **as
+restored**, not as Microsoft's tests were written against.
 
-A whole class of Microsoft-bucket failures is therefore **neither a runner defect nor a BC
-divergence**. It is an incomplete data recipe on our side, and those tests are expected to fail
-until someone replicates the preparation blueprint.
+**The recipe is known in full (#3429).** `microsoft/BCApps`'s
+`build/scripts/ImportTestDataInBcContainer.ps1`, for `testType = "Legacy"` — which is every BaseApp
+bucket — does this, in order:
 
-**This is deliberately not the priority** (Stefan, resolving #2730): fix the clear runner
-failures first. Chasing the recipe to reach 100% green is the *very end* of the work, once
-nothing else is left.
+1. install only the `Base`, `TestFramework` and `LocalBaseExtensions` app groups, plus `DemoTool`;
+2. delete **every** existing company, then create one new, empty, non-evaluation company named
+   `CRONUS International Ltd.`;
+3. run codeunit 2 `Company-Initialize`, then open page 101900 "Demonstration Data Tool" and invoke
+   `Create Demo Data from Config`, which runs codeunit 101899 against `src/DemoTool/DemoDataConfig.xml`
+   with `DataType = Extended`;
+4. install the remaining apps, **after** the demo data exists.
+
+**And step 3 cannot be replicated, because Microsoft does not publish the code that performs it.**
+Measured, not assumed:
+
+| where | result |
+|---|---|
+| `microsoft/BCApps` `src/DemoTool/` | 315 files — `DemoDataConfig.xml`, 95 png, 94 jpg, 32 gif, docs, spreadsheets. **Zero `.al` files.** |
+| shipped Base Application 28.1 | 8,026 AL files, 1,691 codeunits, 2,610 pages. **Zero objects in the 101000–101999 band.** Zero files containing `Create Demo Data from Config` or `Demonstration Data Tool`. |
+
+Codeunit 2 `Company-Initialize` **is** in the shipped Base Application — confirmed twice, by an
+object-id scan of the package's AL sources and by name. Codeunit 101899 and page 101900 are in
+neither the artifact nor the public repository.
+
+So **"replicate Microsoft's data preparation" is not a task that can be assigned.** Do not open an
+issue proposing it, and do not propose writing an importer for it — there is nothing to import. The
+config XML is public, the recipe is public, the executing code is Microsoft-internal.
+
+What is reachable is exactly two things: **codeunit 2**, which ships and could in principle be run,
+and **the demo backup**, which is the *output* of that same pipeline shipped as data. `--test-data`
+already uses the second. So the gap is only where the shipped backup and a freshly generated
+company differ — a set of field-level differences, not a missing procedure.
+
+A class of Microsoft-bucket failures is therefore **neither a runner defect nor a BC divergence**.
+It is a difference between two companies, and the only way to close a piece of it is to name the
+difference and write it down as a rule (see "Capturing a configuration difference" below).
+
+**This is deliberately not the priority** (Stefan, resolving #2730): fix the clear runner failures
+first.
+
+**How much it is worth, measured.** Do not go in expecting a large lever. Full `Tests-ERM`, both
+arms identical but for the flag:
+
+| | total | pass | fail | error |
+|---|---|---|---|---|
+| without `--test-data-normalize-company` | 9,497 | 6,691 | 2,790 | 16 |
+| with it | 9,497 | **6,709** | 2,772 | 16 |
+
+**+18 passing, +0.19 points**, on the bucket where the one implemented rule should matter most.
+Both arms measured exactly the same 9,497 tests — identical key sets, nothing present in one and
+not the other — and all 18 flips are fail → pass with no regressions. **11 of the 18 are tests
+Microsoft itself never runs**, so against their suite it is +7.
+
+The mechanism is real and every flip went the way it was predicted to. The scale is what an earlier
+version of this section got wrong.
+
+**The denominator is also not 40,530.** 12,018 of the 40,828 `[Test]` methods across the 32 buckets
+are listed in Microsoft's `src/DisabledTests/` and are skipped by their own pipeline, so Microsoft
+runs 28,810 of them. A cluster made mostly of tests they disable is worth proportionally less.
+Correcting for it moves our headline from 59.2% to 60.3% — about one point, because we pass their
+disabled tests at 59.1% and their live ones at 66.9%.
 
 **One piece of the recipe now exists as an opt-in flag: `--test-data-normalize-company`.** It
 rewrites named, measured fields of the restored company towards the DemoTool one; today the
@@ -119,6 +171,64 @@ Recipe failures:
   permanent nor a disagreement with BC. Calling it divergence records a fixable data gap as a
   settled decision.
 
+#### Capturing a configuration difference
+
+The triage rule above is entirely negative — do not file it, do not bend the runner, do not call it
+divergence. Here is the positive half, and it is the only way a piece of the recipe ever gets
+closed: **name the difference and write it down as a rule.**
+
+Rules live in `AlRunner/Infrastructure/TestDataNormalization.cs`. One rule is one field write on one
+table's restored rows:
+
+```csharp
+new CompanyNormalizationRule(
+    TableId: 98,                                   // AL table id, never the backup's table NAME —
+    TableName: "General Ledger Setup",             // the name varies by country layer, the id does not
+    FieldName: "Additional Reporting Currency",
+    TargetJson: "\"\"",                            // the target value as a JSON literal
+    Why: "...")                                    // printed on every application; see below
+```
+
+Four things the file enforces, and that a PR adding a rule has to respect:
+
+1. **Bump `RuleSetVersion`.** It feeds `CacheIdentity()`, which is folded into the install-baseline
+   cache key. Skip it and a baseline captured under the old rule set gets restored into a run asking
+   for the new one, silently, against un-normalized rows — the exact silent-wrong-answer class
+   `.claude/rules/loud-failures.md` exists to prevent.
+2. **`Why` is not decoration.** It is printed every time the rule fires, and it must say what
+   Microsoft's company has, what the backup has instead, and which observable behaviour the
+   difference changes. A reason not worth printing is not worth applying.
+3. **A rule that names a field the loaded rows do not carry THROWS.** That is deliberate: the
+   alternative is a run reporting "normalized" while nothing was normalized. If your rule throws,
+   the rule is wrong, not the guard.
+4. **Field writes on existing rows only.** Anything that is not one does not belong here, and this
+   is where an eager agent goes wrong. #3429 names Global Dimension 2 and shortcut dimensions 3–6 as
+   the obvious next candidates; they are **master data**. Changing Global Dimension 2 on a company
+   that already has posted entries dimensioned by `CUSTOMERGROUP` is not a field write in BC, and the
+   target value `PROJECT` does not exist as a Dimension in the restored company at all. Do not add
+   them.
+
+**Evidence a new rule needs, before the PR.** The same shape as the worked example below — run the
+affected bucket, or a single codeunit, both ways, and report both counts. `--test-data-normalize-company`
+is off by default precisely so that every recorded number stays comparable; a rule that ships without
+a measured before/after cannot be checked by anyone later.
+
+**Where to look for the difference itself.** `src/DemoTool/DemoDataConfig.xml` in `microsoft/BCApps`
+is public, and it is the authoritative statement of what their generated company contains. It is the
+one half of the recipe we can read.
+
+Read the right one. There are **25** files by that name in BCApps: `src/DemoTool/DemoDataConfig.xml`
+is **W1**, and the other 24 are country layers at `src/GDL/<country>/DevBase/DemoTool/DemoDataConfig.xml`
+(AU, BE, CA, CH, CZ, DACH, DE, DK, ES, FI, FR, GB, IN, IS, IT, MX, NA, NL, NO, NZ, RU, SE, AT, APAC).
+**We run the W1 buckets, so W1 is the file that governs** — a rule justified from a country layer's
+config is describing a company we do not build. The existing ACY rule's `Why` cites all 25 because it
+happens to hold in every one of them; that is a stronger claim than a rule normally needs, not the
+standard shape.
+
+Compare it against what the backup actually holds, which the reader in
+`AlRunner/TestDataProvisioner.cs` can dump. The difference between those two is the whole search
+space.
+
 #### The worked example, measured
 
 `Codeunit134157`, three tests asserting a G/L Entry count, each off by exactly +1:
@@ -138,13 +248,19 @@ so given an ACY, **BC's own residual rule correctly adds a sixth G/L Entry**, an
 correctly report six where they expect five. The runner was posting correctly for the company
 it was handed. There is no runner defect anywhere in that chain.
 
-#### The scale — this is a class, not a cluster
+#### The scale — a class, but a small one
 
-#2730 already records two more from the same single setting: codeunit 134880's four `Reverse…`
+#2730 records two more clusters from the same single setting: codeunit 134880's four `Reverse…`
 tests, and a 16-test exchange-rate cluster (`There is no Detailed Cust. Ledg. Entry within the
-filter` after report 596) that cannot be diagnosed cleanly while ACY is set. #2833 is a fourth.
-One field of one setup table, four independent clusters — which is what makes this a recipe
-problem rather than a handful of odd tests. Expect other prepared state to behave the same way.
+filter` after report 596). #2833 is a fourth. One field of one setup table, four independent
+clusters, which is what makes this a recipe question rather than a handful of odd tests.
+
+**But measure before predicting.** In the full-bucket run above, cu 134157 goes 3/6 → 6/6 and
+cu 134880 goes 22/28 → 26/28, both reproducing outside isolation — and the 16-test exchange-rate
+cluster **did not move at all**. The whole flag is worth 18 tests in a 9,497-test bucket. An earlier
+version of this section said "expect other prepared state to behave the same way", which primed
+agents to expect a large payoff; the honest version is that each difference is worth a handful of
+tests and the class is worth pursuing for correctness, not for the coverage number.
 
 #### One thing this does NOT explain, and must not bury
 
