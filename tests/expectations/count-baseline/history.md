@@ -1994,3 +1994,29 @@ fixed runner at the new pin with CI's own three-app invocation (`--strict
 side, at this pin on `main` the `WriteTxBoundary` filter is 11 total, 9 pass, 2 fail — Test09
 (the runner let a write through that BC refuses) and Test10 (the flag left set after a
 statement-form run). Added by agent fbk-1.
+## 2026-09-08 — `runner-extras` new app group `report-stubmeta-unbounded-loop` (+4, #3375)
+
+New group, one line under `groups`, no `absentOn`. Its `app.json` declares neither
+`"application"` nor `"platform"` and its own control report runs over a plain table rather
+than the `Integer` virtual table, so nothing here needs the Base Application floor and the
+group compiles on every leg. Four is what the runner printed on BC 28.1: `4P/0F/0E across 4
+tests`.
+
+The group proves the refusal #3375 adds. Its dependency `.app` deliberately carries **no**
+`SymbolReference.json`, only `src/`, which closes both of the runner's report-metadata sources
+at once — the emit registry never saw the dep (never source-compiled) and there is no symbol
+entry to reconstruct from. `NavReportSync` then synthesized a `MetaDataItem` per data item out
+of the data item's NAME alone, and BC read its unset `MaxIteration` as "no limit". Measured on
+this fixture with `AL_RUNNER_INTEGER_WINDOW_MAX=50` (a 1,051-row window), before the fix: the
+dependency report's own `OnPostReport` reported `maxiter=1051 filter=1051` against a declared
+`MaxIteration = 1` and `where(Number = filter(1 .. 3))`. Both bounds were gone, not just the
+one #3374 named.
+
+Four tests and not fewer because each closes a different hole: the refusal fires and names the
+report; the loop does not run at all (the report's own iteration report never appears); a
+data-item-less report the runner also cannot describe still runs its triggers, so the guard is
+proportional rather than "refuse every stub"; and the same two bound shapes source-compiled in
+this bundle still answer 1 and 3, so the fix is scoped to reports nothing describes and nothing
+was clamped.
+
+Written by the coord-1 agent.

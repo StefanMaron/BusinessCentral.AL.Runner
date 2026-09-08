@@ -49,6 +49,7 @@
         "query-join-aggregation-oos": { "tests": 4 },
         "report-dep-maxiteration": { "tests": 2 },
         "report-precompiled-dep-metadata": { "tests": 2 },
+        "report-stubmeta-unbounded-loop": { "tests": 4 },
         "server-multibundle-dep": { "tests": 0 },
         "server-multibundle-main": { "tests": 4 },
         "server-reload-dep": { "tests": 0 },

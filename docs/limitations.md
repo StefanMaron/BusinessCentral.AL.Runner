@@ -1444,7 +1444,7 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 <a id="runtime-shape-gaps"></a>
 
 - **Runtime shape gaps outside the virtual tables — the runner refuses rather than answering
-  a shape it cannot produce.** 13 further guards raise `RunnerOutOfScopeException` with the
+  a shape it cannot produce.** 14 further guards raise `RunnerOutOfScopeException` with the
   reason anchor `not-yet-implemented`, so an AL `[TryFunction]` cannot absorb one into `false`
   ([#2966](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2966)). The number
   counts refusal **call sites**, which is the rule the original nine were counted under; it is
@@ -1465,6 +1465,26 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
     context or request (`RunnerModalDispatch.cs`);
   - **report construction**, when the runner cannot build the report object at all to run it
     or its request page (`NavReportSync.cs`);
+  - a **report's data-item loop**, when neither metadata source describes the report and its
+    data items therefore carry a MetaDataItem synthesized from their name alone
+    (`NavReportSync.RefuseLoopOverSynthesizedDataItems`,
+    [#3375](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3375)). This is
+    the ONE runtime shape gap whose absence is silent rather than a crash, which is why it
+    was found by profiling a hang: a synthetic data item cannot say "unknown" to BC.
+    `MetaDataItem.MaxIteration` is an int whose only unset value is `0`, and
+    `DataItemIterator.ExecuteDataItemLoopAsync` reads `0` as **no limit**; an absent
+    `DataItemTableView` is read as no filter and no sorting. So running such a loop
+    substitutes "unbounded" for whatever the report declared, and a `MaxIteration = 1` data
+    item over the `Integer` virtual table iterates the whole materialised window — 101,001
+    rows. Measured on `tests/runner-extras/report-stubmeta-unbounded-loop` with the window
+    shrunk to 1,051 rows: 1051 and 1051 iterations against a declared 1 and 3. That is the
+    shape that cost 42% of the Microsoft test surface in
+    [#3370](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3370), reached by
+    the route [#3383](https://github.com/StefanMaron/BusinessCentral.AL.Runner/pull/3383) did
+    not close. The guard is proportional: a report the runner also cannot describe but which
+    declares NO data items has no loop to bound, so it still runs its lifecycle triggers.
+    Register the `.app` that declares the report, **with** its `SymbolReference.json`, and the
+    metadata is reconstructed instead (`DependencyReportMetadata.cs`) and nothing refuses;
   - **AL field-trigger installation**, in two shapes across three call sites that used to be
     skipped in silence
     ([#3048](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3048)) — a field

@@ -1,0 +1,32 @@
+{
+  "id": "e0f1a2b3-4c5d-4e6f-9a7b-8c9d0e1f2a04",
+  "name": "Runner Extras - Report StubMeta Unbounded Loop",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves the runner refuses to iterate a report's data items when no source describes that report, instead of synthesizing a data item that claims 'no bound' and looping to the Integer virtual table's edge (issue #3375).",
+  "description": "Regression test for NavReportSync.BuildSyntheticFlatMetaDataItem. The dependency 'RSM Precompiled StubMeta Dep' (declared below, loaded from the committed .deps-bin/*.dll) ships reports 65821 and 65822 as pure compiled code, and its committed .alpackages/*.app carries NO SymbolReference.json — so neither of the runner's two metadata sources holds them: the emit registry never saw them (never source-compiled) and no symbol file declares them. Report 65821's data items therefore reached BC's DataItemIterator with a MetaDataItem synthesized from the data item's NAME alone, whose MaxIteration is 0 and whose DataItemTableView is absent. BC reads both as 'no bound', so a `MaxIteration = 1` data item over the Integer virtual table ran 101,001 times and a `where(Number = filter(1 .. 3))` sibling ran 101,001 times too. Measured on this fixture with the window shrunk to 1,051 rows: 1051 and 1051, against the declared 1 and 3. The runner now refuses that loop by name instead. Report 65822 declares no data items and is the proportionality control; report 65842 in this bundle declares the same two shapes and IS source-compiled here, so its emit-captured metadata bounds it at 1 and 3 and proves the refusal is scoped to reports nothing describes."
+  ,
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "d9e0f1a2-3b4c-4d5e-8f6a-7b8c9d0e1f03",
+      "name": "RSM Precompiled StubMeta Dep",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65840,
+      "to": 65859
+    }
+  ],
+  "runtime": "17.0",
+  "target": "Cloud",
+  "features": []
+}
