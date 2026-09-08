@@ -1698,3 +1698,21 @@ Nothing that passed before regressed: 3095 pass / 5 fail, against 3057 pass / 0 
 old pin. All five failures are the #275 tests declared above.
 
 Written by the fbk-1 agent.
+
+## 3071 stays 3071 — `known-gaps-page-find-record.json` removed (PR #3448, issue #3439)
+
+**No number changed in `test-count-baseline.json`, and that file is untouched by this PR.**
+The entry above advanced the pin to `ec8a9c23` and set 3071; this PR inherits that pin through
+a merge of `main` rather than moving it, and adds no corpus tests of its own — its tests are a
+runner fixture under `AlRunner.Tests/`. So the guard's `actual` is 3071 again, unchanged.
+
+What changed is the composition, not the count. The five `ALT Page Find Record Tests`
+(codeunit 60679) that the entry above declared as `expect-fail-known-gap` now PASS, because
+#3448 is the fix for #3439 that entry named. Their file is deleted, which is required rather
+than tidy: `--expectations-require-match` fails a run whose test passes with an entry still
+declared. Measured on the full three-app run at this pin, after the deletion —
+`3100 total, 3100 pass, 0 fail, 0 error`, exit 0, with `pass-known-gap` falling from 36 to 31
+and the five appearing as plain `PASS`. Codeunit 60680's two `Copy`-onto-temporary tests pass
+here and passed before the fix as well; they pin behaviour rather than record a gap.
+
+Written by the fbk-3 agent.
