@@ -99,21 +99,34 @@ public static partial class RecordPatches
     private static bool CheckTrigger(Type platformBase, Type clrType, string name, bool isPublic)
     {
         var flags = BindingFlags.Instance | (isPublic ? BindingFlags.Public : BindingFlags.NonPublic);
-        var method = clrType.GetMethod(name, flags);
+        var method = LookupTrigger(clrType, name, flags);
         if (method != null) return method.DeclaringType != platformBase;
 
-        // BC throws here, and so must this: GetMethod searches the whole hierarchy, so a null
+        // BC throws here, and so must this: the lookup searches the whole hierarchy, so a null
         // means platformBase itself no longer declares the trigger — the shape this computation
         // rests on. Answering false instead would silently report "declares nothing" for every
         // page in the run, which is #3447 reappearing with no signal.
-        if (clrType.GetMethod(name + "Async", flags) != null
-         || platformBase.GetMethod(name, flags) != null) return false;
+        if (LookupTrigger(clrType, name + "Async", flags) != null
+         || LookupTrigger(platformBase, name, flags) != null) return false;
 
         throw new AlRunner.Infrastructure.BcShapeGapException(
             "page trigger metadata", $"{platformBase.Name}.{name}",
             $"neither {name} nor {name}Async resolves on {clrType.Name}, so the runner cannot say "
             + "which page triggers this page declares — see docs/page-rowset-triggers.md#page-trigger-metadata");
     }
+
+    /// <summary>
+    /// One BC-typed method lookup for the whole file, through <see cref="BcShape"/> (#3069): a
+    /// trigger name that grows a second declaration must arrive as a named gap, not as an
+    /// <c>AmbiguousMatchException</c> an <c>asserterror</c> can absorb. No <c>types:</c> filter —
+    /// the twelve triggers have twelve different signatures and BC resolves them by name too.
+    /// </summary>
+    private static MethodInfo? LookupTrigger(Type declaring, string name, BindingFlags flags)
+        => BcShape.FindMethod(declaring, name, flags,
+            surface: "page trigger metadata", member: $"{declaring.Name}.{name}",
+            detail: "the runner asks which page triggers this page declares, and two declarations "
+                  + "of one trigger name leave no way to say which body BC would have counted — "
+                  + "see docs/page-rowset-triggers.md#page-trigger-metadata");
 
     /// <summary>The compiled <c>PageExtension{id}</c> classes extending this page, in id order.</summary>
     private static List<Type> PageExtensionTypesFor(object metaForm)

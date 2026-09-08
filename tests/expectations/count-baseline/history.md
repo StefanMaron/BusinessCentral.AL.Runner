@@ -2020,3 +2020,23 @@ this bundle still answer 1 and 3, so the fix is scoped to reports nothing descri
 was clamped.
 
 Written by the coord-1 agent.
+
+## al-language 3103 -> 3107, pin `19560bd3` -> `23a9e869` (#3447, corpus #290)
+
+Corpus PR #290 adds `tests/al-language/pageextensiontrigger/`: four tests over the page triggers
+a PAGEEXTENSION declares, on a base page declaring none of them, so every raise the log holds
+came from the extension. Verified on a real BC 28.4.53241.0 tier before it merged (4/4 Success,
+container `fbk3-3447`), then executed 4/4 on all eight cloud legs of the corpus CI.
+
+One intervening corpus commit between the two pins, and it is that merge: `git log 19560bd3..23a9e869`
+is exactly `23a9e86`. Nothing else to classify, so no expectation entry was needed.
+
+Folded rather than landed alone because the four are RED without this PR's runner fix: measured
+on the new pin with the old dispatch, all four failed ("the pageextension's OnOpenPage must run
+exactly once for one open", actual 0). BC's `NavForm.RaiseOn<trigger>Async` ends with a pass over
+`NavForm.pageExtensions`, which only `RegisterPageExtension` fills - and that is called from
+`NCLPageExtension.CreateExtensionInstanceAndBindToParent` inside `NCLMetaForm.CreateObjectInstance`,
+a path the runner replaces. Nothing registered them. `RunnerPageInstance` now binds them at
+construction, and the same four run 4P/0F.
+
+Written by the fbk-3 agent.
