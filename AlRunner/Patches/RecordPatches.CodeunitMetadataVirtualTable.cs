@@ -356,10 +356,18 @@ public static partial class RecordPatches
                     symbol.Subtype ?? "Normal");
             }
 
+            // Loud, never silent (#3540). This is the runner answering a column WRONG on
+            // purpose, not progress: the row's TableNo reads 0, which is also the truthful
+            // answer for a codeunit declaring none, so the read cannot tell the two apart and
+            // nothing else in the run records which one it was. `[warn]` is the severity shape
+            // Log.cs exempts by design; `[RecordPatches]` is dropped at default verbosity along
+            // with its 379 lines of ordinary chatter, which is where this sentence used to go.
             if (unresolvedTables.Count > 0)
                 Console.Error.WriteLine(
-                    $"[RecordPatches] CodeUnit Metadata: {unresolvedTables.Count} declared TableNo reference(s) "
-                    + "could not be resolved to a table id and are reported as 0: "
+                    $"[warn] RecordPatches: CodeUnit Metadata: {unresolvedTables.Count} declared TableNo "
+                    + "reference(s) could not be resolved to a table id, so those rows answer TableNo = 0 — "
+                    + "the same value a codeunit that declares no TableNo answers, and AL branching on "
+                    + "TableNo will fail to tell the two apart: "
                     + string.Join("; ", unresolvedTables.Take(10))
                     + (unresolvedTables.Count > 10 ? $" (+{unresolvedTables.Count - 10} more)" : string.Empty));
 
