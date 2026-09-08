@@ -1,0 +1,188 @@
+How .alpackages/*.app and .deps-bin/*.dll in this folder were produced
+========================================================================
+
+These two binary fixtures make "RSM Precompiled StubMeta Dep" (reports 65821 and
+65822) load as a genuinely Tier-1 precompiled dependency
+(DependencyLoader.LoadOne: <bucketRoot>/.deps-bin/<Publisher>_<Name>_<Version>.dll)
+with NO AL source reachable at metadata time.
+
+WHAT MAKES THIS SUITE DIFFERENT FROM report-dep-maxiteration
+------------------------------------------------------------
+That sibling suite's .app carries a real SymbolReference.json, so its report goes
+down RecordPatches.TryBuildDependencyReportMetadata -- the path #3383 fixed.
+
+This one must NOT. The .app here is written by `al-runner --emit-app`, which
+embeds src/*.al and a NavxManifest.xml and NOTHING ELSE, so
+BcAppSymbolCache.Get(...).Reports is empty for it and FindDependencyReportSymbol
+returns null. That closes BOTH metadata sources at once -- the emit registry
+never saw the dep either -- which is the ONLY way to reach
+NavReportSync's legacy stub path and BuildSyntheticFlatMetaDataItem. Adding a
+SymbolReference.json to this fixture would silently move it onto the sibling
+suite's surface and it would pass before and after the fix.
+
+IMPORTANT: the dep's AL source must NEVER live inside this suite folder (or any
+other runner-extras suite folder) -- a flat-bundle suite's compile step scans
+*.al recursively under its own root, so source sitting next to these fixtures
+would get swept into the MAIN app's own compile, the reports would get REAL
+emit-captured metadata, and the defect would be unreachable. Keep the dep source
+external (a scratch dir, NOT under tests/), regenerate there, then copy only the
+two binary artifacts back here.
+
+Dep app.json (place in a scratch dir, e.g. /tmp/rsm-dep/). "application" and
+"platform" are required: report 65821's data items are over the Integer virtual
+table, which the AL compiler cannot resolve without them (error AL0185 "Table
+'Integer' is missing"). This is a runner-extras AL fixture, not an
+AlRunner.Tests C# fixture, so .claude/rules/no-base-app-in-csharp-tests.md does
+not apply -- and the dep is compiled once, offline, into the committed DLL, so
+the floor is never paid at test time. THIS SUITE'S OWN app.json declares
+neither, deliberately: its control report 65842 runs over a plain table.
+
+  {
+    "id": "d9e0f1a2-3b4c-4d5e-8f6a-7b8c9d0e1f03",
+    "name": "RSM Precompiled StubMeta Dep",
+    "publisher": "AL Runner Fixtures",
+    "version": "1.0.0.0",
+    "dependencies": [],
+    "idRanges": [ { "from": 65820, "to": 65839 } ],
+    "runtime": "17.0",
+    "target": "Cloud",
+    "features": [],
+    "application": "28.0.0.0",
+    "platform": "28.0.0.0"
+  }
+
+Dep AL source, StubMetaReport.Report.al (same scratch dir). The report reports
+its OWN iteration counts through OnPostReport, so the count is observable from
+the calling test WITHOUT a shared table -- which matters here, because with no
+SymbolReference.json the suite app cannot compile against a table declared in
+the dep at all:
+
+  report 65821 "RSM StubMeta Report"
+  {
+      ProcessingOnly = true;
+      UseRequestPage = false;
+
+      dataset
+      {
+          dataitem(BoundedByMaxIteration; "Integer")
+          {
+              DataItemTableView = sorting(Number);
+              MaxIteration = 1;
+
+              trigger OnAfterGetRecord()
+              begin
+                  MaxIterCount += 1;
+              end;
+          }
+
+          dataitem(BoundedByFilter; "Integer")
+          {
+              DataItemTableView = sorting(Number) where(Number = filter(1 .. 3));
+
+              trigger OnAfterGetRecord()
+              begin
+                  FilterCount += 1;
+              end;
+          }
+      }
+
+      var
+          MaxIterCount: Integer;
+          FilterCount: Integer;
+
+      trigger OnPostReport()
+      begin
+          Error('RSM ITERATIONS maxiter=%1 filter=%2', MaxIterCount, FilterCount);
+      end;
+  }
+
+Dep AL source, DatasetlessReport.Report.al (same scratch dir). The
+proportionality control: the runner cannot describe this report either, but it
+declares no data items, so there is no loop to bound and nothing is being
+guessed at:
+
+  report 65822 "RSM StubMeta Datasetless"
+  {
+      ProcessingOnly = true;
+      UseRequestPage = false;
+
+      dataset
+      {
+      }
+
+      trigger OnPostReport()
+      begin
+          Error('RSM 65822 REACHED ONPOSTREPORT');
+      end;
+  }
+
+Regenerate, from the repo root (AlRunner already built, -c Release):
+
+  # 1. The .alpackages symbol/identity package. `--emit-app` writes src/*.al +
+  #    NavxManifest.xml and NO SymbolReference.json, which is the whole point --
+  #    see above.
+  ./AlRunner/bin/Release/net8.0/al-runner --emit-app /tmp/rsm-dep \
+      /tmp/rsm-dep/out/dep.app --package-cache "$HOME/.al-runner/platform-apps"
+
+  # 2. The raw compiled DLL (Tier-1 target), by running the dep as a normal
+  #    bundle once (bundled Emit+Compile writes a cache entry) and copying the
+  #    cached DLL out. It declares no test codeunit, so this run finds 0 tests --
+  #    expected; the artifact is the point.
+  ./AlRunner/bin/Release/net8.0/al-runner --bc-version 28.1 --verbose \
+      --package-cache "$HOME/.al-runner/platform-apps" /tmp/rsm-dep
+  # -> prints "[cache] WROTE key=<KEY> path=~/.cache/al-runner/al-out/<KEY>.dll"
+
+  # 3. Copy into place (filenames MUST match DependencyLoader.SanitizeFileName:
+  #    spaces -> underscores, "<Publisher>_<Name>_<Version>.<ext>").
+  cp /tmp/rsm-dep/out/dep.app \
+     tests/runner-extras/report-stubmeta-unbounded-loop/.alpackages/AL_Runner_Fixtures_RSM_Precompiled_StubMeta_Dep_1.0.0.0.app
+  cp ~/.cache/al-runner/al-out/<KEY>.dll \
+     tests/runner-extras/report-stubmeta-unbounded-loop/.deps-bin/AL_Runner_Fixtures_RSM_Precompiled_StubMeta_Dep_1.0.0.0.dll
+
+WHY THE VALUE IS NOT REACHABLE ON THIS PATH (the question #3375 asks)
+-----------------------------------------------------------------------
+Measured, not assumed. The compiled dependency DLL's string table holds the data
+item NAMES and the trigger method names and nothing else about the dataset:
+
+  $ python3 -c "import re; d=open('.deps-bin/...dll','rb').read(); \
+      print([p for p in [b'BoundedByMaxIteration', b'MaxIteration', \
+      b'DataItemTableView', b'sorting'] if p in d])"
+  [b'BoundedByMaxIteration', b'MaxIteration']
+
+-- and the only 'MaxIteration' hits are inside the data item's own NAME. There
+is no 'DataItemTableView' and no 'sorting' anywhere in the assembly. Decompiling
+Report65821 says the same thing more firmly: the generated code is
+`new DataItem(this, handle)` plus `Add(val, "BoundedByMaxIteration")`.
+
+So the declared bounds are not in the DLL, and they are not reachable through
+either metadata source the runner consults -- the emit registry never saw this
+dep, and there is no SymbolReference.json for FindDependencyReportSymbol to
+anchor on. That is why #3375 lands as a refusal rather than as a second copy of
+#3383's parse.
+
+It is NOT that the value does not exist anywhere. This .app ships
+src/StubMetaReport.Report.al with `MaxIteration = 1;` and the filter verbatim,
+and DependencyReportMetadata.TryReadColumnSourceExpressions already reads that
+embedded src/ tree -- for column source expressions, once a report has been
+DISCOVERED through SymbolReference.json. Anchoring discovery on the source read
+instead is a possible later change, and this suite would then be the RED for it.
+Nothing here should be read as saying it cannot be done.
+
+Verify (must be RED without the NavReportSync.cs fix, GREEN with it):
+
+  ./AlRunner/bin/Release/net8.0/al-runner --bc-version 28.1 --strict \
+      --package-cache "$HOME/.al-runner/platform-apps" \
+      tests/runner-extras/report-stubmeta-unbounded-loop
+
+RED prints the defect, not a timeout -- with AL_RUNNER_INTEGER_WINDOW_MAX=50 set
+so the window is 1,051 rows rather than 101,001 and the RED run finishes in
+seconds:
+
+  FAIL Codeunit65841.DataItemLoop_OfReportNoSourceDescribes_IsRefusedByName
+       Assert.Contains failed. Expected to find:<out-of-scope: NavReport.Run(Report 65821)>
+       in:<RSM ITERATIONS maxiter=1051 filter=1051>
+  FAIL Codeunit65841.DataItemLoop_OfReportNoSourceDescribes_DoesNotIterateAtAll
+       report 65821 ran its data items and reported "RSM ITERATIONS maxiter=1051 filter=1051"
+
+The other two tests PASS in the RED run too, and that is what makes them
+controls rather than filler: they are the two directions the fix must not break.

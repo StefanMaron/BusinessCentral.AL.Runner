@@ -999,9 +999,13 @@ public sealed class FieldTriggerShapeGapCallSiteTests : IDisposable
         // call site, not three, because the Company, Published Application and Installed
         // Application seeders all build their rows through it. Both numbers were READ OUT of
         // this test's own failure message, not arrived at by arithmetic.
-        Assert.Equal(10, runnerShapeGapSites);
+        //
+        // 10 -> 11 / 13 -> 14 (#3375): NavReportSync.RefuseLoopOverSynthesizedDataItems, the
+        // first of these guards whose absence was SILENT rather than a crash — an unbounded
+        // data-item loop reads as a hang, which is how it survived to be found by profiling.
+        Assert.Equal(11, runnerShapeGapSites);
         Assert.Equal(3, installGapSites);
-        Assert.Equal(13, total);
+        Assert.Equal(14, total);
 
         var limitations = File.ReadAllText(Path.Combine(RepoRoot, "docs", "limitations.md"));
         Assert.Contains($"{total} further guards raise `RunnerOutOfScopeException`", limitations,

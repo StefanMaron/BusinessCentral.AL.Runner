@@ -242,6 +242,16 @@ internal static class RunnerShapeGap
         => Build(api, "report-construction", detail, RuntimeDoc);
 
     /// <summary>
+    /// Neither of the runner's two report-metadata sources describes this report, so the data
+    /// items it is about to iterate carry a MetaDataItem synthesized from their NAME alone
+    /// (#3375). Refused rather than run, because a synthetic data item cannot state "unknown"
+    /// to BC: <c>MaxIteration</c>'s only unset value is 0, which its loop reads as "no limit",
+    /// and an absent <c>DataItemTableView</c> is read as "no filter and no sorting".
+    /// </summary>
+    internal static RunnerOutOfScopeException ReportMetadataUnavailable(string api, string detail)
+        => Build(api, "report-metadata-unavailable", detail, RuntimeDoc);
+
+    /// <summary>
     /// A column one of the runner's seeded system-table rows is built from is not a field of
     /// that table's metatable, or resolves outside the row (#3015). Company (2000000006),
     /// Published Application (2000000206) and Installed Application (2000000212) are rows a
