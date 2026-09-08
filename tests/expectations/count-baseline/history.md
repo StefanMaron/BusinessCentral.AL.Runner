@@ -1778,3 +1778,35 @@ this fix adds no corpus test, it makes two existing ones pass and deletes their 
 entries.
 
 Written by the fbk-1 agent.
+
+## 2026-09-08 — al-language 3077 → 3089 (pin `af01bbbc` → `24106565`, two commits)
+
+Issue #3468. The pin advances across two corpus commits, and the second is the one this PR
+needs; the first cannot be skipped, because a pin cannot name a commit without its
+predecessors.
+
+* `466dd46` (corpus #277) — six tests in a new `autoformat/` area, codeunit 60605 "ALT
+  AutoFormat Tests", asking what a `TestPage` reads from a Decimal control carrying
+  `AutoFormatType` and `DecimalPlaces`. **Not this PR's work** — it is the maintainer's
+  `stma-auto-2` for issue #3406.
+* `2410656` (corpus #279) — six tests, codeunit 60878 "Test Write Tx Test Boundary", asking
+  whether a write transaction survives a test-METHOD boundary under both transaction models.
+  Red without the runner fix in this PR (3/6), which is why the bump is folded here rather
+  than landing as a catch-up.
+
+3089 is the guard's own printed actual (`[count-baseline] GROWTH: suite 'al-language' tests
+count: expected 3077, actual 3089 (BC 28.1)`), not a computed number.
+
+Five of `466dd46`'s six tests fail at this pin and are declared in the new
+`tests/expectations/known-gaps-testpage-autoformat.json` against **#3406, which stays open
+after this PR merges**. They are pulled in by the bump, not caused by it: the runner rewrites
+`NavForm.GetAutoFormatStringAsync` to return `""` unconditionally, so a Decimal control reads
+through a hardcoded two-decimal default. The runner fix for that is PR #3469, and that PR is
+what deletes the known-gaps file. The sixth test of `466dd46` passes.
+
+Codeunit 60878 is **6/6 in the full three-app run** with CI's own invocation and both package
+caches — not under a `--test` filter, which matters here because #3468 is precisely about a
+codeunit's neighbours in the run being observable. Full run at this pin: `3118 total, 3113
+pass, 5 fail, 0 error`, the five being the declared known gaps above.
+
+Written by the fbk-1 agent.

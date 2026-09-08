@@ -481,14 +481,11 @@ public static class ALDatabasePatches
     }
 
     /// <summary>
-    /// End the session's write transaction at a TEST-METHOD boundary, the way BC's
-    /// NavTestCodeunit.ExecuteTestMethodAsync does — <c>case TestTransactionModel.AutoCommit:
-    /// activeSession.Commit();</c>, <c>case TestTransactionModel.AutoRollback:
-    /// activeSession.Rollback();</c>, and the surrounding <c>catch (Exception) { if
-    /// (activeSession.IsTransactionActive()) activeSession.Rollback(); }</c> when the method
-    /// threw (decompiled Ncl.dll 28.4.53241.54039). All three end the transaction, so the next
-    /// [Test] in the codeunit starts with nothing pending for
-    /// <see cref="ThrowIfWriteTransactionStarted"/> to fire on. AlRunner#3468.
+    /// End the session's write transaction at a TEST-METHOD boundary. BC does it in every arm
+    /// of NavTestCodeunit.ExecuteTestMethodAsync (Ncl.dll 28.4.53241.54039) except None —
+    /// commit, rollback, or rollback from the catch — so the next [Test] in the codeunit
+    /// starts with nothing pending for <see cref="ThrowIfWriteTransactionStarted"/> to fire
+    /// on. AlRunner#3468; the arm-by-arm reading is in that PR's body.
     ///
     /// <para>Flag only — deliberately NOT a commit point, and deliberately not a rollback.
     /// Which rows survive is decided separately by TestExecutor.ApplyTestTransactionModel
