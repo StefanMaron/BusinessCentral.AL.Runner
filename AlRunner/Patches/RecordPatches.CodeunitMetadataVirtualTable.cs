@@ -36,14 +36,33 @@
 //   shared inventory AllObj reads, so AllObj and CodeUnit Metadata cannot disagree about
 //   which codeunits exist.
 //
-// COLUMNS NOT IMPLEMENTED
-//   Everything outside ID / Name / TableNo / SingleInstance / Subtype — the owning app id,
-//   the two permission-mask strings, TestType, RequiredTestIsolation, Namespace — gets BC's
-//   own NavValue.GetDefaultNavValue for that column's type, which is also what a real row
-//   carries for a codeunit that declares none of them. Filling them needs sources the
-//   runner does not have yet (the app-id column needs per-object app attribution, which is
-//   the same data issue #2326 tracks for AllObj's "Object Subtype"); inventing a value
-//   would be a silent wrong answer, so they are left at BC's default and named here.
+// COLUMNS FROM BC'S OWN METADATA DOCUMENT (#3606)
+//   AL Namespace, InherentPermissions, InherentEntitlements and RequiredTestIsolation are
+//   read off the document BC's emitter produced for the codeunit — see
+//   RecordPatches.CodeunitMetadataFromBcDocument.cs. A codeunit with no document keeps BC's
+//   default for all four; that is every codeunit in a precompiled dependency, whose .app
+//   ships no metadata XML, and every codeunit on a compile-cache HIT with no replayed
+//   sidecar.
+//
+// COLUMNS STILL NOT IMPLEMENTED, AND WHY THESE TWO ARE DIFFERENT FROM THE FOUR ABOVE
+//   App ID and TestType get BC's own NavValue.GetDefaultNavValue, and neither is waiting on
+//   the conversion above, because neither is in the document to convert:
+//
+//     * App ID is not an object property at all. BC's provider fills it with
+//       MetadataDataProvider.GetAppId(metaCodeunit) — the id of the app the object was
+//       PUBLISHED from, which is per-run state and not something a compiler can emit.
+//       Answering it needs per-object app attribution, the same data #2326 tracks for
+//       AllObj's "Object Subtype".
+//     * TestType is emitted 0 times in Base Application's 1,690 codeunit documents (#3606's
+//       measurement, re-confirmed here on a source-compiled Subtype = Test codeunit: the
+//       document carries Subtype="Test" and no TestType attribute). BC does not read it from
+//       the document either — Types.Metadata.MetaCodeunit's ctor DERIVES it, setting
+//       TestType = UnitTest when SubType == Test and TestType is still 0. Reproducing that
+//       derivation is a separate claim about BC, needing its own corpus test, and is not
+//       part of #3606.
+//
+//   Inventing a value for either would be a silent wrong answer, so they stay at BC's
+//   default and are named here.
 //
 // PRECOMPILED-DLL RESPECT
 //   Runtime-engine types only (NCLMetaTable, NCLMetaField, NavValue, ReadOnlyRecordBuffer,
@@ -121,6 +140,7 @@ public static partial class RecordPatches
         EnsureReportMetadataReflection(metaTable);   // NavBoolean.Create(bool)
         EnsureDataAccessProviderReflection(dataAccess);
         var subtypeOrdinals = EnsureCodeunitSubtypeOrdinals(metaTable);
+        var isolationOrdinals = EnsureCodeunitTestIsolationOrdinals(metaTable);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
             ?? throw CodeunitMetadataShapeGap("data access has no in-memory provider");
@@ -131,21 +151,26 @@ public static partial class RecordPatches
         {
             if (!done.TryAdd(row.Id, 0)) continue;
 
-            // Keep this resolution OUT of the per-field builder: a throw from inside
+            // Keep BOTH resolutions OUT of the per-field builder: a throw from inside
             // InsertVirtualRow escapes GetDataAccessForTable and no row of the table is served
-            // at all (#3536, docs/limitations.md#codeunit-metadata-subtype). The `[warn]` tag
-            // is load-bearing too — any other tag is dropped at default verbosity by Log.cs.
+            // at all (#3536, docs/limitations.md#codeunit-metadata-subtype). The document read
+            // joins the subtype resolution here for exactly that reason — it refuses on a
+            // malformed document and on an isolation member the column does not name, and
+            // either would otherwise take the whole table down. The `[warn]` tag is
+            // load-bearing too — any other tag is dropped at default verbosity by Log.cs.
             int subtypeOrdinal;
+            BcCodeunitDocumentValues? document;
             try
             {
                 subtypeOrdinal = ResolveCodeunitSubtypeOrdinal(
                     subtypeOrdinals, _cmvSubtypeOptionString, row.Subtype, row.Id);
+                document = TryReadCodeunitMetadataDocument(row.Id, isolationOrdinals);
             }
             catch (RunnerOutOfScopeException ex)
             {
                 Console.Error.WriteLine(
                     $"[warn] RecordPatches: CodeUnit Metadata has NO ROW for codeunit {row.Id} "
-                    + $"\"{row.Name}\" — its SubType could not be resolved: {ex.Message}. Every other "
+                    + $"\"{row.Name}\" — {ex.Message}. Every other "
                     + "codeunit is still reported, but AL asking for this one will fail to find "
                     + "it: Get() answers false and a FindSet/Count is one row short, with no "
                     + "error raised at the read.");
@@ -154,7 +179,7 @@ public static partial class RecordPatches
 
             InsertVirtualRow(provider, metaTable,
                 new object[] { CodeunitMetadataVirtualTableId, row.Id, 0, 0 },
-                field => BuildCodeunitMetadataValue(field, row, subtypeOrdinal));
+                field => BuildCodeunitMetadataValue(field, row, subtypeOrdinal, document));
         }
     }
 
@@ -163,11 +188,17 @@ public static partial class RecordPatches
     /// the mapping tracks whatever the System package in the resolved artifact declares
     /// rather than a hardcoded field-number table.
     /// </summary>
+    /// <param name="document">BC's own metadata document for this codeunit, already parsed, or
+    /// null when none is registered for it. The four columns it states fall through to BC's
+    /// default when it is null, which is the honest answer for a codeunit whose .app ships no
+    /// metadata XML — never a value derived from something else.</param>
     private static object? BuildCodeunitMetadataValue(
-        NCLMetaField field, CodeunitMetaRow row, int subtypeOrdinal)
+        NCLMetaField field, CodeunitMetaRow row, int subtypeOrdinal,
+        BcCodeunitDocumentValues? document)
     {
         object? Text(string s) => _aovNavTextCreateTruncated!.Invoke(
             null, new object?[] { field.FieldDefinedLength, s ?? string.Empty });
+        object? Default() => _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
 
         switch (NormalizeObjectTypeName(field.FieldName ?? string.Empty))
         {
@@ -186,8 +217,25 @@ public static partial class RecordPatches
                 {
                     field.FieldOptionMetadata, subtypeOrdinal
                 });
+            case "alnamespace":
+                return document == null ? Default() : Text(document.AlNamespace);
+            case "inherentpermissions":
+                return document == null ? Default() : Text(document.InherentPermissions);
+            case "inherententitlements":
+                return document == null ? Default() : Text(document.InherentEntitlements);
+            case "requiredtestisolation":
+                // -1 means BC's document states nothing this column can carry, which is every
+                // codeunit AL forbids the property on. BC's default is ordinal 0 = None, the
+                // same value MetaCodeunit's field initializer holds — see
+                // ReadRequiredTestIsolationOrdinal for why it is not mapped onto Disabled.
+                return document == null || document.RequiredTestIsolationOrdinal < 0
+                    ? Default()
+                    : _aovNavOptionCreate!.Invoke(null, new object?[]
+                    {
+                        field.FieldOptionMetadata, document.RequiredTestIsolationOrdinal
+                    });
             default:
-                return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
+                return Default();
         }
     }
 
