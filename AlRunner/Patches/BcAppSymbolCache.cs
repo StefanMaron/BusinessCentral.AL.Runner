@@ -207,7 +207,17 @@ internal static partial class BcAppSymbolCache
     // test never finishes. A wrong answer replayed from cache rather than a cache miss.
     // Since #3485 that end is BC's own [-1000000000..1000000000] rather than a materialised
     // window of 101,001 rows, so the loop no longer terminates in any useful time at all.
-    private const int CacheVersion = 34;
+    // v35: ParsedField gained Editable / DataClassificationName / EnumTypeId / EnumTypeName
+    // (#3545) — three properties the symbol file states on every field and this reader threw
+    // away. Both halves of the rule above hold at once. The record's SHAPE changed, so
+    // PayloadShape keys a fresh payload on its own; and the PARSE changed twice over, because
+    // DataClassificationName is stored EFFECTIVE rather than declared — a field silent about
+    // it takes its owner's, which is a different value read out of unchanged bytes. That
+    // second half is what needs the integer: it was measured here, where a payload written by
+    // an earlier build of this same change (declared-only, same shape) was replayed warm and
+    // put 154 of System Application's fields back on CustomerContent while the harness said
+    // the reader had been fixed. A wrong answer from cache, wearing a green build.
+    private const int CacheVersion = 35;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -2126,10 +2136,22 @@ internal static partial class BcAppSymbolCache
                     : null;
                 var relationValidate = !(props.TryGetValue("ValidateTableRelation", out var vtr)
                     && (vtr == "0" || vtr.Equals("false", StringComparison.OrdinalIgnoreCase)));
+                // #3545 — Editable / DataClassification / the enum type. All three are stated
+                // in the symbol file and all three were dropped here; see
+                // docs/metadata-equivalence.md#three-symbol-properties-the-reader-dropped for
+                // what each one costs AL and how the rules were measured.
+                var editable = SymbolEditable(props);
+                props.TryGetValue("DataClassification", out var fieldDataClassification);
+                var (enumTypeId, enumTypeName) = SymbolEnumType(
+                    field.TryGetProperty("TypeDefinition", out var td2) ? td2 : default);
                 fields.Add(new ParsedField(fieldId, fieldName, typeName, SymbolTypeLength(typeName), isFlowField, calcFormula,
                     optionMembers, initValue, isAutoIncrement, IsFlowFilter: isFlowFilter,
                     RelationArms: relationArms, RelationValidate: relationValidate,
-                    MinValue: minValue, MaxValue: maxValue));
+                    MinValue: minValue, MaxValue: maxValue,
+                    Editable: editable,
+                    DataClassificationName: string.IsNullOrWhiteSpace(fieldDataClassification)
+                        ? null : fieldDataClassification.Trim(),
+                    EnumTypeId: enumTypeId, EnumTypeName: enumTypeName));
             }
         }
 
@@ -2186,6 +2208,10 @@ internal static partial class BcAppSymbolCache
         // CustomerContent, 61 SystemMetadata, 2 OrganizationIdentifiableInformation) and 61
         // state ExternalName ("CDS BC Table Relation" -> dyn365bc_syntheticrelation).
         tableProps.TryGetValue("DataClassification", out var dataClassification);
+        // #3545 — a field that declares no DataClassification takes the TABLE's. Done here,
+        // after the table's own property is in hand, so ParsedField.DataClassificationName is
+        // the value BC's emitter states rather than only what the field wrote.
+        RecordPatches.ApplyOwnerDataClassification(fields, dataClassification);
         tableProps.TryGetValue("ExternalName", out var externalName);
         // DataPerCompany was hardcoded true here while the SOURCE-parsed path read the declared
         // property — the two paths writing the same column disagreed, so every precompiled table
@@ -2297,6 +2323,43 @@ internal static partial class BcAppSymbolCache
             && subtype.TryGetProperty("Name", out var enumNameProp))
             return $"Enum \"{enumNameProp.GetString() ?? string.Empty}\"";
         return name;
+    }
+
+    /// <summary>
+    /// The field's declared <c>Editable</c>, or null when the symbol file states none — which
+    /// AL reads as true (#3545). Measured over 3,848 field observations on four BC builds:
+    /// the symbol file states <c>Editable</c> only where it is <c>0</c>, and BC's own emitter
+    /// answers <c>1</c> or nothing everywhere it is silent, with zero disagreements. So the
+    /// only value worth carrying is the false, and null is passed on unchanged so
+    /// MetaField's own null default decides — not a true this reader made up.
+    /// </summary>
+    private static bool? SymbolEditable(Dictionary<string, string> props)
+    {
+        if (!props.TryGetValue("Editable", out var v) || string.IsNullOrWhiteSpace(v)) return null;
+        if (v == "0" || v.Equals("false", StringComparison.OrdinalIgnoreCase)) return false;
+        if (v == "1" || v.Equals("true", StringComparison.OrdinalIgnoreCase)) return true;
+        return null;
+    }
+
+    /// <summary>
+    /// The enum object a field's <c>TypeDefinition</c> names — <c>(id, name)</c> when
+    /// <c>TypeDefinition.Name == "Enum"</c>, <c>(0, null)</c> otherwise. Measured: the
+    /// presence of <c>Subtype.Id</c> and the presence of BC's own emitted
+    /// <c>EnumTypeId</c> agree on 3,848 of 3,848 field observations, and the values agree
+    /// wherever both are present (#3545).
+    /// </summary>
+    private static (int Id, string? Name) SymbolEnumType(JsonElement typeDefinition)
+    {
+        if (typeDefinition.ValueKind != JsonValueKind.Object) return (0, null);
+        if (!typeDefinition.TryGetProperty("Name", out var nameProp)
+            || !string.Equals(nameProp.GetString(), "Enum", StringComparison.OrdinalIgnoreCase))
+            return (0, null);
+        if (!typeDefinition.TryGetProperty("Subtype", out var subtype)
+            || subtype.ValueKind != JsonValueKind.Object)
+            return (0, null);
+        var id = subtype.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var i) ? i : 0;
+        var name = subtype.TryGetProperty("Name", out var snProp) ? snProp.GetString() : null;
+        return (id, string.IsNullOrEmpty(name) ? null : name);
     }
 
     private static int SymbolTypeLength(string typeName)

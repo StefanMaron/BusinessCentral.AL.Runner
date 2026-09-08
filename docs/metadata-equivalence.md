@@ -167,7 +167,7 @@ Two consequences worth meeting before a non-empty diff is:
   holds after deltas are applied — which is not obtainable without a tier. That is the ceiling on
   how empty this diff can ever get.
 
-Verified across four BC builds: the same 74 entries cover every difference on all four, with none
+Verified across four BC builds: the same entries cover every difference on all four, with none
 stale. The membership does not move; the counts do, which is the whole reason nothing asserts one.
 
 | BC build | differences | members | System App tables | `Editable` | `DataClassification` | `EnumTypeId` |
@@ -177,13 +177,104 @@ stale. The membership does not move; the counts do, which is the whole reason no
 | 28.1.49838.54044 | 70,728 | 74 | 138 | 78 | 661 | 76 |
 | 28.4.53241.53989 | 70,836 | 74 | 138 | 78 | 663 | 76 |
 
-The last three columns are System Application's own declared fields. They are recorded here and
-asserted nowhere — see the next section.
+The last three columns are System Application's own declared fields. **They are the pre-#3545
+measurement and are all zero now** — kept because they are what the four-build verification was
+run against, and because the first two columns are the baseline the section below reports
+against. They are recorded here and asserted nowhere; see "Three symbol properties the reader
+dropped" for the post-fix figures.
 
 `maxOccurrences` is unused in the current file. The mechanism is right for a difference whose
 count is bounded independently of the build; a count measured on one BC build and one set of apps
 is not that, because the unit legs run 27.5 and 28.4 while the current numbers were measured on
 28.1.
+
+<a id="three-symbol-properties-the-reader-dropped"></a>
+## Three symbol properties the reader dropped (#3545)
+
+`Editable`, a field's `DataClassification` and the enum an `Enum "X"`-typed field names are
+all stated in `SymbolReference.json`, and the reader read none of them. Together they were
+2,628 of the 70,728 differences, and all three are AL-observable: a field's editability, the
+classification the Field and Table Metadata virtual tables report, and whether an enum-typed
+field can be resolved back to its enum object at all.
+
+The rules below are measurements, not readings of the AL documentation. Each was checked by
+joining every field of Business Foundation and System Application in `SymbolReference.json`
+to the same field in BC's own emitted metadata, on four BC builds — **3,848 field
+observations, zero counterexamples for all three rules**.
+
+| | rule |
+|---|---|
+| `Editable` | stated only where it is `0`; silence means true. So only the false is carried, and `MetaField`'s own null default decides the rest. |
+| `EnumTypeId` / `EnumTypeName` | `TypeDefinition.Subtype.Id` and `.Name`, when `TypeDefinition.Name == "Enum"`. Presence of the subtype and presence of BC's emitted `EnumTypeId` agree on every observation. |
+| field `DataClassification` | see the next section — it is the one with exceptions. |
+
+Two things deliberately not done.
+
+**`EnumTypeId`/`EnumTypeName` are not read from AL source.** The enum's OBJECT ID is not in the
+type text, and the name alone would produce a pair BC never emits — an id of 0 beside a real
+name. A source-compiled enum field is served by `FixupEnumFieldOptionMetadata`, a different
+mechanism, and half of this pair is worse than none of it.
+
+**`MetaField.EnumTypeName` stays declared in the allowlist**, down from 1,888 to 1,811. What
+remains is not this defect: it is BC answering `null` where the runner answers the empty
+string on the ~1,800 fields that are not enum-typed at all, the same null-versus-empty shape
+twenty other `MetaField` members carry. That is #3568's, and folding it in here would have
+let a real difference ride out under a fixed member's name.
+
+<a id="field-dataclassification-inherits-its-owner"></a>
+## A field's DataClassification inherits its OWNER, with two exceptions
+
+BC's emitter states the *effective* classification on each field, not the declared one. The
+rule, and both exceptions, are load-bearing:
+
+1. The field's own `DataClassification`, when it states one — 613 of 978 fields on BC
+   28.1, agreeing with BC on 613 of 613.
+2. Otherwise the **owning object's**: the `table` for a field the table declares, the
+   **`tableextension`** for a field an extension adds. Not the extended table — System
+   Application's extension of `User Details` declares no classification and neither do its
+   six fields, and BC answers `CustomerContent` for all six while the extended table declares
+   `SystemMetadata`. Inheriting from the extended table answers `SystemMetadata` on every one
+   of them, which is how this was found: the first attempt cleared 1,558 differences and
+   created 6.
+3. Otherwise `CustomerContent`, which is `ALDataClassification`'s member 0 and therefore what
+   `MetaField` answers when nothing is passed.
+
+**The exceptions.** A `FlowField`/`FlowFilter` and a `Blob` field that are silent about
+`DataClassification` inherit nothing — BC emits no attribute for them, so they land on
+`CustomerContent` however the owner is classified. This is not cosmetic: 11 such fields sit on
+tables declaring `SystemMetadata`, so inheriting unconditionally trades one wrong answer for
+another rather than fixing anything. Verbatim from System Application's table 9131, whose
+table line reads `DataClassification = SystemMetadata`: field 1 `Id` (`Text[250]`, silent) is
+emitted `SystemMetadata`, and field 8 `FieldsJson` (`Blob`, silent) is emitted with no
+`DataClassification` at all.
+
+**BC's six platform-added fields** were wrong on both members and are fixed with them. Their
+values are BC's own, read out of `SystemFieldsHelper` in `Microsoft.Dynamics.Nav.Types`, which
+builds them by parsing boilerplate XML: `Editable="0"` on all six, and
+`DataClassification="EndUserPseudonymousIdentifiers"` for `$systemId`, `SystemCreatedBy` and
+`SystemModifiedBy` against `"SystemMetadata"` for `timestamp`, `SystemCreatedAt` and
+`SystemModifiedAt`. The harness measured the same split independently across 150 tables.
+
+**What this cost, measured on BC 28.1.49838.53910** over the same two apps:
+
+| | before | after |
+|---|---:|---:|
+| differences | 70,728 | 68,023 |
+| members differing | 74 | 71 |
+| `MetaField.Editable` | 987 | **0** |
+| `MetaField.DataClassification` | 1,564 | **0** |
+| `MetaField.EnumTypeId` | 77 | **0** |
+| `MetaField.EnumTypeName` | 1,888 | 1,811 |
+
+No other member moved in either direction, and no new member appeared.
+
+**The symbol cache replays a parse, so this needed a `CacheVersion` bump** (34 → 35), and the
+reason is worth keeping. `DataClassificationName` is stored *effective* rather than declared,
+which is a different value read out of unchanged bytes with no change of shape — exactly what
+`BcAppSymbolCache`'s structural payload hash cannot see. Measured here rather than reasoned
+about: a payload written by an earlier build of this same change was replayed warm and put 154
+of System Application's fields back on `CustomerContent` while the build was green and the
+harness reported the reader as fixed.
 
 <a id="a-check-that-cannot-fail-reads-like-a-check-that-passed"></a>
 ## A check that cannot fail reads exactly like a check that passed

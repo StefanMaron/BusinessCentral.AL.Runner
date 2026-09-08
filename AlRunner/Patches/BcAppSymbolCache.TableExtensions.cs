@@ -285,12 +285,34 @@ internal static partial class BcAppSymbolCache
                     : null;
                 var relationValidate = !(props.TryGetValue("ValidateTableRelation", out var vtr)
                     && (vtr == "0" || vtr.Equals("false", StringComparison.OrdinalIgnoreCase)));
+                // #3545 — read exactly as the base-table loop reads them, for the same reason
+                // the TableRelation gate above gives: the two loops must not disagree about
+                // the same JSON. An extension field's DataClassification inherits the EXTENDED
+                // table's when it declares none, which is resolved in BuildMetaField where the
+                // base table is in hand.
+                var editable = SymbolEditable(props);
+                props.TryGetValue("DataClassification", out var fieldDataClassification);
+                var (enumTypeId, enumTypeName) = SymbolEnumType(
+                    field.TryGetProperty("TypeDefinition", out var td2) ? td2 : default);
                 fields.Add(new ParsedField(fieldId, fieldName, typeName, SymbolTypeLength(typeName), isFlowField, null,
                     optionMembers, initValue, isAutoIncrement, IsFlowFilter: isFlowFilter,
                     RelationArms: relationArms, RelationValidate: relationValidate,
-                    MinValue: minValue, MaxValue: maxValue));
+                    MinValue: minValue, MaxValue: maxValue,
+                    Editable: editable,
+                    DataClassificationName: string.IsNullOrWhiteSpace(fieldDataClassification)
+                        ? null : fieldDataClassification.Trim(),
+                    EnumTypeId: enumTypeId, EnumTypeName: enumTypeName));
             }
         }
+        // #3545 — an extension field with no DataClassification takes the TABLEEXTENSION's,
+        // NOT the extended table's. Measured: System Application's `tableextension ... extends
+        // "User Details"` declares none and its six fields declare none, and BC's emitter
+        // answers CustomerContent for all six while the extended table declares
+        // SystemMetadata. Inheriting from the extended table would answer SystemMetadata on
+        // every one of them.
+        RecordPatches.ApplyOwnerDataClassification(fields,
+            SymbolProperties(ext).TryGetValue("DataClassification", out var extDataClassification)
+                ? extDataClassification : null);
         // #3216 — the extension's own keys. Same JSON shape the base-table reader consumes in
         // BcAppSymbolCache.cs (Keys[].Name + Keys[].FieldNames), minus the "first key is the
         // PK" split, which does not apply to a tableextension. Names are passed through

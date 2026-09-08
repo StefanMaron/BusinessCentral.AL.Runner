@@ -484,10 +484,23 @@ public static partial class RecordPatches
         var minValue = PropValue(props, "MinValue")?.ToString()?.Trim();
         var maxValue = PropValue(props, "MaxValue")?.ToString()?.Trim();
 
+        // #3545 — Editable and DataClassification, read here as well as on the symbol path so
+        // the two paths answer the same MetaField for the same declaration. Only the explicit
+        // `Editable = false` is carried: AL's default is true and MetaField's own null default
+        // already resolves to it, so asserting a true here would claim a reading never made.
+        // EnumTypeId/EnumTypeName are deliberately NOT set from AL source — the enum's OBJECT
+        // ID is not in the type text, and half of that pair is worse than none of it; see
+        // docs/metadata-equivalence.md#three-symbol-properties-the-reader-dropped.
+        bool? editable = PropIs(props, "Editable", "false") ? false : null;
+        var fieldDataClassification = PropValue(props, "DataClassification")?.ToString()?.Trim();
+
         return new ParsedField(fid, fname, ftype, length, isFlowField, calcFormula,
             optionMembers, initValueText, isAutoIncrement, caption,
             relationArms, relationValidate, isFlowFilter, obsoleteState, obsoleteReason,
-            minValue, maxValue);
+            minValue, maxValue,
+            Editable: editable,
+            DataClassificationName: string.IsNullOrWhiteSpace(fieldDataClassification)
+                ? null : fieldDataClassification);
     }
 
     /// <summary>
@@ -852,6 +865,9 @@ public static partial class RecordPatches
             // this value is not; neither would have caught it. DataClassification above is an
             // identifier, not a literal, so it needs none of this.
             var externalName = AlStringLiteralText(PropValue(table.PropertyList, "ExternalName"));
+            // #3545 — a field that declares no DataClassification takes the TABLE's, exactly
+            // as the symbol-read path resolves it.
+            ApplyOwnerDataClassification(fields, dataClassification);
             _parsedTables[tableId] = new ParsedTable(tableId, tableName, fields, pkFieldIds,
                 secondaryKeys, isTableTypeTemporary, dataPerCompany, lookupPage, drillDownPage,
                 TableTypeName: string.IsNullOrWhiteSpace(tableTypeName) ? null : tableTypeName.Trim(),
@@ -902,6 +918,11 @@ public static partial class RecordPatches
                         extKeys.Add(new ParsedExtensionKey(keyName, keyFieldNames));
                 }
             }
+
+            // #3545 — the owner of an extension field is the TABLEEXTENSION, not the table it
+            // extends; see ApplyOwnerDataClassification for the measurement that settled it.
+            ApplyOwnerDataClassification(fields,
+                PropValue(ext.PropertyList, "DataClassification")?.ToString()?.Trim());
 
             Console.Error.WriteLine($"[TableExt] parsed extension {extId} '{extName}' extends '{baseName}' with {fields.Count} fields, {extKeys.Count} keys");
 
@@ -1503,7 +1524,22 @@ internal record ParsedRelationArm(string TableName, string? FieldName, List<Pars
 /// undeclared. Passed through to MetaField.minValue (a string) unparsed — NCL's own field
 /// validation on TestPage SetValue is what evaluates and formats it (#2495).</param>
 /// <param name="MaxValue">Same shape as <see cref="MinValue"/>, for MaxValue.</param>
-internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false, string ObsoleteState = "No", string? ObsoleteReason = null, string? MinValue = null, string? MaxValue = null);
+/// <param name="Editable">The declared <c>Editable</c>, or null when the field declares none —
+/// which AL reads as true (#3545). Null and true are therefore the same answer; what the null
+/// preserves is "nothing was declared", so the builder passes MetaField's own null default
+/// through rather than asserting a value it did not read.</param>
+/// <param name="DataClassificationName">The <c>DataClassification</c> BC's own emitter states
+/// for the field: the field's own when it declares one, otherwise its OWNER's — the table, or
+/// the tableextension for a field an extension adds. Every reader resolves this through
+/// <c>RecordPatches.ApplyOwnerDataClassification</c> as soon as the owner's declaration is in
+/// hand, so consumers never re-derive it; that method carries the rule and its two exceptions.
+/// See docs/metadata-equivalence.md#field-dataclassification-inherits-its-owner (#3545).</param>
+/// <param name="EnumTypeId">The object id of the enum an <c>Enum "X"</c>-typed field names, or
+/// 0 when the field is not enum-typed. <c>MetaField.EnumTypeId</c> is what resolves such a
+/// field back to its enum object (#3545).</param>
+/// <param name="EnumTypeName">The enum's name, paired with <see cref="EnumTypeId"/>; null when
+/// the field is not enum-typed.</param>
+internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false, string ObsoleteState = "No", string? ObsoleteReason = null, string? MinValue = null, string? MaxValue = null, bool? Editable = null, string? DataClassificationName = null, int EnumTypeId = 0, string? EnumTypeName = null);
 internal record ParsedKey(string Name, List<int> FieldIds);
 
 /// <summary>A key declared by a <c>tableextension</c> on the table it extends (#3216).
