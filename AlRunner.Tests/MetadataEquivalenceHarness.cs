@@ -81,6 +81,21 @@ internal static class MetadataEquivalencePaths
         return Path.Combine(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(artifacts))
                             ?? artifacts, "metadata-ground-truth");
     }
+
+    /// <summary>
+    /// Bundles for the BC build this process actually loaded — never the whole root.
+    ///
+    /// A dev box accumulates one directory per build it has generated, and every one of them
+    /// holds a System Application bundle with the same table ids. Registering two of those
+    /// packages into RecordPatches' process-global state makes the second table id lose to the
+    /// first, and the comparison then measures one app's metadata against another app's
+    /// symbols — a wrong answer, arrived at silently, of exactly the kind this harness exists
+    /// to catch. CI has one build so it would never have shown up there.
+    /// </summary>
+    public static string GroundTruthDirForThisBuild()
+        => Path.Combine(GroundTruthRoot(),
+            Path.GetFileName(Path.TrimEndingDirectorySeparator(
+                AlRunner.Infrastructure.BcArtifacts.ServiceTierDir)));
 }
 
 internal static class MetadataEquivalenceHarness
@@ -212,7 +227,12 @@ internal static class MetadataEquivalenceHarness
     /// </summary>
     public static string? FindAppPackage(GroundTruthBundle bundle)
     {
-        var artifacts = AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir;
+        // Scoped to the build's own artifact directory rather than the whole root, for the
+        // same reason GroundTruthDirForThisBuild is: several builds of one app are on a dev
+        // box, they carry the same object ids, and picking the wrong one is not detectable
+        // downstream.
+        var artifacts = Path.Combine(
+            AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, bundle.BcBuild);
         var wanted = $"{bundle.AppPublisher}_{bundle.AppName}_{bundle.AppVersion}.app";
         if (!Directory.Exists(artifacts)) return null;
         foreach (var candidate in Directory.EnumerateFiles(artifacts, "*.app", SearchOption.AllDirectories))

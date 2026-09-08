@@ -59,6 +59,16 @@ One consequence worth stating plainly: because the bundle is generated on the sa
 same artifacts, the `.app` the runner reads and the emitter output it is compared against always
 come from one build. There is no staleness question to get wrong.
 
+The harness enforces that rather than assuming it: it reads only
+`<ground-truth-root>/<the build this process loaded>/`, and it finds each bundle's `.app` inside
+that build's own artifact directory. A dev box accumulates a directory per build, every one of
+them holding a System Application bundle with the same table ids, and registering two of those
+packages into `RecordPatches`' process-global state makes the second id lose to the first — one
+app's metadata measured against another app's symbols, silently. CI has one build, so this would
+never have surfaced there. When no bundle exists for the loaded build the skip message names the
+exact `--artifacts` to pass, because the generator's own default is the NEWEST build and the test
+host loads whichever build the runner was compiled against.
+
 <a id="the-allowlist"></a>
 ## The allowlist
 
@@ -76,6 +86,11 @@ Every entry states a reason. An entry tolerating a **defect** names the issue tr
 permanent limit of the symbol file may set `cannotExpress` instead and skip the issue. Both rules
 are enforced at load time by `MetadataDifferenceAllowlist`, so a malformed entry fails the run
 rather than sitting in the file granting cover nobody reviewed.
+
+Verified across BC 27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54044 and 28.4.53241.53989:
+the same 74 entries cover every difference on all four, with none stale. The counts move
+(System Application `DataClassification` is 661 / 661 / 663 / 617 and `EnumTypeId` 76 / 76 / 76 /
+75), the membership does not.
 
 `maxOccurrences` is unused in the current file. The mechanism is right for a difference whose
 count is bounded independently of the build; a count measured on one BC build and one set of apps

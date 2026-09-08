@@ -55,14 +55,22 @@ public sealed class MetadataEquivalenceHarnessTests
     {
         Skip.IfNot(_engine.Ready, _engine.SkipReason);
 
-        var root = MetadataEquivalencePaths.GroundTruthRoot();
+        var root = MetadataEquivalencePaths.GroundTruthDirForThisBuild();
         var bundles = MetadataEquivalenceHarness.LoadBundles(root);
         if (bundles.Count == 0)
         {
+            // Names the exact --artifacts to pass. A dev box holds several BC builds and the
+            // generator's own default is the NEWEST one, while this process loaded whichever
+            // build the runner was compiled against — so "just run the generator" is not
+            // actionable on its own and has already cost one round trip.
             var reason =
-                $"no metadata ground-truth bundle under '{root}'. Generate one with " +
-                "tools/gen-metadata-ground-truth.sh (Business Foundation is ~3s, System " +
-                "Application ~14s), or set AL_RUNNER_METADATA_GROUND_TRUTH.";
+                $"no metadata ground-truth bundle under '{root}'. This test process loaded BC " +
+                $"from '{AlRunner.Infrastructure.BcArtifacts.ServiceTierDir}', so generate for " +
+                $"that build:{Environment.NewLine}" +
+                $"  tools/gen-metadata-ground-truth.sh --artifacts " +
+                $"\"{AlRunner.Infrastructure.BcArtifacts.ServiceTierDir}\"{Environment.NewLine}" +
+                "Business Foundation is ~3s and System Application ~14s. " +
+                "AL_RUNNER_METADATA_GROUND_TRUTH overrides where bundles are read from.";
             if (TestArtifacts.RunningOnCi)
                 Assert.Fail(
                     "On a CI leg the ground truth is generated before `dotnet test` (see the " +
@@ -176,7 +184,13 @@ public sealed class MetadataEquivalenceHarnessTests
     private static readonly IReadOnlyDictionary<string, (int Editable, int DataClassification, int EnumTypeId, int Tables)>
         PinnedSystemApplicationCounts = new Dictionary<string, (int, int, int, int)>(StringComparer.Ordinal)
         {
+            // Measured by running this harness on each build. They MOVE — DataClassification
+            // is 661 / 663 / 617 and EnumTypeId 76 / 76 / 75 across the three below — which is
+            // why they are pinned per build rather than asserted as constants.
+            ["28.1.49838.53910"] = (78, 661, 76, 138),
             ["28.1.49838.54044"] = (78, 661, 76, 138),
+            ["28.4.53241.53989"] = (78, 663, 76, 138),
+            ["27.5.46862.53931"] = (78, 617, 75, 127),
         };
 
     [SkippableFact]
