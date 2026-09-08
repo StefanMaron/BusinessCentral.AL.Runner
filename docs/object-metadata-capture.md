@@ -36,8 +36,11 @@ Two things that a list of kinds written by hand would have got wrong:
 - **`Interface` is in that table and does NOT arrive.** A runtime package ships `INT`
   documents; this outputter never sees them. Re-measured with an implementing codeunit
   present, in case an unimplemented interface were being elided — still absent. The same
-  goes for `Profile`: a runtime package ships a `PROFILE` document, and the fixture's
-  profile produces no `AddApplicationObject` call.
+  goes for `Profile`: a runtime package ships a `PROFILE` document, and a profile declared
+  in a scratch copy of the fixture produced no `AddApplicationObject` call. The checked-in
+  fixture declares no profile, so that half is a measurement made outside the tree rather
+  than something this repository pins -- add a profile and a role-center page to the fixture
+  if you want a future BC that starts emitting `PROFILE` to show up as a new trace line.
 
 So this path covers eleven of the issue's twelve kinds plus one it did not know about.
 Interface and profile metadata are only available from a runtime package (#3537) or from

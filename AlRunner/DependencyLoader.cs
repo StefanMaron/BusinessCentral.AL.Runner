@@ -178,7 +178,7 @@ public sealed class DependencyLoader
                 {
                     // #2593/#2579: this dependency's Assembly is being reused without calling
                     // LoadOne again — but LoadOne is the ONLY place that replays this dependency's
-                    // Tier-3 metadata sidecars (report/report-layout/page/xmlport/enum) into the
+                    // Tier-3 metadata sidecars (report/report-layout/page/xmlport/enum/object) into the
                     // process-wide registries. Those registries get reset every reload cycle
                     // (BcRuntime.ResetForNewBundleReload), so on the SECOND and every later
                     // --watch/--server cycle that resolves this same AppId as a dependency, skipping
@@ -802,14 +802,23 @@ public sealed class DependencyLoader
         var objectMetadataSidecar = Path.Combine(cacheDir, cacheKey + ".object-metadata.json");
         try
         {
-            if (File.Exists(objectMetadataSidecar))
-                AlObjectMetadataRegistry.LoadSidecar(objectMetadataSidecar);
             int replayedReports = File.Exists(reportSidecar) ? AlReportMetadataRegistry.LoadSidecar(reportSidecar) : 0;
             if (File.Exists(reportLayoutSidecar))
                 AlReportLayoutRegistry.LoadSidecar(reportLayoutSidecar);
             int replayedPages = File.Exists(pageMetadataSidecar) ? AlPageMetadataRegistry.LoadSidecar(pageMetadataSidecar) : 0;
             int replayedXmlPorts = File.Exists(xmlPortMetadataSidecar) ? AlXmlPortMetadataRegistry.LoadSidecar(xmlPortMetadataSidecar) : 0;
             int replayedEnums = File.Exists(enumRegistrySidecar) ? AlEnumMetadataRegistry.LoadSidecar(enumRegistrySidecar) : 0;
+            // LAST, deliberately. This catch logs and RETURNS -- the module is already
+            // loaded, so there is no rebuild behind it. Loading the object registry first put a
+            // new throw source ahead of the five sidecars that have live consumers, so a corrupt
+            // or future-shaped .object-metadata.json would take report, report-layout, page,
+            // xmlport and enum metadata down with it, silently, on a reused module. Nothing reads
+            // the object registry yet, so it is the one that can afford to fail. Keep it last
+            // until step 3 gives it a consumer, then it needs its own error handling rather than
+            // this position. LoadOne's HIT branch is different: its catch falls through to a full
+            // rebuild, so the call is safe anywhere in that block.
+            if (File.Exists(objectMetadataSidecar))
+                AlObjectMetadataRegistry.LoadSidecar(objectMetadataSidecar);
             if (replayedReports + replayedPages + replayedXmlPorts + replayedEnums > 0)
                 Console.Error.WriteLine(
                     $"[deps] metadata sidecar replay (reused module): {m.Name} v{m.Version} — " +
@@ -824,7 +833,7 @@ public sealed class DependencyLoader
 
     /// <summary>
     /// The Tier-3 source-compile cache key for one dependency package — the NAME of
-    /// <c>compiled-deps/&lt;key&gt;.dll</c> and its five metadata sidecars, so this string's
+    /// <c>compiled-deps/&lt;key&gt;.dll</c> and its six metadata sidecars, so this string's
     /// VALUE is persisted, shared across processes, and read by later runs. Changing what it
     /// computes for unchanged inputs orphans every existing entry on every machine; #3043's
     /// whole difficulty is that the obvious refactor does exactly that.
