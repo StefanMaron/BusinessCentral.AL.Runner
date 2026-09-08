@@ -145,15 +145,16 @@ Two things it cannot do, so do them yourself:
   a git repository, so neither file can check its own freshness. That is fine *here* and only
   here: you just extracted both from `origin/main` yourself, so their provenance is the
   guarantee the check would otherwise provide. It is not fine in general, and the same
-  fails-open-on-`unknown` path is reachable by other routes in `pr-body.py` and `preflight.py`
-  too — tracked in #3296.
+  fails-open-on-`unknown` path was reachable by other routes in `pr-body.py` and
+  `preflight.py` too; #3296 fixed that.
 - **It cannot turn a network failure into a verdict.** `refs/remotes/origin/main` is shared by
   every worktree of the repository, so the check itself costs no network; one `git ls-remote`
   confirms that shared ref against the remote. If the remote is unreachable, that is a loud
   note and the local check stands — never a refusal, because a network blip is not evidence of
   a stale checkout.
 
-`tools/preflight.py` carries the same exposure and is **not** guarded yet (#3164).
+`tools/preflight.py` carries the same guard (#3164): it refuses with exit 3 when its running
+copy is stale, or when nothing vouches for it.
 
 ### A cancelled run's leftovers sit in the same rollup as the live run, and `gh pr checks` hides which is which
 
@@ -231,8 +232,12 @@ there is part of the job's own name and does NOT make the leg a required context
 aggregate gates. That is why a single-leg diagnostic run cannot clear the gate, and why a red
 leg still blocks through the aggregate.
 
-The rest come from **`.github/workflows/pr-gate.yml`**, one context per job. Everything in
-that file gates; everything in `pr-check.yml` is advisory and cannot block a merge. The split
+The rest come from **`.github/workflows/pr-gate.yml`**, one context per job — **most of
+which gate, but not all.** A few of its jobs are deliberately not in the ruleset yet, listed as
+`PENDING_REQUIRED_CONTEXTS` in `check_required_contexts.py`, because promoting one early makes
+`ci-wait.py` answer exit 3 for everybody (#3002). So a red tick from `pr-gate.yml` is not by
+itself proof the merge is blocked — ask the ruleset, as this section says below. Everything in
+`pr-check.yml` is advisory and cannot block a merge. The split
 exists because it used to be invisible: all twelve `pr-check.yml` jobs reported without
 gating, and #3116, #3112 and #3095 each merged with one of them in a `FAILURE` state (#3165).
 So a red tick on `PR body closing references must be correct, both directions` now stops the
@@ -267,9 +272,10 @@ the dispatch or an empty commit over reading a pattern out of three data points.
 **A pull request whose every changed path ends in `.md` runs no legs at all** (#2890):
 `test-matrix.yml`'s `changes` job measures the diff through `pr_changed_files.sh`, `bc-tests`
 is skipped, and `BC test matrix passed` still reports — success, with a step log saying the
-matrix was not run. The decision comes from the diff, never from the `docs-only` label. The
-cost is that the unit tests reading `.md` files (`ProseRelocationPointerTests`,
-`BcMatrixDocumentationDriftTests`) run on the merge commit's push to `main`, not on the PR.
+matrix was not run. The decision comes from the diff, never from the `docs-only` label. `BcMatrixDocumentationDriftTests` still runs on the merge commit's push to `main` rather than
+on the PR. The doc-pointer checks do NOT: `tools/test_doc_pointers.py` replaced the old
+`ProseRelocationPointerTests` precisely so they gate a docs-only PR, under the required
+`tools/ unit tests` context.
 
 Read the result with `tools/ci-wait.py <PR> --timeout 0`; do **not** block on it and do not
 hand-roll a `gh run view` poll loop (section 0). Anything other than `completed` means "not yet
