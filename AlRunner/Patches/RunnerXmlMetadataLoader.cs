@@ -88,6 +88,16 @@ public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
             && AlXmlPortMetadataRegistry.TryGet(objectId.ObjectNumber, out var xmlPortXml))
             return Wrap(xmlPortXml, $"runner-xmlport-{objectId.ObjectNumber}");
 
+        // Tables: BC's own emitted metadata document, kept per (kind, id) by #3548. This is
+        // the entry point for NCLMetaTable.LoadMetadata() — MetaObjectCache.GetMetaTable
+        // hands what we return here to MetaTable.CreateMetaTableFromXml, so BC constructs
+        // the table's fields, keys, relations and captions from its own bytes instead of
+        // the runner deriving them (#3552).
+        if (objectId.ObjectType == ObjectType.Table
+            && AlObjectMetadataRegistry.TryGet(
+                RecordPatches.BcTableMetadataKind, objectId.ObjectNumber, out var tableXml))
+            return Wrap(tableXml, $"runner-table-{objectId.ObjectNumber}");
+
         // Reports living in a PRECOMPILED dependency .app: never source-compiled, so the
         // emit registry above will never hold them. Their shape is still fully stated by
         // the .app itself (SymbolReference.json + the embedded AL source), so reconstruct

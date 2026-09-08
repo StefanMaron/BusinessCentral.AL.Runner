@@ -8,8 +8,10 @@ object id).
 
 Three older registries keep one kind each and are unchanged: `AlReportMetadataRegistry`,
 `AlPageMetadataRegistry`, `AlXmlPortMetadataRegistry`. The general registry overlaps them
-on purpose — it is additive, and nothing reads it yet (issue #3548, step 2). Converting a
-consumer to read from it is a separate change, per kind, with its own RED → GREEN.
+on purpose — it is additive. Converting a consumer to read from it is a separate change, per
+kind, with its own RED → GREEN; the first is tables, in
+[`docs/object-metadata-from-bc.md`](object-metadata-from-bc.md) (#3552), and #3562 tracks the
+rest.
 
 <a id="which-kinds-arrive"></a>
 

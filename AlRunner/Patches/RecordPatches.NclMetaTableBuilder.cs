@@ -138,6 +138,21 @@ public static partial class RecordPatches
 
         try
         {
+            // #3552 — when BC's emitter handed the runner its own metadata document for this
+            // table (#3548), let BC construct the NCLMetaTable from it rather than deriving one
+            // below. AVAILABILITY decides the route; a failure past this point propagates
+            // rather than dropping to the derivation, because a weaker answer under a green
+            // build is what .claude/rules/loud-failures.md exists to prevent. What each step
+            // supplies, and which tables are deliberately left on the derivation:
+            // docs/object-metadata-from-bc.md#the-seam.
+            if (ShouldBuildTableFromBcDocument(tableId, parsed))
+            {
+                var fromBc = BuildNCLMetaTableFromBcDocument(tableId, ResolveNavAppBaseGroup());
+                ApplyRunnerFieldWiring(fromBc, parsed, Array.Empty<ParsedField>(), parsed.Fields);
+                TraceTableMetadataSource(tableId, "bc-document", fromBc);
+                return fromBc;
+            }
+
             // Build MetaField[] — include a synthetic timestamp field (id=0, BigInteger)
             // and the BC system fields: SystemId (2000000000), SystemCreatedAt (2000000001),
             // SystemCreatedBy (2000000002), SystemModifiedAt (2000000003), SystemModifiedBy
@@ -223,14 +238,7 @@ public static partial class RecordPatches
                 parsed.TableTypeName);
             if (defaultMetaTable == null) return null;
 
-            // NavAppGroup.BaseGroup
-            var nclAsm = AppDomain.CurrentDomain.GetAssemblies()
-                .First(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
-            var tAppGroup = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.Apps.NavAppGroup")!;
-            var baseGroup = tAppGroup.GetProperty("BaseGroup",
-                BindingFlags.Public | BindingFlags.Static)?.GetValue(null)
-                ?? tAppGroup.GetField("BaseGroup",
-                    BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            var baseGroup = ResolveNavAppBaseGroup();
 
             var built = (NCLMetaTable?)_mCreateFromMetaTable.Invoke(null,
                 new object?[] { defaultMetaTable, baseGroup });
@@ -260,21 +268,6 @@ public static partial class RecordPatches
                 if (_fNCLMetaAppObjMetadataLoaded != null)
                     AlRunner.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, built, true);
 
-                // W-8b A-prime: poke a real NavTableTriggerEventHandler into the
-                // tableTriggerEventHandler field. NCLMetaTable.TableTriggerEventHandler /
-                // TriggerEventHandler are simple field-getter properties — even when their
-                // call sites are R2R-inlined into NavRecord.InsertAsync, the inlined code
-                // reads our field. EventSubscriberPatches.InjectAll later attaches per-event
-                // NavEventSubscription objects to its NavEventScope.registeredSubscriptions.
-                var triggerHandler = AlRunner.Patches.EventSubscriberPatches
-                    .CreateTableTriggerEventHandler();
-                if (triggerHandler != null)
-                {
-                    var f = built.GetType().GetField("tableTriggerEventHandler",
-                        BindingFlags.NonPublic | BindingFlags.Instance);
-                    if (f != null)
-                        AlRunner.Infrastructure.FieldPoke.SetInstance(f, built, triggerHandler);
-                }
                 // NOTE: table-level trigger-subscriber injection (EventSubscriberPatches
                 // .InjectTriggerSubsForTable) is deliberately NOT called here. This method runs
                 // INSIDE _metaTableCache.GetOrAdd(tableId, BuildNCLMetaTable) — the cache entry for
@@ -292,28 +285,9 @@ public static partial class RecordPatches
                 // AppDomain yet at NCLMetaTable build time (build runs during
                 // AddSourceDir, before AL emit). See WireFieldTriggerHandlersAll().
 
-                // For AL `Enum "X"`-typed fields the upstream BC factory builds
-                // either a plain NCLOptionMetadataWithCaptions (when EnumTypeId==0)
-                // or an NCLFieldEnumMetadata that chains to NavGlobal.MetadataProvider
-                // (NREs on skeleton). Both paths produce wrong results for
-                // `FieldRef.GetEnumValueCaption/NameFromOrdinalValue(ordinal)` on
-                // sparse AL enums (e.g. value(0), value(5), value(10)) because the
-                // base GetCaptionFromIndex/GetOptionFromIndex treats the AL ordinal
-                // as a 0..Count-1 array index. We swap in AlEnumOptionMetadata which
-                // mirrors NCLEnumMetadata semantics (search indexes[] for matching
-                // ordinal) using data captured by BcCompiler at AL emit time.
-                FixupEnumFieldOptionMetadata(built, parsed, extFields);
-
-                // Register any AutoIncrement fields so NavRecord_ALInsertAsync3 assigns
-                // counters. `allParsed` rather than `parsed.Fields`: a tableextension may
-                // declare the AutoIncrement field, and since #1711 that property survives the
-                // parse. Registering only base-table fields would be the silent half-fix —
-                // the NCLMetaField would say autoIncrement=true while no counter ever
-                // advanced, so every Insert left the field at 0 and the second row collided.
-                foreach (var f in allParsed)
-                    if (f.IsAutoIncrement)
-                        AlRunner.BcRuntime.RegisterAutoIncrementField(tableId, f.FieldId);
+                ApplyRunnerFieldWiring(built, parsed, extFields, allParsed);
             }
+            TraceTableMetadataSource(tableId, "derived", built);
             return built;
         }
         catch (Exception ex)

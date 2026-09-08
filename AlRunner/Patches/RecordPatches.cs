@@ -263,6 +263,10 @@ public static partial class RecordPatches
     public static void ResetForReload()
     {
         _metaTableCache.Clear();
+        // #3552 — the ledger names LIVE NCLMetaTable instances as already carrying BC's
+        // document, so it is meaningless the moment the line above drops them, and leaving it
+        // populated would make the next cycle's tables keep the derivation in silence.
+        ClearBcDocumentBackedTables();
         // #3121: every table is rebuilt from scratch below, so carrying the previous bundle's
         // pending CalcFormula rebuilds forward only buys a wasted repopulate pass on the next
         // .app registration.
