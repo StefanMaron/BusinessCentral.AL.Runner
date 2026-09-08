@@ -1116,6 +1116,53 @@ internal sealed partial class RunnerPageInstance
     /// <summary>BC's key convention for a control's source expression.</summary>
     internal static string SourceExpressionKey(int controlId) => "Control" + controlId;
 
+    /// <summary>BC's key convention for a control's FORMAT source expression.</summary>
+    internal static string FormatExpressionKey(int controlId) => "Control" + controlId + "_Format";
+
+    /// <summary>
+    /// The .NET format string this control renders its value with, or null when the page
+    /// publishes none.
+    ///
+    /// <para>The value is <b>BC's own</b>, not a runner approximation. The AL compiler emits,
+    /// for every Decimal control, a registration of the shape</para>
+    /// <code>
+    /// RegisterSourceExpression("Control773217788_Format", …,
+    ///     () =&gt; ALCompiler.ConvertToDotNetFormatString(
+    ///               this.Session, this.GetDecimalString(this.Rec, 2, 773217788)), null);
+    /// </code>
+    /// <para>so evaluating it runs <c>NavForm.GetDecimalString</c>'s full cascade —
+    /// the page's <c>GetAutoFormatString</c> override (which is where
+    /// <c>AutoFormatType</c>/<c>AutoFormatExpression</c> reach the AutoFormat system
+    /// codeunit), then the record's, then <c>GetDecimalPlaces</c> on each — and converts the
+    /// BC format it produces into a .NET one. All of that already executes correctly inside
+    /// the runner. The measured format strings live in
+    /// <c>docs/limitations.md#testpage-decimal-formatting</c>, adjudicated upstream by corpus
+    /// codeunit 60605 "ALT AutoFormat Tests" on all eight cloud legs — deliberately not
+    /// restated here, because that table was copied into four places and the
+    /// custom-expression arm was mislabelled in every one of them (#3406).</para>
+    /// <para>Never throws: a page that published no format table, a control with no format
+    /// expression, and an expression whose evaluation fails all answer null, and the caller
+    /// falls back to its own historical spelling. A refusal here would turn every
+    /// <c>Field.Value</c> read on an unusual page into a hard failure, which is a far worse
+    /// answer than the two-decimal default this replaces for the controls it can read.</para>
+    /// </summary>
+    internal string? TryGetControlFormat(int controlId)
+    {
+        try
+        {
+            var expression = _sourceExpressions[FormatExpressionKey(controlId)];
+            if (expression == null) return null;
+            var value = GetValue(expression);
+            var text = value?.ClientObject?.ToString();
+            return string.IsNullOrEmpty(text) ? null : text;
+        }
+        catch
+        {
+            // See the remarks: unreadable format => the caller's default, never a failure.
+            return null;
+        }
+    }
+
     internal static NavValue? GetValue(object expression)
         => (NavValue?)BcShape.Method(
             expression.GetType(), "Get", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,

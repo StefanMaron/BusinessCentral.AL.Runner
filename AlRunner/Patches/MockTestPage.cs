@@ -2941,14 +2941,48 @@ internal static class TestPageMinMaxValue
 /// <c>Convert.ToString</c> because an integral CLR type never carries a fractional Scale to
 /// lose in the first place -- matching the "0" (no decimals) half of
 /// <see cref="TestPageMinMaxValue.FormatValue"/>'s own convention without any code needed here.
+///
+/// <para><b>The number of decimals is the CONTROL's, not a constant (#3406).</b> This helper
+/// used to apply <c>"0.00"</c> to every Decimal on every page, so a control declaring
+/// <c>DecimalPlaces = 3 : 3</c> or <c>AutoFormatType = 11</c> read back with two decimals and
+/// nothing said so. The format string is BC's own: <c>NavForm.GetDecimalString</c> runs to
+/// completion inside the runner and publishes its result as the control's
+/// <c>Control&lt;id&gt;_Format</c> source expression, which
+/// <see cref="RunnerPageInstance.TryGetControlFormat"/> reads. See
+/// docs/limitations.md#testpage-decimal-formatting for the measured format strings and what
+/// still is not covered.</para>
 /// </summary>
 internal static class TestPageNumericValue
 {
-    internal static string? Format(NavValue? navValue)
-        => navValue is NavDecimal d
-            ? Convert.ToDecimal(d.ClientObject, CultureInfo.InvariantCulture)
-                .ToString("0.00", CultureInfo.InvariantCulture)
-            : null;
+    // The two-decimal spelling used when the control has no format of its own — a
+    // record-only field, or a page whose format expression could not be read. Historical:
+    // every existing assertion in the corpus and in Microsoft's own buckets is written
+    // against it, so this arm must not move.
+    private const string NoControlFormat = "0.00";
+
+    /// <param name="controlFormat">
+    /// The .NET format string BC's own <c>GetDecimalString</c> cascade computed for this
+    /// control, or null/empty when there is none to read. See the class remarks: this is
+    /// BC's answer, not the runner's — the runner only applies it.
+    /// </param>
+    internal static string? Format(NavValue? navValue, string? controlFormat = null)
+    {
+        if (navValue is not NavDecimal d) return null;
+
+        var value = Convert.ToDecimal(d.ClientObject, CultureInfo.InvariantCulture);
+        if (string.IsNullOrEmpty(controlFormat))
+            return value.ToString(NoControlFormat, CultureInfo.InvariantCulture);
+
+        // .NET does not reject an unrecognised custom format — it treats the whole string as
+        // a literal and answers it back verbatim, which would put the format string itself
+        // where a number belongs. That is a silent wrong answer of exactly the kind #3406 is
+        // about, so detect it (no digit in the output) and fall back rather than ship it.
+        var formatted = value.ToString(controlFormat, CultureInfo.InvariantCulture);
+        foreach (var c in formatted)
+            if (char.IsDigit(c)) return formatted;
+
+        return value.ToString(NoControlFormat, CultureInfo.InvariantCulture);
+    }
 }
 
 /// <summary>
@@ -3414,7 +3448,11 @@ internal sealed class LiveNavTestField : ITestField
         get => (CurrentOption() is { } option
                    ? TestPageOptionValue.Display(option, OptionCaptions())
                    : null)
-               ?? TestPageNumericValue.Format(_record.GetFieldValue(_fieldNo) as NavValue)
+               // #3406: the control's OWN decimal format, computed by BC's GetDecimalString
+               // cascade and read off the page, not a hardcoded two decimals. Null _page is
+               // the record-only field, which has no control and keeps the old spelling.
+               ?? TestPageNumericValue.Format(_record.GetFieldValue(_fieldNo) as NavValue,
+                                              _page?.TryGetControlFormat(_controlId))
                // #2795: "Yes"/"No", not Convert.ToString's "True"/"False".
                ?? TestPageBooleanValue.Format(_record.GetFieldValue(_fieldNo) as NavValue)
                // #2361: a blank Date/Time/DateTime is '', not the rendered CLR minimum.
@@ -3696,7 +3734,11 @@ internal sealed class PageVariableTestField : ITestField
         get => (CurrentOption() is { } option
                    ? TestPageOptionValue.Display(option, _page.TryGetOptionCaptions(_controlId, option))
                    : null)
-               ?? TestPageNumericValue.Format(RunnerPageInstance.GetValue(_expression))
+               // #3406: the page-global half of the decimal-format rule — see the Rec-bound
+               // sibling. A page-variable control carries the same Control<id>_Format
+               // expression, so the two binding shapes must not answer differently.
+               ?? TestPageNumericValue.Format(RunnerPageInstance.GetValue(_expression),
+                                              _page.TryGetControlFormat(_controlId))
                // #2795: the page-global half of the same rule — see TestPageBooleanValue.Format.
                ?? TestPageBooleanValue.Format(RunnerPageInstance.GetValue(_expression))
                // #2361: the page-global half of the blank-temporal rule — see the Rec-bound
