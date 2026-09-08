@@ -67,7 +67,7 @@ gh workflow run 351779742 --repo StefanMaron/BusinessCentral.AL.Language.Tests \
   --ref <branch> -f bc_version=28.4 -f artifact_type=sandbox -f country=w1
 ```
 
-Three outcomes, and only the first two need anyone to do anything:
+Four outcomes, and only the first two need anyone to do anything here:
 
 | Windows | meaning | fix goes |
 |---|---|---|
