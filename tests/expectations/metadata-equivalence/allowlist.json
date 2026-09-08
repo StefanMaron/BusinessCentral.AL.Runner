@@ -1,0 +1,433 @@
+{
+  "comment": [
+    "Declared differences between BC's own metadata emitter and the runner's",
+    "SymbolReference-derived MetaTable. Issue #3533.",
+    "",
+    "This file IS the allowlist: MetadataEquivalenceHarnessTests fails on any difference not",
+    "listed here, and equally on any entry here that no longer matches anything. So a reader",
+    "fix must delete its entries in the same change, and a BC version that introduces a new",
+    "property surfaces as a new undeclared difference rather than passing silently.",
+    "",
+    "Every entry carries a reason AND exactly one KIND of reason, because the four kinds need",
+    "different evidence:",
+    "  issue            a defect, tracked, expected to go away",
+    "  outOfScope       the runner does not implement the surface, so no AL test can see it",
+    "                   (needs a Doc pointer)",
+    "  oracleLimitation the ground truth is the wrong shape for this member, so the difference",
+    "                   says nothing about the runner (needs a Doc pointer)",
+    "  cannotExpress    the symbol file cannot express it AND it cannot be derived",
+    "",
+    "NO ENTRY CURRENTLY CLAIMS cannotExpress. Seven TranslationKey entries did, on the evidence",
+    "that SymbolReference.json stores no translation keys. That was true and the conclusion was",
+    "wrong twice over: the key is COMPUTED from names rather than stored (2,153 of 2,153",
+    "reproduced), and the runner reads no translation files anyway, so it is out of scope rather",
+    "than impossible. 'Nothing is stored' is evidence about storage, never about derivability.",
+    "",
+    "Ten entries are DIRECTION-SCOPED. An entry covers both directions unless it says otherwise,",
+    "and a reason that justifies one direction must not license the other. All three",
+    "oracleLimitation entries are runner-only: they exist because the runner shows a merged",
+    "runtime view, so BC-absent / runner-present is what they justify \u2014 while the reverse, BC",
+    "emitting a field the runner never builds, is a hard reader defect that must still fail.",
+    "",
+    "There is deliberately NO occurrence cap. One was implemented and used by nothing, which made",
+    "the PR claim a ratchet the code did not keep. No entry here has a bound that survives a",
+    "rebuild \u2014 the counts move with the BC build and with which apps are bundled \u2014 so any cap",
+    "would be a number nobody measured. Direction narrows categorically instead.",
+    "",
+    "Measured on BC 28.1.49838.54044 over Business Foundation (12 tables) and System Application",
+    "(138 tables): 70,728 differences across 74 members. Per-member counts and examples are on",
+    "issue #3568."
+  ],
+  "differences": [
+    {
+      "member": "TranslationKey.#Id2",
+      "reason": "The field-name or property-name component of a translation-file lookup id. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "TranslationKey.#NavSymbolKind1",
+      "reason": "The symbol kind of a translation key's first component (BC: Table, runner: Module). A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "TranslationKey.#NavSymbolKind2",
+      "reason": "The symbol kind of a translation key's second component. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "TranslationKey.#NavSymbolKind3",
+      "reason": "The symbol kind of a translation key's third component. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "TranslationKey.#NavSymbolKind4",
+      "reason": "The symbol kind of a translation key's fourth component. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "TranslationKey.#Id3",
+      "reason": "The property-name component of a field's translation-file lookup id. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "TranslationKey.#Id1",
+      "reason": "The object-name component of a translation-file lookup id. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "MetaField.Caption",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.CaptionClass",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.CaptionOriginal",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.CharAllowed",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ClrType",
+      "reason": "BC states the field's real CLR type and the runner states the empty string on all 1,888 fields. ClrType is not an XML attribute at all \u2014 BC derives it itself \u2014 and it is a PURE FUNCTION of Datatype, which the symbol file does carry and the runner already reads: measured over 988 observations, all 16 Datatypes map to exactly one ClrType each (BigInteger->System.Int64, GUID->System.Guid, Code/Text/DateFormula->System.String, Option/Integer->System.Int32, BLOB/RecordID->System.Byte[], Media->NSMediaWrapper, and so on). Recoverable with no app data.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.EnumTypeName",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ExternalName",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ExternalType",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ObsoleteReason",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.OptionCaption",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.OptionCaptionOriginal",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ToolTip",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ToolTipOriginal",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ValuesAllowed",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.MaxValue",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.MinValue",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.OptionString",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.InitValue",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.DataClassification",
+      "reason": "A field with no DataClassification inherits the TABLE's, which the symbol file does carry. On 439 of 439 measured fields the emitted value equals the table's.",
+      "issue": 3545
+    },
+    {
+      "member": "MetaField.ALNamespace",
+      "reason": "BC states the object's AL namespace on every field; the runner states the empty string. The symbol file has no ALNamespace attribute, but its Namespaces nesting is exactly what the attribute names.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.CaptionML.<presence>",
+      "reason": "BC builds a MultiLanguage caption for the field; the runner builds none. The symbol file carries Caption (2,743 occurrences in System Application) \u2014 the MultiLanguage object is its runtime form. Direction-scoped to BC-present / runner-absent; the runner inventing a caption BC does not have is a different defect.",
+      "issue": 3568,
+      "direction": "bc-only"
+    },
+    {
+      "member": "MetaField.ExtendedDatatype",
+      "reason": "BC answers Undefined where nothing is declared; the runner answers None, a different member of the same enum. An encoded-default disagreement, not a missing read.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.Editable",
+      "reason": "An absent Editable in the symbol file means true; the reader takes the constructor default instead. Measured over 1,540 ISV fields: 271 stated, 1,269 silent-and-default, zero silent-and-non-default.",
+      "issue": 3545
+    },
+    {
+      "member": "MetaField.TestRelations",
+      "reason": "BC answers true on a field with no declared TestTableRelation; the runner answers false. AL's real default, not the constructor's.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.AllowInCustomizations",
+      "reason": "BC answers AsReadOnly where the runner answers ToBeClassified. The symbol file states AllowInCustomizations only where it is non-default, so this is the AL default being wrong rather than a value being lost.",
+      "issue": 3568
+    },
+    {
+      "member": "FieldMetadataRelation.Name",
+      "reason": "BC names each field a key refers to; the runner leaves the name null and carries the id alone.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.Relations.<presence>",
+      "reason": "BC gives SystemCreatedBy and SystemModifiedBy a TableRelation to User (2000000120); the runner gives them none. This is the difference already observable from plain AL as FieldRef.Relation() answering 0 \u2014 see #3549. Direction-scoped to BC-present / runner-absent; the runner inventing a relation BC does not have would be a different defect and is not covered.",
+      "issue": 3568,
+      "direction": "bc-only"
+    },
+    {
+      "member": "MetaField.ValidateRelation",
+      "reason": "BC answers false on the platform-added system fields; the runner answers true. Restricted to the fields BC adds, not to declared ones.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaKey.ALNamespace",
+      "reason": "Same gap as MetaField.ALNamespace, on keys, where the runner answers null.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaKey.DebuggerDisplay",
+      "reason": "Derived from MetaKey.Name and the key's field names, so it differs wherever those do. Not separately fixable.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaKey.Name",
+      "reason": "BC's key name is the SQL key spec it generates (Field1); the runner's is the AL key name (PK). Two different naming schemes, so this is not a value being lost.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaKey.ObsoleteReason",
+      "reason": "The same null-versus-empty-string shape as the MetaField entries, running the other way: BC states the empty string and the runner states null.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.Name",
+      "reason": "BC names the platform-added system fields $systemId, $systemCreatedAt and so on; the runner uses the AL spelling (SystemId). BC policy for the fields IT adds, which the runner adds itself.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.ALNamespace",
+      "reason": "Same gap as MetaField.ALNamespace, on the table itself.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.PlatformDefinedFieldsAdded",
+      "reason": "BC marks every table as having had its platform fields added; the runner leaves the flag false even though it adds those fields.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.Scope",
+      "reason": "BC answers Personalization where the runner answers Cloud. The symbol file carries Scope.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.Validation",
+      "reason": "BC answers true where the runner answers false, on fields whose AL declares an OnValidate trigger.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.InherentEntitlements",
+      "reason": "BC states the declared inherent entitlements; the runner answers None. The symbol file carries InherentEntitlements (687 occurrences in System Application).",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.InherentPermissions",
+      "reason": "The permissions half of MetaTable.InherentEntitlements, same shape and same source.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.#fieldsById.<presence>",
+      "reason": "The private backing storage behind MetaTable.FieldsById, holding the same merged tableextension fields as MetaTable.Fields.<presence>; same runtime-merged-versus-build-time-emit boundary, same consequence for an empty diff.",
+      "oracleLimitation": true,
+      "Doc": "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata",
+      "direction": "runner-only"
+    },
+    {
+      "member": "MetaTable.Fields.<presence>",
+      "reason": "The runner models the MERGED RUNTIME state a running system has \u2014 every registered app's tableextension fields present on the base table. The ground truth is BC's BUILD-TIME per-app emit, which by construction sees only the app being compiled. Two different things, so this is a limitation of the oracle and not evidence about the runner: 115 fields on four Business Foundation tables (230, 242, 308, 6635). In BC 29 everything is merged at database level anyway, which makes the runner's merged view the forward-looking one. CONSEQUENCE: a multi-app bundle can never produce an empty diff, so a non-empty diff here is expected and must not be read as noise or as a bug. DIRECTION-SCOPED: covers only BC-absent / runner-present, which is the merged-runtime direction this reason justifies. The reverse \u2014 BC emitted a field and the runner built none \u2014 is a hard reader defect and is NOT covered.",
+      "oracleLimitation": true,
+      "Doc": "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata",
+      "direction": "runner-only"
+    },
+    {
+      "member": "MetaTable.FieldsById.<presence>",
+      "reason": "The by-id index of the same merged tableextension fields as MetaTable.Fields.<presence>; same runtime-merged-versus-build-time-emit boundary, same consequence for an empty diff.",
+      "oracleLimitation": true,
+      "Doc": "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata",
+      "direction": "runner-only"
+    },
+    {
+      "member": "MetaTable.ReplicateData",
+      "reason": "BC answers true unless AL declares otherwise; the runner answers false. The symbol file states ReplicateData only when non-default.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaKey.KeyName",
+      "reason": "The same naming disagreement as MetaKey.Name, on the second of the two name properties.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.EnumTypeId",
+      "reason": "BC resolves the enum object's id; the runner answers 0. The AL-observable consequence is that an enum-typed field cannot be resolved back to its enum object.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.Access",
+      "reason": "BC states Internal on fields whose AL declares it; the runner answers Public. The symbol file carries Access.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.Access",
+      "reason": "Same as MetaField.Access, on the table.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaCalcFormula.FlowFieldType",
+      "reason": "A case disagreement: BC answers Lookup, the runner answers LOOKUP. The runner is echoing the AL source text rather than mapping it to BC's enum spelling.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.Caption",
+      "reason": "The reverse direction: BC's table Caption is null and the runner carries a real caption. The runner resolves it from AL and BC leaves the runtime object's Caption unset, answering through CaptionML instead. Direction-scoped to BC-null / runner-present, which is the direction this reason describes; BC stating a caption the runner drops is not covered.",
+      "issue": 3568,
+      "direction": "runner-only"
+    },
+    {
+      "member": "MetaTable.CaptionOriginal",
+      "reason": "The CaptionOriginal half of MetaTable.Caption, same cause. Direction-scoped to BC-null / runner-present, which is the direction this reason describes; BC stating a caption the runner drops is not covered.",
+      "issue": 3568,
+      "direction": "runner-only"
+    },
+    {
+      "member": "MetaTable.DataClassification",
+      "reason": "The table-level value, distinct from the field-level inheritance #3545 covers: BC states SystemMetadata where the runner answers CustomerContent.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaFilter.FilterValue",
+      "reason": "Where a CalcFormula filter compares against an enum or a boolean, BC stores the ordinal (0, 1) and the runner stores the source text (System, true).",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.OptionCaptionML.<presence>",
+      "reason": "The option-caption half of MetaField.CaptionML.<presence>. Direction-scoped to BC-present / runner-absent.",
+      "issue": 3568,
+      "direction": "bc-only"
+    },
+    {
+      "member": "MetaField.NotBlank",
+      "reason": "BC states NotBlank where AL declares it; the runner answers false. The symbol file carries NotBlank.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.FieldGroups.<presence>",
+      "reason": "BC builds the declared field groups (Brick, DropDown); the runner builds none anywhere. The symbol file carries FieldGroups. Direction-scoped to BC-present / runner-absent.",
+      "issue": 3568,
+      "direction": "bc-only"
+    },
+    {
+      "member": "MetaKey.Clustered",
+      "reason": "BC answers false on a key AL does not declare clustered; the runner answers true. The symbol file carries Clustered.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaKey.SumIndexFields.<presence>",
+      "reason": "BC builds the declared SumIndexFields; the runner builds none. Direction-scoped to BC-present / runner-absent.",
+      "issue": 3568,
+      "direction": "bc-only"
+    },
+    {
+      "member": "MetaField.Lookup",
+      "reason": "BC states Lookup where AL declares it; the runner answers false.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.ObsoleteReason",
+      "reason": "BC states the declared obsolete reason; the runner answers null.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.ObsoleteState",
+      "reason": "BC states Pending on an obsoleted table; the runner answers No.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ObsoleteState",
+      "reason": "BC states Pending on an obsoleted field; the runner answers No.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.DrillDownFormId",
+      "reason": "BC resolves the declared DrillDownPageId to a page id; the runner answers 0.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaCondition.ConditionValue",
+      "reason": "The same ordinal-versus-source-text disagreement as MetaFilter.FilterValue, on a conditional TableRelation.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.BlankZero",
+      "reason": "BC states BlankZero where AL declares it; the runner answers false.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaKey.Unique",
+      "reason": "BC states Unique where AL declares it; the runner answers false.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.DataCaptionFields",
+      "reason": "BC states the declared DataCaptionFields; the runner states an empty array. The symbol file carries DataCaptionFields.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.BlobSubType",
+      "reason": "BC states the declared BLOB subtype (Bitmap); the runner answers UserDefined.",
+      "issue": 3568
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "comment": [
+    "Which Microsoft apps the metadata-equivalence harness must cover (issue #3533).",
+    "Declaring an app here makes covering it mandatory: MetadataEquivalenceHarnessTests fails",
+    "if no ground-truth bundle for it is present, so the harness cannot quietly measure less",
+    "than it claims. Add an app only once tools/gen-metadata-ground-truth.sh produces a bundle",
+    "for it on a clean box.",
+    "",
+    "Base Application is deliberately ABSENT. Its emit needs a PublicKeyToken=null copy of",
+    "Microsoft.AspNetCore.StaticFiles that no BC artifact ships, and without it the emitter",
+    "produces ZERO objects (issue #3549). Listing it here would fail every leg; leaving it out",
+    "and saying so is the honest state."
+  ],
+  "apps": [
+    {
+      "publisher": "Microsoft",
+      "name": "Business Foundation",
+      "reason": "96 AL files, 12 tables, compiles clean headless in ~3s with no reference-set workaround at all — the app that proves the harness runs anywhere the artifacts do."
+    },
+    {
+      "publisher": "Microsoft",
+      "name": "System Application",
+      "reason": "1,319 AL files, 138 tables, ~14s. The app the known defect counts were measured on, and large enough that a reader regression has somewhere to hide."
+    }
+  ]
+}
