@@ -142,11 +142,12 @@ public class TransactionModelCommitRefusalTests
                 Runnable: Codeunit "TXM Runnable";
                 Probe: Record "TXM Probe";
             begin
-                // No write before the call: a guarded Codeunit.Run whose result is consumed
-                // opens a transaction world, and BC refuses that while the caller has an
-                // uncommitted write pending — a different rule (corpus TestCodeunitRunWrite-
-                // Transaction), and one this test must not trip over. Entry 20 is used here
-                // and nowhere else in this bundle.
+                // DECLARED FIRST ON PURPOSE, and do not reorder: AlRunner#3468 — the runner's
+                // write-transaction flag survives a test-method boundary, so any arm below that
+                // writes without committing leaves this guarded Codeunit.Run refused with "the
+                // transaction is stopped" instead of measuring what it is here to measure. It
+                // also writes nothing itself, for the same reason within the method (corpus
+                // TestCodeunitRunWriteTransaction). Entry 20 is used here and nowhere else.
                 if not Runnable.Run() then
                     Error('TXM7 FAIL: a guarded Codeunit.Run inside an AutoRollback test must succeed, got [%1]', GetLastErrorText());
 
