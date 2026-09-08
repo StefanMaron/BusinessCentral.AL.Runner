@@ -164,6 +164,12 @@ public static partial class BcRuntime
         // ALDatabasePatches.EndGuardedRunTransaction and AlRunner#2332.
         if (guarded) ALDatabasePatches.BeginGuardedRunTransaction();
 
+        // #3480: BOTH forms begin a transaction of their own — the statement form a plain
+        // BeginTransaction, the guarded form a transaction world — which is why a write inside
+        // the run codeunit is legal even when the CALLER has none (a TransactionModel::None
+        // test body). Corpus 60878 Test10.
+        ALDatabasePatches.EnterRunTransaction();
+
         bool ran = false;
         try
         {
@@ -188,6 +194,7 @@ public static partial class BcRuntime
         }
         finally
         {
+            ALDatabasePatches.ExitRunTransaction();
             if (guarded) ALDatabasePatches.EndGuardedRunTransaction(ran);
         }
     }
@@ -218,6 +225,9 @@ public static partial class BcRuntime
         // and ALDatabasePatches.BeginGuardedRunTransaction / EndGuardedRunTransaction.
         if (guarded) ALDatabasePatches.BeginGuardedRunTransaction();
 
+        // The other spelling of the same AL construct — see NavCodeunit_DoRunAsync above.
+        ALDatabasePatches.EnterRunTransaction();
+
         bool ran = false;
         try
         {
@@ -234,6 +244,7 @@ public static partial class BcRuntime
         }
         finally
         {
+            ALDatabasePatches.ExitRunTransaction();
             if (guarded) ALDatabasePatches.EndGuardedRunTransaction(ran);
         }
     }

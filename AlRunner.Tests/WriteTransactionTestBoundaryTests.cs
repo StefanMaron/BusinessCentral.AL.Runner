@@ -207,4 +207,181 @@ public class WriteTransactionTestBoundaryTests
         Assert.Contains("PASS  Codeunit62470.D_DefaultModelTestWritesWithoutCommitting", output);
         Assert.Contains("PASS  Codeunit62470.E_GuardedCodeunitRunIsStillAllowed", output);
     }
+
+    /// <summary>
+    /// Issue #3480, the other end of the same boundary. BC handles
+    /// <c>TransactionModel::None</c> BEFORE the method body — the pre-body
+    /// <c>while (IsTransactionActive()) EndTransaction(commit: false)</c> loop in
+    /// <c>NavTestCodeunit.ExecuteTestMethodAsync</c> — so a None test body runs with no
+    /// transaction at all, and a write from that body is refused by
+    /// <c>TransactionManager.EnsureWriteTransactionStarted</c>'s <c>ThrowIfNoTransaction()</c>.
+    /// A write inside a codeunit the test RUNS is fine, because both forms of
+    /// <c>Codeunit.Run</c> begin a transaction of their own.
+    ///
+    /// The BC claim itself is pinned upstream (corpus 60878 Test08-Test10, PR body's
+    /// <c>Corpus-PR:</c> line). This pins the runner's own mechanism.
+    /// </summary>
+    [SkippableFact]
+    public void UnderTransactionModelNone_ATestBodyHasNoTransactionAndCannotWrite()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.Dir("al-runner-writetx-none-3480");
+        Directory.CreateDirectory(root);
+
+        File.WriteAllText(Path.Combine(root, "app.json"), """
+        {
+          "id": "b3480000-0000-4000-8000-000000003480",
+          "name": "WriteTxNone3480",
+          "publisher": "Repro3480",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 62480, "to": 62489 } ],
+          "runtime": "14.0"
+        }
+        """);
+
+        File.WriteAllText(Path.Combine(root, "TxnProbe.al"), """
+        table 62480 "TXN Probe"
+        {
+            DataClassification = SystemMetadata;
+
+            fields
+            {
+                field(1; "Entry No."; Integer) { }
+            }
+
+            keys
+            {
+                key(PK; "Entry No.") { Clustered = true; }
+            }
+        }
+
+        codeunit 62482 "TXN Runnable"
+        {
+            trigger OnRun()
+            var
+                Probe: Record "TXN Probe";
+            begin
+                Probe."Entry No." := 80;
+                Probe.Insert();
+            end;
+        }
+
+        // The statement-form target. Its own key, because the guarded run above commits its
+        // row and a duplicate key inside a run would return `false` for a reason that has
+        // nothing to do with the transaction.
+        codeunit 62483 "TXN Runnable Two"
+        {
+            trigger OnRun()
+            var
+                Probe: Record "TXN Probe";
+            begin
+                Probe."Entry No." := 83;
+                Probe.Insert();
+            end;
+        }
+
+        codeunit 62481 "TXN Tests"
+        {
+            Subtype = Test;
+            TestPermissions = Disabled;
+
+            // Declaration order IS the fixture: F writes without committing, and everything
+            // after it runs under TransactionModel::None.
+
+            [Test]
+            procedure F_DefaultModelTestWritesWithoutCommitting()
+            var
+                Probe: Record "TXN Probe";
+            begin
+                Probe."Entry No." := 81;
+                Probe.Insert();
+
+                if not Database.IsInWriteTransaction() then
+                    Error('TXN1 FAIL: an uncommitted Insert must open a write transaction inside the test that made it');
+            end;
+
+            [Test]
+            [TransactionModel(TransactionModel::None)]
+            procedure G_NoneTestStartsWithNoTransaction()
+            var
+                Runnable: Codeunit "TXN Runnable";
+                Probe: Record "TXN Probe";
+            begin
+                if Database.IsInWriteTransaction() then
+                    Error('TXN2 FAIL: a None test body runs with no transaction, so no write transaction may be pending');
+
+                if not Probe.Get(81) then
+                    Error('TXN2 FAIL: ending the previous test''s transaction must not discard its committed row');
+
+                if not Runnable.Run() then
+                    Error('TXN2 FAIL: a guarded Codeunit.Run must be allowed here, got [%1]', GetLastErrorText());
+
+                if not Probe.Get(80) then
+                    Error('TXN2 FAIL: the run codeunit''s row must be visible after a successful guarded run');
+            end;
+
+            [Test]
+            [TransactionModel(TransactionModel::None)]
+            procedure H_NoneTestCannotWriteFromItsOwnBody()
+            var
+                Probe: Record "TXN Probe";
+            begin
+                Probe."Entry No." := 82;
+                asserterror Probe.Insert();
+
+                if GetLastErrorText() <> 'A transaction must be started before changes can be made to the database.' then
+                    Error('TXN3 FAIL: expected BC''s no-transaction refusal, got [%1]', GetLastErrorText());
+
+                if Database.IsInWriteTransaction() then
+                    Error('TXN3 FAIL: a refused write must not open a write transaction');
+
+                if Probe.Get(82) then
+                    Error('TXN3 FAIL: a refused write must not have written a row');
+            end;
+
+            [Test]
+            [TransactionModel(TransactionModel::None)]
+            procedure I_ARunCodeunitMayWriteUnderNone()
+            var
+                Probe: Record "TXN Probe";
+            begin
+                Codeunit.Run(Codeunit::"TXN Runnable Two");
+
+                if not Probe.Get(83) then
+                    Error('TXN4 FAIL: Codeunit.Run begins a transaction of its own, so the run codeunit''s write must land');
+
+                if Database.IsInWriteTransaction() then
+                    Error('TXN4 FAIL: the transaction Codeunit.Run began must end with the run');
+            end;
+
+            // The scope must not outlive the None test that opened it: this default-model test
+            // writes, which would be refused if it had.
+            [Test]
+            procedure J_ADefaultModelTestAfterANoneTestCanStillWrite()
+            var
+                Probe: Record "TXN Probe";
+            begin
+                Probe."Entry No." := 84;
+                Probe.Insert();
+
+                if not Database.IsInWriteTransaction() then
+                    Error('TXN5 FAIL: a default-model test after a None test must still be able to write');
+            end;
+        }
+        """);
+
+        var (output, exitCode) = RunRunner(root);
+
+        Assert.True(exitCode == 0,
+            $"Expected all five tests to pass (exit 0); got exit {exitCode}.\n{output}");
+        Assert.DoesNotContain("FAIL", output);
+        Assert.Contains("PASS  Codeunit62481.F_DefaultModelTestWritesWithoutCommitting", output);
+        Assert.Contains("PASS  Codeunit62481.G_NoneTestStartsWithNoTransaction", output);
+        Assert.Contains("PASS  Codeunit62481.H_NoneTestCannotWriteFromItsOwnBody", output);
+        Assert.Contains("PASS  Codeunit62481.I_ARunCodeunitMayWriteUnderNone", output);
+        Assert.Contains("PASS  Codeunit62481.J_ADefaultModelTestAfterANoneTestCanStillWrite", output);
+    }
 }

@@ -496,6 +496,89 @@ public static class ALDatabasePatches
     public static void EndWriteTransactionAtTestBoundary()
         => System.Threading.Volatile.Write(ref _inWriteTransaction, false);
 
+    // ── TransactionModel::None: a test body that runs with no transaction ───────
+    // #3480. BC ends every transaction BEFORE a None body and re-opens them after it, so
+    // TransactionManager.EnsureWriteTransactionStarted's opening ThrowIfNoTransaction()
+    // refuses a write from the body — but not one inside a codeunit the test RUNS, since
+    // both forms of Codeunit.Run begin a transaction of their own. Hence the depth counter
+    // rather than a plain flag. Pinned upstream by corpus 60878 Test08-Test10.
+    private static bool _noTransactionScope;
+    private static int _runTransactionDepth;
+
+    /// <summary>Enter the transaction-less window a <c>TransactionModel::None</c> test body
+    /// runs in — BC's pre-body loop, mirrored. Ends the write transaction the same way that
+    /// loop does, so a previous test's uncommitted write cannot refuse this test's guarded
+    /// <c>Codeunit.Run</c>.</summary>
+    public static void EnterNoTransactionScope()
+    {
+        System.Threading.Volatile.Write(ref _noTransactionScope, true);
+        System.Threading.Volatile.Write(ref _inWriteTransaction, false);
+    }
+
+    /// <summary>Leave it. Called for EVERY test, None or not, so the scope can never outlive
+    /// the method that opened it and reach the install/seed writes between codeunits.</summary>
+    public static void ExitNoTransactionScope()
+    {
+        System.Threading.Volatile.Write(ref _noTransactionScope, false);
+        System.Threading.Volatile.Write(ref _runTransactionDepth, 0);
+    }
+
+    /// <summary>The transaction <c>Codeunit.Run</c> begins around the run codeunit — BC's
+    /// BeginTransaction on the statement-form branch, BeginTransactionWorldAndTransaction on
+    /// the guarded one. Bracketed for BOTH forms because both make a write legal inside the
+    /// run; the guarded form's separate <see cref="BeginGuardedRunTransaction"/> bracket
+    /// tracks row-rollback scope, which is a different question.</summary>
+    public static void EnterRunTransaction()
+        => System.Threading.Interlocked.Increment(ref _runTransactionDepth);
+
+    /// <summary>Close it. When the outermost run returns inside a None test, the transaction
+    /// it began is gone and the body is left with none again (corpus 60878 Test10).</summary>
+    public static void ExitRunTransaction()
+    {
+        if (System.Threading.Interlocked.Decrement(ref _runTransactionDepth) <= 0)
+        {
+            System.Threading.Volatile.Write(ref _runTransactionDepth, 0);
+            if (System.Threading.Volatile.Read(ref _noTransactionScope))
+                System.Threading.Volatile.Write(ref _inWriteTransaction, false);
+        }
+    }
+
+    /// <summary>BC's <c>TransactionManager.ThrowIfNoTransaction()</c> for the one state the
+    /// runner can be in without a transaction: the body of a <c>TransactionModel::None</c>
+    /// test, outside any <c>Codeunit.Run</c>.</summary>
+    private static void ThrowIfNoTransactionForWrite()
+    {
+        if (!System.Threading.Volatile.Read(ref _noTransactionScope)) return;
+        if (System.Threading.Volatile.Read(ref _runTransactionDepth) > 0) return;
+        throw BuildNoTransaction();
+    }
+
+    /// <summary>Build BC's own <c>NavCSideException(18022407, Lang.NoTransaction)</c>, the same
+    /// reflection route and for the same reason as <see cref="BuildCannotChangeTransactionType"/>:
+    /// Lang lives in Microsoft.Dynamics.Nav.Language.dll, which the runner does not reference
+    /// directly. The fallback is BC's own en-US text for that resource.</summary>
+    private static Exception BuildNoTransaction()
+    {
+        var message = LangString("NoTransaction")
+            ?? "A transaction must be started before changes can be made to the database.";
+        try
+        {
+            var tCSide = ResolveNavCSideExceptionType();
+            var ctor = tCSide?.GetConstructor(
+                System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.NonPublic,
+                null, new[] { typeof(int), typeof(string) }, null);
+            if (ctor != null)
+                return (Exception)ctor.Invoke(new object[] { 18022407, message });
+        }
+        catch { /* fall through to the plain exception below */ }
+
+        // Never let the diagnostic construction mask the contract: AL must still see an error
+        // here, because BC would have thrown one.
+        return new InvalidOperationException(message);
+    }
+
     /// <summary>Clear write-transaction state at the per-test isolation boundary, so one
     /// test's uncommitted write cannot make the next test start "in a transaction".</summary>
     public static void ResetWriteTransactionState()
@@ -614,6 +697,11 @@ public static class ALDatabasePatches
     public static void NoteRecordWrite(object? record)
     {
         if (record is Microsoft.Dynamics.Nav.Runtime.NavRecord { IsTemporary: true }) return;
+        // #3480: BC's EnsureWriteTransactionStarted refuses a write with no transaction active,
+        // which under TransactionModel::None is the whole test body. A temporary record never
+        // reaches it — the check above returns first, and BC's own write path for a temp table
+        // touches no database and no TransactionManager.
+        ThrowIfNoTransactionForWrite();
         System.Threading.Interlocked.Increment(ref _rowVersion);
         System.Threading.Volatile.Write(ref _inWriteTransaction, true);
         // Take the rollback snapshot now, before this write lands — captured once, lazily,
