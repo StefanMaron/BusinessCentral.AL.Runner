@@ -81,6 +81,23 @@ public static class ALDatabasePatches
         if (CurrentTestIsAutoRollback() && CurrentCommitBehaviorName() != "Ignore")
             throw BuildTestExplicitCommitNotAllowed();
 
+        CommitWithoutTestExecutionGuard();
+    }
+
+    /// <summary>
+    /// Everything <see cref="ALDatabase_ALCommit"/> does except its AutoRollback refusal —
+    /// for the internal callers that are NOT an AL <c>Commit()</c> statement.
+    ///
+    /// <para>BC's guard is written into ALDatabase.ALCommit and nowhere else, so it does not
+    /// apply to the transaction BC ends elsewhere. The one such caller here is
+    /// <see cref="EndGuardedRunTransaction"/>, which stands in for BC's
+    /// EndTransactionWorldAndTransaction: a guarded <c>Codeunit.Run</c> that returns true
+    /// commits its nested transaction, and BC refuses no part of that inside an AutoRollback
+    /// test. Routing it through the refusal would break every guarded Codeunit.Run in such a
+    /// test — a regression this split exists to prevent.</para>
+    /// </summary>
+    private static void CommitWithoutTestExecutionGuard()
+    {
         switch (CurrentCommitBehaviorName())
         {
             case "Error":
@@ -333,7 +350,8 @@ public static class ALDatabasePatches
         if (commit)
         {
             RecordPatches.PopTransactionWorldScope(restore: false);
-            ALDatabase_ALCommit();
+            // Not an AL Commit() statement — see CommitWithoutTestExecutionGuard.
+            CommitWithoutTestExecutionGuard();
         }
         else
         {

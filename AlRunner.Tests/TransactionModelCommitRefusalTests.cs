@@ -111,6 +111,17 @@ public class TransactionModelCommitRefusalTests
             end;
         }
 
+        codeunit 62462 "TXM Runnable"
+        {
+            trigger OnRun()
+            var
+                Probe: Record "TXM Probe";
+            begin
+                Probe."Entry No." := 20;
+                Probe.Insert();
+            end;
+        }
+
         codeunit 62460 "TXM Tests"
         {
             Subtype = Test;
@@ -119,6 +130,29 @@ public class TransactionModelCommitRefusalTests
             var
                 Helpers: Codeunit "TXM Helpers";
                 RefusalTxt: Label 'Tests cannot call the Commit function if TransactionModel property is set to AutoRollback.', Locked = true;
+
+            // The guard is BC's, and BC writes it into ALDatabase.ALCommit only. A guarded
+            // Codeunit.Run ends its nested transaction through EndTransactionWorldAndTransaction
+            // instead, which is not an AL Commit() statement and is not refused — so the runner
+            // must not route that internal commit through the refusal.
+            [Test]
+            [TransactionModel(TransactionModel::AutoRollback)]
+            procedure AutoRollback_GuardedCodeunitRunIsNotRefused()
+            var
+                Runnable: Codeunit "TXM Runnable";
+                Probe: Record "TXM Probe";
+            begin
+                // No write before the call: a guarded Codeunit.Run whose result is consumed
+                // opens a transaction world, and BC refuses that while the caller has an
+                // uncommitted write pending — a different rule (corpus TestCodeunitRunWrite-
+                // Transaction), and one this test must not trip over. Entry 20 is used here
+                // and nowhere else in this bundle.
+                if not Runnable.Run() then
+                    Error('TXM7 FAIL: a guarded Codeunit.Run inside an AutoRollback test must succeed, got [%1]', GetLastErrorText());
+
+                if not Probe.Get(20) then
+                    Error('TXM7 FAIL: the run codeunit''s row must be visible after a successful guarded run');
+            end;
 
             // Arm (a): the refusal itself.
             [Test]
@@ -234,13 +268,14 @@ public class TransactionModelCommitRefusalTests
         var (output, exitCode) = RunRunner(root);
 
         Assert.True(exitCode == 0,
-            $"Expected all six tests to pass (exit 0); got exit {exitCode}.\n{output}");
+            $"Expected all seven tests to pass (exit 0); got exit {exitCode}.\n{output}");
         Assert.DoesNotContain("FAIL", output);
         Assert.Contains("PASS  Codeunit62460.AutoRollback_ExplicitCommitIsRefused", output);
         Assert.Contains("PASS  Codeunit62460.AutoRollback_RefusalReachesAnUnattributedCallee", output);
         Assert.Contains("PASS  Codeunit62460.AutoCommit_ExplicitCommitIsAllowedAndDurable", output);
         Assert.Contains("PASS  Codeunit62460.AutoRollback_CommitBehaviorIgnoreIsExempt", output);
         Assert.Contains("PASS  Codeunit62460.AutoRollback_RefusalOutranksCommitBehaviorError", output);
+        Assert.Contains("PASS  Codeunit62460.AutoRollback_GuardedCodeunitRunIsNotRefused", output);
         Assert.Contains("PASS  Codeunit62460.Unattributed_ExplicitCommitIsAllowed", output);
     }
 }
