@@ -48,7 +48,10 @@ public static class ResumeCarry
     public sealed record CarriedBucket(
         string BucketPath, BucketStage Stage, List<string> CompileErrors, string? ProcessError,
         List<CarriedTest> Tests, long EmitTicks, long CompileTicks, long RunTicks,
-        int RanGroupCount, List<string>? ProvisionGaps);
+        int RanGroupCount, List<string>? ProvisionGaps,
+        // #3538. Trailing and defaulted, so a carry file written by an earlier runner build
+        // deserialises unchanged and simply carries no abort.
+        List<CompanyInitFailure>? CompanyInitFailures = null);
 
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -75,7 +78,8 @@ public static class ResumeCarry
             payload.Add(new CarriedBucket(
                 b.BucketPath, b.Stage, new List<string>(b.CompileErrors), b.ProcessError, tests,
                 b.EmitTime.Ticks, b.CompileTime.Ticks, b.RunTime.Ticks, b.RanGroupCount,
-                b.ProvisionGaps == null ? null : new List<string>(b.ProvisionGaps)));
+                b.ProvisionGaps == null ? null : new List<string>(b.ProvisionGaps),
+                b.CompanyInitFailures == null ? null : new List<CompanyInitFailure>(b.CompanyInitFailures)));
         }
         File.WriteAllText(path, JsonSerializer.Serialize(payload, Options));
     }
@@ -114,7 +118,12 @@ public static class ResumeCarry
                 all.Add(new BucketResult(
                     b.BucketPath, b.Stage, b.CompileErrors, b.ProcessError, tests,
                     TimeSpan.FromTicks(b.EmitTicks), TimeSpan.FromTicks(b.CompileTicks),
-                    TimeSpan.FromTicks(b.RunTicks), b.RanGroupCount, b.ProvisionGaps));
+                    TimeSpan.FromTicks(b.RunTicks), b.RanGroupCount, b.ProvisionGaps,
+                    // #3538: an abort recorded by an earlier attempt is carried forward with
+                    // that attempt's results. Dropping it here would be the same silent loss
+                    // this field exists to stop, one surface over — the resumed run's document
+                    // would describe tests that ran against a partial company and say nothing.
+                    b.CompanyInitFailures));
             }
         }
         return all;

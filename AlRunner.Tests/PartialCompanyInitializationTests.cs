@@ -41,6 +41,9 @@ public sealed class PartialCompanyInitializationTests
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
     private static readonly string FixturePath = Path.Combine(
         RepoRoot, "AlRunner.Tests", "Fixtures", "CompanyInitPartial");
+    // The same bundle with a deliberately failing test, so the run earns exit 1 on its own.
+    private static readonly string FailingFixturePath = Path.Combine(
+        RepoRoot, "AlRunner.Tests", "Fixtures", "CompanyInitPartialFailing");
 
     // The value the seam turns into the exception message, so every assertion below is against
     // text that could only have come through the real catch path.
@@ -49,7 +52,8 @@ public sealed class PartialCompanyInitializationTests
     private sealed record Run(string Output, int Exit);
 
     private static Run RunRunner(string cacheDir, bool injectAbort,
-        string? outPath = null, string? junitPath = null, bool outputJson = false)
+        string? outPath = null, string? junitPath = null, bool outputJson = false,
+        string[]? bundles = null, bool perfMarkers = false)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
@@ -57,7 +61,18 @@ public sealed class PartialCompanyInitializationTests
         if (outPath != null) args.Append($" --out \"{outPath}\"");
         if (junitPath != null) args.Append($" --output-junit \"{junitPath}\"");
         if (outputJson) args.Append(" --output-json");
-        args.Append($" \"{FixturePath}\"");
+        if (bundles != null)
+        {
+            // A generated closure compiles against the platform apps; without them on the
+            // package-cache path dependency resolution skips Microsoft/System and the bundle
+            // fails to compile at all (AL0185). Same reason as InstallSeedDepCompanyCacheTests.
+            args.Append(" --package-cache \"").Append(TestArtifacts.PlatformAppsDir()).Append('"');
+            foreach (var b in bundles) args.Append($" \"{b}\"");
+        }
+        else
+        {
+            args.Append($" \"{FixturePath}\"");
+        }
 
         var psi = new ProcessStartInfo
         {
@@ -67,6 +82,9 @@ public sealed class PartialCompanyInitializationTests
         };
         if (injectAbort) psi.Environment["AL_RUNNER_TEST_FAIL_COMPANY_INIT"] = InjectedReason;
         else psi.Environment.Remove("AL_RUNNER_TEST_FAIL_COMPANY_INIT");
+        // The DepCompanyCache MISS / HIT / DISK-HIT markers are PerfTrace lines, so the two
+        // cache tests below cannot see which tier answered without this.
+        if (perfMarkers) psi.Environment["AL_RUNNER_PERF"] = "1";
 
         var sb = new StringBuilder();
         using var p = Process.Start(psi)!;
@@ -81,7 +99,7 @@ public sealed class PartialCompanyInitializationTests
 
     private static string NewCacheDir()
     {
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-cip-" + Guid.NewGuid().ToString("N")[..12]);
+        var dir = TestScratch.Dir("al-runner-cip-cache");
         Directory.CreateDirectory(dir);
         return dir;
     }
@@ -206,28 +224,109 @@ public sealed class PartialCompanyInitializationTests
     }
 
     /// <summary>
-    /// The warm-cache arm. The dependency-company baseline is cached in memory and on disk, and
-    /// a HIT skips company initialization entirely — so a condition recorded only where the
-    /// codeunit actually ran would vanish on the second run and a repeat run would report a
-    /// clean database. That is precisely how the emit-exclusion loss came back green on a warm
-    /// cache (#3476). Both runs share one private `--cache` directory, so the second is a real
-    /// cross-process warm run.
+    /// The exit code is escalated from 0 and never from anything else. With a failing test in
+    /// the bundle the run has earned exit 1 — a statement about the AL — and the partial-company
+    /// notice must not overwrite it with 2, while every reporting surface still carries the
+    /// condition. Only the end-of-run `[warn] company-init:` line is gated on the run having
+    /// been otherwise clean, so its absence here is the assertion, not an omission.
     /// </summary>
     [SkippableFact]
-    public void PartialCompanyInit_SurvivesAWarmCache()
+    public void PartialCompanyInit_DoesNotLowerAnEarnedExitCode()
     {
         TestArtifacts.SkipIfMissing();
 
         var cache = NewCacheDir();
-        var cold = RunRunner(cache, injectAbort: true);
-        Assert.Equal(2, cold.Exit);
-        Assert.Contains("Company initialization: INCOMPLETE", cold.Output);
+        var run = RunRunner(cache, injectAbort: true, bundles: new[] { FailingFixturePath });
 
-        var warm = RunRunner(cache, injectAbort: true);
-        Assert.True(warm.Exit == 2,
-            $"the second run reuses the compiled output and may reuse the dependency baseline; "
-            + $"the company it runs against is still partial. exit={warm.Exit}\n{warm.Output}");
-        Assert.Contains("Company initialization: INCOMPLETE", warm.Output);
-        Assert.Contains(InjectedReason, warm.Output);
+        Assert.True(run.Exit == 1,
+            $"a failing test earns exit 1; the abort must not replace it with 2. "
+            + $"exit={run.Exit}\n{run.Output}");
+        Assert.Contains("fail:        1", run.Output);
+        // The condition is still recorded — it is not gated on the exit code.
+        Assert.Contains("Company initialization: INCOMPLETE", run.Output);
+        Assert.Contains(InjectedReason, run.Output);
+        // ...and the escalation line, which only explains a moved exit code, is not printed.
+        Assert.DoesNotContain("[warn] company-init:", run.Output);
+    }
+
+    /// <summary>
+    /// The disk lever. `EnsureCompanyInitialized` runs only on a dependency-company-baseline
+    /// MISS, so a snapshot persisted after an abort would be restored by the next PROCESS with
+    /// nothing left to report it — the run would come back clean on a company that is still
+    /// partial, which is the #3476 cache defect one cache over.
+    ///
+    /// <para>Both arms use <see cref="InstallSeedClosure"/>, whose dependency app writes rows in
+    /// its install trigger: without that the snapshot has zero DataAccessSources, the codec
+    /// refuses to persist it in either arm, and the whole question is unreachable. The clean arm
+    /// is the non-vacuity guard — it must reach DISK-HIT, so the abort arm's MISS is the
+    /// withhold rather than a fixture that never persists anything.</para>
+    /// </summary>
+    [SkippableFact]
+    public void PartialCompanyInit_IsWithheldFromTheDiskBaseline_SoTheNextProcessStillReportsIt()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.Dir("al-runner-cip-disk");
+        try
+        {
+            // Control: same fixture shape, no abort. Second process must reuse the persisted
+            // baseline, or the abort arm below proves nothing.
+            var cleanBundle = InstallSeedClosure.Write(root, "cipclean", 61980).BundleDir;
+            var cleanCache = NewCacheDir();
+            var cleanCold = RunRunner(cleanCache, injectAbort: false,
+                bundles: new[] { cleanBundle }, perfMarkers: true);
+            Assert.True(cleanCold.Exit == 0, $"control cold run failed. exit={cleanCold.Exit}\n{cleanCold.Output}");
+            var cleanWarm = RunRunner(cleanCache, injectAbort: false,
+                bundles: new[] { cleanBundle }, perfMarkers: true);
+            Assert.Contains("InstallBaseline.DepCompanyCache DISK-HIT", cleanWarm.Output);
+
+            // The arm under test: identical but for the injected abort.
+            var abortBundle = InstallSeedClosure.Write(root, "cipabort", 61995).BundleDir;
+            var abortCache = NewCacheDir();
+            var cold = RunRunner(abortCache, injectAbort: true,
+                bundles: new[] { abortBundle }, perfMarkers: true);
+            Assert.Equal(2, cold.Exit);
+            Assert.Contains("Company initialization: INCOMPLETE", cold.Output);
+
+            var warm = RunRunner(abortCache, injectAbort: true,
+                bundles: new[] { abortBundle }, perfMarkers: true);
+            Assert.DoesNotContain("InstallBaseline.DepCompanyCache DISK-HIT", warm.Output);
+            Assert.Contains("InstallBaseline.DepCompanyCache MISS", warm.Output);
+            Assert.True(warm.Exit == 2,
+                $"the second process must re-run company initialization and report the abort "
+                + $"again. exit={warm.Exit}\n{warm.Output}");
+            Assert.Contains("Company initialization: INCOMPLETE", warm.Output);
+            Assert.Contains(InjectedReason, warm.Output);
+        }
+        finally { try { Directory.Delete(root, true); } catch { } }
+    }
+
+    /// <summary>
+    /// The in-memory lever. Two app groups sharing one dependency closure resolve to the same
+    /// key, so the second gets a HIT and never calls `EnsureCompanyInitialized` — the snapshot
+    /// it restores IS the partial company the first group's abort left behind. Without the
+    /// carry, the second group runs its tests against that company and contributes nothing to
+    /// the record; with it, both groups are accounted for.
+    /// </summary>
+    [SkippableFact]
+    public void PartialCompanyInit_OnAnInMemoryCacheHit_IsReportedByTheSecondAppGroup()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.Dir("al-runner-cip-hit");
+        try
+        {
+            var (appA, appB, _) = InstallSeedClosure.WriteSharedClosure(root, "ciphit", 61960);
+            var run = RunRunner(NewCacheDir(), injectAbort: true,
+                bundles: new[] { appA, appB }, perfMarkers: true);
+
+            Assert.Equal(2, run.Exit);
+            // The HIT is what makes this test about the carry rather than about two aborts.
+            Assert.Contains("InstallBaseline.DepCompanyCache HIT", run.Output);
+            // One abort per app group: each ran its tests against the partial company, and the
+            // one that reused the snapshot has no other way to say so.
+            Assert.Contains("Company initialization: INCOMPLETE (2 abort(s))", run.Output);
+        }
+        finally { try { Directory.Delete(root, true); } catch { } }
     }
 }

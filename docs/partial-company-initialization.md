@@ -94,6 +94,15 @@ Two levers, in `AlRunner/TestExecutor.cs`:
   — seconds, and it re-runs codeunit 2 itself — and gets a run that reports the condition, or a
   clean one once a runner fix has made the abort stop happening.
 
+Both are measured rather than reasoned, and the measurement needs a fixture whose dependency
+closure **writes rows**: with an empty snapshot the codec refuses to persist anything at all
+(`not persisting: snapshot has 0 DataAccessSource(s)`), no disk entry exists in either arm, and
+a warm run MISSes for a reason that has nothing to do with the withhold. So both tests build a
+closure with `AlRunner.Tests/InstallSeedClosure.cs`, and the disk test carries a control arm —
+the same fixture shape without an abort must reach `DISK-HIT` — so that the abort arm's `MISS`
+is the withhold and not a fixture that never persisted. Remove the two levers and both tests
+fail; that is what makes this section a claim about the code rather than about #3476.
+
 ## Where the code is
 
 - `AlRunner/CompanyInitializer.cs` — the catch path, the run-wide accumulator, and the
@@ -102,5 +111,7 @@ Two levers, in `AlRunner/TestExecutor.cs`:
 - `AlRunner/Program.cs` — draining the accumulator into the bucket's `BucketResult`, and the
   exit-code escalation
 - `AlRunner/Reporter.cs`, `AlRunner/JUnitReport.cs` — the four reporting surfaces
-- `AlRunner.Tests/PartialCompanyInitializationTests.cs` — the proving tests, including the
-  negative control and the cold-then-warm pair
+- `AlRunner/Infrastructure/ResumeCarry.cs` — the abort crosses the watchdog-resume process
+  boundary with the attempt's results
+- `AlRunner.Tests/PartialCompanyInitializationTests.cs` — the proving tests: the negative
+  control, the two cache levers, and the run that earns exit 1 on its own
