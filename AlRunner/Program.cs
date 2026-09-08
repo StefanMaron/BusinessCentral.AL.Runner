@@ -3895,9 +3895,15 @@ foreach (var bundle in bundles)
     // existed.
     if (bundleTests.Count == 0 && bundleErrors.Count > 0)
         bundleStage = AlRunner.Infrastructure.BundleFailureStage.Classify(bundleErrors);
+    // #3538: drained here, once per bucket, because the accumulator is run-wide while
+    // CompanyInitializer.ResetForNewBundle runs once per APP GROUP — a bucket with several
+    // groups can abort in one and initialize cleanly in the next, and both facts belong to
+    // this bucket. Draining also means the next bucket starts empty rather than inheriting
+    // this one's condition.
     results.Add(new BucketResult(bundleAbs, bundleStage,
         bundleErrors, null, bundleTests,
-        bundleEmit, bundleComp, bundleRun, ranGroupCount, bundleProvisionGaps));
+        bundleEmit, bundleComp, bundleRun, ranGroupCount, bundleProvisionGaps,
+        CompanyInitializer.DrainFailures()));
     // Appended here, not buffered to process exit: a run that dies mid-way still
     // yields a row for every bundle it did finish. The row's wall clock covers this
     // whole loop turn, so wall − (emit+compile+run) is the per-bundle overhead
@@ -4485,6 +4491,27 @@ if (!serverMode && !watchMode && !dapMode
     && AlRunner.Infrastructure.ExecutionSchedulerShutdown.DisposeIfRealized()
         == AlRunner.Infrastructure.ExecutionSchedulerShutdown.Outcome.Disposed)
     Console.Error.WriteLine("[shutdown] disposed BC ExecutionScheduler that a BC-internal path realized during the run (#2704)");
+
+// #3538: company initialization did not finish, so every test above ran against a company
+// real BC cannot produce — codeunit 2 "Company-Initialize" commits exactly once, at the end of
+// its OnRun, so a service tier either has the whole set of setup rows or the company creation
+// failed. Ranked exactly like carryIncomplete and the lost output below, and for the same
+// reason: it says nothing about the AL, it says the DATABASE the AL ran against was not the one
+// asked for — so a consumer must not read it as "some tests failed", and equally must not read
+// a zero as "the company was initialized". Never RAISED above what the tests earned, so a
+// failing run still reports its own, more specific code, and --no-strict-exit still forces 0
+// for a consumer that wants the old behaviour.
+var companyInitFailures = Reporter.CompanyInitFailures(allResults);
+if (companyInitFailures.Count > 0 && computedExitCode == 0)
+{
+    Console.Error.WriteLine(
+        $"[warn] company-init: {companyInitFailures.Count} company initialization abort(s) — "
+        + "every test in this run used a PARTIALLY initialized company, so AL reading a setup "
+        + "row the codeunit never reached will fail for that reason and not its own; "
+        + "exiting 2 because the run is not clean. See the summary above, and "
+        + "docs/partial-company-initialization.md.");
+    computedExitCode = 2;
+}
 
 // #2403: an output file the caller asked for and did not get. Ranked exactly like
 // carryIncomplete above, and for the same reason: it says nothing about the AL, it says the

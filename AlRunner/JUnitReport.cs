@@ -101,6 +101,8 @@ public static class JUnitReport
             foreach (var cs in carriedSuites) cs.WriteTo(writer);
         }
 
+        WriteCompanyInitComments(writer, buckets);
+
         WriteLostSuiteComments(writer, buckets);
 
         foreach (var suite in suites)
@@ -208,6 +210,36 @@ public static class JUnitReport
     /// synthetic suite would have to invent an <c>errors</c> count and so would move the very
     /// numbers a dashboard plots. It reports what did not run; it does not restate the run.</para>
     /// </summary>
+    /// <summary>
+    /// An XML comment per bucket whose company initialization aborted (#3538) — the JUnit
+    /// counterpart of <c>--output-json</c>'s <c>companyInitFailures</c> array.
+    ///
+    /// <para>Every test element in this document then describes a run against a company real BC
+    /// cannot produce, and nothing else in the XML says so: the counts are whatever the tests
+    /// earned, and a suite that happens not to read a missing setup row is wholly green. Same
+    /// shape and same reasoning as <see cref="WriteLostSuiteComments"/> — a comment rather than
+    /// a synthetic suite or a non-standard attribute, because it reports a condition about the
+    /// run without moving the numbers a dashboard plots.</para>
+    /// </summary>
+    private static void WriteCompanyInitComments(XmlWriter writer, IReadOnlyList<BucketResult> buckets)
+    {
+        foreach (var b in buckets)
+        {
+            var failures = b.CompanyInitFailures ?? Array.Empty<CompanyInitFailure>();
+            if (failures.Count == 0) continue;
+
+            var text = new StringBuilder();
+            text.Append($" company initialization did NOT complete for {b.BucketPath}: the tests "
+                + "in this report ran against a PARTIALLY initialized company, so setup rows are "
+                + "missing and a failure reading one is caused by this; ");
+            foreach (var f in failures)
+                text.Append($"[{Reporter.DescribeCompanyInitFailure(f)}] ");
+
+            // "--" cannot appear inside an XML comment, and a BC exception message can carry one.
+            writer.WriteComment(text.ToString().Replace("--", "- -"));
+        }
+    }
+
     private static void WriteLostSuiteComments(XmlWriter writer, IReadOnlyList<BucketResult> buckets)
     {
         foreach (var b in buckets)

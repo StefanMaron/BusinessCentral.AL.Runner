@@ -7,6 +7,17 @@ namespace AlRunner;
 
 public enum BucketStage { CompileFailed, ExecuteFailed, Ran }
 
+/// <summary>
+/// Company initialization (Base App codeunit 2 "Company-Initialize") aborted part-way, so the
+/// company every test in this bucket ran against is missing whatever setup rows the codeunit
+/// had not reached. Real BC cannot produce that state — codeunit 2's OnRun commits exactly
+/// once, at the end — so this is a property of the RUN, not of any one test, and it is carried
+/// on the bucket rather than left on stderr (#3538). See
+/// docs/partial-company-initialization.md.
+/// </summary>
+public sealed record CompanyInitFailure(int CodeunitId, string CodeunitName,
+                                        string ExceptionType, string Message);
+
 public sealed record BucketResult(string BucketPath, BucketStage Stage,
                                    IReadOnlyList<string> CompileErrors,
                                    string? ProcessError,
@@ -30,7 +41,15 @@ public sealed record BucketResult(string BucketPath, BucketStage Stage,
                                    // PrintSummary repeats them at the end, where a scripted caller
                                    // and a human scrolling to the bottom actually look (#2587).
                                    // Optional/trailing for the same reason as RanGroupCount.
-                                   IReadOnlyList<string>? ProvisionGaps = null);
+                                   IReadOnlyList<string>? ProvisionGaps = null,
+                                   // #3538: company initialization aborted for one or more of
+                                   // this bucket's app groups, so its tests ran against a
+                                   // company real BC could not produce. Optional/trailing for
+                                   // the same reason as the two above; null and empty both mean
+                                   // "the company initialized cleanly", and every reporting
+                                   // surface omits the condition entirely in that case, so a
+                                   // clean run's output is byte-identical to before.
+                                   IReadOnlyList<CompanyInitFailure>? CompanyInitFailures = null);
 
 public static class Reporter
 {
@@ -79,6 +98,21 @@ public static class Reporter
     /// If it ever did, the failure mode is over-marking — the pre-review behaviour — not a real
     /// failure hidden.</para>
     /// </summary>
+    /// <summary>
+    /// Every company-initialization abort in the run, in bucket order (#3538). One place, so
+    /// the summary, --out, --output-json and the JUnit report cannot describe the same
+    /// condition differently — the reason IsSuspect exists one concept over.
+    /// </summary>
+    public static IReadOnlyList<CompanyInitFailure> CompanyInitFailures(IReadOnlyList<BucketResult> buckets)
+        => buckets
+            .SelectMany(b => b.CompanyInitFailures ?? Array.Empty<CompanyInitFailure>())
+            .ToList();
+
+    /// <summary>One abort, rendered the same way wherever it is printed.</summary>
+    public static string DescribeCompanyInitFailure(CompanyInitFailure f)
+        => $"codeunit {f.CodeunitId} \"{f.CodeunitName}\" did not complete: "
+            + $"{f.ExceptionType}: {f.Message}";
+
     internal static bool IsNamedCauseOfASuiteError(BucketResult b, TestResult t)
         => b.CompileErrors.Any(e =>
             Infrastructure.BundleFailureStage.AbortReasonNamesTest(e, t.Codeunit, t.Method));
@@ -330,6 +364,21 @@ public static class Reporter
                 foreach (var e in b.CompileErrors) w.WriteLine($"  {e}");
             }
         }
+        // #3538: a run-level condition, printed as its own block rather than folded into the
+        // counters above — none of them is about it. Every test below it ran against a company
+        // real BC never produces, so this has to be readable next to the totals, not only as a
+        // `[warn]` line thousands of lines earlier at the moment the codeunit aborted.
+        var companyInitFailures = CompanyInitFailures(buckets);
+        if (companyInitFailures.Count > 0)
+        {
+            w.WriteLine("-----------------------------------------------------------------");
+            w.WriteLine($"Company initialization: INCOMPLETE ({companyInitFailures.Count} abort(s)) — "
+                + "the tests above ran against a PARTIALLY initialized company.");
+            foreach (var f in companyInitFailures)
+                w.WriteLine($"  {DescribeCompanyInitFailure(f)}");
+            w.WriteLine("  → setup rows the codeunit had not reached are missing, so a failure "
+                + "reading one is caused by this, not by the AL under test.");
+        }
         var gaps = buckets
             .SelectMany(b => b.ProvisionGaps ?? Array.Empty<string>())
             .Distinct(StringComparer.Ordinal)
@@ -577,6 +626,8 @@ public static class Reporter
             .Select(b => new { file = b.BucketPath, errors = b.CompileErrors.ToList() })
             .ToList();
 
+        var companyInitFailures = CompanyInitFailures(buckets);
+
         var output = new
         {
             tests = tests.Select(x => new
@@ -618,6 +669,20 @@ public static class Reporter
             compilationErrors = compileErrors.Count > 0 ? compileErrors : null,
             executionErrors = executionErrors.Count > 0 ? executionErrors : null,
             suiteErrors = suiteErrors.Count > 0 ? suiteErrors : null,
+            // #3538: the condition a consumer could not previously see at all. It is not a test
+            // result and not a bucket stage, so it appeared in none of the arrays above while
+            // every test in the document had run against a half-initialized company. Additive
+            // and null-omitted, so a run whose company initialized cleanly serialises
+            // byte-identically to before.
+            companyInitFailures = companyInitFailures.Count > 0
+                ? companyInitFailures.Select(f => new
+                {
+                    codeunitId = f.CodeunitId,
+                    codeunit = f.CodeunitName,
+                    exceptionType = f.ExceptionType,
+                    message = f.Message,
+                }).ToList()
+                : null,
             // #1936: same "real wall clock, not just the measured phases" gap as the
             // `wall:` line in PrintSummary — see that comment. Additive field, so
             // existing consumers reading this JSON are unaffected.
@@ -665,6 +730,24 @@ public static class Reporter
             }
             else
             {
+                // #3538: same gap as #2762 one condition over. This file is the triage
+                // worklist, and every failing record under a bucket whose company did not
+                // finish initializing may be that condition rather than a runner gap worth
+                // chasing. Its own kind, ranked first so it is read before the records it may
+                // explain.
+                foreach (var f in b.CompanyInitFailures ?? Array.Empty<CompanyInitFailure>())
+                {
+                    failures.Add(new
+                    {
+                        bucket = b.BucketPath,
+                        kind = "company-init",
+                        codeunitId = f.CodeunitId,
+                        codeunit = f.CodeunitName,
+                        exceptionType = f.ExceptionType,
+                        message = f.Message,
+                        classification = "company-init/partial",
+                    });
+                }
                 // #2762: this branch walked only failing TESTS, so a bucket that lost a whole
                 // suite contributed zero records and the triage file said the run had nothing
                 // wrong with it. Its own kind, not "compile": the bucket ran, and the records
