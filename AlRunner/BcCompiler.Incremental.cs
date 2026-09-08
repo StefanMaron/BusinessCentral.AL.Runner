@@ -230,6 +230,13 @@ public sealed partial class BcCompiler
     private readonly Dictionary<string, Dictionary<int, string>> _radXmlPortMetadataByModule =
         new(StringComparer.Ordinal);
 
+    // #3548 — the same shadow copy for the general (kind, id) capture, which
+    // ResetForNewBundleReload clears alongside the two above. Keyed by
+    // AlObjectMetadataRegistry identity key rather than by id, because ids repeat across
+    // kinds: table 70660 and page 70660 are two entries, not one.
+    private readonly Dictionary<string, Dictionary<string, AlObjectMetadataEntry>> _radObjectMetadataByModule =
+        new(StringComparer.Ordinal);
+
     // #2939, and the same mechanism as the two dictionaries above. RecordPatches'
     // _bcQuerySymbolJsonPaths — the loose SymbolReference.json files a bundle's own compiled
     // queries are read from — is a REGISTERED list, and since #2939 the per-bundle reload path
@@ -260,9 +267,22 @@ public sealed partial class BcCompiler
     {
         var pages = new Dictionary<int, string>();
         var xmlPorts = new Dictionary<int, string>();
+        var objects = new Dictionary<string, AlObjectMetadataEntry>(StringComparer.Ordinal);
         foreach (var sym in declared)
         {
             var id = (sym as NavCA.ISymbolWithId)?.Id;
+            // #3548 — the general capture covers every kind, including the id-less ones the
+            // two id-keyed snapshots below cannot represent, so it is taken first and does
+            // not share their `id == null` bail-out. It reads the process-wide registry
+            // exactly as they do, which carries #3282's known call-site asymmetry: on the
+            // EmitDepSymbols(trackIncrementalBaseline: true) path no outputter ran, so a
+            // colliding object id can capture another module's document. Deliberately kept
+            // consistent with its two neighbours rather than diverging — see
+            // docs/object-metadata-capture.md#surviving-a-warm-run.
+            var objKey = AlObjectMetadataRegistry.KeyFor(
+                sym.Kind.ToString(), IdlessSymbolKinds.Contains(sym.Kind) ? null : id, sym.Name);
+            if (AlObjectMetadataRegistry.TryGetByKey(objKey, out var objEntry))
+                objects[objKey] = objEntry;
             if (id == null) continue;
             if (sym.Kind == NavCA.SymbolKind.Page && AlPageMetadataRegistry.TryGet(id.Value, out var pageXml))
                 pages[id.Value] = pageXml;
@@ -271,6 +291,7 @@ public sealed partial class BcCompiler
         }
         _radPageMetadataByModule[moduleName] = pages;
         _radXmlPortMetadataByModule[moduleName] = xmlPorts;
+        _radObjectMetadataByModule[moduleName] = objects;
 
         // #2939: the query-symbol source file THIS module's own full compile just wrote, or
         // null when it wrote none (it declares no query, or it is not the bundle-emit path at
@@ -316,15 +337,22 @@ public sealed partial class BcCompiler
             _radPageMetadataByModule[moduleName] = pages = new Dictionary<int, string>();
         if (!_radXmlPortMetadataByModule.TryGetValue(moduleName, out var xmlPorts))
             _radXmlPortMetadataByModule[moduleName] = xmlPorts = new Dictionary<int, string>();
+        if (!_radObjectMetadataByModule.TryGetValue(moduleName, out var objects))
+            _radObjectMetadataByModule[moduleName] = objects =
+                new Dictionary<string, AlObjectMetadataEntry>(StringComparer.Ordinal);
 
         foreach (var v in vacatedIds)
         {
+            objects.Remove(RadObjectMetadataKey(v));
             if (v.Id is not { } id) continue;
             if (v.Kind == NavCA.SymbolKind.Page) pages.Remove(id);
             else if (v.Kind == NavCA.SymbolKind.XmlPort) xmlPorts.Remove(id);
         }
         foreach (var c in changedIds)
         {
+            var objKey = RadObjectMetadataKey(c);
+            if (AlObjectMetadataRegistry.TryGetByKey(objKey, out var objEntry))
+                objects[objKey] = objEntry;
             if (c.Id is not { } id) continue;
             if (c.Kind == NavCA.SymbolKind.Page && AlPageMetadataRegistry.TryGet(id, out var pageXml))
                 pages[id] = pageXml;
@@ -341,6 +369,9 @@ public sealed partial class BcCompiler
             foreach (var (id, xml) in pages) AlPageMetadataRegistry.Register(id, xml);
         if (_radXmlPortMetadataByModule.TryGetValue(moduleName, out var xmlPorts))
             foreach (var (id, xml) in xmlPorts) AlXmlPortMetadataRegistry.Register(id, xml);
+        if (_radObjectMetadataByModule.TryGetValue(moduleName, out var objects))
+            foreach (var e in objects.Values)
+                AlObjectMetadataRegistry.Register(e.Kind, e.Id, e.Name, e.Xml);
         // #2939. RegisterBundleQuerySymbolsJson is itself idempotent AND always invalidates the
         // derived index (the file is rewritten in place by each full Emit), so replaying an
         // already-registered path is correct rather than merely harmless.
@@ -362,6 +393,15 @@ public sealed partial class BcCompiler
     };
 
     private static string RadObjKey(NavCA.SymbolKind kind, int id) => $"{kind}:{id}";
+
+    /// <summary>The <see cref="AlObjectMetadataRegistry"/> identity of a RAD object
+    /// identity — id-bearing kinds by id, id-less kinds by name, exactly as the capture in
+    /// CaptureOutputter.AddApplicationObject keyed it.</summary>
+    private static string RadObjectMetadataKey(RadObjectIdentity identity)
+        => AlObjectMetadataRegistry.KeyFor(
+            identity.Kind.ToString(),
+            IdlessSymbolKinds.Contains(identity.Kind) ? null : identity.Id,
+            identity.Name ?? string.Empty);
 
     /// <summary>Stable (Kind,Id-or-Name) key used to match a "vacated" identity against an "appeared" one across paths.</summary>
     private static string IdentityKey(RadObjectIdentity id) => $"{id.Kind}|{(id.Id.HasValue ? "id:" + id.Id.Value : "name:" + id.Name)}";

@@ -1,0 +1,23 @@
+{
+  "id": "a3000000-0000-4000-8000-000000000048",
+  "name": "Runner Tests Fixture - Object Metadata Capture",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#3548: BC's emitter hands CaptureOutputter a metadata document for every application object it emits; the general registry must hold one per (kind, id).",
+  "description": "Used by AlRunner.Tests' ObjectMetadataCaptureTests. Declares one object of each kind BC emits metadata for, reusing the SAME numeric id 70660 across table/page/codeunit/enum/report/xmlport so a registry keyed on the id alone would collapse them into one entry. Deliberately declares no 'application' dependency (see .claude/rules/no-base-app-in-csharp-tests.md).",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 70660,
+      "to": 70679
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

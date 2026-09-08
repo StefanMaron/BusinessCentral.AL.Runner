@@ -3044,6 +3044,22 @@ public sealed partial class BcCompiler
             if (symbol is NavCA.IXmlPortTypeSymbol xmlPortSym && !string.IsNullOrEmpty(metadata))
                 AlXmlPortMetadataRegistry.Register(xmlPortSym.Id, metadata);
 
+            // General capture (#3548). BC hands us its own metadata document for every
+            // object it emits and the three branches above keep three kinds; the rest was
+            // discarded and then rebuilt from SymbolReference.json, AL source text or
+            // symbol properties. Keep all of it, keyed by (kind, id), so a kind BC adds
+            // later is covered without a fourteenth branch. Additive — the registries
+            // above stay, with their consumers unchanged.
+            if (!string.IsNullOrEmpty(metadata))
+            {
+                var idless = IdlessSymbolKinds.Contains(symbol.Kind);
+                AlObjectMetadataRegistry.Register(
+                    symbol.Kind.ToString(),
+                    idless ? null : (symbol as NavCA.ISymbolWithId)?.Id,
+                    symbol.Name,
+                    metadata);
+            }
+
             if (Environment.GetEnvironmentVariable("BCCOMPILER_TRACE") == "1")
                 Console.Error.WriteLine($"  emit[{AddCalls}]: {symbol.Name} kind={symbol.GetType().Name} metaLen={metadata?.Length ?? -1}");
             // #2967 — SCRATCH-DIR CLASSIFICATION: a DOCUMENTED TRADE-OFF that stays as it is.
