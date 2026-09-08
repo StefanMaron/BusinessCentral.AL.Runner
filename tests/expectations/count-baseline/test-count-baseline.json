@@ -68,6 +68,7 @@
         "testpage-precompiled-dep-control": { "tests": 2 },
         "testpage-precompiled-member-names": { "tests": 8 },
         "testpage-promoted-actionref": { "tests": 18 },
+        "testpage-same-value-modify": { "tests": 6 },
         "testpage-trigger-inject-timing": { "tests": 2 },
         "user-system-table-triggers": { "tests": 10 },
         "user-table-baseapp-subscriber": { "tests": 5 },
