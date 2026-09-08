@@ -443,7 +443,7 @@ public static partial class RecordPatches
     {
         var pages = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var captions = new Dictionary<int, string>();
-        foreach (var (kind, id, name, caption) in EnumerateKnownAlObjects())
+        foreach (var (kind, id, name, caption, _) in EnumerateKnownAlObjects())
         {
             if (id <= 0 || string.IsNullOrEmpty(name)) continue;
             switch (NormalizeObjectTypeName(kind))
