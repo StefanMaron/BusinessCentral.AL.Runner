@@ -11,7 +11,7 @@ namespace AlRunner.Tests;
 /// uncommitted.
 ///
 /// The BEHAVIOURAL claim is plain BC behaviour and lives upstream (see the PR body's
-/// <c>Corpus-PR:</c> line, codeunit 60898 "Test Write Tx Test Boundary"), per
+/// <c>Corpus-PR:</c> line, codeunit 60878 "Test Write Tx Test Boundary"), per
 /// .claude/rules/bc-behavior-tests-go-upstream.md. This test spawns the real runner against a
 /// synthetic bundle so a regression in the runner's own boundary handling fails loudly here
 /// without depending on the submodule pin having moved.
