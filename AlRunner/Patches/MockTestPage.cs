@@ -2982,16 +2982,6 @@ internal static class TestPageNumericValue
 /// <see cref="TestPageBooleanValue"/> and <see cref="TestPageOptionValue"/> already use, so
 /// neither binding shape can drift from the other — the corpus suite asserts both.</para>
 ///
-/// <para><b>Interaction with the WRITE side (#3384 / PR #3394), which lands in this same
-/// file.</b> That change reads a typed <c>SetValue</c> argument back through the spelling
-/// <c>ValueToString</c> produces. This one changes that spelling for a BLANK temporal only,
-/// from <c>01/01/0001 00:00:00</c> to <c>""</c> — and an empty string is not a value its
-/// round-trip branch is meant to parse, so it declines and falls through to BC's own evaluator,
-/// which is the correct outcome: writing a blank temporal is a separate question from rendering
-/// one, and neither change should silently answer the other's. Named
-/// <c>TestPageBlankTemporalValue</c> rather than <c>TestPageTemporalValue</c> so the two helpers
-/// can coexist in this file whichever merges first.</para>
-///
 /// <para>It must also be what <c>ValueToString</c> answers, for the reason spelled out in
 /// <see cref="TestPageBooleanValue"/>: <c>NavTestField.ALAssertEquals</c> converts the EXPECTED
 /// value through <c>ValueToString</c> and compares it ORDINALLY against the getter, so moving
