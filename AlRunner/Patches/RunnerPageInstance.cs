@@ -1872,6 +1872,28 @@ internal sealed partial class RunnerPageInstance
            && form.MasterPage?.PageProperties?.SourceObject?.DelayedInsert == true;
 
     /// <summary>
+    /// Whether the page writes ROWS — a repeater the cursor moves through — rather than one
+    /// record it saves when it is left. Read off <c>MasterPage.PageProperties.PageType</c>, the
+    /// same property <c>NavTestExecution.FindPageType</c> reads.
+    ///
+    /// Both directions are measured on real BC and adjudicated upstream. A List inserts the row
+    /// as soon as its key is complete (corpus codeunit 60636
+    /// <c>NewAndInsertRecordEvents_PageDrivenInsert_FireForTheKeyOnly</c>); a Card does not —
+    /// its row does not exist until the page is closed, which corpus codeunit 60844
+    /// <c>Close_WithoutOK_StillPersistsTheNewRow</c> asserts by name ("this assertion catches a
+    /// test environment where the record was already inserted eagerly on SetValue"). ListPart
+    /// and Worksheet are the other two repeater page types and ride the same client mechanism;
+    /// no corpus test distinguishes them from List, and none contradicts them either. See
+    /// MockTestPage.InsertOnCompletePrimaryKey.
+    /// </summary>
+    internal bool WritesRowsAsTheyAreCompleted
+        => _form is NavForm form
+           && form.MasterPage?.PageProperties?.PageType is
+               Microsoft.Dynamics.Nav.Types.Metadata.PageType.List
+               or Microsoft.Dynamics.Nav.Types.Metadata.PageType.ListPart
+               or Microsoft.Dynamics.Nav.Types.Metadata.PageType.Worksheet;
+
+    /// <summary>
     /// Hand BC's <c>NavForm.SplitKey()</c> the key the CLIENT proposes for the row about to be
     /// inserted — <c>NavForm.AutoKeyValue</c>, the first thing SplitKey consults.
     ///

@@ -1658,8 +1658,9 @@ internal class LiveNavTestPage : MockITestPage
     /// its own trigger and event. The runner deferred the whole thing to the flush, so the
     /// insert trigger saw a finished row and the modify never happened at all.
     ///
-    /// <para>Two deliberate limits, both because nothing has measured past them.
-    /// <c>DelayedInsert = true</c> keeps the old flush-on-leave timing, which is that
+    /// <para>Three limits. A page that saves one RECORD rather than rows keeps the
+    /// flush-on-leave timing — see RunnerPageInstance.WritesRowsAsTheyAreCompleted, where both
+    /// directions are measured. <c>DelayedInsert = true</c> keeps it too, which is that
     /// property's own definition. And "complete" is BC's own emptiness test —
     /// <c>NavValue.IsZeroOrEmpty</c>, what <c>NavForm.SplitKey</c> uses on the last key field —
     /// so a page whose last key field is filled in BY <c>AutoSplitKey</c> reads as incomplete
@@ -1672,6 +1673,10 @@ internal class LiveNavTestPage : MockITestPage
         // No page: record-only mode has no DelayedInsert property to read and no page triggers
         // to get the timing wrong, so it keeps the flush-time insert.
         if (_page == null || _page.DelaysInsertUntilTheRowIsLeft) return;
+        // A Card saves its one record when the page is left, not when its key is typed — corpus
+        // codeunit 60844 Close_WithoutOK_StillPersistsTheNewRow asserts the row is absent right
+        // up to Close(), and says in its own message that it is there to catch an eager insert.
+        if (!_page.WritesRowsAsTheyAreCompleted) return;
         if (!PrimaryKeyIsComplete(_record!)) return;
         // The same call the flush points make, so the insert keeps BC's order — the write gate,
         // SplitKey, OnInsertRecord's veto, then the record's own Insert — and clears
