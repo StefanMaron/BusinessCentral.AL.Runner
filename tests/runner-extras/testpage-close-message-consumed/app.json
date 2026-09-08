@@ -1,0 +1,18 @@
+{
+  "id": "b3d9f2a7-5c14-4e68-9a03-7d1f6b8c4e52",
+  "name": "Runner Extras - TestPage Close Message Consumed",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3179: after a [MessageHandler] consumes an error raised in OnQueryClosePage, control must come back to the caller and the page must still be drivable -- the runner must not raise where BC does not.",
+  "description": "Runner-specific, and deliberately so. What BC DOES on this path is a plain BC-behaviour claim and is asserted upstream by corpus codeunit 60602 'QCM Query Close Msg Tests' (BusinessCentral.AL.Language.Tests#272, merged bd168356, green on all eight cloud legs and on the Windows nightly). None of that is re-asserted here. What this bundle pins is that the RUNNER reaches the end of that path at all: until #3179 it raised RunnerOutOfScopeException the moment a [MessageHandler] consumed the text, so every assertion after the close was unreachable and an AL test that passes on a service tier could not run here. The claim is 'the runner does not refuse', which only a runner test can make -- a corpus leg cannot observe a refusal that exists only here. Runs on all eight BC legs rather than the two that carry AlRunner.Tests.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65860,
+      "to": 65869
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

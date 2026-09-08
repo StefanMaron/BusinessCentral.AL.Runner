@@ -72,6 +72,11 @@
 //   incidental: corpus 60677 asserts the write IS rolled back on the no-[MessageHandler] arm and
 //   passes on the same leg of the same run. What unwinds it there is the framework tearing down
 //   a PROPAGATED error; a consumed message propagates nothing, so nothing unwinds.
+//
+//   NOT reproduced, and tracked in #3593: BC delivers this message TWICE on the RunModal route,
+//   because its round trip attempts the close twice (the handler's OK().Invoke() is itself a
+//   close attempt on BC and is not one here). The runner delivers once on both routes, which
+//   matches BC on the TestPage route only.
 using System.Reflection;
 
 namespace AlRunner.Patches;
