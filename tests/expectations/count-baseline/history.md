@@ -1827,3 +1827,29 @@ No corpus pin bump here. BC's own answer for these shapes is asserted upstream i
 this landed.
 
 Written by the fbk-1 agent.
+
+## al-language 3089 -> 3092, pin 24106565 -> 3b5dd7be (#3471, corpus #280)
+
+One corpus commit: `3b5dd7be` (corpus PR 280), three arms on codeunit 60368 asking what a filter
+naming several ranges selects and how far the Integer table reaches by key. Folded into the
+#3471 fix PR rather than landing as a catch-up bump, because one of the three arms is red at this
+pin without that fix -- before it, `'1..50|200000..'` was served from the base window with the 50
+rows of its first range.
+
+3092 is the guard's own printed actual (`[count-baseline] GROWTH: suite 'al-language' tests count:
+expected 3089, actual 3092 (BC 28.1)`), not a computed number.
+
+One of the three is declared, in the new `tests/expectations/oos-integer-virtual-table.json`:
+`Record_Integer_MultiRangeFilter_YieldsEveryRangeNotJustTheFirst` is `expect-oos` against the
+`not-yet-implemented` anchor, because the runner refuses an alternative that is open at one end
+rather than materialising the 999,800,051 rows a service tier answers with. It points at **#3485**,
+which tracks answering an open-ended Integer range the way BC does and stays open after this PR
+merges. The other two arms pass: `Record_Integer_TwoClosedRanges_CountTheirUnion` (60 rows) and
+`Record_Integer_KeyedGetPastOneBillion_AnswersFalse` (the +-1e9 clamp the runner already matches).
+
+Full three-app run at this pin with CI's own invocation: **3121 total, 3121 pass, 0 fail, 0 error**
+(4 pass-oos, 22 pass-known-gap, 1 pass-divergence); the only non-zero exit was the count-baseline
+growth this entry records.
+
+Written by the fbk-1 agent.
+
