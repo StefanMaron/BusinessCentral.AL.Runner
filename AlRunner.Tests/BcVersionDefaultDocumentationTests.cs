@@ -38,6 +38,30 @@ public sealed class BcVersionDefaultDocumentationTests
     private static readonly string MinimalBundle =
         Path.Combine(RepoRoot, "tests", "runner-extras", "esm-xapp-table");
 
+    /// <summary>
+    /// Wall-clock cap for one spawned runner, in milliseconds.
+    ///
+    /// This class is the HEAVIEST collection in the suite, and an xUnit collection is
+    /// strictly serial: on the BC 27.5 leg of run 34187276963 — a leg where every test
+    /// here PASSED — it summed 136.8s of runtime across 191.5s dispatched. Its spawns
+    /// include a cold, no-package-cache, two-bundle compile, which is close to the most
+    /// expensive thing any test here asks the runner to do.
+    ///
+    /// At the previous 120s that cap sat in the bottom sixth of the suite (18 spawns cap
+    /// at 120s; 132 of 152 cap at 180s or more) while doing more work than most, so what
+    /// it measured was how loaded the CI box was, not whether the runner works: issue
+    /// #3435 recorded the same test timing out on a different subset of legs on each run,
+    /// passing on 27.0 and 27.5 while failing on 28.4 within one run of one commit.
+    ///
+    /// 180s is the suite's modal cap (47 spawns), so this brings the heaviest collection
+    /// up to the value the rest of the suite already uses for ordinary work rather than
+    /// inventing a number. The claim under test is that the documented shape RUNS — a
+    /// correctness claim — so a cap only has to be loose enough that load cannot
+    /// masquerade as failure; it is not a performance budget, and nothing here asserts
+    /// that a run is fast. Startup cost is measured by its own tests.
+    /// </summary>
+    private const int SpawnTimeoutMs = 180_000;
+
     private static (int ExitCode, string StdOut, string StdErr) Run(string? isolatedHome, params string[] args)
     {
         var sb = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
@@ -62,10 +86,11 @@ public sealed class BcVersionDefaultDocumentationTests
         proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (errSb) errSb.AppendLine(e.Data); };
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
-        if (!proc.WaitForExit(120_000))
+        if (!proc.WaitForExit(SpawnTimeoutMs))
         {
             try { proc.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException($"al-runner did not exit within 120s for args: {string.Join(' ', args)}");
+            throw new TimeoutException(
+                $"al-runner did not exit within {SpawnTimeoutMs / 1000}s for args: {string.Join(' ', args)}");
         }
         proc.WaitForExit();
         lock (outSb) lock (errSb) return (proc.ExitCode, outSb.ToString(), errSb.ToString());
@@ -208,5 +233,46 @@ public sealed class BcVersionDefaultDocumentationTests
         var nextCommandMatch = Regex.Match(guide[shapeIdx..], @"al-runner[^\r\n]*");
         Assert.True(nextCommandMatch.Success, "expected an al-runner command line following the shape description.");
         Assert.DoesNotContain("--package-cache", nextCommandMatch.Value, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The timeout message must report the cap that was ACTUALLY applied, not a literal
+    /// that drifts from it.
+    ///
+    /// This is not hypothetical tidiness: while reproducing #3435, the cap was
+    /// temporarily squeezed to 3s to force the timeout path, and the failure still read
+    /// "did not exit within 120s" — the old message hardcoded the number the code no
+    /// longer used. A person diagnosing a CI timeout reads that sentence to decide
+    /// whether the cap is too tight, so a stale figure there sends them to the wrong
+    /// conclusion with nothing to warn them.
+    ///
+    /// Asserting the rendered text against <see cref="SpawnTimeoutMs"/> means re-hardcoding
+    /// the message, or changing the cap without the message following, fails here. The
+    /// assertion deliberately checks the derived SECONDS text rather than the constant's
+    /// presence, because that is the part a reader acts on.
+    /// </summary>
+    [Fact]
+    public void TimeoutMessage_ReportsTheCapThatWasActuallyApplied()
+    {
+        // Positive: the message renders the real cap, in seconds, as a reader will see it.
+        var rendered = $"al-runner did not exit within {SpawnTimeoutMs / 1000}s for args: <args>";
+        Assert.Contains($"within {SpawnTimeoutMs / 1000}s", rendered, StringComparison.Ordinal);
+
+        // Negative: a DIFFERENT cap must render a different sentence. Pinning the expected
+        // text to a literal 180 here would re-create the very coupling this test exists to
+        // forbid, so the wrong-figure check is expressed against a value the cap is not.
+        const int NotTheCap = 120_000;
+        Assert.NotEqual(NotTheCap, SpawnTimeoutMs);
+        Assert.DoesNotContain($"within {NotTheCap / 1000}s", rendered, StringComparison.Ordinal);
+
+        // And the source itself must derive the message from the constant rather than
+        // reintroducing a literal — the defect above is invisible to the string check
+        // whenever the hardcoded number happens to match the current cap.
+        var source = File.ReadAllText(Path.Combine(
+            RepoRoot, "AlRunner.Tests", "BcVersionDefaultDocumentationTests.cs"));
+        var throwIdx = source.IndexOf("did not exit within", StringComparison.Ordinal);
+        Assert.True(throwIdx >= 0, "expected the timeout message to still exist.");
+        var throwLine = source[throwIdx..source.IndexOf('\n', throwIdx)];
+        Assert.Contains("SpawnTimeoutMs", throwLine, StringComparison.Ordinal);
     }
 }
