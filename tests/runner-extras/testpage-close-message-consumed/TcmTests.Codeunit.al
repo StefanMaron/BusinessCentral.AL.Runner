@@ -139,6 +139,54 @@ codeunit 65863 "Tcm Close Message Tests"
         Row.DeleteAll();
     end;
 
+    // CLAIM 5: the MODAL route reaches the end too, and reports an Action.
+    //
+    // The four arms above all drive TestPage.Close(). RunModal() reaches the same close handler
+    // by a different route -- RunnerModalDispatch rather than MockTestPage -- and that route is
+    // NOT covered by them. It is covered upstream by corpus 60602, but that codeunit cannot run
+    // in this repository until the pin passes #2943, so without this arm a modal-route
+    // regression would be invisible here in the meantime.
+    //
+    // What is asserted is the runner-observable half, exactly as in the arms above: control
+    // comes back at all, where before #3179 the dispatch raised RunnerOutOfScopeException and
+    // this line was unreachable. The Action value is read back as a concrete value rather than
+    // a liveness check, so a runner that returned control while losing the dispatch's result
+    // fails instead of passing quietly.
+    //
+    // Action::None is BC's own answer here and is asserted upstream, not established by this
+    // test: a refused close completed no action, so there is none to report. It is written as
+    // an equality against Action::None rather than an inequality against OK, because "not OK"
+    // would also accept a runner that invented some third value.
+    [Test]
+    [HandlerFunctions('TcmOkHandler,TcmMessageHandler')]
+    procedure RunModalAfterQueryCloseError_MessageConsumed_ReturnsToTheCaller()
+    var
+        Row: Record "Tcm Row";
+        Card: Page "Tcm Error Card";
+        Result: Action;
+    begin
+        Initialize();
+
+        Result := Card.RunModal();
+
+        // Reaching this line at all is the #3179 half; the rest is what came back.
+        Assert.IsTrue(Row.Get('SEEN'),
+            'the [MessageHandler] must have consumed the close-time message on the RunModal route too');
+        Assert.IsTrue(StrPos(Row."Last Text", CloseRefusedTxt) > 0,
+            'the handler must receive the trigger''s own error text on the RunModal route');
+        Assert.AreEqual(Format(Action::None), Format(Result),
+            'RunModal must report an Action once control returns, and a refused close completed none');
+    end;
+
+    // Invoked by the modal arm above. Chooses OK deliberately: the close is refused regardless,
+    // which is what makes Action::None a statement about the refusal rather than about what the
+    // handler picked.
+    [ModalPageHandler]
+    procedure TcmOkHandler(var Card: TestPage "Tcm Error Card")
+    begin
+        Card.OK().Invoke();
+    end;
+
     // Records rather than asserts -- see the "Tcm Row" header. Counting deliveries as well as
     // capturing the text, so an arm can tell one close attempt from two.
     [MessageHandler]
