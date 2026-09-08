@@ -388,6 +388,22 @@ public static class NclShadowRuntime
     /// </summary>
     internal static FileStream? AcquireInUseLock(string dir)
     {
+        // One lock file per pid would otherwise accumulate one entry per run, forever. A file
+        // that opens exclusively is held by nobody, so it belongs to a process that has exited.
+        foreach (var file in SafeEnumerateFiles(dir))
+        {
+            var name = Path.GetFileName(file);
+            if (!name.StartsWith(InUseLockPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+            if (name.EndsWith("." + Environment.ProcessId, StringComparison.Ordinal)) continue;
+            try
+            {
+                using (var probe = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+                File.Delete(file);
+            }
+            catch (IOException) { /* held by a live process, or gone — leave it */ }
+            catch (UnauthorizedAccessException) { }
+        }
+
         try
         {
             var path = Path.Combine(dir, InUseLockPrefix + Environment.ProcessId);
@@ -431,6 +447,13 @@ public static class NclShadowRuntime
         catch (IOException) { return true; }
         catch (UnauthorizedAccessException) { return true; }
         return false;
+    }
+
+    private static IEnumerable<string> SafeEnumerateFiles(string dir)
+    {
+        try { return Directory.EnumerateFiles(dir).ToList(); }
+        catch (IOException) { return Array.Empty<string>(); }
+        catch (UnauthorizedAccessException) { return Array.Empty<string>(); }
     }
 
     /// <summary>

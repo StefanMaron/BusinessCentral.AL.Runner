@@ -170,6 +170,35 @@ public sealed class NclShadowInUseAndManifestTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
+    /// <summary>Acquiring the lock reclaims a dead process's lock file — otherwise a long-lived
+    /// shadow dir accumulates one entry per run — and leaves a live one alone, which is the half
+    /// that matters: reclaiming a held lock would defeat the prune guard entirely.</summary>
+    [Fact]
+    public void AcquireInUseLock_ReclaimsADeadLockFile_ButNeverAHeldOne()
+    {
+        var root = NewRoot("lock-cleanup");
+        FileStream? live = null;
+        try
+        {
+            var deadLock = Path.Combine(root, NclShadowRuntime.InUseLockPrefix + "999999");
+            File.WriteAllText(deadLock, "pid 999999");
+            var heldPath = Path.Combine(root, NclShadowRuntime.InUseLockPrefix + "999998");
+            live = new FileStream(heldPath, FileMode.Create, FileAccess.ReadWrite, FileShare.Read);
+
+            using var mine = NclShadowRuntime.AcquireInUseLock(root);
+            Assert.NotNull(mine);
+
+            Assert.False(File.Exists(deadLock), "an unheld lock file is a leftover and is reclaimed");
+            Assert.True(File.Exists(heldPath), "a lock another live process holds must survive");
+            Assert.True(File.Exists(Path.Combine(root, NclShadowRuntime.InUseLockPrefix + Environment.ProcessId)));
+        }
+        finally
+        {
+            live?.Dispose();
+            Directory.Delete(root, recursive: true);
+        }
+    }
+
     /// <summary>The #3559 regression pin: the oldest dir is prune fodder by every rule the
     /// prune had, and is being executed from. It must survive with every file intact.</summary>
     [Fact]
