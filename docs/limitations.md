@@ -850,84 +850,47 @@ reflection), so the runner cannot disagree with the service tier about any of it
 
 ---
 
-### `Record Integer` — a filter reaching past the materialised window is refused, not truncated
+### `Record Integer` — served by BC's own provider, with no runner limit on it
 
 <a id="integer-virtual-table"></a>
 
-The `Integer` system virtual table (2000000026) is computed per request on the service
-tier by `IntegerDataProvider`, a `RangeBasedComputedDataProvider`. It is **not** unbounded
-there either. Decompiled from `Microsoft.Dynamics.Nav.Ncl` and byte-identical in 27.0 and
-28.4, both of its entry points open the same way:
+The `Integer` system virtual table (2000000026) is **not** a limitation any more, and this
+section stays only because two of them used to be documented here and code may still cite the
+anchor.
+
+Since [#3485](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3485) the table
+is served by Microsoft's own `IntegerDataProvider`, reached through Microsoft's own
+`DataAccessSource.GetVirtualDataAccess` — the same object a service tier hands out. It is a
+`RangeBasedComputedDataProvider`: rows are computed per request and none are stored, so
+`Count()`, `IsEmpty()`, `FindSet`/`Next`/`FindLast` and `Get()` all answer from BC's code on
+BC's own clamp,
 
 ```csharp
-// GetValuesWithinRangeForKeyField, and CountValuesWithinRange
+// IntegerDataProvider.GetValuesWithinRangeForKeyField, and CountValuesWithinRange
 if (range.GetInclusiveIntegerBounds(-1000000000, 1000000000, out var low, out var high))
 ```
 
-So real BC clamps every request to **[-1,000,000,000 .. 1,000,000,000]**, and serves a
-filter with an open bound as exactly that range rather than refusing it —
-`Range.GetInclusiveIntegerBounds` substitutes its `minimum` for an open low bound and its
-`maximum` for an open high one.
+which means an open bound is answered as ±1,000,000,000 exactly as it is on a tier, and a
+multi-range filter answers the union of its ranges.
 
-2,000,000,001 rows is not something the runner can materialise into an in-memory store.
-What it does instead, since #3438:
+**What this replaced.** The table used to be materialised into an in-memory store: a base
+window `[-1000..100000]`, spans added per request, and a 500,000-row cap. That store could not
+follow a range open at one end — 2,000,000,001 rows cannot be inserted — so such a range was
+either answered from the base window (`SetFilter(Number, '>=1')` yielded 100,000 rows against a
+service tier's 1,000,000,000) or refused with `RunnerOutOfScopeException` when its closed end
+lay outside that window. Both divergences are gone, along with the row cap and the
+`AL_RUNNER_INTEGER_WINDOW_MIN` / `_MAX` / `_MAX_ROWS` environment variables, which no longer
+exist and are ignored.
 
-- Rows are materialised **per request**, the way `Record Date`'s are. A filter whose every
-  non-empty range is closed at both ends materialises exactly the span it names, clamped to
-  BC's own [-1e9 .. 1e9] — so `SetRange(Number, 249000, 250000)` yields 1001 rows and
-  `Get(250000)` succeeds, as they do on a service tier.
-- A **base window** of `[-1000 .. 100000]` (101,001 rows) is materialised when the table is
-  first handed out. It is what answers a request that does *not* close both bounds: an
-  unbounded filter, an open bound, a filter shape the runner cannot read.
-- The materialised set is capped at **500,000 rows**
-  (`AL_RUNNER_INTEGER_WINDOW_MAX_ROWS`), counted across every span a run has materialised.
-  A request that would push it past the cap raises `RunnerOutOfScopeException` naming the
-  span, what it would add, the resulting total and the cap. It never answers a wider request
-  with fewer rows.
-- The refusal, and the materialising, cover all **four** request paths a `Record Integer`
-  read can take, since each carries a different request type and no single guard sees them
-  all:
+One consequence worth stating, because it is a change in cost rather than in correctness: AL
+that iterates an unbounded `Integer` range to its end now iterates to 1,000,000,000, as it
+would on a service tier, instead of stopping at 100,000. A `dataitem(Number; Integer)` bounded
+by `MaxIteration` or by a `DataItemTableView` filter is unaffected; one bounded by neither does
+not terminate in useful time, here or on a tier.
 
-  | AL | `DataAccess` method | request type |
-  |---|---|---|
-  | `Find` / `FindSet` / `FindFirst` / `FindLast` | `InnerFindAsync` | `FindCacheRequest` |
-  | `Count` | `CountAsync` | `CountCacheRequest` |
-  | `IsEmpty` | `ExistsAsync` | `ExistsCacheRequest` |
-  | `Get(Number)` | `InternalTryGetByPrimaryKeyAsync` | `PrimaryKeyCacheRequest` |
-
-  Before #2350 none of the four was guarded, although the source file's own header had
-  described the guard as existing for a full release — the identifier it named appeared
-  exactly once in the repository, in that comment.
-
-An **open** bound is the one shape no store can materialise its way out of, and the runner
-deliberately serves it rather than refusing it: `dataitem(Number; Integer)` with no upper
-bound is a standard idiom, and 18 of the Base Application's 658 reports drive one, bounded
-by `MaxIteration` rather than by the filter. Real BC serves that shape too, from its own
-±1e9 bound. So the divergence is a **row count, not a refusal**: `SetFilter(Number, '>=1')`
-yields 100,000 rows here against 1,000,000,000 on a service tier, and code that iterates an
-unbounded `Integer` range to the end stops at the base window's edge.
-
-The one case that *is* refused is a **range that is half-open with its closed end outside
-the base window** — `SetFilter(Number, '>=249000')`. The window holds no row at or above
-249000, so serving the request from it would report success with no rows where BC returns
-751,000,001. Close the other end of the filter and the span is materialised exactly, or
-widen the base window.
-
-That test is applied to **each range of the filter separately**, not to the outermost bounds
-the filter spans. A filter may name several ranges — `SetFilter(Number, '1..50|200000..')` —
-and BC answers the union of them, so a range whose closed end lies outside the window is
-refused even when another range keeps the filter's outermost bounds inside it. Read from the
-outermost bounds alone, that filter looks answerable at 1 and 50 and is served with the 50
-rows of its first range, dropping the second whole
-([#3471](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3471)). A
-multi-range filter whose ranges all sit inside the window is answered normally.
-
-`AL_RUNNER_INTEGER_WINDOW_MAX` raises the base window's upper edge for a one-off run, and
-`AL_RUNNER_INTEGER_WINDOW_MIN` lowers the lower one. Both only ever **widen** it: a `MIN`
-above the default, or a non-positive `MAX`, is ignored. Neither is needed to reach an
-ordinary row any more — that is what per-request materialising does — they decide only how
-far an OPEN bound is answered, and the row cap bounds them: a base window wider than
-`AL_RUNNER_INTEGER_WINDOW_MAX_ROWS` is refused when the table is handed out, naming the cap.
+`Record Integer temporary` is untouched by all of this: a temporary record still gets its own
+private, empty store holding exactly what AL inserted
+([#2524](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2524)).
 
 ---
 
@@ -1474,8 +1437,9 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
     value is `0`, and `DataItemIterator.ExecuteDataItemLoopAsync` reads `0` as **no limit**;
     an absent `DataItemTableView` is read as no filter and no sorting. So running such a loop
     substitutes "unbounded" for whatever the report declared, and a `MaxIteration = 1` data
-    item over the `Integer` virtual table iterates the whole materialised window — 101,001
-    rows.
+    item over the `Integer` virtual table iterates that whole table — every Number in
+    [-1,000,000,000..1,000,000,000] since #3485 served it from BC's own computed provider; a
+    materialised window of 101,001 rows when the measurement below was taken.
 
     **What was measured, and what was not.** On the purpose-built fixture
     `tests/runner-extras/report-stubmeta-unbounded-loop`, with the window shrunk to 1,051
@@ -1590,7 +1554,7 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 <a id="virtual-table-shape-gaps"></a>
 
 - **System virtual tables — the runner refuses rather than answering a shape it cannot read.**
-  AllObj, AllObjWithCaption, All Profile, Integer, Field, Table/Page/CodeUnit/Report Metadata,
+  AllObj, AllObjWithCaption, All Profile, Field, Table/Page/CodeUnit/Report Metadata,
   Report Data Items, Report Layout List, Page Control Field, Metadata and Aggregate Permission
   Set, Feature Key, Session, Time Zone and Windows Language are all populated in-memory by
   `AlRunner/Patches/RecordPatches.*VirtualTable.cs`. Each populator reads something it does not
@@ -1639,10 +1603,13 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   branch is **not covered by a test**: it is unreachable from compiling AL, and reaching it
   would take an injected declaration carrying a subtype no compiler emits.
 
-  `Date` and `Integer` refuse for a second, different reason on top of that one: both are
-  computed per request on the service tier over a range too large to materialise, so a filter
-  reaching past the window each one materialises is refused rather than answered short. See
-  [`Record Date`](#date-virtual-table) and [`Record Integer`](#integer-virtual-table).
+  `Date` refuses for a second, different reason on top of that one: it is computed per request
+  on the service tier over a range too large to materialise, so a filter reaching past the
+  window it materialises is refused rather than answered short. See
+  [`Record Date`](#date-virtual-table). `Integer` used to refuse for the same reason and no
+  longer does — it is served by BC's own provider and materialises nothing
+  ([#3485](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3485), and
+  [`Record Integer`](#integer-virtual-table) for what that removed).
 - **`Session` (2000000009) answers one row — the reading session — and two of its columns are
   blank.** That single row is not a runner simplification: BC's own `SessionDataProvider`
   returns `new ReadOnlyRecordBuffer[1]` unconditionally, with `My Session` a constant `true`,

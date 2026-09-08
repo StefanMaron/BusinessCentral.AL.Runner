@@ -1118,8 +1118,8 @@ public static partial class NavReportSync
             + "property that bounds such a loop (MaxIteration, DataItemTableView's filters and "
             + "sorting, DataItemLink) is unreachable through either source, and BC reads each "
             + "absence as 'no bound', so the loop would run to its source table's end: over the "
-            + "Integer virtual table that is 101,001 iterations of a data item that may declare "
-            + $"MaxIteration = 1. Register the .app declaring {who}, WITH its "
+            + "Integer virtual table that is every Number in [-1000000000..1000000000], for a data "
+            + $"item that may declare MaxIteration = 1. Register the .app declaring {who}, WITH its "
             + "SymbolReference.json, so the metadata can be rebuilt");
     }
 

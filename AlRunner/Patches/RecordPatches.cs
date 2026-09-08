@@ -2023,20 +2023,14 @@ public static partial class RecordPatches
             }
 
             // ── Integer system virtual table (2000000026) ────────────────────────────────
-            // Virtual on the service tier (IntegerDataProvider computes rows per Number on
-            // demand). Routed to the same in-memory store as every other table and populated
-            // over a bounded window, so `dataitem(X; Integer)` report datasets and plain
-            // `Record Integer` iteration yield rows instead of silently yielding nothing.
-            // See RecordPatches.IntegerVirtualTable.cs.
+            // Served by BC's OWN IntegerDataProvider, through BC's own
+            // DataAccessSource.GetVirtualDataAccess — rows are computed per request and none
+            // are stored, so an open-ended range answers on BC's ±1e9 clamp instead of from a
+            // materialised window (#3485). Not cached in perTable: BC caches it per table id
+            // on the DataAccessSource itself. See RecordPatches.IntegerVirtualTable.cs.
             if (IsIntegerVirtualTable(table))
             {
-                if (!perTable.TryGetValue(tableId, out var integerDa))
-                {
-                    var createdInteger = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
-                    integerDa = perTable.GetOrAdd(tableId, createdInteger);
-                }
-                PopulateIntegerVirtualTable(integerDa, table);
-                return integerDa;
+                return GetIntegerVirtualDataAccess(self, table);
             }
 
             // ── All Profile system virtual table (2000000178) ────────────────────────────

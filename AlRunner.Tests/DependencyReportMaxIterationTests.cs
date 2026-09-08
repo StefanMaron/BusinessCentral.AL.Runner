@@ -5,8 +5,9 @@
 //     if (dataItem.MetaData.MaxIteration != 0 && maxIteration == dataItem.MetaData.MaxIteration)
 //         break;
 // so 0 means NO LIMIT, not "zero iterations". A dataitem declared `MaxIteration = 1` over the
-// Integer virtual table therefore runs once with the property and 101,001 times without it —
-// the whole Integer window, -1000..100000. That is why the omission is a hang rather than a
+// Integer virtual table therefore runs once with the property, and without it runs to that
+// table's end — every Number in [-1000000000..1000000000], BC's own clamp, since #3485 served
+// that table from BC's computed provider. That is why the omission is a hang rather than a
 // wrong number: see docs/limitations.md and issue #3370.
 //
 // Types.dll's MetaDataItem(XmlNode, ...) reads the element name uppercased, `MAXITERATION`,
