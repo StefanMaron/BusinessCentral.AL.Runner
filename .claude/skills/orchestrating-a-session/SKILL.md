@@ -45,8 +45,9 @@ something, spawning an agent to re-measure it wastes a full context. Write the P
   (`gh issue edit <N> --remove-assignee <login> --add-assignee @me`) and fold it in. Do not
   bulk-claim issues nobody is working on, and do not assume a release — confirm it.
 
-**A PR from anyone other than the repo owner** is reviewed, never merged. You may review it
-and, with approval, comment on it. Merging someone else's contribution stays the owner's call.
+**A PR from anyone other than the repo owner** is reviewed, never merged. Commenting on it is
+ungated like any other PR here — the boundary is the repository, not who opened it. Merging
+someone else's contribution stays the owner's call.
 
 **Ungated on these two repositories** (`BusinessCentral.AL.Runner` and the corpus): commenting
 on issues and PRs, closing issues, applying labels. **Still gated:** PR review comments submitted
