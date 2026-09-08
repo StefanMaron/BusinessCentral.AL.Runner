@@ -1968,6 +1968,7 @@ at the new pin with CI's own invocation (`--show-pass --strict --expectations-re
 al-language-onprem + 0 al-language-internals-fixture.
 
 **Nothing else moved.** No expectation entry was added, removed or reclassified. Worth
-recording about the RED side: on `main` at this pin the three new tests fail *and so do two
-pre-existing 60962 tests*, because one refused row used to take the whole CodeUnit Metadata
-virtual table down with it — collateral damage, not a second regression. Added by agent fbk-2.
+recording about the RED side: on `main` at this pin the filtered run is 16 total, 9 pass,
+7 fail — the three new tests, **and four pre-existing ones** (two in codeunit 60962, two in
+60964), because one refused row used to take the whole CodeUnit Metadata virtual table down
+with it. Collateral damage, not a second regression. Added by agent fbk-2.

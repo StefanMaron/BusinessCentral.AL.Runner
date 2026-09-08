@@ -131,18 +131,10 @@ public static partial class RecordPatches
         {
             if (!done.TryAdd(row.Id, 0)) continue;
 
-            // Resolved HERE rather than from inside the per-field builder, so a subtype this
-            // column cannot name costs the one row it belongs to instead of the whole table
-            // (#3536). It used to throw out of InsertVirtualRow, which escapes
-            // GetDataAccessForTable — no row of the table was served, and because TryAdd above
-            // latches before the insert, the next handout omitted the offending codeunit
-            // silently. Codeunit 2 "Company-Initialize" reads this table, so one such codeunit
-            // anywhere in any loaded app left the company half-initialized.
-            //
-            // Still loud (loud-failures.md): the refusal's own message is printed, naming the
-            // codeunit and the reason, once per codeunit per provider — TryAdd has latched the
-            // id, so this row is not attempted again. What is contained is the blast radius,
-            // not the report.
+            // Keep this resolution OUT of the per-field builder: a throw from inside
+            // InsertVirtualRow escapes GetDataAccessForTable and no row of the table is served
+            // at all (#3536, docs/limitations.md#codeunit-metadata-subtype). The `[warn]` tag
+            // is load-bearing too — any other tag is dropped at default verbosity by Log.cs.
             int subtypeOrdinal;
             try
             {
@@ -152,9 +144,11 @@ public static partial class RecordPatches
             catch (RunnerOutOfScopeException ex)
             {
                 Console.Error.WriteLine(
-                    $"[RecordPatches] CodeUnit Metadata: codeunit {row.Id} \"{row.Name}\" is NOT in the "
-                    + $"table — its SubType could not be resolved: {ex.Message}. Every other codeunit "
-                    + "is still reported; AL that reads this one's row will find none.");
+                    $"[warn] RecordPatches: CodeUnit Metadata has NO ROW for codeunit {row.Id} "
+                    + $"\"{row.Name}\" — its SubType could not be resolved: {ex.Message}. Every other "
+                    + "codeunit is still reported, but AL asking for this one will fail to find "
+                    + "it: Get() answers false and a FindSet/Count is one row short, with no "
+                    + "error raised at the read.");
                 continue;
             }
 
@@ -291,10 +285,8 @@ public static partial class RecordPatches
         }
         if (ordinals.TryGetValue(NormalizeObjectTypeName(effectiveSubtype), out var ordinal))
             return ordinal;
-        // The message names the value that was LOOKED UP, and says so only when it differs
-        // from the declared one. Before #3536 it claimed the Install translation unconditionally,
-        // so a declared subtype that had merely failed to match — a quoted identifier, at the
-        // time — was reported as though the translation had been applied and had still missed.
+        // Name the value LOOKED UP, and only when it differs from the declared one: claiming
+        // the translation unconditionally makes the message false for a value it never touched.
         var translated = !string.Equals(effectiveSubtype, declaredSubtype, StringComparison.Ordinal);
         throw CodeunitMetadataShapeGap(
             $"codeunit {codeunitId} declares Subtype = '{declaredSubtype}'"
@@ -303,9 +295,8 @@ public static partial class RecordPatches
                   + $"emits '{AlSubtypeTheCompilerDoesNotEmit}' as '{AlDefaultCodeunitSubtype}', and that"
                 : ", which")
             + $" is not a member of that column's own option set ('{optionString}')"
-            // Why "not in the option string" is the right test for THIS column, when it is the
-            // wrong test for Page Metadata's PageType. Stated as the standing fact it is, not
-            // as something that happened to this value — see above.
+            // Why "not in the option string" is the right test for THIS column and the wrong
+            // one for Page Metadata's PageType. A standing fact, not an event.
             + (translated
                 ? string.Empty
                 : $". The one subtype AL accepts that this column does not name — "
