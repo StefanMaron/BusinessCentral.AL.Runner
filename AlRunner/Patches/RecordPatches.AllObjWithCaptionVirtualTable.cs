@@ -21,7 +21,10 @@
 //   Same rows, same key, same construction path — this deliberately reuses AllObj's
 //   inventory (EnumerateKnownAlObjects) and its reflection helpers rather than growing a
 //   parallel one, so the two tables can never disagree about which objects exist. The
-//   only addition is the caption.
+//   additions are the caption and the subtype (field 30, #2326), both COLUMNS AllObj does
+//   not declare — its fields are 1/3/4/60/61/62. Both ride through the shared inventory for
+//   this table's benefit; see ObjectSubtypeTextFor and
+//   docs/virtual-tables-allobj.md#object-subtype.
 //
 // WHERE CAPTIONS COME FROM (two sources, neither invented)
 //   1. Objects the runner compiles itself — the Caption property read off their AL source,
@@ -94,7 +97,7 @@ public static partial class RecordPatches
         var ordinals = EnsureAllObjWithCaptionObjectTypeOrdinals(metaTable);
         var done = _awcPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<(int, int), byte>());
 
-        foreach (var (kind, id, name, caption) in EnumerateKnownAlObjects())
+        foreach (var (kind, id, name, caption, subtype) in EnumerateKnownAlObjects())
         {
             if (id <= 0) continue;
             if (!ordinals.TryGetValue(NormalizeObjectTypeName(kind), out var typeOrdinal))
@@ -109,7 +112,8 @@ public static partial class RecordPatches
                 new object[] { AllObjWithCaptionVirtualTableId, typeOrdinal, id, 0 },
                 field => BuildAllObjWithCaptionValue(field, typeOrdinal, id, name,
                     // AL's own default caption is the object name. Applied here, once.
-                    string.IsNullOrEmpty(caption) ? name : caption));
+                    string.IsNullOrEmpty(caption) ? name : caption,
+                    ObjectSubtypeTextFor(kind, subtype)));
         }
     }
 
@@ -117,12 +121,13 @@ public static partial class RecordPatches
     /// One column of an AllObjWithCaption row, matched by the metatable's own FIELD NAME so
     /// the mapping tracks whatever the System package in the resolved artifact declares
     /// rather than a hardcoded field-number table. Every other column (App Package ID, App
-    /// Runtime Package ID, Object Subtype, Object Namespace, …) gets BC's own default,
-    /// which is exactly what AllObjWithCaptionDataProvider emits for a base object with no
-    /// app package and no namespace.
+    /// Runtime Package ID, Object Namespace, …) gets BC's own default, which is exactly what
+    /// AllObjWithCaptionDataProvider emits for a base object with no app package and no
+    /// namespace.
     /// </summary>
     private static object? BuildAllObjWithCaptionValue(
-        NCLMetaField field, int typeOrdinal, int objectId, string objectName, string objectCaption)
+        NCLMetaField field, int typeOrdinal, int objectId, string objectName, string objectCaption,
+        string objectSubtype)
     {
         switch (NormalizeObjectTypeName(field.FieldName ?? string.Empty))
         {
@@ -134,9 +139,46 @@ public static partial class RecordPatches
                 return _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, objectName ?? string.Empty });
             case "objectcaption":
                 return _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, objectCaption ?? string.Empty });
+            case "objectsubtype":
+                // Text[30] on this table, not an option — so the value is the enum MEMBER
+                // NAME as text, which is what EnumHelper<T>.EnumToString hands BC's own
+                // provider. Truncated through the field's own defined length, same as every
+                // other text column here, rather than to a written-down 30.
+                return _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, objectSubtype ?? string.Empty });
             default:
                 return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
         }
+    }
+
+    /// <summary>
+    /// The text BC puts in "Object Subtype" for one object, given the subtype the runner's
+    /// inventory carries for it (<see cref="EnumerateKnownAlObjects"/>).
+    ///
+    /// <para>Observably equivalent to AllObjWithCaptionDataProvider.GetCaptionAndSubtype: a
+    /// per-kind switch answering the member name, except that a CODEUNIT whose subtype is
+    /// <c>Normal</c> answers the empty string — a table or query whose type is Normal
+    /// answers the word. Editing this method without that asymmetry in hand gets it wrong in
+    /// two directions at once. Per-kind table, the decompiled bodies, why <c>Install</c>
+    /// lands on empty, and the five *extension kinds this deliberately leaves empty:
+    /// see docs/virtual-tables-allobj.md#object-subtype.</para>
+    /// </summary>
+    internal static string ObjectSubtypeTextFor(string kind, string? subtype)
+    {
+        if (string.IsNullOrEmpty(subtype)) return string.Empty;
+        if (NormalizeObjectTypeName(kind) != "codeunit") return subtype;
+
+        // What the COMPILER wrote, not what the author declared — the same translation, in
+        // the same position, as ResolveCodeunitSubtypeOrdinal. Install collapses to Normal
+        // before the blanking test, so it cannot survive it.
+        var effective =
+            string.Equals(subtype, AlSubtypeTheCompilerDoesNotEmit, StringComparison.OrdinalIgnoreCase)
+                ? AlDefaultCodeunitSubtype
+                : subtype;
+
+        // The one kind BC blanks when the subtype is its enum's default.
+        return string.Equals(effective, AlDefaultCodeunitSubtype, StringComparison.OrdinalIgnoreCase)
+            ? string.Empty
+            : effective;
     }
 
     private static Dictionary<string, int>? _awcObjectTypeOrdinals;

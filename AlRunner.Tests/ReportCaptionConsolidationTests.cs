@@ -179,11 +179,11 @@ public class ReportCaptionConsolidationTests
         return (string?)m.Invoke(null, new object[] { kind, id });
     }
 
-    private static (string Kind, int Id, string Name, string? Caption) KnownAlObject(string kind, int id)
+    private static (string Kind, int Id, string Name, string? Caption, string? Subtype) KnownAlObject(string kind, int id)
     {
         var m = RecordPatchesType.GetMethod("EnumerateKnownAlObjects", BindingFlags.NonPublic | BindingFlags.Static)
             ?? throw new InvalidOperationException("RecordPatches.EnumerateKnownAlObjects not found by reflection.");
-        var rows = (IEnumerable<(string Kind, int Id, string Name, string? Caption)>)m.Invoke(null, null)!;
+        var rows = (IEnumerable<(string Kind, int Id, string Name, string? Caption, string? Subtype)>)m.Invoke(null, null)!;
         var match = rows.Where(r => r.Kind == kind && r.Id == id).ToList();
         Assert.True(match.Count == 1, $"expected exactly one {kind} {id} row, got {match.Count}");
         return match[0];

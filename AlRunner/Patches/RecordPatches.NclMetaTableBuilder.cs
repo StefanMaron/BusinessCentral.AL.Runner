@@ -995,7 +995,7 @@ public static partial class RecordPatches
         {
             var wantedKind = NormalizeObjectTypeName(kind);
             id = -1;
-            foreach (var (objKind, objId, name, _) in EnumerateKnownAlObjects())
+            foreach (var (objKind, objId, name, _, _) in EnumerateKnownAlObjects())
             {
                 if (objId <= 0) continue;
                 if (!string.Equals(name, objectName, StringComparison.OrdinalIgnoreCase)) continue;
