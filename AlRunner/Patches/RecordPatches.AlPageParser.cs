@@ -501,7 +501,7 @@ public static partial class RecordPatches
         var wanted = NormalizeObjectTypeName(runObjectKind);
         if (wanted == "page") return TryGetAnyPageName(objectId);
 
-        foreach (var (kind, id, name, _) in EnumerateKnownAlObjects())
+        foreach (var (kind, id, name, _, _) in EnumerateKnownAlObjects())
             if (id == objectId
                 && !string.IsNullOrEmpty(name)
                 && NormalizeObjectTypeName(kind) == wanted)
