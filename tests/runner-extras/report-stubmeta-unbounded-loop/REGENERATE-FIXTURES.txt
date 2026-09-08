@@ -139,7 +139,7 @@ Regenerate, from the repo root (AlRunner already built, -c Release):
   cp ~/.cache/al-runner/al-out/<KEY>.dll \
      tests/runner-extras/report-stubmeta-unbounded-loop/.deps-bin/AL_Runner_Fixtures_RSM_Precompiled_StubMeta_Dep_1.0.0.0.dll
 
-WHY THE VALUE CANNOT BE CARRIED ON THIS PATH (the question #3375 asks)
+WHY THE VALUE IS NOT REACHABLE ON THIS PATH (the question #3375 asks)
 -----------------------------------------------------------------------
 Measured, not assumed. The compiled dependency DLL's string table holds the data
 item NAMES and the trigger method names and nothing else about the dataset:
@@ -150,11 +150,23 @@ item NAMES and the trigger method names and nothing else about the dataset:
   [b'BoundedByMaxIteration', b'MaxIteration']
 
 -- and the only 'MaxIteration' hits are inside the data item's own NAME. There
-is no 'DataItemTableView' and no 'sorting' anywhere in the assembly. So the
-declared bounds are not in the DLL, they are not in the .app (no
-SymbolReference.json), and they were never emit-captured. There is nothing to
-carry. That is why #3375 lands as a refusal rather than as a second copy of
+is no 'DataItemTableView' and no 'sorting' anywhere in the assembly. Decompiling
+Report65821 says the same thing more firmly: the generated code is
+`new DataItem(this, handle)` plus `Add(val, "BoundedByMaxIteration")`.
+
+So the declared bounds are not in the DLL, and they are not reachable through
+either metadata source the runner consults -- the emit registry never saw this
+dep, and there is no SymbolReference.json for FindDependencyReportSymbol to
+anchor on. That is why #3375 lands as a refusal rather than as a second copy of
 #3383's parse.
+
+It is NOT that the value does not exist anywhere. This .app ships
+src/StubMetaReport.Report.al with `MaxIteration = 1;` and the filter verbatim,
+and DependencyReportMetadata.TryReadColumnSourceExpressions already reads that
+embedded src/ tree -- for column source expressions, once a report has been
+DISCOVERED through SymbolReference.json. Anchoring discovery on the source read
+instead is a possible later change, and this suite would then be the RED for it.
+Nothing here should be read as saying it cannot be done.
 
 Verify (must be RED without the NavReportSync.cs fix, GREEN with it):
 

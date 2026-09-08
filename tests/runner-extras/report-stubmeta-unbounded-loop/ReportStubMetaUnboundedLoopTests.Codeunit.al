@@ -24,13 +24,19 @@
 // aborted Codeunit134008.CalcPostVATSettlementForSalesTax with 8,914 Microsoft tests unrun
 // (#3370) — reached by a second route that #3383 did not close.
 //
-// GREEN (after the fix): the runner refuses. The value genuinely is not recoverable on this
-// path — the compiled DLL carries only the data item's NAME (verified by dumping its string
-// table: "BoundedByMaxIteration" is there, "DataItemTableView" and "sorting" are not), and
-// both metadata sources are closed by construction — so there is nothing to carry, and a
-// synthetic data item cannot represent "unknown" to BC: MaxIteration is an int whose only
-// unset value, 0, already means "no limit". Per .claude/rules/loud-failures.md the runner
-// says so by name instead of looping to the window's edge.
+// GREEN (after the fix): the runner refuses. The declared bounds are not reachable through
+// either metadata source here, and they are absent from the compiled DLL — decompiling
+// Report65821 out of .deps-bin gives `new DataItem(this, handle)` and
+// `Add(val, "BoundedByMaxIteration")` and nothing about the dataset. And a synthetic data item
+// cannot represent "unknown" to BC: MaxIteration is an int whose only unset value, 0, already
+// means "no limit". So per .claude/rules/loud-failures.md the runner says so by name instead
+// of looping to the window's edge.
+//
+// NOT "the value does not exist". The .app still ships src/StubMetaReport.Report.al with
+// `MaxIteration = 1;` in it, and DependencyReportMetadata.cs already reads that embedded src/
+// tree for column source expressions — it anchors report DISCOVERY on SymbolReference.json,
+// not on the source read. A later change could carry these from the source; this suite pins
+// the refusal, not an impossibility.
 codeunit 65841 "RSM Tests"
 {
     Subtype = Test;

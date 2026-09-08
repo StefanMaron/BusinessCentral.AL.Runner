@@ -1081,11 +1081,20 @@ public static partial class NavReportSync
         // has no loop to bound, so nothing about it is being guessed at and its lifecycle
         // triggers run exactly as they would with real metadata. Refusing it would be the
         // mirror defect.
-        _dataItemsField ??= dataItemIteratorType.GetField("dataItems",
-            BindingFlags.Instance | BindingFlags.NonPublic);
-        if (_dataItemsField?.GetValue(navReport) is not System.Collections.ICollection dataItems
-            || dataItems.Count == 0)
-            return;
+        //
+        // Both lookups below refuse rather than answer, because the ONLY other exit from this
+        // method is "do not refuse" — so a member that moved on a future BC build would restore
+        // the unbounded loop this guard exists to stop, silently and with every test green.
+        // Same reasoning as LoopRootDataItemsAsync twenty lines up, which is why that one is a
+        // throw too.
+        _dataItemsField ??= AlRunner.Infrastructure.BcShape.Field(
+            dataItemIteratorType, "dataItems", BindingFlags.Instance | BindingFlags.NonPublic,
+            "report-metadata-unavailable",
+            "the data-item list a report with no metadata is refused against");
+        if (_dataItemsField.GetValue(navReport) is not System.Collections.ICollection dataItems)
+            throw new InvalidOperationException(
+                "DataItemIterator.dataItems is not a countable list — Ncl shape changed; do not commit");
+        if (dataItems.Count == 0) return;
 
         var who = ReportIdentity(navReport);
         throw AlRunner.Patches.RunnerShapeGap.ReportMetadataUnavailable(
@@ -1095,10 +1104,11 @@ public static partial class NavReportSync
             + "SymbolReference.json declares it, so its data item(s) "
             + $"{SynthesizedDataItemNames(meta)} were synthesized from their names alone. Every "
             + "property that bounds such a loop (MaxIteration, DataItemTableView's filters and "
-            + "sorting, DataItemLink) is unknown, and BC reads each absence as 'no bound', so the "
-            + "loop would run to its source table's end: over the Integer virtual table that is "
-            + $"101,001 iterations of a data item that may declare MaxIteration = 1. Register the "
-            + $".app declaring {who}, WITH its SymbolReference.json, so the metadata can be rebuilt");
+            + "sorting, DataItemLink) is unreachable through either source, and BC reads each "
+            + "absence as 'no bound', so the loop would run to its source table's end: over the "
+            + "Integer virtual table that is 101,001 iterations of a data item that may declare "
+            + $"MaxIteration = 1. Register the .app declaring {who}, WITH its "
+            + "SymbolReference.json, so the metadata can be rebuilt");
     }
 
     /// <summary>How to name this report in a refusal: "Report 65821", or the CLR type when the

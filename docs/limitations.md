@@ -1469,22 +1469,43 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
     data items therefore carry a MetaDataItem synthesized from their name alone
     (`NavReportSync.RefuseLoopOverSynthesizedDataItems`,
     [#3375](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3375)). This is
-    the ONE runtime shape gap whose absence is silent rather than a crash, which is why it
-    was found by profiling a hang: a synthetic data item cannot say "unknown" to BC.
-    `MetaDataItem.MaxIteration` is an int whose only unset value is `0`, and
-    `DataItemIterator.ExecuteDataItemLoopAsync` reads `0` as **no limit**; an absent
-    `DataItemTableView` is read as no filter and no sorting. So running such a loop
+    the ONE runtime shape gap whose absence is silent rather than a crash: a synthetic data
+    item cannot say "unknown" to BC. `MetaDataItem.MaxIteration` is an int whose only unset
+    value is `0`, and `DataItemIterator.ExecuteDataItemLoopAsync` reads `0` as **no limit**;
+    an absent `DataItemTableView` is read as no filter and no sorting. So running such a loop
     substitutes "unbounded" for whatever the report declared, and a `MaxIteration = 1` data
     item over the `Integer` virtual table iterates the whole materialised window — 101,001
-    rows. Measured on `tests/runner-extras/report-stubmeta-unbounded-loop` with the window
-    shrunk to 1,051 rows: 1051 and 1051 iterations against a declared 1 and 3. That is the
-    shape that cost 42% of the Microsoft test surface in
-    [#3370](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3370), reached by
-    the route [#3383](https://github.com/StefanMaron/BusinessCentral.AL.Runner/pull/3383) did
-    not close. The guard is proportional: a report the runner also cannot describe but which
-    declares NO data items has no loop to bound, so it still runs its lifecycle triggers.
-    Register the `.app` that declares the report, **with** its `SymbolReference.json`, and the
-    metadata is reconstructed instead (`DependencyReportMetadata.cs`) and nothing refuses;
+    rows.
+
+    **What was measured, and what was not.** On the purpose-built fixture
+    `tests/runner-extras/report-stubmeta-unbounded-loop`, with the window shrunk to 1,051
+    rows: **1051 and 1051** iterations against a declared `MaxIteration = 1` and a declared
+    `where(Number = filter(1 .. 3))` — both bounds lost, not just the one
+    [#3374](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3374) named. That
+    is the whole of the evidence. **How often this route is reached in Microsoft's test
+    buckets is unquantified**: the 42% surface loss recorded in
+    [#3370](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3370) was traced
+    to the *captured-metadata* path that
+    [#3383](https://github.com/StefanMaron/BusinessCentral.AL.Runner/pull/3383) fixed, and no
+    Microsoft report has been observed reaching this one. The two are the same defect class
+    on two different paths, which is a statement about the class and not about this route's
+    cost.
+
+    Nor are the declared bounds *absent from the artifact*. They are absent from the compiled
+    DLL — decompiling report 65821 out of the fixture's own
+    `.deps-bin/*.dll` gives `new DataItem(this, handle)` and `Add(val,
+    "BoundedByMaxIteration")` and nothing about the dataset — and they are **not reachable
+    through either metadata source the runner consults**, which is what makes a refusal the
+    honest answer today. But the `.app` still ships `src/StubMetaReport.Report.al` with
+    `MaxIteration = 1;` in it, and `DependencyReportMetadata.cs` already reads that embedded
+    `src/` tree for column source expressions — it anchors report *discovery* on
+    `SymbolReference.json`, not on the source read. So a later change could carry these from
+    the source, and this entry should not be read as saying it cannot.
+
+    The guard is proportional: a report the runner also cannot describe but which declares NO
+    data items has no loop to bound, so it still runs its lifecycle triggers. Register the
+    `.app` that declares the report, **with** its `SymbolReference.json`, and the metadata is
+    reconstructed instead (`DependencyReportMetadata.cs`) and nothing refuses;
   - **AL field-trigger installation**, in two shapes across three call sites that used to be
     skipped in silence
     ([#3048](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3048)) — a field
