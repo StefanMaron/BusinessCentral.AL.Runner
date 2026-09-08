@@ -63,8 +63,10 @@ public static class ALDatabasePatches
     /// in-memory store is written through — but the write transaction ends here, which is
     /// what AL observes via Database.IsInWriteTransaction().
     ///
-    /// Observably equivalent to BC's own body, which begins by switching on the session's
-    /// commit behaviour and only then commits (see docs/limitations.md#commitbehavior):
+    /// Observably equivalent to BC's own body, which begins by refusing the call outright when
+    /// an AutoRollback test method is in force and the commit behaviour is not Ignore, then
+    /// switches on the session's commit behaviour and only then commits (see
+    /// docs/limitations.md#commitbehavior):
     /// <c>Error</c> raises <c>Lang.CommitProhibited</c>, <c>Ignore</c> does nothing at all,
     /// <c>Ok</c> commits. Ignore returning EARLY is the whole point — BC skips
     /// <c>session.Commit()</c>, so neither the rollback boundary nor the write-transaction
@@ -72,6 +74,13 @@ public static class ALDatabasePatches
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void ALDatabase_ALCommit()
     {
+        // BC's guard sits AHEAD of the commit-behaviour switch, and the order is observable:
+        // under AutoRollback + [CommitBehavior(CommitBehavior::Error)] the refusal below is
+        // the message AL sees, not Lang.CommitProhibited. Measured on BC 28.4.53241.0 —
+        // corpus codeunit 60899 Test08, upstream PR #278.
+        if (CurrentTestIsAutoRollback() && CurrentCommitBehaviorName() != "Ignore")
+            throw BuildTestExplicitCommitNotAllowed();
+
         switch (CurrentCommitBehaviorName())
         {
             case "Error":
@@ -118,6 +127,83 @@ public static class ALDatabasePatches
     }
 
     private static System.Reflection.PropertyInfo? _commitBehaviorProp;
+
+    /// <summary>
+    /// Whether an <c>[TransactionModel(TransactionModel::AutoRollback)]</c> test method is in
+    /// force — the runner's answer to BC's
+    /// <c>session.TestExecution != null &amp;&amp; session.TestExecution.CurrentTransactionModel
+    /// == TestTransactionModel.AutoRollback</c>.
+    ///
+    /// <para>Both halves come from one place: <see cref="BcRuntime.ExecutingTestMethod"/> is
+    /// BC's own <c>executingTestMethod</c> field, so a null means no test method is executing
+    /// (install/upgrade triggers, <c>al-runner execute</c> of a plain codeunit, and the seed
+    /// run between codeunits are all outside a test and must commit normally), and
+    /// <c>TestExecutor.IsAutoRollback</c> reads the attribute BC's own NavTestCodeunit reads to
+    /// set CurrentTransactionModel in the first place. A callee's own frames do not enter into
+    /// it — the state is per executing TEST METHOD, which is what makes the refusal reach an
+    /// unattributed callee (corpus codeunit 60899 Test05).</para>
+    /// </summary>
+    private static bool CurrentTestIsAutoRollback()
+    {
+        var m = BcRuntime.ExecutingTestMethod;
+        return m != null && TestExecutor.IsAutoRollback(m);
+    }
+
+    /// <summary>
+    /// BC's own <c>NavTestExplicitCommitNotAllowedException</c>, whose message BC builds from
+    /// <c>Lang.TestExplicitCommitNotAllowed</c>. Resolved by reflection for the same reason
+    /// <see cref="BuildCommitProhibited"/> resolves NavCSideException that way: the type lives
+    /// in Microsoft.Dynamics.Nav.Types.dll and the resource in
+    /// Microsoft.Dynamics.Nav.Language.dll, neither of which the runner references directly.
+    ///
+    /// The parameterless constructor is preferred because it is the one BC calls, so the text
+    /// is BC's resource rather than ours; the string overload and the fallback exist so a
+    /// missing type or resource still produces the error AL must see, never a silent commit.
+    /// </summary>
+    internal static Exception BuildTestExplicitCommitNotAllowed()
+    {
+        var tException = ResolveTestExplicitCommitNotAllowedType();
+        if (tException != null)
+        {
+            try
+            {
+                var ctor = tException.GetConstructor(Type.EmptyTypes);
+                if (ctor != null) return (Exception)ctor.Invoke(null);
+            }
+            catch { /* fall through to the string overload below */ }
+        }
+
+        // Fallback is BC 28.4's own en-US text, measured on a service tier (corpus PR #278);
+        // used only if the resource cannot be read.
+        var message = LangString("TestExplicitCommitNotAllowed")
+            ?? "Tests cannot call the Commit function if TransactionModel property is set to "
+               + "AutoRollback.";
+        try
+        {
+            var ctor = (tException ?? ResolveNavCSideExceptionType())?.GetConstructor(
+                System.Reflection.BindingFlags.Instance
+                | System.Reflection.BindingFlags.Public
+                | System.Reflection.BindingFlags.NonPublic,
+                null, new[] { typeof(string) }, null);
+            if (ctor != null) return (Exception)ctor.Invoke(new object[] { message });
+        }
+        catch { /* fall through to the plain exception below */ }
+
+        return new InvalidOperationException(message);
+    }
+
+    private static Type? ResolveTestExplicitCommitNotAllowedType()
+    {
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            var t = asm.GetType("Microsoft.Dynamics.Nav.Types.Exceptions.NavTestExplicitCommitNotAllowedException",
+                        throwOnError: false)
+                 ?? asm.GetType("Microsoft.Dynamics.Nav.Runtime.NavTestExplicitCommitNotAllowedException",
+                        throwOnError: false);
+            if (t != null) return t;
+        }
+        return null;
+    }
 
     /// <summary>
     /// BC's own NavCSideException carrying <c>Lang.CommitProhibited</c>, so AL's

@@ -118,6 +118,29 @@ public static partial class BcRuntime
         }
     }
 
+    /// <summary>
+    /// The <c>[Test]</c> method currently executing, or <c>null</c> outside one — read straight
+    /// off BC's own <c>NavTestExecution.executingTestMethod</c>, the field
+    /// <see cref="EnterTestExecutionScope(object, MethodInfo?)"/> pokes and
+    /// <see cref="LeaveTestExecutionScope"/> clears, for the same reason
+    /// <see cref="InTestExecutionScope"/> is: one copy of the state, not two that can drift.
+    ///
+    /// <para>BC's ALDatabase.ALCommit consults the executing test's transaction model through
+    /// <c>session.TestExecution.CurrentTransactionModel</c>, which NavTestCodeunit sets from
+    /// this very method's [Test] attribute before invoking it. Reading the attribute back off
+    /// the method is therefore the same fact by the same route — see
+    /// ALDatabasePatches.ALDatabase_ALCommit.</para>
+    /// </summary>
+    public static MethodInfo? ExecutingTestMethod
+    {
+        get
+        {
+            if (_testExecutionInstance == null || _fExecutingTestMethod == null) return null;
+            try { return _fExecutingTestMethod.GetValue(_testExecutionInstance) as MethodInfo; }
+            catch { return null; }
+        }
+    }
+
     public static void LeaveTestExecutionScope()
     {
         if (_testExecutionInstance == null || _fExecutingTestCodeUnit == null) return;
