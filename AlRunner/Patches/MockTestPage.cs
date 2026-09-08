@@ -3472,10 +3472,14 @@ internal static class TestPageTemporalValue
                 + $"{inner.Message}), so the runner has no answer from BC about this spelling. "
                 + "This is a runner fault on the evaluate path, not a value BC rejected.");
         }
-        catch (System.ArgumentException ex)
+        catch (Exception ex) when (ex is System.ArgumentException
+                                or System.Reflection.TargetParameterCountException
+                                or System.Reflection.TargetException)
         {
             // Unwrapped, so it came from Invoke itself rather than from BC: the bound Evaluate
-            // does not take the arguments this call site passes.
+            // does not take the arguments this call site passes. The two reflection types are
+            // not ArgumentExceptions — both derive from ApplicationException — so before #3462
+            // they propagated raw past every arm here and an asserterror absorbed them.
             throw new AlRunner.Infrastructure.BcShapeGapException(
                 "TestPage SetValue on a Date/DateTime/Time control",
                 "NavValueEvaluator.Evaluate",
@@ -3569,26 +3573,46 @@ internal static class TestPageTemporalValue
 
     private static string? _bindFailure;
 
+    // TEST SEAM (#3462). The bind result latches once per process, so a test cannot provoke a
+    // real bind failure without destroying the binding for every other test in the run. This
+    // makes EnsureEvaluatorBound refuse as though the bind had failed, without touching the
+    // latch. AsyncLocal, not a plain static: xunit runs test classes in parallel and the
+    // temporal suites drive this path concurrently.
+    private static readonly System.Threading.AsyncLocal<string?> ForcedBindFailure = new();
+
+    internal static IDisposable ForceBindFailure(string reason)
+    {
+        var previous = ForcedBindFailure.Value;
+        ForcedBindFailure.Value = reason;
+        return new ForcedBindFailureScope(previous);
+    }
+
+    private sealed class ForcedBindFailureScope : IDisposable
+    {
+        private readonly string? _previous;
+        internal ForcedBindFailureScope(string? previous) => _previous = previous;
+        public void Dispose() => ForcedBindFailure.Value = _previous;
+    }
+
     /// <summary>
-    /// Bind BC's evaluator, or THROW.
-    ///
-    /// <para>Not a decline. Declining is what happens when the evaluator runs and BC refuses the
-    /// text, and that is correct — the caller then falls through to its NavText path and BC
-    /// raises its own refusal. A failure to BIND is a different thing entirely: it means this
-    /// runner cannot ask BC at all, on a BC build whose shape it does not recognise. Left as a
-    /// decline it would be invisible, because the typed-argument path keeps working through
-    /// <see cref="TryResolveRoundTrip"/> and only text spellings quietly revert to the
-    /// pre-#3384 refusal — a silent downgrade of exactly the kind loud-failures.md forbids.
-    /// </para>
+    /// Bind BC's evaluator, or THROW — a failure to BIND means the runner cannot ask THIS BC
+    /// build how it reads a date, which is a shape gap and not a decline. Declining would be
+    /// invisible: the typed-argument path keeps working through <see cref="TryResolveRoundTrip"/>
+    /// and only text spellings quietly revert to the pre-#3384 refusal.
     /// </summary>
     internal static void EnsureEvaluatorBound()
     {
-        if (TryBindEvaluator()) return;
+        var forced = ForcedBindFailure.Value;
+        if (forced == null && TryBindEvaluator()) return;
 
-        throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
+        // BcShapeGapException, not RunnerOutOfScopeException: an AL asserterror absorbs the
+        // latter (NavMethodScope_AssertError rethrows only this type), so `asserterror
+        // SetValue(<temporal>)` passed green on a runner that could not ask BC anything (#3462).
+        throw new AlRunner.Infrastructure.BcShapeGapException(
             "TestPage SetValue on a Date/DateTime/Time control",
-            "testpage-temporal-evaluator — could not bind BC's own NavValueEvaluator ("
-            + (_bindFailure ?? "reason not recorded") + "), so the runner cannot ask this BC "
+            "NavValueEvaluator.Evaluate",
+            "could not bind BC's own NavValueEvaluator ("
+            + (forced ?? _bindFailure ?? "reason not recorded") + "), so the runner cannot ask this BC "
             + "build how it reads a date, time or datetime a test typed as text. This is a "
             + "runner/BC-version mismatch, not a rejected value.");
     }

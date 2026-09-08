@@ -820,14 +820,33 @@ public static partial class BcRuntime
     /// the lazy init before anything can share it removes the first-touch window.</para>
     /// </summary>
     private static void WarmSkeletonFormatSettings()
+        => WarmSkeletonFormatSettings(_skeletonSession, Console.Error);
+
+    /// <summary>The warm itself, taking its session and its output so a test can drive both.</summary>
+    internal static void WarmSkeletonFormatSettings(object? session, System.IO.TextWriter err)
     {
         try
         {
-            _ = (_skeletonSession as Microsoft.Dynamics.Nav.Runtime.NavSession)?.FormatSettings;
+            // Not `(session as NavSession)?.FormatSettings`: the null-conditional made both skip
+            // arms silent, so the first-touch window the warm exists to close stayed open with
+            // nothing saying so (#3462). Stderr rather than a throw — `session` is only null
+            // when the Ncl types were not found, where ApplyAllPatches has already failed and
+            // throwing here would report the symptom instead of the cause.
+            if (session is Microsoft.Dynamics.Nav.Runtime.NavSession navSession)
+            {
+                _ = navSession.FormatSettings;
+                return;
+            }
+
+            err.WriteLine("[BcRuntime] WARN: FormatSettings warm skipped: "
+                + (session == null
+                    ? "no skeleton session, so NavSession.SyncFormatSettings is still unwarmed"
+                    : $"the skeleton session is a {session.GetType().Name}, not a NavSession, "
+                      + "so NavSession.SyncFormatSettings is still unwarmed"));
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine(
+            err.WriteLine(
                 $"[BcRuntime] WARN: FormatSettings warm failed: {ex.GetType().Name}: {ex.Message}");
         }
     }
