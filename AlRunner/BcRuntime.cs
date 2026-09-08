@@ -827,7 +827,22 @@ public static partial class BcRuntime
     {
         try
         {
-            _ = (session as Microsoft.Dynamics.Nav.Runtime.NavSession)?.FormatSettings;
+            // Not `(session as NavSession)?.FormatSettings`: the null-conditional made both skip
+            // arms silent, so the first-touch window the warm exists to close stayed open with
+            // nothing saying so (#3462). Stderr rather than a throw — `session` is only null
+            // when the Ncl types were not found, where ApplyAllPatches has already failed and
+            // throwing here would report the symptom instead of the cause.
+            if (session is Microsoft.Dynamics.Nav.Runtime.NavSession navSession)
+            {
+                _ = navSession.FormatSettings;
+                return;
+            }
+
+            err.WriteLine("[BcRuntime] WARN: FormatSettings warm skipped: "
+                + (session == null
+                    ? "no skeleton session, so NavSession.SyncFormatSettings is still unwarmed"
+                    : $"the skeleton session is a {session.GetType().Name}, not a NavSession, "
+                      + "so NavSession.SyncFormatSettings is still unwarmed"));
         }
         catch (Exception ex)
         {
