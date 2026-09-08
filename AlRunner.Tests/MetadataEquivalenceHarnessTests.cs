@@ -186,15 +186,19 @@ public sealed class MetadataEquivalenceHarnessTests
         // build moves is worse than no pin, because it reads as covered.
         //
         // The fix is not to choose which way that fails. The counts genuinely move with the
-        // build (System Application's DataClassification is 661 / 663 / 617 across 28.1 / 28.4
-        // / 27.5, and its table count 138 / 138 / 127), so ANY key is either too tight and goes
-        // inert or too loose and asserts a number that held once. The SHAPE does not move: the
-        // reader answers a constant, which is what the defect IS. Measured on all three builds,
-        // BC says False on 87 of 87 Editable differences and the runner says True on 87 of 87;
-        // the runner says CustomerContent on 620-666 of 620-666 DataClassification differences
-        // and 0 on every EnumTypeId one. Asserting the constant is both stronger than a count
-        // and incapable of going inert. The counts themselves are recorded in
-        // docs/metadata-equivalence.md, where a measurement belongs.
+        // build, so ANY key is either too tight and goes inert or too loose and asserts a
+        // number that held once. The SHAPE does not move: where the reader is still wrong it
+        // answers a CONSTANT, which is what the defect IS, and where it has been fixed it
+        // answers BC exactly. Both are asserted here, and neither can go inert. The counts
+        // themselves are recorded in docs/metadata-equivalence.md, where a measurement belongs.
+        //
+        // The two members #3545 fixed — Editable and DataClassification — moved from the first
+        // list to the second in that change, and their allowlist entries were deleted with it.
+        // EnumTypeId did NOT move and is still asserted as a defect below: the value is
+        // readable and stating it is what is blocked, on #3594. Their agreement is re-asserted
+        // rather than left to
+        // Every_difference_is_declared_with_a_reason, which would report a regression as an
+        // undeclared member and say nothing about which reader rule broke.
         foreach (var report in RunAll())
         {
             int MissingRelation(int fieldId) => report.Differences
@@ -212,12 +216,25 @@ public sealed class MetadataEquivalenceHarnessTests
             MetadataDifference[] Declared(string signature) => report.Differences
                 .Where(d => d.Signature == signature && IsDeclaredField(d.Path)).ToArray();
 
-            AssertConstantAnswer(report, Declared("MetaField.Editable"), "MetaField.Editable",
-                bc: "False", runner: "True");
-            AssertConstantAnswer(report, Declared("MetaField.DataClassification"),
-                "MetaField.DataClassification", bc: null, runner: "CustomerContent");
+            // Still wrong, and wrong the same way on every build: the reader falls back to a
+            // constant. Tracked on #3568.
+            AssertConstantAnswer(report, Declared("MetaField.ClrType"), "MetaField.ClrType",
+                bc: null, runner: "<empty>");
+            AssertConstantAnswer(report, Declared("MetaField.ExtendedDatatype"),
+                "MetaField.ExtendedDatatype", bc: "Undefined", runner: "None");
+            AssertConstantAnswer(report, Declared("MetaField.CaptionML." + MetadataObjectDiff.PresenceMember),
+                "MetaField.CaptionML", bc: "present", runner: MetadataObjectDiff.Null);
+
+            // Still wrong for a reason that is not a reading defect: the id is known and
+            // stating it needs a metadata object BC can resolve (#3594).
             AssertConstantAnswer(report, Declared("MetaField.EnumTypeId"), "MetaField.EnumTypeId",
                 bc: null, runner: "0");
+
+            // Fixed by #3545, and asserted over EVERY field rather than only the declared
+            // ones: the same change corrected BC's six platform-added fields, whose Editable
+            // and DataClassification come from SystemFieldsHelper's boilerplate.
+            AssertReaderAgrees(report, "MetaField.Editable");
+            AssertReaderAgrees(report, "MetaField.DataClassification");
         }
     }
 
@@ -247,6 +264,23 @@ public sealed class MetadataEquivalenceHarnessTests
         Assert.True(bcAnswers.Length == 1 && bcAnswers[0] == bc,
             $"{report.Bundle.Label}: {signature} — BC should answer '{bc}' on all " +
             $"{differences.Length} differences. It answers: " + string.Join(", ", bcAnswers.Take(10)));
+    }
+
+    /// <summary>
+    /// The reader answers exactly what BC answers on <paramref name="signature"/>, everywhere.
+    /// This is the GREEN half of the test above, and it is not vacuous: a regression in any of
+    /// the three reader rules #3545 landed puts differences straight back here, and the
+    /// message names the member rather than leaving the allowlist to report it as undeclared.
+    /// </summary>
+    private static void AssertReaderAgrees(MetadataEquivalenceReport report, string signature)
+    {
+        var differences = report.Differences.Where(d => d.Signature == signature).ToArray();
+        Assert.True(differences.Length == 0,
+            $"{report.Bundle.Label}: {signature} was fixed by #3545 and its allowlist entry " +
+            $"deleted with it, so any difference here is a regression in the reader rule. " +
+            $"{differences.Length} difference(s), first {Math.Min(5, differences.Length)}:" +
+            Environment.NewLine +
+            string.Join(Environment.NewLine, differences.Take(5).Select(d => "  " + d)));
     }
 
     [SkippableFact]

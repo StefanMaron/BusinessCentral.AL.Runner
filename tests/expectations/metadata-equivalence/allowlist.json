@@ -172,11 +172,6 @@
       "issue": 3568
     },
     {
-      "member": "MetaField.DataClassification",
-      "reason": "A field with no DataClassification inherits the TABLE's, which the symbol file does carry. On 439 of 439 measured fields the emitted value equals the table's.",
-      "issue": 3545
-    },
-    {
       "member": "MetaField.ALNamespace",
       "reason": "BC states the object's AL namespace on every field; the runner states the empty string. The symbol file has no ALNamespace attribute, but its Namespaces nesting is exactly what the attribute names.",
       "issue": 3568
@@ -191,11 +186,6 @@
       "member": "MetaField.ExtendedDatatype",
       "reason": "BC answers Undefined where nothing is declared; the runner answers None, a different member of the same enum. An encoded-default disagreement, not a missing read.",
       "issue": 3568
-    },
-    {
-      "member": "MetaField.Editable",
-      "reason": "An absent Editable in the symbol file means true; the reader takes the constructor default instead. Measured over 1,540 ISV fields: 271 stated, 1,269 silent-and-default, zero silent-and-non-default.",
-      "issue": 3545
     },
     {
       "member": "MetaField.TestRelations",
@@ -311,8 +301,8 @@
     },
     {
       "member": "MetaField.EnumTypeId",
-      "reason": "BC resolves the enum object's id; the runner answers 0. The AL-observable consequence is that an enum-typed field cannot be resolved back to its enum object.",
-      "issue": 3568
+      "reason": "BC resolves the enum object's id; the runner answers 0. The AL-observable consequence is that an enum-typed field cannot be resolved back to its enum object. #3545 established WHERE the value is \u2014 TypeDefinition.Subtype.Id, agreeing with BC on 3,848 of 3,848 field observations across four builds \u2014 and did not land it: passing enumTypeId makes BC's own FieldDataProvider.GetFieldRecordBuffer resolve that id through NCLMetadata, and the runner registers no metadata object for a precompiled app's enum, so every read of the Field virtual table for Base Application table 1366 threw NavMetadataNotFoundException(\"Enum 8889\") and aborted the corpus app. Registering the metadata is the work; see #3594.",
+      "issue": 3594
     },
     {
       "member": "MetaField.Access",
