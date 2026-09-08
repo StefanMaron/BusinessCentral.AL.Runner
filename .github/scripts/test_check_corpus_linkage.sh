@@ -201,6 +201,11 @@ assert_exit "a bold marker is not the marker" 1 \
 assert_exit "an autolink in angle brackets does not count" 1 \
   "AlRunner/Patches/MockTestPage.cs" \
   "Corpus-PR: <$CORPUS_URL>"
+# GitHub's own cross-repo shorthand renders as a working link and reads correctly to a
+# human, which is what makes it the shape an agent reaches for -- it went red on PR #3582.
+assert_exit "GitHub's owner/repo#N shorthand is not a URL" 1 \
+  "AlRunner/Patches/MockTestPage.cs" \
+  "Corpus-PR: StefanMaron/BusinessCentral.AL.Language.Tests#293"
 
 # --- Extraction mode, used by the advisory half in pr-check.yml --------------
 # The parsing lives here, under test; only the gh call that resolves the URL is
