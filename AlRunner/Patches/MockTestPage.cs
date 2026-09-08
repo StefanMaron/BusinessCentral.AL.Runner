@@ -3445,6 +3445,27 @@ internal static class TestPageTemporalValue
 
     private static string? _bindFailure;
 
+    // TEST SEAM (#3462). The bind result latches once per process, so a test cannot provoke a
+    // real bind failure without destroying the binding for every other test in the run. This
+    // makes EnsureEvaluatorBound refuse as though the bind had failed, without touching the
+    // latch. AsyncLocal, not a plain static: xunit runs test classes in parallel and the
+    // temporal suites drive this path concurrently.
+    private static readonly System.Threading.AsyncLocal<string?> ForcedBindFailure = new();
+
+    internal static IDisposable ForceBindFailure(string reason)
+    {
+        var previous = ForcedBindFailure.Value;
+        ForcedBindFailure.Value = reason;
+        return new ForcedBindFailureScope(previous);
+    }
+
+    private sealed class ForcedBindFailureScope : IDisposable
+    {
+        private readonly string? _previous;
+        internal ForcedBindFailureScope(string? previous) => _previous = previous;
+        public void Dispose() => ForcedBindFailure.Value = _previous;
+    }
+
     /// <summary>
     /// Bind BC's evaluator, or THROW.
     ///
@@ -3459,12 +3480,13 @@ internal static class TestPageTemporalValue
     /// </summary>
     internal static void EnsureEvaluatorBound()
     {
-        if (TryBindEvaluator()) return;
+        var forced = ForcedBindFailure.Value;
+        if (forced == null && TryBindEvaluator()) return;
 
         throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             "TestPage SetValue on a Date/DateTime/Time control",
             "testpage-temporal-evaluator — could not bind BC's own NavValueEvaluator ("
-            + (_bindFailure ?? "reason not recorded") + "), so the runner cannot ask this BC "
+            + (forced ?? _bindFailure ?? "reason not recorded") + "), so the runner cannot ask this BC "
             + "build how it reads a date, time or datetime a test typed as text. This is a "
             + "runner/BC-version mismatch, not a rejected value.");
     }

@@ -820,14 +820,18 @@ public static partial class BcRuntime
     /// the lazy init before anything can share it removes the first-touch window.</para>
     /// </summary>
     private static void WarmSkeletonFormatSettings()
+        => WarmSkeletonFormatSettings(_skeletonSession, Console.Error);
+
+    /// <summary>The warm itself, taking its session and its output so a test can drive both.</summary>
+    internal static void WarmSkeletonFormatSettings(object? session, System.IO.TextWriter err)
     {
         try
         {
-            _ = (_skeletonSession as Microsoft.Dynamics.Nav.Runtime.NavSession)?.FormatSettings;
+            _ = (session as Microsoft.Dynamics.Nav.Runtime.NavSession)?.FormatSettings;
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine(
+            err.WriteLine(
                 $"[BcRuntime] WARN: FormatSettings warm failed: {ex.GetType().Name}: {ex.Message}");
         }
     }

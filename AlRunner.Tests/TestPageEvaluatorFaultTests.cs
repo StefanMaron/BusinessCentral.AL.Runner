@@ -12,6 +12,7 @@
 // RED against main: every arm below that expects BcShapeGapException got `false` instead,
 // because the two catches at the call site returned false for any exception at all.
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using AlRunner;
 using AlRunner.Infrastructure;
@@ -59,11 +60,114 @@ public sealed class TestPageEvaluatorFaultTests
     public void InvokeEvaluate_WhenTheBoundEvaluateRefusesTheArguments_RaisesAVersionMismatch()
     {
         var gap = Assert.Throws<BcShapeGapException>(() => TestPageTemporalValue.InvokeEvaluate(
-            () => throw new ArgumentException("parameter count mismatch")));
+            () => throw new ArgumentException("the argument is of the wrong type")));
 
         Assert.Equal("NavValueEvaluator.Evaluate", gap.Member);
-        Assert.Contains("parameter count mismatch", gap.Detail);
+        Assert.Contains("the argument is of the wrong type", gap.Detail);
         Assert.Contains("version mismatch", gap.Detail);
+    }
+
+    // The two shapes MethodBase.Invoke raises UNWRAPPED that the ArgumentException arm above
+    // does not cover: both derive from ApplicationException, not from ArgumentException, so on
+    // main they propagated raw past every arm (#3462). RED against main: BcShapeGapException
+    // was not thrown - the raw exception came out instead.
+    public static IEnumerable<object[]> UnwrappedInvokeFaults() => new[]
+    {
+        new object[] { new TargetParameterCountException("Parameter count mismatch.") },
+        new object[] { new TargetException("Object does not match target type.") },
+    };
+
+    [Theory]
+    [MemberData(nameof(UnwrappedInvokeFaults))]
+    public void InvokeEvaluate_WhenInvokeItselfRefusesTheCall_RaisesAVersionMismatch(Exception injected)
+    {
+        var gap = Assert.Throws<BcShapeGapException>(
+            () => TestPageTemporalValue.InvokeEvaluate(() => throw injected));
+
+        Assert.Equal("NavValueEvaluator.Evaluate", gap.Member);
+        Assert.Contains(injected.GetType().Name, gap.Detail);
+        Assert.Contains("version mismatch", gap.Detail);
+    }
+
+    // ...and the consequence, on the seam that INVERTS a result. An asserterror around a
+    // SetValue that hits one of these must still fail; before the fix NavMethodScope_AssertError
+    // absorbed the raw exception on its catch-all and the asserterror PASSED.
+    [Theory]
+    [MemberData(nameof(UnwrappedInvokeFaults))]
+    public void InvokeEvaluate_WhenInvokeItselfRefusesTheCall_IsNotSwallowedByAssertError(Exception injected)
+    {
+        var gap = Assert.Throws<BcShapeGapException>(() => BcRuntime.NavMethodScope_AssertError(
+            null!, () => TestPageTemporalValue.InvokeEvaluate(() => throw injected)));
+
+        Assert.Equal("NavValueEvaluator.Evaluate", gap.Member);
+    }
+
+    // ══ The bind path two frames up (#3462) ══════════════════════════════════════════════
+    //
+    // A bind failure means the runner could not ask THIS BC build how it reads a date at all -
+    // a runner/BC-version mismatch, which BcShapeGapException is the type for. It refused with
+    // RunnerOutOfScopeException, which an asserterror absorbs, so `asserterror SetValue(...)`
+    // on a temporal control passed green having measured nothing.
+    //
+    // The bind result latches once per process, so these drive the refusal through the
+    // ForceBindFailure seam rather than by breaking the real binding for the rest of the run.
+
+    [Fact]
+    public void EnsureEvaluatorBound_WhenTheBindFailed_RaisesAShapeGapNamingTheReason()
+    {
+        using (TestPageTemporalValue.ForceBindFailure("NavValueEvaluator not found"))
+        {
+            var gap = Assert.Throws<BcShapeGapException>(TestPageTemporalValue.EnsureEvaluatorBound);
+
+            Assert.Equal("NavValueEvaluator.Evaluate", gap.Member);
+            Assert.Contains("NavValueEvaluator not found", gap.Detail);
+            Assert.Contains("version mismatch", gap.Detail);
+        }
+    }
+
+    [Fact]
+    public void EnsureEvaluatorBound_WhenTheBindFailed_IsNotSwallowedByAssertError()
+    {
+        // RED against main: NavMethodScope_AssertError rethrows only BcShapeGapException and
+        // absorbed the RunnerOutOfScopeException on its catch-all, so this returned normally
+        // and the AL asserterror it stands for passed on a runner fault.
+        using (TestPageTemporalValue.ForceBindFailure("NavValueEvaluator.Evaluate not found"))
+        {
+            var gap = Assert.Throws<BcShapeGapException>(() => BcRuntime.NavMethodScope_AssertError(
+                null!, TestPageTemporalValue.EnsureEvaluatorBound));
+
+            Assert.Equal("TestPage SetValue on a Date/DateTime/Time control", gap.Surface);
+        }
+    }
+
+    [Fact]
+    public void EnsureEvaluatorBound_WhenTheBindFailed_IsNotAbsorbableAsAnOutOfScopeSignal()
+    {
+        // The other half: anything carrying a RunnerOutOfScopeException can be declared away by
+        // an `expect-oos` manifest entry, and which BC build is on disk must never be
+        // declarable as an expected scope boundary.
+        using (TestPageTemporalValue.ForceBindFailure("DataError.TrapError not found"))
+        {
+            var thrown = Record.Exception(TestPageTemporalValue.EnsureEvaluatorBound);
+
+            Assert.NotNull(thrown);
+            Assert.IsNotType<RunnerOutOfScopeException>(thrown);
+            Assert.Null(OutOfScopeMessage.FromException(thrown));
+        }
+    }
+
+    // The seam is a seam, not a switch: with nothing forced, the real bind still decides. On
+    // this build it succeeds, so EnsureEvaluatorBound returns - which is also what makes the
+    // three arms above statements about the refusal rather than about the seam.
+    [Fact]
+    public void EnsureEvaluatorBound_WithNothingForced_StillBindsThisBuildsEvaluator()
+    {
+        using (TestPageTemporalValue.ForceBindFailure("probe")) { }
+
+        TestPageTemporalValue.EnsureEvaluatorBound();
+        Assert.True(TestPageTemporalValue.TryResolve(
+            NavType.Date, "01/15/2026 00:00:00", out var resolved));
+        Assert.NotNull(resolved);
     }
 
     // The one exception shape that IS a refusal. It cannot escape Evaluate under TrapError on
