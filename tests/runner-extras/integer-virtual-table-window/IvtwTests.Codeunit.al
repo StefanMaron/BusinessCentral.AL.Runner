@@ -162,34 +162,34 @@ codeunit 64591 "Ivtw Tests"
     end;
 
     [Test]
-    procedure Integer_UnboundedFilter_IsServedFromTheBaseWindowRatherThanRefused()
+    procedure Integer_UnboundedFilter_IsServedFromWhatIsMaterialised_NotFromBcsOwnBound()
     var
         IntRec: Record Integer;
-        Seen: Integer;
     begin
-        // Issue #3376 asked for the opposite of this test, and the decompile is why it does not
-        // get it. #3376 reads the unbounded case as "you asked for all of them and we invented a
-        // bound", and proposes refusing it. But BC invents a bound too — GetInclusiveIntegerBounds
-        // substitutes -1e9 for an open low and +1e9 for an open high — so refusing would diverge
-        // from a service tier on a shape BaseApp uses constantly. 18 of BaseApp's 658 reports
-        // declare MaxIteration over an unbounded `dataitem(x; Integer)`.
+        // Issue #3376 asked for an unbounded filter to be REFUSED, and the decompile is why it
+        // does not get that. BC invents a bound too - GetInclusiveIntegerBounds substitutes -1e9
+        // for an open low and +1e9 for an open high - so refusing would diverge from a service
+        // tier on a shape BaseApp uses constantly: 18 of its 658 reports declare MaxIteration
+        // over an unbounded `dataitem(x; Integer)`.
         //
-        // So an open bound whose closed end the base window can answer from is served, and this
-        // test pins WHERE it stops: at the base window's edge, not at 1,000,000,000. That
-        // remaining divergence is a row count, and it is recorded in docs/limitations.md.
+        // So an open bound is served, and this test pins WHERE it stops. It is the one shape
+        // per-request materialising cannot follow: BC would enumerate to 1,000,000,000 and the
+        // runner enumerates what it has materialised, which always covers the base window and
+        // never reaches BC's bound. That divergence is recorded in docs/limitations.md.
         IntRec.SetFilter(Number, '>=1');
 
         Assert.IsTrue(IntRec.FindFirst(), 'An unbounded Integer filter must be served, not refused.');
         Assert.AreEqual(1, IntRec.Number, 'Expected the unbounded range to start at 1.');
 
-        // Not merely "it did not throw": the base window's own upper edge is reachable through it,
-        // and is where the enumeration ends.
-        IntRec.SetFilter(Number, '>=99998');
-        Assert.IsTrue(IntRec.FindSet(), 'Expected rows at the top of the base window.');
-        repeat
-            Seen += 1;
-        until IntRec.Next() = 0;
-        Assert.AreEqual(3, Seen, 'Expected 99998, 99999 and 100000 — the base window''s last three rows.');
+        // Not merely "it did not throw": the enumeration reaches at least the base window's own
+        // upper edge, so an open bound is answered from a populated store rather than an empty
+        // one - and it stops short of BC's bound, which is the divergence this suite exists to
+        // state rather than hide. The upper assertion is deliberately not an exact count: an
+        // earlier request in the same process may have materialised further rows, which an open
+        // filter then legitimately selects.
+        Assert.IsTrue(IntRec.FindLast(), 'An unbounded Integer filter returned no last row.');
+        Assert.IsTrue(IntRec.Number >= 100000, 'An open-ended range must reach the base window''s upper edge, 100000.');
+        Assert.IsTrue(IntRec.Number < 1000000000, 'The runner stops at what it materialised; only real BC reaches 1000000000.');
     end;
 
     [Test]
