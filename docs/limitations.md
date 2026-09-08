@@ -148,10 +148,19 @@ by an unattributed callee, the scope being popped when the attributed call retur
 `Error` refusal — in `error-handling/TestCommitBehaviorAttribute.al` (codeunit 60881),
 corpus PR #276. Runner side landed with issue #3449.
 
-One related refusal is **not** implemented, tracked in issue #3451: BC rejects an explicit
-`Commit()` inside a `[TransactionModel(TransactionModel::AutoRollback)]` test with "Tests
-cannot call the Commit function if TransactionModel property is set to AutoRollback."
-(measured on a BC 28.4 container); the runner accepts it.
+A related refusal sits ahead of that switch, and is also modeled (issue #3451): while a
+`[TransactionModel(TransactionModel::AutoRollback)]` test method is in force, an explicit
+`Commit()` is rejected with BC's own "Tests cannot call the Commit function if
+TransactionModel property is set to AutoRollback." The refusal is session state, so it
+reaches a `Commit()` issued by a callee carrying no attribute of its own;
+`CommitBehavior::Ignore` exempts it, and `CommitBehavior::Error` does not outrank it — the
+AutoRollback text is the one raised, because BC evaluates this guard before the switch. All
+five arms were measured on a real BC 28.4 service tier in
+`record/TestTransactionModelAutoRollback.al` (codeunit 60899, tests 04-08), corpus PR #278.
+
+The guard is BC's `ALDatabase.ALCommit` and nothing wider. A guarded `Codeunit.Run` commits
+its nested transaction through `EndTransactionWorldAndTransaction`, which is not an AL
+`Commit()` statement, so it is not refused inside an AutoRollback test.
 
 ### Test isolation modes — mapping to AL's `TestIsolation` values
 
