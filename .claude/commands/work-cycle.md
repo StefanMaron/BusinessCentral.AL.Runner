@@ -27,8 +27,8 @@ Report the triager's summary numbers (ready / needs-input / closed / left-alone)
 ## Phase 2 — Implementation loop
 
 Settings:
-- **Concurrency**: up to 2 implementation agents in parallel (identities `impl-1`, `impl-2`).
-- **Identities are a reusable pool, not a counter.** `impl-1` and `impl-2` are the only two, for every cycle. A finished agent frees its name immediately; the next task reuses it and resets that worktree. Never allocate `impl-3` or higher to "keep them separate" — separation is what the two names already provide, and every extra identity leaves a permanent multi-hundred-megabyte checkout under `.claude/worktrees/`.
+- **Concurrency**: up to 2 implementation agents in parallel.
+- **Identities are a reusable pool, not a counter**, and they are namespaced per account — `<tag>-1`, `<tag>-2`, where `<tag>` derives from the account the session runs as (`impl-agent.md` has the derivation). Two names per cycle, reused: a finished agent frees its name immediately and the next task resets that worktree. Never allocate a third to "keep them separate" — separation is what the two names already provide, and every extra identity leaves a permanent multi-hundred-megabyte checkout under `.claude/worktrees/`. The old global `impl-N` pool is what this replaced: a counter nobody owned, which drifted to `impl-69` and left 82 worktrees and 10 GB behind.
 - **Isolation**: each impl agent runs with `isolation: "worktree"` so it has its own checkout and branch.
 - **Background**: impl agents run with `run_in_background: true` so the orchestrator pass can run alongside them.
 

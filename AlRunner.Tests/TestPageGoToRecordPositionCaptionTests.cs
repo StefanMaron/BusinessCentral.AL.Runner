@@ -64,12 +64,21 @@ public sealed class TestPageGoToRecordPositionCaptionTests
     {
         var source = MockTestPageSource();
 
-        // Every call this file makes to capture a cursor position for later restore
-        // (FindRowFromTableFieldValues' not-found restore, EnterNewRowLine's return
-        // position, and GetBookmark) must resolve field-by-NUMBER, matching every other
-        // cursor move in this class (ALSetPosition/GetFieldValue already take field
-        // numbers, never captions).
+        // Every call this file makes to read a cursor position must resolve field-by-NUMBER,
+        // matching every other cursor move in this class (ALSetPosition/GetFieldValue already
+        // take field numbers, never captions). Four sites:
+        //
+        //   * FindRowFromTableFieldValues' not-found restore,
+        //   * EnterNewRowLine's return position,
+        //   * GetBookmark,
+        //   * ReloadLinkedRow's parent-row identity check (#3029), which compares one parent
+        //     position against the last one to tell a genuine parent move from the host
+        //     calling a part again about the row it is already on.
+        //
+        // The count is deliberately kept alongside the enumeration above rather than standing
+        // alone: a bare number tells a future reader that something changed, never whether the
+        // new site is correct. Adding one here means naming it there.
         var explicitCalls = Regex.Matches(source, @"\.ALGetPosition\(\s*useCaptions:\s*false\s*\)");
-        Assert.Equal(3, explicitCalls.Count);
+        Assert.Equal(4, explicitCalls.Count);
     }
 }

@@ -198,17 +198,45 @@ public sealed class BcInternalsNullForgivingGuardTests
         var converted = SourceFiles()
             .Sum(f => CountConverted(File.ReadAllText(f)));
 
-        Assert.Equal(73, converted);
+        Assert.Equal(74, converted);
+    }
+
+    /// <summary>
+    /// <see cref="CountConverted"/> is a raw substring count, so prose describing a converted
+    /// site would register as one. That is not hypothetical: this PR's own
+    /// <c>NavReportSync.cs</c> explains the conversion in a comment directly above the call,
+    /// which made the population read 75 where only 74 sites exist. <see cref="Scan"/> has
+    /// blanked comments and string literals since it was written; this arm holds the converted
+    /// counter to the same rule, so the two halves of the population are counted alike.
+    /// </summary>
+    [Fact]
+    public void CountConverted_IgnoresCommentsAndStringLiterals()
+    {
+        const string src = """
+            class C {
+                void M() {
+                    _live ??= BcShape.Field(typeof(X), "Real");
+                    // ??= BcShape.Field(...) here would be prose, not a site
+                    var s = "BcShape.Method(";
+                    /* BcShape.Property( in a block comment */
+                }
+            }
+            """;
+
+        Assert.Equal(1, CountConverted(src));
     }
 
     private static int CountConverted(string src)
     {
+        // Blank() first, for the same reason Scan() does: a comment or string literal naming
+        // a converted site is prose about the population, not a member of it.
+        var code = Blank(src);
         var n = 0;
         foreach (var name in new[] { "BcShape.Property(", "BcShape.Method(", "BcShape.Field(",
                                      "BcShape.Constructor(", "BcShape.NestedType(" })
         {
-            for (var i = src.IndexOf(name, StringComparison.Ordinal); i >= 0;
-                 i = src.IndexOf(name, i + 1, StringComparison.Ordinal))
+            for (var i = code.IndexOf(name, StringComparison.Ordinal); i >= 0;
+                 i = code.IndexOf(name, i + 1, StringComparison.Ordinal))
                 n++;
         }
         return n;

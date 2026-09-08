@@ -45,11 +45,15 @@ something, spawning an agent to re-measure it wastes a full context. Write the P
   (`gh issue edit <N> --remove-assignee <login> --add-assignee @me`) and fold it in. Do not
   bulk-claim issues nobody is working on, and do not assume a release — confirm it.
 
-**A PR from anyone other than the repo owner** is reviewed, never merged. You may review it
-and, with approval, comment on it. Merging someone else's contribution stays the owner's call.
+**A PR from anyone other than the repo owner** is reviewed, never merged. Commenting on it is
+ungated like any other PR here — the boundary is the repository, not who opened it. Merging
+someone else's contribution stays the owner's call.
 
-**Still gated, ask first:** comments on issues or PRs (including the corpus repo), PR review
-comments, anything posted to another repo. That is editorial content, not a workflow step.
+**Ungated on these two repositories** (`BusinessCentral.AL.Runner` and the corpus): commenting
+on issues and PRs, closing issues, applying labels. **Still gated:** PR review comments submitted
+as a formal review, and anything posted to another repository. `public-posting-approval.md` is
+the authority and is auto-loaded; it carries the two conditions that come with the ungating —
+every state change carries its reasoning, and every agent-authored post says an agent wrote it.
 
 ## Implementation agents
 
@@ -270,9 +274,20 @@ first and, if one failed, read its log or take a second run by another route
 (`ci-verdicts.md` §3, §5). Do not reach for `--admin`: protection is working, the context
 genuinely is not satisfied.
 
-**Which checks gate is now a property of the file a job lives in** (#3165). Everything in
-`.github/workflows/pr-gate.yml` produces a required context and blocks; everything in
-`pr-check.yml` is advisory and cannot. Before the split all twelve guards lived in
+**Which checks gate is now mostly a property of the file a job lives in** (#3165):
+`.github/workflows/pr-gate.yml` is where gating jobs live, `pr-check.yml` is advisory and
+cannot block. **Mostly, not entirely** — a few `pr-gate.yml` jobs are deliberately not yet in
+the ruleset, tracked as `PENDING_REQUIRED_CONTEXTS` in `check_required_contexts.py` because
+promoting one early makes `ci-wait.py` answer exit 3 for everybody. So a red tick from that
+file is not proof the merge is blocked. Ask, rather than counting jobs in a file:
+
+```bash
+gh api repos/StefanMaron/BusinessCentral.AL.Runner/rules/branches/main \
+  --jq '[.[]|select(.type=="required_status_checks")
+         |.parameters.required_status_checks[].context]'
+```
+
+Before the split all twelve guards lived in
 `pr-check.yml` and none of them gated, so #3116, #3112 and #3095 each merged with one in a
 `FAILURE` state, and a red closing-reference or CI-skip tick stopped nothing. `pr-gate.yml`
 carries no `concurrency` block, deliberately — that is the same #2726 rule applied to a

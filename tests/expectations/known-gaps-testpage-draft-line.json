@@ -2,33 +2,9 @@
   {
     "codeunitId": 60358,
     "CodeunitName": "ONRC Tests",
-    "Method": "DraftLine_ShownAndUntouched_RunsOnNewRecordOncePerRenderedBlankLine",
+    "Method": "New_OnEmptyLinkedPart_RunsOnNewRecordOncePlusTheOpenCost",
     "Mode": "expect-fail-known-gap",
     "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3029",
-    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #266 (5f4b254), which added this test. The runner's TestPage raises a page's OnNewRecord a different number of times than BC does for a draft line \u2014 EnterNewRowLine and the promotion both call TryNewRecord. Expected 6 OnNewRecord firings, got 4. Tracked as #3029, which is open and is NOT closed by this PR; open PR #3414 fixes it and removes this entry."
-  },
-  {
-    "codeunitId": 60358,
-    "CodeunitName": "ONRC Tests",
-    "Method": "DraftLine_ShownThenWritten_WriteDoesNotRaiseOnNewRecordAgain",
-    "Mode": "expect-fail-known-gap",
-    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3029",
-    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #266 (5f4b254), which added this test. The runner's TestPage raises a page's OnNewRecord a different number of times than BC does for a draft line \u2014 EnterNewRowLine and the promotion both call TryNewRecord. Expected 6 OnNewRecord firings, got 4. Tracked as #3029, which is open and is NOT closed by this PR; open PR #3414 fixes it and removes this entry."
-  },
-  {
-    "codeunitId": 60358,
-    "CodeunitName": "ONRC Tests",
-    "Method": "DraftLine_ReachedByNextThenWritten_RunsOnNewRecordExactlyOnce",
-    "Mode": "expect-fail-known-gap",
-    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3029",
-    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #266 (5f4b254), which added this test. The runner's TestPage raises a page's OnNewRecord a different number of times than BC does for a draft line \u2014 EnterNewRowLine and the promotion both call TryNewRecord. Landing on an existing data row raised OnNewRecord once where BC raises it not at all. Tracked as #3029, which is open and is NOT closed by this PR; open PR #3414 fixes it and removes this entry."
-  },
-  {
-    "codeunitId": 60358,
-    "CodeunitName": "ONRC Tests",
-    "Method": "TwoRowsWrittenThroughTheDraftLine_SecondRowRaisesOnNewRecordOnceMore",
-    "Mode": "expect-fail-known-gap",
-    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3029",
-    "Note": "Pulled in by this PR's pin advance to ccc10f12, NOT caused by it: corpus history is linear, so #274 (the upstream half of this PR) cannot be taken without #266 (5f4b254), which added this test. The runner's TestPage raises a page's OnNewRecord a different number of times than BC does for a draft line \u2014 EnterNewRowLine and the promotion both call TryNewRecord. Expected 6 OnNewRecord firings, got 5. Tracked as #3029, which is open and is NOT closed by this PR; open PR #3414 fixes it and removes this entry."
+    "Note": "Expected:<2> Actual:<1>. New() on an empty linked part must raise OnNewRecord exactly ONCE MORE than opening the card on that empty part already did; the runner charges nothing for the New(). This is a DELTA, not an absolute: corpus PR #284 (merged 9d76412) re-scoped these arms away from the tier-specific open cost, and both measured tiers agree on every delta in this file. So this entry does NOT rest on the unsettled 6-vs-3 opening-cost question -- that disagreement was a bc-linux defect, fixed upstream in MsDyn365Bc.On.Linux 2b0d91f8 and confirmed by its maintainer at 3, matching Windows. The other three arms this file used to cover -- DraftLine_ShownAndUntouched, DraftLine_ShownThenWritten, TwoRowsWrittenThroughTheDraftLine -- now PASS with this PR's fix and their entries are removed; measured on this branch with the manifest emptied: 4 pass, 1 fail. Tracked as #3029, which stays OPEN: this PR narrows the gap from four arms to one and does not close it."
   }
 ]

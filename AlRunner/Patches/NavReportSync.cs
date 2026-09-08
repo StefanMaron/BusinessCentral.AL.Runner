@@ -50,6 +50,10 @@ public static partial class NavReportSync
 
     // Reflection handles cached after first use.
     private static FieldInfo? _dataItemsField;     // DataItemIterator.dataItems : List<DataItem>
+    // The same member, resolved separately and LOUDLY for RefuseLoopOverSynthesizedDataItems.
+    // Deliberately not shared with the line above: see that method for why sharing it makes
+    // the guard silent.
+    private static FieldInfo? _refusalDataItemsField;
     private static MethodInfo? _applySetTableViewForAllDataItems; // DataItemIterator.ApplySetTableViewForAllDataItems()
     private static PropertyInfo? _objectIdProp;    // NavApplicationObjectBase.ObjectId : ApplicationObjectId
     private static PropertyInfo? _objectNumberProp;// ApplicationObjectId.ObjectNumber : int
@@ -1038,6 +1042,8 @@ public static partial class NavReportSync
         var iter = FindDataItemIteratorType(navReport);
         if (iter == null) return false;
 
+        RefuseLoopOverSynthesizedDataItems(navReport, iter);
+
         _applyDataItemTableView ??= iter.GetMethod("ApplyDataItemTableViewAndRequestFormFilters",
             BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
             null, Type.EmptyTypes, null);
@@ -1060,6 +1066,92 @@ public static partial class NavReportSync
         AwaitValueTask(Invoke(_loopRootDataItems, navReport, Array.Empty<object?>()));
         if (datasetProcessor != null) InvokeProcessorLifecycle(datasetProcessor, "FinishAsync");
         return datasetProcessor != null;
+    }
+
+    /// <summary>
+    /// Refuse to run the data-item loop of a report NOTHING in this run describes (#3375).
+    /// Such a report's data items carry a <see cref="BuildSyntheticFlatMetaDataItem"/>
+    /// MetaDataItem built from the data item's NAME alone, and a synthetic data item cannot
+    /// say "unknown" to BC — <c>MaxIteration</c>'s only unset value, 0, is the one its loop
+    /// reads as "no limit" — so running it silently substitutes "unbounded" for a bound the
+    /// report declared. See docs/limitations.md#runtime-shape-gaps.
+    /// </summary>
+    private static void RefuseLoopOverSynthesizedDataItems(object navReport, Type dataItemIteratorType)
+    {
+        var meta = FindProperty(navReport.GetType(), "Metadata")?.GetValue(navReport);
+        if (meta == null || !_stubMetaReports.TryGetValue(meta, out _)) return;
+
+        // Proportional, per #3026's point-of-use rule: a report that declares no data items
+        // has no loop to bound, so nothing about it is being guessed at and its lifecycle
+        // triggers run exactly as they would with real metadata. Refusing it would be the
+        // mirror defect.
+        //
+        // Both lookups below refuse rather than answer, because the ONLY other exit from this
+        // method is "do not refuse" — so a member that moved on a future BC build would restore
+        // the unbounded loop this guard exists to stop, silently and with every test green.
+        // Same reasoning as LoopRootDataItemsAsync twenty lines up, which is why that one is a
+        // throw too.
+        //
+        // Its OWN static, not the shared _dataItemsField, and that is the load-bearing part.
+        // Two other sites resolve the same member with a plain GetField and tolerate null
+        // (SyncRun, ReportAdd), and ReportAdd runs during construction — so a `_dataItemsField
+        // ??= BcShape.Field(...)` here would find the static already populated and NEVER
+        // evaluate its own guarded lookup. A guard whose loudness depends on a fail-open site
+        // having failed first is not a guard: measured, that spelling passed a deliberate
+        // break of its own field name with all four tests green.
+        _refusalDataItemsField ??= AlRunner.Infrastructure.BcShape.Field(
+            dataItemIteratorType, "dataItems", BindingFlags.Instance | BindingFlags.NonPublic,
+            "report-metadata-unavailable",
+            "the data-item list a report with no metadata is refused against");
+        if (_refusalDataItemsField.GetValue(navReport) is not System.Collections.ICollection dataItems)
+            throw new InvalidOperationException(
+                "DataItemIterator.dataItems is not a countable list — Ncl shape changed; do not commit");
+        if (dataItems.Count == 0) return;
+
+        var who = ReportIdentity(navReport);
+        throw AlRunner.Patches.RunnerShapeGap.ReportMetadataUnavailable(
+            $"NavReport.Run({who})",
+            $"neither report-metadata source describes {who}: it was not source-compiled here, so "
+            + "AlReportMetadataRegistry never captured it, and no loaded dependency .app's "
+            + "SymbolReference.json declares it, so its data item(s) "
+            + $"{SynthesizedDataItemNames(meta)} were synthesized from their names alone. Every "
+            + "property that bounds such a loop (MaxIteration, DataItemTableView's filters and "
+            + "sorting, DataItemLink) is unreachable through either source, and BC reads each "
+            + "absence as 'no bound', so the loop would run to its source table's end: over the "
+            + "Integer virtual table that is 101,001 iterations of a data item that may declare "
+            + $"MaxIteration = 1. Register the .app declaring {who}, WITH its "
+            + "SymbolReference.json, so the metadata can be rebuilt");
+    }
+
+    /// <summary>How to name this report in a refusal: "Report 65821", or the CLR type when the
+    /// compiled name does not carry an id.</summary>
+    private static string ReportIdentity(object navReport)
+    {
+        var name = navReport.GetType().Name;
+        return name.Length > 6 && name.StartsWith("Report", StringComparison.Ordinal)
+            && int.TryParse(name.AsSpan(6), out var id) && id > 0
+            ? $"Report {id}"
+            : name;
+    }
+
+    /// <summary>The data-item names the stub MetaReport was given, in the order ReportAdd saw
+    /// them — the whole of what the runner actually knows about this report's dataset.</summary>
+    private static string SynthesizedDataItemNames(object meta)
+    {
+        _metaReportDataItemsField ??= meta.GetType().GetField("dataItems",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+        if (_metaReportDataItemsField?.GetValue(meta) is not System.Collections.IEnumerable list)
+            return "(none recorded)";
+
+        var names = new List<string>();
+        foreach (var mdi in list)
+        {
+            if (mdi == null) continue;
+            _synthMdiVarNameProp ??= mdi.GetType().GetProperty("DataItemVarName",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (_synthMdiVarNameProp?.GetValue(mdi) is string n && n.Length > 0) names.Add(n);
+        }
+        return names.Count == 0 ? "(none recorded)" : string.Join(", ", names);
     }
 
     /// <summary>

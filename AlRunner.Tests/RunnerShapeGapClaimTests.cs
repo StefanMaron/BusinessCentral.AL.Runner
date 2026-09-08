@@ -1,5 +1,10 @@
-// RunnerShapeGapClaimTests — what the eighteen corrected refusals outside the virtual-table
-// populators actually claim, and what an AL [TryFunction] does with one (#2966).
+// RunnerShapeGapClaimTests — what the corrected refusals outside the virtual-table populators
+// actually claim, and what an AL [TryFunction] does with one (#2966).
+//
+// #2966 corrected eighteen. The suite is not closed at eighteen: a refusal ADDED later is held
+// to the same claims, and joins both the Sites table and the floor at the bottom of the file.
+// #3375's report-metadata-unavailable is the first such addition, which is why nothing here
+// carries the number 18 in a name any more.
 //
 // WHY THIS IS A RUNNER-SIDE MECHANISM TEST AND NOT AN AL BUNDLE
 // ------------------------------------------------------------
@@ -106,6 +111,12 @@ public sealed class RunnerShapeGapClaimTests
             ["report-construction"] = (
                 () => Invoke("ReportConstruction", "NavReport.RunRequestPage(50100)", "the probe detail"),
                 "NavReport.RunRequestPage(50100)", "report-construction", RuntimeDoc),
+            // #3375. A DISTINCT surface from report-construction: the report object was built
+            // fine, and what is missing is any description of its dataset — so the loop about
+            // to run would be bounded by metadata the runner invented.
+            ["report-metadata-unavailable"] = (
+                () => Invoke("ReportMetadataUnavailable", "NavReport.Run(Report 50100)", "the probe detail"),
+                "NavReport.Run(Report 50100)", "report-metadata-unavailable", RuntimeDoc),
         };
 
     public static IEnumerable<object[]> SiteNames() => Sites.Keys.Select(k => new object[] { k });
@@ -317,7 +328,7 @@ public sealed class RunnerShapeGapClaimTests
     }
 
     [Fact]
-    public void AllEighteenCorrectedRefusalsUnderAlRunnerStillExist_SoNoneWasDeletedRatherThanCorrected()
+    public void EveryRefusalUnderAlRunnerStillExists_SoNoneWasDeletedRatherThanCorrected()
     {
         var files = FullyCorrectedFiles.Concat(PartiallyCorrectedFiles.Select(x => x.File));
         var total = files.Sum(f =>
@@ -325,7 +336,19 @@ public sealed class RunnerShapeGapClaimTests
 
         // A refusal DELETED rather than corrected means a precondition went back to being read
         // as a default, which is the failure this whole change is about. Asserted exactly.
-        Assert.Equal(18, total);
+        //
+        // 18 -> 19 (#3375): NavReportSync.RefuseLoopOverSynthesizedDataItems. A refusal ADDED,
+        // not one of #2966's corrected eighteen — which is why the name no longer carries the
+        // number. It kept going stale in the name while the assertion below was the only thing
+        // that could catch it, and a name that disagrees with its own assertion is the kind of
+        // stale prose this repository has a drift test for everywhere else.
+        //
+        // Bumping this number is NOT how a new refusal is meant to satisfy this suite. The
+        // classification is the Sites entry above, which pins the new surface's api, its anchor
+        // and its doc link, and puts it through the [TryFunction] arm — so a refusal cannot be
+        // added here without someone stating what it claims. This assertion only holds the
+        // floor.
+        Assert.Equal(19, total);
     }
 
     // ── The nine sites the issue's own measurement could not see ─────────────────────────
