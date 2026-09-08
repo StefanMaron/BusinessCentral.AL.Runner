@@ -1724,15 +1724,21 @@ Two tests added to the existing `PSA Tests` codeunit (65612), pinning the two ha
 * `EffectivePermissionsForAnotherUser_IsRefusedByName` — asking about a user other than the
   session's own is refused, matched on the reason anchor `effective-permissions-other-user`
   rather than by a bare `asserterror` (which would also have passed on the NRE the fix removes).
-* `EffectivePermissionsForTheSessionUser_AnswersAllFiveDirectPermissions` — the positive
-  direction and the guard against a blanket refusal.
+* `EffectivePermissionsForTheSessionUser_IsAnsweredNotRefused` — the positive direction and
+  the guard against a blanket refusal. Narrowed from an earlier draft that asserted the five
+  direct permissions by value: that was a plain BC-behaviour claim written runner-locally, so
+  it had encoded the runner's own error as its expectation. The value half is pinned upstream
+  in corpus codeunit 60702 instead; what stays here is the runner-owned half.
 
 They landed in this bundle rather than a new one because they assert the same runner-owned
 permission model as the six #3039 tests already there, against a sibling method in the same
-BC class. No al-language change here: the four corpus tests this fix also enables are in
-corpus PR #269, and the pin is deliberately NOT moved for them — the `e6a0a0cd` pin this branch
-rebased onto is the catch-up bump recorded directly above, which predates #269. The catch-up
-bump that picks up those four tests is follow-up once #269 merges.
+BC class. No al-language change here, but NOT for the reason first recorded. An earlier
+draft of this entry said the pin was `e6a0a0cd`, that it predated corpus PR #269, and that a catch-up bump
+was follow-up once #269 merged. All three were already false when this landed: #269 merged at
+2026-09-07T18:57Z as `c5b8123d`, the pin this branch carried was `ec8a9c23` and already
+contained it, and corpus codeunit 60702 therefore ran in this PR's own CI — which is what
+adjudicated the Execute-on-table-data claim the fix rests on. There was no outstanding
+catch-up for these tests.
 
 Written by agent stma-auto-5 (automated implementation agent).
 
