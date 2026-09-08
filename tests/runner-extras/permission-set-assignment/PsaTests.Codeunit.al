@@ -171,4 +171,74 @@ codeunit 65612 "PSA Tests"
         Assert.IsFalse(UserPermissions.IsSuper(OtherSid),
             'a permission set other than SUPER must not answer the SUPER question');
     end;
+
+    // ── #2382: "what may this user do to this object" ──────────────────────────────────────
+    // The SAME null one method over. PermissionManagement.GetEffectivePermissionForObjectAsync
+    // also ends in `session.Permissions`, so page 1 "Company Information" could not even OPEN —
+    // its OnOpenPage reaches codeunit 1392 -> codeunit 9852 -> this helper. The page half is a
+    // BC claim and is pinned upstream (corpus codeunit 60702), including the mask's five values
+    // for the session's own user.
+    //
+    // What stays here is the half no service tier can adjudicate: a real tier HAS per-user
+    // permission state and answers for any user, and the runner has none. Answering MaxDirect
+    // for an arbitrary user would report "everything" with nothing behind it, which is the
+    // silent fake .claude/rules/loud-failures.md forbids — so that arm refuses BY NAME.
+    // See AlRunner/Patches/RecordPatches.EffectivePermissionForObject.cs.
+    [Test]
+    procedure EffectivePermissionsForAnotherUser_IsRefusedByName()
+    var
+        EffectivePermissionsMgt: Codeunit "Effective Permissions Mgt.";
+        Perm: Record Permission;
+        User: Record User;
+        OtherSid: Guid;
+    begin
+        OtherSid := NewUser(User, 'PSA-EFFPERM-OTHER');
+
+        asserterror
+            EffectivePermissionsMgt.PopulatePermissionRecordWithEffectivePermissionsForObject(
+              Perm, OtherSid, CopyStr(CompanyName(), 1, 50),
+              Perm."Object Type"::"Table Data", DATABASE::"Access Control");
+
+        // The reason anchor, not merely "it threw": a bare asserterror here would also pass on
+        // the NRE this fix removed.
+        Assert.IsTrue(
+          StrPos(GetLastErrorText(), 'effective-permissions-other-user') > 0,
+          'asking about another user must be refused by name, not answered: ' + GetLastErrorText());
+    end;
+
+    // The positive direction of the same boundary, and the guard against a blanket refusal:
+    // the SESSION'S OWN user is ANSWERED rather than refused. Without this, "always throw"
+    // would pass the test above.
+    //
+    // The runner-specific claim is the one asserted here -- WHICH user gets an answer -- and it
+    // is deliberately all that is asserted. What the mask itself contains on a Table Data object
+    // is plain BC behaviour, so it is pinned upstream where a real service tier adjudicates it,
+    // by corpus codeunit 60702's EffectivePermissions_SuperSession_HoldsTheFourDataRightsButNotExecute
+    // (StefanMaron/BusinessCentral.AL.Language.Tests#269, green and verified executed on all
+    // eight required BC legs). This test previously restated those values locally and asserted
+    // direct Execute = 1 on table data, which is exactly what that upstream measurement says BC
+    // does NOT answer -- a runner-local BC claim inheriting the runner's own error as its
+    // expectation, which .claude/rules/bc-behavior-tests-go-upstream.md exists to prevent.
+    [Test]
+    procedure EffectivePermissionsForTheSessionUser_IsAnsweredNotRefused()
+    var
+        EffectivePermissionsMgt: Codeunit "Effective Permissions Mgt.";
+        Perm: Record Permission;
+        Ordinal: Integer;
+    begin
+        EffectivePermissionsMgt.PopulatePermissionRecordWithEffectivePermissionsForObject(
+          Perm, UserSecurityId(), CopyStr(CompanyName(), 1, 50),
+          Perm."Object Type"::"Table Data", DATABASE::"Access Control");
+
+        // Read stands in for "an answer came back at all": it is the one bit that is Yes for a
+        // SUPER session on table data under BOTH the old and the corrected mask, so this asserts
+        // the refusal boundary without re-deciding the BC question settled upstream.
+        //
+        // Compared as the option's ORDINAL on both sides. PSA Assert compares Format()ed
+        // Variants, and an option LITERAL formats as its number while an option FIELD formats
+        // as its caption -- so Format(::Yes) is '1' and Format(the field) is 'Yes', and the
+        // two never match however correct the value is.
+        Ordinal := Perm."Read Permission";
+        Assert.AreEqual(1, Ordinal, 'the session user is answered, with direct Read granted');
+    end;
 }

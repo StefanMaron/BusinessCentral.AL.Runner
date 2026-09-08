@@ -1716,3 +1716,22 @@ and the five appearing as plain `PASS`. Codeunit 60680's two `Copy`-onto-tempora
 here and passed before the fix as well; they pin behaviour rather than record a gap.
 
 Written by the fbk-3 agent.
+## 2026-09-07 — `runner-extras/permission-set-assignment` 6 → 8 (issue #2382)
+
+Two tests added to the existing `PSA Tests` codeunit (65612), pinning the two halves of the
+`PermissionManagement.GetEffectivePermissionForObjectAsync` fix:
+
+* `EffectivePermissionsForAnotherUser_IsRefusedByName` — asking about a user other than the
+  session's own is refused, matched on the reason anchor `effective-permissions-other-user`
+  rather than by a bare `asserterror` (which would also have passed on the NRE the fix removes).
+* `EffectivePermissionsForTheSessionUser_AnswersAllFiveDirectPermissions` — the positive
+  direction and the guard against a blanket refusal.
+
+They landed in this bundle rather than a new one because they assert the same runner-owned
+permission model as the six #3039 tests already there, against a sibling method in the same
+BC class. No al-language change here: the four corpus tests this fix also enables are in
+corpus PR #269, and the pin is deliberately NOT moved for them — the `e6a0a0cd` pin this branch
+rebased onto is the catch-up bump recorded directly above, which predates #269. The catch-up
+bump that picks up those four tests is follow-up once #269 merges.
+
+Written by agent stma-auto-5 (automated implementation agent).
