@@ -236,16 +236,45 @@ public sealed class PartialCompanyInitializationTests
         TestArtifacts.SkipIfMissing();
 
         var cache = NewCacheDir();
-        var run = RunRunner(cache, injectAbort: true, bundles: new[] { FailingFixturePath });
+        var outPath = Path.Combine(cache, "classification.json");
+        var junitPath = Path.Combine(cache, "junit.xml");
+        var run = RunRunner(cache, injectAbort: true, outPath: outPath, junitPath: junitPath,
+            bundles: new[] { FailingFixturePath });
 
         Assert.True(run.Exit == 1,
             $"a failing test earns exit 1; the abort must not replace it with 2. "
             + $"exit={run.Exit}\n{run.Output}");
         Assert.Contains("fail:        1", run.Output);
-        // The condition is still recorded — it is not gated on the exit code.
+
+        // The condition is recorded on every surface — none of them is gated on the exit code,
+        // and a reader of any one of them has to be able to tell that the failing test ran
+        // against a company real BC could not produce.
         Assert.Contains("Company initialization: INCOMPLETE", run.Output);
         Assert.Contains(InjectedReason, run.Output);
-        // ...and the escalation line, which only explains a moved exit code, is not printed.
+
+        var companyInit = JsonDocument.Parse(File.ReadAllText(outPath)).RootElement
+            .GetProperty("all_failures").EnumerateArray()
+            .Where(f => f.GetProperty("kind").GetString() == "company-init")
+            .ToList();
+        Assert.Single(companyInit);
+        Assert.Equal(InjectedReason, companyInit[0].GetProperty("message").GetString());
+
+        var junit = File.ReadAllText(junitPath);
+        Assert.Contains("company initialization did NOT complete", junit);
+        Assert.Contains(InjectedReason, junit);
+
+        // --output-json is a separate invocation because it redirects everything else to stderr.
+        // Its exitCode field has to agree with the process — the #2403 rule this escalation sits
+        // next to — so it must read 1 here and not the 2 the abort would otherwise have set.
+        var jsonRun = RunRunner(cache, injectAbort: true, outputJson: true,
+            bundles: new[] { FailingFixturePath });
+        Assert.Equal(1, jsonRun.Exit);
+        var doc = JsonDocument.Parse(jsonRun.Output[jsonRun.Output.IndexOf('{')..]).RootElement;
+        Assert.Equal(1, doc.GetProperty("exitCode").GetInt32());
+        Assert.Equal(1, doc.GetProperty("failed").GetInt32());
+        Assert.Single(doc.GetProperty("companyInitFailures").EnumerateArray());
+
+        // ...and the escalation line, which only ever explains a MOVED exit code, is not printed.
         Assert.DoesNotContain("[warn] company-init:", run.Output);
     }
 

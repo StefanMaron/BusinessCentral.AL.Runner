@@ -99,6 +99,56 @@ public sealed class ResumeCarryTests : IDisposable
     }
 
     [Fact]
+    public void RoundTrip_KeepsACompanyInitAbort()
+    {
+        // #3538. A company that did not finish initializing is a property of the RUN, and an
+        // attempt that recorded one hands it to the next process along with its results —
+        // otherwise the resumed run's summary, --out and --output-json describe tests that ran
+        // against a partial company and say nothing about it, which is the silent loss this
+        // field exists to stop, one process boundary over.
+        var path = Path.Combine(_dir, "attempt.json");
+        var bucket = Bucket() with
+        {
+            CompanyInitFailures = new[]
+            {
+                new CompanyInitFailure(2, "Company-Initialize", "NullReferenceException",
+                    "Object reference not set to an instance of an object."),
+            },
+        };
+
+        ResumeCarry.Write(path, new[] { bucket });
+        var back = Assert.Single(ResumeCarry.Read(new[] { path }, out var unreadable));
+
+        Assert.Equal(0, unreadable);
+        var f = Assert.Single(back.CompanyInitFailures!);
+        Assert.Equal(2, f.CodeunitId);
+        Assert.Equal("Company-Initialize", f.CodeunitName);
+        Assert.Equal("NullReferenceException", f.ExceptionType);
+        Assert.Equal("Object reference not set to an instance of an object.", f.Message);
+    }
+
+    [Fact]
+    public void ACarryFileWithoutTheField_ReadsAsNoAbort()
+    {
+        // The negative control, and the compatibility half: a file written by a runner build
+        // that predates #3538 has no companyInitFailures key at all. It must deserialise to
+        // null — "this attempt recorded no abort" — rather than failing the read, which would
+        // discard a whole attempt's results over a missing optional field.
+        var path = Path.Combine(_dir, "old-attempt.json");
+        File.WriteAllText(path,
+            """
+            [{"BucketPath":"/bundle/x","Stage":"Ran","CompileErrors":[],"ProcessError":null,
+              "Tests":[],"EmitTicks":0,"CompileTicks":0,"RunTicks":0,"RanGroupCount":1,
+              "ProvisionGaps":null}]
+            """);
+
+        var back = Assert.Single(ResumeCarry.Read(new[] { path }, out var unreadable));
+
+        Assert.Equal(0, unreadable);
+        Assert.Null(back.CompanyInitFailures);
+    }
+
+    [Fact]
     public void ManyFiles_AreConcatenatedInOrder()
     {
         // One file per attempt, so a chain of resumes reads back as the chain — never with an
