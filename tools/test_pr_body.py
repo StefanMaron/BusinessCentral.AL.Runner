@@ -666,7 +666,20 @@ def record_kwargs(store, real):
 
 
 calls: list[dict] = []
-_real_run, pb.subprocess.run = pb.subprocess.run, record_kwargs(calls, pb.subprocess.run)
+
+
+class _Done:
+    """What gh() reads off subprocess.run; no `gh` binary need exist."""
+
+    returncode, stdout, stderr = 0, "{}", ""
+
+
+def _spy(*a, **kw):
+    calls.append(kw)
+    return _Done()
+
+
+_real_run, pb.subprocess.run = pb.subprocess.run, _spy
 try:
     pb.gh(["--version"], attempts=1, sleep=lambda s: None)
 finally:
