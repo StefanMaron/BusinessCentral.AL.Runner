@@ -35,12 +35,12 @@ public static partial class RecordPatches
     /// as its underlying <see cref="int"/>.
     /// </summary>
     /// <remarks>
-    /// Observably equivalent to BC's body for a page whose extensions BC would have loaded, and
-    /// strictly closer to it than the empty-extension-list answer it replaces. Two deliberate
-    /// differences, both in the direction of answering later rather than wrongly: the result is
-    /// cached only once the page's CLR type resolves (BC caches unconditionally, and the runner
-    /// resolves that type lazily from the loaded assemblies), and an unresolvable type answers
-    /// "no triggers" without being remembered.
+    /// Observably equivalent to BC's own body — it runs BC's <c>IsTriggerImplemented</c> over the
+    /// same names, with the same page-only exclusion — for a page whose extensions BC would have
+    /// loaded (NCLMetaForm.DefinedTriggers, BC 27.5 and 28.4). One deliberate difference: the
+    /// answer is cached only once the page's CLR type resolves, because the runner resolves that
+    /// type lazily from the loaded assemblies and BC's unconditional cache would freeze an
+    /// all-false answer taken too early.
     /// </remarks>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static int NCLMetaForm_get_DefinedTriggers(object self)
@@ -168,13 +168,13 @@ public static partial class RecordPatches
 }
 
 /// <summary>
-/// Opt-in record of what <see cref="RecordPatches.NCLMetaForm_get_DefinedTriggers"/> answered,
-/// one line per page, written when the process exits.
+/// Opt-in AUDIT of what <see cref="RecordPatches.NCLMetaForm_get_DefinedTriggers"/> answered,
+/// one line per page, written when the process exits — an inspection channel like
+/// <c>AL_RUNNER_HOOK_AUDIT</c>, not a diagnosis, so it is not <c>[warn]</c>-tagged and reports
+/// no problem. Off unless <c>AL_RUNNER_PAGE_TRIGGER_AUDIT=1</c>.
 ///
-/// <para>The flags have no AL-observable of their own — BC's own consumers of them sit on
-/// dispatch paths the runner serves itself — so this is what a test can assert against. Off
-/// unless <c>AL_RUNNER_PAGE_TRIGGER_AUDIT=1</c>, and written straight to the process's stdout
-/// handle, because the test phase redirects <see cref="Console"/>.</para>
+/// <para>Written straight to the process's stdout HANDLE: the test phase redirects
+/// <see cref="Console"/>, so a <c>Console.Out</c> write from here is swallowed.</para>
 /// </summary>
 internal static class PageTriggerAudit
 {

@@ -2507,6 +2507,11 @@ public static partial class RecordPatches
             // unguarded and NREs (#3436). Form{id} stays as a fallback rather than being
             // replaced, since it predates this and nothing measured which builds need it.
             "Page"     => FindClrTypeByName($"Page{id}") ?? FindClrTypeByName($"Form{id}"),
+            // PageExtension{id} — what the AL compiler emits for a pageextension, and what
+            // NCLPageExtension.IsTriggerImplemented<NavFormExtension> reads (#3447). Without
+            // this arm a pageextension receiver fell to the table default and resolved
+            // Record{id}, so BC's own CheckTrigger threw "OnOpenPage missing on Record{id}".
+            "PageExtension" => FindClrTypeByName($"PageExtension{id}"),
             "Report"   => FindClrTypeByName($"Report{id}"),
             "CodeUnit" => FindClrTypeByName($"Codeunit{id}"),
             _          => FindRecordType(id),

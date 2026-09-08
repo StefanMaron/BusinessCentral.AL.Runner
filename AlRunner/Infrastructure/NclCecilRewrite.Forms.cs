@@ -1112,8 +1112,14 @@ public static partial class NclCecilRewrite
         //       every NCLPageExtension in orderedExtensionObjects; the runner's skeleton carries
         //       none, so a trigger a pageextension declares read false. The replacement runs BC's
         //       own IsTriggerImplemented against the runner's pageextension registry — see
-        //       RecordPatches.PageTriggerMetadata.cs. The helper returns int32, the underlying
-        //       type of the private PageTriggers enum this getter declares.
+        //       RecordPatches.PageTriggerMetadata.cs.
+        //
+        //       TRAP, for anyone adding a rewrite shaped like this one: the helper returns
+        //       System.Int32 while the target returns the private PageTriggers enum, and
+        //       ReplaceBodyWithHelper emits no conversion for a VALUE-type return — it adapts
+        //       reference returns only. That is valid here because an enum and its underlying
+        //       type are the same thing on the IL stack, and ONLY while that underlying type is
+        //       int32, which the guard below asserts rather than assumes.
         {
             var metaFormType = asm.MainModule.Types
                 .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.NCLMetaForm")
