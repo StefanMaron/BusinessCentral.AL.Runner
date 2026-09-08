@@ -502,10 +502,11 @@ public static partial class RecordPatches
 
         int? closedLow, closedHigh;
         bool fullyBounded;
+        List<(int Value, bool OpenHigh)> halfOpenEnds;
         try
         {
             fullyBounded = TryReadClosedNumberBounds(
-                cacheRequest, dataAccess, numberFieldNo, out closedLow, out closedHigh);
+                cacheRequest, dataAccess, numberFieldNo, out closedLow, out closedHigh, out halfOpenEnds);
         }
         catch (RunnerOutOfScopeException) { throw; }
         catch
@@ -515,6 +516,7 @@ public static partial class RecordPatches
             // narrower store.
             fullyBounded = false;
             closedLow = closedHigh = null;
+            halfOpenEnds = new List<(int, bool)>();
         }
 
         if (fullyBounded && closedLow is int lo && closedHigh is int hi)
@@ -530,11 +532,18 @@ public static partial class RecordPatches
         var lowBound = closedLow is int cl && cl < IntegerWindowMin ? cl : IntegerWindowMin;
         var highBound = closedHigh is int ch && ch > IntegerWindowMax ? ch : IntegerWindowMax;
 
-        // The closed end sits outside the span we are about to materialise, so that span answers
-        // the request with no rows at all while BC answers it with up to a billion. Nothing here
-        // can be materialised honestly; say so.
-        if (closedLow is int lo2 && lo2 > highBound) throw IntegerOpenEndedRefusal(lo2, openHigh: true);
-        if (closedHigh is int hi2 && hi2 < lowBound) throw IntegerOpenEndedRefusal(hi2, openHigh: false);
+        // The closed end of a half-open range sits outside the span we are about to materialise, so
+        // that range contributes no rows at all while BC answers it with up to a billion. Nothing
+        // here can be materialised honestly; say so.
+        //
+        // Decided per RANGE, never from the envelope (#3471): `'1..50|200000..'` has its outermost
+        // closed bounds at 1 and 50, both inside the window, and dropping the second range whole
+        // is the same silent zero this refusal exists to remove.
+        foreach (var (value, openHigh) in halfOpenEnds)
+        {
+            if (openHigh && value > highBound) throw IntegerOpenEndedRefusal(value, openHigh: true);
+            if (!openHigh && value < lowBound) throw IntegerOpenEndedRefusal(value, openHigh: false);
+        }
 
         PopulateIntegerSpan(dataAccess, meta, lowBound, highBound);
     }
@@ -571,10 +580,12 @@ public static partial class RecordPatches
     /// from the base window instead.
     /// </returns>
     private static bool TryReadClosedNumberBounds(
-        object cacheRequest, object dataAccess, int numberFieldNo, out int? low, out int? high)
+        object cacheRequest, object dataAccess, int numberFieldNo, out int? low, out int? high,
+        out List<(int Value, bool OpenHigh)> halfOpenEnds)
     {
         low = null;
         high = null;
+        halfOpenEnds = new List<(int, bool)>();
 
         if (_pFiltersAndMarks!.GetValue(cacheRequest) is not object fam) return false;
         var filter = NumberFilterIn(fam, numberFieldNo);
@@ -596,17 +607,34 @@ public static partial class RecordPatches
 
             // IsLowIsMinimum / IsHighMaximum are the same two flags BC's own
             // GetInclusiveIntegerBounds branches on before substituting its own limits.
+            int? rangeLow = null, rangeHigh = null;
+
             if (!(bool)_ivtRangeLowIsMin!.GetValue(range)!
                 && ToInt32OrNull(_ivtRangeLowValue!.GetValue(range)) is int lo)
+            {
+                rangeLow = lo;
                 low = low == null || lo < low ? lo : low;
+            }
             else
                 allClosed = false;
 
             if (!(bool)_ivtRangeHighIsMax!.GetValue(range)!
                 && ToInt32OrNull(_ivtRangeHighValue!.GetValue(range)) is int hi)
+            {
+                rangeHigh = hi;
                 high = high == null || hi > high ? hi : high;
+            }
             else
                 allClosed = false;
+
+            // Exactly one end closed: BC substitutes its own limit for the other, so THIS range
+            // reaches past anything we can materialise, and its closed end is what decides whether
+            // the span we do materialise can answer it at all. Recorded per range, because the
+            // envelope loses it whenever another range names a more extreme bound (#3471).
+            if (rangeLow is int openHighEnd && rangeHigh == null)
+                halfOpenEnds.Add((openHighEnd, true));
+            else if (rangeHigh is int openLowEnd && rangeLow == null)
+                halfOpenEnds.Add((openLowEnd, false));
         }
 
         return sawRange && allClosed && low != null && high != null;

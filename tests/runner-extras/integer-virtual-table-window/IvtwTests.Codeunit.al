@@ -229,6 +229,63 @@ codeunit 64591 "Ivtw Tests"
         Assert.IsFalse(Reached, 'TryFindSet must not have completed.');
     end;
 
+    [Test]
+    procedure Integer_MultiRangeFilterWithAHighEndPastTheWindow_ThrowsOutOfScope()
+    var
+        IntRec: Record Integer;
+    begin
+        // Issue #3471. A filter may name several ranges, and the refusal above has to be decided
+        // PER RANGE. `1..50|200000..` closes 1 and 50 and leaves the second range open at the top,
+        // so the filter's outermost closed bounds are 1 and 50 — both inside the base window. Read
+        // through those bounds alone the request looks answerable, and the base window serves it
+        // with the 50 rows of the first range while real BC also returns 200000 and everything
+        // above it (pinned upstream, codeunit 60368).
+        //
+        // Dropping a whole range is the same silent wrong answer the single-range refusal exists
+        // to remove, so it is refused the same way.
+        IntRec.SetFilter(Number, '1..50|200000..');
+
+        asserterror IntRec.FindSet();
+        Assert.ExpectedError('out-of-scope: Integer (virtual table 2000000026)');
+        Assert.ExpectedError('with its other end open');
+        Assert.ExpectedError('200000');
+    end;
+
+    [Test]
+    procedure Integer_MultiRangeFilterWithALowEndPastTheWindow_ThrowsOutOfScope()
+    var
+        IntRec: Record Integer;
+    begin
+        // The mirror, and the one a check written only against the upper edge would miss:
+        // `..-200000|1..50` is open at the LOW end of its first range, and -200000 is a HIGH bound
+        // there, so it is not the outermost bound in either direction — 50 is higher and 1 is the
+        // lowest closed low. Both sit inside the base window, so this shape too reads as
+        // answerable through the outermost bounds alone.
+        IntRec.SetFilter(Number, '..-200000|1..50');
+
+        asserterror CountRows(IntRec);
+        Assert.ExpectedError('out-of-scope: Integer (virtual table 2000000026)');
+        Assert.ExpectedError('with its other end open');
+        Assert.ExpectedError('-200000');
+    end;
+
+    [Test]
+    procedure Integer_MultiRangeFilterEntirelyInsideTheWindow_StillAnswers()
+    var
+        IntRec: Record Integer;
+    begin
+        // The control that keeps the refusal above from being "any filter with a `|` in it".
+        // Every range here is closed and inside the base window, so the union is materialised and
+        // answered: 5 rows from 1..5 and 3 from 90..92.
+        IntRec.SetFilter(Number, '1..5|90..92');
+
+        Assert.AreEqual(8, CountRows(IntRec), 'A multi-range filter inside the base window must be answered, not refused.');
+        Assert.IsTrue(IntRec.FindFirst(), 'A multi-range filter inside the base window returned no rows.');
+        Assert.AreEqual(1, IntRec.Number, 'Expected the first row of 1..5|90..92 to be Number 1.');
+        Assert.IsTrue(IntRec.FindLast(), 'A multi-range filter inside the base window returned no last row.');
+        Assert.AreEqual(92, IntRec.Number, 'Expected the last row of 1..5|90..92 to be Number 92.');
+    end;
+
     local procedure CountRows(var IntRec: Record Integer): Integer
     begin
         exit(IntRec.Count());
