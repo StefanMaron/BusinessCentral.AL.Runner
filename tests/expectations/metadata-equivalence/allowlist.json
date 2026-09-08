@@ -1,0 +1,396 @@
+{
+  "comment": [
+    "Declared differences between BC's own metadata emitter and the runner's",
+    "SymbolReference-derived MetaTable. Issue #3533.",
+    "",
+    "This file IS the allowlist: MetadataEquivalenceHarnessTests fails on any difference not",
+    "listed here, and equally on any entry here that no longer matches anything. So a reader",
+    "fix must delete its entries in the same change, and a BC version that introduces a new",
+    "property surfaces as a new undeclared difference rather than passing silently.",
+    "",
+    "Every entry carries a reason. An entry that tolerates a DEFECT names the issue tracking",
+    "it; only a permanent limit of the symbol file may set cannotExpress instead.",
+    "",
+    "No entry sets maxOccurrences. The mechanism exists (see MetadataDifferenceAllowlist) and",
+    "is worth using for a difference whose count is bounded independently of the build, but a",
+    "count measured on one BC build and one set of apps is not that: the unit legs run 27.5 and",
+    "28.4 while these numbers were measured on 28.1, and the totals move with both the BC build",
+    "and which apps have a ground-truth bundle.",
+    "",
+    "Measured on BC 28.1.49838.54044 over Business Foundation (12 tables) and System Application",
+    "(138 tables): 70,728 differences across 73 members. Per-member counts and examples are on",
+    "issue #3568."
+  ],
+  "differences": [
+    {
+      "member": "TranslationKey.#Id2",
+      "reason": "Same as TranslationKey.#Id1: the symbol file records no translation keys at all.",
+      "cannotExpress": true
+    },
+    {
+      "member": "TranslationKey.#NavSymbolKind1",
+      "reason": "The symbol-kind half of a translation key the symbol file does not carry.",
+      "cannotExpress": true
+    },
+    {
+      "member": "TranslationKey.#NavSymbolKind2",
+      "reason": "The symbol-kind half of a translation key the symbol file does not carry.",
+      "cannotExpress": true
+    },
+    {
+      "member": "TranslationKey.#NavSymbolKind3",
+      "reason": "The symbol-kind half of a translation key the symbol file does not carry.",
+      "cannotExpress": true
+    },
+    {
+      "member": "TranslationKey.#NavSymbolKind4",
+      "reason": "The symbol-kind half of a translation key the symbol file does not carry.",
+      "cannotExpress": true
+    },
+    {
+      "member": "TranslationKey.#Id3",
+      "reason": "Same as TranslationKey.#Id1: the symbol file records no translation keys at all.",
+      "cannotExpress": true
+    },
+    {
+      "member": "TranslationKey.#Id1",
+      "reason": "Translation keys are hashes the AL compiler assigns at compile time. SymbolReference.json contains the string 'TranslationKey' zero times in either measured package, so there is nothing to read and nothing to derive.",
+      "cannotExpress": true
+    },
+    {
+      "member": "MetaField.Caption",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.CaptionClass",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.CaptionOriginal",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.CharAllowed",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ClrType",
+      "reason": "BC states the field's real CLR type (System.Int64, System.Guid, System.String, ...); the runner states the empty string on every field. Not in the symbol file under that name, but derivable from the declared field type.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.EnumTypeName",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ExternalName",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ExternalType",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ObsoleteReason",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.OptionCaption",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.OptionCaptionOriginal",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ToolTip",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ToolTipOriginal",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ValuesAllowed",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.MaxValue",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.MinValue",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.OptionString",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.InitValue",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.DataClassification",
+      "reason": "A field with no DataClassification inherits the TABLE's, which the symbol file does carry. On 439 of 439 measured fields the emitted value equals the table's.",
+      "issue": 3545
+    },
+    {
+      "member": "MetaField.ALNamespace",
+      "reason": "BC states the object's AL namespace on every field; the runner states the empty string. The symbol file has no ALNamespace attribute, but its Namespaces nesting is exactly what the attribute names.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.CaptionML.<presence>",
+      "reason": "BC builds a MultiLanguage caption for the field; the runner builds none. The symbol file carries Caption (2,743 occurrences in System Application) \u2014 the MultiLanguage object is its runtime form.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ExtendedDatatype",
+      "reason": "BC answers Undefined where nothing is declared; the runner answers None, a different member of the same enum. An encoded-default disagreement, not a missing read.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.Editable",
+      "reason": "An absent Editable in the symbol file means true; the reader takes the constructor default instead. Measured over 1,540 ISV fields: 271 stated, 1,269 silent-and-default, zero silent-and-non-default.",
+      "issue": 3545
+    },
+    {
+      "member": "MetaField.TestRelations",
+      "reason": "BC answers true on a field with no declared TestTableRelation; the runner answers false. AL's real default, not the constructor's.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.AllowInCustomizations",
+      "reason": "BC answers AsReadOnly where the runner answers ToBeClassified. The symbol file states AllowInCustomizations only where it is non-default, so this is the AL default being wrong rather than a value being lost.",
+      "issue": 3568
+    },
+    {
+      "member": "FieldMetadataRelation.Name",
+      "reason": "BC names each field a key refers to; the runner leaves the name null and carries the id alone.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.Relations.<presence>",
+      "reason": "BC gives SystemCreatedBy and SystemModifiedBy a TableRelation to User (2000000120); the runner gives them none. This is the difference already observable from plain AL as FieldRef.Relation() answering 0 \u2014 see #3549.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ValidateRelation",
+      "reason": "BC answers false on the platform-added system fields; the runner answers true. Restricted to the fields BC adds, not to declared ones.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaKey.ALNamespace",
+      "reason": "Same gap as MetaField.ALNamespace, on keys, where the runner answers null.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaKey.DebuggerDisplay",
+      "reason": "Derived from MetaKey.Name and the key's field names, so it differs wherever those do. Not separately fixable.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaKey.Name",
+      "reason": "BC's key name is the SQL key spec it generates (Field1); the runner's is the AL key name (PK). Two different naming schemes, so this is not a value being lost.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaKey.ObsoleteReason",
+      "reason": "The same null-versus-empty-string shape as the MetaField entries, running the other way: BC states the empty string and the runner states null.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.Name",
+      "reason": "BC names the platform-added system fields $systemId, $systemCreatedAt and so on; the runner uses the AL spelling (SystemId). BC policy for the fields IT adds, which the runner adds itself.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.ALNamespace",
+      "reason": "Same gap as MetaField.ALNamespace, on the table itself.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.PlatformDefinedFieldsAdded",
+      "reason": "BC marks every table as having had its platform fields added; the runner leaves the flag false even though it adds those fields.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.Scope",
+      "reason": "BC answers Personalization where the runner answers Cloud. The symbol file carries Scope.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.Validation",
+      "reason": "BC answers true where the runner answers false, on fields whose AL declares an OnValidate trigger.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.InherentEntitlements",
+      "reason": "BC states the declared inherent entitlements; the runner answers None. The symbol file carries InherentEntitlements (687 occurrences in System Application).",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.InherentPermissions",
+      "reason": "The permissions half of MetaTable.InherentEntitlements, same shape and same source.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.#fieldsById.<presence>",
+      "reason": "The private backing storage behind MetaTable.FieldsById, carrying the same merged fields.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.Fields.<presence>",
+      "reason": "The runner merges every REGISTERED app's tableextension fields into the base table; BC's emit sees only the app being compiled. 115 fields on four Business Foundation tables. A difference in what is being asked rather than a value being wrong, and it cannot be empty while another app is loaded.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.FieldsById.<presence>",
+      "reason": "The by-id index of the same merged tableextension fields as MetaTable.Fields.<presence>.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.ReplicateData",
+      "reason": "BC answers true unless AL declares otherwise; the runner answers false. The symbol file states ReplicateData only when non-default.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaKey.KeyName",
+      "reason": "The same naming disagreement as MetaKey.Name, on the second of the two name properties.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.EnumTypeId",
+      "reason": "BC resolves the enum object's id; the runner answers 0. The AL-observable consequence is that an enum-typed field cannot be resolved back to its enum object.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.Access",
+      "reason": "BC states Internal on fields whose AL declares it; the runner answers Public. The symbol file carries Access.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.Access",
+      "reason": "Same as MetaField.Access, on the table.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaCalcFormula.FlowFieldType",
+      "reason": "A case disagreement: BC answers Lookup, the runner answers LOOKUP. The runner is echoing the AL source text rather than mapping it to BC's enum spelling.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.Caption",
+      "reason": "The reverse direction: BC's table Caption is null and the runner carries a real caption. The runner resolves it from AL and BC leaves the runtime object's Caption unset, answering through CaptionML instead.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.CaptionOriginal",
+      "reason": "The CaptionOriginal half of MetaTable.Caption, same cause.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.DataClassification",
+      "reason": "The table-level value, distinct from the field-level inheritance #3545 covers: BC states SystemMetadata where the runner answers CustomerContent.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaFilter.FilterValue",
+      "reason": "Where a CalcFormula filter compares against an enum or a boolean, BC stores the ordinal (0, 1) and the runner stores the source text (System, true).",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.OptionCaptionML.<presence>",
+      "reason": "The option-caption half of MetaField.CaptionML.<presence>.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.NotBlank",
+      "reason": "BC states NotBlank where AL declares it; the runner answers false. The symbol file carries NotBlank.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.FieldGroups.<presence>",
+      "reason": "BC builds the declared field groups (Brick, DropDown); the runner builds none anywhere. The symbol file carries FieldGroups.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaKey.Clustered",
+      "reason": "BC answers false on a key AL does not declare clustered; the runner answers true. The symbol file carries Clustered.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaKey.SumIndexFields.<presence>",
+      "reason": "BC builds the declared SumIndexFields; the runner builds none.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.Lookup",
+      "reason": "BC states Lookup where AL declares it; the runner answers false.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.ObsoleteReason",
+      "reason": "BC states the declared obsolete reason; the runner answers null.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.ObsoleteState",
+      "reason": "BC states Pending on an obsoleted table; the runner answers No.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.ObsoleteState",
+      "reason": "BC states Pending on an obsoleted field; the runner answers No.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.DrillDownFormId",
+      "reason": "BC resolves the declared DrillDownPageId to a page id; the runner answers 0.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaCondition.ConditionValue",
+      "reason": "The same ordinal-versus-source-text disagreement as MetaFilter.FilterValue, on a conditional TableRelation.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.BlankZero",
+      "reason": "BC states BlankZero where AL declares it; the runner answers false.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaKey.Unique",
+      "reason": "BC states Unique where AL declares it; the runner answers false.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaTable.DataCaptionFields",
+      "reason": "BC states the declared DataCaptionFields; the runner states an empty array. The symbol file carries DataCaptionFields.",
+      "issue": 3568
+    },
+    {
+      "member": "MetaField.BlobSubType",
+      "reason": "BC states the declared BLOB subtype (Bitmap); the runner answers UserDefined.",
+      "issue": 3568
+    }
+  ]
+}

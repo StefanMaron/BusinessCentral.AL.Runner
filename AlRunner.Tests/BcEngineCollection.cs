@@ -25,7 +25,7 @@
 //
 // Members: BcCompilerEmitRetryTests, BcCompilerProfileEmitCrashTests,
 // SkeletonSharedObjectContainerLeakTests, RecordBulkWriteNotesTransactionTests,
-// CodeunitRunWriteTransactionRefusalTests.
+// CodeunitRunWriteTransactionRefusalTests, MetadataEquivalenceHarnessTests.
 // Any NEW test that loads Microsoft.Dynamics.Nav.* types in-process belongs here too.
 
 using System.Runtime.CompilerServices;
