@@ -497,22 +497,11 @@ public static class ALDatabasePatches
         => System.Threading.Volatile.Write(ref _inWriteTransaction, false);
 
     // ── TransactionModel::None: a test body that runs with no transaction ───────
-    // #3480. BC handles None BEFORE the method body — NavTestCodeunit.ExecuteTestMethodAsync
-    // runs `while (activeSession.IsTransactionActive()) activeSession.EndTransaction(commit:
-    // false);` on the way in and re-opens what it ended in the enclosing `finally` — so the
-    // body executes with nothing active. Two AL-observable consequences, both measured on a
-    // real BC 28.4.53241.0 service tier and pinned upstream by corpus codeunit 60878
-    // Test08-Test10: the body starts with no write transaction, and a write FROM the body is
-    // refused outright, because TransactionManager.EnsureWriteTransactionStarted() opens with
-    //
-    //     private void ThrowIfNoTransaction()
-    //     {
-    //         if (!IsTransactionActive)
-    //             throw new NavCSideException(18022407, Lang.NoTransaction);
-    //     }
-    //
-    // A write inside a codeunit the test RUNS is allowed, because both forms of Codeunit.Run
-    // begin a transaction of their own — hence the depth counter rather than a plain flag.
+    // #3480. BC ends every transaction BEFORE a None body and re-opens them after it, so
+    // TransactionManager.EnsureWriteTransactionStarted's opening ThrowIfNoTransaction()
+    // refuses a write from the body — but not one inside a codeunit the test RUNS, since
+    // both forms of Codeunit.Run begin a transaction of their own. Hence the depth counter
+    // rather than a plain flag. Pinned upstream by corpus 60878 Test08-Test10.
     private static bool _noTransactionScope;
     private static int _runTransactionDepth;
 
@@ -543,9 +532,7 @@ public static class ALDatabasePatches
         => System.Threading.Interlocked.Increment(ref _runTransactionDepth);
 
     /// <summary>Close it. When the outermost run returns inside a None test, the transaction
-    /// it began is gone and the body is left with none again — measured: after a statement-form
-    /// run whose codeunit wrote without committing, <c>Database.IsInWriteTransaction()</c> is
-    /// false (corpus 60878 Test10).</summary>
+    /// it began is gone and the body is left with none again (corpus 60878 Test10).</summary>
     public static void ExitRunTransaction()
     {
         if (System.Threading.Interlocked.Decrement(ref _runTransactionDepth) <= 0)
@@ -569,7 +556,7 @@ public static class ALDatabasePatches
     /// <summary>Build BC's own <c>NavCSideException(18022407, Lang.NoTransaction)</c>, the same
     /// reflection route and for the same reason as <see cref="BuildCannotChangeTransactionType"/>:
     /// Lang lives in Microsoft.Dynamics.Nav.Language.dll, which the runner does not reference
-    /// directly. The fallback is BC 28.4's own en-US text, read off a service tier.</summary>
+    /// directly. The fallback is BC's own en-US text for that resource.</summary>
     private static Exception BuildNoTransaction()
     {
         var message = LangString("NoTransaction")

@@ -167,7 +167,7 @@ public static partial class BcRuntime
         // #3480: BOTH forms begin a transaction of their own — the statement form a plain
         // BeginTransaction, the guarded form a transaction world — which is why a write inside
         // the run codeunit is legal even when the CALLER has none (a TransactionModel::None
-        // test body). Corpus 60878 Test10 pins that on a service tier.
+        // test body). Corpus 60878 Test10.
         ALDatabasePatches.EnterRunTransaction();
 
         bool ran = false;

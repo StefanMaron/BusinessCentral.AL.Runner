@@ -1475,12 +1475,11 @@ public sealed class TestExecutor
         // for why: it's what makes NavTenantSettingsHelper.IsSandbox()/IsProduction() (Codeunit 457
         // "Environment Information") report a sandbox during test execution, exactly like real BC.
         BcRuntime.EnterTestExecutionScope(instance, m);
-        // #3480: BC handles TransactionModel::None BEFORE the body, not after it —
-        // `while (activeSession.IsTransactionActive()) activeSession.EndTransaction(commit:
-        // false);` in NavTestCodeunit.ExecuteTestMethodAsync — so a None test body runs with
-        // no transaction at all. See ALDatabasePatches.EnterNoTransactionScope for what that
-        // makes observable, and ApplyTestTransactionModel for the end-of-method boundary
-        // (#3468), which None is deliberately not part of.
+        // #3480: BC handles TransactionModel::None BEFORE the body, not after it (the
+        // pre-body EndTransaction loop in NavTestCodeunit.ExecuteTestMethodAsync), so the body
+        // runs with no transaction at all — see ALDatabasePatches.EnterNoTransactionScope.
+        // ApplyTestTransactionModel is the end-of-method boundary (#3468), which None is
+        // deliberately not part of.
         if (TransactionModelName(m) == "None")
             AlRunner.Patches.ALDatabasePatches.EnterNoTransactionScope();
         try

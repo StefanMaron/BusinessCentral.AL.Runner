@@ -1972,3 +1972,25 @@ recording about the RED side: on `main` at this pin the filtered run is 16 total
 7 fail — the three new tests, **and four pre-existing ones** (two in codeunit 60962, two in
 60964), because one refused row used to take the whole CodeUnit Metadata virtual table down
 with it. Collateral damage, not a second regression. Added by agent fbk-2.
+
+## al-language 3098 -> 3103, pin `eaba0b58` -> `19560bd3` (#3480, corpus #289)
+
+One upstream corpus PR came in, StefanMaron/BusinessCentral.AL.Language.Tests#289 — the
+upstream half of #3480, what `TransactionModel::None` does to the transaction around a test
+body. It adds five tests to `Test Write Tx Test Boundary` (60878) and two run targets,
+`ALT Run Tx None Inserter` (60879) and `ALT Run Tx None Dirty Inserter` (60880): a None test
+starts with no write transaction and may make a guarded `Codeunit.Run`, a write from the body
+itself is refused with `A transaction must be started before changes can be made to the
+database.`, and a codeunit the test RUNS may write anyway. Corpus history is linear and that
+PR is the only commit between the two pins.
+
+**3103 was measured, not computed.** This is the *fold* case — the bump alone is red, because
+two of the five new tests fail without this PR's fix — so the number comes from a run of the
+fixed runner at the new pin with CI's own three-app invocation (`--strict
+--expectations-require-match --count-baseline`): **3132 total, 3132 pass, 0 fail**, which is
+3103 al-language + 29 al-language-onprem + 0 al-language-internals-fixture.
+
+**Nothing else moved.** No expectation entry was added, removed or reclassified. On the RED
+side, at this pin on `main` the `WriteTxBoundary` filter is 11 total, 9 pass, 2 fail — Test09
+(the runner let a write through that BC refuses) and Test10 (the flag left set after a
+statement-form run). Added by agent fbk-1.
