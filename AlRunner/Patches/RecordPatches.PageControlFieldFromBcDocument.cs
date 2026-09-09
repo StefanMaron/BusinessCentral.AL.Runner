@@ -77,7 +77,7 @@ public static partial class RecordPatches
     /// document omits it. Null is a distinct state from <c>""</c> here and must stay one:
     /// SolveEditable's whole shape is <c>if (control.Editable == null)</c>, so collapsing the
     /// two is what made an undeclared Editable answer <c>''</c> (#3653).</param>
-    /// <param name="SourceExpressionIsAssignable">BC's <c>ExpressionIsAssignable</c>, default
+    /// <param name="SourceExpressionIsAssignable">BC's <c>SourceExpressionIsAssignable</c>, default
     /// true (<c>[DefaultValue(true)]</c> on <c>ControlDataboundDefinition</c>). False forces
     /// Editable to False regardless of what the control declares.</param>
     private sealed record BcPageControl(
@@ -227,8 +227,15 @@ public static partial class RecordPatches
                     DeclaredEditable: e.HasAttribute("Editable") ? e.GetAttribute("Editable") : null,
                     Visible: ReadBcAttrOrDefault(e, "Visible", "true"),
                     Sequence: sequence++,
-                    SourceExpressionIsAssignable: !e.HasAttribute("ExpressionIsAssignable")
-                        || !BcPropertyIsFalse(e.GetAttribute("ExpressionIsAssignable"))));
+                    // SourceExpressionIsAssignable, NOT ExpressionIsAssignable. Both names
+                    // are real and they are different elements: DataFieldDefinition (an
+                    // <Expression> entry) carries ExpressionIsAssignable, while a CONTROL
+                    // carries SourceExpressionIsAssignable. Reading the shorter name here
+                    // makes HasAttribute never match, the `||` short-circuit answer true for
+                    // every control, and rule 1 unreachable — measured, and shipped in the
+                    // first cut of #3653.
+                    SourceExpressionIsAssignable: !e.HasAttribute("SourceExpressionIsAssignable")
+                        || !BcPropertyIsFalse(e.GetAttribute("SourceExpressionIsAssignable"))));
             }
 
             CollectBcPageControls(e, into, ref sequence);
@@ -359,6 +366,14 @@ public static partial class RecordPatches
         // Rule 3 — a non-editable PAGE forces a control that does not already read false to
         // False. Note BC compares with PropertyIsFalse rather than string equality, so a
         // control declaring "NO" or "0" is already false and is left alone.
+        //
+        // BC FALLS THROUGH here and this RETURNS, which is a deliberate structural
+        // divergence and is observably equivalent: the only thing rule 4 can do is assign
+        // the same "False" this line already assigned, and its guard
+        // (!PropertyIsFalse(control.Editable)) is false by construction once it has. Since
+        // rule 4 is not reproduced at all (see the method summary), the early return also
+        // cannot skip work that would otherwise happen. If rule 4 is ever implemented, this
+        // must become a fall-through again.
         if (!BcPropertyIsFalse(control.DeclaredEditable) && !pageEditable) return "False";
 
         // Otherwise the declared expression stands verbatim — including a variable NAME,

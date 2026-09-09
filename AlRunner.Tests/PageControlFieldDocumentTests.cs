@@ -47,6 +47,10 @@ public sealed class PageControlFieldDocumentTests : IDisposable
         // dropped for the same reason the runtime drops them on a --watch reload.
         RemoveParsedPage(90321);
         RemoveParsedPage(90331);
+        RemoveParsedPage(90351);
+        RemoveParsedPage(90352);
+        RemoveFromDict("_parsedTables", 90350);
+        RemoveMetaTableCacheEntry(90350);
         RemoveParsedPageExtension(90333);
         RemoveFromDict("_parsedTables", 90320);
         RemoveMetaTableCacheEntry(90320);
@@ -356,6 +360,126 @@ public sealed class PageControlFieldDocumentTests : IDisposable
 
         // Negative: a declared value is reported verbatim on these columns too.
         Assert.Equal("false", rows.Single(r => r.ControlName == "PcfDocHidden").Visible);
+    }
+
+    /// <summary>
+    /// The two SolveEditable rules that override a DECLARED value, each on the smallest page
+    /// that can trigger it. Both shapes were confirmed present in BC's own emitted document
+    /// before these tests were written: a constant-bound control carries
+    /// <c>SourceExpressionIsAssignable="0"</c>, and a page declaring <c>Editable = false</c>
+    /// carries <c>Editable="0"</c> on its <c>&lt;Properties&gt;</c>.
+    ///
+    /// <para>Every control here declares <c>Editable = true</c>. That is what makes the arms
+    /// load-bearing: the answer can only be <c>False</c> if the rule fired, since neither the
+    /// declaration nor rule 2 could have produced it.</para>
+    /// </summary>
+    private const string OverrideFixtureAl = """
+        table 90350 "PcfAsg Sample"
+        {
+            DataClassification = CustomerContent;
+            fields
+            {
+                field(1; "Entry No."; Integer) { DataClassification = CustomerContent; }
+            }
+            keys { key(PK; "Entry No.") { Clustered = true; } }
+        }
+
+        page 90351 "PcfAsg Fixture"
+        {
+            PageType = Card;
+            SourceTable = "PcfAsg Sample";
+            layout
+            {
+                area(Content)
+                {
+                    group(G)
+                    {
+                        field(AsgBare; Rec."Entry No.") { ApplicationArea = All; }
+                        field(AsgConst; 'literal text') { ApplicationArea = All; Editable = true; }
+                    }
+                }
+            }
+        }
+
+        page 90352 "PcfAsg NonEditable"
+        {
+            PageType = Card;
+            SourceTable = "PcfAsg Sample";
+            Editable = false;
+            layout
+            {
+                area(Content)
+                {
+                    group(G)
+                    {
+                        field(NeDeclaredTrue; Rec."Entry No.") { ApplicationArea = All; Editable = true; }
+                    }
+                }
+            }
+        }
+        """;
+
+    private void EmitOverrideFixture()
+    {
+        File.WriteAllText(Path.Combine(_root, "PcfAsg.al"), OverrideFixtureAl);
+        var output = new BcCompiler().Emit(new[] { _root }, "PcfAsgModule");
+        Assert.True(output.Sources.Count > 0,
+            $"Expected the fixture to emit; diagnostics: {string.Join(" | ", output.Diagnostics.Take(10))}");
+    }
+
+    [SkippableFact]
+    public void PageControlFieldRows_NonAssignableSourceExpression_IsFalse_EvenWhenDeclaredTrue()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        EmitOverrideFixture();
+
+        var rows = PageControlFieldRowsFor(90351).ToDictionary(r => r.ControlName, r => r.Editable);
+
+        // SolveEditable rule 1. "AsgConst" is bound to a string literal, so BC emits
+        // SourceExpressionIsAssignable="0" on it — and rule 1 returns False BEFORE the
+        // declared-value branch is reached, so the control's own `Editable = true` loses.
+        //
+        // This arm fails three ways, which is the point of it: with rule 1 deleted (the
+        // declaration wins, "true"), with the attribute name misspelled as
+        // ExpressionIsAssignable (HasAttribute never matches, so rule 1 cannot fire and the
+        // declaration wins again — the defect this test was added to catch), and against the
+        // pre-#3653 runner.
+        Assert.Equal("False", rows["AsgConst"]);
+
+        // Negative: rule 1 is not a blanket override. The assignable control on the SAME page
+        // takes rule 2 and answers True, so a fix that returned False unconditionally — or one
+        // that read the attribute's ABSENCE as false — is caught here rather than passing.
+        Assert.Equal("True", rows["AsgBare"]);
+    }
+
+    [SkippableFact]
+    public void PageControlFieldRows_NonEditablePage_ForcesFalse_EvenWhenTheControlDeclaresTrue()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        EmitOverrideFixture();
+
+        var rows = PageControlFieldRowsFor(90352).ToDictionary(r => r.ControlName, r => r.Editable);
+
+        // SolveEditable rule 3. Page 90352 declares Editable = false, which BC emits as
+        // Editable="0" on <Properties> — note the 0/1 spelling, not true/false, which is why
+        // the parse goes through BcPropertyIsFalse rather than bool.TryParse. The control
+        // declares Editable = true and is overridden to False.
+        //
+        // Fails with rule 3 deleted (the declaration survives as "true"), and fails if the
+        // page-level attribute is parsed with bool.TryParse — "0" would not parse, the page
+        // would read editable, and the rule would not fire.
+        Assert.Equal("False", rows["NeDeclaredTrue"]);
+
+        // Negative: page 90351 is identical except that it does NOT declare Editable = false,
+        // and its Rec-bound control answers True. So the override above is the PAGE property
+        // doing the work — not the declaration being discarded, and not every control on
+        // every page being forced.
+        Assert.Equal("True",
+            PageControlFieldRowsFor(90351).Single(r => r.ControlName == "AsgBare").Editable);
     }
 
     [Fact]
