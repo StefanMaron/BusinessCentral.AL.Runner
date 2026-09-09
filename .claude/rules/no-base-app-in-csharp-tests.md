@@ -21,24 +21,22 @@ Legitimate, and they stay:
 
 - `PlaceholderFloorProvisioningTests` — the placeholder `1.0.0.0` application floor IS its
   subject; remove it and nothing is being tested.
-- `Fixtures/SubscriberScanAudit` — `EventSubscriberScanEquivalenceTests` asserts over 3,000 real
-  `[NavEventSubscriber]` methods across Base Application + System Application, a count with
-  nothing to count without the platform closure loaded. It has its own fixture so the floor is
-  paid once per CI leg rather than 28 times.
+- `Fixtures/SubscriberScanAudit` — `EventSubscriberScanEquivalenceTests` drives the runner with
+  `AL_RUNNER_SUBSCRIBER_SCAN_AUDIT=1` and asserts over 3,000 real `[NavEventSubscriber]` methods
+  across Base Application + System Application, a count with nothing to count without the
+  platform closure loaded. It has its own fixture so the floor is paid once per CI leg rather
+  than 28 times.
 
-**A class that looks like it needs the floor needs one property of it**, not the floor — the
-three discharged under #2364 needed:
+**A class that looks like it needs the floor needs one property of it**, not the floor: work
+out which property and supply it (#2364). Two that have come up, with what replaced the floor —
 
-- an install closure whose triggers WRITE ROWS, now `AlRunner.Tests/InstallSeedClosure.cs` —
+- an install closure whose triggers WRITE ROWS, now `AlRunner.Tests/InstallSeedClosure.cs`;
   without one the runner logs `not persisting: snapshot has 0 DataAccessSource(s)` and the
   assertions pass vacuously;
-- real metadata for one table id, replaced by three tables the test declares itself, which let
-  it assert two different empty tables are each explained with their own id.
+- real metadata for one table id, replaced by tables the test declares itself.
 
-So work out which single property of Base Application the class is leaning on and supply that;
-it has been cheaper to supply than to load every time. **A checked-in fixture manifest counts
-too** — `AlRunner.Tests/Fixtures/RecordTriggerXRec/app.json` is the violation a class-only list
-missed (#2364).
+**A checked-in fixture manifest counts too** — `AlRunner.Tests/Fixtures/RecordTriggerXRec/app.json`
+is the violation a class-only list missed (#2364).
 
 ## Do not conclude a failure set from a run that has not finished
 

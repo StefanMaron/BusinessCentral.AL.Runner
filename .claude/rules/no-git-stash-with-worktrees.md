@@ -34,9 +34,10 @@ produces a PR carrying a green CI verdict for code that is not what CI measured:
    whatever `HEAD` says, so with your fix still uncommitted it throws the fix away, with no
    stash entry and no reflog entry to recover from.
 2. **`git checkout <rev> -- <paths>` writes the index, not just the working tree**, leaving
-   those paths **staged** as pre-fix content. `git commit` then commits the revert, and
-   `git commit -a` commits the working tree — right for paths you restored, still pre-fix for
-   any you did not.
+   those paths **staged** as pre-fix content. Read `git status`: a path you restored from a copy
+   reads `MM`, one you did not reads `M `. `git commit` then commits the index — the revert —
+   and `git commit -a` commits the working tree, right for paths you restored and still pre-fix
+   for any you did not.
 
 So, around any `git checkout <rev> -- <paths>`:
 
@@ -52,9 +53,11 @@ So, around any `git checkout <rev> -- <paths>`:
 
 `pgrep -f <pattern>` matches the polling shell's own command line **and every ancestor** whose
 command line contains the pattern, including the outer tool shell, so
-`while pgrep -f "dotnet run"; do ...; done` never terminates and filtering `$$` out does not
-rescue it. Use `$!` on a job you started, or `wait`. Better: don't poll, run it in the
-foreground (`no-backgrounding-long-commands.md`).
+`while pgrep -f "dotnet run"; do ...; done` never terminates. Filtering `$$` out does not rescue
+it, and fails twice over: `grep -v $$` is a substring filter, so with a PID of `123` it also
+drops `1234` and `4123`, and `grep -vx` fixes that half while leaving the ancestor half. Use
+`$!` on a job you started, or `wait` — better still, run it in the foreground
+(`no-backgrounding-long-commands.md` owns that).
 
 ## Sister rules
 

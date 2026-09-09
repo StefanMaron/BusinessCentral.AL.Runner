@@ -59,3 +59,11 @@ floor from the `RecordTriggerXRec` fixture surfaced `EventSubscriberScanEquivale
 failing with `found 0` subscribers on multiple BC legs at once, again only on a completed
 eight-leg run. The bar for adding to either allowlist is a completed run showing the class or
 fixture fails without the floor, not a reading of what the test looks like it needs.
+
+## The three discharges (moved from the rule, #3728 review round 2)
+
+**There are no outstanding violations.** #2364 discharged the last three, and none of them
+turned out to need the floor — each needed one specific thing the floor happened to supply. The
+`MissingTestDataDiagnosisTests` replacement asserts **two different** empty tables are each
+explained with their own id, a stronger claim than one hardcoded id could make. In three out of
+three cases it was cheaper to supply the property than to load the floor.
