@@ -735,15 +735,15 @@ internal class LiveNavTestPage : MockITestPage
     public override ITestAction Edit() => BuiltInPageModeActionFor(viewMode: false);
 
     /// <summary>
-    /// The built-in page-mode action for one of the two modes, resolved the way BC's own UI
-    /// builder resolves it (<c>ActionBuilder.ResolveCardFormId</c> /
-    /// <c>IsModifyAllowedInCard</c>, BC 28.1) — see BuiltInPageModeAction.cs for the full read.
+    /// The built-in page-mode action for one of the two modes. Which of BC's three shapes it
+    /// is — open a card, switch this page's own mode, or do nothing — is decided here, and
+    /// each shape is measured on a real service tier: corpus codeunit 60479 "TPMS Tests"
+    /// (StefanMaron/BusinessCentral.AL.Language.Tests#317) plus 60461 "TPVE Tests" for the
+    /// card-opening one. BuiltInPageModeAction.cs carries the table.
     ///
-    /// <para>Refuses by name rather than answering null, which is what
-    /// <c>TestPageProxy.View()/Edit()</c> do for a page that has no such action: BC's
-    /// <c>NavTestAction</c> takes that null without checking it, so AL's <c>.Invoke()</c>
-    /// would surface as a bare NullReferenceException inside Ncl with nothing naming the
-    /// page or the reason.</para>
+    /// <para>The action EXISTS in every one of those shapes: BC answers Visible = true
+    /// throughout and expresses "this does not apply here" through Enabled instead. So the
+    /// only refusals left below are the two shapes where BC has no action object at all.</para>
     /// </summary>
     private ITestAction BuiltInPageModeActionFor(bool viewMode)
     {
@@ -753,41 +753,79 @@ internal class LiveNavTestPage : MockITestPage
         var actionName = viewMode ? "View" : "Edit";
         var cardPageId = RecordPatches.TryGetAnyCardPageId(_pageId);
 
-        // No resolvable CardPageId. BC's ResolveCardFormId then falls back to the HOST page's
-        // own id whenever the host is not a List, and NavOpenTaskPageAction.InvokeCore takes
-        // its UseCurrentForm branch: the action switches the OPEN page's mode in place through
-        // PageModeAggregator.ChangePageMode, opening nothing. That is a real AL shape —
-        // SubscriptionBilling's ContractRenewalTest does
-        // `if not Card.Editable then Card.Edit().Invoke();` inside a [ModalPageHandler] — and it
-        // is NOT what this class implements. Answering it by opening a second copy of the page
-        // would be a silent wrong answer (two OnOpenPage runs where BC has none), so it
-        // refuses. On a List with no CardPageId the builder creates no action at all.
-        if (cardPageId <= 0)
+        // A resolvable CardPageId: BC's ResolveCardFormId lands on that card and the action
+        // opens it (corpus 60461). Whether the EDIT half of that can be invoked is decided by
+        // the card, not here — see BuiltInPageModeAction.Enabled.
+        if (cardPageId > 0)
+            return new BuiltInPageModeAction(
+                this, _record, cardPageId, viewMode, BuiltInPageModeActionKind.OpenCard);
+
+        var pageType = RecordPatches.TryGetAnyPageType(_pageId);
+
+        // Null means the page is in neither source's inventory, so the runner cannot tell which
+        // of BC's two no-CardPageId shapes applies — a list's do-nothing action, or a non-list's
+        // in-place switch. They differ in whether the page's editability moves, which is exactly
+        // what the caller is about to read, so picking one would be a silent wrong answer.
+        if (pageType == null)
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage.{actionName}() on page {_pageId}",
-                $"not-yet-implemented — page {_pageId} declares no CardPageId this run can "
-                + $"resolve, so its built-in {actionName} action is not a page open. On a page "
-                + "that is not a list BC switches the OPEN page's own mode in place "
-                + "(NavOpenTaskPageAction.UseCurrentForm -> PageModeAggregator.ChangePageMode), "
-                + "which the runner does not model; on a list with no CardPageId BC's builder "
-                + "creates no such action at all. Tracked by issue #3258");
+                $"not-yet-implemented — page {_pageId} declares no CardPageId and its PageType is "
+                + "not in this run's inventory, so the runner cannot tell whether BC would switch "
+                + "this page's mode in place (not a List) or do nothing (a List). Tracked by "
+                + "issue #3735");
 
-        // BC's IsModifyAllowedInCard: with a card page id in context, the Edit action is
-        // created only when that CARD allows modification — so a read-only card has a View
-        // action and no Edit action. Unknown (the card is not in this run's inventory) keeps
-        // the permissive answer, the same rule TryGetAnyPageType's callers use: refusing on a
-        // lookup miss would refuse pages on the strength of the runner's own inventory.
-        if (!viewMode && RecordPatches.TryGetAnyPageModifyAllowed(cardPageId) == false)
+        // BC's ResolveCardFormId falls back to the host page's OWN id only when the host is not
+        // a List; on a list with nothing to open the action exists, is Visible, and does
+        // nothing. Measured for PageType = List (corpus 60479
+        // PlainListWithoutCardPageIdOffersBothActionsAndEnablesOnlyView) and for PageType = Card
+        // (the in-place arms below); the other list-shaped types follow the same declaration
+        // family rather than a separate measurement.
+        if (pageType.StartsWith("List", StringComparison.OrdinalIgnoreCase))
+            return new BuiltInPageModeAction(
+                this, _record, targetPageId: 0, viewMode, BuiltInPageModeActionKind.NoTarget);
+
+        // A page declaring Editable = false has no built-in Edit action at all, and BC does not
+        // report that as an AL error: TestPage.Edit() hands back a NavTestAction wrapping a null
+        // client action, so .Invoke() and .Visible() each raise a bare NullReferenceException
+        // from NavTestAction.ALInvoke()/ALVisible() — caught by neither asserterror nor a
+        // [TryFunction] (measured on BC 28.4.53241.0 both ways; corpus 60479's file header
+        // records it, which is why no arm there asserts it). Refusing by name is a DELIBERATE
+        // divergence from that: a bare NRE inside Ncl names neither the page nor the reason.
+        if (!viewMode && !DeclaredPageEditable)
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                 $"TestPage.Edit() on page {_pageId}",
-                $"not-yet-implemented — the CardPageId target, page {cardPageId}, does not allow "
-                + "modification (Editable = false or ModifyAllowed = false), and BC's own UI "
-                + "builder creates no Edit action for such a card "
-                + "(ActionBuilder.IsModifyAllowedInCard), so real BC has nothing to invoke here "
-                + "either. Tracked by issue #3258");
+                $"testpage-page-mode-no-edit-action — page {_pageId} declares Editable = false, so "
+                + "BC's UI builder creates no built-in Edit action for it and real BC raises a bare "
+                + "System.NullReferenceException from NavTestAction.ALInvoke(). The runner refuses "
+                + "by name instead of reproducing an exception that names nothing");
 
-        return new BuiltInPageModeAction(this, _record, cardPageId, viewMode);
+        // Not a list, no card: the page already open changes mode. See
+        // BuiltInPageModeAction.Invoke.
+        return new BuiltInPageModeAction(
+            this, _record, targetPageId: 0, viewMode, BuiltInPageModeActionKind.InPlaceSwitch);
     }
+
+    /// <summary>The page's declared <c>Editable</c>, true for a page with no metadata here.</summary>
+    internal bool DeclaredPageEditable => _page?.PageEditable ?? true;
+
+    /// <summary>This page's current static editability — what <c>TestPage.Editable()</c> answers.</summary>
+    internal bool StaticEditableNow => _staticEditable;
+
+    /// <summary>
+    /// The in-place half of a built-in page-mode action: the page already open changes mode,
+    /// nothing opens, and OnOpenPage does not run again (corpus 60479
+    /// CardOpenedReadOnlyIsMadeEditableInPlaceByItsEditAction asserts the open count stays 1).
+    ///
+    /// <para>It writes the same field, by the same formula, that <see cref="MarkOpened"/> writes
+    /// for a page the test opened — which is what makes the switch work for a page a
+    /// [ModalPageHandler] was handed too, where that field starts null
+    /// (ResolveStaticEditable takes the override in preference to everything else). BC does this
+    /// through PageModeAggregator.ChangePageMode on a client LogicalForm; that type lives in
+    /// Microsoft.Dynamics.Nav.Client.UI.dll and acts on a form the runner never builds, so there
+    /// is no BC machinery here to reuse.</para>
+    /// </summary>
+    internal void SwitchViewModeInPlace(bool viewMode)
+        => _staticEditableOverride = !viewMode && DeclaredPageEditable;
 
     private sealed class RecordingBuiltInAction : ITestAction
     {
