@@ -29,8 +29,13 @@
 //     TableNo            BC states the page's source table on EVERY row, including one with
 //                        no source field.
 //
-//   docs/page-control-field-from-bc-document.md has the emitted document, the reflection
-//   measurements behind the three attribute defaults, and what is deliberately left alone.
+//   Editable is a fifth, and it does not come from the document at all: BC's
+//   SolvePropertiesDefaulting pass overwrites it before the provider reads it, so the value
+//   is computed here by SolveDocumentControlEditable rather than read off the attribute
+//   (#3653 — a tier answered True where reading the absent attribute predicted '').
+//
+//   docs/page-control-field-from-bc-document.md has the emitted document, the SolveEditable
+//   chain, and what is deliberately left alone.
 //
 // WHY THE XML AND NOT THE MERGED MetaPageDefinition EnsureRealPageMetadata BUILDS
 //   Written down rather than rediscovered, because it is the same trap #3607 hit one table

@@ -266,7 +266,7 @@ public sealed class PageControlFieldDocumentTests : IDisposable
     }
 
     [SkippableFact]
-    public void EmittedDocument_OmitsDefaultedProperties_AndEditableHasNoDefaultToOmitTo()
+    public void EmittedDocument_OmitsDefaultedProperties_StatingNeitherEnabledNorEditable()
     {
         TestArtifacts.SkipIf(!_engine.Ready,
             _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
@@ -277,13 +277,14 @@ public sealed class PageControlFieldDocumentTests : IDisposable
         Assert.Equal("false", Named(controls, "PcfDocHidden").GetAttribute("Visible"));
         Assert.Equal("false", Named(controls, "PcfDocEditable").GetAttribute("Editable"));
 
-        // Negative, and the asymmetry the fix turns on: an UNDECLARED property is absent from
-        // the document, so what the column reports is whatever BC's deserializer supplies.
-        // ControlDefinition carries [DefaultValue("true")] on Enabled and Visible and NONE on
-        // Editable, so Enabled/Visible read "true" and Editable reads "". Substituting "true"
-        // for all three — which the AL derivation did — is therefore wrong for exactly one of
-        // them. See docs/page-control-field-from-bc-document.md#the-three-property-defaults;
-        // #3625 tracks getting the Editable half in front of a real tier.
+        // Negative: an UNDECLARED property is absent from the document. This is a statement
+        // about the DOCUMENT only, and the renaming of this method is #3653's doing: what the
+        // COLUMN reports for an absent Editable is decided afterwards by BC's
+        // SolveEditable pass, not by the absence measured here, and a tier answered True
+        // where reading the absence alone predicted ''
+        // (docs/page-control-field-from-bc-document.md#solveeditable). The assertions
+        // themselves are unchanged and still load-bearing: the solver's null branch is
+        // reachable only because the attribute really is omitted.
         var plain = Named(controls, "Entry No.");
         Assert.False(plain.HasAttribute("Enabled"));
         Assert.False(plain.HasAttribute("Editable"));
