@@ -70,25 +70,25 @@ the whole claim of #3663, demonstrated on live code within a day of the issue be
 ## The measurement
 
 Every `GetProperty` / `GetMethod` / `GetField` / `GetConstructor` / `GetNestedType` call in
-`AlRunner/Patches/**/*.cs` (171 files), classified by what happens to the null a failed lookup
+`AlRunner/Patches/**/*.cs` (172 files), classified by what happens to the null a failed lookup
 returns. Comments and string literals are blanked before scanning, so prose describing a shape
 is not counted as one.
 
 | | count |
 |---|---:|
-| lookups scanned | 744 |
+| lookups scanned | 738 |
 | — excluded as not-reflection (`JsonElement`, `StackFrame`) | 21 |
-| **considered** | **723** |
-| **silent — the null is absorbed** | **125** |
+| **considered** | **717** |
+| **silent — the null is absorbed** | **120** |
 | loud — `?? throw` | 105 |
 | null-forgiving `!` — a different ratchet's population (#3051) | 26 |
 | chain — `?? <another lookup>`, an alternate member *name* | 13 |
 | explicit `!= null` test at the expression | 2 |
-| stored to a variable, or otherwise consumed; the failure path is a property of the method, not of the expression | 452 |
+| stored to a variable, or otherwise consumed; the failure path is a property of the method, not of the expression | 451 |
 
-The buckets sum to 723, and 723 + 21 excluded = 744.
+The buckets sum to 717, and 717 + 21 excluded = 738.
 
-The 125 sit in **42 files**. The heaviest:
+The 120 sit in **41 files**. The heaviest:
 
 | file | silent sites |
 |---|---:|
@@ -138,7 +138,7 @@ off.
 #3663 measured 745 lookups and reported **167 loud / 339 silent / 239 unclear**, and said
 plainly that its classifier was a heuristic and 339 should be read as an order of magnitude.
 Re-deriving it produced 740 lookups at the time — the five-lookup gap is #3647 and #3660, both
-fixed that same day — so the *scan* reproduces. (The tree has since moved to 744/723/125; the
+fixed that same day — so the *scan* reproduces. (The tree has since moved to 738/717/120; the
 comparison below uses the figures as measured against #3663's own tree, so the two sides are
 like for like.) The *classification* does not, and the reason is specific
 and worth recording:
@@ -237,7 +237,7 @@ by the same amount, and name the site in the PR body.
 
 ## What this guard does not claim
 
-It does **not** claim all 125 are bugs. Per #3663 and `BcShapeGapException`'s own header, some
+It does **not** claim all 120 are bugs. Per #3663 and `BcShapeGapException`'s own header, some
 fraction are correct as they stand, and telling which is which needs the per-site adjudication
 #3657 spent its review on — in that one method, four exits turned out to be genuine answers
 that had to stay silent, and getting one wrong in that direction breaks an ordinary query on
