@@ -364,8 +364,8 @@ public static partial class RecordPatches
 
         // BcShape.FindMethod, not Type.GetMethod (#3069). A bare-name lookup throws
         // AmbiguousMatchException the day Microsoft ships a second GetAllItems overload on
-        // this provider, and MethodScopePatches.NavMethodScope_AssertError rethrows only
-        // BcShapeGapException while absorbing everything else — so that throw would be
+        // this provider, and MethodScopePatches.NavMethodScope_AssertError rethrows only the
+        // runner's own refusal types while absorbing everything else — so that throw would be
         // SWALLOWED under an AL `asserterror`, passing it on a call real BC performs fine.
         //
         // The signature is pinned to the one BC's own provider declares —

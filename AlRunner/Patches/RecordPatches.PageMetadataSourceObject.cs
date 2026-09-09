@@ -140,8 +140,8 @@ public static partial class RecordPatches
             var type = typeof(NCLMetadata).Assembly.GetType("Microsoft.Dynamics.Nav.Runtime.PageDataProvider");
             // BcShape.FindMethod, not Type.GetMethod (#3069). A bare-name lookup throws
             // AmbiguousMatchException the day Microsoft ships a second overload of this name,
-            // and MethodScopePatches.NavMethodScope_AssertError rethrows only
-            // BcShapeGapException and absorbs everything else — so that throw would be
+            // and MethodScopePatches.NavMethodScope_AssertError rethrows only the runner's
+            // own refusal types and absorbs everything else — so that throw would be
             // SWALLOWED under an AL `asserterror`, passing it on a call real BC performs fine.
             // FindMethod refuses with the right type instead, and still answers null on
             // absence, which ReadSourceTableView already turns into a named refusal.

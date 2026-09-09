@@ -204,8 +204,9 @@ internal static class BcShape
     /// <para>What this is for: <see cref="Type.GetMethod(string, BindingFlags)"/> throws
     /// <see cref="AmbiguousMatchException"/> the moment Microsoft ships a second method of that
     /// name. That is a bare framework exception carrying no member name, and
-    /// <c>MethodScopePatches.NavMethodScope_AssertError</c> rethrows only
-    /// <see cref="BcShapeGapException"/> — so under an AL <c>asserterror</c> it is ABSORBED and
+    /// <c>MethodScopePatches.NavMethodScope_AssertError</c> rethrows only the runner's own
+    /// refusal types (this one and <c>BcAppSymbolReadException</c>, #3241) — so under an AL
+    /// <c>asserterror</c> a bare framework exception is ABSORBED and
     /// the asserterror PASSES, on a call real BC performs fine. Enumerating cannot throw, so
     /// every outcome here is the method, <c>null</c>, or a refusal that names the member
     /// (#3069, and #3062 for the same repair inside the permission slice).</para>

@@ -230,6 +230,24 @@ raising `RunnerOutOfScopeException` that would be exactly wrong here.
 written the gap down. Settled in
 [#2946](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2946).
 
+**A fourth type, and `expect-oos` may never absorb that one either.**
+`BcAppSymbolReadException` — message prefix `symbol-read-fail ` — means a
+registered dependency `.app` has a `SymbolReference.json` the runner could not
+read to completion. Same argument, one step further out: it is not a statement
+about the runner's scope at all, it is a statement about the package on this
+machine, so it can be true on one leg and false on the next. It differs from a
+shape gap in one way that mattered: it **wraps** whatever failed the read, and
+`OutOfScopeMessage.FromException` walks that chain, so a corrupt package whose
+inner failure happened to carry an out-of-scope signal with the entry's own
+anchor classified as `pass-oos`. `expect-oos` and `expect-divergence` now refuse
+it explicitly, naming the `.app` and the surface; with no entry at all it is a
+plain failure rather than an "undeclared out-of-scope" report about a surface
+nothing touched. `expect-fail-known-gap` still absorbs it. It also tears through
+both AL trapping seams — `asserterror` and `[TryFunction]` — for the same reason
+a shape gap does: on real BC the read succeeds, so swallowing it inverts the
+result. Settled in
+[#3241](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3241).
+
 New Cecil throw sites therefore have to put the **`docs/scope.md` anchor first
 in the reason slot**, and the API name in the API slot. A message shaped
 `out-of-scope: report-rendering-external — RDLC layout processing …` puts a
