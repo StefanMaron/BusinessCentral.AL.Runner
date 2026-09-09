@@ -744,8 +744,17 @@ public static partial class BcRuntime
         {
             var pmpT = typeof(NCLOptionMetadata).Assembly
                 .GetType("Microsoft.Dynamics.Nav.Runtime.PlatformMetadataProvider");
-            var inst = pmpT?.GetProperty("Instance",
-                BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null);
+            // BcShape.Property, not `GetProperty(...)?` (#3663): a null here would propagate
+            // through `?.` and leave the guard below reading "there is no inventory", which is
+            // the same answer a BC build that genuinely exposes none gives. Those two must not
+            // look alike — one is a rename to react to, the other is nothing to do — so an
+            // absent member refuses loudly and the catch below turns it back into the
+            // documented degradation, with the shape gap named.
+            var inst = pmpT == null ? null : AlRunner.Infrastructure.BcShape.Property(
+                pmpT, "Instance", BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic,
+                "system enum registration",
+                "the PlatformMetadataProvider singleton BC resolves its own platform enums through")
+                .GetValue(null);
             // BcShape.FindMethod, not a name-only GetMethod (#3069): an overload appearing on
             // either of these would otherwise pick one silently, and BC moving them is exactly
             // the case this whole method must degrade on rather than guess through. Absence
@@ -772,9 +781,15 @@ public static partial class BcRuntime
                 // present is the one that came from real symbols.
                 if (AlEnumMetadataRegistry.TryGet(id, out _)) continue;
 
-                var name = de.Value?.GetType()
-                    .GetProperty("Name", BindingFlags.Public | BindingFlags.Instance)
-                    ?.GetValue(de.Value) as string ?? string.Empty;
+                // Same reasoning as the Instance lookup above: a renamed Name property would
+                // otherwise degrade to the empty string, registering all 16 platform enums
+                // under no name at all rather than saying the shape moved.
+                var name = de.Value == null ? string.Empty
+                    : AlRunner.Infrastructure.BcShape.Property(
+                        de.Value.GetType(), "Name", BindingFlags.Public | BindingFlags.Instance,
+                        "system enum registration",
+                        "the display name of one platform enum, carried into AlEnumMetadataRegistry")
+                      .GetValue(de.Value) as string ?? string.Empty;
                 if (getAl.Invoke(inst, new object[] { id }) is not byte[] al || al.Length == 0)
                     continue;
 

@@ -237,7 +237,14 @@ public sealed class BcInternalsNullForgivingGuardTests
         // so a non-editable field was reported editable (#3669). Three exits in that same
         // method deliberately stay silent, because a null there is BC's own answer; the
         // per-read split is in docs/page-control-field-from-bc-document.md#a-failed-lookup-refuses.
-        Assert.Equal(87, converted);
+        // 87 -> 89 for the PlatformMetadataProvider.Instance and EnumMetadata.Name reads in
+        // EnumMetadataPatches.EnsureSystemEnumsRegistered (#3594). Both used to be `?.`, and a
+        // null from either was indistinguishable from BC legitimately exposing no platform
+        // enums — the first degraded to "there is no inventory", the second registered all 16
+        // under the empty name. The enclosing catch still turns a refusal back into the
+        // documented degradation; what changed is that the shape gap is now named rather than
+        // silently answered.
+        Assert.Equal(89, converted);
     }
 
     /// <summary>
