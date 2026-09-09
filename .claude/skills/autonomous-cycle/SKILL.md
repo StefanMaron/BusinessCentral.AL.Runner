@@ -116,10 +116,6 @@ were measured:
 approves a PR arms auto-merge": the command, the conditions, the head to record. Run that
 list.
 
-When it arms rather than merges, arming is still not merging, and it does not replace the merge
-bar — it is the bar expressed as a standing instruction to GitHub, so a PR lands the moment its
-checks go green instead of at the coordinator's next sweep.
-
 **Keep one reviewer continuously alive rather than spawning one when a queue becomes visible.**
 Reactive spawning is what produces the pile-up: by the time the queue is obvious it is already
 several PRs deep, and the batch needed to clear it is large enough to go stale. Start the

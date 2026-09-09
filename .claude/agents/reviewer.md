@@ -215,9 +215,9 @@ at the moment you post.
 diff unchanged since your last full review: with `<old>` the head in your previous verdict
 line and `<new>` the head from step 1, after `git fetch upstream main` the command
 `diff <(git diff $(git merge-base upstream/main <old>) <old>) <(git diff $(git merge-base
-upstream/main <new>) <new>)` prints nothing. Then re-check only the mechanical conditions in
-the arming list and stamp `re-review`. Any output, or an `<old>` git cannot resolve: full
-review, stamp `full`.
+upstream/main <new>) <new>)` prints nothing. Then post the verdict for `<new>` stamped
+`re-review`, and run the arming list against that posted verdict. Any output, or an `<old>`
+git cannot resolve: full review, stamp `full`.
 
 On a corpus PR the same line applies, with that repository's `--repo` on the head read and
 `master` as the base.
