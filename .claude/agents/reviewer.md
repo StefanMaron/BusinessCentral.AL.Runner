@@ -199,8 +199,8 @@ Verdict: MERGE|FIX-FIRST|HOLD (<reason, only for FIX-FIRST/HOLD>) — head <full
 1. Decide MERGE, FIX-FIRST or HOLD. FIX-FIRST and HOLD carry the reason in parentheses; MERGE
    carries none.
 2. Read the head: `gh pr view <N> --repo <owner>/<repo> --json headRefOid --jq .headRefOid`.
-   Without `gh`, read `headRefOid` through `mcp__github__pull_request_read`. Use the full
-   40-character SHA, never an abbreviation.
+   Without `gh`, read `headRefOid` through `mcp__github__pull_request_read`. Write the full
+   40-character SHA.
 3. Sign the comment, then write the verdict line as its last line.
 
 Done when the posted comment's last line is the verdict line and its head equals the PR's head
@@ -215,6 +215,5 @@ auto-merge"). When the diff differs at all, do a full review and stamp `full`.
 
 On a corpus PR the same line applies, with that repository's `--repo` on the head read.
 
-Why the line exists: an arming step can only check a verdict it can find, and a verdict whose
-head has moved is the one that gets armed by mistake
+Why: an arming step can only check a verdict it can find, on the head it is about to merge
 ([e-11](https://fbakkensen.github.io/al-runner-retro/#e-11)).

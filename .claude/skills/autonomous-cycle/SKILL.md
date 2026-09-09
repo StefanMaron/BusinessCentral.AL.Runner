@@ -113,7 +113,7 @@ were measured:
   coordinator, who is not reading the diffs.
 
 **Arming is defined once**, in the `orchestrating-a-session` skill under "A reviewer that
-approves a PR arms auto-merge": the command, the conditions, the stamp to record. Run that
+approves a PR arms auto-merge": the command, the conditions, the head to record. Run that
 list; on a green PR it is the merge decision.
 
 When it arms rather than merges, arming is still not merging, and it does not replace the merge
