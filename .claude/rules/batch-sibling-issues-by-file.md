@@ -46,10 +46,10 @@ that data.
 
 ## This is still one PR — reconciling with `branch-and-pr.md`
 
-`branch-and-pr.md`'s "one open PR per impl agent" bounds **concurrency**; this rule bounds
-**content**. One agent, one branch, one open PR, which may carry `Closes #A`, `Closes #B` and
-`Closes #C` when each has its own proving test. Still forbidden: claiming an issue and starting
-*separate* work on it while your PR is open. Claim the batch together, before the PR exists.
+`branch-and-pr.md` owns how many PRs and branches one agent may have in flight; this rule bounds
+only **content** — one PR may carry `Closes #A`, `Closes #B` and `Closes #C` when each has its
+own proving test. So claim the batch together, before the PR exists, rather than starting
+*separate* work on a second issue afterwards.
 
 ## Sister rules
 

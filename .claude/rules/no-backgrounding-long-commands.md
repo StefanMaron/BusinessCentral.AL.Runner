@@ -13,10 +13,9 @@ documented stall, what cost real work was an unpushed worktree, not the lost tur
 A cold full-corpus run (build + AL emit + C# compile + execute ~2000 tests) is not a
 few-seconds operation — budget several minutes, or use a compile cache where one is available.
 
-**CI is the one thing you never wait for, in the foreground or anywhere else.** A workflow run
-is not your child process: it completes whether or not this turn is alive. Push, open the PR,
-hand back, and read the verdict later with `tools/ci-wait.py <PR> --timeout 0`
-(`ci-verdicts.md` §0 owns that rule and its exit codes; this one governs local work).
+**CI is the one thing you never wait for, in the foreground or anywhere else** — a workflow run
+is not your child process; `ci-verdicts.md` §0 owns how and when to read its verdict. This rule
+governs work running locally.
 
 ## Nothing earns you a wake-up on a `Bash` call you started
 
