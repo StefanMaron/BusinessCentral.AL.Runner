@@ -72,7 +72,8 @@ BC's own code, unmodified.
 
 - **Join path** — `RecordPatches.QueryJoin.BuildTableFindAllRequest` reads each dataitem's
   `TableFiltersAndMarks` when it builds that dataitem's own read request. Correct, per
-  dataitem, and unchanged by #3571.
+  dataitem, and unchanged by #3571 — but it used to answer a DEFAULT when the read FAILED,
+  which is what #3656 fixed. See "The join path refuses too" below.
 - **Single-dataitem path** — `RecordPatches.QueryProjection.TranslateQueryFilters` handled
   runtime `SetRange`/`SetFilter` filters and static `ColumnFilters`, and read
   `TableFiltersAndMarks` nowhere.
@@ -149,6 +150,103 @@ column** of the same query, resolved against `columnIdByName`. For `DataItemTabl
 is a **table field** of the dataitem's own `RelatedTable`, resolved against that table's
 `fieldNoByName`. An unresolvable name abandons the build in both cases, matching the
 `ColumnFilter` discipline: running the query unrestricted returns rows real BC excludes.
+
+## The join path refuses too
+
+#3656, the sibling of #3647 one code path over. `BuildTableFindAllRequest` builds the
+per-dataitem read request for a **multi-dataitem (join)** query, and reached the same
+`NCLMetaQueryDataItem.TableFiltersAndMarks` through a lookup whose failure answered a default:
+
+```csharp
+object? filtersAndMarks = null;
+try
+{
+    var p = dataItem.GetType().GetProperty("TableFiltersAndMarks", ...);
+    filtersAndMarks = p?.GetValue(dataItem);
+}
+catch { filtersAndMarks = null; }
+filtersAndMarks ??= StaticMember("FiltersAndMarks", "Empty");
+```
+
+Three separate ways to answer "no filters" for something that is not an empty answer — an
+unresolved property, anything the getter raised, and a fallback indistinguishable from a
+dataitem that genuinely declares none.
+
+### Why the consequence is worse here than a wrong filter
+
+The one call site is `JoinExecutor.ReadDataItemRows`, and it reads **two** of this method's
+answers as ordinary facts:
+
+| the builder answers | ReadDataItemRows does | observable result |
+|---|---|---|
+| a request carrying `FiltersAndMarks.Empty` | reads the dataitem's table unfiltered | the join returns **more rows than it should** |
+| `null` | `if (req == null) return result;` | that dataitem contributes **zero rows**, collapsing the whole join to empty |
+
+Neither throws. A passing test cannot tell the difference unless it asserts the row count,
+which is the silent-default shape `.claude/rules/loud-failures.md` forbids.
+
+### The bare `catch` was the second half of the defect
+
+`catch { filtersAndMarks = null; }` swallowed **everything** the getter raised, including a
+`BcShapeGapException` from a read beneath it — the one exception type that exists to tear
+through both of AL's trapping seams. Converting the lookups to throw without removing that
+catch would have produced refusals this very method ate: a guard that is quiet rather than
+armed.
+
+It also swallowed BC's own errors. `NCLMetaQuery.CreateTableFiltersAndMarksFromDataItemField-`
+`Filters` raises `NavNotSupportedException` for a `DataItemTableFilter` on a FlowField, and the
+getter can reach it; the old code turned that into "no filters" and ran the query, instead of
+reporting the error real BC reports.
+
+Nothing is caught now. The one `catch` that remains rethrows the getter's real exception
+through `ExceptionDispatchInfo`, never a bare `throw tie.InnerException` — the same
+stack-trace-preservation reason `ExecuteJoinQuery` gives a few lines above it. Without the
+unwrap a caller sees a `TargetInvocationException` whose text names reflection rather than the
+member that moved.
+
+### Which exits are now loud, and which stay silent
+
+Five lookups refuse; one exit stays silent, and it is the one that carries most traffic.
+
+| exit | now | why |
+|---|---|---|
+| `FindProviderRequest` type lookup | **refuses** | a moved type; `!` would NRE inside the builder naming a parameter |
+| `FiltersAndMarks` / `TableFilterDictionary` type lookups | **refuses** | same |
+| `FindProviderRequest` ctor not found | **refuses** | used to `return null`, which the executor read as "no rows" |
+| `TableFiltersAndMarks` lookup | **refuses** | the member #3656 names |
+| `FiltersAndMarks.Empty` / `TableFilterDictionary.Empty` statics | **refuses** | `Empty` singletons that always exist on a real Ncl; absence is a moved member |
+| anything the getter raises | **propagates** | was swallowed by the bare `catch` |
+| **`TableFiltersAndMarks` reads null** | **silent** | **BC's own answer** — see below |
+
+The silent row is load-bearing and must stay silent. Measured on the `bc284` context,
+`NCLMetaQuery.CreateTableFiltersAndMarksFromDataItemFieldFilters` opens with
+
+```csharp
+if (fieldFilters.Count == 0) { return null; }
+```
+
+and ends with a second `return null;` when no filter expression was built. So **null is BC's
+answer for "this dataitem declares no `DataItemTableFilter`"** — the ordinary case for most
+join dataitems. Converting it would turn every unfiltered join into an error.
+
+### What proves it
+
+`AlRunner.Tests/QueryJoinFindRequestShapeGapTests` — 12 arms, driving the real production
+helper with fakes standing in for a BC type whose member moved, the same idiom
+`PermissionMetadataShapeGapTests` uses. RED baseline **6 failed / 4 passed**, every failure
+reading `Assert.Throws() Failure: No exception was thrown`; GREEN **12/12**.
+
+The negative controls are what stop the fix becoming a blanket conversion, and they are
+load-bearing rather than decorative: a sabotage that refuses on a *successful* read of null
+breaks `ADataItemWhoseTableFiltersAndMarksReadsNull_GetsEmpty_AndDoesNotThrow` and
+`TheRequestCarriesTheTableAndTheEmptyGlobalFilters`.
+
+`TheAbsentMemberAndTheNullRead_AreDistinguishedByWhetherAnythingIsThrownAtAll` pins the pair in
+one place. #3647's equivalent arm was found *unarmed* because both of its outcomes refused and
+only the message wording separated them; here they are separated by whether anything is thrown
+at all, so a fix collapsing the two cannot pass both lines. Verified in both directions —
+reverting the lookup fails it with `IsType Failure: Value is null`, and over-refusing fails it
+with `Assert.Null Failure: Value is not null`.
 
 ## What proves it
 
