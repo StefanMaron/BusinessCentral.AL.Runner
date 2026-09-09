@@ -463,9 +463,14 @@ public static partial class RecordPatches
 
     private static object? BuildNclMetaPermissionSet(int permissionSetId)
     {
-        var declaration = EnumerateKnownPermissionSets()
-            .Select(p => p.PermissionSet)
-            .FirstOrDefault(p => p.Id == permissionSetId);
+        // The OWNING APP travels with the declaration now (#3695). It used to be projected away
+        // here, and NCLMetaPermissionSet.OwningApp then stayed null for every set the runner
+        // builds: BC resolves it lazily through MetadataAppGroup.GetObjectOwner, and that lazy
+        // is gated on `MetadataAppGroup.GroupId != 0`, which the base group's id is not. See
+        // SetOwningApp below for what dereferences it.
+        var found = EnumerateKnownPermissionSets()
+            .FirstOrDefault(p => p.PermissionSet.Id == permissionSetId);
+        var declaration = found.PermissionSet;
         if (declaration == null) return null;
 
         EnsurePermissionMetadataReflection();
@@ -501,7 +506,68 @@ public static partial class RecordPatches
         if (_fNCLMetaAppObjMetadataLoaded != null)
             FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, meta, true);
 
+        SetOwningApp(meta, found.OwningAppId, found.OwningAppName);
+
         return meta;
+    }
+
+    private static FieldInfo? _fNCLMetaAppObjOwningApp;
+
+    /// <summary>
+    /// Give the built <c>NCLMetaPermissionSet</c> the same <c>NavAppRuntimeMetadata</c> owner
+    /// BC's own lookup would have found, by writing the backing field its lazy would have
+    /// written.
+    ///
+    /// <para>CLAIM — observably equivalent. BC's <c>NCLMetaApplicationObject.OwningApp</c>
+    /// resolves through <c>MetadataAppGroup.GetObjectOwner</c>, which scans
+    /// <c>OrderedAppMetadata</c> for the app declaring this object — the same
+    /// (app id, app name) pair <see cref="EnumerateKnownPermissionSets"/> already carries for
+    /// this permission set, and the same owner object
+    /// <see cref="GetOrCreateAppOwner"/> hands the app-group summaries. So this writes what
+    /// BC's own resolution answers, not a stand-in for it.</para>
+    ///
+    /// <para>TRAP — the lazy cannot do it here, which is why the field is written rather than
+    /// the property read. The getter is gated on <c>MetadataAppGroup.GroupId != 0</c>, and the
+    /// runner plants <c>NavAppGroup.BaseGroup</c>, whose GroupId IS 0. So the property returns
+    /// the null field forever and never attempts a resolution — silently, since nothing on
+    /// that path reports an unresolved owner.</para>
+    ///
+    /// <para>What dereferences it: <c>MetadataPermissionSetProvider.GetPermissionSet</c>'s
+    /// local <c>CollectReferencedPermissionSetKeys</c> reads
+    /// <c>metaPermissionSet.OwningApp.AppId.Value</c> for every include/exclude edge, so a null
+    /// owner is a NullReferenceException inside BC's own graph walk — measured on all 47
+    /// dependency permission sets before this (#3695).</para>
+    /// </summary>
+    private static void SetOwningApp(object meta, Guid owningAppId, string owningAppName)
+    {
+        // Walked up the hierarchy by hand: `owningApp` is declared PRIVATE on the base
+        // NCLMetaApplicationObject, and BindingFlags.FlattenHierarchy does not surface a
+        // private base field — measured, it returns null here, which this method's own refusal
+        // reported by name on its first run.
+        _fNCLMetaAppObjOwningApp ??= FindDeclaredFieldUpHierarchy(meta.GetType(), "owningApp")
+            ?? throw PermissionMetadataBcShapeGap(
+                "NCLMetaApplicationObject.owningApp",
+                "field not found on the type or any of its bases — a permission set's owning app "
+                + "cannot be supplied, and BC's own permission graph walk dereferences it");
+
+        FieldPoke.SetInstance(_fNCLMetaAppObjOwningApp, meta, GetOrCreateAppOwner(owningAppId, owningAppName));
+    }
+
+    /// <summary>
+    /// The field <paramref name="name"/> declared on <paramref name="type"/> or any of its base
+    /// types, or null. <c>DeclaredOnly</c> per level is what makes a private base field
+    /// reachable at all; <c>FlattenHierarchy</c> does not do it.
+    /// </summary>
+    private static FieldInfo? FindDeclaredFieldUpHierarchy(Type type, string name)
+    {
+        for (var t = type; t != null; t = t.BaseType)
+        {
+            var f = t.GetField(name,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic
+                | BindingFlags.DeclaredOnly);
+            if (f != null) return f;
+        }
+        return null;
     }
 
     // ── source-declared permissions: names in, ids out (#2910) ──────────────────────────

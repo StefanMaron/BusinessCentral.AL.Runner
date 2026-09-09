@@ -425,7 +425,18 @@ public sealed class VirtualTableRefusalClaimTests
         // DateDataProvider, which computes rows per request, so there is no materialised window
         // for a filter to reach past and no skeleton-session read of our own to fail.
         // 75 was READ OUT of this test's own failure message ("Expected: 84, Actual: 75").
-        Assert.Equal(75, total);
+        // +1 (#3695): the Permission (2000000005) populator joined, and contributes exactly ONE
+        // countable refusal — the one in RecordPatches.cs's dispatch chain, guarding a
+        // DataAccessSource with no skeleton session, without which BC's own
+        // PermissionDataProvider cannot be constructed. Its own file,
+        // RecordPatches.PermissionSystemTable.cs, raises two more that this count does not see:
+        // CoveredFiles is a hard-coded list (#3118) and the new file is deliberately not on it,
+        // so those two are outside the scanned set. The delta is therefore +1, not +3.
+        // 76 was READ OUT of this test's own failure message ("Expected: 75, Actual: 76"), and
+        // independently confirmed by counting the same regex across CoveredFiles ∪ SiblingFiles
+        // on origin/main (75) and on this branch (76): the ONLY per-file movement is
+        // RecordPatches.cs, 5 -> 6.
+        Assert.Equal(76, total);
     }
 
 
