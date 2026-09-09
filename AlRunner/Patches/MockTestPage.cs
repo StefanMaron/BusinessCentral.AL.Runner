@@ -780,7 +780,7 @@ internal class LiveNavTestPage : MockITestPage
             // neither asserterror nor a [TryFunction] (measured on BC 28.4.53241.0 both ways;
             // corpus 60479's file header records it, which is why no arm there asserts it).
             // Refusing by name is a DELIBERATE divergence: a bare NRE inside Ncl names neither
-            // the page nor the reason.
+            // the page nor the reason. See docs/limitations.md#testpage-page-mode-no-edit-action.
             case BuiltInPageModeShape.RefuseNoEditAction:
                 throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     $"TestPage.Edit() on page {_pageId}",

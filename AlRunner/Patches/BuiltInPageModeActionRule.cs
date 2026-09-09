@@ -2,16 +2,15 @@
 // inputs — which shape the action is, and whether it is enabled.
 //
 // They live apart from BuiltInPageModeAction and LiveNavTestPage for the reason
-// TestPageNewRowLineRule and LiveNavTestPage.OffersBuiltInAction do: every row of the table in
-// BuiltInPageModeAction.cs's header is a measured claim about real BC, and a claim that can
-// only be exercised by standing up a BC runtime and a TestPage is a claim nothing pins
-// cheaply. Here each row is one assertion (AlRunner.Tests/BuiltInPageModeActionRuleTests.cs).
+// TestPageNewRowLineRule and LiveNavTestPage.OffersBuiltInAction do: every value below is a
+// measured claim about real BC, and a claim that can only be exercised by standing up a BC
+// runtime and a TestPage is a claim nothing pins cheaply. Here each one is an assertion
+// (AlRunner.Tests/BuiltInPageModeActionRuleTests.cs).
 //
-// Every value below is measured on a real service tier — corpus codeunit 60479 "TPMS Tests"
-// (StefanMaron/BusinessCentral.AL.Language.Tests#317, 9/9 on BC 28.4.53241.0) and 60461
-// "TPVE Tests" (upstream #203) — not read off BC's UI builder. The builder read is in
-// BuiltInPageModeAction.cs's header and explains the measurements; it does not stand in for
-// them, and where the two disagreed the measurement won (issue #3258).
+// Measured on a real service tier — corpus codeunit 60479 "TPMS Tests"
+// (StefanMaron/BusinessCentral.AL.Language.Tests#317) and 60461 "TPVE Tests" (upstream #203) —
+// not read off BC's UI builder. The builder read explains the measurements and does not stand
+// in for them; where the two disagreed the measurement won (issue #3258).
 namespace AlRunner.Patches;
 
 /// <summary>Which of BC's shapes a built-in page-mode action is, or why there is none.</summary>

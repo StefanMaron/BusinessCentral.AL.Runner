@@ -1,78 +1,33 @@
 // BuiltInPageModeAction — AL's `SomePage.View()` and `SomePage.Edit()` on a TestPage.
 //
-// THE GAP (issue #3185)
-//   Both raised "InvalidOperationException: The UISessionManager was expected to be
-//   initialized." from TestPageClientSession.GetTestLogicalDispatcher(), before any page could
-//   open. Two independent causes, and the first one hid the second:
+// THE CLAIM
+//   Nothing in the application declares these actions; the CLIENT supplies them, and BC's
+//   TestPageProxy.View()/Edit() is a lookup rather than an effect. Across every shape BC
+//   distinguishes, Visible is TRUE — including the shapes where nothing happens. Enabled is
+//   the channel BC says "not here" through. Both properties answered a hardcoded true, and the
+//   two no-card shapes were refused outright, until issue #3258.
 //
-//   1. NavTestPageBase.ALView()/ALEdit() wrap their result in TestClientProxy<ITestAction>
-//      .Proxy(...), which needs the client's dispatcher. NclCecilRewrite step 4 strips that
-//      call from NavTestPageBase — but it used to strip it from a hard-coded list of six
-//      method names, and NavTestPageBase has EIGHT Proxy call sites. ALView and ALEdit were
-//      the two the list did not name. That step now sweeps the whole type.
+//   Measured, not read off the builder: corpus codeunit 60479 "TPMS Tests"
+//   (StefanMaron/BusinessCentral.AL.Language.Tests#317, 10 arms on BC 28.4.53241.0) and 60461
+//   "TPVE Tests" (upstream #203). Row by row the table is pinned as assertions in
+//   AlRunner.Tests/BuiltInPageModeActionRuleTests.cs; the builder walk behind it
+//   (ActionBuilder.ResolveCardFormId / IsModifyAllowedInCard, BC 28.1) and the #3185 history
+//   are in this change's pull request.
 //
-//   2. Underneath it, ITestPage.View()/Edit() answered `new MockITestAction()`, whose Invoke()
-//      is a literal no-op. So even with the proxy gone, invoking either did nothing at all.
-//      This file is that half.
+// THE TRAP
+//   The read-only rule reads the HOST page's own Editable, never the target card's.
+//   ResolveCardFormId falls back to the parent page's OWN id only when that parent is not a
+//   List — so a list whose card is read-only keeps its Edit action, Visible and not Enabled,
+//   while a Card declaring Editable = false has no Edit action at all.
 //
-// WHAT REAL BC DOES, AND HOW THAT WAS ESTABLISHED
-//   Nothing in the application declares these actions; the CLIENT supplies them. The
-//   reference implementation is Microsoft.Dynamics.Nav.Client.TestPageClient.TestPageProxy
-//   (BC 28.1), and it is a lookup, not an effect:
-//
-//     public ITestAction View()  => the first ActionControl whose Action is a
-//         NavOpenTaskPageAction { IsPageModeAction: not false } with ViewMode == PageMode.View,
-//         wrapped in a TestActionProxy — or NULL when the page has none.
-//
-//   Edit() is the same with PageMode.Edit. Those actions are created by
-//   Microsoft.Dynamics.Nav.Client.FormBuilder.ActionBuilder, from MenuActionType.View /
-//   MenuActionType.Edit, and everything this file needs is in three of its methods:
-//
-//     * ResolveCardFormId — the TARGET. For a system menu action `actionDef.TargetID` is 0, so
-//       it falls back to the card page id in the builder context (a list page's CardPageId),
-//       then FormState.CardPageId, and only then — when the parent form is NOT a List — to the
-//       parent page's OWN id.
-//     * IsModifyAllowedInCard — whether the card allows modification. BC does NOT drop the
-//       Edit action when it does not: the action is still there and still Visible, and BC
-//       expresses "you cannot use it here" through Enabled instead (corpus 60479
-//       ListWhoseCardIsReadOnlyLeavesTheEditActionVisibleButNotEnabled). This file said the
-//       opposite until #3258, and the runner refused that shape on the strength of it.
-//     * NavOpenTaskPageAction.FindFormState / CreateForm — the ROW and the MODE. `new
-//       FormState(ViewMode)` carries the requested mode onto the target, and the parent
-//       binding manager's CurrentRow bookmark is stamped onto it, so the card opens on the
-//       row the list is standing on.
-//
-//   And the service tier has adjudicated the result twice. Corpus codeunit 60461 "TPVE Tests"
-//   (StefanMaron/BusinessCentral.AL.Language.Tests#203) drives a List with CardPageId, parks it
-//   on its second row, invokes each action, and asserts that the card opens exactly once, on
-//   that row, that the [PageHandler] ran, and that View gives the handler a read-only page
-//   while Edit gives it an editable one. Corpus codeunit 60479 "TPMS Tests" (upstream #317,
-//   9/9 on BC 28.4.53241.0) adds every shape where NO card opens:
-//
-//     shape                                   | Visible | Enabled | Invoke
-//     ----------------------------------------|---------|---------|---------------------------
-//     Card opened read-only, Edit()            | true    | true    | the page becomes editable
-//     Card opened editable, View()             | true    | true    | the page becomes read-only
-//     Card already in the requested mode       | true    | FALSE   | nothing at all
-//     List with no CardPageId, View()          | true    | true    | nothing opens
-//     List with no CardPageId, Edit()          | true    | FALSE   | nothing opens
-//     List whose card is read-only, Edit()     | true    | FALSE   | nothing opens
-//     List whose card is read-only, View()     | true    | true    | that card opens, read-only
-//     List whose card is editable, both        | true    | true    | that card opens (60461)
-//
-//   Visible is true in every single row. Enabled is where BC says "not here" — which is the
-//   correction #3258 was filed to get: both properties used to answer a hardcoded true, and
-//   the two no-card shapes were refused outright.
-//
-// WHAT THIS FILE IMPLEMENTS
-//   All of the above. The in-place switch moves LiveNavTestPage's own editability
-//   (SwitchViewModeInPlace) rather than driving BC's PageModeAggregator.ChangePageMode: that
-//   type lives in Microsoft.Dynamics.Nav.Client.UI.dll and operates on a client LogicalForm,
-//   which the runner never builds — its whole action layer is its own.
+//   The in-place switch moves LiveNavTestPage's own editability (SwitchViewModeInPlace) rather
+//   than driving BC's PageModeAggregator.ChangePageMode: that type operates on a client
+//   LogicalForm, which the runner never builds.
 //
 // WHAT IS STILL REFUSED
-//   A page declaring Editable = false, asked for Edit(). BC has no such action and raises a
-//   bare NullReferenceException out of NavTestAction; the runner refuses by name instead. See
+//   A page declaring Editable = false, asked for Edit() — a deliberate divergence, since BC
+//   raises a bare NullReferenceException that names nothing. See
+//   docs/limitations.md#testpage-page-mode-no-edit-action and
 //   LiveNavTestPage.BuiltInPageModeActionFor.
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
@@ -213,8 +168,8 @@ internal sealed class BuiltInPageModeAction : ITestAction
     }
 
     /// <summary>
-    /// True in every shape a service tier has been asked about — see the table in this file's
-    /// header, where Visible is true on all eight rows. The action's EXISTENCE is what
+    /// True in every shape a service tier has been asked about — corpus 60479 (upstream #317)
+    /// and 60461 (#203) assert it on every one. The action's EXISTENCE is what
     /// LiveNavTestPage.BuiltInPageModeActionFor decides; anything that got this far exists.
     /// </summary>
     public bool Visible => true;

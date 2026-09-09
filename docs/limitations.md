@@ -684,6 +684,26 @@ the exact value will see different results.
 | `Commit()` | Commits current transaction | Establishes a rollback commit-point — see "Transaction semantics" above; not a no-op |
 | `FilterGroup(n)` | Scoped filter groups | Tracked — BC's own `NavRecord` filter state runs here. Pinned upstream by `record/TestFilterContracts.al` (`FilterGroup2_CombinesWithFilterGroup0_AsAND`, `Reset_AfterFilterGroup2_ClearsBothGroups`) and measured 2026-09-07: a group-2 `SetRange` intersected with a group-0 `SetFilter` answered the intersection, and `GetFilters` reported only group 0, as on BC. This row said "no-op" until the 2026-09 audit |
 
+### `TestPage.Edit()` on a page declaring `Editable = false` — refused by name, not by NRE
+
+<a id="testpage-page-mode-no-edit-action"></a>
+
+BC's UI builder creates no built-in Edit action for a page that declares `Editable = false`, and
+BC does not report that as an AL error: `TestPage.Edit()` hands back a `NavTestAction` wrapping a
+null client action, so `.Invoke()` and `.Visible()` each raise a bare
+`System.NullReferenceException` out of `NavTestAction`, caught by neither `asserterror` nor a
+`[TryFunction]` (measured on BC 28.4.53241.0 both ways).
+
+The runner deliberately answers differently: it throws `RunnerOutOfScopeException` with reason
+`testpage-page-mode-no-edit-action`, naming the page id and the declaration that caused it. A
+bare NRE inside `Ncl` names neither, so reproducing it faithfully would trade a diagnosable
+failure for an undiagnosable one. AL that expects a `NullReferenceException` here sees a
+different exception type; AL that expects the call to work sees the same failure either way.
+
+The rest of the built-in page-mode surface — `View()`/`Edit()` `Visible`, `Enabled` and `Invoke`
+across every shape BC distinguishes — is faithful, and is pinned upstream by corpus codeunits
+60479 (`BusinessCentral.AL.Language.Tests#317`) and 60461 (`#203`).
+
 ### Permission-set assignment — answered from `Access Control`, including the session user's own SUPER row
 
 <a id="permission-set-assignment"></a>
