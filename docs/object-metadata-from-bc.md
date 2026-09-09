@@ -186,3 +186,36 @@ on `Types.Metadata.MetaField`, reachable only through the original `MetaTable` t
 trace is where those values are observable at all, which is why
 `AlRunner.Tests/TableMetadataFromBcDocumentTests.cs` asserts through it — the two routes
 produce the same *type*, so nothing downstream can be asked which one ran.
+
+<a id="queries"></a>
+
+## Queries
+
+`Types.Metadata.MetaQuery` has a public `MetaQuery(XmlNode, int metadataAppGroupId, int
+languageAppGroupId)` constructor — BC's own parser for the query metadata document its
+emitter produces, building the exact type `CreateDynamicQuery` already consumes. So
+`RecordPatches.MetaQueryFromBcDocument` hands that constructor BC's bytes instead of
+assembling the design property by property, the same seam this page describes for tables.
+
+Four values were hardcoded before the conversion, and BC's document states all four:
+`ReadState` (was always `ReadUncommitted`), `QueryType` (was always `Normal`), `Distinct`
+(was always `false`), and the join type of a dataitem link (was always `InnerJoin`). The
+document additionally carries `DataAccessIntent`, `QueryCategory`, `TopNumberOfRows`,
+`ColumnType`, `MethodType`, `QueryColumnIndex`, `DataItemLinkType`, `TotalingMethod` and
+`OrderBy`/`SortingType` — several compiler-assigned, so nothing outside the document can
+supply them.
+
+**The join-type default was AL-observable and wrong.** A nested dataitem that declares no
+`SqlJoinType` gets `Left Outer Join` in BC's document, not `InnerJoin`, so every query
+omitting the property silently dropped parent rows that had no matching child. Corpus PR
+[#297](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/297) asks a real
+service tier to adjudicate that default.
+
+`DataAccessIntent` is in the document but `Types.Metadata.MetaQuery` exposes no property for
+it, so nothing can consume it yet. `AlQueryParser.cs` keeps all three of its live consumers
+(`AllObjWithCaption`'s Object Subtype, the cache populator's query-id enumeration, and
+`BuildNCLMetaQuery`'s existence check), so the conversion makes none of it dead.
+
+If BC ever changes that constructor's signature, `EnsureQueryDocumentShape` throws
+`BcShapeGapException` naming it rather than falling back to a derivation that would answer
+differently — the citation on that throw points here.
