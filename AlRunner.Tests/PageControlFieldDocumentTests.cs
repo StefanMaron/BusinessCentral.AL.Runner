@@ -45,9 +45,13 @@ public sealed class PageControlFieldDocumentTests : IDisposable
         // The AL parser's dictionaries and the delta memo are static, so a fixture left
         // behind here would answer for the NEXT class's page of the same id. Both are
         // dropped for the same reason the runtime drops them on a --watch reload.
+        RemoveParsedPage(90321);
         RemoveParsedPage(90331);
         RemoveParsedPageExtension(90333);
+        RemoveFromDict("_parsedTables", 90320);
+        RemoveMetaTableCacheEntry(90320);
         ClearBcPageExtensionControls();
+        ClearBcPageControlDocuments();
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
@@ -57,8 +61,28 @@ public sealed class PageControlFieldDocumentTests : IDisposable
                 System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
             ?.Invoke(null, null);
 
+    private static void ClearBcPageControlDocuments()
+        => typeof(AlRunner.Patches.RecordPatches)
+            .GetMethod("ClearBcPageControlDocuments",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?.Invoke(null, null);
+
     private static void RemoveParsedPage(int id) => RemoveFromDict("_parsedPages", id);
     private static void RemoveParsedPageExtension(int id) => RemoveFromDict("_parsedPageExtensions", id);
+
+    /// <summary>
+    /// Drop the built NCLMetaTable for the fixture table. It is memoised for the process, so
+    /// a table left behind answers for the next class that declares 90320 — and #3653's
+    /// assertions read the bound field's Editable THROUGH it, so a stale entry would decide
+    /// the result.
+    /// </summary>
+    private static void RemoveMetaTableCacheEntry(int tableId)
+    {
+        var f = typeof(AlRunner.Patches.RecordPatches).GetField("_metaTableCache",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        if (f?.GetValue(null) is System.Collections.IDictionary d && d.Contains(tableId))
+            d.Remove(tableId);
+    }
 
     private static void RemoveFromDict(string field, int id)
     {
@@ -267,6 +291,240 @@ public sealed class PageControlFieldDocumentTests : IDisposable
         // Visible IS stated on this control even though it is defaulted, which is why the
         // reader must not infer "absent means declared-default" from Visible's presence.
         Assert.Equal("true", plain.GetAttribute("Visible"));
+    }
+
+    // ---------------------------------------------------------------------------------
+    // #3653 — what the ROW reports for an undeclared Editable, which is a different
+    // question from what the DOCUMENT states (the test above).
+    //
+    // The document omits the attribute; #3604 read that absence as the answer and reported
+    // ''. A real BC service tier reports True, identically on all eight cloud legs (corpus
+    // PR #310, run 34329910568). BC does not read the deserialized field: MergePageAndTable
+    // runs PropertiesSolveHelper.SolveEditable over every control first, and that RESOLVES
+    // the null against the bound field's own Editable before any reader sees it. See
+    // docs/page-control-field-from-bc-document.md#solveeditable.
+    //
+    // These are runner-mechanism tests. The behavioural claim is the corpus's; what they pin
+    // is that the runner reproduces BC's solver rather than the raw attribute.
+    // ---------------------------------------------------------------------------------
+
+    [SkippableFact]
+    public void PageControlFieldRows_UndeclaredEditable_ResolvesToTheBoundFieldsEditable()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        EmitMainFixtureThroughTheParser();
+
+        var rows = PageControlFieldRowsFor(90321);
+        var bare = rows.Single(r => r.ControlName == "Entry No.");
+
+        // Positive, and the whole RED: "Entry No." declares no Editable and is bound to a
+        // field that declares none either, so SolveEditable's null branch answers the field's
+        // own Editable — true — rendered by Boolean.ToString(InvariantCulture). The capital T
+        // is not incidental: it is what the tier reported (Actual:<True>), and it is what
+        // distinguishes BC's solver from a "true" substituted by the runner.
+        Assert.Equal("True", bare.Editable);
+
+        // Negative: a DECLARED Editable is not overwritten by the solver. SolveEditable's
+        // null branch is gated on control.Editable == null, so a declared value survives —
+        // this is corpus test DeclaredEditableFalse_RoundTripsAsFalse's claim, held here on
+        // the runner side so a fix that defaulted every row to True would be caught.
+        Assert.Equal("false", rows.Single(r => r.ControlName == "PcfDocEditable").Editable);
+    }
+
+    [SkippableFact]
+    public void PageControlFieldRows_EnabledAndVisible_AreNotTouchedByTheSolver()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        EmitMainFixtureThroughTheParser();
+
+        var rows = PageControlFieldRowsFor(90321);
+        var bare = rows.Single(r => r.ControlName == "Entry No.");
+
+        // The sibling half of #3653, and the reason the fix is not "resolve all three the
+        // same way": no method on PropertiesSolveHelper writes Enabled or Visible, so those
+        // two keep the deserializer's [DefaultValue("true")] — lower-case "true", the
+        // attribute default, NOT the "True" that Boolean.ToString produces. The two spellings
+        // are what make this test able to tell the two mechanisms apart at all, and both are
+        // pinned green on a real tier by corpus codeunit 60424.
+        Assert.Equal("true", bare.Enabled);
+        Assert.Equal("true", bare.Visible);
+
+        // Negative: a declared value is reported verbatim on these columns too.
+        Assert.Equal("false", rows.Single(r => r.ControlName == "PcfDocHidden").Visible);
+    }
+
+    [Fact]
+    public void ParsedAndDependencyPaths_AnswerEditableTheSameWayTheDocumentPathDoes()
+    {
+        // The fold in #3653. Both fallback paths — a source-compiled page whose document was
+        // never captured, and a page from a precompiled dependency .app — substituted the
+        // lower-case attribute default "true" for an undeclared Editable, where the document
+        // path (and BC) answer "True". One column meaning two different things depending on
+        // which path served the page is the defect #3631 named for Sequence: AL cannot see
+        // which path it got, so the two must agree.
+        //
+        // No BC engine needed — this is the defaulting rule itself, not a document read.
+        Assert.Equal("True", SolveParsedEditable(null, null));
+
+        // The bound field's own declared Editable is what an undeclared control resolves to,
+        // so a field declared Editable = false makes the CONTROL report False without the
+        // control declaring anything. This is the arm that proves the field is really
+        // consulted rather than a constant being returned.
+        Assert.Equal("False", SolveParsedEditable(null, false));
+        Assert.Equal("True", SolveParsedEditable(null, true));
+
+        // Negative: a DECLARED expression is reported verbatim and is never overwritten —
+        // including a variable name, which is why the column is Text and not Boolean.
+        Assert.Equal("false", SolveParsedEditable("false", null));
+        Assert.Equal("true", SolveParsedEditable("true", false));
+        Assert.Equal("MyEditableVar", SolveParsedEditable("MyEditableVar", false));
+    }
+
+    [Fact]
+    public void ParsedPathWiring_ReportsTheSolvedEditable_NotTheRawAttributeDefault()
+    {
+        // The helper test above pins the RULE; this pins that the AL-parsed path actually
+        // CALLS it. Without this, replacing the call site with `?? "true"` again would keep
+        // that test green — the exact shape of a fix that passes its own unit test and leaves
+        // the defect in the column a caller reads.
+        //
+        // No emit and no BC engine: this page is parsed from AL text only, so
+        // HasBcPageMetadataDocument is false for it and the fallback path is the one that
+        // builds its rows — which is precisely the path under test.
+        const string Al = """
+            table 90340 "PcfFb Sample"
+            {
+                DataClassification = CustomerContent;
+                fields
+                {
+                    field(1; "Entry No."; Integer) { DataClassification = CustomerContent; }
+                    field(2; "Locked Field"; Text[30]) { Editable = false; DataClassification = CustomerContent; }
+                }
+                keys { key(PK; "Entry No.") { Clustered = true; } }
+            }
+
+            page 90341 "PcfFb Fixture"
+            {
+                PageType = Card;
+                SourceTable = "PcfFb Sample";
+                layout
+                {
+                    area(Content)
+                    {
+                        group(G)
+                        {
+                            field(FbBare; Rec."Entry No.") { ApplicationArea = All; }
+                            field(FbLocked; Rec."Locked Field") { ApplicationArea = All; }
+                            field(FbDeclared; Rec."Entry No.") { ApplicationArea = All; Editable = false; }
+                        }
+                    }
+                }
+            }
+            """;
+
+        ParseAlTableSource(Al);
+        ParseAlSource("TryParsePageFile", Al);
+        try
+        {
+            var rows = AllKnownPageControlFieldRows()
+                .Where(r => r.PageNo == 90341)
+                .ToDictionary(r => r.ControlName, r => r.Editable);
+
+            Assert.True(rows.Count >= 3,
+                $"expected page 90341's controls to be enumerated; got {rows.Count} row(s). "
+                + "The AL-parsed fallback path did not produce this page's rows at all.");
+
+            // Positive: an undeclared Editable on a field that declares none resolves to
+            // "True" — BC's Boolean.ToString, not the lower-case "true" this path used to
+            // substitute. This assertion is what a re-introduced `?? "true"` fails.
+            Assert.Equal("True", rows["FbBare"]);
+
+            // The field is consulted, not a constant returned: the same undeclared control
+            // over a field declared Editable = false answers "False".
+            Assert.Equal("False", rows["FbLocked"]);
+
+            // Negative: a declared value survives verbatim, lower-case as written.
+            Assert.Equal("false", rows["FbDeclared"]);
+        }
+        finally
+        {
+            RemoveParsedPage(90341);
+            RemoveFromDict("_parsedTables", 90340);
+            InvalidatePageControlFieldRowCache();
+        }
+    }
+
+    /// <summary>
+    /// Every row the virtual table would report, from the real builder
+    /// (<c>EnumerateKnownPageControlFields</c>) — so the AL-parsed and dependency branches are
+    /// exercised as the populate path runs them, not as a helper called in isolation.
+    /// </summary>
+    private static List<(int PageNo, string ControlName, string Editable)> AllKnownPageControlFieldRows()
+    {
+        var m = typeof(AlRunner.Patches.RecordPatches).GetMethod("EnumerateKnownPageControlFields",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "RecordPatches.EnumerateKnownPageControlFields not found.");
+
+        InvalidatePageControlFieldRowCache();
+        var raw = (System.Collections.IEnumerable)m.Invoke(null, null)!;
+        var view = new List<(int, string, string)>();
+        foreach (var row in raw)
+        {
+            var t = row.GetType();
+            view.Add(((int)t.GetProperty("PageNo")!.GetValue(row)!,
+                      (string)t.GetProperty("ControlName")!.GetValue(row)!,
+                      (string)t.GetProperty("Editable")!.GetValue(row)!));
+        }
+        return view;
+    }
+
+    /// <summary>
+    /// Drop the memoised row list. It is keyed on (registration epoch, parsed-page count), and
+    /// removing a page in the finally block above leaves that count where it started — so
+    /// without this the NEXT caller is served this test's rows.
+    /// </summary>
+    private static void InvalidatePageControlFieldRowCache()
+    {
+        var f = typeof(AlRunner.Patches.RecordPatches).GetField("_pageControlFieldRows",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        f?.SetValue(null, null);
+    }
+
+    private static string SolveParsedEditable(string? declared, bool? fieldEditable)
+    {
+        var m = typeof(AlRunner.Patches.RecordPatches).GetMethod("SolveParsedControlEditable",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "RecordPatches.SolveParsedControlEditable not found — #3653's fold onto the "
+                + "AL-parsed and dependency paths has been renamed or removed.");
+        return (string)m.Invoke(null, new object?[] { declared, fieldEditable })!;
+    }
+
+    /// <summary>
+    /// Emit the main fixture AND drive the AL source parser over it, so
+    /// <c>GetOrBuildNCLMetaTable</c> can resolve the bound field. A bare
+    /// <see cref="EmitAndReadDocument"/> captures the document but leaves
+    /// <c>_parsedTables</c> empty, and SolveEditable's field branch would then see a null
+    /// field and answer True by its OTHER arm — passing for the wrong reason.
+    /// </summary>
+    private void EmitMainFixtureThroughTheParser()
+    {
+        EmitAndReadDocument();
+        ParseAlSource("TryParsePageFile", FixtureAl);
+        ParseAlTableSource(FixtureAl);
+    }
+
+    private static void ParseAlTableSource(string source)
+    {
+        var m = typeof(AlRunner.Patches.RecordPatches).GetMethod("TryParseTableFile",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?? throw new InvalidOperationException("RecordPatches.TryParseTableFile not found.");
+        m.Invoke(null, new object?[] { source, null });
     }
 
     [SkippableFact]
@@ -524,12 +782,14 @@ public sealed class PageControlFieldDocumentTests : IDisposable
             int I(string n) => (int)t.GetProperty(n)!.GetValue(row)!;
             view.Add(new PageControlFieldRowView(
                 I("ControlId"), S("ControlName"), I("TableNo"), I("FieldNo"),
-                S("SourceExpression"), I("Sequence")));
+                S("SourceExpression"), I("Sequence"),
+                S("Enabled"), S("Editable"), S("Visible")));
         }
         return view;
     }
 
     private sealed record PageControlFieldRowView(
         int ControlId, string ControlName, int TableNo, int FieldNo,
-        string SourceExpression, int Sequence);
+        string SourceExpression, int Sequence,
+        string Enabled, string Editable, string Visible);
 }

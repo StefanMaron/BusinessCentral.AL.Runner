@@ -129,6 +129,27 @@ public static partial class RecordPatches
         };
     }
 
+    /// <summary>
+    /// <c>Editable</c> for a control whose source is AL text or a dependency's symbol file,
+    /// rather than BC's emitted document. Same rules as
+    /// <c>SolveDocumentControlEditable</c> — see that method for the mechanism and the tier
+    /// verdict behind it (#3653) — reduced to the two inputs these paths have.
+    ///
+    /// <para><paramref name="declared"/> is null when the control declares no Editable, which
+    /// is the state BC's solver resolves; <paramref name="fieldEditable"/> is the bound
+    /// field's own declared Editable, itself null when the FIELD declares none, and null on
+    /// both counts means true.</para>
+    ///
+    /// <para>Neither of BC's other two rules is reachable from here: these paths carry no
+    /// <c>ExpressionIsAssignable</c> and no page-level <c>Editable</c>, so a control that BC
+    /// would force to False through either can only be reached on the document path. That is
+    /// a narrower answer rather than a wrong one — a page served from these paths has no
+    /// document, so there is nothing to read it from — and it is why this is a separate
+    /// method instead of a call into the document one.</para>
+    /// </summary>
+    private static string SolveParsedControlEditable(string? declared, bool? fieldEditable)
+        => declared ?? (fieldEditable ?? true).ToString(System.Globalization.CultureInfo.InvariantCulture);
+
     private static List<PageControlFieldRow> EnumerateKnownPageControlFields()
     {
         var generation = (BcAppRegistrationEpoch, _parsedPages.Count);
@@ -167,7 +188,14 @@ public static partial class RecordPatches
                     rows.Add(new PageControlFieldRow(
                         page.Id, c.ControlId, c.ControlName,
                         pField != null ? tableId : 0, pField?.FieldId ?? 0,
-                        c.EnabledExpr ?? "true", c.EditableExpr ?? "true", c.VisibleExpr ?? "true",
+                        c.EnabledExpr ?? "true",
+                        // #3653 — the same solver the document path runs, for the same reason
+                        // #3631 gave for Sequence: one column may not mean two different
+                        // things depending on which path served the page, because AL cannot
+                        // see which it got. `?? "true"` here was the lower-case attribute
+                        // default; BC's SolveEditable produces "True"/"False".
+                        SolveParsedControlEditable(c.EditableExpr, pField?.Editable),
+                        c.VisibleExpr ?? "true",
                         c.SourceExpressionText, string.Empty, c.Sequence));
                 }
             }
@@ -187,7 +215,17 @@ public static partial class RecordPatches
                     var (tableNo, fieldNo) = ResolveDependencyControlField(c.SourceExpression, symbol.SourceTableId, symTable);
                     rows.Add(new PageControlFieldRow(
                         symbol.Id, c.Id, c.Name, tableNo, fieldNo,
-                        c.EnabledExpr ?? "true", c.EditableExpr ?? "true", c.VisibleExpr ?? "true",
+                        c.EnabledExpr ?? "true",
+                        // #3653, same statement as the source-parsed path above. The bound
+                        // field comes from the dependency's own parsed table when
+                        // ResolveDependencyControlField resolved one; an unresolved control
+                        // takes SolveEditable's no-field arm and answers True, which is BC's
+                        // `field?.Editable ?? true`.
+                        SolveParsedControlEditable(c.EditableExpr,
+                            fieldNo != 0
+                                ? symTable?.Fields.FirstOrDefault(f => f.FieldId == fieldNo)?.Editable
+                                : null),
+                        c.VisibleExpr ?? "true",
                         // A dependency page's SymbolReference.json does not state the source
                         // field's option members, and DependencyPageMetadataXml.EmitPageXml
                         // reconstructs no <Controls> element to read them from, so this stays
