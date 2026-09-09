@@ -1,0 +1,19 @@
+{
+  "id": "c4e81b76-2d95-4f3a-8b61-9e07a5d3c218",
+  "name": "Runner Extras - Precompiled Implicit Return",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3347: a PRECOMPILED AL method declared Boolean whose body has no exit(<value>) must return false. Codeunit 2000 'Time Series Management'.GetMLForecastCredentials returned true, which is why MS Tests-Cash Flow Codeunit135203's four Azure-ML tests saw the quota error instead of the missing-credentials error.",
+  "description": "These tests do not live in the al-language corpus, and the reason was measured rather than assumed. The claim -- AL's implicit default return -- IS plain BC behaviour and does belong upstream, so it was written there too: StefanMaron/BusinessCentral.AL.Language.Tests#316 pins eight variants of the shape, including cross-codeunit calls that discard a returned true. All eight PASS on the runner. That is the point: the corpus compiles its objects from source, and the runner's own emit of this shape is correct in every variant AL can express, so a corpus test cannot reach the defect. What is broken is the runner's execution of Microsoft's PRECOMPILED copy of the same shape, and the only way to name a precompiled method is to call one -- which is what this bundle does. The isolation is recorded on the issue: a locally-compiled mirror of Codeunit 2000's exact body (same signature, same discarded cross-codeunit call, same byref write) returns false, while BC's precompiled original returns true, in the same run, with both producing the identical byref output.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65900,
+      "to": 65909
+    }
+  ],
+  "platform": "27.0.0.0",
+  "application": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}
