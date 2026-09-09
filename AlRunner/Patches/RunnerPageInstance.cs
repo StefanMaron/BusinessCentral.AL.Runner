@@ -1068,7 +1068,7 @@ internal sealed partial class RunnerPageInstance
         // the measured shapes and the grammar.
         if (PageControlExpression.TryEvaluateBoolean(
                 raw,
-                atOpen ? ResolveExpressionIdentifierAtOpen : ResolveExpressionIdentifier,
+                atOpen ? ResolveExpressionIdentifierAtOpen : ResolveExpressionIdentifierLive,
                 out var evaluated, out var why))
             return evaluated;
 
@@ -1080,23 +1080,6 @@ internal sealed partial class RunnerPageInstance
             $"the property is bound to expression '{raw}', which cannot be evaluated: {why}");
     }
 
-    /// <summary>
-    /// Resolve one identifier inside a control-property expression.
-    ///
-    /// Registered source expressions only. A page global is registered in the page's
-    /// source-expression table under the emitted name the metadata carries, and that is the one
-    /// source this resolves against.
-    ///
-    /// A source-table FIELD reference is deliberately NOT resolved here, even though the metadata
-    /// carries the field name and the record is right there. Measured on all 8 BC versions
-    /// (corpus PR #125's measurement pass): real BC evaluates such an expression as if the field
-    /// held its type default, whatever row the page is on — opening a card on a row with
-    /// Flag = true and on a row with Flag = false produced byte-identical readings of
-    /// `Visible = Rec.Flag`, `Visible = not Rec.Flag` and `Visible = Rec.Value &lt;&gt; ''`.
-    /// Reading the live record would therefore answer something BC does not answer, and a value
-    /// this runner made up is worse than the loud refusal the caller raises instead
-    /// (.claude/rules/loud-failures.md). Issue #2596 tracks it, with the transcripts.
-    /// </summary>
     /// <summary>
     /// The same resolution as <see cref="ResolveExpressionIdentifier"/>, but answering from the
     /// open-time snapshot. Used only for a control's own Visible — the one property real BC
@@ -1119,6 +1102,103 @@ internal sealed partial class RunnerPageInstance
 
         value = null;
         return false;
+    }
+
+    /// <summary>
+    /// Identifier resolution for the LIVE properties — an action's Enabled and Visible, and a
+    /// control's Enabled and Editable. A registered source expression first, then a field on the
+    /// page's source table, read off the record the page is currently on.
+    ///
+    /// <para>Measured on BC 28.4.53241.0 (container, test toolkit) and pinned upstream by corpus
+    /// codeunit 60436 "TPAE Tests": all four of those properties follow the current row. An action
+    /// declaring <c>Enabled = Rec.Flag</c> reports true and runs its OnAction on a row whose Flag
+    /// is true, and reports false and skips it on a row whose Flag is false; a control's Enabled
+    /// and Editable answer the same way. A control's own <c>Visible</c> does NOT — it reads the
+    /// field's type default on every row (corpus codeunit 60755) — which is why that one property
+    /// goes through <see cref="ResolveExpressionIdentifierAtOpen"/> and never reaches here.</para>
+    ///
+    /// <para>Before this, every such expression raised RunnerOutOfScopeException, which #3693
+    /// turned into an un-invokable action — issue #3730.</para>
+    ///
+    /// <para>Ordering: a registered source expression is tried before a source-table field, so a
+    /// page global sharing a field's name shadows the field. AL tells them apart by the
+    /// <c>Rec.</c> prefix, which the metadata drops; whether BC resolves the same way here is
+    /// UNMEASURED.</para>
+    /// </summary>
+    private bool ResolveExpressionIdentifierLive(string name, bool quoted, out object? value)
+    {
+        if (ResolveExpressionIdentifier(name, quoted, out value)) return true;
+        return TryResolveSourceTableField(name, out value);
+    }
+
+    /// <summary>
+    /// One source-table field, by the name the metadata carries, off the record the page is on.
+    ///
+    /// <para>The value is the field's <c>ClientObject</c>: a Boolean arrives as <c>bool</c>, a
+    /// Text/Code as <c>string</c>, and an Option/Enum as its ORDINAL — which is the shape
+    /// PageControlExpression needs, because the compiler writes an option comparison into the
+    /// metadata with the member already lowered to a number (<c>Kind = 1</c>).</para>
+    ///
+    /// <para>False for a name the source table does not carry, false for a FlowField or
+    /// FlowFilter, and false for a value shape the expression evaluator cannot compare, so the
+    /// caller raises its refusal naming the expression rather than inventing an answer
+    /// (.claude/rules/loud-failures.md).</para>
+    /// </summary>
+    private bool TryResolveSourceTableField(string name, out object? value)
+    {
+        value = null;
+        if (_record?.MetaTable == null) return false;
+
+        foreach (var field in RecordPatches.GetAllFields(_record.MetaTable) ?? Enumerable.Empty<NCLMetaField>())
+        {
+            if (!string.Equals(field.FieldName, name, StringComparison.OrdinalIgnoreCase)) continue;
+
+            // GetAllFields is BC's NCLMetaTable.AllFields, FlowFields and FlowFilters included.
+            // An UNCALCULATED FlowField's ClientObject is its type default, which narrows
+            // cleanly below — so without this the runner would answer Enabled = false on a row
+            // whose CalcFormula holds. What BC answers for a FlowField-bound live property is
+            // unmeasured (no corpus arm covers it), so refuse rather than calculate: see
+            // AlRunner.Tests/LivePropertyExpressionTests.cs's FlowField arm.
+            if (field.FieldClass != Microsoft.Dynamics.Nav.Types.Metadata.FieldClass.Normal)
+                return false;
+
+            return TryComparableFieldValue(_record.GetFieldValue(field.FieldNo)?.ClientObject, out value);
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// A field's <c>ClientObject</c> narrowed to the shapes PageControlExpression's Compare can
+    /// order: Boolean, Text/Code, and the numeric family — which is also where an Option/Enum
+    /// arrives, as its ordinal, since the compiler lowers a member comparison to a number
+    /// (<c>Kind = 1</c>).
+    ///
+    /// <para>Anything else — a Guid, a Blob, a Media, a DateFormula — is refused rather than
+    /// passed through, so the caller raises its refusal naming the expression instead of handing
+    /// the evaluator an operand it would have to invent an ordering for
+    /// (.claude/rules/loud-failures.md). Internal so AlRunner.Tests can pin the narrowing without
+    /// a live NavForm.</para>
+    /// </summary>
+    internal static bool TryComparableFieldValue(object? clientObject, out object? value)
+    {
+        switch (clientObject)
+        {
+            case bool:
+            case string:
+            case int:
+            case long:
+            case short:
+            case byte:
+            case decimal:
+            case double:
+            case float:
+                value = clientObject;
+                return true;
+            default:
+                value = null;
+                return false;
+        }
     }
 
     /// <summary>
