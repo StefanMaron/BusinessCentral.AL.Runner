@@ -323,7 +323,8 @@ public static class ServerProtocol
         double? wallSeconds = null,
         ServerSelection? selection = null,
         IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null,
-        IReadOnlyDictionary<string, List<Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null)
+        IReadOnlyDictionary<string, List<Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null,
+        IReadOnlyList<CompanyInitFailure>? companyInitFailures = null)
     {
         var payload = new
         {
@@ -350,6 +351,7 @@ public static class ServerProtocol
                 : null,
             coverage = ToStatementTableWire(statementTable),
             perTestCoverage = ToPerTestCoverageWire(perTestStatementTable),
+            companyInitFailures = ToCompanyInitWire(companyInitFailures),
             wallSeconds,
             protocolVersion = 2,
         };
@@ -370,7 +372,8 @@ public static class ServerProtocol
         IReadOnlyList<CompilationErrorGroup>? compilationErrors = null,
         ServerSelection? selection = null,
         IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null,
-        IReadOnlyDictionary<string, List<Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null)
+        IReadOnlyDictionary<string, List<Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null,
+        IReadOnlyList<CompanyInitFailure>? companyInitFailures = null)
     {
         var payload = new
         {
@@ -391,9 +394,27 @@ public static class ServerProtocol
                 : null,
             coverage = ToStatementTableWire(statementTable),
             perTestCoverage = ToPerTestCoverageWire(perTestStatementTable),
+            companyInitFailures = ToCompanyInitWire(companyInitFailures),
         };
         return JsonSerializer.Serialize(payload, Opts);
     }
+
+    // #3561: the company-initialization condition on a server response, in the same field shape
+    // the CLI's --output-json document already uses (codeunitId / codeunit / exceptionType /
+    // message / count / accepted). Null-omitted, and an EMPTY list omits too — unlike coverage
+    // there is no "asked and found nothing" state to distinguish: no aborts is no condition.
+    private static IEnumerable<object>? ToCompanyInitWire(IReadOnlyList<CompanyInitFailure>? failures)
+        => failures is { Count: > 0 }
+            ? failures.Select(f => (object)new
+            {
+                codeunitId = f.CodeunitId,
+                codeunit = f.CodeunitName,
+                exceptionType = f.ExceptionType,
+                message = f.Message,
+                count = f.Count,
+                accepted = f.AcceptedReason,
+            })
+            : null;
 
     // Groups a flat statement list into the wire's per-file shape (issue #2042):
     // {file, statements:[{id, scope, line, column, endLine, endColumn, hits}]}.

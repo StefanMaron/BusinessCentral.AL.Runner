@@ -16,7 +16,22 @@ public enum BucketStage { CompileFailed, ExecuteFailed, Ran }
 /// docs/partial-company-initialization.md.
 /// </summary>
 public sealed record CompanyInitFailure(int CodeunitId, string CodeunitName,
-                                        string ExceptionType, string Message);
+                                        string ExceptionType, string Message,
+                                        // #3561: how many app groups reported THIS abort. The
+                                        // dependency-company-baseline carry re-reports on every
+                                        // cache HIT — deliberately, each group did run against the
+                                        // partial company — so N groups sharing one closure used to
+                                        // print N identical lines. Collapsed at drain time by
+                                        // Reporter.FinalizeCompanyInitFailures; 1 for an
+                                        // uncollapsed abort, so an existing caller sees no change.
+                                        int Count = 1,
+                                        // #3561: non-null when the run's expectations manifest
+                                        // declares this abort accepted (Mode =
+                                        // accept-partial-company-init). The condition is still
+                                        // printed and still recorded — only the exit-code
+                                        // escalation is suppressed. Carries the entry's free-text
+                                        // Reason, which is what the summary prints.
+                                        string? AcceptedReason = null);
 
 public sealed record BucketResult(string BucketPath, BucketStage Stage,
                                    IReadOnlyList<string> CompileErrors,
@@ -108,14 +123,93 @@ public static class Reporter
     /// condition differently — the reason IsSuspect exists one concept over.
     /// </summary>
     public static IReadOnlyList<CompanyInitFailure> CompanyInitFailures(IReadOnlyList<BucketResult> buckets)
-        => buckets
-            .SelectMany(b => b.CompanyInitFailures ?? Array.Empty<CompanyInitFailure>())
-            .ToList();
+        // #3561: collapsed ACROSS buckets as well as within one. The dependency-company baseline
+        // is cached per dependency set, not per bundle, so the app groups re-reporting one abort
+        // on a cache HIT are routinely in different buckets — collapsing only at the drain site
+        // would still print one abort as N identical lines. --out is deliberately NOT collapsed
+        // this way: it is a per-bucket triage worklist and each bucket's record belongs to it.
+        => Collapse(buckets.SelectMany(b => b.CompanyInitFailures ?? Array.Empty<CompanyInitFailure>()));
 
-    /// <summary>One abort, rendered the same way wherever it is printed.</summary>
+    /// <summary>
+    /// Fold aborts that say the same thing into one record carrying the total app-group count.
+    /// "The same thing" is the whole of what the accumulator records: codeunit id, codeunit
+    /// name, exception type and message. The app id is not part of the key because the
+    /// accumulator holds none and the codeunit it records is always Base App's codeunit 2, so an
+    /// app dimension would be constant today and invented rather than measured (#3561).
+    /// </summary>
+    private static IReadOnlyList<CompanyInitFailure> Collapse(IEnumerable<CompanyInitFailure> failures)
+    {
+        var collapsed = new List<CompanyInitFailure>();
+        var index = new Dictionary<(int, string, string, string), int>();
+        foreach (var f in failures)
+        {
+            var key = (f.CodeunitId, f.CodeunitName, f.ExceptionType, f.Message);
+            if (index.TryGetValue(key, out var at))
+            {
+                collapsed[at] = collapsed[at] with
+                {
+                    Count = collapsed[at].Count + f.Count,
+                    // An acceptance is a property of the codeunit, so every member of a
+                    // collapsed group carries the same answer; keeping the first non-null is
+                    // just defensive about a group whose members were marked in different
+                    // processes (a resumed run merges carried buckets).
+                    AcceptedReason = collapsed[at].AcceptedReason ?? f.AcceptedReason,
+                };
+                continue;
+            }
+            index[key] = collapsed.Count;
+            collapsed.Add(f);
+        }
+        return collapsed;
+    }
+
+    /// <summary>
+    /// One abort, rendered the same way wherever it is printed. The two suffixes are #3561: how
+    /// many app groups reported this same abort (omitted at 1), and the manifest reason that
+    /// accepted it (omitted when nothing did). Both are part of the one rendering so the
+    /// summary, the JUnit comment and a reader of either cannot see different facts.
+    /// </summary>
     public static string DescribeCompanyInitFailure(CompanyInitFailure f)
         => $"codeunit {f.CodeunitId} \"{f.CodeunitName}\" did not complete: "
-            + $"{f.ExceptionType}: {f.Message}";
+            + $"{f.ExceptionType}: {f.Message}"
+            + (f.Count > 1 ? $" ×{f.Count} app group(s)" : "")
+            + (f.AcceptedReason != null ? $" [accepted: {f.AcceptedReason}]" : "");
+
+    /// <summary>
+    /// Turn what the accumulator drained into what the run reports (#3561). Called from BOTH
+    /// drain sites — the CLI bucket loop and the server per-request handler — so the two cannot
+    /// describe the same condition differently.
+    ///
+    /// <para>Two things happen here. Identical aborts are COLLAPSED into one record carrying a
+    /// count: N app groups sharing one dependency-company baseline each re-report the abort on
+    /// their cache HIT (deliberately — each really did run against the partial company), which
+    /// used to print N identical lines and emit N identical JSON entries. "Identical" is the
+    /// whole of what the accumulator records: codeunit id, codeunit name, exception type and
+    /// message. The app id is not part of the key because the accumulator holds no app id and
+    /// the codeunit it records is always Base App's codeunit 2, so an app dimension would be
+    /// constant today and invented rather than measured.</para>
+    ///
+    /// <para>And an abort the manifest ACCEPTS is marked with the entry's reason. That marking
+    /// is the only thing that suppresses the exit 0 → 2 escalation in Program.cs; every
+    /// reporting surface still carries the condition.</para>
+    /// </summary>
+    public static IReadOnlyList<CompanyInitFailure> FinalizeCompanyInitFailures(
+        IReadOnlyList<CompanyInitFailure> drained, Infrastructure.ExpectationManifest? manifest)
+    {
+        if (drained.Count == 0) return Array.Empty<CompanyInitFailure>();
+        return Collapse(drained.Select(f => f with
+        {
+            AcceptedReason = manifest?.FindCompanyInitAcceptance(f.CodeunitId, f.CodeunitName)?.Reason,
+        }));
+    }
+
+    /// <summary>
+    /// The aborts that make the run unclean (#3561): everything the manifest did not accept.
+    /// The escalation reads this; every reporting surface reads the whole list.
+    /// </summary>
+    public static IReadOnlyList<CompanyInitFailure> UnacceptedCompanyInitFailures(
+        IReadOnlyList<BucketResult> buckets)
+        => CompanyInitFailures(buckets).Where(f => f.AcceptedReason == null).ToList();
 
     /// <summary>Whether anything in this bucket is marked — i.e. whether the notes that
     /// introduce the marker have anything below them to introduce.</summary>
@@ -372,10 +466,16 @@ public static class Reporter
         if (companyInitFailures.Count > 0)
         {
             w.WriteLine("-----------------------------------------------------------------");
-            w.WriteLine($"Company initialization: INCOMPLETE ({companyInitFailures.Count} abort(s)) — "
+            // #3561: the count is app groups, not lines — identical aborts are collapsed into one
+            // line carrying its own ×N, so the header keeps saying how many app groups ran against
+            // a partial company while the body stops repeating itself.
+            w.WriteLine($"Company initialization: INCOMPLETE ({companyInitFailures.Sum(f => f.Count)} abort(s)) — "
                 + "the tests above ran against a PARTIALLY initialized company.");
             foreach (var f in companyInitFailures)
                 w.WriteLine($"  {DescribeCompanyInitFailure(f)}");
+            if (companyInitFailures.All(f => f.AcceptedReason != null))
+                w.WriteLine("  → accepted by tests/expectations (accept-partial-company-init), so the run "
+                    + "still exits on what the tests earned. See docs/partial-company-initialization.md.");
             w.WriteLine("  → setup rows the codeunit had not reached are missing, so a failure "
                 + "reading one is caused by this, not by the AL under test.");
         }
@@ -681,6 +781,12 @@ public static class Reporter
                     codeunit = f.CodeunitName,
                     exceptionType = f.ExceptionType,
                     message = f.Message,
+                    // #3561: how many app groups reported this same abort, and the manifest
+                    // reason accepting it. `count` is always present so a consumer never has to
+                    // decide whether a missing field means one or none; `accepted` is
+                    // null-omitted, so a document from a run with no acceptance is unchanged.
+                    count = f.Count,
+                    accepted = f.AcceptedReason,
                 }).ToList()
                 : null,
             // #1936: same "real wall clock, not just the measured phases" gap as the
@@ -745,6 +851,9 @@ public static class Reporter
                         codeunit = f.CodeunitName,
                         exceptionType = f.ExceptionType,
                         message = f.Message,
+                        // #3561 — see the JSON document's own fields.
+                        count = f.Count,
+                        accepted = f.AcceptedReason,
                         classification = "company-init/partial",
                     });
                 }

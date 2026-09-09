@@ -29,6 +29,7 @@
 //   presents a half-initialized company, so a run carrying one is in a state no service tier
 //   can produce, and every reporting surface says so — including the exit code. The decision,
 //   the BC citation and the exit-code rule are in docs/partial-company-initialization.md.
+using System.Linq;
 using System.Reflection;
 
 namespace AlRunner;
@@ -48,6 +49,15 @@ internal static class CompanyInitializer
     // came through the formatting below rather than a fixed string.
     private const string InjectFailureEnvVar = "AL_RUNNER_TEST_FAIL_COMPANY_INIT";
 
+    // Test-only seam, #3561, and the same justification as the one above: the drift half of
+    // accept-partial-company-init fires when the named codeunit RAN TO COMPLETION, and the only
+    // way to complete codeunit 2 for real is to load the Base Application floor — which costs
+    // ~70s per invocation and is forbidden in C# test fixtures
+    // (.claude/rules/no-base-app-in-csharp-tests.md). Set to 1, this stands in for "codeunit 2
+    // was found and returned normally": the completion is recorded exactly where the real one
+    // is, so the drift check under test is the real one. No shipped code path sets it.
+    private const string InjectCompletedEnvVar = "AL_RUNNER_TEST_COMPANY_INIT_COMPLETED";
+
     private static bool _ranForThisBundle;
 
     // Run-wide, NOT per app group: ResetForNewBundle runs once per app group and a bucket has
@@ -57,6 +67,18 @@ internal static class CompanyInitializer
     private static readonly object _failuresLock = new();
 
     internal static void ResetForNewBundle() => _ranForThisBundle = false;
+
+    // #3561: the initialization codeunits that ran to COMPLETION in this process, which is what
+    // makes an accept-partial-company-init entry drift rather than merely unused. Never drained:
+    // an entry is judged against the whole run, and under --server against the whole session,
+    // where "this codeunit initialized cleanly" stays true for every later request.
+    private static readonly HashSet<(int Id, string Name)> _completed = new();
+
+    /// <summary>Initialization codeunits that ran to completion in this process (#3561).</summary>
+    internal static IReadOnlyCollection<(int Id, string Name)> CompletedInitializations
+    {
+        get { lock (_failuresLock) return _completed.ToArray(); }
+    }
 
     /// <summary>Everything this run has recorded so far, removed from the accumulator.</summary>
     internal static IReadOnlyList<CompanyInitFailure> DrainFailures()
@@ -73,7 +95,7 @@ internal static class CompanyInitializer
     /// <summary>Discard what has been recorded. For tests that reuse one process.</summary>
     internal static void ResetFailuresForTests()
     {
-        lock (_failuresLock) _failures.Clear();
+        lock (_failuresLock) { _failures.Clear(); _completed.Clear(); }
         LastRecordedFailure = null;
     }
 
@@ -103,6 +125,15 @@ internal static class CompanyInitializer
         LastRecordedFailure = null;
 
         var injected = Environment.GetEnvironmentVariable(InjectFailureEnvVar);
+        // #3561: stands in for a codeunit 2 that completed — see InjectCompletedEnvVar. Ignored
+        // when an abort is injected too, because a run cannot both abort and complete and the
+        // abort is the more specific instruction.
+        if (string.IsNullOrEmpty(injected)
+            && Environment.GetEnvironmentVariable(InjectCompletedEnvVar) == "1")
+        {
+            NoteCompleted();
+            return;
+        }
         // The exists-check is gated by the seam deliberately: the seam stands in for "codeunit
         // 2 was found and threw", and whether Base App is loaded at all is upstream of
         // everything this path reports. Gating it the other way would force every test of the
@@ -119,6 +150,7 @@ internal static class CompanyInitializer
                 throw new InvalidOperationException(injected);
             BcRuntime.NavCodeunit_RunCodeunit(
                 Microsoft.Dynamics.Nav.Types.DataError.ThrowError, CompanyInitializeCodeunitId, null);
+            NoteCompleted();
             PerfTrace.Log("CompanyInitializer: ran codeunit 2 Company-Initialize");
         }
         catch (Exception ex)
@@ -130,6 +162,11 @@ internal static class CompanyInitializer
             LastRecordedFailure = failure;
             Report(failure);
         }
+    }
+
+    private static void NoteCompleted()
+    {
+        lock (_failuresLock) _completed.Add((CompanyInitializeCodeunitId, CompanyInitializeCodeunitName));
     }
 
     private static void Report(CompanyInitFailure failure)

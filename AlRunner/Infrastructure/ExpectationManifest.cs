@@ -40,6 +40,15 @@ public enum ExpectationMode
     ExpectDivergence,
     /// <summary>Test must not be invoked.</summary>
     Skip,
+    /// <summary>
+    /// NOT a test expectation (#3561). Declares that this project knowingly accepts a company
+    /// initialization that did not complete for the named codeunit, so the run records the
+    /// condition everywhere it already did but does not escalate exit 0 to 2. The alternative
+    /// was --no-strict-exit, which forces 0 for a failing test, a compile failure and a lost
+    /// output file too. <c>Reason</c> is mandatory free text; <c>Method</c> must be "*" because
+    /// there is no test to name. See docs/partial-company-initialization.md.
+    /// </summary>
+    AcceptPartialCompanyInit,
 }
 
 /// <summary>
@@ -106,8 +115,33 @@ public sealed class ExpectationManifest
     private ExpectationManifest(IReadOnlyList<ExpectationEntry> entries)
     {
         Entries = entries;
-        _byName = entries.ToDictionary(e => (e.CodeunitName, e.Method), e => e);
+        // #3561: an accept-partial-company-init entry names an INSTALL codeunit, not a test, so
+        // it must never enter the test-lookup table (nothing would ever look it up) nor the
+        // match audit below, where --expectations-require-match would report it as matching no
+        // test and fail the run with exit 5 for an entry that is entirely correct.
+        _byName = entries
+            .Where(e => e.Mode != ExpectationMode.AcceptPartialCompanyInit)
+            .ToDictionary(e => (e.CodeunitName, e.Method), e => e);
+        CompanyInitAcceptances = entries
+            .Where(e => e.Mode == ExpectationMode.AcceptPartialCompanyInit)
+            .ToList();
     }
+
+    /// <summary>
+    /// The accept-partial-company-init entries (#3561), which are run-level declarations rather
+    /// than test expectations. Empty in every manifest that does not use the mode.
+    /// </summary>
+    public IReadOnlyList<ExpectationEntry> CompanyInitAcceptances { get; } = Array.Empty<ExpectationEntry>();
+
+    /// <summary>
+    /// The entry accepting an abort of this initialization codeunit, or null (#3561). Matched on
+    /// the codeunit id AND the name the accumulator recorded, so an entry naming a different
+    /// codeunit cannot silently accept this one.
+    /// </summary>
+    public ExpectationEntry? FindCompanyInitAcceptance(int codeunitId, string codeunitName)
+        => CompanyInitAcceptances.FirstOrDefault(
+            e => e.CodeunitId == codeunitId
+                && string.Equals(e.CodeunitName, codeunitName, StringComparison.Ordinal));
 
     /// <summary>
     /// Record a test codeunit this run loaded. Called from the executor at discovery
@@ -189,6 +223,9 @@ public sealed class ExpectationManifest
         var unmatched = new List<UnmatchedExpectation>();
         foreach (var entry in Entries)
         {
+            // #3561: not a test expectation - see the constructor. Its own drift check is the
+            // end-of-run one in Program.cs ("the codeunit completed, remove the entry").
+            if (entry.Mode == ExpectationMode.AcceptPartialCompanyInit) continue;
             // Mirrors LookupExpectation: entries may be written against the AL object
             // name OR the CLR type name, and "*" matches every test method.
             var named = discovered
@@ -359,9 +396,10 @@ public sealed class ExpectationManifest
             "expect-fail-known-gap" => ExpectationMode.ExpectFailKnownGap,
             "expect-divergence" => ExpectationMode.ExpectDivergence,
             "skip" => ExpectationMode.Skip,
+            "accept-partial-company-init" => ExpectationMode.AcceptPartialCompanyInit,
             _ => throw new InvalidOperationException(
                 $"{relName}[{idx}] ({codeunitName}.{method}): unknown Mode '{modeRaw}' — must be expect-oos, "
-                + "expect-fail-known-gap, expect-divergence, or skip"),
+                + "expect-fail-known-gap, expect-divergence, skip, or accept-partial-company-init"),
         };
 
         if (mode == ExpectationMode.ExpectOos && string.IsNullOrWhiteSpace(reason))
@@ -388,9 +426,46 @@ public sealed class ExpectationManifest
                     + "an intended divergence has no open work to link. Use expect-fail-known-gap if it is a gap.");
         }
 
+        if (mode == ExpectationMode.AcceptPartialCompanyInit)
+        {
+            // #3561. The entry buys a suppressed exit-code escalation, so what it must carry is
+            // WHY that is acceptable here — free text a reviewer reads, refused when it is a
+            // placeholder with nothing behind it. Same fixed token list as the Corpus-NA reason
+            // in .github/scripts/check_corpus_linkage.sh: mechanical, not a quality bar.
+            if (string.IsNullOrWhiteSpace(reason))
+                throw new InvalidOperationException(
+                    $"{relName}[{idx}] ({codeunitName}): Mode=accept-partial-company-init requires a "
+                    + "non-empty 'Reason' saying why a partially initialized company is accepted here");
+            if (IsPlaceholderReason(reason!))
+                throw new InvalidOperationException(
+                    $"{relName}[{idx}] ({codeunitName}): Mode=accept-partial-company-init 'Reason' is a "
+                    + $"placeholder ('{reason}'). Say why this project accepts a company real BC cannot "
+                    + "produce — the reason is what a reviewer reads, and it is printed in the summary.");
+            if (method != "*")
+                throw new InvalidOperationException(
+                    $"{relName}[{idx}] ({codeunitName}): Mode=accept-partial-company-init names an "
+                    + $"initialization codeunit, not a test, so 'Method' must be \"*\" (got '{method}')");
+            if (!string.IsNullOrWhiteSpace(issue))
+                throw new InvalidOperationException(
+                    $"{relName}[{idx}] ({codeunitName}): Mode=accept-partial-company-init must not carry "
+                    + "'Issue' — an accepted condition is a standing decision, not tracked work. Fix the "
+                    + "abort, or leave the entry's Reason pointing at your own tracking issue.");
+        }
+
         return new ExpectationEntry(
             codeunitId, codeunitName, method, mode, reason, issue, docAnchor, note, relName);
     }
+
+    /// <summary>
+    /// A reason with nothing behind it (#3561). The list is the one
+    /// <c>.github/scripts/check_corpus_linkage.sh</c> refuses for a <c>Corpus-NA:</c> reason,
+    /// mirrored deliberately so the two refusals cannot drift into different answers.
+    /// </summary>
+    internal static bool IsPlaceholderReason(string reason) => reason.Trim().ToLowerInvariant() switch
+    {
+        "" or "n/a" or "na" or "none" or "no" or "-" or "--" or "." or "?" or "tbd" or "todo" or "x" => true,
+        _ => false,
+    };
 }
 
 /// <summary>
