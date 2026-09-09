@@ -152,7 +152,11 @@ public static partial class RecordPatches
             InstallFreshPermissionSetLookup(baseGroup, summaries);
 
             _permMetaPopulatedForCount = known.Count;
-            _permissionSetIdByName = null;   // the inventory just changed; rebuild lazily
+            // The inventory just changed; rebuild both directions lazily. They are derived
+            // from the same enumeration, so invalidating one without the other would leave
+            // a stale id->name answering alongside a fresh name->id.
+            _permissionSetIdByName = null;
+            _permissionSetNameById = null;
 
             if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_PERMMETA") == "1")
             {
@@ -630,11 +634,21 @@ public static partial class RecordPatches
         }
         SetProperty(mps, "Permissions", permissions);
 
+        // #3609: ids when BC's own document stated them, names otherwise. Ids are strictly
+        // better here — BuildIncludeList has to resolve a name through PermissionSetIdByName
+        // and DROPS what it cannot find, which an already-resolved id cannot hit.
         SetProperty(mps, "IncludedPermissionSets",
             BuildIncludeList(RequireBcProperty(_tMetaPermissionSet, "IncludedPermissionSets").PropertyType,
-                declaration.IncludedPermissionSets));
+                declaration.IncludedPermissionSets, declaration.IncludedPermissionSetIds));
+        // ExcludedPermissionSets was hardcoded null because the only route into this method
+        // stated no exclude edges: SymbolReference.json does not carry them, and Base
+        // Application declares the property on 0 of its 258 permission sets (re-measured for
+        // #3609 — the zero is a property of Base Application's AL, not of BC's emitter). BC's
+        // emitted document DOES state them, as ids, for anything the runner compiles from
+        // source, so that route fills the column and the precompiled route still passes null.
         SetProperty(mps, "ExcludedPermissionSets",
-            BuildIncludeList(RequireBcProperty(_tMetaPermissionSet, "ExcludedPermissionSets").PropertyType, null));
+            BuildIncludeList(RequireBcProperty(_tMetaPermissionSet, "ExcludedPermissionSets").PropertyType,
+                null, declaration.ExcludedPermissionSetIds));
 
         return mps;
     }
@@ -651,15 +665,40 @@ public static partial class RecordPatches
     /// version of this code assumed strings and failed loudly at <c>Add()</c> — the right
     /// failure, but only because it was checked at all.</para>
     /// </summary>
-    private static object BuildIncludeList(Type listType, IReadOnlyList<string>? names)
+    private static object BuildIncludeList(
+        Type listType, IReadOnlyList<string>? names, IReadOnlyList<int>? resolvedIds = null)
     {
         var list = (System.Collections.IList)Activator.CreateInstance(listType)!;
-        if (names == null || names.Count == 0) return list;
 
         var element = listType.IsGenericType ? listType.GetGenericArguments()[0] : typeof(string);
+
+        // #3609: BC's own document states these edges as object ids, so when they are present
+        // there is nothing to resolve and nothing that can be dropped by a failed lookup. Only
+        // the int element type can take them directly; for the other two shapes the id has to
+        // be turned back into the name BC declares them by, and a name that is not in this
+        // run's inventory is dropped exactly as the name route drops it.
+        if (resolvedIds is { Count: > 0 })
+        {
+            foreach (var id in resolvedIds)
+            {
+                if (element == typeof(int)) { list.Add(id); continue; }
+                var nameForId = PermissionSetNameById().TryGetValue(id, out var n) ? n : null;
+                if (nameForId == null)
+                {
+                    if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_PERMMETA") == "1")
+                        Console.Error.WriteLine(
+                            $"[perm-metadata] included/excluded permission set id {id} is not in this "
+                            + "run's inventory — dropped");
+                    continue;
+                }
+                AddIncludeListEntry(list, element, nameForId);
+            }
+            return list;
+        }
+
+        if (names == null || names.Count == 0) return list;
         foreach (var name in names)
         {
-            if (element == typeof(string)) { list.Add(name); continue; }
             if (element == typeof(int))
             {
                 if (PermissionSetIdByName().TryGetValue(name, out var id)) { list.Add(id); continue; }
@@ -668,18 +707,43 @@ public static partial class RecordPatches
                         $"[perm-metadata] included permission set '{name}' is not in this run's inventory — dropped");
                 continue;
             }
-            var ctor = element.GetConstructors()
-                .FirstOrDefault(c =>
-                {
-                    var ps = c.GetParameters();
-                    return ps.Length == 2 && ps[0].ParameterType == typeof(int) && ps[1].ParameterType == typeof(string);
-                });
-            if (ctor != null) { list.Add(ctor.Invoke(new object?[] { 30, name })); continue; }
-            throw PermissionMetadataBcShapeGap(
-                $"MetaPermissionSet include/exclude list element type {element.Name}",
-                "is not one this code knows how to fill — BC's permission-set metadata inventory cannot be populated");
+            AddIncludeListEntry(list, element, name);
         }
         return list;
+    }
+
+    /// <summary>
+    /// Add one include/exclude entry in whatever non-int element type BC declares — a bare
+    /// string, or the (int length, string value) code-like shape. Shared by the name route and
+    /// #3609's id route so the two cannot drift into filling the same list differently.
+    /// </summary>
+    private static void AddIncludeListEntry(System.Collections.IList list, Type element, string name)
+    {
+        if (element == typeof(string)) { list.Add(name); return; }
+        var ctor = element.GetConstructors()
+            .FirstOrDefault(c =>
+            {
+                var ps = c.GetParameters();
+                return ps.Length == 2 && ps[0].ParameterType == typeof(int) && ps[1].ParameterType == typeof(string);
+            });
+        if (ctor != null) { list.Add(ctor.Invoke(new object?[] { 30, name })); return; }
+        throw PermissionMetadataBcShapeGap(
+            $"MetaPermissionSet include/exclude list element type {element.Name}",
+            "is not one this code knows how to fill — BC's permission-set metadata inventory cannot be populated");
+    }
+
+    private static Dictionary<int, string>? _permissionSetNameById;
+
+    /// <summary>Object id -> role id, the inverse of <see cref="PermissionSetIdByName"/>, for
+    /// #3609's id route when BC declares the list in a non-int element type. Invalidated
+    /// alongside it whenever the inventory changes.</summary>
+    private static Dictionary<int, string> PermissionSetNameById()
+    {
+        if (_permissionSetNameById != null) return _permissionSetNameById;
+        var index = new Dictionary<int, string>();
+        foreach (var (permissionSet, _, _) in EnumerateKnownPermissionSets())
+            index.TryAdd(permissionSet.Id, permissionSet.Name);
+        return _permissionSetNameById = index;
     }
 
     private static Dictionary<string, int>? _permissionSetIdByName;
