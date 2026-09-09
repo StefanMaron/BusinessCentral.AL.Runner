@@ -322,8 +322,9 @@ gh workflow run ci.yml --repo StefanMaron/BusinessCentral.AL.Language.Tests \
 that job, so there is no conclusion for it to report; `AlRunner.Tests/BcLegRerunWorkflowTests.cs`
 holds that property. Treat the result as evidence for a human, never as a cleared gate.
 
-**The corpus has no equivalent guarantee** — there the eight `BC <ver> / test` legs ARE the
-required contexts, so a dispatched leg reports a check run with the gating name. Never dispatch
+**The corpus has no equivalent guarantee** — there the `BC <ver> / test` legs ARE the required
+contexts (`verify-execution-not-the-tick.md` § "Which legs were ever going to run it" says
+which), so a dispatched leg reports a check run with the gating name. Never dispatch
 a corpus leg expecting it to turn a PR green, and check `gh pr checks --required` rather than
 assuming either way (corpus PR #144).
 

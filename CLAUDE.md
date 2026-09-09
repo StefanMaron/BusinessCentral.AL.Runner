@@ -53,8 +53,7 @@ Finding and reading code is the single biggest token cost in this repo, and the 
 the **number** of round trips, not the size of any one result: every call re-sends the whole
 accumulated conversation, so 200 small greps cost far more than 20 targeted ones. Use the tools
 below before a grep sweep over `AlRunner/**/*.cs`. Re-measure the cost with
-`tools/agent-cost.py <tasks-dir>` rather than trusting a figure written here — the last one to
-sit stale did so for weeks because nobody re-ran it (measurements:
+`tools/agent-cost.py <tasks-dir>` rather than trusting a figure written here (measurements:
 docs/incidents/CLAUDE.md.md).
 
 **0. `tools/context-pack.py` — one round trip, many answers.**

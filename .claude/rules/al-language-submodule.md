@@ -94,7 +94,7 @@ fails with "add an entry".
 ## Which tests belong here at all
 
 `bc-behavior-tests-go-upstream.md` decides that in both directions — what goes upstream, and
-what stays in `tests/runner-extras/`. Nothing in the corpus is written by us either way.
+what stays in `tests/runner-extras/`.
 
 ## Sister rules
 

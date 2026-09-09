@@ -16,13 +16,10 @@ that the message says which of the three it is.
 
 ## The three that get this right — copy one of them
 
-- **`tools/ci-wait.py`, exit 3** — auth, network, no checks reported, a required-context set
-  that could not be established without narrowing it, or the running file being behind
-  `origin/main`. Two internals are the models: `rollup_is_final` returns
+- **`tools/ci-wait.py`, exit 3** — the model to copy is `rollup_is_final`, which returns
   `True`/`False`/**`None`**, with `None` "deliberately distinct from False: an unknown must
-  never be resolved toward GREEN" (#2807); and a ruleset read **narrower** than the built-in
-  floor is refused as `degraded` rather than judged on the smaller set, because a partial read
-  and a deliberate removal look identical from there (#3002).
+  never be resolved toward GREEN" (#2807). What each of its refusals means, including the
+  narrowed-ruleset one, is `ci-verdicts.md`'s to state.
 - **`.github/scripts/check_corpus_pin_forward.sh`, exit 3** via `die_undetermined`, at seven
   call sites (#3683): `.gitmodules` present but declaring no readable submodule path;
   `SUBMODULE_PATH` naming no submodule the repository declares; the submodule present at one

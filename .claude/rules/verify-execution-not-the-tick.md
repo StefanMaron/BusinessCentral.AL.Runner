@@ -35,11 +35,10 @@ instead of running it.
 4. **A correctly-named `tools/test_*.py` or `.github/scripts/test_*` gates the day it lands**,
    discovered by glob in `pr-gate.yml`, so no filename appears in any workflow — searching the
    workflows for one and finding nothing does not mean it is un-gated.
-5. **Pass `--allow-escape-sequences` to `gh api .../logs`**, and treat an empty body as
-   *unavailable*, never as zero passes: every corpus job log is coloured, so
-   `gh api "repos/$CORPUS/actions/jobs/$id/logs" > leg.log` without the flag writes **zero bytes
-   and exits 0**, and the log then greps as "no matches". `ci-verdicts.md` § "An empty log fetch
-   is a refusal, not an empty log" owns both shapes of that refusal.
+5. **Treat an empty log body as *unavailable*, never as zero passes** — every corpus job log is
+   coloured, and `gh api .../logs` refuses one without `--allow-escape-sequences`:
+   `ci-verdicts.md` § "An empty log fetch is a refusal, not an empty log" owns both shapes of
+   that refusal.
 
 ## The general rule these share
 

@@ -3,8 +3,7 @@
 The runner exists so AL test code can run against **unmodified** MS-AL-compiled DLLs
 (`Microsoft.Dynamics.Nav.SystemApplication.dll`, `Microsoft.Dynamics.Nav.BaseApplication.dll`,
 etc., shipped inside MS `.app` files) and ISV-AL-compiled DLLs, so integration tests exercise
-**real MS / ISV business logic** without us re-implementing or re-compiling it. We accept those
-DLLs as they ship.
+**real MS / ISV business logic** without us re-implementing or re-compiling it.
 
 The one hard constraint: **the public type surface and method bodies of any precompiled
 AL-business-logic DLL must behave exactly as they did when MS/the ISV compiled them.**

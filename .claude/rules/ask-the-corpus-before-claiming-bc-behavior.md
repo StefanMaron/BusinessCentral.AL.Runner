@@ -35,9 +35,9 @@ on `MsDyn365Bc.On.Linux`, one particular patched container rather than Business 
 nightly runs an official Microsoft container on Windows. Where the two disagree, Windows is
 right by definition and the Linux result is an image bug.
 
-**One qualifier, and it is not a footnote: the tier is patched.** On a surface an unfaithful
-patch covers, a corpus result measures the patch — read "The tier is patched" below before
-resting a UI-side claim on one.
+**One qualifier: the tier is patched.** On a surface an unfaithful patch covers, a corpus
+result measures the patch — read "The tier is patched" below before resting a UI-side claim on
+one.
 
 ## When the Linux tier is the thing in doubt, ask Windows — do not reason about it
 
@@ -77,8 +77,8 @@ Four outcomes, and only the first two need anyone to do anything here:
 | passes, Linux passes | settled | merge |
 | **errored before running tests** | **no verdict at all** | **nothing here — the tier is broken; file it** |
 
-None of the first three rows is a judgement call: a red corpus leg on a UI-adjacent surface
-looks like it needs analysis and usually needs a dispatch.
+A red corpus leg on a UI-adjacent surface looks like it needs analysis and usually needs a
+dispatch.
 
 **The fourth row is the one that bites** (corpus #288). A run that dies before executing a test
 still reports `conclusion: failure`, so read the log rather than the conclusion:
@@ -94,8 +94,8 @@ minutes apart are a deterministic fault, and another attempt spends an hour of t
 shared Actions queue reproducing it.
 
 **It adjudicates; it does not gate.** The nightly takes 1-2 hours and is deliberately not a
-required status context. The eight `BC <ver> / test` legs remain the merge gate, so a PR stays
-blocked on those either way.
+required status context, so the corpus's own required legs remain the merge gate either way
+(`verify-execution-not-the-tick.md` § "Which legs were ever going to run it").
 
 **Do not adjust a corpus assertion to match the Linux tier, and never to match the runner.**
 The second is the more tempting error, because it turns a red leg green and looks like

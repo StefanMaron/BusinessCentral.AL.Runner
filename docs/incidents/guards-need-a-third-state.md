@@ -51,3 +51,10 @@ that spot is currently backstopped by a `summary.get("pass") != want` comparison
 where a `None` fails loudly, so it is not reachable as a false pass **today**. It is still written
 the opposite way from every neighbour in that function, where an uncomputable value is an explicit
 refusal rather than a silent zero.
+
+## Counting `die_undetermined` (moved from the rule, #3728 review round 3)
+
+Count them with care: the definition line matches too, so a bare `grep -c die_undetermined`
+answers **eight**. The first draft of this file said five and listed four; the correction said
+five when #3683 had just made it seven. Both slips were the same one — trusting a count over the
+enumeration.

@@ -69,3 +69,9 @@ instead of — the value you wanted. It has now corrupted a `$(...)` capture, a 
 health check, and a PR-existence guard that reported "a PR already exists" when none did.
 Filter to the shape you expect (`| command grep -E '^[0-9]+$'`) rather than testing whether
 the capture is non-empty.
+
+## Residue moved from CLAUDE.md (#3728 review round 3)
+
+Re-measure with `tools/agent-cost.py <tasks-dir>` rather than trusting that paragraph — the
+previous figure there ("63 greps + 50 file reads out of 180") sat stale for a long time because
+nobody re-ran it.
