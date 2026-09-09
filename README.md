@@ -252,12 +252,17 @@ Out of scope by design: SMTP, HTTP egress to external services, file I/O against
 
 ## Exit Codes
 
+Read these out of `al-runner --help`, which generates them from the code; this
+table is a copy and the CLI is the authority.
+
 | Code | Meaning |
 |------|---------|
 | `0` | All tests passed |
-| `1` | Test assertion failures, runner errors, or argument error |
-| `2` | Runner limitations only |
-| `3` | AL compilation error |
+| `1` | At least one test FAILED or ERRORED |
+| `2` | A bundle could not execute — a process-level error, and also a bad invocation (unknown flag, or a bundle path that does not exist) |
+| `3` | A bundle could not compile |
+| `4` | `--count-baseline`: a suite's test or app-group count did not exactly match its declared baseline |
+| `5` | `--expectations-require-match`: an expectations entry matched no test in this run |
 
 ## Tooling for AI-assisted development (optional)
 
