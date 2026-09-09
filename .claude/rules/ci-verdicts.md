@@ -129,17 +129,22 @@ Two things it cannot do, so do them yourself:
   ```bash
   git fetch origin main
   d=$(mktemp -d) && mkdir -p "$d/tools"
-  for f in ci-wait.py agent_self_freshness.py; do
+  for f in ci-wait.py agent_self_freshness.py agent_stdio.py; do
     git show "origin/main:tools/$f" > "$d/tools/$f"
   done
   python3 "$d/tools/ci-wait.py" <PR> --timeout 0
   ```
-  **Extract both files, not just `ci-wait.py`** (#3295). A lone copy cannot import its sibling
-  guard, and that used to print a note and judge the PR anyway — so the recipe *recommended
+  **Extract all three files, not just `ci-wait.py`** (#3295, #3658). A lone copy cannot import
+  its sibling guard, and that used to print a note and judge the PR anyway — so the recipe *recommended
   here* was itself a way to reach the one path where nothing checked the running code. It now
   exits 3 instead, so the one-file version of this recipe no longer works at all, which is the
   intended outcome: a tool whose job is to withhold an unsafe verdict must not have a path that
   emits one with the safety check skipped.
+
+  The third file is `agent_stdio.py`, and it is not a guard — without it the copy prints
+  through the console codec, so on a cp1252 box a failing-log tail carrying one non-cp1252
+  character raises `UnicodeEncodeError` and the traceback exits **1**, which is this tool's
+  "a required check failed" code (#3658). A two-file copy says so in a `note:` line on stderr.
 
   Expect two loud `unknown` notes from the copy above — a directory under `/tmp` is not inside
   a git repository, so neither file can check its own freshness. That is fine *here* and only
