@@ -300,13 +300,25 @@ public sealed class BcShapeMethodLookupTests
     // name-only lookup belongs, in the one helper that refuses by name when it misses.
     // (#3051's other 67 conversions are GetProperty / GetField / GetConstructor, or pass an
     // explicit signature, so this scan never counted them.)
+    //
+    // 72 -> 71 by #3581, which converted the ONE site in RecordPatches.BcAppFallback.cs:
+    // `tSystemPackage?.GetMethod("GetPackageStream", ...)` became BcShape.Method, so a
+    // SystemPackage accessor that BC renames now refuses by name instead of logging and
+    // returning. Net and gross agree here — one site converted, none added, and
+    // RecordPatches.BcAppFallback.cs leaves the breakdown entirely.
+    //
+    // NOTE for whoever lands the next conversion: this counter and
+    // BcInternalsNullForgivingGuardTests' `converted` move in OPPOSITE directions on the same
+    // change — this one counts what REMAINS (falls), that one counts what has been CONVERTED
+    // (rises, 87 -> 88 for this same site). #3581 updated one and missed the other, so check
+    // both.
 
     /// <summary>
     /// Every remaining name-only method lookup that could reach a Microsoft-shipped type. Lower
     /// it as sites are converted; it may never rise. On a mismatch the assertion prints the
     /// per-file breakdown, which is the number to put here.
     /// </summary>
-    private const int NameOnlyBcTypedMethodLookups = 72;
+    private const int NameOnlyBcTypedMethodLookups = 71;
 
     /// <summary>The floor is not cosmetic: a scan that silently narrowed to a handful of files
     /// would report a small number and read as progress. AlRunner/ holds ~195 sources.</summary>

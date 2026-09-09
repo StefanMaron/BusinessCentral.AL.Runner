@@ -648,31 +648,97 @@ public static partial class RecordPatches
     /// </summary>
     internal static void RegisterSystemAppPackage()
     {
-        try
+        var asm = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "Microsoft.BusinessCentral.SystemApp");
+        if (asm == null)
         {
-            var asm = AppDomain.CurrentDomain.GetAssemblies()
-                .FirstOrDefault(a => a.GetName().Name == "Microsoft.BusinessCentral.SystemApp");
-            if (asm == null)
-            {
-                try { asm = Assembly.Load("Microsoft.BusinessCentral.SystemApp"); }
-                catch { /* fall through */ }
-            }
-            if (asm == null)
-            {
-                Console.Error.WriteLine("[RecordPatches] BcAppFallback: SystemApp assembly not loadable; system tables (RecordLink etc.) will fail");
-                return;
-            }
+            try { asm = Assembly.Load("Microsoft.BusinessCentral.SystemApp"); }
+            catch { /* the refusal below names it; a load failure and an absence are one case here */ }
+        }
 
-            var tSystemPackage = asm.GetTypes().FirstOrDefault(t => t.Name == "SystemPackage");
-            var mGetStream = tSystemPackage?.GetMethod("GetPackageStream",
-                BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic);
-            if (mGetStream == null)
-            {
-                Console.Error.WriteLine("[RecordPatches] BcAppFallback: SystemPackage.GetPackageStream not found in SystemApp DLL");
-                return;
-            }
+        // The static is written HERE, not in the core, and only after AddBcAppPath has actually
+        // registered the path — so `_systemAppTempPath` names an entry that is genuinely in
+        // `_bcAppPaths`. Assigning it inside the core would let any caller that injects a
+        // different `register` (the tests below) overwrite the real path with one nothing
+        // registered, and the static is process-global, so the damage outlives the caller:
+        // ClearPerBundleBcAppPaths uses it as the KEEP predicate, so a stale value makes the
+        // next ResetForReload drop the real SystemApp registration for the rest of the process.
+        _systemAppTempPath = RegisterSystemAppPackageCore(
+            asm, AddBcAppPath, EagerParseAllBcAppTables);
+    }
 
-            using var stream = (Stream)mGetStream.Invoke(null, null)!;
+    /// <summary>Surface text for every refusal this step raises — what an AL author loses when
+    /// the platform system tables do not get registered.</summary>
+    private const string SystemAppSurface = "NCL-internal system tables (RecordLink, Field, Object, …)";
+
+    /// <summary>
+    /// The decision half of <see cref="RegisterSystemAppPackage"/>, with the SystemApp assembly
+    /// and the two side effects taken as parameters so each way this step can fail is
+    /// injectable without a BC install (SystemAppPackageRegistrationFailureTests). Returns the
+    /// path of the extracted package.
+    ///
+    /// <para><b>Writes no process-global state.</b> That is what makes it drivable with fakes:
+    /// the caller assigns <see cref="_systemAppTempPath"/> from the return value, so a test
+    /// injecting its own <paramref name="register"/> cannot leave the static naming a path that
+    /// is not in <see cref="_bcAppPaths"/>. Keep it that way — the static is the KEEP predicate
+    /// in <see cref="ClearPerBundleBcAppPaths"/>, so a wrong value there is not a wrong reading
+    /// but a real unregistration on the next reload.</para>
+    ///
+    /// <para><b>#3581 — none of the three exits here may resolve toward success.</b> This is the
+    /// engine-bootstrap step that puts the platform SystemApp package into
+    /// <see cref="_bcAppPaths"/> and materialises the NCL-internal system tables; BC's own NCL
+    /// code reaches those tables through <c>NCLMetadata.GetMetaTableById</c> directly, so if this
+    /// does not happen the metadata is absent for the whole life of the process. It previously
+    /// logged and returned on all three, which is "registration failed" spelled as
+    /// "initialization succeeded" — see <c>.claude/rules/guards-need-a-third-state.md</c>.</para>
+    ///
+    /// <para><b>Why absence refuses rather than passing.</b> The rule's constraint is that a
+    /// genuinely absent thing must stay a pass, so refusing here is only correct because there is
+    /// no bundle that legitimately has no SystemApp to register: the assembly ships in every
+    /// complete BC artifact set (11 of 11 measured — see the test file's header for the version
+    /// list), and <c>ForceLoadBcDlls</c> would already have thrown on
+    /// <c>Microsoft.Dynamics.Nav.Common</c> from the same directory before this runs. So an
+    /// absent SystemApp is a failed LOOKUP — BC's layout moved — not a bundle without one.</para>
+    ///
+    /// <para><b>The outer catch was the live half.</b> <see cref="AddBcAppPath"/> raises
+    /// <c>BcAppSymbolReadException</c> precisely so a .app whose symbols could not be read is
+    /// never left registered and Program.cs can exit 1 (#2712). Catching it here converted that
+    /// deliberate refusal back into a silent success one frame above where it was raised, and the
+    /// stderr line that replaced it starts with a bracketed component tag, which Log's
+    /// default-verbosity filter drops.</para>
+    /// </summary>
+    private static string RegisterSystemAppPackageCore(
+        Assembly? asm, Action<string> register, Action eagerParse)
+    {
+        if (asm == null)
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                SystemAppSurface, "Microsoft.BusinessCentral.SystemApp",
+                "the assembly could not be loaded, so the SystemPackage holding the AL source for "
+                + "the NCL-internal system tables cannot be read — it ships in every BC artifact "
+                + "set the runner bootstraps against, so this is BC's layout having moved rather "
+                + "than a bundle that has nothing to register");
+
+        var tSystemPackage = asm.GetTypes().FirstOrDefault(t => t.Name == "SystemPackage")
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                SystemAppSurface, "Microsoft.BusinessCentral.SystemApp.SystemPackage",
+                "type not found in the SystemApp assembly — the runner reads its embedded NAVX "
+                + "package to register the NCL-internal system tables");
+
+        var mGetStream = AlRunner.Infrastructure.BcShape.Method(
+            tSystemPackage, "GetPackageStream",
+            BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic,
+            SystemAppSurface);
+
+        // `(Stream)Invoke(...)!` was a null-forgiving annotation that throws nothing: a method
+        // that is PRESENT but answers null NRE'd on the CopyTo below, inside the old catch, and
+        // reported as "registration failed: NullReferenceException:" naming no member at all.
+        using var stream = mGetStream.Invoke(null, null) as Stream
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                SystemAppSurface, $"{tSystemPackage.Name}.GetPackageStream",
+                "returned no package stream, so there is nothing to extract — the runner cannot "
+                + "tell whether the package is absent or the accessor changed shape");
+
+        {
             var asmInfo = !string.IsNullOrEmpty(asm.Location) && File.Exists(asm.Location)
                 ? new FileInfo(asm.Location)
                 : null;
@@ -721,17 +787,12 @@ public static partial class RecordPatches
                 Path.Combine(Path.GetTempPath(), $"al-runner-systemapp-{suffix}.app"),
                 fs => stream.CopyTo(fs));
 
-            _systemAppTempPath = tempPath;
-            AddBcAppPath(tempPath);
+            register(tempPath);
             Console.Error.WriteLine(System.FormattableString.Invariant(
                 $"[RecordPatches] BcAppFallback: registered SystemPackage → {Path.GetFileName(tempPath)} ({new FileInfo(tempPath).Length:N0} bytes)"));
 
-            EagerParseAllBcAppTables();
-        }
-        catch (Exception ex)
-        {
-            var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-            Console.Error.WriteLine($"[RecordPatches] BcAppFallback: SystemApp registration failed: {inner.GetType().Name}: {inner.Message}");
+            eagerParse();
+            return tempPath;
         }
     }
 
