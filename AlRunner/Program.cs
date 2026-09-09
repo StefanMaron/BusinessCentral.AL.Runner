@@ -2638,7 +2638,11 @@ foreach (var bundle in bundles)
         foreach (var suite in suites)
         {
             var s = Path.Combine(suite, "src");
-            if (Directory.Exists(s))
+            if (SuiteHasAlOutsideConventionalDirs(suite))
+                // #3611/#3714: AL beside src/ (a root table, a ControlAddin/ folder) — the
+                // compile reads the whole root (CollectSuitePaths), so the table parsers must too.
+                dirsToRegister.Add(suite);
+            else if (Directory.Exists(s))
                 dirsToRegister.Add(s);
             else if (!Directory.Exists(Path.Combine(suite, "test")))
                 // Flat bundle: register the suite root so table parsers can find .al files.
@@ -5165,7 +5169,10 @@ return strictExitCode ? computedExitCode : 0;
         foreach (var suite in suites)
         {
             var s = Path.Combine(suite, "src");
-            if (Directory.Exists(s)) dirsToRegister.Add(s);
+            // #3611/#3714: same decision as the CLI loop above — AL beside src/ means the
+            // table parsers read the whole root, as the compile does.
+            if (SuiteHasAlOutsideConventionalDirs(suite)) dirsToRegister.Add(suite);
+            else if (Directory.Exists(s)) dirsToRegister.Add(s);
             else if (!Directory.Exists(Path.Combine(suite, "test")))
                 dirsToRegister.Add(suite);
             allPaths.AddRange(CollectSuitePaths(suite, bucketRoot));

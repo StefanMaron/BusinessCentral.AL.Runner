@@ -348,23 +348,84 @@ internal static partial class ProgramSupport
 
     internal static List<string> CollectSuitePaths(string suite, string? bucketRoot = null)
     {
-        var all = new List<string>();
-        var s = Path.Combine(suite, "src");
-        var t = Path.Combine(suite, "test");
-        if (Directory.Exists(s)) all.Add(s);
-        foreach (var app in Directory.EnumerateDirectories(suite, "app*"))
-            all.Add(app);
-        if (Directory.Exists(t)) all.Add(t);
-        // Flat bundle: if neither src/ nor test/ exist, include the suite root so
-        // the emitter can recurse into it and find all .al files.
-        if (all.Count == 0 && AlRunner.Infrastructure.SafeDirectoryScan.Files(suite, "*.al").Any())
-            all.Add(suite);
+        var all = ConventionalSourceDirs(suite);
+        // #3611/#3714: src/, app*/ and test/ are a convention inherited from the legacy bucket
+        // trees, not a contract — alc compiles every .al under the project root, whatever the
+        // folder is called. A suite with any .al file OUTSIDE those folders is compiled from its
+        // root, exactly like a flat bundle, so a root-level codeunit or a sibling folder such as
+        // ControlAddin/ can no longer vanish from the compile (silently, when the dropped file
+        // was the test codeunit: "Tests: 0 total", exit 0). A suite that keeps everything under
+        // the conventional folders returns exactly what it always did, so its ComputeAlCacheKey
+        // input does not move. The register-source-dirs loops in Program.cs ask
+        // SuiteHasAlOutsideConventionalDirs for the same decision — keep the two in step.
+        var alFiles = AlRunner.Infrastructure.SafeDirectoryScan.Files(suite, "*.al");
+        if (all.Count == 0 || HasAlOutside(alFiles, all))
+        {
+            all.Clear();
+            if (alFiles.Count > 0) all.Add(suite);
+        }
         if (bucketRoot != null)
         {
             var shared = Path.Combine(bucketRoot, "_shared");
             if (Directory.Exists(shared)) all.Add(shared);
         }
         return all;
+    }
+
+    /// <summary>
+    /// The folders the legacy bucket layout put AL in — <c>src/</c>, every <c>app*/</c>, and
+    /// <c>test/</c> — in the order <see cref="CollectSuitePaths"/> has always returned them.
+    /// Empty for a flat suite.
+    /// </summary>
+    private static List<string> ConventionalSourceDirs(string suite)
+    {
+        var dirs = new List<string>();
+        var s = Path.Combine(suite, "src");
+        var t = Path.Combine(suite, "test");
+        if (Directory.Exists(s)) dirs.Add(s);
+        foreach (var app in Directory.EnumerateDirectories(suite, "app*"))
+            dirs.Add(app);
+        if (Directory.Exists(t)) dirs.Add(t);
+        return dirs;
+    }
+
+    /// <summary>
+    /// True when at least one of <paramref name="alFiles"/> (every <c>.al</c> under the suite)
+    /// is not under any of <paramref name="dirs"/>. Only <c>.al</c> files are ever passed in —
+    /// an app.json, a README or a <c>.alpackages/</c> beside <c>src/</c> must not widen the compile.
+    /// </summary>
+    private static bool HasAlOutside(IReadOnlyList<string> alFiles, IReadOnlyList<string> dirs)
+    {
+        foreach (var file in alFiles)
+        {
+            var covered = false;
+            foreach (var d in dirs)
+            {
+                var rel = Path.GetRelativePath(d, file);
+                if (rel != ".." && !rel.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
+                    && !Path.IsPathRooted(rel))
+                {
+                    covered = true;
+                    break;
+                }
+            }
+            if (!covered) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// #3611/#3714: does this suite carry <c>.al</c> files outside <c>src/</c>, <c>app*/</c> and
+    /// <c>test/</c>? When it does, <see cref="CollectSuitePaths"/> compiles it from its root, and
+    /// the RecordPatches source-dir registration in Program.cs must register the root too — a
+    /// table at the root that compiled but was never parsed into the in-memory provider is the
+    /// same defect one layer down.
+    /// </summary>
+    internal static bool SuiteHasAlOutsideConventionalDirs(string suite)
+    {
+        var dirs = ConventionalSourceDirs(suite);
+        return dirs.Count > 0
+            && HasAlOutside(AlRunner.Infrastructure.SafeDirectoryScan.Files(suite, "*.al"), dirs);
     }
 
     // Deterministic cache key for the bundled-mode emit:
