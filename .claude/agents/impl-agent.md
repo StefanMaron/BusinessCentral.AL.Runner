@@ -144,14 +144,15 @@ paths under that same name:
 ```bash
 S=<the scratchpad directory from your prompt>
 p=$(tools/agent_scratchpad.py --scratchpad "$S" --agent-id <AGENT-ID>-issue-<N>-<SESSION> path pr-body.md)
-python tools/pr-body.py <pr-N> --body-file "$p" --closes <N>   # Step 4, in this same call: $p is gone by the next one
+# write the body into "$p" here; Step 4 reads it back from that same literal path
 
 tools/agent_scratchpad.py --scratchpad "$S" --agent-id <AGENT-ID>-issue-<N>-<SESSION> dir            # clone corpora in here
 tools/agent_scratchpad.py --scratchpad "$S" --agent-id <AGENT-ID>-issue-<N>-<SESSION> check <path>   # exit 1 if shared
 ```
 
 Done when every path you write to carries the issue number: the worktree as
-`<AGENT-ID>-issue-<N>`, everything else as `<AGENT-ID>-issue-<N>-<SESSION>`.
+`<AGENT-ID>-issue-<N>`, everything else as `<AGENT-ID>-issue-<N>-<SESSION>`. Delete every
+`<AGENT-ID>-issue-<N>-<SESSION>` directory in the same step that removes the worktree.
 
 **After `gh pr create`/`gh pr edit`, re-read what you published:**
 `gh pr view <N> --json closingIssuesReferences` must list exactly the issues you meant.
