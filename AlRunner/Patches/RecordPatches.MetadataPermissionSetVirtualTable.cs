@@ -140,6 +140,34 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// One source-declared permission set as the metadata layer should see it, by whichever of
+    /// the two routes can answer (#3609).
+    ///
+    /// <para>BC emitted its own <c>&lt;PermissionSet&gt;</c> document for everything the runner
+    /// compiled this run, and it states the object references and the mask ALREADY RESOLVED.
+    /// That route is preferred — not as a nicety, but because the derivation cannot express a
+    /// <c>tabledata</c> grant at all: <c>ParsedObjectDecls</c> carries no tables, so
+    /// <see cref="ResolveSourcePermissionEntries"/> maps PermissionObject ordinal 0 and 1 to
+    /// null and drops the entry BEFORE its own diagnostic, at every verbosity.</para>
+    ///
+    /// <para>A set with no document — a compile-cache HIT whose replay supplied none — keeps
+    /// the derivation rather than losing the row. See docs/permission-set-from-bc-document.md.</para>
+    /// </summary>
+    internal static BcAppSymbolCache.PermissionSetSymbol ComposeSourcePermissionSet(ParsedAlPermissionSet p)
+    {
+        if (TryReadPermissionSetFromBcDocument(p.Id, p.Name) is { } fromDocument)
+            return fromDocument;
+
+        return new BcAppSymbolCache.PermissionSetSymbol(
+            p.Id, p.Name, p.Caption, p.Assignable,
+            // #2910: a source-declared set's permissions name their objects; a precompiled
+            // one's carry ids. Resolve here so both shapes reach BC's composer identically.
+            ResolveSourcePermissionEntries(p.Permissions),
+            p.IncludedPermissionSets,
+            p.Access);
+    }
+
+    /// <summary>
     /// Every permission set the runner has a real declaration for, paired with the id of the
     /// app that declares it, one entry per role id. A role id is unique across an app group
     /// on a real tier — <c>PermissionSetGroupObjectMetadataSummaries</c> is a dictionary
@@ -162,16 +190,10 @@ public static partial class RecordPatches
 
         // 1. Permission sets the runner compiled from source.
         foreach (var p in ParsedPermissionSets)
-            if (seen.Add(p.Name))
-                yield return (new BcAppSymbolCache.PermissionSetSymbol(
-                        p.Id, p.Name, p.Caption, p.Assignable,
-                        // #2910: a source-declared set's permissions name their objects; a
-                        // precompiled one's carry ids. Resolve here so both shapes reach BC's
-                        // composer identically.
-                        ResolveSourcePermissionEntries(p.Permissions),
-                        p.IncludedPermissionSets,
-                        p.Access),
-                    p.AppId, p.AppName ?? string.Empty);
+        {
+            if (!seen.Add(p.Name)) continue;
+            yield return (ComposeSourcePermissionSet(p), p.AppId, p.AppName ?? string.Empty);
+        }
 
         // 2. Permission sets declared by precompiled dependency .app packages.
         foreach (var appPath in _bcAppPaths.ToArray())

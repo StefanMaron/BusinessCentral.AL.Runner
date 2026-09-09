@@ -330,7 +330,16 @@ internal static partial class BcAppSymbolCache
         // exclusions, extension merge) — the runner only transcribes them.
         IReadOnlyList<PermissionSymbol>? Permissions = null,
         IReadOnlyList<string>? IncludedPermissionSets = null,
-        string? Access = null);
+        string? Access = null,
+        // #3609: the same two edge lists as already-resolved OBJECT IDS. SymbolReference.json
+        // states include edges as NAMES (IncludedPermissionSets above) and states no exclude
+        // edges at all; BC's own emitted metadata document states BOTH as ids. A symbol built
+        // from a document fills these and leaves the name list null; one built from a
+        // SymbolReference fills the name list and leaves these null. BuildIncludeList prefers
+        // ids when present, because a name still has to survive PermissionSetIdByName's
+        // lookup and an id does not.
+        IReadOnlyList<int>? IncludedPermissionSetIds = null,
+        IReadOnlyList<int>? ExcludedPermissionSetIds = null);
 
     /// <summary>
     /// A precompiled dependency's page, as far as SymbolReference.json states it — just

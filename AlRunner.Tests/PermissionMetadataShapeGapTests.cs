@@ -73,12 +73,22 @@ public sealed class PermissionMetadataShapeGapTests
     }
 
     // ══ 2. BuildIncludeList — BC's include/exclude element type is one it cannot fill ═════
+    //
+    // Three arguments, matching the ONE live BuildIncludeList both production call sites use.
+    // #3609 gave it a third (resolved-id) parameter, and reflection made every way of keeping
+    // the old two-argument shape fail: a default parameter raises TargetParameterCountException
+    // (Invoke matches the exact count), a second overload raises AmbiguousMatchException
+    // (GetMethod(name, flags) cannot choose), and a thin forwarder passes both of those while
+    // failing ReflectionDrivenHelperLivenessTests, because the arms would then exercise a
+    // method no production code reaches (#3100). If this signature changes again, change these
+    // arms with it rather than adding a shim for them to point at.
 
     [Fact]
     public void BuildIncludeList_RaisesAShapeGapNamingTheElementType_WhenItCannotBeFilled()
     {
         var ex = Assert.Throws<BcShapeGapException>(
-            () => Invoke("BuildIncludeList", typeof(List<NotFillableElement>), (IReadOnlyList<string>)new[] { "SUPER" }));
+            () => Invoke("BuildIncludeList", typeof(List<NotFillableElement>),
+                (IReadOnlyList<string>)new[] { "SUPER" }, (IReadOnlyList<int>?)null));
 
         Assert.Contains(nameof(NotFillableElement), ex.Member, StringComparison.Ordinal);
     }
@@ -87,7 +97,8 @@ public sealed class PermissionMetadataShapeGapTests
     [Fact]
     public void BuildIncludeList_StillFills_AStringElementList()
     {
-        var list = (IList)Invoke("BuildIncludeList", typeof(List<string>), (IReadOnlyList<string>)new[] { "SUPER", "SECURITY" })!;
+        var list = (IList)Invoke("BuildIncludeList", typeof(List<string>),
+            (IReadOnlyList<string>)new[] { "SUPER", "SECURITY" }, (IReadOnlyList<int>?)null)!;
 
         Assert.Equal(2, list.Count);
         Assert.Equal("SUPER", list[0]);

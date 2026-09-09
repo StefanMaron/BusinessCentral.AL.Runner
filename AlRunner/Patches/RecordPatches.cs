@@ -290,6 +290,11 @@ public static partial class RecordPatches
         // for it. Report ids repeat across reloads, so a stale entry is a wrong answer rather
         // than a miss.
         ClearBcReportDocuments();
+        // #3604, the same statement one object kind over: the memo holds the control tree
+        // parsed out of the PREVIOUS bundle's page documents, and a --watch cycle that adds
+        // or hides a control would otherwise keep answering the old tree. Page ids repeat
+        // across reloads, so a stale entry is a wrong answer rather than a miss.
+        ClearBcPageControlDocuments();
         // #3121: every table is rebuilt from scratch below, so carrying the previous bundle's
         // pending CalcFormula rebuilds forward only buys a wasted repopulate pass on the next
         // .app registration.
@@ -1014,17 +1019,8 @@ public static partial class RecordPatches
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static object TempTableDataProvider_CalcNumeric(object self, object request)
     {
-        // #2648: a FlowField whose CalcFormula source is the Date virtual table reaches the
-        // provider without ever going through DataAccess, so none of the Date window guards has
-        // seen it. This call materialises the whole window on first such read (and is a
-        // ConditionalWeakTable miss for every other table). It lives inside the replacement body
-        // rather than as a Cecil prepend because Cecil REPLACES this method's body outright.
-        //
-        // #3044: the request goes with it, so a read whose "Period Start" filter is closed at
-        // both ends AND already materialised does not re-materialise the whole window behind a
-        // guard that had already narrowed it. Anything else — which is every FlowField shape
-        // #2988 measured — still gets the window.
-        EnsureDateStoreCoversProviderRequest(self, request);
+        // No Date (2000000007) materialisation here since #3506: BC's own DateDataProvider
+        // answers that table, so a Date read never reaches a TempTableDataProvider.
 
         var rt = request.GetType();
         var companyToken   = (int)BcShape.Property(rt, "CompanyToken", "AL record data access").GetValue(request)!;
@@ -2089,44 +2085,15 @@ public static partial class RecordPatches
             }
 
             // ── Date system virtual table (2000000007) ───────────────────────────────────
-            // Virtual on the service tier (DateDataProvider computes one row per period, for
-            // each of the five period types, ON DEMAND, per request). Routed to the same
-            // in-memory store as every other table, so `Record Date` iteration answers with
-            // real periods instead of "There is no Date within the filter." Every piece of the
-            // period arithmetic is BC's own code, called by reflection.
-            //
-            // NOTHING IS MATERIALISED HERE (#2648). This runs from
-            // RecordImplementation.InitializeImpl — i.e. when the `Record Date` VARIABLE is
-            // constructed, before any filter exists — so populating here meant inserting the
-            // whole default window (1900-01-01..2099-12-31, 86,885 rows) whatever the caller
-            // went on to ask for. A filter naming one week in 1850 cost ~109,000 row inserts to
-            // return 7 rows. The three read paths (find, count, keyed Get) each carry the
-            // request, so each populates exactly what its request can select; a request that
-            // names no closed "Period Start" bound still gets the whole documented window,
-            // because that is what answers it. See RecordPatches.DateVirtualTable.cs.
+            // Served by BC's OWN DateDataProvider, through BC's own
+            // DataAccessSource.GetVirtualDataAccess — one row per period is computed per
+            // request and none are stored, so a range open at one end runs out to BC's own
+            // first/last period start instead of stopping at a materialised window (#3506).
+            // Not cached in perTable: BC caches it per table id on the DataAccessSource
+            // itself. See RecordPatches.DateVirtualTable.cs.
             if (IsDateVirtualTable(table))
             {
-                if (!perTable.TryGetValue(tableId, out var dateDa))
-                {
-                    var createdDate = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
-                    dateDa = perTable.GetOrAdd(tableId, createdDate);
-                }
-                // The ninth Date refusal, and the only one outside
-                // RecordPatches.DateVirtualTable.cs. It routes through that file's factory
-                // rather than spelling the anchor itself, so the table cannot claim one thing
-                // from the populator and another from this dispatch chain — the sibling defect
-                // #2945 found for Field, Aggregate Permission Set and All Profile (#2965).
-                //
-                // The CHECK stays at handout even though the rows no longer are (#2648): the
-                // skeleton session is what BC's own GetPeriodName needs to name a period, and a
-                // DataAccessSource without one is a runner defect that must stay loud at exactly
-                // the point it was loud before.
-                var dateSession = _fDasSession?.GetValue(self)
-                    ?? throw DateShapeGap(
-                        "the DataAccessSource has no skeleton session, so BC's own "
-                        + "DateDataProvider.GetPeriodName cannot name a period");
-                PrepareDateVirtualTable(dateDa, table, dateSession);
-                return dateDa;
+                return GetDateVirtualDataAccess(self, table);
             }
 
             // ── Report Layout List system virtual table (2000000234) ─────────────────────

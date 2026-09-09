@@ -177,8 +177,10 @@ codeunit 64582 "TVTI Tests"
 
         TempDate.Reset();
         TempDate.SetRange("Period Type", TempDate."Period Type"::Date);
-        // A CLOSED "Period Start" range is what makes the runner widen its materialised Date
-        // window; on a temporary record it widened straight into AL's own store.
+        // A "Period Start" range used to make the runner widen a materialised Date window, and
+        // on a temporary record it widened straight into AL's own store. Since #3506 the
+        // non-temporary table is served by BC's own DateDataProvider and materialises nothing,
+        // so this arm now pins that a temporary Record Date still holds only what AL inserted.
         TempDate.SetRange("Period Start", 20990101D, 20990131D);
         Assert.AreEqual(1, TempDate.Count(), 'temporary Record Date row count before FindSet');
         Assert.IsTrue(TempDate.FindSet(), 'temporary Record Date: FindSet found nothing after Insert');
@@ -195,19 +197,17 @@ codeunit 64582 "TVTI Tests"
     var
         DateRec: Record Date;
     begin
-        // January 1850 is OUTSIDE the runner's default materialised window
-        // (AL_RUNNER_DATE_WINDOW_MIN_YEAR = 1900 .. _MAX_YEAR = 2099), so answering this range
-        // REQUIRES EnsureDateWindowCoversRequest to widen the window on demand. A range inside
-        // the default window -- January 2099, which this test used to name -- is already
-        // materialised at creation time and passes with the widening switched off entirely.
+        // January 1850 was OUTSIDE the runner's old materialised window (1900 .. 2099), so
+        // answering this range used to require widening it on demand. Since #3506 BC's own
+        // DateDataProvider answers it with no store at all; the year stays 1850 because a range
+        // the old window happened to hold could not tell the two mechanisms apart.
         DateRec.Reset();
         DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
         DateRec.SetRange("Period Start", 18500101D, 18500131D);
-        // Count() first, on purpose: it goes through DataAccess_DateWindowGuardForCount, the
-        // CountAsync prepend, which is a different entry point into the same widening than the
-        // find below.
-        Assert.AreEqual(31, DateRec.Count(), 'non-temporary Record Date: days materialised for January 1850');
-        Assert.IsTrue(DateRec.FindSet(), 'non-temporary Record Date: the window widening stopped firing');
-        Assert.AreEqual(18500101D, DateRec."Period Start", 'non-temporary Record Date: first materialised day of January 1850');
+        // Count() first, on purpose: it takes the CountAsync path, a different entry point into
+        // the provider than the find below.
+        Assert.AreEqual(31, DateRec.Count(), 'non-temporary Record Date: days answered for January 1850');
+        Assert.IsTrue(DateRec.FindSet(), 'non-temporary Record Date: the find path stopped answering');
+        Assert.AreEqual(18500101D, DateRec."Period Start", 'non-temporary Record Date: first day of January 1850');
     end;
 }

@@ -767,86 +767,52 @@ id divergence a host-specific assertion would hit.
 
 ---
 
-### `Record Date` — an open-ended `Period Start` filter is answered from a materialised window
+### `Record Date` — served by BC's own provider, with no runner limit on it
 
 <a id="date-virtual-table"></a>
 
-The `Date` system virtual table (2000000007) is computed per request on the service
-tier and covers years 1 through 9999 — about 3.6 million `Date`-type rows on its own,
-plus the Week, Month, Quarter and Year periods. The runner serves every table from an
-in-memory store, so it has to materialise rows, and it cannot materialise all of them.
+The `Date` system virtual table (2000000007) is **not** a limitation any more, and this section
+stays only because several of them used to be documented here and code may still cite the
+anchor.
 
-What it does instead:
+Since [#3506](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3506) the table
+is served by Microsoft's own `DateDataProvider`, reached through Microsoft's own
+`DataAccessSource.GetVirtualDataAccess` — the same object a service tier hands out. It is a
+`RangeBasedComputedDataProvider`, the same base `IntegerDataProvider` has: one row per period
+is computed per request and none are stored, so `Count()`, `IsEmpty()`,
+`FindSet`/`Next`/`FindLast`, a keyed `Get()` and a FlowField over the table all answer from
+BC's code, across years 1 through 9999. A range open at one end runs out to BC's own first or
+last period start for the period type — `0001-01-03` and `9999-12-31` for `Date`, `0002-01-01`
+for `Year`, from `DateTimeHelper.DatePeriodStartMinimumDate` / `DatePeriodStartMaximumDate` —
+and a multi-range filter answers the union of its ranges.
 
-- **Nothing is materialised until a read asks for it.** Declaring a `Record Date`
-  variable costs no rows at all.
-- A read whose `"Period Start"` filter is **closed at both ends** materialises exactly
-  the periods inside those bounds, and nothing else. A filter naming one week gets
-  about 25 rows, whether that week is in 1850 or 2300. This is safe rather than a
-  shortcut: BC's own filter engine excludes every row outside the filter anyway, so a
-  narrower store cannot change an answer. A keyed `Get` likewise materialises only the
-  day its key names.
-- A read that does **not** close both ends — no `"Period Start"` filter at all, an open
-  bound, or a filter shape the runner cannot read — is answered from a window of whole
-  years, **1900-01-01 to 2099-12-31** by default (86,885 rows across all five period
-  types), widened by whichever bound the filter did close. A FlowField whose
-  `CalcFormula` source is `Date`, and a `TableRelation` to `Date`, also get the whole
-  window: they reach the store without a filter the runner can see.
-- The narrowing happens on all **four** request paths a `Record Date` read can take, so
-  a filter naming 1850 or 2300 gets real rows whichever one AL uses:
+**What this replaced.** The table used to be materialised into an in-memory store: a window of
+whole years (`1900-01-01 .. 2099-12-31` by default, 86,885 rows), spans added per request, a
+500,000-row cap, four request-carrying guards and a FlowField-side net that materialised the
+whole window because the formula's filters were not yet resolved when it ran. That store could
+not follow a range open at one end — 3.6 million `Date` rows cannot be inserted — so such a
+range was either answered from the window (`SetFilter("Period Start", '%1..', 20260116D)`
+iterated to 2099-12-31 against a service tier's 9999-12-31) or, when its closed end lay outside
+the window, refused with `RunnerOutOfScopeException`. A FlowField over the same shape answered
+a silent `0`, because it never passed any of the four guards
+([#3507](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3507)). All of those
+divergences are gone, along with the row cap and the `AL_RUNNER_DATE_WINDOW_MIN_YEAR` /
+`_MAX_YEAR` / `_MAX_ROWS` environment variables, which no longer exist and are ignored.
 
-  | AL | `DataAccess` method | request type |
-  |---|---|---|
-  | `Find` / `FindSet` / `FindFirst` / `FindLast` | `InnerFindAsync` | `FindCacheRequest` |
-  | `Count` | `CountAsync` | `CountCacheRequest` |
-  | `IsEmpty` | `ExistsAsync` | `ExistsCacheRequest` |
-  | `Get(Period Type, Period Start)` | `InternalTryGetByPrimaryKeyAsync` | `PrimaryKeyCacheRequest` |
+One consequence worth stating, because it is a change in cost rather than in correctness: AL
+that iterates an open-ended `Date` range to its end now iterates to 9999-12-31, as it would on
+a service tier, instead of stopping at the window edge. `Count()` over such a range stays cheap
+— BC counts the span arithmetically (`DateDataProvider.CountPeriodsWithinRange`) rather than
+walking it.
 
-  This list said "both request paths — find, and `Count` / `IsEmpty`" until #3006.
-  `IsEmpty()` has never taken the count path: `RecordImplementation.IsEmptyAsync` calls
-  its own `ExistsAsync`, which builds an `ExistsCacheRequest`. Until that fourth guard
-  existed, `IsEmpty()` answered `true` for a 1850 range that `Count()` answered `7` for
-  on the very next line. The FlowField and `TableRelation` net described above does not
-  cover this case, because it materialises the default window and 1850 is outside it.
-- Materialising past **500,000 rows** raises `RunnerOutOfScopeException`, naming the
-  requested bounds, what is materialised and the cap. It never answers a wider request
-  with fewer rows.
+Everything the rows themselves say — the weekday number and name of a `Date` period, the Monday
+start and ISO week number of a `Week` period, a computed month end, and `"Period End"` being a
+closing date — is BC's own arithmetic, as it always was, and is pinned upstream in the
+al-language corpus (codeunit 60983).
 
-The one case the window does not cover is an **open** bound. `SetFilter("Period Start",
-'%1..', D)` asks real BC for every period from `D` to 9999-12-31; the runner answers it
-from the window — which is why an open bound is one of the shapes that materialises the
-whole window rather than something narrower. `FindFirst` on such a filter is unaffected, because its answer sits at
-the closed end — and that is the shape production AL uses. Iterating an open-ended range
-to the end stops at the window edge instead of year 9999.
-
-That truncation holds only while the range's **closed** end is inside the window. A range
-that is open at one end with its closed end **outside** the window is refused loudly
-instead — `SetFilter("Period Start", '..%1', 18500101)`. The window holds no period on or
-before 1850, so serving that request from it reports success with no rows at all, where a
-service tier answers 675,332 (measured on BC 28.4.53241.0), the first of them 0001-01-03.
-That is a silent zero rather than a truncation, so it raises `RunnerOutOfScopeException`
-naming the bound, which end is open and the window. Close the other end of the filter, or
-move the window with the environment variables below.
-
-The test is applied to **each range of the filter separately**, not to the outermost bounds
-the filter spans. A filter may name several ranges —
-`SetFilter("Period Start", '%1..%2|%3..', 20000101, 20000110, 23000101)` — and BC answers
-their union, 2,812,377 rows on the same tier. Read from the outermost closed bounds alone
-that filter looks answerable at 2000-01-01 and 2000-01-10 and is served with the 10 rows of
-its first range, dropping the second whole
-([#3483](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3483)). A
-multi-range filter whose ranges are all closed is materialised as usual, including when one
-of them lies past the window.
-
-Three environment variables move all three numbers for a one-off run:
-`AL_RUNNER_DATE_WINDOW_MIN_YEAR`, `AL_RUNNER_DATE_WINDOW_MAX_YEAR`,
-`AL_RUNNER_DATE_WINDOW_MAX_ROWS`.
-
-Everything the rows themselves say — the weekday number and name of a `Date` period,
-the Monday start and ISO week number of a `Week` period, a computed month end, and
-`"Period End"` being a closing date — comes from BC's own arithmetic
-(`DateTimeHelper` and `DateDataProvider` in `Microsoft.Dynamics.Nav.Ncl`, called by
-reflection), so the runner cannot disagree with the service tier about any of it.
+`Record Date temporary` is untouched by all of this: a temporary record still gets its own
+private, empty store holding exactly what AL inserted
+([#2524](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2524)).
 
 ---
 
@@ -1612,13 +1578,14 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   branch is **not covered by a test**: it is unreachable from compiling AL, and reaching it
   would take an injected declaration carrying a subtype no compiler emits.
 
-  `Date` refuses for a second, different reason on top of that one: it is computed per request
-  on the service tier over a range too large to materialise, so a filter reaching past the
-  window it materialises is refused rather than answered short. See
-  [`Record Date`](#date-virtual-table). `Integer` used to refuse for the same reason and no
-  longer does — it is served by BC's own provider and materialises nothing
-  ([#3485](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3485), and
-  [`Record Integer`](#integer-virtual-table) for what that removed).
+  `Date` and `Integer` used to refuse for a second, different reason on top of that one —
+  computed per request on the service tier over a range too large to materialise, so a filter
+  reaching past the materialised window was refused rather than answered short — and neither
+  does any more: both are served by BC's own provider and materialise nothing
+  ([#3485](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3485) and
+  [#3506](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3506); see
+  [`Record Date`](#date-virtual-table) and [`Record Integer`](#integer-virtual-table) for what
+  that removed).
 - **`Session` (2000000009) answers one row — the reading session — and two of its columns are
   blank.** That single row is not a runner simplification: BC's own `SessionDataProvider`
   returns `new ReadOnlyRecordBuffer[1]` unconditionally, with `My Session` a constant `true`,
