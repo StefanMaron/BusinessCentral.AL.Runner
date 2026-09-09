@@ -943,9 +943,8 @@ public static class AppLoader
         var direct = ReadAlFromNavx(bytes);
         if (direct.Count > 0) return direct;
 
-        // R2R nested case.
-        using var zipStream = new MemoryStream(bytes, NavxZipOffset(bytes), bytes.Length - NavxZipOffset(bytes));
-        using var zip = new ZipArchive(zipStream, ZipArchiveMode.Read);
+        // R2R nested case. Through OpenZipFromNavx so a .NEA payload decodes here too (#3537).
+        using var zip = OpenZipFromNavx(bytes);
         var nested = zip.Entries.FirstOrDefault(e =>
             e.FullName.EndsWith(".app", StringComparison.OrdinalIgnoreCase)
             && !e.FullName.Contains('/'));
@@ -972,9 +971,8 @@ public static class AppLoader
         var direct = ReadLayoutsFromNavx(bytes);
         if (direct.Count > 0) return direct;
 
-        // R2R nested case.
-        using var zipStream = new MemoryStream(bytes, NavxZipOffset(bytes), bytes.Length - NavxZipOffset(bytes));
-        using var zip = new ZipArchive(zipStream, ZipArchiveMode.Read);
+        // R2R nested case. Through OpenZipFromNavx so a .NEA payload decodes here too (#3537).
+        using var zip = OpenZipFromNavx(bytes);
         var nested = zip.Entries.FirstOrDefault(e =>
             e.FullName.EndsWith(".app", StringComparison.OrdinalIgnoreCase)
             && !e.FullName.Contains('/'));
@@ -987,10 +985,8 @@ public static class AppLoader
 
     private static List<(string FileName, byte[] Bytes)> ReadLayoutsFromNavx(byte[] data)
     {
-        var offset = NavxZipOffset(data);
         var result = new List<(string, byte[])>();
-        using var ms = new MemoryStream(data, offset, data.Length - offset, writable: false);
-        using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
+        using var zip = OpenZipFromNavx(data);
         foreach (var entry in zip.Entries
             .Where(e => e.FullName.StartsWith("layout/", StringComparison.OrdinalIgnoreCase)
                      && (e.FullName.EndsWith(".rdlc", StringComparison.OrdinalIgnoreCase)
@@ -1029,6 +1025,16 @@ public static class AppLoader
         try
         {
             var offset = ReadNavxOffsetFromStream(fs);
+            // A runtime package puts a .NEA container where an ordinary .app puts the zip
+            // (#3537). Decoding it costs a buffer of the whole payload, so it is done only
+            // when the magic says so and never on the ordinary path this method exists to
+            // keep streaming.
+            if (PayloadIsNeaContainer(fs, offset))
+            {
+                var decoded = DecodeNeaPayload(fs, offset);
+                fs.Dispose();
+                return new ZipArchive(new MemoryStream(decoded, writable: false), ZipArchiveMode.Read);
+            }
             var view = new NavxZipView(fs, offset);
             return new ZipArchive(view, ZipArchiveMode.Read, leaveOpen: false);
         }
@@ -1116,9 +1122,115 @@ public static class AppLoader
         }
     }
 
+    // ── .NEA runtime-package container (#3537) ───────────────────────────────
+    //
+    // A runtime package is an ordinary NAVX .app whose payload, instead of starting at
+    // `PK\x03\x04`, starts with this 8-byte header and then an RC4 stream. Under that one
+    // layer is a plain zip, which is why decoding it here makes every reader in this file
+    // answer about a runtime package without any of them changing.
+    //
+    // The key is not a secret and this is not encryption: it is a fixed 6-byte value that
+    // ships in the clear inside Microsoft.Dynamics.Nav.CodeAnalysis, as
+    // `Packaging.Nea.NeaStream.Key`, alongside `NeaStream.Header`. BC's own reader
+    // (`NeaStreamReader.IsSupported`) takes no key argument for exactly that reason.
+    //
+    // Reimplemented here rather than called through NavAppPackageReader deliberately.
+    // AppLoader runs on the cold-artifact-cache provisioning path, where
+    // Microsoft.Dynamics.Nav.CodeAnalysis is not yet resolvable — the failure AffectedObjectId's
+    // doc comment records, which took 20 of 22 provisioning tests down. Six lines of RC4 keep
+    // this file's zero-BC-assembly property intact. docs/runtime-packages.md § "The container"
+    // has the format, the cross-version measurement and why a reader is preferred to a writer.
+    private static ReadOnlySpan<byte> NeaHeader => [0x2E, 0x4E, 0x45, 0x41, 0x00, 0x00, 0x00, 0x01];
+    /// <summary>Bytes of the .NEA header, i.e. where the RC4 body starts. See <see cref="IsNeaContainer"/>.</summary>
+    internal const int NeaHeaderLength = 8;
+    private static ReadOnlySpan<byte> NeaKey => [0x0F, 0x0B, 0x51, 0x89, 0xB8, 0x78];
+
+    /// <summary>
+    /// True if the bytes at <paramref name="offset"/> begin a .NEA container.
+    ///
+    /// <para>Internal rather than private because <c>BcAppSymbolCache</c> keeps its own
+    /// NAVX reader — it reads <c>SymbolReference.json</c>, which a runtime package ships and
+    /// which #3549 consumes — and a second copy of the RC4 would be a second place for the
+    /// format to drift.</para>
+    /// </summary>
+    internal static bool IsNeaContainer(byte[] bytes, int offset)
+        => offset >= 0
+        && bytes.Length - offset >= NeaHeader.Length
+        && bytes.AsSpan(offset, NeaHeader.Length).SequenceEqual(NeaHeader);
+
+    /// <summary>
+    /// The same question against a seekable stream, leaving the position where it found it so
+    /// the ordinary streaming path is unaffected when the answer is false.
+    /// </summary>
+    private static bool PayloadIsNeaContainer(Stream s, long offset)
+    {
+        var saved = s.Position;
+        try
+        {
+            if (s.Length - offset < NeaHeader.Length) return false;
+            s.Position = offset;
+            Span<byte> probe = stackalloc byte[8];
+            int total = 0;
+            while (total < probe.Length)
+            {
+                int n = s.Read(probe.Slice(total));
+                if (n == 0) return false;
+                total += n;
+            }
+            return probe.SequenceEqual(NeaHeader);
+        }
+        finally { s.Position = saved; }
+    }
+
+    /// <summary>Reads the whole .NEA body from <paramref name="s"/> and decodes it to zip bytes.</summary>
+    private static byte[] DecodeNeaPayload(Stream s, long offset)
+    {
+        s.Position = offset + NeaHeader.Length;
+        using var buffered = new MemoryStream();
+        s.CopyTo(buffered);
+        var body = buffered.GetBuffer();
+        return NeaDecode(body, 0, (int)buffered.Length);
+    }
+
+    /// <summary>Decodes a .NEA body to the plain zip bytes underneath. See
+    /// <see cref="IsNeaContainer"/> for why this is internal.</summary>
+    internal static byte[] NeaDecode(byte[] bytes, int start)
+        => NeaDecode(bytes, start, bytes.Length - start);
+
+    /// <summary>
+    /// RC4 over <paramref name="count"/> bytes from <paramref name="start"/>, with the fixed key
+    /// above. Symmetric, so this is both BC's encode and its decode.
+    /// </summary>
+    private static byte[] NeaDecode(byte[] bytes, int start, int count)
+    {
+        if (count < 0) count = 0;
+        Span<byte> s = stackalloc byte[256];
+        for (int i = 0; i < 256; i++) s[i] = (byte)i;
+        var key = NeaKey;
+        for (int i = 0, j = 0; i < 256; i++)
+        {
+            j = (j + s[i] + key[i % key.Length]) & 0xFF;
+            (s[i], s[j]) = (s[j], s[i]);
+        }
+        var result = new byte[count];
+        for (int n = 0, i = 0, j = 0; n < count; n++)
+        {
+            i = (i + 1) & 0xFF;
+            j = (j + s[i]) & 0xFF;
+            (s[i], s[j]) = (s[j], s[i]);
+            result[n] = (byte)(bytes[start + n] ^ s[(s[i] + s[j]) & 0xFF]);
+        }
+        return result;
+    }
+
     private static ZipArchive OpenZipFromNavx(byte[] bytes)
     {
         var offset = NavxZipOffset(bytes);
+        if (IsNeaContainer(bytes, offset))
+        {
+            var decoded = NeaDecode(bytes, offset + NeaHeaderLength);
+            return new ZipArchive(new MemoryStream(decoded, writable: false), ZipArchiveMode.Read);
+        }
         var ms = new MemoryStream(bytes, offset, bytes.Length - offset, writable: false);
         return new ZipArchive(ms, ZipArchiveMode.Read);
     }
@@ -1134,10 +1246,8 @@ public static class AppLoader
 
     private static List<(string Name, string Source)> ReadAlFromNavx(byte[] data)
     {
-        var offset = NavxZipOffset(data);
         var result = new List<(string, string)>();
-        using var ms = new MemoryStream(data, offset, data.Length - offset, writable: false);
-        using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
+        using var zip = OpenZipFromNavx(data);
         foreach (var entry in zip.Entries
             .Where(e => e.FullName.StartsWith("src/", StringComparison.OrdinalIgnoreCase)
                      && e.FullName.EndsWith(".al", StringComparison.OrdinalIgnoreCase))
