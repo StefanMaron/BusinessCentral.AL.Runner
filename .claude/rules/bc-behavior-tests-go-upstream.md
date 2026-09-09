@@ -3,7 +3,7 @@
 A test that asserts **what Business Central does** — with nothing runner-specific in the claim —
 MUST live in the upstream corpus
 [`StefanMaron/BusinessCentral.AL.Language.Tests`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests)
-(the `tests/al-language/` submodule), where a **running BC service tier** validates it, not as a
+(checked out into `tests/al-language/`), where a **running BC service tier** validates it, not as a
 runner-local test in `tests/runner-extras/`. An unvalidated BC test inherits the runner's errors
 as its own expectations, so green then means only "the runner agrees with itself". Full
 argument: `docs/upstream-corpus-workflow.md`.
@@ -40,10 +40,12 @@ Step 3 is the one that is never optional. Full detail, including escape hatches:
    orchestrator merges it, not the authoring agent, once the corpus's required BC legs are green
    (`verify-execution-not-the-tick.md` § "Which legs were ever going to run it" says which of the
    sixteen those are, and which of them ever run your tests).
-4. **After that PR merges, bump the submodule pin** in this repo, in whichever PR
-   `al-language-submodule.md` says it belongs in.
-5. **Then merge the runner change here**, showing the corpus test going RED → GREEN against the
-   new pin.
+4. **Once that PR merges, this repository measures it on its next run** — there is no pin
+   to bump (#3737). Until it merges, cite it with a `Corpus-PR:` line and CI resolves the
+   corpus at your corpus PR's branch head, so the runner PR is measured against exactly the
+   tests it is being written for.
+5. **Then merge the runner change here.** The order is the merge bar, not a formality: a PR
+   asserting BC behaviour merges after the corpus PR it cites (`orchestrating-a-session`).
 
 **No local BC container is not a blocker** — open the corpus PR and let its CI adjudicate (step
 2). **No verdict available at all** (corpus CI broken, BC legs failing for unrelated reasons,
@@ -84,6 +86,14 @@ PR_BODY="$(cat body.md)" CHANGED_FILES="$(git diff --name-only origin/main...HEA
 The gate checks that you **declared** something; whether the declaration is right is the
 reviewer's call, never CI's.
 
+**Since #3737 the line does more than declare.** `.github/actions/resolve-corpus-ref` reads
+it and checks the corpus out at that pull request's branch head while it is open, and at
+`master` once it has merged — so the same line that satisfies the gate is what points CI at
+your corpus tests. Two consequences. The line must **stay** in the body after the corpus PR
+merges, and a body edited after the last push is not what the matrix measured until something
+re-triggers it, so **push an empty commit after adding or changing the line**. Each leg prints
+`corpus: <sha> (<ref>)`; read it to confirm which corpus the verdict is about.
+
 ## Not a licence to skip TDD
 
 `tdd.md` applies in full: this rule decides **where** the proving test lives, never whether one
@@ -98,7 +108,7 @@ know.
   reading, a container differential, the docs, and a codeunit's name
 - `verify-execution-not-the-tick.md` — a green corpus leg does not prove your tests ran;
   `tools/corpus-pass-count.py` answers it, and the hand-rolled check false-zeros five ways
-- `al-language-submodule.md` — the corpus is read-only here; how to bump the pin
+- `al-language-submodule.md` — the corpus is read-only here, and resolved rather than pinned
 - `tdd.md` — every fix needs a RED → GREEN, and tests must prove, not just pass
 - `no-assumption-fixes.md` — understand the AL pattern before patching
 - `file-issues-for-gaps.md` — gaps get tracked, never silently worked around

@@ -160,7 +160,7 @@ writing it into a comment, a doc table, or an issue as though it were establishe
 - `verify-execution-not-the-tick.md` — a green corpus test is evidence only if it *ran*;
   the check for that has produced a false zero five ways
 - `no-assumption-fixes.md` — understand the AL pattern before patching
-- `al-language-submodule.md` — the corpus is read-only here; how to bump the pin
+- `al-language-submodule.md` — the corpus is read-only here, and resolved rather than pinned
 - `file-issues-for-gaps.md` — gaps get tracked, never silently worked around
 
 History: docs/incidents/ask-the-corpus-before-claiming-bc-behavior.md

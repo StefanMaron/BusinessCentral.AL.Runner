@@ -4,10 +4,16 @@ Run Business Central AL unit tests in milliseconds — no service tier, no Docke
 
 ## Test corpus
 
-The canonical test corpus is the **`tests/al-language/` git submodule** pointing at
+The canonical test corpus is
 [`StefanMaron/BusinessCentral.AL.Language.Tests`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests) —
 the AL-language spec, validated against a real BC service tier. The runner consumes it
 read-only: **never modify files under `tests/al-language/`.**
+
+It is **resolved per run, not pinned** (#3737). CI checks it out at `master`, or at the head
+of the corpus pull request a PR body's `Corpus-PR:` line names, and every run prints
+`corpus: <full sha> (<ref>)`. Locally, `tools/corpus-checkout.py` clones it into
+`tests/al-language/` (gitignored) and prints the same line. Quote the SHA with any corpus
+result — there is no gitlink to read it off afterwards (`.claude/rules/al-language-submodule.md`).
 
 Tests that exercise surfaces the runner cannot support in-process (report rendering, SMTP,
 HTTP egress, etc.) are declared in [`tests/expectations/`](tests/expectations/README.md);

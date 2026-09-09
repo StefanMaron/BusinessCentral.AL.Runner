@@ -48,10 +48,10 @@ For each PR:
    > Please revert all changes to CHANGELOG.md — it is generated from commit messages post-merge and must not be edited in PRs.
 
    Do **not** merge until CHANGELOG.md is gone.
-5. **`tests/al-language/` in diff** → the submodule content is read-only, so the only legitimate change is the gitlink line a pin bump produces. Which PR that bump belongs in has three answers, not one (`al-language-submodule.md`): *fold* it into the fix PR when the corpus test and the fix are both new; a *catch-up* bump, whose fix already merged, is legitimately its own PR; a bump held back by an *intervening commit* pins as far as the open work allows. Flag only when the diff edits a file *inside* the submodule, or bumps the pin with no accompanying fix **and the newly pulled-in tests need one** — an unaccompanied bump is not by itself a violation. If it is one of those and hasn't been flagged yet:
-   > `tests/al-language/` is a read-only submodule — please revert any change to files inside it. The gitlink line a pin bump produces is fine; editing a file *inside* the submodule is not.
+5. **`tests/al-language/` in diff** → since #3737 that path is gitignored and resolved per run, so a diff cannot legitimately touch it at all — there is no gitlink line and no pin bump. Flag any change under it:
+   > `tests/al-language/` is the read-only corpus, checked out per run rather than committed (#3737) — please revert any change under it. A corpus change goes to `StefanMaron/BusinessCentral.AL.Language.Tests` and is cited with a `Corpus-PR:` line, which is what points this PR's matrix at it.
    >
-   > On the bump itself, `al-language-submodule.md` names three cases. If the corpus test and the runner fix are both new, fold the bump into the fix PR — alone it is red by construction. If the fix has already merged, a bump on its own is fine and needs nothing added to it. If an intervening corpus commit needs work that is still open, pin the newest commit whose predecessors are all satisfied and name the issue holding the rest. Please say which of the three this is.
+   > Which corpus this PR was measured against is the `corpus: <sha> (<ref>)` line each leg prints — read it rather than the `Corpus-PR:` number, whose branch head moves.
 
    Do **not** merge until it's resolved. (No `docs/coverage.yaml` to check for — retired at the v1→v2 cutover, see `al-runner-tests` skill.)
 6. **No shipped SA implementations.** Auto-generated blank shells for dependency objects are fine — that is how the runner works. Forbidden is a *real implementation* of a System Application codeunit inside the runner (an actual Image processing / Cryptography / File Mgt. implementation, as AL the runner emits or as C# under `AlRunner/Patches/` standing in for the SA codeunit's body). The only exceptions are test-automation libraries (`LibraryAssert` 130, `LibraryVariableStorage` 131004). If the diff adds anything else under that umbrella, block with:
@@ -99,7 +99,7 @@ Full pass with no actions: print summary (PRs merged, comments posted, issues cl
 - `--repo StefanMaron/BusinessCentral.AL.Runner` on every `gh` command.
 - No duplicate comments — check existing comments before posting.
 - No merge if `CHANGELOG.md` is in the diff.
-- No merge if the diff edits a file inside `tests/al-language/`, or bumps the pin with no accompanying fix in the same PR — a pin bump is only legitimate folded into the fix PR it enables (`al-language-submodule.md`).
+- No merge if the diff touches `tests/al-language/` at all — it is gitignored and resolved per run (`al-language-submodule.md`).
 - No merge if the PR ships a real SA codeunit implementation (only auto-generated blank shells and test-automation libraries are allowed).
 - `git fetch origin main` at the start of each pass (Step 0).
 - Assignee boundary from Step 1 applies throughout, not just PR review.
