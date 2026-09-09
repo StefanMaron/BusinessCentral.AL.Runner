@@ -49,6 +49,26 @@ public static class NclShadowRuntime
     private const string MarkerFileName = ".al-runner-shadow-source";
     private const string EntryDllName = "al-runner.dll";
 
+    // #3559. The manifest lists every entry a completed mirror produced, so completeness
+    // means "the whole file set", not "the five files a `dotnet exec` needs". The in-use
+    // lock is a file this process keeps an OPEN HANDLE on for its whole lifetime, so a
+    // sibling's prune can see that somebody is executing from here.
+    // See docs/ncl-shadow-runtime.md#completeness-and-in-use-locking.
+    private const string ManifestFileName = ".al-runner-shadow-manifest";
+    internal const string InUseLockPrefix = ".al-runner-shadow-inuse.";
+
+    /// <summary>Files this process's own bookkeeping writes into a shadow dir, so they are
+    /// never listed in the manifest (the marker is written after it, and the lock files come
+    /// and go per process).</summary>
+    private static bool IsBookkeepingName(string name) =>
+        name.Equals(ManifestFileName, StringComparison.OrdinalIgnoreCase)
+        || name.Equals(MarkerFileName, StringComparison.OrdinalIgnoreCase)
+        || name.StartsWith(InUseLockPrefix, StringComparison.OrdinalIgnoreCase);
+
+    // Held for the life of the process — see HoldInUseLock. A field, not a local, because
+    // closing the handle is exactly what makes the directory prunable again.
+    private static readonly List<FileStream> HeldInUseLocks = new();
+
     // The entry assembly and the small manifests hostfxr reads to launch it — these
     // must be real, independent files in the shadow dir, not symlinks. See the comment
     // at the call site in EnsureShadowDir for why.
@@ -195,8 +215,28 @@ public static class NclShadowRuntime
 
         if (reusable)
         {
-            Console.Error.WriteLine($"[Cecil] Reusing Ncl shadow runtime dir at {shadowDir}");
-            return shadowDll;
+            // Take the in-use lock BEFORE trusting the check: a sibling's prune can land
+            // between the two, and re-checking afterwards is what makes the lock the thing
+            // that decides (#3559).
+            HoldInUseLock(shadowDir);
+            if (IsShadowDirComplete(shadowDir, origFull))
+            {
+                Console.Error.WriteLine($"[Cecil] Reusing Ncl shadow runtime dir at {shadowDir}");
+                return shadowDll;
+            }
+        }
+
+        if (!forceFresh && Directory.Exists(shadowDir))
+        {
+            // #3559: say what was wrong with the directory we refused. Silence here is what
+            // turned a shadow dir emptied under a live process into a FileNotFoundException
+            // inside Roslyn twenty minutes later, with nothing naming the directory.
+            var why = string.Join(", ", MissingRequiredNames(shadowDir, origFull));
+            if (why.Length > 0)
+                Console.Error.WriteLine(
+                    $"[warn] Ncl shadow runtime: the published dir at {shadowDir} is INCOMPLETE " +
+                    $"(missing: {why}) - this run will refuse it and rebuild it now. " +
+                    "See docs/ncl-shadow-runtime.md for the shapes that produce this.");
         }
 
         Console.Error.WriteLine($"[Cecil] Building Ncl shadow runtime dir at {shadowDir}");
@@ -232,9 +272,10 @@ public static class NclShadowRuntime
             if (entrySource == null)
                 NclCecilRewrite.RewriteInPlace(bcServiceTierDir, Path.Combine(tempDir, NclFileName));
 
-            // Marker goes in LAST, inside the temp dir, so the invariant "marker present
-            // => fully built" survives the rename: nobody can observe a marker-bearing
-            // shadowDir that isn't complete.
+            // Manifest, then the marker, both LAST and inside the temp dir, so the invariant
+            // "marker present => fully built" survives the rename: nobody can observe a
+            // marker-bearing shadowDir that isn't complete.
+            WriteManifest(tempDir);
             File.WriteAllText(Path.Combine(tempDir, MarkerFileName), origFull);
 
             publishedDir = PublishShadowDir(tempDir, shadowDir, origFull);
@@ -247,6 +288,11 @@ public static class NclShadowRuntime
             if (!string.Equals(publishedDir, tempDir, StringComparison.OrdinalIgnoreCase))
                 try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
         }
+
+        // Held for this process's lifetime, and this process outlives the child it is about
+        // to re-exec into (TryShadowReexec waits on it) — so no sibling's prune can empty
+        // the directory the child is executing from (#3559).
+        HoldInUseLock(publishedDir);
 
         PruneStaleShadowDirs(shadowRoot, publishedDir, keepNewest: 4);
 
@@ -266,6 +312,169 @@ public static class NclShadowRuntime
     {
         "al-runner.deps.json", "al-runner.runtimeconfig.json",
     };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // #3559 — completeness manifest, and the in-use lock that stops prune deleting
+    // a directory a live process is executing from.
+    // Mechanism and the field evidence: docs/ncl-shadow-runtime.md
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Every entry a completed mirror of a shadow dir holds, as paths relative to
+    /// <paramref name="dir"/> with '/' separators. A directory that is a symlink is
+    /// recorded as its own entry with a trailing '/' and not descended into (the link
+    /// target belongs to the install being mirrored, not to us); a real directory is
+    /// descended into; bookkeeping files are skipped.
+    /// </summary>
+    internal static IEnumerable<string> EnumerateManifestEntries(string dir, string prefix = "")
+    {
+        foreach (var entry in Directory.EnumerateFileSystemEntries(dir).OrderBy(e => e, StringComparer.Ordinal))
+        {
+            var name = Path.GetFileName(entry);
+            if (prefix.Length == 0 && IsBookkeepingName(name)) continue;
+            var rel = prefix + name;
+            var info = new DirectoryInfo(entry);
+            var isDir = (info.Attributes & FileAttributes.Directory) != 0;
+            var isLink = info.LinkTarget != null;
+            if (isDir && !isLink)
+            {
+                foreach (var nested in EnumerateManifestEntries(entry, rel + "/")) yield return nested;
+            }
+            else
+            {
+                yield return isDir ? rel + "/" : rel;
+            }
+        }
+    }
+
+    /// <summary>Writes the manifest of <paramref name="dir"/> into it. Called as the last
+    /// step before the marker, so "marker present" still implies "manifest present and
+    /// describes a finished mirror".</summary>
+    internal static void WriteManifest(string dir) =>
+        File.WriteAllLines(Path.Combine(dir, ManifestFileName), EnumerateManifestEntries(dir).ToList());
+
+    /// <summary>The manifest entries of <paramref name="dir"/> that are not on disk. Empty
+    /// when the dir is whole; a single "(no manifest)" pseudo-entry when the manifest is
+    /// absent, which is itself a refusal — a dir published without one cannot be
+    /// distinguished from one a prune emptied.</summary>
+    internal static IReadOnlyList<string> MissingManifestEntries(string dir)
+    {
+        var manifest = Path.Combine(dir, ManifestFileName);
+        string[] lines;
+        try
+        {
+            if (!File.Exists(manifest)) return new[] { "(no manifest)" };
+            lines = File.ReadAllLines(manifest);
+        }
+        catch (IOException) { return new[] { "(no manifest)" }; }
+        catch (UnauthorizedAccessException) { return new[] { "(no manifest)" }; }
+
+        var missing = new List<string>();
+        foreach (var rel in lines)
+        {
+            if (rel.Length == 0) continue;
+            var path = Path.Combine(dir, rel.Replace('/', Path.DirectorySeparatorChar).TrimEnd(Path.DirectorySeparatorChar));
+            if (!EntryResolves(path, isDirectory: rel.EndsWith("/", StringComparison.Ordinal))) missing.Add(rel);
+        }
+        return missing;
+    }
+
+    /// <summary>
+    /// True when a manifest entry is really readable: present, and — when it is a symlink — its
+    /// target still exists. Measured on Linux (.NET 8), a DANGLING symlink answers
+    /// <c>File.Exists</c> true, <c>FileInfo.Exists</c> true, and is listed by
+    /// <c>Directory.EnumerateFiles</c>; only <c>ResolveLinkTarget(returnFinalTarget: true)</c>
+    /// reports it. On Windows <c>File.Exists</c> answers false for the same shape, so an
+    /// existence check alone passes there and lets the gap through on the legs that matter.
+    /// </summary>
+    internal static bool EntryResolves(string path, bool isDirectory)
+    {
+        try
+        {
+            FileSystemInfo info = isDirectory ? new DirectoryInfo(path) : new FileInfo(path);
+            if (!info.Exists) return false;
+            if (info.LinkTarget == null) return true;
+            return info.ResolveLinkTarget(returnFinalTarget: true)?.Exists == true;
+        }
+        catch (IOException) { return false; }              // cyclic or too many links
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
+    /// <summary>
+    /// Opens this process's in-use lock inside <paramref name="dir"/> and returns the open
+    /// handle, or null when it could not be created. <c>FileShare.Read</c> is what makes it
+    /// a lock: a prune probing with <c>FileShare.None</c> is refused while it is open, and
+    /// on Windows <c>Directory.Delete(recursive: true)</c> is refused outright.
+    /// </summary>
+    internal static FileStream? AcquireInUseLock(string dir)
+    {
+        // One lock file per pid would otherwise accumulate one entry per run, forever. A file
+        // that opens exclusively is held by nobody, so it belongs to a process that has exited.
+        foreach (var file in SafeEnumerateFiles(dir))
+        {
+            var name = Path.GetFileName(file);
+            if (!name.StartsWith(InUseLockPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+            if (name.EndsWith("." + Environment.ProcessId, StringComparison.Ordinal)) continue;
+            try
+            {
+                using (var probe = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+                File.Delete(file);
+            }
+            catch (IOException) { /* held by a live process, or gone — leave it */ }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        try
+        {
+            var path = Path.Combine(dir, InUseLockPrefix + Environment.ProcessId);
+            var fs = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.Read);
+            var stamp = Encoding.UTF8.GetBytes($"pid {Environment.ProcessId} since {DateTime.UtcNow:O}");
+            fs.Write(stamp, 0, stamp.Length);
+            fs.Flush(flushToDisk: false);
+            return fs;
+        }
+        catch (IOException) { return null; }
+        catch (UnauthorizedAccessException) { return null; }
+    }
+
+    /// <summary>Takes the in-use lock and never releases it — the handle lives as long as
+    /// this process does, which is precisely the window during which the directory must not
+    /// be pruned. The parent outlives the shadow child it re-execs (TryShadowReexec waits on
+    /// it), so the parent holding the lock covers the child's whole run.</summary>
+    internal static void HoldInUseLock(string dir)
+    {
+        var fs = AcquireInUseLock(dir);
+        if (fs == null) return;
+        lock (HeldInUseLocks) HeldInUseLocks.Add(fs);
+    }
+
+    /// <summary>True when any in-use lock in <paramref name="dir"/> is still held open —
+    /// i.e. some runner process is executing from it right now. A lock file left behind by a
+    /// crashed process opens cleanly and does not protect anything.</summary>
+    internal static bool IsInUse(string dir)
+    {
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(dir))
+            {
+                if (!Path.GetFileName(file).StartsWith(InUseLockPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+                try { using var probe = new FileStream(file, FileMode.Open, FileAccess.ReadWrite, FileShare.None); }
+                catch (IOException) { return true; }
+                catch (UnauthorizedAccessException) { return true; }
+            }
+        }
+        // Cannot read the directory: assume in use rather than delete something we cannot inspect.
+        catch (IOException) { return true; }
+        catch (UnauthorizedAccessException) { return true; }
+        return false;
+    }
+
+    private static IEnumerable<string> SafeEnumerateFiles(string dir)
+    {
+        try { return Directory.EnumerateFiles(dir).ToList(); }
+        catch (IOException) { return Array.Empty<string>(); }
+        catch (UnauthorizedAccessException) { return Array.Empty<string>(); }
+    }
 
     /// <summary>
     /// True when <paramref name="shadowDir"/> is a fully-built, reusable shadow dir for
@@ -287,7 +496,10 @@ public static class NclShadowRuntime
             if (!File.Exists(shadowDll) || !File.Exists(shadowNcl)) return false;
             foreach (var name in RequiredManifestNames)
                 if (!File.Exists(Path.Combine(shadowDir, name))) return false;
-            return true;
+            // #3559: the five names above are what `dotnet exec` needs to LAUNCH; the run
+            // then reads hundreds of further files off this directory by path, hours later.
+            // The manifest is the only check that covers those.
+            return MissingManifestEntries(shadowDir).Count == 0;
         }
         catch (IOException)
         {
@@ -308,6 +520,19 @@ public static class NclShadowRuntime
     {
         EntryDllName, NclFileName, "al-runner.deps.json", "al-runner.runtimeconfig.json",
     };
+
+    /// <summary>What an in-place heal copies out of a complete build: every entry that build's
+    /// manifest lists (#3559 — a prune that emptied a live dir leaves hundreds of holes, and
+    /// the four names above cannot fill them), falling back to those four names when the build
+    /// carries no manifest.</summary>
+    private static IEnumerable<string> HealableNames(string tempDir)
+    {
+        List<string> entries;
+        try { entries = EnumerateManifestEntries(tempDir).ToList(); }
+        catch (IOException) { return HealableFileNames; }
+        catch (UnauthorizedAccessException) { return HealableFileNames; }
+        return entries.Count > 0 ? entries : HealableFileNames;
+    }
 
     /// <summary>
     /// Publishes <paramref name="tempDir"/> (a fully-built shadow dir, marker written last)
@@ -429,14 +654,30 @@ public static class NclShadowRuntime
             // shadow dir itself, well past its own startup. A missing file has no
             // existing inode to corrupt, so creating it is safe regardless of who else
             // is running from this directory.
-            foreach (var name in HealableFileNames)
+            foreach (var name in HealableNames(tempDir))
             {
-                var dest = Path.Combine(shadowDir, name);
-                if (File.Exists(dest)) continue;
-                try { File.Copy(Path.Combine(tempDir, name), dest, overwrite: false); }
+                var isDir = name.EndsWith("/", StringComparison.Ordinal);
+                var rel = name.Replace('/', Path.DirectorySeparatorChar).TrimEnd(Path.DirectorySeparatorChar);
+                var dest = Path.Combine(shadowDir, rel);
+                var src = Path.Combine(tempDir, rel);
+                if (isDir ? Directory.Exists(dest) : File.Exists(dest)) continue;
+                try
+                {
+                    var destParent = Path.GetDirectoryName(dest);
+                    if (destParent != null) Directory.CreateDirectory(destParent);
+                    if (isDir) CopyDirectoryRecursive(src, dest);
+                    else File.Copy(src, dest, overwrite: false);
+                }
                 catch (IOException) { /* sibling created it (or is creating it) concurrently — fine either way */ }
                 catch (UnauthorizedAccessException) { /* same */ }
             }
+            // The manifest, then the marker, last — same invariant as the initial build:
+            // "marker matches origFull" only becomes true once every other required file is
+            // in place. Both are safe to overwrite (never mapped, never a load target).
+            try { File.Copy(Path.Combine(tempDir, ManifestFileName), Path.Combine(shadowDir, ManifestFileName), overwrite: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+
             // Marker goes last, same invariant as the initial build: "marker matches
             // origFull" only becomes true once every other required file is in place.
             // The marker itself IS safe to overwrite unconditionally — nothing reads it
@@ -501,7 +742,7 @@ public static class NclShadowRuntime
     /// <summary>The required names <see cref="IsShadowDirComplete"/> did not find, so an
     /// error can say WHICH file is missing rather than only that something was. Same
     /// definition of "required" as that method, read from the same two lists.</summary>
-    private static IEnumerable<string> MissingRequiredNames(string dir, string origFull)
+    internal static IEnumerable<string> MissingRequiredNames(string dir, string origFull)
     {
         if (!Directory.Exists(dir)) { yield return "(the directory itself)"; yield break; }
         foreach (var name in new[] { EntryDllName, NclFileName }.Concat(RequiredManifestNames))
@@ -519,6 +760,14 @@ public static class NclShadowRuntime
             if (recorded != origFull)
                 yield return $"{MarkerFileName} (records '{recorded}', expected '{origFull}')";
         }
+
+        // #3559: the file set, summarised — a prune that emptied a live directory leaves
+        // hundreds missing, and printing all of them would bury the rest of the message.
+        var missingFromManifest = MissingManifestEntries(dir);
+        if (missingFromManifest.Count > 0)
+            yield return missingFromManifest.Count <= 5
+                ? string.Join(", ", missingFromManifest)
+                : $"{string.Join(", ", missingFromManifest.Take(5))} and {missingFromManifest.Count - 5} more file(s) listed in {ManifestFileName}";
     }
 
     /// <summary>
@@ -646,6 +895,18 @@ public static class NclShadowRuntime
     /// <see cref="PublishShadowDir"/> for the self-heal that recovers from that state
     /// once it's already happened, but the real fix is not deleting into it in the first
     /// place.</summary>
+    /// <summary>Second guard behind the in-use lock: a directory this new is plausibly serving
+    /// a process built before the lock existed, or one between its own publish and its lock.
+    /// It is a floor on age, not on count — a dir older than this is still ordinary prune fodder.</summary>
+    internal static readonly TimeSpan MinPruneAge = TimeSpan.FromMinutes(10);
+
+    private static bool IsYoungerThan(string dir, TimeSpan age)
+    {
+        try { return DateTime.UtcNow - Directory.GetLastWriteTimeUtc(dir) < age; }
+        catch (IOException) { return true; }
+        catch (UnauthorizedAccessException) { return true; }
+    }
+
     internal static void PruneStaleShadowDirs(string shadowRoot, string protectedDir, int keepNewest)
     {
         var protectedFull = Path.GetFullPath(protectedDir);
@@ -666,6 +927,26 @@ public static class NclShadowRuntime
 
         foreach (var dir in stale)
         {
+            // #3559: never delete a directory another runner process is executing from.
+            // Measured on Windows: Directory.Delete(recursive: true) over a live shadow dir
+            // deletes every file the process does not hold mapped and leaves the rest, so
+            // the victim keeps running and dies hours later on the first file it opens by
+            // path. See docs/ncl-shadow-runtime.md.
+            if (IsInUse(dir))
+            {
+                if (AlRunner.Log.Verbose)
+                    Console.Error.WriteLine(
+                        $"[reexec] Not pruning shadow dir {dir}: another runner process is running from it");
+                continue;
+            }
+            if (IsYoungerThan(dir, MinPruneAge))
+            {
+                if (AlRunner.Log.Verbose)
+                    Console.Error.WriteLine(
+                        $"[reexec] Not pruning shadow dir {dir}: published less than {MinPruneAge.TotalMinutes:0} minutes ago");
+                continue;
+            }
+
             // #2034 audit: same reasoning as the symlink-fallback WARN above — a real
             // failure during shadow-dir upkeep, not routine Cecil-rewrite diagnostics.
             try { Directory.Delete(dir, recursive: true); }

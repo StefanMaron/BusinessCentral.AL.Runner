@@ -36,7 +36,8 @@ public sealed class NclShadowLockedSourcePublishTests
         File.WriteAllBytes(Path.Combine(dir, NclFileName), new byte[] { 4, 5, 6 });
         File.WriteAllText(Path.Combine(dir, "al-runner.deps.json"), "{}");
         File.WriteAllText(Path.Combine(dir, "al-runner.runtimeconfig.json"), "{}");
-        // Marker last, same invariant the real build holds.
+        // Manifest then marker, last — same invariant the real build holds (#3559).
+        NclShadowRuntime.WriteManifest(dir);
         File.WriteAllText(Path.Combine(dir, MarkerFileName), origFull);
     }
 
