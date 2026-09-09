@@ -1017,7 +1017,7 @@ public static partial class NclCecilRewrite
 
         // NavForm.GetPart(int) — issue #2201's page-globals shape. GetPart(int) is the one
         // door BOTH the host's own compiled AL (CurrPage.<part> compiles to
-        // base.Parent.CurrPage.GetPart(controlId) — see MockTestPage.cs's GetPart doc
+        // base.Parent.CurrPage.GetPart(controlId) — see MockTestPage.LivePage.Parts.cs's GetPart doc
         // comment) and the runner's own AdoptFromHost go through to reach a subpage part
         // object. Appending a call to RunnerFormInit.OnSubpagePartResolved right before every
         // `ret` — after the original body has already computed its return value, which stays

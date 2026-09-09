@@ -125,7 +125,8 @@ public sealed class PermissionSetSystemTableGuardInstallTests
     [Fact]
     public void ExactlyOneCallSite_AsksForNonAssignableSets_AndItIsTheGetGuard()
     {
-        var everywhere = CecilRewrite() + FindIntercept() + Read("Patches", "RecordPatches.cs") + ProviderFile();
+        var everywhere = CecilRewrite() + FindIntercept() + Read("Patches", "RecordPatches.cs")
+            + Read("Patches", "RecordPatches.DataAccessDispatch.cs") + ProviderFile();
         Assert.Equal(1, everywhere.Split("includeNonAssignable: true").Length - 1);
 
         var provider = ProviderFile();
