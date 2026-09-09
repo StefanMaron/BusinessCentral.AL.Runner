@@ -276,9 +276,10 @@ section, then proceed however you can.**
 Why it matters: navigation is the dominant cost of agent work in this repo. Measured on one
 implementation agent's transcript, 63% of its 180 tool calls were greps and partial file reads
 — `AlRunner/` is ~139,000 lines across 341 tracked `.cs` files, the largest of them
-`Program.cs` at 6,952 (`git ls-files | xargs wc -l`, 2026-09-10). No file under
-`AlRunner/Patches/` is over 2,332 lines any more: #3676 split `RecordPatches.cs` and
-`MockTestPage.cs`, the two that used to dominate this, into partials by surface.
+`Program.cs` at 6,952 and the largest under `AlRunner/Patches/`
+`RunnerPageInstance.cs` at 2,929 (`git ls-files | xargs wc -l`, 2026-09-10). #3676 split
+`RecordPatches.cs` and `MockTestPage.cs`, the two that used to dominate this, into
+partials by surface.
 
 ### 1. C# language server (answers "who calls this") — main session only
 
