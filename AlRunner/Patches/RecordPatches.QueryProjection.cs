@@ -592,6 +592,20 @@ public static partial class RecordPatches
             }
         }
 
+        // #3571: the dataitem's own static `DataItemTableFilter`. BC parked it on
+        // NCLMetaQueryDataItem.TableFiltersAndMarks — already keyed by NCLMetaField (a TABLE
+        // field), not by query column — so unlike the two passes above these tuples need no
+        // retargeting and are added as-is. See docs/query-dataitem-table-filter.md.
+        //
+        // The join path reads TableFiltersAndMarks separately, per dataitem, in
+        // RecordPatches.QueryJoin.BuildTableFindAllRequest; this pass is the single-dataitem
+        // path's equivalent and must not double-apply, hence the single-dataitem guard.
+        foreach (var tuple in GetSingleDataItemTableFilterTuples(metaAppObj!))
+        {
+            translatedTuples.Add(tuple);
+            anyTranslated = true;
+        }
+
         // #2925: hand the collected flow filters back as a real FiltersAndMarks. MarkedRecords
         // is null — marks are a Record concept (Record.Mark/MarkedOnly) with no query
         // equivalent, and BC's own FiltersAndMarks.Empty is itself constructed as
@@ -614,6 +628,73 @@ public static partial class RecordPatches
 
     private static Type? _tNCLMetaQueryColumn;
     private static PropertyInfo? _pNCLMetaQueryColumnFilters; // #2418
+    private static PropertyInfo? _pNclMetaQueryQueryDefinition3;   // #3571
+    private static PropertyInfo? _pQueryDefDataItems3;             // #3571
+    private static PropertyInfo? _pDataItemTableFiltersAndMarks;   // #3571
+    private static PropertyInfo? _pDataItemSubQueryDefinition3;    // #3571
+
+    /// <summary>
+    /// The <c>(INavFieldMetadata, FilterExpression)</c> tuples of a SINGLE-dataitem query's
+    /// static <c>DataItemTableFilter</c> (#3571), read off
+    /// <c>NCLMetaQueryDataItem.TableFiltersAndMarks</c> — which BC's own
+    /// <c>NCLMetaQuery.CreateTableFiltersAndMarksFromDataItemFieldFilters</c> built from the
+    /// design-time <c>MetaQueryDataItem.FieldFilters</c> list
+    /// <c>NclMetaQueryBuilder.BuildMetaQueryDesign</c> populates, and which BC's document
+    /// parser populates directly. Verified on BC 28.1: parsing a query document carrying
+    /// <c>&lt;DataItemTableFilter&gt;</c> yields <c>FieldFilters count=1</c>, so both
+    /// construction routes reach the same place.
+    ///
+    /// <para>Empty for a MULTI-dataitem query, deliberately: the join path applies each
+    /// dataitem's TableFiltersAndMarks itself, per dataitem, when it builds that dataitem's
+    /// read request (<c>RecordPatches.QueryJoin.BuildTableFindAllRequest</c>). Returning them
+    /// here as well would push one dataitem's table-field filter into a request covering
+    /// another dataitem's table.</para>
+    /// </summary>
+    private static IEnumerable<object> GetSingleDataItemTableFilterTuples(object metaAppObj)
+    {
+        var nclAsm = metaAppObj.GetType().Assembly;
+        const string rt = "Microsoft.Dynamics.Nav.Runtime.";
+        _pNclMetaQueryQueryDefinition3 ??= _tNCLMetaQuery!.GetProperty("QueryDefinition",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        var queryDef = _pNclMetaQueryQueryDefinition3?.GetValue(metaAppObj);
+        if (queryDef == null) yield break;
+
+        _pQueryDefDataItems3 ??= nclAsm.GetType(rt + "NCLMetaQueryDefinition")?
+            .GetProperty("DataItems", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (_pQueryDefDataItems3?.GetValue(queryDef) is not System.Collections.IEnumerable dataItems)
+            yield break;
+
+        var tDataItem = nclAsm.GetType(rt + "NCLMetaQueryDataItem");
+        _pDataItemSubQueryDefinition3 ??= tDataItem?.GetProperty("SubQueryDefinition",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        _pDataItemTableFiltersAndMarks ??= tDataItem?.GetProperty("TableFiltersAndMarks",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (_pDataItemTableFiltersAndMarks == null) yield break;
+
+        // #2300's exclusion, for the same reason it exists there: a FlowField-calculation
+        // synthesized dataitem is not one of the query's own, and counting it would make a
+        // genuinely single-dataitem query look like a join and skip this pass entirely.
+        var real = new List<object>();
+        foreach (var di in dataItems)
+        {
+            if (di == null) continue;
+            if (_pDataItemSubQueryDefinition3?.GetValue(di) != null) continue;
+            real.Add(di);
+        }
+        if (real.Count != 1) yield break;
+
+        var fam = _pDataItemTableFiltersAndMarks.GetValue(real[0]);
+        if (fam == null) yield break;
+        var filters = BcShape.Property(
+            _tFiltersAndMarks!, "Filters", BindingFlags.Public | BindingFlags.Instance,
+            "AL query execution (projection and filter push-down)").GetValue(fam);
+        if (filters == null) yield break;
+        var items = (Array?)_tFilterFieldDictionary!.GetProperty("Items",
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(filters);
+        if (items == null) yield break;
+        foreach (var item in items)
+            if (item != null) yield return item;
+    }
 
     /// <summary>
     /// The query's static <c>ColumnFilter</c> conditions — <c>NCLMetaQuery.ColumnFilters</c>

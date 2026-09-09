@@ -745,10 +745,17 @@ internal static partial class BcAppSymbolCache
         int Id, string Name, string? QueryType, string? Caption, string? OrderBy,
         int TopNumberOfRowsToReturn, List<QueryDataItemSymbol> DataItems);
 
+    // DataItemTableFilter (#3571) is the AL `DataItemTableFilter = <Field> = const(...)/
+    // filter(...) [, ...]` property, carried verbatim ("Status = const(Open)"). It restricts the
+    // dataitem's own table rows and needs no projected query column, so it is a different input
+    // from ColumnFilter (#2418) and lands in a different place: MetaQueryDataItem.FieldFilters,
+    // which BC's NCLMetaQuery.CreateTableFiltersAndMarksFromDataItemFieldFilters turns into the
+    // dataitem's TableFiltersAndMarks. Parsed by RecordPatches.TryParseColumnFilterText, which
+    // this property shares a grammar with.
     internal sealed record QueryDataItemSymbol(
         int Id, string Name, string RelatedTable, string? SqlJoinType, string? DataItemLink,
         List<QueryColumnSymbol> Columns, List<QueryColumnSymbol> Filters,
-        List<QueryDataItemSymbol> DataItems);
+        List<QueryDataItemSymbol> DataItems, string? DataItemTableFilter = null);
 
     // SourceColumn is the field NAME on RelatedTable; Id is the BC column id; Caption optional.
     // Method (issue #2137) is the AL `Method = Sum/Count/Average/Min/Max` property, carried
@@ -2053,6 +2060,9 @@ internal static partial class BcAppSymbolCache
         var props = SymbolProperties(el);
         props.TryGetValue("SqlJoinType", out var sqlJoinType);
         props.TryGetValue("DataItemLink", out var dataItemLink);
+        // #3571. Read verbatim; the field-name → field-no resolution needs the dataitem's
+        // RelatedTable, which only the query builder has.
+        props.TryGetValue("DataItemTableFilter", out var dataItemTableFilter);
 
         var columns = ParseQueryColumns(el, "Columns");
         var filters = ParseQueryColumns(el, "Filters");
@@ -2064,7 +2074,7 @@ internal static partial class BcAppSymbolCache
                 var c = TryParseQueryDataItem(child);
                 if (c != null) nested.Add(c);
             }
-        return new QueryDataItemSymbol(id, name, relatedTable, sqlJoinType, dataItemLink, columns, filters, nested);
+        return new QueryDataItemSymbol(id, name, relatedTable, sqlJoinType, dataItemLink, columns, filters, nested, dataItemTableFilter);
     }
 
     private static List<QueryColumnSymbol> ParseQueryColumns(JsonElement dataItem, string arrayName)

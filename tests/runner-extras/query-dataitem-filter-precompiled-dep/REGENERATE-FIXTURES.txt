@@ -1,0 +1,125 @@
+How .alpackages/*.app and .deps-bin/*.dll in this folder were produced
+=====================================================================
+
+These two binary fixtures make "QDF Precompiled Query Dep" (tables 65890-65892,
+queries 65893 "QDF Open Rows" and 65894 "QDF Composite Link") load as a
+genuinely Tier-1 precompiled dependency -- a compiled DLL under
+.deps-bin/<Publisher>_<Name>_<Version>.dll plus a symbol package under
+.alpackages/, with NO AL source reachable at runtime.
+
+WHY THE PRECOMPILED SHAPE IS THE POINT
+--------------------------------------
+#3608 / PR #3617 made a query the runner COMPILED get its MetaQuery design from
+BC's own emitted metadata document. A query in a precompiled dependency .app was
+never emitted here, so no document exists and
+RecordPatches.NclMetaQueryBuilder.BuildMetaQueryDesign keeps the
+SymbolReference derivation -- chosen on AVAILABILITY, before any parse. Issues
+#3571 and #3572 both report that derivation arm, and neither defect is
+reachable through the document arm, so a source-compiled fixture would not
+exercise either fix. Confirmed by measurement: on BC 28.1 the document arm
+already carries both properties (parsing query 65893's document yields
+FieldFilters count=1; query 65894's yields DataItemLinks count=2), while the
+derivation arm dropped the filter entirely and mis-parsed the composite link.
+
+IMPORTANT: the dep's AL source must NEVER live inside this suite folder (or any
+other runner-extras suite folder) -- a flat-bundle suite's compile step scans
+*.al recursively under its own root, so source sitting next to these fixtures
+would be swept into the MAIN app's own compile, the queries would be emitted
+here, and the DOCUMENT arm would answer instead of the derivation arm under
+test. Keep the dep source external (a scratch dir, NOT under tests/),
+regenerate there, copy only the two binary artifacts back.
+
+THE SYMBOL PACKAGE'S PROPERTY VALUES ARE THE COMPILER'S OWN
+------------------------------------------------------------
+build_symbol_app.py.txt states two query properties verbatim as BC 28.1's
+compiler emitted them for the AL below -- read back out of the
+<key>.query-symbols.json sidecar the runner writes next to the cached DLL:
+
+  {"Name": "DataItemTableFilter", "Value": "Status = const(Open)"}
+  {"Name": "DataItemLink",
+   "Value": "\"Header No.\" = Hdr.\"No.\", \"Variant Code\" = Hdr.\"Variant Code\""}
+
+Note the second: AL's multi-field DataItemLink arrives as ONE string carrying
+both equalities, comma-separated, with quoted field names that themselves
+contain '.'. That is the input on which the old first-'='/first-'.' parse
+produced a source field literally named `No.", "Variant Code" = Hdr."Variant
+Code`, resolved it to nothing, and abandoned the whole build -- leaving
+NCLMetaQuery null, which NavQuery.ValidateTablesNotVirtual then dereferenced.
+If you regenerate these fixtures against a newer BC, re-read the sidecar and
+keep the values verbatim rather than re-typing them; an invented spelling would
+let the tests pass on a shape the compiler does not actually emit.
+
+Dep AL source (place in a scratch dir, e.g. /tmp/qdf-dep/):
+
+  app.json
+  {
+    "id": "b3d9f1a7-5c82-4e06-9b34-7a1e6d208c45",
+    "name": "QDF Precompiled Query Dep",
+    "publisher": "AL Runner Fixtures",
+    "version": "1.0.0.0",
+    "dependencies": [],
+    "idRanges": [ { "from": 65890, "to": 65899 } ],
+    "runtime": "17.0",
+    "target": "Cloud",
+    "features": []
+  }
+
+  table 65890 "QDF Filter Row"    fields: Code Code[20] (PK), Status Option (Open,Closed)
+  table 65891 "QDF Link Header"   fields: "No." Code[20], "Variant Code" Code[20], Descr Text[50]
+                                  key PK: "No.", "Variant Code"
+  table 65892 "QDF Link Line"     fields: "Header No." Code[20], "Variant Code" Code[20],
+                                  "Line No." Integer, Tag Text[50]
+                                  key PK: "Header No.", "Variant Code", "Line No."
+
+  query 65893 "QDF Open Rows"
+      dataitem(Row; "QDF Filter Row")
+      {
+          DataItemTableFilter = Status = const(Open);
+          column(RowCode; "Code") { }
+      }
+
+  query 65894 "QDF Composite Link"
+      dataitem(Hdr; "QDF Link Header")
+      {
+          column(HdrNo; "No.") { }
+          column(HdrDescr; Descr) { }
+          dataitem(Ln; "QDF Link Line")
+          {
+              DataItemLink = "Header No." = Hdr."No.", "Variant Code" = Hdr."Variant Code";
+              SqlJoinType = InnerJoin;
+              column(LineTag; Tag) { }
+          }
+      }
+
+Regenerate, from the repo root (AlRunner already built, -c Release):
+
+  # 1. The symbol package. build_symbol_app.py.txt is the script, verbatim;
+  #    copy it out to a .py and run it. It writes a NAVX-framed zip carrying
+  #    NavxManifest.xml + SymbolReference.json and NO compiled code -- the
+  #    same technique tests/runner-extras/precompiled-tableext-keys uses.
+  cp tests/runner-extras/query-dataitem-filter-precompiled-dep/build_symbol_app.py.txt /tmp/build_qdf_app.py
+  python3 /tmp/build_qdf_app.py \
+     tests/runner-extras/query-dataitem-filter-precompiled-dep/.alpackages/AL_Runner_Fixtures_QDF_Precompiled_Query_Dep_1.0.0.0.app
+
+  # 2. The compiled DLL (Tier-1 target), by running the dep as a normal bundle
+  #    once and copying the cached DLL out.
+  dotnet run --project AlRunner -c Release -- --bc-version 28.1 \
+      --package-cache "$HOME/.al-runner/platform-apps" --verbose /tmp/qdf-dep
+  # -> prints "[cache] WROTE key=<KEY> path=~/.cache/al-runner/al-out/<KEY>.dll"
+  cp ~/.cache/al-runner/al-out/<KEY>.dll \
+     tests/runner-extras/query-dataitem-filter-precompiled-dep/.deps-bin/AL_Runner_Fixtures_QDF_Precompiled_Query_Dep_1.0.0.0.dll
+
+  # (filenames MUST match DependencyLoader.SanitizeFileName: spaces -> underscores,
+  #  "<Publisher>_<Name>_<Version>.<ext>")
+
+Verify (RED before the #3571/#3572 fix, GREEN after):
+
+  dotnet run --project AlRunner -c Release -- --bc-version 28.1 --strict \
+      --package-cache "$HOME/.al-runner/platform-apps" \
+      tests/runner-extras/query-dataitem-filter-precompiled-dep
+
+RED, measured on origin/main at 96e1cbc4:
+  PrecompiledDepQueryAppliesStaticDataItemTableFilter
+      Expected 1 but got 2: rows returned by a query whose dataitem filters Status = const(Open)
+  PrecompiledDepQueryJoinsOnEveryDataItemLinkEquality
+      NullReferenceException at Microsoft.Dynamics.Nav.Runtime.NavQuery.ValidateTablesNotVirtual()
