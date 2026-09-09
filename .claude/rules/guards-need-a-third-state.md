@@ -24,10 +24,14 @@ that the message says which of the three it is.
   floor is refused as `degraded` rather than judged on the smaller set, because a partial read
   and a deliberate removal look identical from there (#3002).
 - **`.github/scripts/check_corpus_pin_forward.sh`, exit 3** via `die_undetermined`, at seven
-  call sites covering checkout problems, a change the guard has no basis to judge, an
-  unreliable measurement and three broken ones. What they share is that **none resolves toward
-  success** (#3683). Enumerate those call sites rather than counting them: the definition line
-  matches too, so `grep -c die_undetermined` over-answers by one.
+  call sites (#3683): `.gitmodules` present but declaring no readable submodule path;
+  `SUBMODULE_PATH` naming no submodule the repository declares; the submodule present at one
+  endpoint and absent at the other — **adding or removing the corpus submodule is not a pin
+  bump, and only a human reviewer can judge it**; an unchecked-out submodule; a corpus commit
+  absent from the clone; a shallow clone, where the measurement is unreliable; and a
+  `merge-base` that failed rather than answering. They share no common cause — what they share
+  is that **none resolves toward success**. Enumerate those call sites rather than counting
+  them: the definition line matches too, so `grep -c die_undetermined` over-answers by one.
 - **`tools/corpus-pass-count.py`, `classify()`** — `ran` / `failed` / `not-run` / `no-suite`,
   so "not in this leg's suite" and "this leg never reached the test phase" cannot be read as
   "your tests did not run". A zero has three meanings and a bare grep gives all three the same
@@ -46,8 +50,8 @@ over three cases:
 | present, declaring paths, **none matching** the configured one | **3**, naming what it *does* declare | a typo is visible in the message rather than inferred from an absence |
 | present but **unreadable** | **3**, deliberately *not* folded into row 1 | an absent file is the legitimate pass; an unreadable one is a broken measurement |
 
-**That third row is the whole rule in one place.** Folding it into the first puts the broken
-case back on the exit-0 path the change exists to take it off.
+**Folding the third row into the first puts the broken case back on the exit-0 path** the
+change exists to take it off.
 
 Read `.gitmodules` at the **endpoint commits**, never the working tree, for the same reason the
 pins are read there (#3261): under `actions/checkout` the working tree is `refs/pull/N/merge`.
@@ -80,16 +84,16 @@ and conflating the two refused every CI run in the first version of that fix (#3
 2. **Give each a verdict that is not the success state**, and a message naming what could not
    be established and what would fix it. `check_corpus_pin_forward.sh`'s messages are the
    model: each names its own cause, which sends the reader to the right remedy.
-3. **Check it before the work, not after** (#3681): a `PIN_PATH` that names nothing has already
-   made every verdict the script could reach meaningless, including the ones that look like
-   passes.
+3. **Check it before the work, not after** — `#3681`'s guard puts the `PIN_PATH` check *ahead
+   of the changed-file scan*, because a `PIN_PATH` that names nothing has already made every
+   verdict the script could reach meaningless, including the ones that look like passes.
 4. **Keep the genuinely-absent case a pass**, per the constraint above.
 5. **Prove the third state fires.** A refusal path with no test is indistinguishable from a
    never-fire path, which is the defect itself. `pr-gate.yml` discovers `test_*.sh` and
    `tools/test_*.py` siblings by glob, so a correctly-named test gates the day it lands (#3683).
 
-Open instance: #3361 part 2, where a leg summary that lost its `fail` key reads as zero
-failures, safe today only by a neighbouring comparison that fails loudly.
+**A guard that is safe only by accident of a neighbour is still on this list** — #3361 part 2
+is one, where a leg summary that lost its `fail` key reads as zero failures.
 
 ## The same shape one level down
 

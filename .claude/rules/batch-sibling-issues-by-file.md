@@ -38,10 +38,12 @@ which is where splitting is most wasteful.
 
 **The right number is a property of how finely the issues were filed, not a constant** — ten
 issues that all land in one file are one PR, not ten. The two limits that are not arbitrary are
-already in the rule and both are self-enforcing: a proving test per closed issue (point 3) and
-one coherent change (point 4), which a reviewer judges from the diff. The evidence that would
-justify a cap is reviewers unable to hold arriving PRs, or a climbing conflict rate on large
-ones — and it should then be a number derived from that data.
+already in the rule: a proving test per closed issue (point 3), and one coherent change (point
+4), which a reviewer judges from the diff.
+
+**Watch three signals, and add a cap only from what they measure**: reviewers unable to hold an
+arriving PR, the conflict rate on large PRs, and **the rebase rate on them**. A cap derived from
+those numbers is legitimate; a guessed one is what this section replaced.
 
 ## This is still one PR — reconciling with `branch-and-pr.md`
 

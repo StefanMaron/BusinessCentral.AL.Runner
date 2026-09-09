@@ -43,3 +43,11 @@ where a `None` fails loudly, so it is not reachable as a false pass **today**. I
 written the opposite way from every neighbour in that function, where an uncomputable value is
 an explicit refusal rather than a silent zero. A guard that is safe only by accident of a
 neighbour is on this list.
+
+## The instances (status moved from the rule, #3728 review round 2)
+
+#3361 part 2 was open when this rule was written, and its own body records the honest qualifier:
+that spot is currently backstopped by a `summary.get("pass") != want` comparison a few lines down
+where a `None` fails loudly, so it is not reachable as a false pass **today**. It is still written
+the opposite way from every neighbour in that function, where an uncomputable value is an explicit
+refusal rather than a silent zero.
