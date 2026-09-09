@@ -59,6 +59,16 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import agent_stdio as _stdio
+except Exception:  # pragma: no cover - a copy detached from its sibling module
+    _stdio = None
+if _stdio is not None:
+    # Before any print: stdout is built from the console codec, and cp1252
+    # cannot encode the robot emoji in an agent-authored PR body (#3589).
+    _stdio.enable_utf8_stdio()
+
 # Every private directory carries this prefix, so `scan` can tell an owned
 # directory from a bare one without a registry, and a human reading the
 # scratchpad can attribute a stray file to the agent that wrote it.

@@ -1484,6 +1484,43 @@ check("#3309: ci-verdicts.md records that an empty --log-failed is not an empty 
       "ci-verdicts.md does not mention the escape-sequence refusal")
 
 
+# --------------------------------------------------------------------------
+# #3589: the failing-log excerpt main() prints is GitHub's text, not ours, and
+# printing it died on this box with UnicodeEncodeError while reporting a red PR
+# -- a tool that has done the work must not lose its answer on the way to the
+# terminal. The child below reproduces that print site under the codec that
+# decides it; PYTHONIOENCODING is read before main() exists, so a child
+# interpreter is the only lever.
+# --------------------------------------------------------------------------
+CP1252_CHILD = r'''
+import importlib.util, sys
+pre = (sys.stdout.encoding or "").lower().replace("-", "")
+if pre != "cp1252":
+    # PYTHONIOENCODING is honoured on every platform, so anything else here is a
+    # broken test environment, never a reason to skip.
+    sys.stderr.write("PRECONDITION-FAIL: stdout encoding is %s" % pre)
+    raise SystemExit(3)
+spec = importlib.util.spec_from_file_location("ci_wait", sys.argv[1])
+cw = importlib.util.module_from_spec(spec)
+sys.modules["ci_wait"] = cw
+spec.loader.exec_module(cw)
+tail = ["--- failing log (tail) ---", "  \U0001f916 step failed \u2014 see above"]
+print("\n".join(tail))
+'''
+assert CP1252_CHILD.isascii(), "CP1252_CHILD must survive an ASCII argv"
+ROBOT_UTF8 = "\U0001f916".encode("utf-8")
+DASH_UTF8 = "—".encode("utf-8")
+DASH_CP1252 = "—".encode("cp1252")
+_env = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
+_child = subprocess.run([sys.executable, "-c", CP1252_CHILD, os.path.join(HERE, "ci-wait.py")],
+                        capture_output=True, env=_env)
+_detail = ascii(_child.stdout[-200:]) + " " + ascii(_child.stderr[-400:])
+check("#3589: a failing-log excerpt prints under a cp1252 stdout, exit 0",
+      _child.returncode == 0, _detail)
+check("#3589: the excerpt keeps the emoji as UTF-8", ROBOT_UTF8 in _child.stdout, _detail)
+check("#3589: the excerpt keeps the em dash as UTF-8, not as cp1252 0x97",
+      DASH_UTF8 in _child.stdout and DASH_CP1252 not in _child.stdout, _detail)
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")
