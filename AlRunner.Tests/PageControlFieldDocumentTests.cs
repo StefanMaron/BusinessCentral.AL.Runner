@@ -42,7 +42,29 @@ public sealed class PageControlFieldDocumentTests : IDisposable
     public void Dispose()
     {
         AlObjectMetadataRegistry.Clear();
+        // The AL parser's dictionaries and the delta memo are static, so a fixture left
+        // behind here would answer for the NEXT class's page of the same id. Both are
+        // dropped for the same reason the runtime drops them on a --watch reload.
+        RemoveParsedPage(90331);
+        RemoveParsedPageExtension(90333);
+        ClearBcPageExtensionControls();
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
+    }
+
+    private static void ClearBcPageExtensionControls()
+        => typeof(AlRunner.Patches.RecordPatches)
+            .GetMethod("ClearBcPageExtensionControls",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?.Invoke(null, null);
+
+    private static void RemoveParsedPage(int id) => RemoveFromDict("_parsedPages", id);
+    private static void RemoveParsedPageExtension(int id) => RemoveFromDict("_parsedPageExtensions", id);
+
+    private static void RemoveFromDict(string field, int id)
+    {
+        var f = typeof(AlRunner.Patches.RecordPatches).GetField(field,
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        if (f?.GetValue(null) is System.Collections.IDictionary d && d.Contains(id)) d.Remove(id);
     }
 
     /// <summary>
@@ -270,4 +292,244 @@ public sealed class PageControlFieldDocumentTests : IDisposable
             Assert.False(c.HasAttribute("SourceTable"),
                 $"control '{c.GetAttribute("Name")}' unexpectedly states its own SourceTable");
     }
+
+    // ---------------------------------------------------------------------------------
+    // #3605 — a pageextension's added controls live ONLY in the extension's own
+    // MetadataRuntimeDeltas document, never in the base page's <PageDefinition>.
+    //
+    // This is the exact inverse of tables (#3600), where a same-app tableextension's added
+    // fields ARE folded into the base <MetaTable>. Carrying a table intuition across is
+    // what makes the page case look already-solved when it is not.
+    // ---------------------------------------------------------------------------------
+
+    /// <summary>
+    /// A base page plus a pageextension that adds one control, over a table extended by a
+    /// tableextension — the smallest shape in which "the control the base document does not
+    /// mention" is a real, resolvable field rather than a dangling name.
+    /// </summary>
+    private const string ExtensionFixtureAl = """
+        table 90330 "PcfExt Sample"
+        {
+            DataClassification = CustomerContent;
+            fields
+            {
+                field(1; "Entry No."; Integer) { DataClassification = CustomerContent; }
+            }
+            keys { key(PK; "Entry No.") { Clustered = true; } }
+        }
+
+        tableextension 90332 "PcfExt Sample Ext" extends "PcfExt Sample"
+        {
+            fields
+            {
+                field(50; "Extra Note"; Text[30]) { DataClassification = CustomerContent; }
+            }
+        }
+
+        page 90331 "PcfExt Fixture"
+        {
+            PageType = List;
+            SourceTable = "PcfExt Sample";
+
+            layout
+            {
+                area(Content)
+                {
+                    repeater(Rows)
+                    {
+                        field("Entry No."; Rec."Entry No.") { ApplicationArea = All; }
+                    }
+                }
+            }
+        }
+
+        pageextension 90333 "PcfExt Fixture Ext" extends "PcfExt Fixture"
+        {
+            layout
+            {
+                addlast(Content)
+                {
+                    field("Extra Note"; Rec."Extra Note") { ApplicationArea = All; }
+                }
+            }
+        }
+        """;
+
+    private void EmitExtensionFixture()
+    {
+        File.WriteAllText(Path.Combine(_root, "PcfExt.al"), ExtensionFixtureAl);
+        var output = new BcCompiler().Emit(new[] { _root }, "PcfExtModule");
+        Assert.True(output.Sources.Count > 0,
+            $"Expected the fixture to emit; diagnostics: {string.Join(" | ", output.Diagnostics.Take(10))}");
+
+        // A bare Emit captures the metadata documents but does NOT run the AL source parser,
+        // which a real run does on the same sources. GetPageExtensionIdsForPage resolves a
+        // page id to its NAME through that parser's dictionaries, so without this the lookup
+        // finds no extensions and the conversion silently contributes nothing — the same
+        // shape as the bug under test, which would make the assertion untrustworthy in both
+        // directions. Driving the real parser here keeps the test on the production path.
+        ParseAlSource("TryParsePageFile", ExtensionFixtureAl);
+    }
+
+    private static void ParseAlSource(string method, string source)
+        => typeof(AlRunner.Patches.RecordPatches)
+            .GetMethod(method,
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?.Invoke(null, new object[] { source });
+
+    [SkippableFact]
+    public void BasePageDocument_DoesNotMentionAPageExtensionsAddedControl()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        EmitExtensionFixture();
+
+        Assert.True(AlObjectMetadataRegistry.TryGet("Page", 90331, out var pageXml),
+            "expected the base page's document to be captured under kind \"Page\"");
+
+        var doc = new System.Xml.XmlDocument();
+        doc.LoadXml(pageXml);
+        var controls = FieldControls(doc.DocumentElement!);
+
+        // Positive: the base page's own control is there, so the document did parse and the
+        // walk does find controls — without this the negative below would pass vacuously.
+        Assert.Equal(new[] { "Entry No." }, controls.Select(c => c.GetAttribute("Name")).ToArray());
+
+        // Negative, and the whole premise of #3605: the extension's control is absent from
+        // the base document ENTIRELY — not merely from the walk. A substring check over the
+        // raw XML cannot be fooled by a walk that skips an element shape it does not know.
+        Assert.DoesNotContain("Extra Note", pageXml, StringComparison.Ordinal);
+    }
+
+    [SkippableFact]
+    public void PageExtensionDocument_CarriesTheAddedControlUnderControlAdd()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        EmitExtensionFixture();
+
+        // The kind string is load-bearing: the conversion looks the delta up under
+        // "PageExtension", and any other spelling silently contributes zero extra controls.
+        Assert.True(AlObjectMetadataRegistry.TryGet("PageExtension", 90333, out var extXml),
+            "expected pageextension 90333's delta document to be captured under kind "
+            + "\"PageExtension\" — without it the added control cannot be answered at all");
+
+        var doc = new System.Xml.XmlDocument();
+        doc.LoadXml(extXml);
+        var root = doc.DocumentElement!;
+
+        // The root element is MetadataRuntimeDeltas, NOT PageDefinition — this is a different
+        // document shape from the base page's, which is why it needs its own read.
+        Assert.Equal("MetadataRuntimeDeltas", root.Name);
+
+        var adds = root.ChildNodes.Cast<System.Xml.XmlNode>()
+            .OfType<System.Xml.XmlElement>().Where(e => e.Name == "ControlAdd").ToList();
+        Assert.Single(adds);
+
+        // Positive: the added control sits under <ControlAdd> in exactly the <Controls
+        // xsi:type="ControlDefinition"> shape the base document uses, which is why the same
+        // collector reads both rather than needing a second parser.
+        var added = FieldControls(adds[0]);
+        Assert.Equal(new[] { "Extra Note" }, added.Select(c => c.GetAttribute("Name")).ToArray());
+
+        // ...and it states the binding as a field NUMBER, so the bound branch resolves it
+        // against the metatable the same way a base-page control resolves.
+        Assert.Equal("50", added[0].GetAttribute("DataColumnName"));
+    }
+
+    [SkippableFact]
+    public void PageControlFieldRows_IncludeAPageExtensionsAddedControl_WithItsResolvedField()
+    {
+        TestArtifacts.SkipIf(!_engine.Ready,
+            _engine.SkipReason ?? "the in-process BC engine is not ready (see BcEngineCollection).");
+
+        EmitExtensionFixture();
+
+        var rows = PageControlFieldRowsFor(90331);
+
+        // Positive: BOTH controls, the base page's and the extension's. Before #3605 this
+        // answered only "Entry No." — the document path replaced an AL derivation that did
+        // merge extensions, so the added control was dropped silently.
+        Assert.Equal(new[] { "Entry No.", "Extra Note" },
+            rows.Select(r => r.ControlName).ToArray());
+
+        // The extension row carries BC's own resolved values, not defaults: field 50 comes
+        // from the TABLEEXTENSION (so the delta's DataColumnName was really resolved against
+        // the extended table, not echoed back), and TableNo is the page's source table, which
+        // BC assigns on every row.
+        //
+        // SourceExpression is deliberately NOT asserted here. Resolving it needs a built
+        // NCLMetaTable, which a bare BcCompiler.Emit does not construct — in this harness it
+        // is empty for the base page's row too, so an assertion either way would measure the
+        // harness rather than the conversion. It IS pinned end-to-end: a live runner probe on
+        // this exact shape answers `Extra Note` (BC's field-NAME form, not the binding text
+        // `Rec."Extra Note"`), and corpus codeunit 60426 pins the column against a real tier.
+        var extra = rows.Single(r => r.ControlName == "Extra Note");
+        Assert.Equal(50, extra.FieldNo);
+        Assert.Equal(90330, extra.TableNo);
+
+        // Sequence continues the base page's numbering rather than restarting at 0 — BC
+        // numbers its FindAll walk over the MERGED page, so two rows may not share an index.
+        Assert.Equal(0, rows.Single(r => r.ControlName == "Entry No.").Sequence);
+        Assert.Equal(1, extra.Sequence);
+
+        // Negative: the control id is hashed in the EXTENSION's id space, not the base
+        // page's. Asserting inequality as well as equality is what catches a future change
+        // that "fixes" the id by hashing against the page — which would make every TestPage
+        // lookup of an extension control miss.
+        Assert.Equal(MemberIdOf(90333, "Extra Note"), extra.ControlId);
+        Assert.NotEqual(MemberIdOf(90331, "Extra Note"), extra.ControlId);
+    }
+
+    /// <summary>BC's IdSpace.GetMemberId, reached on the runner's own implementation by
+    /// reflection so this cannot drift from the hash the runtime resolves controls with.</summary>
+    private static int MemberIdOf(int ancestorObjectId, string name)
+    {
+        var t = typeof(AlRunner.Patches.RecordPatches).Assembly
+            .GetType("AlRunner.Patches.RunnerPageInstance")
+            ?? throw new InvalidOperationException("AlRunner.Patches.RunnerPageInstance not found.");
+        var m = t.GetMethod("MemberId",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?? throw new InvalidOperationException("RunnerPageInstance.MemberId not found.");
+        return (int)m.Invoke(null, new object[] { ancestorObjectId, name })!;
+    }
+
+    /// <summary>
+    /// The rows the virtual table would report for one page, taken from the document path
+    /// itself (<c>GetPageControlFieldRowsFromBcDocument</c>) rather than from the populated
+    /// table, so the assertion is about the conversion under test and not about whether a
+    /// virtual-table populate ran in this process.
+    /// </summary>
+    private static List<PageControlFieldRowView> PageControlFieldRowsFor(int pageId)
+    {
+        var rp = typeof(AlRunner.Patches.RecordPatches);
+        var m = rp.GetMethod("GetPageControlFieldRowsFromBcDocument",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "RecordPatches.GetPageControlFieldRowsFromBcDocument not found — the "
+                + "#3604/#3605 conversion this class pins has been renamed or removed.");
+
+        var raw = m.Invoke(null, new object[] { pageId });
+        Assert.True(raw != null,
+            $"page {pageId}: the document path returned null, meaning BC's document was not "
+            + "captured or did not parse — the conversion is not being exercised at all.");
+
+        var view = new List<PageControlFieldRowView>();
+        foreach (var row in (System.Collections.IEnumerable)raw!)
+        {
+            var t = row.GetType();
+            string S(string n) => (string)t.GetProperty(n)!.GetValue(row)!;
+            int I(string n) => (int)t.GetProperty(n)!.GetValue(row)!;
+            view.Add(new PageControlFieldRowView(
+                I("ControlId"), S("ControlName"), I("TableNo"), I("FieldNo"),
+                S("SourceExpression"), I("Sequence")));
+        }
+        return view;
+    }
+
+    private sealed record PageControlFieldRowView(
+        int ControlId, string ControlName, int TableNo, int FieldNo,
+        string SourceExpression, int Sequence);
 }

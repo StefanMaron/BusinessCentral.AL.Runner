@@ -1488,11 +1488,18 @@ internal static partial class BcAppSymbolCache
             int id = control.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var idv) ? idv : 0;
             if (!string.IsNullOrEmpty(name) && id != 0)
             {
-                sequence++;
                 props.TryGetValue("Visible", out var visible);
                 props.TryGetValue("Editable", out var editable);
                 props.TryGetValue("Enabled", out var enabled);
-                into.Add(new PageControlSymbol(id, name!, srcExpr, visible, editable, enabled, sequence));
+                // 0-based, POST-increment (#3631). BC numbers its FindAll walk with
+                // `Select((cd, i) => …)`, an index captured before the OrderBy that sorts by
+                // control id, so the first control is 0. This path was left 1-based when
+                // #3628 corrected the other two only because this file was being changed by
+                // another PR at the time; the inconsistency is worse than either value,
+                // because Page Control Field's Sequence then meant different things for a
+                // source-compiled and a precompiled-dependency page and AL cannot see which
+                // it has.
+                into.Add(new PageControlSymbol(id, name!, srcExpr, visible, editable, enabled, sequence++));
             }
         }
 

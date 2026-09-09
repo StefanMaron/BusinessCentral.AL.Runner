@@ -295,6 +295,9 @@ public static partial class RecordPatches
         // or hides a control would otherwise keep answering the old tree. Page ids repeat
         // across reloads, so a stale entry is a wrong answer rather than a miss.
         ClearBcPageControlDocuments();
+        // #3605: and the pageextension deltas that merge into those documents, which are keyed
+        // by the EXTENSION's id — a separate id space, so a separate memo to drop.
+        ClearBcPageExtensionControls();
         // #3121: every table is rebuilt from scratch below, so carrying the previous bundle's
         // pending CalcFormula rebuilds forward only buys a wasted repopulate pass on the next
         // .app registration.
