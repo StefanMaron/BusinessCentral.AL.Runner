@@ -108,7 +108,7 @@ public static class NavAppResourcePatches
         /// /resources/ parts). Resource name = package path minus "resources/",
         /// case-sensitive exactly like BC's PackagedResourceManifest dictionary.
         /// </summary>
-        private static Dictionary<string, byte[]> ReadPackageResources(string appPath)
+        internal static Dictionary<string, byte[]> ReadPackageResources(string appPath)
         {
             var result = new Dictionary<string, byte[]>(StringComparer.Ordinal);
             try
@@ -126,7 +126,20 @@ public static class NavAppResourcePatches
         private static void ReadResourcesFromNavx(byte[] navxBytes, Dictionary<string, byte[]> into, bool allowNested)
         {
             var offset = NavxZipOffset(navxBytes);
-            using var ms = new MemoryStream(navxBytes, offset, navxBytes.Length - offset, writable: false);
+            // A runtime package's payload is a .NEA container, not a bare zip (#3537). Peel it
+            // through AppLoader's helpers rather than repeating the header and RC4 key here, so
+            // the format keeps ONE implementation across the runner's three .app readers. Without
+            // this, ZipArchive hits the RC4 bytes, the InvalidDataException is swallowed by
+            // ReadPackageResources' catch, and an empty dictionary is returned as if complete —
+            // reporting a runtime package's resources as ABSENT rather than as unreadable, which
+            // is the silent-wrong-answer shape .claude/rules/loud-failures.md forbids. Live on the
+            // dependency path: DependencyLoader.RegisterDependencyAssembly sets AppPath from a
+            // resolved dependency .app.
+            using var ms = AlRunner.AppLoader.IsNeaContainer(navxBytes, offset)
+                ? new MemoryStream(
+                    AlRunner.AppLoader.NeaDecode(navxBytes, offset + AlRunner.AppLoader.NeaHeaderLength),
+                    writable: false)
+                : new MemoryStream(navxBytes, offset, navxBytes.Length - offset, writable: false);
             using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
             bool any = false;
             foreach (var entry in zip.Entries)
@@ -162,6 +175,15 @@ public static class NavAppResourcePatches
             return 0;
         }
     }
+
+    /// <summary>
+    /// Test seam over the real <c>/resources/</c> reader — the same method
+    /// <see cref="AppResourceStore.TryRead"/> calls, not a copy of it. Exists because the reader
+    /// had no test at all, which is how a runtime package silently reporting zero resources
+    /// survived (#3537).
+    /// </summary>
+    internal static Dictionary<string, byte[]> ReadPackageResourcesForTests(string appPath)
+        => AppResourceStore.ReadPackageResources(appPath);
 
     // Assembly → resource store. Assemblies are process-wide (Assembly.Load(byte[])),
     // so entries stay valid across bundles; re-registration updates in place.

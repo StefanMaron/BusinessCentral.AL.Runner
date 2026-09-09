@@ -1148,10 +1148,11 @@ public static class AppLoader
     /// <summary>
     /// True if the bytes at <paramref name="offset"/> begin a .NEA container.
     ///
-    /// <para>Internal rather than private because <c>BcAppSymbolCache</c> keeps its own
-    /// NAVX reader — it reads <c>SymbolReference.json</c>, which a runtime package ships and
-    /// which #3549 consumes — and a second copy of the RC4 would be a second place for the
-    /// format to drift.</para>
+    /// <para>Internal rather than private because two other files keep their own NAVX readers
+    /// and both must see through this layer: <c>BcAppSymbolCache</c> reads
+    /// <c>SymbolReference.json</c> (which a runtime package ships, and #3549 consumes), and
+    /// <c>NavAppResourcePatches</c> reads <c>/resources/*</c> on the dependency path. A further
+    /// copy of the RC4 would be a further place for the format to drift.</para>
     /// </summary>
     internal static bool IsNeaContainer(byte[] bytes, int offset)
         => offset >= 0

@@ -54,8 +54,23 @@ purpose.
 no managed stack. Six lines of RC4 keep `AppLoader`'s zero-BC-assembly property intact, and the
 format is a fixed constant rather than something that has to track a BC version.
 
-The decode lives in `AppLoader` and `BcAppSymbolCache` calls into it, so there is one
-implementation rather than two copies of the same constants.
+The runner carries the header and the key as **literals** in `AppLoader` — not resolved from BC
+at run time. Reflecting them out of `Microsoft.Dynamics.Nav.CodeAnalysis` is how they were
+*verified* (BC's own `NeaStreamWriter` was executed over a known plaintext, and an independent
+RC4 reproduced its output byte for byte), but doing that at run time would reintroduce exactly the
+assembly dependency the previous paragraph rules out.
+
+The decode lives in `AppLoader`, and both other `.app` readers — `BcAppSymbolCache`
+(`SymbolReference.json`) and `NavAppResourcePatches` (`/resources/*`) — call into it, so the
+format has one implementation rather than three copies of the same constants.
+
+**If Microsoft ever changed these constants**, a changed *header* is loud: `IsNeaContainer`
+answers `false`, the ZIP reader hits bytes that are not a ZIP, and the reader raises
+`InvalidDataException`. A changed *key* under an unchanged header is the quieter case — a corrupt
+ZIP, loud through `ExtractCSharp` but reaching `IsR2R`/`HasAlSource` as `catch { return false; }`.
+No guard is built for that: the constants are byte-identical across all eleven BC builds measured
+(27.0 through 28.4), and BC's own reader has no version negotiation — `NeaStreamReader.IsSupported`
+takes no key argument and its private overload assigns `NeaStream.Key` unconditionally.
 
 ## What is inside one
 

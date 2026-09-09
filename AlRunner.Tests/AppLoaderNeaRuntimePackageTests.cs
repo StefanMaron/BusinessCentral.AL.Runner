@@ -119,6 +119,25 @@ public sealed class AppLoaderNeaRuntimePackageTests
         return path;
     }
 
+    private static readonly byte[] FontBytes = Utf8("PROBE-FONT-BYTES-v1");
+
+    /// <summary>
+    /// A package carrying a <c>/resources/</c> part, written either plain or `.NEA`-wrapped from
+    /// the identical ZIP. NavAppResourcePatches reads this part to answer NavApp.GetResource, and
+    /// it is on the dependency path (DependencyLoader sets AppPath from a resolved dependency
+    /// .app), so a runtime package must answer it the same way an ordinary one does.
+    /// </summary>
+    private static string WriteResourcePackage(string dir, Guid appId, string name, bool nea)
+    {
+        var zip = ZipWith(
+            ("NavxManifest.xml", Utf8(ManifestXml(appId, name))),
+            ("PackagedResources.json", Utf8("""{"Resources":["fonts/Probe.ttf"]}""")),
+            ("resources/fonts/Probe.ttf", FontBytes));
+        var path = Path.Combine(dir, name + ".app");
+        File.WriteAllBytes(path, Navx(nea ? NeaEncode(zip) : zip, appId));
+        return path;
+    }
+
     /// <summary>The same content as an ordinary package, so each assertion has a control.</summary>
     private static string WritePlainPackage(string dir, Guid appId, string name)
     {
@@ -251,5 +270,53 @@ public sealed class AppLoaderNeaRuntimePackageTests
         AppLoader.ResetManifestMemoForTests();
         Assert.Null(AppLoader.ReadManifest(path));
         Assert.False(AppLoader.HasSymbolReference(path));
+    }
+
+    /// <summary>
+    /// The THIRD reader copy (#3537 review). NavAppResourcePatches opened a ZipArchive over the
+    /// raw NAVX payload through its own private NavxZipOffset, so it could not see through a
+    /// `.NEA` container — and the failure was silent in the shape loud-failures.md names: the
+    /// InvalidDataException was caught, logged to Console.Error (off the visible path, since the
+    /// runner re-execs itself), and an EMPTY dictionary returned as if complete. A runtime
+    /// package's resources then reported as absent from the app rather than as unreadable.
+    ///
+    /// Asserting a specific count and the specific bytes is what makes this prove something: a
+    /// test that only checked "no throw" would have passed against the broken reader, which
+    /// returned zero resources without throwing.
+    /// </summary>
+    [Fact]
+    public void PackageResources_AreReadFromANeaRuntimePackageNotReportedAbsent()
+    {
+        var dir = NewTempDir("res-nea");
+        var path = WriteResourcePackage(dir, Guid.NewGuid(), "ResNea", nea: true);
+
+        var resources = Patches.NavAppResourcePatches.ReadPackageResourcesForTests(path);
+
+        var one = Assert.Single(resources);
+        Assert.Equal("fonts/Probe.ttf", one.Key);
+        Assert.Equal(FontBytes, one.Value);
+    }
+
+    /// <summary>
+    /// The equivalence control for the same reader: identical ZIP content, one plain and one
+    /// `.NEA`, must produce identical resource dictionaries. Without this a decoder that produced
+    /// silently different bytes would still satisfy the count assertion above.
+    /// </summary>
+    [Fact]
+    public void PackageResources_AnswerIdenticallyForANeaAndAPlainPackageWithTheSameContent()
+    {
+        var dir = NewTempDir("res-equiv");
+        var appId = Guid.Parse("bbbbbbbb-cccc-dddd-eeee-ffffffffffff");
+        var nea = WriteResourcePackage(dir, appId, "ResEquivNea", nea: true);
+        var plain = WriteResourcePackage(dir, appId, "ResEquivPlain", nea: false);
+
+        var fromNea = Patches.NavAppResourcePatches.ReadPackageResourcesForTests(nea);
+        var fromPlain = Patches.NavAppResourcePatches.ReadPackageResourcesForTests(plain);
+
+        Assert.Single(fromPlain);          // the control is itself non-empty
+        Assert.Equal(fromPlain.Keys.OrderBy(k => k, StringComparer.Ordinal),
+                     fromNea.Keys.OrderBy(k => k, StringComparer.Ordinal));
+        foreach (var (name, bytes) in fromPlain)
+            Assert.Equal(bytes, fromNea[name]);
     }
 }
