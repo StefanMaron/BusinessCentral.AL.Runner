@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Unit tests for the two BLOCKING PreToolUse hooks (#3707).
 
-Both hooks live in `.claude/hooks/`, and no CI job globs that directory --
-`pr-gate.yml`'s tools-tests job runs `tools/test_*.py` only. So the tests for
-them live here, and drive the real scripts as subprocesses with a JSON
-PreToolUse payload on stdin, which is the only interface the harness uses.
+Both hooks live in `.claude/hooks/`, which `pr-gate.yml`'s tools-tests job does
+not glob -- it runs `tools/test_*.py` only. So the tests for them live here,
+where that job discovers them directly, and drive the real scripts as
+subprocesses with a JSON PreToolUse payload on stdin, the only interface the
+harness uses.
 
 What "blocking" means, and why the assertions are on exit code 2 specifically:
 a PreToolUse hook that exits 2 has its stderr fed back to the model and the tool

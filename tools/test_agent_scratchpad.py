@@ -233,26 +233,21 @@ def test_cli_refuses_rather_than_defaulting_without_an_identity() -> None:
         check("nothing is printed to stdout", out == "", out)
 
 
-def test_the_hook_suite_runs_here_because_no_CI_job_globs_it() -> None:
-    """`.claude/hooks/test_*.py` is discovered by NOTHING.
+def test_no_test_suite_lives_where_nothing_globs_it() -> None:
+    """A suite under `.claude/hooks/` gates nothing on its own.
 
-    `pr-gate.yml`'s tools-tests job globs `tools/test_*.py` only, so
-    `.claude/hooks/test_prefer_code_navigation.py` has never run in CI and
-    neither would the new hook's suite. That is the same defect the tools-tests
-    job was created to fix, one directory over: a test file that exists, passes
-    locally, and gates nothing.
-
-    Rather than edit a workflow -- this box's token has no `workflow` scope, so a
-    PR touching .github/workflows/ cannot be merged from here -- this delegates
-    from a suite the glob DOES pick up. Any .claude/hooks/test_*.py now gates the
-    day it lands, by the same discovery argument, with no workflow change.
+    `pr-gate.yml`'s tools-tests job globs `tools/test_*.py` only. #3420 covered
+    that by delegating from here; #3707 moved the hook suites into `tools/`
+    instead, so they are discovered directly and delegating would run them
+    twice. What is left to assert is that nobody puts one back.
     """
-    hooks = sorted(pathlib.Path(HERE).parent.joinpath(".claude", "hooks").glob("test_*.py"))
-    check("hook suites are discovered", len(hooks) >= 2, f"found {[h.name for h in hooks]}")
-    for h in hooks:
-        r = subprocess.run([sys.executable, str(h)], capture_output=True, text=True)
-        check(f"{h.name} passes", r.returncode == 0,
-              (r.stdout + r.stderr)[-600:])
+    root = pathlib.Path(HERE).parent
+    strays = sorted(root.joinpath(".claude", "hooks").glob("test_*.py"))
+    check("no suite hides under .claude/hooks", not strays,
+          f"move to tools/: {[s.name for s in strays]}")
+    for name in ("test_prefer_code_navigation.py", "test_shared_scratchpad_guard.py"):
+        check(f"{name} is globbed by tools-tests",
+              root.joinpath("tools", name).is_file(), name)
 
 
 def main() -> int:

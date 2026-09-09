@@ -18,7 +18,7 @@ exit 0 allows it. There is no third state here: this hook reads the command
 string it was handed, so it cannot fail to measure. A payload it cannot parse
 allows the call rather than blocking on a guess.
 
-Tested by tools/test_agent_workflow_hooks.py (that directory is what CI globs).
+Tested by tools/test_agent_workflow_hooks.py (tools/ is what pr-gate.yml globs).
 """
 import json
 import re

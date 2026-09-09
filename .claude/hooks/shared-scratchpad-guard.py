@@ -20,7 +20,8 @@ taking the warning with it. The refusal that CAN block lives in
 
 Tested by tools/test_shared_scratchpad_guard.py. The suite lives there rather than
 beside the hook because `pr-gate.yml`'s tools-tests job globs `tools/test_*.py`
-only, so a test next to the hook gates nothing (#3707).
+only, so a test next to the hook gates nothing unless something delegates to it
+(#3707).
 """
 import json
 import os

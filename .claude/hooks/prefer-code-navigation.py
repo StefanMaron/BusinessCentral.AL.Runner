@@ -45,7 +45,8 @@ marker in the command, which always wins.
 
 Tested by tools/test_prefer_code_navigation.py (firing) and
 tools/test_agent_workflow_hooks.py (blocking, context and the escape hatch).
-CI globs tools/test_*.py only, which is why neither suite lives beside the hook.
+Both live in tools/ because that is the directory pr-gate.yml's tools-tests job
+globs; a suite beside the hook is only run if something delegates to it.
 """
 import json
 import os
@@ -55,8 +56,9 @@ import sys
 BLOCK = 2
 ALLOW = 0
 
-# The payload's own answer, measured on harness 2.1.266. `orchestrator` is not
-# here: the coordinator's own greps stay advisory.
+# The payload's own answer, measured on harness 2.1.266 for `impl-agent`;
+# `reviewer` is here by analogy with it and has not been measured. `orchestrator`
+# is not here: the coordinator's own greps stay advisory.
 BLOCKING_AGENT_TYPES = {"impl-agent", "reviewer"}
 # Both separators, because the cwd arrives Windows-shaped on a Windows box and
 # POSIX-shaped in CI, and the same hook has to recognise each.

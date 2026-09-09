@@ -405,6 +405,11 @@ Otherwise the next agent starts from the wrong premise — which has happened he
 - **`grep` is a shell function.** It rejects `-E` and `--include` with
   `error: unknown option '-G'` **and exits 0 with no output**, which reads exactly like "no
   matches". Use `command grep` or `rg` before believing an empty result.
+- **`export AL_RUNNER_HOOK_CONTEXT=coordinator` in the shell that launches `claude`** if this
+  session greps `AlRunner/**/*.cs` itself: `.claude/hooks/prefer-code-navigation.py` blocks that
+  read in an agent context and stays advisory for a coordinator. It is read from the hook
+  process's environment, so exporting it inside a Bash command does nothing, and a dispatched
+  subagent's own `agent_type` still outranks it (#3707).
 - **Always pass a private `--cache <dir>`** to runner invocations. The shared
   `~/.cache/al-runner` is not keyed on the runner binary, so a concurrent agent's payload can
   make a fix look like it did nothing.
