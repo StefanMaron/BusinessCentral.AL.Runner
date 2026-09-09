@@ -1255,9 +1255,70 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     internal void RaiseOnValidate(int controlId)
     {
+        // #3573: a pageextension `modify(Control)` block may wrap the base control's own
+        // OnValidate with OnBeforeValidate / OnAfterValidate. BC runs all three in one
+        // sequence — before, base, after — so an Error() in a before-trigger must prevent
+        // both later stages, which falling out of this method on the exception achieves.
+        foreach (var before in FindModifiedControlTriggers(controlId, "_OnBeforeValidate"))
+            Invoke(before);
+
         var trigger = FindTrigger(controlId, "_OnValidate", "OnValidate");
         // A control with no OnValidate simply has no such method, which is not an error.
         if (trigger != null) Invoke(trigger.Value);
+
+        foreach (var after in FindModifiedControlTriggers(controlId, "_OnAfterValidate"))
+            Invoke(after);
+    }
+
+    /// <summary>
+    /// Every pageextension trigger a <c>modify(<paramref name="controlId"/>)</c> block declares
+    /// carrying <paramref name="suffix"/>, in ascending pageextension-id order.
+    ///
+    /// <para>Issue #3573. This is a DIFFERENT resolution from <see cref="FindTrigger"/>, and the
+    /// difference is the id space. A control a pageextension ADDS belongs to the extension, so
+    /// its member id hashes from the extension's own object id and FindTrigger's extension arm
+    /// finds it. A control a pageextension MODIFIES still belongs to the BASE PAGE — AL's
+    /// <c>modify(Name)</c> keeps the existing control's identity — so BC drives it by the base
+    /// page's member id while the trigger body compiles onto the extension's type. Measured on
+    /// the reproducer in #3573: the control being validated is id 709536759 =
+    /// <c>MemberId(64520, "Name")</c> (the base page), while FindTrigger's extension arm asks
+    /// for <c>MemberId(64521, "Name")</c> = 1257079618 and can never match. Hence the base
+    /// page's id space here, against the extension's own methods.</para>
+    ///
+    /// <para>Scoped to control names the extension's AL source actually declares a
+    /// <c>modify(...)</c> for (RecordPatches.GetModifiedControlNames), so this cannot reach a
+    /// method belonging to an extension-added control that merely shares a name with a base
+    /// control — those keep FindTrigger's ordinary path, which is the acceptance criterion
+    /// "extension-added controls keep their ordinary trigger path".</para>
+    ///
+    /// <para>Order is the extensions' own id order, which GetPageExtensionIdsForPage sorts. That
+    /// is deterministic but is NOT a claim about the order real BC uses when two extensions
+    /// modify one control — nothing here has measured that, and no corpus test asserts it. The
+    /// upstream test that accompanies this fix pins the single-extension sequence only.</para>
+    /// </summary>
+    private List<TriggerMatch> FindModifiedControlTriggers(int controlId, string suffix, int arity = 0)
+    {
+        var matches = new List<TriggerMatch>();
+        foreach (var extensionId in RecordPatches.GetPageExtensionIdsForPage(_pageId))
+        {
+            var modified = RecordPatches.GetModifiedControlNames(extensionId);
+            if (modified.Count == 0) continue;
+
+            var extInstance = GetOrCreateExtensionInstance(extensionId);
+            if (extInstance == null) continue;
+
+            foreach (var controlName in modified)
+            {
+                // The BASE page's id space — see the remarks. A modify() block whose target is
+                // not the control being validated simply does not match.
+                if (MemberId(_pageId, controlName) != controlId) continue;
+
+                var match = FindTriggerOnTarget(extInstance, _pageId, controlId, suffix,
+                    suffix.TrimStart('_'), arity, declaredName: controlName);
+                if (match != null) matches.Add(match.Value);
+            }
+        }
+        return matches;
     }
 
     /// <summary>
@@ -2208,7 +2269,19 @@ internal sealed partial class RunnerPageInstance
                 RecordPatches.TryGetPageMemberName(extensionId, memberId, isExtension: true));
             if (extMatch != null) return extMatch;
         }
-        return null;
+
+        // #3573: last, the id space the two arms above cannot reach — a control an extension
+        // MODIFIES rather than declares. See FindModifiedControlTriggers for why that needs the
+        // BASE page's id space against the EXTENSION's methods. Last, not first, so an
+        // extension-added control keeps the ordinary path above unchanged.
+        //
+        // A `modify()` block accepts OnLookup, OnDrillDown and OnAssistEdit alongside the
+        // before/after validate pair (measured on BC 28.1: the compiler rejects OnValidate and
+        // OnControlAddIn there with AL0162, and accepts these), so this belongs in FindTrigger
+        // rather than only on the validate path — RaiseOnLookup and RaiseOnDrillDown resolve
+        // through here and were refusing a control that plainly declares the trigger.
+        var modified = FindModifiedControlTriggers(memberId, suffix, arity);
+        return modified.Count > 0 ? modified[0] : null;
     }
 
     /// <summary>

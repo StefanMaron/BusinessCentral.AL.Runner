@@ -313,6 +313,98 @@ public class PageExtensionParserTests
         finally { Cleanup(); }
     }
 
+    // #3573 — RUNNER-MECHANISM guard, not a claim about BC.
+    //
+    // What real BC does with a `modify(Control)` block's triggers is stated upstream, where a
+    // service tier adjudicates it: corpus codeunit 60514 "MCV Validate Trigger Tests"
+    // (StefanMaron/BusinessCentral.AL.Language.Tests#305). This test pins the one piece of the
+    // fix that lives on OUR side of that line — that the parser captures which BASE-PAGE
+    // controls a pageextension modifies, keyed by the extension's id, so trigger dispatch has
+    // something to resolve against.
+    //
+    // The id space is the whole point and is why this needed a capture at all. A control an
+    // extension ADDS hashes from the extension's own object id, which ParseMemberNames already
+    // indexes. A control an extension MODIFIES keeps the BASE page's identity — measured on the
+    // #3573 reproducer, the control being validated is MemberId(basePage, "Name") while the
+    // trigger method sits on the extension's type — so no entry in MemberIdToName can reach it
+    // and the name has to travel separately. Asserting on the NAME rather than on a derived id
+    // keeps this test about the capture; MemberIdMatchesTheIdBcActuallyEmitted above is what
+    // pins the hash itself.
+    [Fact]
+    public void ModifiedControlNames_CapturesTheBasePageControlsAPageextensionModifies()
+    {
+        try
+        {
+            Parse("TryParsePageFile", $$"""
+                page {{PageId}} "PX Card"
+                {
+                    SourceTable = "PX Base Table";
+                    layout
+                    {
+                        area(Content)
+                        {
+                            field(Alpha; Rec.Alpha) { }
+                            field(Beta; Rec.Beta) { }
+                        }
+                    }
+                }
+
+                pageextension {{PageExtId}} "PX Card Ext" extends "PX Card"
+                {
+                    layout
+                    {
+                        modify(Alpha)
+                        {
+                            trigger OnBeforeValidate() begin end;
+                            trigger OnAfterValidate() begin end;
+                        }
+
+                        addlast(Content)
+                        {
+                            field(Gamma; Rec.Gamma) { }
+                        }
+                    }
+                }
+                """);
+
+            var modified = ModifiedNames(PageExtId);
+
+            // Positive: the modified control is captured, under the name the AL source spells.
+            Assert.Contains("Alpha", modified);
+
+            // Negative, and the reason this test is not satisfied by "returns everything":
+            // Beta is a base-page control the extension does NOT modify, and Gamma is one the
+            // extension ADDS. Neither belongs here — Gamma in particular already resolves
+            // through the extension's own id space, and pulling it into this set would make
+            // dispatch look for it in the base page's space, where it does not exist.
+            Assert.DoesNotContain("Beta", modified);
+            Assert.DoesNotContain("Gamma", modified);
+            Assert.Single(modified);
+
+            // AL identifiers are case-insensitive: `modify(alpha)` targets `field(Alpha; ...)`,
+            // so a set that only matched the source's exact casing would miss real code.
+            Assert.Contains("ALPHA", modified);
+
+            // A page is not an extension and modifies nothing, so it must answer empty rather
+            // than inherit its extension's set.
+            Assert.Empty(ModifiedNames(PageId));
+
+            // An object this run never parsed answers empty too, rather than throwing — that is
+            // what a precompiled-dependency pageextension hits, and it is a declared gap
+            // (the dependency's SymbolReference.json does not state modified controls) rather
+            // than an error.
+            Assert.Empty(ModifiedNames(PageExtId + 500));
+        }
+        finally { Cleanup(); }
+    }
+
+    private static IReadOnlySet<string> ModifiedNames(int extensionId)
+    {
+        var m = RP.GetMethod("GetModifiedControlNames", BindingFlags.NonPublic | BindingFlags.Static)
+            ?? throw new InvalidOperationException("RecordPatches.GetModifiedControlNames not found.");
+        return (IReadOnlySet<string>)m.Invoke(null, new object[] { extensionId })!;
+    }
+
     // ─── helpers ─────────────────────────────────────────────────────────────────────────
 
     private static System.Collections.IEnumerable ExtensionFields(string baseTableName)
