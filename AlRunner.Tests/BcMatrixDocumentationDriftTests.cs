@@ -102,6 +102,10 @@ public sealed class BcMatrixDocumentationDriftTests
         ("docs/virtual-tables-allobj.md", "27.0 27.3 27.5 28.2 28.3",
             "the corpus legs that had reported when the upstream Install-subtype assertion was "
             + "adjudicated — a historical observation of which legs answered, not the matrix"),
+        ("docs/codeunit-metadata-from-bc.md", "27.0 28.1 28.4",
+            "the three BC versions whose Ncl.dll was provisioned on the machine that hand-scanned "
+            + "every method body for the backing-field write in #3629 — a historical measurement, "
+            + "not the matrix"),
     };
 
     // ---- version lists written out in prose --------------------------------------------

@@ -3443,10 +3443,29 @@ internal static class TestPageTemporalValue
             NavType.DateTime => "NavDateTime",
             _ => "NavTime",
         };
-        if (!Enum.IsDefined(_navNclType!, member)) return false;
+        // Both pre-invoke steps THROW rather than decline (#3560). Declining sends the caller
+        // to its NavText path, where BC raises its date-format refusal - so an AL author reads
+        // BC rejecting the spelling they typed when what happened is that the runner could not
+        // map this control's type onto this build's NavNclType at all.
+        if (ForcedEnumMemberMissing.Value || !Enum.IsDefined(_navNclType!, member))
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "TestPage SetValue on a Date/DateTime/Time control",
+                "NavNclType." + member,
+                $"this build's NavNclType does not define {member}, so the runner cannot name "
+                + "the type whose evaluator it needs to read this control's value. A "
+                + "runner/BC-version mismatch, not a rejected value.");
 
-        var evaluator = _getEvaluator!.Invoke(null, new[] { Enum.Parse(_navNclType!, member) });
-        if (evaluator == null) return false;
+        var evaluator = ForcedNullEvaluator.Value
+            ? null
+            : _getEvaluator!.Invoke(null, new[] { Enum.Parse(_navNclType!, member) });
+        if (evaluator == null)
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "TestPage SetValue on a Date/DateTime/Time control",
+                "NavValueEvaluator.GetEvaluator",
+                $"GetEvaluator answered null for NavNclType.{member}, so this build declares "
+                + "the type but hands the runner no evaluator for it and the runner has no way "
+                + "to ask BC how it reads this value. A runner/BC-version mismatch, not a "
+                + "rejected value.");
 
         // DataError.TrapError, not ThrowError: a spelling BC cannot read has to come back as
         // "no" so the caller keeps its NavText path, where BC raises the refusal AL is written
@@ -3601,6 +3620,36 @@ internal static class TestPageTemporalValue
         var previous = ForcedBindFailure.Value;
         ForcedBindFailure.Value = reason;
         return new ForcedBindFailureScope(previous);
+    }
+
+    // TEST SEAMS (#3560) for the two pre-invoke declines below EnsureEvaluatorBound. Neither is
+    // reachable on a BC build the runner supports - both the enum member and its evaluator
+    // resolve - so a refusal nobody can provoke would ship untested. AsyncLocal for the same
+    // reason ForcedBindFailure is: the temporal suites run in parallel.
+    private static readonly System.Threading.AsyncLocal<bool> ForcedEnumMemberMissing = new();
+    private static readonly System.Threading.AsyncLocal<bool> ForcedNullEvaluator = new();
+
+    internal static IDisposable ForceEnumMemberMissing() => Force(ForcedEnumMemberMissing);
+
+    internal static IDisposable ForceNullEvaluator() => Force(ForcedNullEvaluator);
+
+    private static IDisposable Force(System.Threading.AsyncLocal<bool> flag)
+    {
+        var previous = flag.Value;
+        flag.Value = true;
+        return new ForcedFlagScope(flag, previous);
+    }
+
+    private sealed class ForcedFlagScope : IDisposable
+    {
+        private readonly System.Threading.AsyncLocal<bool> _flag;
+        private readonly bool _previous;
+        internal ForcedFlagScope(System.Threading.AsyncLocal<bool> flag, bool previous)
+        {
+            _flag = flag;
+            _previous = previous;
+        }
+        public void Dispose() => _flag.Value = _previous;
     }
 
     private sealed class ForcedBindFailureScope : IDisposable

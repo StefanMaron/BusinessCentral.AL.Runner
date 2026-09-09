@@ -155,8 +155,6 @@ public sealed class TestPageTemporalValueTests
             AppDomain.CurrentDomain.GetAssemblies(),
             a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
 
-        // Throws RunnerOutOfScopeException, naming testpage-temporal-evaluator, if the shape has
-        // moved. Passing means the reflection above matches the Ncl this build actually loads.
         TestPageTemporalValue.EnsureEvaluatorBound();
     }
 }
