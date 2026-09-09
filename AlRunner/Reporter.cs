@@ -126,16 +126,16 @@ public static class Reporter
         // #3561: collapsed ACROSS buckets as well as within one. The dependency-company baseline
         // is cached per dependency set, not per bundle, so the app groups re-reporting one abort
         // on a cache HIT are routinely in different buckets — collapsing only at the drain site
-        // would still print one abort as N identical lines. --out is deliberately NOT collapsed
-        // this way: it is a per-bucket triage worklist and each bucket's record belongs to it.
+        // would still print one abort as N identical lines. --out gets only the WITHIN-bucket
+        // collapse each BucketResult already carries, and no cross-bucket one: it is a per-bucket
+        // triage worklist and each bucket's record belongs to that bucket.
         => Collapse(buckets.SelectMany(b => b.CompanyInitFailures ?? Array.Empty<CompanyInitFailure>()));
 
     /// <summary>
     /// Fold aborts that say the same thing into one record carrying the total app-group count.
     /// "The same thing" is the whole of what the accumulator records: codeunit id, codeunit
-    /// name, exception type and message. The app id is not part of the key because the
-    /// accumulator holds none and the codeunit it records is always Base App's codeunit 2, so an
-    /// app dimension would be constant today and invented rather than measured (#3561).
+    /// name, exception type and message — see FinalizeCompanyInitFailures for why the key holds
+    /// no app id (#3561).
     /// </summary>
     private static IReadOnlyList<CompanyInitFailure> Collapse(IEnumerable<CompanyInitFailure> failures)
     {

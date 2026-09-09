@@ -6680,14 +6680,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     "affectedOnly selection is applied to runTests; execute always runs the lowest-object-id OnRun codeunit");
             }
 
-            // #3561: drained ONCE PER REQUEST, here. CompanyInitializer's accumulator is
-            // run-wide and the CLI drains it where it builds a bucket's BucketResult, a path
-            // --server never takes: the static therefore grew for the life of the server
-            // process and no response ever carried the condition, so a client had no surface
-            // saying its tests had run against a company real BC cannot produce. Same
-            // Finalize call as the CLI, so collapse and manifest acceptance behave identically
-            // on both transports; the escalation mirrors the CLI's, because a client reading
-            // only exitCode is exactly the consumer #3538 was filed for.
+            // #3561: drained once per request, as in the runTests handler above.
             var companyInitFailures = Reporter.FinalizeCompanyInitFailures(
                 CompanyInitializer.DrainFailures(), expectations);
             if (exitCode == 0 && companyInitFailures.Any(f => f.AcceptedReason == null))

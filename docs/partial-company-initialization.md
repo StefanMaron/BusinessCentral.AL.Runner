@@ -81,8 +81,8 @@ N app groups sharing one cached dependency-company baseline each re-report the a
 cache HIT — deliberately: each really did run its tests against the partial company. Identical
 records (same codeunit id, codeunit name, exception type and message) are collapsed into one
 summary line carrying `×N app group(s)` and one `--output-json` entry carrying `count: N`; the
-header keeps counting app groups. `--out` is not collapsed, because it is a per-bucket triage
-worklist and each bucket's record belongs to that bucket. The app id is not part of "identical":
+header keeps counting app groups. `--out` carries the within-bucket collapse and no cross-bucket
+one, because it is a per-bucket triage worklist and each bucket's record belongs to that bucket. The app id is not part of "identical":
 the accumulator records none, and the codeunit it records is always Base App's codeunit 2.
 
 ### Server mode
