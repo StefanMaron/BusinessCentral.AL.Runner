@@ -926,11 +926,71 @@ internal sealed partial class RunnerPageInstance
     internal bool ActionEnabled(int actionId)
         => EvaluateProperty(ActionDefinition(actionId)?.Enabled, "Enabled", actionId, atOpen: false);
 
-    // Live, like every other property except a CONTROL's own Visible. An action's own Visible
-    // has not been measured against real BC either way, so it keeps the behaviour it had
-    // rather than inheriting a freeze from a measurement that was not about it.
+    /// <summary>
+    /// Live, like every other property except a CONTROL's own Visible — and it follows the
+    /// enclosing action groups, not just the action's own declaration.
+    ///
+    /// <para>An action inside <c>group(G) { Visible = false; ... }</c> declares no Visible of
+    /// its own, so reading only its own property answered the AL default of true where real BC
+    /// answers false. Measured on BC 28.4: an action in such a group reports
+    /// <c>Visible = false</c> and <c>Enabled = true</c>, and is still invokable — see corpus
+    /// codeunit 60583 "TPAR Tests". Enabled is deliberately NOT walked: the same measurement
+    /// shows a hidden group does not disable the actions inside it, and a group declaring
+    /// <c>Enabled = false</c> has not been measured either way.</para>
+    ///
+    /// <para>Unlike <see cref="ControlVisible"/> an action is never eliminated by this — the
+    /// same measurement shows a hidden action stays on the page and its OnAction still runs.
+    /// This changes what <c>Visible()</c> answers, nothing about reachability.</para>
+    /// </summary>
     internal bool ActionVisible(int actionId)
-        => EvaluateProperty(ActionDefinition(actionId)?.Visible, "Visible", actionId, atOpen: false);
+    {
+        if (!EvaluateProperty(ActionDefinition(actionId)?.Visible, "Visible", actionId, atOpen: false))
+            return false;
+
+        foreach (var ancestor in EnclosingActionGroups(actionId))
+            if (!EvaluateProperty(ancestor.Visible, "Visible", ancestor.ID, atOpen: false))
+                return false;
+
+        return true;
+    }
+
+    /// <summary>
+    /// The action groups enclosing <paramref name="actionId"/>.
+    ///
+    /// <para>Actions do not live in the layout tree, so <see cref="ControlVisible"/>'s
+    /// <c>FindParentByControlId</c> walk cannot reach them — that one traverses
+    /// <c>masterPage.ContentArea</c> only. BC publishes a traversal that does cover actions:
+    /// <c>MasterPage.FindControlBaseDefinition(id, out path)</c> searches ContentArea, then
+    /// CommandBar, then InfopartsArea, descending through <c>Actions</c> and
+    /// <c>ActionContainers</c>, and hands back the ancestor path. Using BC's own search keeps
+    /// this from being a second, divergent notion of where an action lives.</para>
+    /// </summary>
+    private IEnumerable<Microsoft.Dynamics.Nav.Types.Metadata.ActionGroupBaseDefinition> EnclosingActionGroups(int actionId)
+    {
+        if (_form is not NavForm form || form.MasterPage is not { } master)
+            return Array.Empty<Microsoft.Dynamics.Nav.Types.Metadata.ActionGroupBaseDefinition>();
+
+        return master.FindControlBaseDefinition(actionId, out var path) == null
+            ? Array.Empty<Microsoft.Dynamics.Nav.Types.Metadata.ActionGroupBaseDefinition>()
+            : ActionGroupsIn(path);
+    }
+
+    /// <summary>
+    /// The elements of an ancestor path that carry an action group's own <c>Visible</c>.
+    ///
+    /// <para>Only an <c>ActionGroupBaseDefinition</c> — AL's <c>group(...)</c> inside
+    /// <c>actions</c> — does. The path also carries the content area, the command bar and
+    /// action CONTAINERS (AL's <c>area(Processing)</c>), none of which an AL author can give a
+    /// <c>Visible</c>, so folding them in would invent a rule no measurement supports.</para>
+    ///
+    /// <para>Internal and static so <c>AlRunner.Tests</c> can pin the filter directly: the live
+    /// route needs a NavForm over a real compiled page's metadata, which only the page-build
+    /// pipeline produces.</para>
+    /// </summary>
+    internal static IEnumerable<Microsoft.Dynamics.Nav.Types.Metadata.ActionGroupBaseDefinition> ActionGroupsIn(
+        IEnumerable<Microsoft.Dynamics.Nav.Types.Metadata.ElementDefinition>? path)
+        => path?.OfType<Microsoft.Dynamics.Nav.Types.Metadata.ActionGroupBaseDefinition>()
+           ?? Array.Empty<Microsoft.Dynamics.Nav.Types.Metadata.ActionGroupBaseDefinition>();
 
     /// <summary>
     /// Whether <paramref name="controlId"/> names a control this page DECLARES at all — the

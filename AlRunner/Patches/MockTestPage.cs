@@ -4484,6 +4484,34 @@ internal sealed class LiveNavTestAction : ITestAction
     public void Invoke()
     {
         _testPage.SaveCurrentRow();
+
+        // A DISABLED action's Invoke() does nothing, and does not raise. BC's own
+        // Microsoft.Dynamics.Framework.UI.ActionControl.Invoke opens with
+        // `if (!Enabled) return null;`, and TestActionProxy.Invoke — the ITestAction a real
+        // tier hands NavTestAction — carries no gate of its own, so the refusal is silent all
+        // the way up to AL. Measured on BC 28.4: invoking an action declared Enabled = false
+        // leaves the OnAction trigger unrun, raises nothing, and leaves the page usable (the
+        // next action still runs). Corpus codeunit 60583 "TPAR Tests" pins it, for a literal
+        // Enabled = false and for an Enabled bound to an expression that is currently false.
+        //
+        // Running the trigger anyway was a silent wrong answer: AL got an effect it could not
+        // have obtained on a real tier, so a test asserting the effect passed here and failed
+        // there. Observably equivalent to BC now, with one honest difference — BC says nothing
+        // and this says so on [warn], because the shape it produces (an assertion failing one
+        // step later about a missing effect) is exactly what a reader cannot diagnose.
+        //
+        // SaveCurrentRow stays ahead of the gate: BC's TestActionProxy.Invoke calls
+        // parent.ActivateControl(this) before actionControl.Invoke(), so the row reaches the
+        // server whether or not the trigger fires. Not separately measured.
+        if (!_page.ActionEnabled(_actionId))
+        {
+            Console.Error.WriteLine(
+                $"[warn] TestPage: action {_actionId} is not Enabled, so Invoke() did not run "
+                + "its OnAction trigger — real BC refuses a disabled action silently "
+                + "(ActionControl.Invoke: `if (!Enabled) return null;`)");
+            return;
+        }
+
         _page.RaiseOnAction(_actionId);
     }
 
