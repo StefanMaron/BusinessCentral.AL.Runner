@@ -246,6 +246,43 @@ public static partial class RecordPatches
         }
     }
 
+    /// <summary>
+    /// One table's AL field NAME and CAPTION index, for resolving a report data item's SORTING
+    /// tokens the way <c>NCLMetaTable.FindFieldMatch</c> does. Built from the
+    /// <see cref="ParsedTable"/> already in <c>_parsedTables</c> — a plain walk of a list
+    /// already in memory, with no symbol read and no <c>NCLMetaTable</c> construction.
+    ///
+    /// <para>Names win over captions on a collision, because <c>FindFieldMatch</c> tries
+    /// <c>TryGetFieldByName</c> before <c>TryGetFieldByCaption</c>; a caption is only added
+    /// when it does not shadow a real field name.</para>
+    /// </summary>
+    private static Dictionary<string, int> BuildSortFieldIndex(ParsedTable table)
+    {
+        var byName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var f in table.Fields)
+            byName.TryAdd(f.FieldName, f.FieldId);
+        foreach (var f in table.Fields)
+            if (!string.IsNullOrEmpty(f.Caption))
+                byName.TryAdd(f.Caption!, f.FieldId);
+        return byName;
+    }
+
+    /// <summary>
+    /// <c>FindFieldMatch</c>'s name half, in its order: exact name (or caption, folded into the
+    /// same index above), then — because a sorting token reaches it through
+    /// <c>TableFilterResolver.ResolveField</c>, which passes <c>prefixFallback: true</c> — the
+    /// first field whose name starts with the token. Returns 0 for a token BC would answer
+    /// null for, which <c>AddSortingField</c> traces and skips.
+    /// </summary>
+    private static int ResolveSortFieldNo(Dictionary<string, int> index, string identifier)
+    {
+        if (index.TryGetValue(identifier, out var exact)) return exact;
+        foreach (var (name, no) in index)
+            if (name.StartsWith(identifier, StringComparison.OrdinalIgnoreCase))
+                return no;
+        return 0;
+    }
+
     private static object? BuildReportDataItemValue(NCLMetaField field, ReportRow report, ReportDataItemRow item)
     {
         object? Text(string s) => _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, s ?? string.Empty });
@@ -303,6 +340,32 @@ public static partial class RecordPatches
                 var id = ResolveTableIdByName(name);
                 tableIdCache[name] = id;
                 return id;
+            }
+
+            // #3627. A dependency report's SORTING clause names fields by AL NAME, so answering
+            // Sorting Fields for it needs a name -> number lookup. The cost is the whole reason
+            // the column was left empty, so note where it is and is not paid.
+            //
+            // Paid ONCE PER BUILD, and this method builds once per (registration epoch, parsed
+            // report count) — every population after the first is the cached list handed back.
+            // Within one build the map is memoized per TABLE, so Base Application's 1927 data
+            // items cost one map per distinct data-item table, not one per data item; the map
+            // itself is built off the ParsedTable that ResolveTable has already faulted into
+            // _parsedTables one line above, so it costs no symbol read of its own and never
+            // constructs an NCLMetaTable. That is the difference from the first attempt at
+            // #3607, which reached for the request-page-building metadata synthesizer per
+            // object and blew the 60s per-test watchdog.
+            var sortFieldMaps = new Dictionary<int, Dictionary<string, int>?>();
+
+            Func<string, int>? SortFieldResolverFor(int tableId)
+            {
+                if (tableId <= 0) return null;
+                if (!sortFieldMaps.TryGetValue(tableId, out var map))
+                {
+                    map = _parsedTables.TryGetValue(tableId, out var pt) ? BuildSortFieldIndex(pt) : null;
+                    sortFieldMaps[tableId] = map;
+                }
+                return map == null ? null : identifier => ResolveSortFieldNo(map, identifier);
             }
 
             // 1. Reports the runner source-compiled.
@@ -367,16 +430,17 @@ public static partial class RecordPatches
                     // of its reports' RequestFilterFields values are Field<N> lists. So this
                     // path reaches BC's answer with no NCLMetaTable lookup either (#3620).
                     //
-                    // Sorting Fields stays empty on this path, which is BC's own default for
-                    // a column it cannot compute. Unlike the document, a symbol file's
-                    // DataItemTableView is the AL SOURCE TEXT — sorting("Company Name"), field
-                    // NAMES — so answering it here would need a real per-table field lookup
-                    // for all 659 reports at virtual-table population time, which is the cost
-                    // this file's header records as having blown the 60s watchdog. Empty is
-                    // the honest answer; #3620's PR body records it as deliberately left.
+                    // Sorting Fields needs the name -> number lookup SortFieldResolverFor
+                    // memoizes, because a symbol file's DataItemTableView is the AL SOURCE
+                    // TEXT — sorting("Company Name"), field NAMES — where the document is
+                    // already SORTING(Field5). #3627; see SortFieldResolverFor above for
+                    // where that lookup's cost is paid and why it is not the per-object cost
+                    // this file's header records as having blown the 60s watchdog.
                     items.Add(new ReportDataItemRow(di.Id != 0 ? di.Id : ordinal, di.Name, tableId, di.Indentation,
                         di.DataItemTableView ?? string.Empty,
-                        FieldNumbersFrom(di.RequestFilterFields ?? string.Empty)));
+                        FieldNumbersFrom(di.RequestFilterFields ?? string.Empty),
+                        SortingFieldNumbersFromAlView(
+                            di.DataItemTableView ?? string.Empty, SortFieldResolverFor(tableId))));
                 }
                 if (!ok) continue;
 
