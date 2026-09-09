@@ -2144,6 +2144,30 @@ Measured 116P/0F/0E on the whole bundle, not computed from the diff.
 
 Written by an agent (Claude, `stma-auto-2`).
 
+## al-language 3112 -> 3123, pin `c9d5f656` -> `3ad4c340` (#3580, corpus #293 and #292)
+
+Folded into the fix PR, not a catch-up bump: `26b0434` is the first commit after the old pin and
+it adds `WriteTxBoundary_Test12_AnXmlPortImportMayWriteUnderNone`, which fails without the
+`SessionTransactionExtensions` transaction-depth prepend this PR adds. Bumping alone would be red
+by construction.
+
+Two corpus commits ride along, both green here at the new pin:
+
+- `26b0434` (corpus #293) -- codeunit 60878 grows from 11 to 15 tests: a report, an xmlport import
+  and a page field validate under `TransactionModel::None`, plus the row-seeding arm the page one
+  opens on. Measured 15/15.
+- `3ad4c34` (corpus #292) -- codeunit 60965, per-field `DataClassification`, the relation columns
+  and `SystemCreatedBy`'s relation. Measured 7/7.
+
+3112 + 11 = 3123, measured on a whole-bundle run at the new pin (3123 pass, 0 fail, 0 error) --
+not computed from the diff. `--strict --count-baseline` then exits 0.
+
+The pin stops at `3ad4c340` rather than at corpus tip because the next commits need runner work
+that is still open: corpus #273 -> AlRunner#2943 (codeunit 60559) and corpus #272 -> AlRunner#3593
+(codeunit 60602). That is `al-language-submodule.md`'s "blocked by an intervening commit".
+
+Written by the fbk-2 agent.
+
 ## runner-extras `testpage-close-message-consumed` 5 -> 8 (#3593)
 
 Three new AL tests in codeunit 65863 "Tcm Close Message Tests", pinning the number of close
