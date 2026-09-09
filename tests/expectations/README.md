@@ -1,7 +1,7 @@
 # tests/expectations/
 
 Runner-owned manifest declaring expected outcomes for tests in
-`tests/al-language/` (the BusinessCentral.AL.Language.Tests submodule).
+`tests/al-language/` (BusinessCentral.AL.Language.Tests, checked out per run).
 
 See [`docs/expectations.md`](../../docs/expectations.md) for the schema, mode
 semantics, and result-classification table.

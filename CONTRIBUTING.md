@@ -17,7 +17,7 @@ The goal is broad AL-language compatibility — any AL code that can run without
 ```
 AlRunner/                — runner source (Program.cs, BcRuntime.cs, BcCompiler.cs,
                            BcAssembler.cs, TestExecutor.cs, Patches/, Infrastructure/)
-tests/al-language/       — git submodule, canonical AL test corpus (READ-ONLY)
+tests/al-language/       — canonical AL test corpus, resolved per run, gitignored (READ-ONLY)
 tests/expectations/      — JSON manifest: OOS-by-design, known gaps, disabled tests
 tests/runner-extras/     — runner-specific positive tests (e.g. asserts that a
                            given surface throws RunnerOutOfScopeException)
@@ -37,14 +37,14 @@ scripts/                 — al-inventory.py, coverage-gen.js (auxiliary)
 ### Clone
 
 ```bash
-git clone --recurse-submodules https://github.com/StefanMaron/BusinessCentral.AL.Runner
+git clone https://github.com/StefanMaron/BusinessCentral.AL.Runner
 cd BusinessCentral.AL.Runner
 ```
 
-If you already cloned without `--recurse-submodules`:
+The corpus is not in git — check it out (it prints the SHA it resolved):
 
 ```bash
-git submodule update --init --recursive
+tools/corpus-checkout.py
 ```
 
 ### Build
@@ -108,28 +108,23 @@ dotnet run --project AlRunner -c Release -- --isolation test tests/al-language/t
 dotnet run --project AlRunner -c Release -- --cache ~/.cache/al-runner/al-out tests/al-language/tests/al-language
 ```
 
-### Bump the corpus pin
+### Move the corpus you are testing against
 
-Which PR the bump belongs in depends on what the new commits need — the three cases are in
-`.claude/rules/al-language-submodule.md`. A catch-up bump, where the fix it needs has already
-merged, is its own PR. Inspect the corpus diff before bumping:
+There is no pin to bump (#3737). A run resolves the corpus at `master`, or at the head of the
+corpus pull request the PR body's `Corpus-PR:` line names, and prints
+`corpus: <full sha> (<ref>)`. Locally:
 
 ```bash
-git -C tests/al-language fetch
-git -C tests/al-language log --oneline HEAD..origin/master
-git -C tests/al-language diff HEAD..origin/master   # review
-git -C tests/al-language checkout origin/master
-git add tests/al-language
-git commit -m "Bump tests/al-language to <sha>"
+tools/corpus-checkout.py                   # master
+tools/corpus-checkout.py --corpus-pr 293   # a corpus pull request's head
+tools/corpus-checkout.py --print           # what this checkout holds now
+git -C tests/al-language log --oneline -5  # review what arrived
 ```
 
-Tests that newly fail after the bump are runner gaps — patch the runner (or add an expectation entry), never the corpus.
-
-If the bump brings in a whole new corpus **app**, CI runs it automatically — the app list is
-enumerated, not named (#2984) — but the new app also needs its own line in
-`tests/expectations/count-baseline/test-count-baseline.json`, keyed by its directory basename.
-`AlRunner.Tests/CorpusAppEnumerationWorkflowTests.cs` fails in milliseconds when one is missing,
-rather than letting the app's test count go unguarded.
+Corpus tests that newly fail are runner gaps — patch the runner (or add an expectation entry),
+never the corpus. A whole new corpus **app** runs automatically: the app list is enumerated,
+not named (#2984), and its tests are covered by the per-run count comparison rather than a
+committed number (#3675).
 
 ---
 
@@ -150,7 +145,7 @@ Where the test lives:
 
 | Kind of change | Test location |
 |---|---|
-| Runner can now run an AL pattern it couldn't before | A failing test in `tests/al-language/` that now passes (cite the test file in the PR body). If the corpus does not cover the pattern, write the test first against real BC in the `BusinessCentral.AL.Language.Tests` upstream repo, get it merged, then bump the submodule pin in your runner PR. |
+| Runner can now run an AL pattern it couldn't before | A failing test in `tests/al-language/` that now passes (cite the test file in the PR body). If the corpus does not cover the pattern, write the test first against real BC in the `BusinessCentral.AL.Language.Tests` upstream repo and cite it with a `Corpus-PR:` line, which is what points your PR's matrix at it. |
 | Runner-specific positive assertion (e.g. surface X throws OOS with reason Y) | New suite under `tests/runner-extras/`. |
 | Test is OOS-by-design and the runner correctly refuses it | New entry in `tests/expectations/oos-<area>.json` per [`docs/expectations.md`](docs/expectations.md). |
 | Test is in scope but the runner cannot run it yet | Open a GH issue; add a `known-gaps-<area>.json` entry linking the issue. |
@@ -168,7 +163,7 @@ Every PR must:
 - Cite the test that proves the change. For a fix, point at the al-language test that now passes (or the new entry in `tests/runner-extras/` or `tests/expectations/`).
 - Include `Closes #N` in the body if it addresses a GH issue.
 - **Not** edit `CHANGELOG.md`. It is generated post-merge from squash-commit messages (`.claude/rules/no-changelog-edits.md`).
-- **Not** edit anything under `tests/al-language/`. The corpus is read-only; bump the submodule pin in a separate PR.
+- **Not** edit anything under `tests/al-language/`. The corpus is read-only and is not in git at all — a corpus change goes upstream, cited with a `Corpus-PR:` line.
 - Honour the precompiled-DLL contract: no rewriting method bodies or renaming types in MS / ISV business-logic DLLs (`.claude/rules/precompiled-dll-respect.md`). Runtime engine (`Ncl.dll`, `Types.dll`) and skeleton state are fair game.
 - Make every unsupported surface **loud** — throw `RunnerOutOfScopeException` with a named API and reason from `docs/scope.md`. Never silently return a default (`.claude/rules/loud-failures.md`).
 - Not be assumption-driven. If the triggering AL pattern is not clear from the issue body, ask the reporter — do not guess (`.claude/rules/no-assumption-fixes.md`).
