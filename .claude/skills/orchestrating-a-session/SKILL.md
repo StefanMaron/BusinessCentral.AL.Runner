@@ -231,11 +231,12 @@ Merge when **all of**:
 3. The proving test exists, and every corpus PR the body declares printed `MERGED` in the
    arming-list read above.
 
-**One CI read per sweep:** `gh pr list --repo <owner>/<repo> --state open --json
-number,headRefOid,isDraft,mergeStateStatus,statusCheckRollup` returns every open PR's head and
-verdict in one call. Run `tools/ci-wait.py <PR> --timeout 0` for the PRs that call leaves
-undecided — a rollup carrying a non-success conclusion, or one short of a conclusion — and
-never block on it. One pass, one answer, returns at once: 0 green on current head, 1 failed
+**One listing per sweep, one verdict per PR you arm:** `gh pr list --repo <owner>/<repo> --state
+open --limit 100 --json number,headRefOid,isDraft,mergeStateStatus,statusCheckRollup` returns
+every open PR's head, merge state and rollup in one call, which orders the sweep and replaces
+per-PR run listings; page with `--search "sort:updated-asc"` when it returns 100 rows. The
+rollup is never the verdict: run `tools/ci-wait.py <PR> --timeout 0` for every PR you consider
+arming, and never block on it. One pass, one answer, returns at once: 0 green on current head, 1 failed
 with the log already fetched, 2 still running (*not* a verdict, and the ordinary answer on a PR
 just opened — leave it for the next sweep, since arming `--auto` lands a reviewed PR the moment
 its checks go green with nobody present), 3 undetermined, 4 blocked with everything green — a

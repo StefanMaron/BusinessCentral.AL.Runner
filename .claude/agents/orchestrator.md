@@ -27,10 +27,10 @@ git fetch origin main
 **Concurrency with human maintainers.** Public repo with multiple maintainers: only touch PRs and issues whose assignee is `@me` (the bot's own account) or which have no assignee. Anything assigned to another user is human-owned — hands off.
 
 ```
-gh pr list --label "status: review-ready" --assignee @me --state open --json number,title,assignees,headRefOid,isDraft,mergeStateStatus,statusCheckRollup --repo StefanMaron/BusinessCentral.AL.Runner
+gh pr list --label "status: review-ready" --assignee @me --state open --limit 100 --json number,title,assignees,headRefOid,isDraft,mergeStateStatus,statusCheckRollup --repo StefanMaron/BusinessCentral.AL.Runner
 ```
 
-(Or filter the unrestricted list to PRs whose `assignees` is empty or `@me` only.) When checking the linked issue, skip the whole PR if that issue is assigned to a non-@me user. That one call is the pass's whole CI read: it carries each PR's head SHA and rollup, so nothing needs a per-PR run listing.
+(Or filter the unrestricted list to PRs whose `assignees` is empty or `@me` only.) When checking the linked issue, skip the whole PR if that issue is assigned to a non-@me user. That one call replaces per-PR run listings: it carries each PR's head SHA, merge state and rollup, which order the pass; the verdict on any PR you arm comes from step 2. When it returns 100 rows, page with `--search "sort:updated-asc"` until a call returns fewer.
 
 For each PR:
 
@@ -42,7 +42,7 @@ For each PR:
 
    If the diff looks like nonsense — implementation doesn't match the issue, the test doesn't exercise the reported AL pattern, or it is suspicious for any reason a quick read surfaces — leave one specific actionable comment naming what's wrong and **do not merge**. Do not approve "to be safe"; the goal is catching obvious-bad PRs, not deep-reviewing correct ones. Otherwise continue to the mechanical checks.
 
-2. `tools/ci-wait.py <N> --timeout 0` — run it only for a PR whose rollup from that one call carries a non-success conclusion or is short of one; a green rollup on the current head is the verdict already.
+2. `tools/ci-wait.py <N> --timeout 0` for every PR you consider arming; the rollup from step 1 is never the verdict (it cannot see a cancelled run's leftovers or a queued rerun, which the tool does).
 3. `gh pr diff <N> --name-only --repo StefanMaron/BusinessCentral.AL.Runner | grep -E "CHANGELOG|^tests/al-language/"`
 4. **CHANGELOG.md in diff** → check existing comments (`gh pr view <N> --json comments`); if not yet posted:
    > Please revert all changes to CHANGELOG.md — it is generated from commit messages post-merge and must not be edited in PRs.
@@ -62,22 +62,23 @@ For each PR:
    - Skip `gh pr review --approve` (fails when you are the repo owner).
 8. CI failing: read job log, post a specific actionable comment.
 
-**Stuck PR:** same CI run ID across loops + no new commits → close with comment, then clear its issues' labels per Step 2, returning each to `status: ready`.
+**Stuck PR:** same CI run ID across loops + no new commits → close with comment, then Step 2 (closed-unmerged branch).
 
 ## Step 2 — Close linked issues and clear their labels
-Merging closes what `closingIssuesReferences` names; the labels stay behind, so clear them here. After every merge or close, list the issues the PR names with `gh pr view <PR> --json closingIssuesReferences,body,headRefName --repo StefanMaron/BusinessCentral.AL.Runner`: the `closingIssuesReferences` numbers, every `Part of #N` line in the body (your own read of the body, not a GitHub parse), and the `issue-<N>` in the branch name. Then, per issue:
+Merging closes what `closingIssuesReferences` names; the labels stay behind, so clear them here. After every merge or close, list the issues the PR names with `gh pr view <PR> --json state,mergedAt,closingIssuesReferences,body,headRefName --repo StefanMaron/BusinessCentral.AL.Runner`: the `closingIssuesReferences` numbers, every `Part of #N` line in the body (your own read of the body, not a GitHub parse), and the `issue-<N>` in the branch name. Read each issue's labels first (`gh issue view <N> --json state,labels`); remove a `status:` label whatever its value, and an `agent:` label only when it names a loop this session dispatched — a foreign `agent:` label stays and goes into the pass summary (`check-open-prs-before-claiming.md`). Then, per issue:
 
-- **Closed** — `gh issue edit <N> --remove-label "status: in-progress" --remove-label "agent: <X>" --repo StefanMaron/BusinessCentral.AL.Runner`. Close it yourself when the merge did not: `gh issue close <N> --comment "Closed — implemented in #<PR>" --repo StefanMaron/BusinessCentral.AL.Runner`.
-- **`Part of #N`** — comment on N naming what this PR landed and what remains, then `gh issue edit <N> --add-label "status: ready" --remove-label "status: in-progress" --remove-label "agent: <X>" --repo StefanMaron/BusinessCentral.AL.Runner`.
-- **Named by the branch only, and still open** — comment on it naming the PR, so the next agent reads what already landed.
+- **PR merged, issue closed** — remove its `status:` label and your own `agent:` label. Close it yourself when the merge did not: `gh issue close <N> --comment "Closed — implemented in #<PR>"`.
+- **PR merged, `Part of #N`** — comment on N naming what this PR landed and what remains, remove its `status:` and your own `agent:` label, add `status: ready`.
+- **PR merged, named by the branch only, still open** — comment on it naming the PR, so the next agent reads what already landed.
+- **PR closed unmerged** — every issue it named that is still open and has no other open PR (`check-open-prs-before-claiming.md`, the check) gets your own `agent:` label removed, `status: in-progress` replaced by `status: ready`, and a comment naming the closed PR.
 
-Done when `gh issue view <N> --json state,labels --repo StefanMaron/BusinessCentral.AL.Runner` shows no `status:` and no `agent:` label on every closed issue the PR named.
+Done when `gh issue view <N> --json state,labels` shows, for every issue the PR named: no `status:` label on a closed issue, `status: ready` on an open one this step released, and no `agent:` label of a loop this session dispatched.
 
 ## Step 3 — Unblock issues
 ```
 gh issue list --label "status: blocked" --assignee @me --state open --json number,title,body,assignees --repo StefanMaron/BusinessCentral.AL.Runner
 ```
-Skip any blocked issue assigned to a non-@me user. Read comments; resolve if possible and remove the label, or leave a comment if it needs human input. Also check `status: in-progress` issues with no open PR — reset stalled ones to `status: ready`.
+Skip any blocked issue assigned to a non-@me user. Read comments; resolve if possible and remove the label, or leave a comment if it needs human input. A `status: in-progress` issue with no open PR whose `agent:` label names a loop this session dispatched is released as in Step 2's closed-unmerged branch.
 
 ## Step 4 — Done
 Triage of new untriaged issues is owned by the **`triager`** sub-agent (Opus, runs at the start of a cycle); the orchestrator does not triage. If the `status: ready` queue is empty and there are no PRs to review, the iteration is done.

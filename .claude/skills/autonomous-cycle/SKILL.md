@@ -417,7 +417,7 @@ a merge can turn `main` red, which outranks everything you were about to do.
    found only by a manual sweep, because the priority order below asks about *red* and a
    conflicted PR never becomes red.
 
-   The one CI read per sweep (`orchestrating-a-session`, the merge bar) returns
+   The one listing per sweep (`orchestrating-a-session`, the merge bar) returns
    `mergeStateStatus` beside the rollup; take both from it.
 
    `DIRTY`/`CONFLICTING` → rebase on the base branch, resolve, force-push with
@@ -605,10 +605,12 @@ Scheduler entry as optional restart-on-boot hardening.
 
 **End the session after 10 cycles and let the timer start the next one.** A session running for
 days accumulates state that is not context — tool handles, temp files, harness state. On the
-tenth cycle, comment the cycle state on the tracking issue, or on the status issue this session
-opened — every open PR by number with its verdict, what is armed, what is held for a person —
-then end the session; the next one starts from that comment. Done when the comment names every
-number `gh pr list --state open --json number --repo <owner>/<repo>` prints.
+tenth cycle, comment the cycle state on the session's status issue — the one this session
+opened at startup, or the one the previous session's last comment named; open one titled
+`Coordinator status <date>` when neither exists — every open PR by number with its verdict, what
+is armed, what is held for a person — then end the session; the next one starts from that
+comment. Done when the comment names every number `gh pr list --state open --limit 100 --json
+number --repo <owner>/<repo>` prints.
 
 **Where compaction lands matters more than when it fires.** A compaction inside a unit of work
 discards that unit's working context; one between units costs nothing, because everything

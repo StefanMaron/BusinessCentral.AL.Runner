@@ -61,7 +61,7 @@ Once detected, here is which tool covers which operation:
 | Label / assign / close issue | `gh issue edit`, `gh issue close` | `mcp__github__issue_write` (`method: update`) |
 | Comment on issue or PR | `gh issue comment`, `gh pr comment` | `mcp__github__add_issue_comment` (PRs too — pass the PR number) |
 | List PRs | `gh pr list` | `mcp__github__list_pull_requests` |
-| PR detail / diff / files / CI | `gh pr view`, `gh pr diff`, `gh pr checks` | `mcp__github__pull_request_read` (`get`, `get_diff`, `get_files`, `get_check_runs`) |
+| PR detail / diff / files / CI | `gh pr view`, `gh pr diff`, `tools/ci-wait.py <N> --timeout 0` | `mcp__github__pull_request_read` (`get`, `get_diff`, `get_files`, `get_check_runs`) |
 | Merge a PR | `gh pr merge --squash` | `mcp__github__merge_pull_request` (`merge_method: "squash"`) |
 | Open a PR | `gh pr create` | `mcp__github__create_pull_request` |
 | Label a PR | `gh pr edit --add-label` | `mcp__github__update_pull_request` |
