@@ -65,9 +65,10 @@ created once and never fast-forwarded again (#3020).
 
 `ci-wait.py`, `pr-body.py` and `preflight.py` refuse rather than answer when `origin/main` has
 moved their own file since your checkout branched (`tools/agent_self_freshness.py`; #3164) —
-exit 3 for `ci-wait.py`, refuse-to-write for `pr-body.py`. There is no flag to switch the check
-off. A branch that legitimately *edits* one of them is not stale and is not refused: what makes
-a copy stale is `origin/main` moving the file since the branch point.
+exit 3 for `ci-wait.py`, refuse-to-write for `pr-body.py`, and **exit 3 for `preflight.py` both
+when its running copy is stale and when nothing vouches for it** (#3164). There is no flag to
+switch the check off. A branch that legitimately *edits* one of them is not stale and is not
+refused: what makes a copy stale is `origin/main` moving the file since the branch point.
 
 **Expect refusals in a burst right after such a merge, not as an outage** — the fix is
 `git fetch origin main` in each worktree, never a revert.
@@ -99,8 +100,9 @@ Two things the guard cannot do:
 
 Two traps, and `gh pr checks` corroborates neither: a cancelled run's aggregate job can conclude
 `failure` because it runs `if: always()` over killed `needs` (#3010), and `gh pr checks` prints
-one row per context name, so cancellations never appear in it at all (#3016). Superseded runs
-are the common case here, not an edge case (#3003).
+one row per context name without saying which run produced it, so a leftover from a cancelled
+run can be the row you see and is then indistinguishable from a live failure (#3016).
+Superseded runs are the common case here, not an edge case (#3003).
 
 **The reliable check is the run, not the rollup:**
 
