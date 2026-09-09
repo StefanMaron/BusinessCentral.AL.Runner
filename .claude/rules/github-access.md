@@ -49,8 +49,7 @@ call) lives in the `al-runner-workflow` skill — reference material, not a rule
   branch's head commit is **never** an ancestor of `main` — the squash creates a new commit
   with the same tree and a different history. `git merge-base --is-ancestor <branch-head>
   origin/main` therefore exits non-zero for a PR that merged perfectly, and it reads as "not
-  in main yet". Measured on PR #3383: head `cbc7fe9f` is not an ancestor of `origin/main`;
-  its merge commit `c207517e` is. Ask the PR instead:
+  in main yet" (#3383). Ask the PR instead:
   ```bash
   gh pr view <N> --repo StefanMaron/BusinessCentral.AL.Runner \
     --json state,mergedAt,mergeCommit \

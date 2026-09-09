@@ -1,22 +1,18 @@
 # Never use `git stash` — the stash is shared across every worktree
 
-`refs/stash` belongs to the **repository**, not to a worktree. Every
-`.claude/worktrees/impl-*` directory is a worktree of the same repository, so `git stash`
-and `git stash pop` in one agent's worktree operate on the same single stack every other
-agent is using. On 2026-08-27 two impl agents stashed concurrently while working different
-issues; one agent's `git stash pop` restored the *other* agent's changes into its own
-worktree, and a fix landed in a worktree that had nothing to do with it. Recovered only
-because the agent noticed. Nothing in git warns you.
+`refs/stash` belongs to the **repository**, not to a worktree, so every agent's
+`.claude/worktrees/*` directory pushes and pops the same single stack. One agent's
+`git stash pop` has restored another agent's changes into its own worktree, and nothing in git
+warns you.
 
 ## The rule
 
 Do not run `git stash`, `git stash pop`, `git stash apply`, or `git stash drop` in this
-repository. Not in a worktree, not in the top-level checkout.
+repository — not in a worktree, not in the top-level checkout.
 
-The obvious workarounds do not help: `git stash push --` with a pathspec, or naming a stash
-with `-m`, still writes to the same shared `refs/stash`; `git stash list` interleaves every
-agent's entries with yours, and `stash@{0}` shifts under you when another agent pushes.
-There is no per-worktree stash.
+The obvious workarounds do not help: `git stash push --` with a pathspec and `-m` names still
+write to the shared `refs/stash`, `git stash list` interleaves every agent's entries with yours,
+and `stash@{0}` shifts under you when another agent pushes. There is no per-worktree stash.
 
 ## What to use instead
 
@@ -31,26 +27,23 @@ Committing early is the preferred answer to all of these.
 
 ## The RED-baseline recipe has two ways to destroy work
 
-Both hit real agents within a single day, following the first table row literally. Measured
-on git 2.55.0, not inferred.
+Both are properties of `git checkout` (measured on git 2.55.0), and mode 2 is silent — it
+produces a PR carrying a green CI verdict for code that is not what CI measured:
 
 1. **The restore step is not a restore.** `git checkout HEAD -- <path>` sets the file to
-   whatever `HEAD` says. With your fix still uncommitted, `HEAD` is the state *without* it,
-   so the command throws your work away. No stash entry and no reflog entry to recover from.
-2. **`git checkout <rev> -- <paths>` writes the index, not just the working tree.** Those
-   paths end up **staged** as pre-fix content: restore the working tree from a copy and
-   `git status` reads `MM`, restore only some and the rest read `M `. `git commit` then
-   commits the **index** — the revert — for every path you reverted; `git commit -a` commits
-   the **working tree**, right for paths you restored and still pre-fix for any you did not.
-
-Mode 1 announces itself: the tests stop passing. Mode 2 is silent — it produces a PR carrying
-a green CI verdict for code that is not what CI measured.
+   whatever `HEAD` says, so with your fix still uncommitted it throws the fix away, with no
+   stash entry and no reflog entry to recover from.
+2. **`git checkout <rev> -- <paths>` writes the index, not just the working tree**, leaving
+   those paths **staged** as pre-fix content. Read `git status`: a path you restored from a copy
+   reads `MM`, one you did not reads `M `. `git commit` then commits the index — the revert —
+   and `git commit -a` commits the working tree, right for paths you restored and still pre-fix
+   for any you did not.
 
 So, around any `git checkout <rev> -- <paths>`:
 
 1. **Copy the affected files outside the repository before you revert** —
-   `mkdir -p /tmp/red-baseline && cp <paths> /tmp/red-baseline/` — so the restore is
-   verifiable instead of hopeful.
+   `mkdir -p /tmp/red-baseline && cp <paths> /tmp/red-baseline/` — so the restore is verifiable
+   instead of hopeful.
 2. Restore, then `git add` those paths again; the revert staged them and the restore does not
    necessarily unstage them.
 3. Read `git diff --cached` and confirm it is your fix, not the revert.
@@ -58,14 +51,13 @@ So, around any `git checkout <rev> -- <paths>`:
 
 ## Polling loops must not match themselves
 
-`pgrep -f <pattern>` matches the polling shell's own command line, so
-`while pgrep -f "dotnet run"; do ...; done` never terminates — this has hung an agent turn.
-Filtering the shell's own PID out does **not** rescue it, and this rule used to recommend it:
-measured, `pgrep -f <pat>` also matches every *ancestor* whose command line contains the
-pattern, including the outer tool shell that ran your command, so `pgrep -f <pat> | grep -v $$`
-still matches and the loop still spins. `grep -v $$` is a substring filter besides — with `$$`
-of `123` it also drops PIDs `1234` and `4123`; `grep -vx` fixes that half and not the ancestor
-half. Use `$!` on a job you started, or `wait`. Better: don't poll, run it in the foreground.
+`pgrep -f <pattern>` matches the polling shell's own command line **and every ancestor** whose
+command line contains the pattern, including the outer tool shell, so
+`while pgrep -f "dotnet run"; do ...; done` never terminates. Filtering `$$` out does not rescue
+it, and fails twice over: `grep -v $$` is a substring filter, so with a PID of `123` it also
+drops `1234` and `4123`, and `grep -vx` fixes that half while leaving the ancestor half. Use
+`$!` on a job you started, or `wait`. Whether to wait at all is
+`no-backgrounding-long-commands.md`'s call, not this rule's.
 
 ## Sister rules
 
@@ -73,3 +65,5 @@ half. Use `$!` on a job you started, or `wait`. Better: don't poll, run it in th
 - `tdd.md` — the RED → GREEN cycle the revert recipe above exists to serve
 - `no-backgrounding-long-commands.md` — why the answer to "is it done yet" is a foreground
   wait for local work, and for CI is not to wait at all
+
+History: docs/incidents/no-git-stash-with-worktrees.md

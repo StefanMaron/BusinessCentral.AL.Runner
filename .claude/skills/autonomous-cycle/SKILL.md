@@ -268,8 +268,9 @@ Two things about the verdicts it produces, because both change what "stop" means
      and while it exists a query run from the repository root reads it instead. Measured: an
      18-day-old root copy answered `No matching nodes found.` — exit 0 — for a symbol that
      exists, while the correct graph returned 11 nodes. A rebuild under `AlRunner/` never
-     touches it, so the two diverge indefinitely; that is the 13-day-stale incident `CLAUDE.md`
-     records. Both repairs are reported rather than folded into a silent PASS.
+     touches it, so the two diverge indefinitely; that is the 13-day-stale incident
+     `docs/incidents/CLAUDE.md.md` records. Both repairs are reported rather than folded into a
+     silent PASS.
 
    **Severity: WARN, with one exception.** A tool that is absent or unusable does not halt a
    cycle — each degrades to a documented fallback (`rg`, `tools/context-pack.py`) that still
@@ -478,20 +479,12 @@ a merge can turn `main` red, which outranks everything you were about to do.
 Several people may run this loop at once, against the same repository, with no coordination
 between them. Nothing may depend on them talking to each other.
 
-**The assignee locks; your label discriminates.** Both matter and they do different jobs: the
-assignee is what stops two agents working the same issue, and your own agent label is what lets
-you (and anyone reading the repository later) tell which work came from which loop. Set both.
+Set both the assignee and your own `agent:` label when claiming; what each is worth is owned
+by the rule below.
 
-**The GitHub assignee is the lock**, and it decides the order you look in. It is visible to
-everyone, survives a crashed box, and needs no shared state between contributors. A dedicated
-label is useful for telling afterwards which work the loop produced — but the label is
-bookkeeping; the assignee is what prevents two agents doing the same issue.
-
-**Between two loops on the same account, neither signal decides ownership**, and the check that
-does is one call: an **open PR carrying `Closes #N`** means the issue is in progress no matter
-what the assignee and labels say. Resolve it before claiming, and — as a coordinator — build the
-whole map once per cycle before dispatching. Three collisions in four hours came from skipping
-it. `.claude/rules/check-open-prs-before-claiming.md` has the command and the incidents.
+**What each claim signal is worth, and the one call that decides ownership, live in
+`.claude/rules/check-open-prs-before-claiming.md`** — read it before claiming, and as a
+coordinator build the whole open-PR map once per cycle before dispatching.
 
 **Look in this order, and it works for any account:**
 

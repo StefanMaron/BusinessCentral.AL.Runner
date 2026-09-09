@@ -1,45 +1,38 @@
 # Branch and PR rules
 
-- **Never push directly to `main`.** Always via PR. Branch protection enforces this; agents must respect it even if a task says "push to main".
-- **Branch name:** `agent/<agent-id>/issue-<N>` — no exceptions. `<agent-id>` comes from a fixed, reusable pool (`impl-1`, `impl-2`) sized to the concurrency limit — it is not a task counter and does not increase. The issue number is what makes the branch unique, so reusing an identity never collides. See `.claude/agents/impl-agent.md` for how to reset a reused worktree safely.
-- **PR body must contain `Closes #N`** so the linked issue auto-closes on merge, and it must not contain a closing keyword (`Closes`/`Fixes`/`Resolves`, any tense, case-insensitive) next to any OTHER issue number unless you actually mean to close that issue too — `pr-gate.yml`'s `reject-bad-closing-references` job enforces both directions, and since #3165 it **blocks the merge** — it is a required status check rather than an advisory one.
-- **One open PR per impl agent.** Do not claim a second issue while a PR is open. This bounds *concurrency*, not content: a single PR may legitimately close several issues when each gets its own proving test — see `batch-sibling-issues-by-file.md`.
+- **Never push directly to `main`.** Always via PR; branch protection enforces it even when a task says otherwise.
+- **Branch name:** `agent/<agent-id>/issue-<N>`. The identity comes from a fixed, reusable pool sized to the concurrency limit, so the issue number is what makes a branch unique and reusing an identity never collides. `.claude/agents/impl-agent.md` has the reset recipe for a reused worktree.
+- **The PR body must contain `Closes #N`**, and must not put a closing keyword (`Closes`/`Fixes`/`Resolves`, any tense, any case) next to any other issue number unless you mean to close that one too. `pr-gate.yml`'s `reject-bad-closing-references` job blocks the merge in both directions (#3165).
+- **One open PR per impl agent** — do not claim a second issue while a PR is open. That bounds *concurrency*, not content: one PR may close several issues when each gets its own proving test (`batch-sibling-issues-by-file.md`).
 - **Set `status: review-ready`** on the PR when you mark it ready — that is how the orchestrator finds your work; the coordinator reads CI, not you (`.claude/agents/impl-agent.md`, Step 5).
-- **Concurrency with human maintainers.** This is a public repo. When claiming an issue, also assign it to `@me` (`gh issue edit <N> --add-assignee @me`, or `mcp__github__issue_write` with `method: update` and your login in `assignees`). Skip any issue or PR whose assignee is a user other than `@me` — a human maintainer is already on it. The assignee field is the boundary between "agent-owned" and "human-owned" work. A repo owner can waive this for a specific PR, but an agent never waives it on its own. **Between agents the assignee decides nothing** — every loop pushes under the same account, so it cannot say *which* agent claimed it. Resolve the issue's open PRs before claiming or dispatching, and never release a claim by removing an assignee: `.claude/rules/check-open-prs-before-claiming.md`.
-- **GitHub access:** never assume the `gh` CLI exists — it is absent in web/remote sessions. See `.claude/rules/github-access.md`.
-- **Editing a PR body from a script: use `tools/pr-body.py`.** Never fetch-modify-upload by hand. A scripted edit did exactly that to PR #2790: `gh pr view --json body --jq .body` returned an empty string during a network failure, the replacements matched nothing, the append ran against `""`, and 711 bytes went up over a ~4 KB body — removing the standalone closing-reference line, so the linked issue stayed open after merge. The guard in place, `print('changed' if b != orig else 'NO ANCHOR MATCHED')`, **could not fail**: appending always changes the string. `tools/pr-body.py` refuses an empty or short fetch, requires every anchor to be found the expected number of times, refuses to drop a declared closing reference or introduce a foreign one, refuses a large shrink, and verifies the result by **re-reading** — a write's exit code is not evidence here (a `gh` call reported `dial tcp … i/o timeout` on a write that had already landed). `--check` re-asserts a body against its own diff after a rebase; `--dry-run` prints the diff and every assertion. And before any of that: **a note belongs in a comment, not in the body** — #2790's body was being edited only to add one.
+- **Assign the issue to `@me` when you claim it** (`gh issue edit <N> --add-assignee @me`, or `mcp__github__issue_write` with `method: update` and your login in `assignees`), and skip any issue or PR assigned to a user other than `@me`: the assignee is the boundary between agent-owned and human-owned work on a public repo, and only the repo owner waives it. What each claim signal is worth between agents, and how to release a claim, are in `check-open-prs-before-claiming.md`.
+- **GitHub access:** `gh` is absent in web and remote sessions (`github-access.md`).
+- **Edit a PR body with `tools/pr-body.py`**, never by hand fetch-modify-upload: it refuses an empty or short fetch, holds every anchor to its expected count, refuses to drop a declared closing reference or add a foreign one, refuses a large shrink, and verifies by **re-reading**, because a write's exit code is not evidence that the write landed (#2790). Two traps it exists for: `gh pr view --json body --jq .body` returns an **empty string** on a network failure, so a hand-rolled edit appends to `""` and uploads it over a real body; and a guard of the shape `changed if b != orig` **cannot fail** after an append, because appending always changes the string. `--check` re-asserts a body against its diff after a rebase; `--dry-run` prints the diff and every assertion. Before any of that: a note belongs in a comment, not in the body.
 
-## This repo squash-merges: your COMMIT MESSAGES become the merge commit, and the PR body links issues separately
+## This repo squash-merges: your COMMIT MESSAGES become the merge commit, the PR body links the issues
 
-This section used to say "the PR title + body become the commit message". That is not
-what this repository is configured to do, and the wrong version is why the guards below
-were built to scan only the title and body (#2491). Measured, not assumed:
+`squash_merge_commit_message` is `COMMIT_MESSAGES` and `squash_merge_commit_title` is
+`COMMIT_OR_PR_TITLE` on this repository, so text reaches the merged result by two
+independent routes and both fire (#2491). Re-read the setting rather than trusting this line:
 
 ```bash
-gh api repos/StefanMaron/BusinessCentral.AL.Runner \
-  --jq '{squash_merge_commit_title, squash_merge_commit_message}'
-# {"squash_merge_commit_title":"COMMIT_OR_PR_TITLE","squash_merge_commit_message":"COMMIT_MESSAGES"}
+gh api repos/StefanMaron/BusinessCentral.AL.Runner --jq '{squash_merge_commit_title, squash_merge_commit_message}'
 ```
-
-So text reaches the merged result by **two independent routes**, and both fire:
 
 | route | source text | what acts on it |
 |---|---|---|
-| the merge commit | your branch's **commit messages**, concatenated (subject: a commit subject, or the PR title) | GitHub parses the commit landing on `main` — closing references, CI-skip directives |
-| the pull request | the PR **title and body** | GitHub's `closingIssuesReferences`, which closes those issues when the PR merges |
+| the merge commit | your branch's **commit messages**, concatenated (subject: a commit subject, or the PR title) | GitHub's parse of the commit landing on `main` — closing references, CI-skip directives |
+| the pull request | the PR **title and body** | `closingIssuesReferences`, which closes those issues when the PR merges |
 
-Practical consequence: a closing keyword or a skip directive written in a **commit
-message** fires even though it never appears in the PR body, and editing the body will
-not remove it — the commit has to be reworded and force-pushed. `Closes #N` belongs in
-the PR **body**, where the declaration is visible to a reviewer; `pr-gate.yml` reads
-the title, the body and every commit message and holds the body to being the place a
-target is declared.
+Declare the target in the PR **body**, where a reviewer sees it, and refer to every other
+issue in a commit message without a trigger keyword or directive form: GitHub's parser
+ignores negation and qualifying prose, and undoing it means rewording the commit and
+force-pushing, not editing the body (#2127, #2486).
 
-Anything GitHub parses out of a commit message fires regardless of the author's intent or
-the surrounding prose. Refer to issues and directives without their trigger keywords/forms
-unless the effect is intended. Four real bugs share this one root cause:
+Three traps that parser sets:
 
-- A trailing `(#N)` already in the title survives into the merge commit and gets a second one appended by the squash itself (`generate_changelog.py` strips both, see #2109). **No automated guard for this one** — watch for it when a squash-merge default message already carries a PR-title `(#N)` and GitHub is about to append its own.
-- GitHub matches several CI-skip spellings (`[skip ci]`, `[ci skip]`, `[no ci]`, `[skip actions]`, `[actions skip]`, `***NO_CI***`) ANYWHERE in a commit message, so writing one in a PR body — even just to document it — silently skips every workflow on the resulting merge commit, including the one required check on `main` (this happened for real on #2115's merge, see #2116). `pr-gate.yml`'s `reject-ci-skip-directives` job catches it before merge, and blocks it.
-- The same parser fires on a **commit message**, which the PR-body guard could not see: PR #2486 declared exactly two closing references (`closingIssuesReferences` confirmed #2478 and #2480), a commit message said "It does not close #2479", and merge commit `28cdcf65` closed #2479 anyway. The issue had to be reopened by hand. `reject-bad-closing-references` and `reject-ci-skip-directives` now scan the commit messages too (#2491).
-- GitHub's closing-reference parser (`Closes`/`Fixes`/`Resolves` + `#N`) fires on that pattern anywhere in the message and does not understand negation or qualifying prose: PR #2127's body said "This does not close #2125" and merge commit `fe789a13` closed #2125 regardless. The mirror bug is the parser missing entirely — a PR with no closing reference merges fine and leaves its linked issue open and labeled in-progress. `pr-gate.yml`'s `reject-bad-closing-references` job catches both directions. (This line used to cite #2046, #1642 and #1640 as instances. None of them was: PR #2050 opened with "Addresses #2046 (does not close it)" and PR #2048 with "Part of #1642 — not closing it", both deliberate partial landings of a tracking issue, which is the correct way to land part of a tracked effort; and #1640 was closed on merge by PR #2040's `Closes #1640`, only its `status: in-progress` / `agent:` labels went stale — a label-hygiene defect, not a parser miss. #2186 has the record.)
+- **A trailing `(#N)` already in the PR title** survives into the merge commit and the squash appends a second one; `generate_changelog.py` strips both (#2109). Nothing guards this — watch for it when GitHub is about to append its own.
+- **A CI-skip spelling anywhere in a commit message or PR body** (`[skip ci]`, `[ci skip]`, `[no ci]`, `[skip actions]`, `[actions skip]`, `***NO_CI***`) skips every workflow on the merge commit, including the one required check on `main`; `reject-ci-skip-directives` blocks it before merge (#2116).
+- **Both guards read the commit messages too**, not only the title and body, so a body that is clean does not clear you (#2491).
+
+History: docs/incidents/branch-and-pr.md
