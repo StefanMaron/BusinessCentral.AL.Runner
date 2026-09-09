@@ -1,0 +1,112 @@
+import zipfile, io, struct, uuid, sys, json
+
+APP_ID = "b3d9f1a7-5c82-4e06-9b34-7a1e6d208c45"
+NAME, PUBLISHER, VERSION = "QDF Precompiled Query Dep", "AL Runner Fixtures", "1.0.0.0"
+
+navx_manifest = f'''<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
+  <App Id="{APP_ID}" Name="{NAME}" Publisher="{PUBLISHER}" Version="{VERSION}"
+       Target="Cloud" ShowMyCode="true" PropagateDependencies="false" />
+  <IdRanges><IdRange MinObjectId="65890" MaxObjectId="65899" /></IdRanges>
+  <Dependencies />
+</Package>
+'''
+
+# NO Platform/Runtime attributes and no top-level RuntimeVersion — #2124: a real value here
+# makes BC 27.0's compiler refuse EVERY OTHER dependency .app in the same combined
+# tests/runner-extras run with AL1153.
+symbol_reference = {
+    "Tables": [
+        {
+            "Id": 65890, "Name": "QDF Filter Row",
+            "Fields": [
+                {"Id": 1, "Name": "Code", "TypeDefinition": {"Name": "Code[20]"}, "Properties": []},
+                {"Id": 2, "Name": "Status", "TypeDefinition": {"Name": "Option", "OptionMembers": ["Open", "Closed"]},
+                 "Properties": [{"Name": "OptionMembers", "Value": "Open,Closed"}]},
+            ],
+            "Keys": [{"Name": "PK", "FieldNames": ["Code"], "Properties": [{"Name": "Clustered", "Value": "1"}]}],
+            "ReferenceSourceFileName": "Row.Table.al", "Properties": [],
+        },
+        {
+            "Id": 65891, "Name": "QDF Link Header",
+            "Fields": [
+                {"Id": 1, "Name": "No.", "TypeDefinition": {"Name": "Code[20]"}, "Properties": []},
+                {"Id": 2, "Name": "Variant Code", "TypeDefinition": {"Name": "Code[20]"}, "Properties": []},
+                {"Id": 3, "Name": "Descr", "TypeDefinition": {"Name": "Text[50]"}, "Properties": []},
+            ],
+            "Keys": [{"Name": "PK", "FieldNames": ["No.", "Variant Code"],
+                      "Properties": [{"Name": "Clustered", "Value": "1"}]}],
+            "ReferenceSourceFileName": "Header.Table.al", "Properties": [],
+        },
+        {
+            "Id": 65892, "Name": "QDF Link Line",
+            "Fields": [
+                {"Id": 1, "Name": "Header No.", "TypeDefinition": {"Name": "Code[20]"}, "Properties": []},
+                {"Id": 2, "Name": "Variant Code", "TypeDefinition": {"Name": "Code[20]"}, "Properties": []},
+                {"Id": 3, "Name": "Line No.", "TypeDefinition": {"Name": "Integer"}, "Properties": []},
+                {"Id": 4, "Name": "Tag", "TypeDefinition": {"Name": "Text[50]"}, "Properties": []},
+            ],
+            "Keys": [{"Name": "PK", "FieldNames": ["Header No.", "Variant Code", "Line No."],
+                      "Properties": [{"Name": "Clustered", "Value": "1"}]}],
+            "ReferenceSourceFileName": "Line.Table.al", "Properties": [],
+        },
+    ],
+    # Property VALUES below are copied verbatim from what BC 28.1's own compiler emitted for
+    # the equivalent AL — see REGENERATE-FIXTURES.txt.
+    "Queries": [
+        {
+            "Id": 65893, "Name": "QDF Open Rows",
+            "Properties": [{"Name": "QueryType", "Value": "Normal"}],
+            "ReferenceSourceFileName": "Open.Query.al",
+            "Elements": [{
+                "Id": 268207951, "Name": "Row", "RelatedTable": "QDF Filter Row",
+                "Properties": [{"Name": "DataItemTableFilter", "Value": "Status = const(Open)"}],
+                "Columns": [{"Id": 355646050, "Name": "RowCode", "SourceColumn": "Code", "Properties": []}],
+                "Filters": [], "DataItems": [],
+            }],
+        },
+        {
+            "Id": 65894, "Name": "QDF Composite Link",
+            "Properties": [{"Name": "QueryType", "Value": "Normal"}],
+            "ReferenceSourceFileName": "Composite.Query.al",
+            "Elements": [{
+                "Id": 859545699, "Name": "Hdr", "RelatedTable": "QDF Link Header", "Properties": [],
+                "Columns": [
+                    {"Id": 674968234, "Name": "HdrNo", "SourceColumn": "No.", "Properties": []},
+                    {"Id": 2040216768, "Name": "HdrDescr", "SourceColumn": "Descr", "Properties": []},
+                ],
+                "Filters": [],
+                "DataItems": [{
+                    "Id": 1437150199, "Name": "Ln", "RelatedTable": "QDF Link Line",
+                    "Properties": [
+                        {"Name": "DataItemLink",
+                         "Value": "\"Header No.\" = Hdr.\"No.\", \"Variant Code\" = Hdr.\"Variant Code\""},
+                        {"Name": "SqlJoinType", "Value": "InnerJoin"},
+                    ],
+                    "Columns": [{"Id": 1656092391, "Name": "LineTag", "SourceColumn": "Tag", "Properties": []}],
+                    "Filters": [], "DataItems": [],
+                }],
+            }],
+        },
+    ],
+    "AppId": APP_ID, "Name": NAME, "Publisher": PUBLISHER, "Version": VERSION,
+}
+
+def write_navx(zip_bytes, out_path):
+    header = (b"NAVX" + struct.pack("<I", 40) + struct.pack("<I", 2)
+              + uuid.UUID(APP_ID).bytes_le + struct.pack("<Q", len(zip_bytes)) + b"NAVX")
+    with open(out_path, "wb") as f:
+        f.write(header); f.write(zip_bytes)
+
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+    zf.writestr("NavxManifest.xml", navx_manifest)
+    zf.writestr("SymbolReference.json", json.dumps(symbol_reference))
+    zf.writestr("[Content_Types].xml",
+        '<?xml version="1.0" encoding="utf-8"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="xml" ContentType="" /><Default Extension="json" ContentType="" />'
+        '<Default Extension="al" ContentType="" /><Default Extension="png" ContentType="" />'
+        '</Types>')
+write_navx(buf.getvalue(), sys.argv[1])
+print("wrote", sys.argv[1])

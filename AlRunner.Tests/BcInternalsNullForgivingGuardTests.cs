@@ -221,14 +221,19 @@ public sealed class BcInternalsNullForgivingGuardTests
         var converted = SourceFiles()
             .Sum(f => CountConverted(File.ReadAllText(f)));
 
-        Assert.Equal(74, converted);
+        // A ratchet, not a fact about the code: it goes UP when a site is deliberately
+        // converted, and a drop means a conversion was undone. 74 -> 75 for the
+        // DataItemTableFilter read in RecordPatches.QueryProjection.cs (#3571).
+        Assert.Equal(75, converted);
     }
 
     /// <summary>
     /// <see cref="CountConverted"/> is a raw substring count, so prose describing a converted
     /// site would register as one. That is not hypothetical: this PR's own
     /// <c>NavReportSync.cs</c> explains the conversion in a comment directly above the call,
-    /// which made the population read 75 where only 74 sites exist. <see cref="Scan"/> has
+    /// which made the population read one higher than the number of real sites (76 against 75
+    /// as the counts stand now; it was 75 against 74 when this was written, before #3571 added
+    /// a site — the off-by-one is the point, not either figure). <see cref="Scan"/> has
     /// blanked comments and string literals since it was written; this arm holds the converted
     /// counter to the same rule, so the two halves of the population are counted alike.
     /// </summary>

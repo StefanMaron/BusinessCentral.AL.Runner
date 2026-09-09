@@ -32,6 +32,7 @@ public static partial class RecordPatches
     private static Type? _tMetaQueryOrderBy;
     private static Type? _tMetaQueryDataItemLink;
     private static Type? _tMetaQueryColumnFilter; // #2418
+    private static Type? _tMetaQueryFieldFilter;  // #3571
     private static MethodInfo? _mCreateDynamicQuery;
 
     private static void QLog(string msg)
@@ -52,6 +53,7 @@ public static partial class RecordPatches
         _tMetaQueryColumn = typesAsm?.GetType(md + "MetaQueryColumn");
         _tMetaQueryOrderBy = typesAsm?.GetType(md + "MetaQueryOrderBy");
         _tMetaQueryDataItemLink = typesAsm?.GetType(md + "MetaQueryDataItemLink");
+        _tMetaQueryFieldFilter = typesAsm?.GetType(md + "MetaQueryFieldFilter");
         _tMetaQueryColumnFilter = typesAsm?.GetType(md + "MetaQueryColumnFilter"); // #2418
 
         // public static NCLMetaQuery CreateDynamicQuery(ApplicationObjectId, MetaQuery, Type, NavAppGroup)
@@ -255,13 +257,56 @@ public static partial class RecordPatches
             //   referenced (parent) dataitem's table.
             if (!isRoot && !string.IsNullOrEmpty(diSym.DataItemLink))
             {
-                var link = ParseDataItemLink(diSym.DataItemLink!, fieldNoByName);
-                if (link == null)
+                // #3572: AL allows a COMMA-SEPARATED list of equalities here, and BC states one
+                // <DataItemLink> element per equality in its own emitted document (verified on
+                // BC 28.1: a two-field link parses to DataItemLinks count=2). The design object's
+                // DataItemLinks is a List for exactly that reason. Splitting on top-level commas
+                // only — a quoted field name may itself contain one.
+                var links = ParseDataItemLinks(diSym.DataItemLink!, fieldNoByName);
+                if (links == null)
                 {
                     QLog($"BuildMetaQueryDesign({queryId}): could not parse DataItemLink '{diSym.DataItemLink}' for '{diSym.Name}' — abandoning build");
                     return null;
                 }
-                GetList(di, "DataItemLinks").Add(link);
+                foreach (var link in links)
+                    GetList(di, "DataItemLinks").Add(link);
+            }
+
+            // #3571: the AL `DataItemTableFilter` property restricts this dataitem's own table
+            // rows. It resolves to a TABLE field number (not a query column id, which is what
+            // ColumnFilter uses) and needs no projected column, so it lands in the dataitem's
+            // FieldFilters — the list BC's own
+            // NCLMetaQuery.CreateTableFiltersAndMarksFromDataItemFieldFilters reads to build the
+            // dataitem's TableFiltersAndMarks. An unparseable property or an unknown field
+            // abandons the WHOLE build, matching the ColumnFilter discipline below: running the
+            // query unrestricted would return rows real BC excludes.
+            if (!string.IsNullOrEmpty(diSym.DataItemTableFilter))
+            {
+                if (_tMetaQueryFieldFilter == null)
+                {
+                    QLog($"BuildMetaQueryDesign({queryId}): DataItemTableFilter present but MetaQueryFieldFilter reflection unavailable — abandoning build");
+                    return null;
+                }
+                var parsed = TryParseColumnFilterText(diSym.DataItemTableFilter);
+                if (parsed == null)
+                {
+                    QLog($"BuildMetaQueryDesign({queryId}): DataItemTableFilter '{diSym.DataItemTableFilter}' could not be parsed — abandoning build");
+                    return null;
+                }
+                foreach (var cond in parsed)
+                {
+                    int filterFieldNo = ResolveFieldNo(fieldNoByName, cond.FieldName);
+                    if (filterFieldNo < 0)
+                    {
+                        QLog($"BuildMetaQueryDesign({queryId}): DataItemTableFilter names unknown field '{cond.FieldName}' on table {tableNo} — abandoning build");
+                        return null;
+                    }
+                    var ff = Activator.CreateInstance(_tMetaQueryFieldFilter)!;
+                    SetProp(ff, "FieldNo", filterFieldNo);
+                    SetProp(ff, "TypeOfFilter", cond.Kind == ParsedColumnFilterKind.Const ? "CONST" : "FILTER");
+                    SetProp(ff, "Value", cond.Value);
+                    GetList(di, "FieldFilters").Add(ff);
+                }
             }
 
             GetList(mq, "DataItems").Add(di);
@@ -358,14 +403,37 @@ public static partial class RecordPatches
     private static int ResolveFieldNo(Dictionary<string, int> fieldNoByName, string fieldName)
         => fieldNoByName.TryGetValue(fieldName, out var no) ? no : -1;
 
+    // Parse a DataItemLink property — one or more comma-separated
+    // `"<thisField>" = <SourceDataItem>."<sourceField>"` equalities — into one
+    // MetaQueryDataItemLink each (#3572). Null iff ANY equality fails to parse or resolve:
+    // applying a subset would join on fewer fields than AL declares, widening the result
+    // silently, which is the failure this returns null to prevent.
+    private static List<object>? ParseDataItemLinks(string link, Dictionary<string, int> thisFieldNoByName)
+    {
+        var parts = SplitTopLevelCommas(link.Trim());
+        if (parts.Count == 0) return null;
+        var result = new List<object>();
+        foreach (var part in parts)
+        {
+            if (part.Trim().Length == 0) continue;
+            var one = ParseDataItemLink(part, thisFieldNoByName);
+            if (one == null) return null;
+            result.Add(one);
+        }
+        return result.Count == 0 ? null : result;
+    }
+
     // Parse `"<thisField>" = <SourceDataItem>."<sourceField>"` into a MetaQueryDataItemLink.
+    // ONE equality only — ParseDataItemLinks splits a multi-field property before calling this.
     private static object? ParseDataItemLink(string link, Dictionary<string, int> thisFieldNoByName)
     {
-        var eq = link.IndexOf('=');
+        // Top-level: a quoted field name may contain '=' or '.', so neither may be located by
+        // a bare IndexOf (`"A=B" = Hdr."C.D"` is one legal equality).
+        var eq = TopLevelIndexOf(link, '=');
         if (eq < 0) return null;
         var lhs = Unquote(link[..eq].Trim());
         var rhs = link[(eq + 1)..].Trim();
-        var dot = rhs.IndexOf('.');
+        var dot = TopLevelIndexOf(rhs, '.');
         if (dot < 0) return null;
         var sourceDataItem = rhs[..dot].Trim();
         var sourceField = Unquote(rhs[(dot + 1)..].Trim());

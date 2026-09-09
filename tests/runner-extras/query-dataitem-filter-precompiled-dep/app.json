@@ -1,0 +1,31 @@
+{
+  "id": "c5e0a2b8-6d93-4f17-8a45-9b2f7e319d56",
+  "name": "Runner Extras - Query DataItem Filter (Precompiled Dep)",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves a query in a PRECOMPILED dependency honours its DataItemTableFilter (#3571) and joins on every equality of a multi-field DataItemLink (#3572).",
+  "description": "A query living in a precompiled dependency .app is never emitted by this runner, so no BC metadata document exists for it and RecordPatches.NclMetaQueryBuilder.BuildMetaQueryDesign keeps the SymbolReference derivation (#3608/PR #3617 converted only the compiled-here route). Both issues report that derivation arm, and neither is reachable through the document arm. The dependency 'QDF Precompiled Query Dep' ships tables 65890-65892 and queries 65893/65894 as pure compiled code plus a symbol package; see REGENERATE-FIXTURES.txt. Its two query properties are stated verbatim as BC 28.1's own compiler emits them: DataItemTableFilter as 'Status = const(Open)', and a two-field DataItemLink as ONE string carrying both equalities.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "b3d9f1a7-5c82-4e06-9b34-7a1e6d208c45",
+      "name": "QDF Precompiled Query Dep",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65870,
+      "to": 65889
+    }
+  ],
+  "runtime": "17.0",
+  "target": "Cloud",
+  "features": []
+}
