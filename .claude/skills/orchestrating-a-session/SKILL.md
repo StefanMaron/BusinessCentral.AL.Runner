@@ -153,17 +153,13 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
   and count-baseline update are folded in.
 - No *other* PR in the same batch conflicts with it. Where two do — two submodule pin bumps to
   different revisions, say — arm only the one that must merge first and report the ordering.
-- **`tools/pr-verdict.py <N>` exits 0**: a MERGE verdict on this head and this patch.
-  Exit 1 (FIX-FIRST or HOLD), 2 (code moved under the verdict) and 3 (no readable verdict)
-  all mean: do not arm.
+- **The newest review comment on the PR ends with a `Verdict: MERGE` line whose head equals the
+  PR's current head** (`gh pr view <N> --json headRefOid`). A FIX-FIRST or HOLD, a missing
+  verdict line, or a head that has moved since the verdict: do not arm.
 
-`tools/arm-check.py <N>` runs every condition above except the batch conflict, and exits 0
-with the stamp as its last line when all hold. The batch-conflict condition is yours: it is a
-statement about the batch, which no per-PR tool can see.
-
-**Record the stamp you armed against** (`— head … — patch …`, from `tools/pr-verdict.py
---stamp <N>`) in the verdict. Same patch with a moved head is a rebase; a moved patch is new
-code nobody has reviewed.
+**Record the head you armed against** — it is the head in that verdict line. If the head moves
+afterwards, GitHub keeps auto-merge armed against the new head, which nobody has reviewed, and
+the head is what lets you notice.
 
 **One command, two outcomes — and on a green PR it MERGES.** `--auto` is not "queue it for
 later":

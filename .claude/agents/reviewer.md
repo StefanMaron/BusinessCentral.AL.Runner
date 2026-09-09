@@ -190,28 +190,31 @@ agent review, since it posts under the account holder's name.
 
 ## The verdict line
 
-End every review comment with one verdict line, and nothing after it:
+End every review comment with one verdict line, and write nothing after it:
 
 ```
-Verdict: MERGE|FIX-FIRST|HOLD (<reason, only for FIX-FIRST/HOLD>) — head <full 40-char sha> — patch <diff fingerprint, 12 hex> — kind: full|arm-check
+Verdict: MERGE|FIX-FIRST|HOLD (<reason, only for FIX-FIRST/HOLD>) — head <full 40-char sha> — kind: full|re-review
 ```
 
 1. Decide MERGE, FIX-FIRST or HOLD. FIX-FIRST and HOLD carry the reason in parentheses; MERGE
    carries none.
-2. Produce the stamp: `python tools/pr-verdict.py --stamp <PR>` prints `— head … — patch … —
-   kind: full`. Without `gh`: read `headRefOid` with `mcp__github__pull_request_read`, then
-   `--stamp <PR> --head <sha>`.
+2. Read the head: `gh pr view <N> --repo <owner>/<repo> --json headRefOid --jq .headRefOid`.
+   Without `gh`, read `headRefOid` through `mcp__github__pull_request_read`. Use the full
+   40-character SHA, never an abbreviation.
 3. Sign the comment, then write the verdict line as its last line.
 
-Done when `python tools/pr-verdict.py <PR>` reads your line back: exit 0 for MERGE, 1 for
-FIX-FIRST or HOLD. Exit 3 means the line is malformed (reason missing or misplaced, or text
-after the line); edit the comment until it reads.
+Done when the posted comment's last line is the verdict line and its head equals the PR's head
+at the moment you post. Re-read the head if the review took long enough for someone to push;
+a verdict on a head that has already moved is not a verdict on the PR.
 
-**Re-review of an unchanged diff**: run `python tools/arm-check.py <PR>`. When every check
-passes, its last line is the stamp with `kind: arm-check`; paste it. When it refuses, the diff
-changed: do a full review.
+`kind:` says which pass produced it. Use `full` for the review above. Use `re-review` for a
+pass over a diff that has not changed since your last full review: compare `gh pr diff <N>`
+with the diff you reviewed then, and when they are identical re-check only the mechanical
+conditions in the arming list (`orchestrating-a-session`, "A reviewer that approves a PR arms
+auto-merge"). When the diff differs at all, do a full review and stamp `full`.
 
-Trap: `patch` is a fingerprint of the diff, whitespace-sensitive, unchanged by a rebase. Same
-patch with a moved head is a rebase; a moved patch is new code and owes a full review.
-Why the line exists: a verdict a tool can read cannot be armed by mistake
+On a corpus PR the same line applies, with that repository's `--repo` on the head read.
+
+Why the line exists: an arming step can only check a verdict it can find, and a verdict whose
+head has moved is the one that gets armed by mistake
 ([e-11](https://fbakkensen.github.io/al-runner-retro/#e-11)).
