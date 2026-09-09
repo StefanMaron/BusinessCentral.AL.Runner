@@ -66,6 +66,34 @@ query all numbered 70660. A registry keyed on the id alone answers seven objects
 document. The registry still accepts an id-less registration and keys it by name, so a
 kind BC starts delivering later is stored rather than dropped.
 
+<a id="objecttype-vs-symbolkind"></a>
+
+## `ObjectType` vs `SymbolKind`: two enums, one spelling divergence
+
+The registry is keyed by the **AL compiler's** `SymbolKind` name (BcCompiler's
+`CaptureOutputter.AddApplicationObject` stores `symbol.Kind.ToString()`). BC's **runtime**
+asks for metadata by `Microsoft.Dynamics.Nav.Types.ObjectType`, through
+`MetaObjectCache` / `NCLObjectMetadataLoaderExtensions.GetMeta*` ->
+`RetrieveRuntimeObject` -> `loader.GetMetaObjectXmlMetadata(new ApplicationObjectId(...))`.
+So anything serving the runtime out of this registry has to bridge the two.
+
+Measured by decompiling both enums (`Microsoft.Dynamics.Nav.Types.dll` and
+`Microsoft.Dynamics.Nav.CodeAnalysis.dll`, BC 28.1): **every kind this capture produces
+names identically in `ObjectType`, with exactly one divergence** —
+
+| `ObjectType` | `SymbolKind` |
+|---|---|
+| `CodeUnit` | `Codeunit` |
+
+The mapping table lives in `RegistryKindByObjectType` (`AlRunner/Patches/RunnerXmlMetadataLoader.cs`).
+It deliberately omits `Report`, `Page`, `Table` and `XmlPort`: those four are served by
+earlier branches in `GetMetaObjectXmlMetadata`, out of their own per-kind registries
+(`AlReportMetadataRegistry`, `AlPageMetadataRegistry`, `AlXmlPortMetadataRegistry`) or, for
+`Table`, out of this registry under `RecordPatches.BcTableMetadataKind`.
+
+`AlRunner.Tests/MetadataLoaderKindCoverageTests.cs` pins the divergence, so a rename of
+either enum fails there rather than silently losing a kind to the fallback's final `throw`.
+
 <a id="surviving-a-warm-run"></a>
 
 ## Surviving a warm run

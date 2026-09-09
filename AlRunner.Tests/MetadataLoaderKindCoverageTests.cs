@@ -22,6 +22,7 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+[Collection(ObjectMetadataRegistrySerialCollection.Name)]
 public sealed class MetadataLoaderKindCoverageTests : IDisposable
 {
     public MetadataLoaderKindCoverageTests() => AlObjectMetadataRegistry.Clear();
@@ -61,9 +62,14 @@ public sealed class MetadataLoaderKindCoverageTests : IDisposable
         var result = Loader.GetMetaObjectXmlMetadata(new ApplicationObjectId(objectType, id), appGroup: null!);
 
         Assert.NotNull(result.Document.DocumentElement);
-        // A concrete value out of the registered document, not merely "did not throw": the
-        // marker text is unique per (kind, id) so a wrong-kind or wrong-id lookup would fail
-        // this assertion even though it returned SOME document.
+        // A concrete value out of the registered document, not merely "did not throw". What
+        // this pins is that the ObjectType was routed to the RIGHT registry kind: the marker
+        // text is unique per (kind, id), so a mapping that sent CodeUnit at "Query" would
+        // read back the wrong payload here. It is NOT a defence against a wrong-kind lookup
+        // returning some other document -- that state is unreachable, because the per-test
+        // Clear() plus this method's single Register() leave the registry holding exactly one
+        // entry, and any miss falls through to GetMetaObjectXmlMetadata's final throw.
+        // UnregisteredId_StillThrowsRunnerOutOfScopeException is what covers the miss.
         Assert.Equal($"{registryKind}-{id}-payload", result.Document.DocumentElement!.SelectSingleNode("Marker")!.InnerText);
     }
 

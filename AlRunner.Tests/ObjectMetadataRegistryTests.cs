@@ -13,7 +13,7 @@ namespace AlRunner.Tests;
 /// Serialized against the other tests that touch this static registry — see
 /// <see cref="ObjectMetadataRegistrySerialCollection"/>.
 /// </summary>
-[Collection("object-metadata-registry")]
+[Collection(ObjectMetadataRegistrySerialCollection.Name)]
 public class ObjectMetadataRegistryTests : IDisposable
 {
     public ObjectMetadataRegistryTests() => AlObjectMetadataRegistry.Clear();
@@ -128,5 +128,16 @@ public class ObjectMetadataRegistryTests : IDisposable
     }
 }
 
-[CollectionDefinition("object-metadata-registry", DisableParallelization = true)]
-public class ObjectMetadataRegistrySerialCollection { }
+/// <summary>
+/// Serial collection for every test class that mutates the process-wide
+/// <see cref="AlObjectMetadataRegistry"/> IN-PROCESS. The registry is a static
+/// <c>ConcurrentDictionary</c>: thread-safe per operation, but a <c>Clear()</c> landing
+/// between another class's <c>Register</c> and its lookup flips that lookup's outcome in
+/// both directions (#3613). <c>DisableParallelization</c> is what makes membership mean
+/// anything; <see cref="ObjectMetadataRegistryIsolationGuardTests"/> enforces both halves.
+/// </summary>
+[CollectionDefinition(Name, DisableParallelization = true)]
+public class ObjectMetadataRegistrySerialCollection
+{
+    public const string Name = "object-metadata-registry";
+}

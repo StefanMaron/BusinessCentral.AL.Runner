@@ -55,15 +55,11 @@ namespace AlRunner.Patches;
 /// </summary>
 public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
 {
-    // BC's runtime ObjectType (Microsoft.Dynamics.Nav.Types.ObjectType) and the AL compiler's
-    // SymbolKind (Microsoft.Dynamics.Nav.CodeAnalysis.SymbolKind — the string
-    // AlObjectMetadataRegistry is keyed by, via BcCompiler.CaptureOutputter.AddApplicationObject's
-    // `symbol.Kind.ToString()`) are two different enums. Measured by decompiling both
-    // (Microsoft.Dynamics.Nav.Types.dll / Microsoft.Dynamics.Nav.CodeAnalysis.dll, BC 28.1):
-    // every kind AlObjectMetadataRegistry captures (docs/object-metadata-capture.md) names
-    // identically in ObjectType, with exactly one spelling divergence — ObjectType.CodeUnit vs
-    // SymbolKind.Codeunit. Report/Page/Table/XmlPort are excluded here because the branches
-    // above already serve them from their own registries.
+    // BC's runtime ObjectType and the AL compiler's SymbolKind (the string the registry is
+    // keyed by) are two different enums; they name every captured kind identically except
+    // ObjectType.CodeUnit vs SymbolKind.Codeunit. Report/Page/Table/XmlPort are absent
+    // because the branches above already serve them from their own registries.
+    // see docs/object-metadata-capture.md#objecttype-vs-symbolkind
     private static readonly System.Collections.Generic.IReadOnlyDictionary<ObjectType, string>
         RegistryKindByObjectType = new System.Collections.Generic.Dictionary<ObjectType, string>
         {
