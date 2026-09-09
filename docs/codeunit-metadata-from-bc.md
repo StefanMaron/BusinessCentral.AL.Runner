@@ -122,7 +122,7 @@ empty `find_usages`. **Both statements are false.** `find_usages` on a
 `<Property>k__BackingField` does not see writes routed through the compiler-generated setter, so
 the empty result was a tool artifact rather than a finding — a false negative of the same family
 `CLAUDE.md` documents for `grep -E` and `rg`. A Mono.Cecil scan over every method body found the
-write immediately, present on 27.0, 28.1 and 28.4.
+write immediately, on every BC version this repository tests — the method is byte-identical across them.
 
 Two lessons, cheap to state and expensive to relearn:
 
