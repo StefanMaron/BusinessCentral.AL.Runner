@@ -8,7 +8,7 @@
 //   two no-card shapes were refused outright, until issue #3258.
 //
 //   Measured, not read off the builder: corpus codeunit 60479 "TPMS Tests"
-//   (StefanMaron/BusinessCentral.AL.Language.Tests#317, 10 arms on BC 28.4.53241.0) and 60461
+//   (StefanMaron/BusinessCentral.AL.Language.Tests#317, 9 arms, 9/9 on BC 28.4.53241.0) and 60461
 //   "TPVE Tests" (upstream #203). Row by row the table is pinned as assertions in
 //   AlRunner.Tests/BuiltInPageModeActionRuleTests.cs; the builder walk behind it
 //   (ActionBuilder.ResolveCardFormId / IsModifyAllowedInCard, BC 28.1) and the #3185 history

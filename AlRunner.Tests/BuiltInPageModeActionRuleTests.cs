@@ -6,7 +6,7 @@ namespace AlRunner.Tests;
 /// <summary>
 /// The measured table behind <c>TestPage.View()</c> / <c>TestPage.Edit()</c>, one assertion per
 /// row. The claims themselves are BC's, adjudicated by a real service tier — corpus codeunit
-/// 60479 "TPMS Tests" (StefanMaron/BusinessCentral.AL.Language.Tests#317, 10 arms on BC
+/// 60479 "TPMS Tests" (StefanMaron/BusinessCentral.AL.Language.Tests#317, 9 arms, 9/9 on BC
 /// 28.4.53241.0) and 60461 "TPVE Tests" (upstream #203). These pin the runner's own decision
 /// function against them, which is what the upstream arms cannot do until the corpus pin moves
 /// (the chain is blocked on issue #2943), and what no BC-runtime test does cheaply.
@@ -72,8 +72,9 @@ public class BuiltInPageModeActionRuleTests
     [InlineData("InPlaceSwitch", false, false, true)]  // Edit on a read-only page
     [InlineData("InPlaceSwitch", true, true, true)]    // View on an editable page
     [InlineData("InPlaceSwitch", false, true, false)]  // Edit, already editable
-    // View on a page that is already read-only, incl. one declaring Editable = false
-    // (60479 RoCardPageHandler asserts IsFalse on View().Enabled() there).
+    // View on a page that is already read-only, incl. one declaring Editable = false --
+    // asserted upstream in 60479's RoCardPageHandler, adjudicated by #317's cloud legs rather
+    // than by the 28.4 container run, which predates that assertion.
     [InlineData("InPlaceSwitch", true, false, false)]  // View, already read-only
     // A list with no card: View is enabled, Edit is not.
     [InlineData("NoTarget", true, true, true)]
