@@ -223,8 +223,10 @@ public sealed class BcInternalsNullForgivingGuardTests
 
         // A ratchet, not a fact about the code: it goes UP when a site is deliberately
         // converted, and a drop means a conversion was undone. 74 -> 75 for the
-        // DataItemTableFilter read in RecordPatches.QueryProjection.cs (#3571).
-        Assert.Equal(75, converted);
+        // DataItemTableFilter read in RecordPatches.QueryProjection.cs (#3571); 75 -> 80 for
+        // the five lookups in that same method's GetSingleDataItemTableFilterTuples, whose
+        // failure used to be a silent `yield break` the caller read as "no filters" (#3647).
+        Assert.Equal(80, converted);
     }
 
     /// <summary>

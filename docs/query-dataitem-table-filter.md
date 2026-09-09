@@ -161,3 +161,58 @@ is a **table field** of the dataitem's own `RelatedTable`, resolved against that
 - `AlRunner.Tests/BcAppSymbolCacheQueryDataItemFilterTests` — the symbol layer, asserting the
   property text arrives verbatim on root and nested dataitems, with a negative control for a
   dataitem declaring no filter.
+
+## A failed lookup refuses
+
+Issue #3647. `GetSingleDataItemTableFilterTuples` reads four BC members through reflection,
+and its early exits were all the same `yield break`. Two different facts shared it:
+
+- **a failed reflection lookup** — "BC does not have the member I need", and
+- **an empty answer** — "this dataitem legitimately has no filters".
+
+The one call site is a `foreach` that adds whatever it yields, so it cannot tell them apart.
+That made a BC rename of `NCLMetaQueryDataItem.TableFiltersAndMarks` **unapply the filter
+silently**: the query returns more rows than it should, nothing throws, and a test only
+notices if it asserts the row count. `.claude/rules/loud-failures.md` forbids that shape, and
+`AlRunner/Infrastructure/BcShapeGapException.cs` puts a read that could not be *performed* on
+the refusing side.
+
+Latent, not live: every BC version this repository tests resolves all four, and
+`tests/runner-extras/query-dataitem-filter-precompiled-dep` covers the live path. The change
+is about the BC version where one of them moves.
+
+### Which exit is which
+
+| exit | now | why |
+|---|---|---|
+| `QueryDefinition` lookup | **refuses** | the member is absent — BC's layout moved |
+| `QueryDefinition` reads null | silent | an answer: this metaquery carries no definition |
+| `DataItems` lookup | **refuses** | as above, and worded so it cannot be confused with the next row |
+| `DataItems` reads null | **refuses** | BC builds no query without a dataitem, so there is no empty-list answer this could be |
+| `DataItems` holds a non-enumerable | **refuses** | present but uninterpretable is the same "layout moved" case |
+| `SubQueryDefinition` / `TableFiltersAndMarks` lookup | **refuses** | the members #3647 names |
+| `di == null`, sub-query dataitem | silent | structural — #2300's exclusion, not a failed read |
+| `real.Count != 1` | silent | the method is explicitly the single-dataitem case; the join path applies a multi-dataitem query's filters itself |
+| `TableFiltersAndMarks` reads null | silent | BC's answer: this dataitem has no filters |
+| `Filters` reads null | silent | BC's answer: no filter dictionary |
+| `Items` lookup | **refuses** | absent member |
+| `Items` reads null | silent | BC's answer: an empty dictionary |
+
+The refusals raise `BcShapeGapException`, which tears through both AL trapping seams — under
+`asserterror` a swallowed refusal would *invert* the result, since real BC reads the filter
+fine and the asserterror fails there.
+
+### What is not covered
+
+`RecordPatches.QueryJoin.BuildTableFindAllRequest` reads the same
+`TableFiltersAndMarks` for the **join** path and has the same shape, plus a bare `catch`
+that falls back to `FiltersAndMarks.Empty` — so a rename unapplies a join dataitem's filter
+just as silently. Different file and different call path, so it is tracked separately rather
+than folded in.
+
+### What proves it
+
+`AlRunner.Tests/QueryDataItemFilterShapeGapTests` — five arms for the refusals, each removing
+one member and leaving the others, and four negative controls for the exits that must stay
+silent. The method takes its three BC types as parameters so fakes can stand in for a moved
+member without a BC install and without poisoning the `RecordPatches` statics for other tests.

@@ -600,7 +600,8 @@ public static partial class RecordPatches
         // The join path reads TableFiltersAndMarks separately, per dataitem, in
         // RecordPatches.QueryJoin.BuildTableFindAllRequest; this pass is the single-dataitem
         // path's equivalent and must not double-apply, hence the single-dataitem guard.
-        foreach (var tuple in GetSingleDataItemTableFilterTuples(metaAppObj!))
+        foreach (var tuple in GetSingleDataItemTableFilterTuples(
+                     metaAppObj!, _tNCLMetaQuery!, _tFiltersAndMarks!, _tFilterFieldDictionary!))
         {
             translatedTuples.Add(tuple);
             anyTranslated = true;
@@ -628,10 +629,6 @@ public static partial class RecordPatches
 
     private static Type? _tNCLMetaQueryColumn;
     private static PropertyInfo? _pNCLMetaQueryColumnFilters; // #2418
-    private static PropertyInfo? _pNclMetaQueryQueryDefinition3;   // #3571
-    private static PropertyInfo? _pQueryDefDataItems3;             // #3571
-    private static PropertyInfo? _pDataItemTableFiltersAndMarks;   // #3571
-    private static PropertyInfo? _pDataItemSubQueryDefinition3;    // #3571
 
     /// <summary>
     /// The <c>(INavFieldMetadata, FilterExpression)</c> tuples of a SINGLE-dataitem query's
@@ -649,49 +646,80 @@ public static partial class RecordPatches
     /// read request (<c>RecordPatches.QueryJoin.BuildTableFindAllRequest</c>). Returning them
     /// here as well would push one dataitem's table-field filter into a request covering
     /// another dataitem's table.</para>
+    ///
+    /// <para>#3647 — a FAILED LOOKUP refuses; an EMPTY ANSWER stays silent. The two were the
+    /// same <c>yield break</c>, and the caller cannot tell them apart, so a BC rename of any
+    /// of these four members would have unapplied the filter and returned MORE ROWS with
+    /// nothing said. Which exit is which, and why, is in
+    /// docs/query-dataitem-table-filter.md#a-failed-lookup-refuses.</para>
+    ///
+    /// <para>The three BC types are parameters rather than reads of the statics so the refusals
+    /// can be driven with fakes standing in for a moved member —
+    /// <c>AlRunner.Tests/QueryDataItemFilterShapeGapTests</c>. Production passes exactly the
+    /// statics the old body read.</para>
     /// </summary>
-    private static IEnumerable<object> GetSingleDataItemTableFilterTuples(object metaAppObj)
+    private static IEnumerable<object> GetSingleDataItemTableFilterTuples(
+        object metaAppObj, Type tQuery, Type tFiltersAndMarks, Type tFilterFieldDictionary)
     {
-        var nclAsm = metaAppObj.GetType().Assembly;
-        const string rt = "Microsoft.Dynamics.Nav.Runtime.";
-        _pNclMetaQueryQueryDefinition3 ??= _tNCLMetaQuery!.GetProperty("QueryDefinition",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-        var queryDef = _pNclMetaQueryQueryDefinition3?.GetValue(metaAppObj);
+        const string surface = "AL query execution (projection and filter push-down)";
+        const BindingFlags anyInstance =
+            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        // A null QueryDefinition is an ANSWER (a metaquery carrying no definition); the lookup
+        // failing is not, so only the read is behind the throwing accessor.
+        var queryDef = BcShape.Property(tQuery, "QueryDefinition", anyInstance, surface)
+            .GetValue(metaAppObj);
         if (queryDef == null) yield break;
 
-        _pQueryDefDataItems3 ??= nclAsm.GetType(rt + "NCLMetaQueryDefinition")?
-            .GetProperty("DataItems", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-        if (_pQueryDefDataItems3?.GetValue(queryDef) is not System.Collections.IEnumerable dataItems)
-            yield break;
-
-        var tDataItem = nclAsm.GetType(rt + "NCLMetaQueryDataItem");
-        _pDataItemSubQueryDefinition3 ??= tDataItem?.GetProperty("SubQueryDefinition",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-        _pDataItemTableFiltersAndMarks ??= tDataItem?.GetProperty("TableFiltersAndMarks",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-        if (_pDataItemTableFiltersAndMarks == null) yield break;
+        // Resolved off the value's own runtime type rather than by type NAME. Same member on
+        // BC — the value IS an NCLMetaQueryDefinition — and it removes an assembly-name lookup
+        // that could fail for a second reason (a type that moved namespace) reported as the
+        // same gap. The dataitem lookups below do the same.
+        var tQueryDef = queryDef.GetType();
+        var rawDataItems = BcShape.Property(tQueryDef, "DataItems", anyInstance, surface)
+            .GetValue(queryDef);
+        // Null or non-enumerable both mean the runner could not read BC's dataitem list. There
+        // is no "a query has no dataitems" answer for it to be confused with — BC cannot build
+        // an NCLMetaQuery without one — so neither is silent.
+        if (rawDataItems == null)
+            throw new BcShapeGapException(
+                surface, $"{tQueryDef.Name}.DataItems",
+                "read as null — every query BC builds has at least one dataitem, so the runner "
+                + "cannot tell a legitimately empty list from a member that moved");
+        var dataItems = BcShape.RequiredEnumerable(
+            rawDataItems, $"{tQueryDef.Name}.DataItems", surface,
+            "the runner walks it to find the query's single dataitem");
 
         // #2300's exclusion, for the same reason it exists there: a FlowField-calculation
         // synthesized dataitem is not one of the query's own, and counting it would make a
         // genuinely single-dataitem query look like a join and skip this pass entirely.
+        //
+        // The two per-dataitem lookups are resolved off the dataitem's own runtime type rather
+        // than a type name, so a fake stands in for a moved member without also having to fake
+        // the assembly. On BC that type IS NCLMetaQueryDataItem.
         var real = new List<object>();
+        PropertyInfo? pTableFiltersAndMarks = null;
         foreach (var di in dataItems)
         {
-            if (di == null) continue;
-            if (_pDataItemSubQueryDefinition3?.GetValue(di) != null) continue;
+            if (di == null) continue;   // structural: not a failed read
+            var tDataItem = di.GetType();
+            if (BcShape.Property(tDataItem, "SubQueryDefinition", anyInstance, surface).GetValue(di) != null)
+                continue;               // structural: BC's synthesized sub-dataitem
+            pTableFiltersAndMarks = BcShape.Property(tDataItem, "TableFiltersAndMarks", anyInstance, surface);
             real.Add(di);
         }
+        // Not a failed read: this method is explicitly the SINGLE-dataitem case, and the join
+        // path applies a multi-dataitem query's filters itself (see the para above).
         if (real.Count != 1) yield break;
 
-        var fam = _pDataItemTableFiltersAndMarks.GetValue(real[0]);
-        if (fam == null) yield break;
+        var fam = pTableFiltersAndMarks!.GetValue(real[0]);
+        if (fam == null) yield break;                       // BC's answer: this dataitem has none
         var filters = BcShape.Property(
-            _tFiltersAndMarks!, "Filters", BindingFlags.Public | BindingFlags.Instance,
-            "AL query execution (projection and filter push-down)").GetValue(fam);
-        if (filters == null) yield break;
-        var items = (Array?)_tFilterFieldDictionary!.GetProperty("Items",
-            BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(filters);
-        if (items == null) yield break;
+            tFiltersAndMarks, "Filters", BindingFlags.Public | BindingFlags.Instance, surface)
+            .GetValue(fam);
+        if (filters == null) yield break;                   // BC's answer: no filter dictionary
+        var items = (Array?)BcShape.Property(
+            tFilterFieldDictionary, "Items", anyInstance, surface).GetValue(filters);
+        if (items == null) yield break;                     // BC's answer: an empty dictionary
         foreach (var item in items)
             if (item != null) yield return item;
     }
