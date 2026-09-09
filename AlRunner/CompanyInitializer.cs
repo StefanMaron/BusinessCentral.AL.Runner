@@ -56,6 +56,13 @@ internal static class CompanyInitializer
     // (.claude/rules/no-base-app-in-csharp-tests.md). Set to 1, this stands in for "codeunit 2
     // was found and returned normally": the completion is recorded exactly where the real one
     // is, so the drift check under test is the real one. No shipped code path sets it.
+    //
+    // Note the DIRECTION, which is the opposite of its two siblings and the reason to be careful
+    // with it: this one HIDES. It takes an early return that skips the real codeunit 2 call
+    // entirely, so set outside a test it leaves the company uninitialized AND suppresses the
+    // 0 → 2 escalation that would have said so. Gating is the family's — a bare env-var read,
+    // exactly as AL_RUNNER_TEST_FAIL_COMPANY_INIT and AL_RUNNER_TEST_BARRIER_DIR are, with no
+    // build guard anywhere in the family; setting it is as deliberate as passing --no-strict-exit.
     private const string InjectCompletedEnvVar = "AL_RUNNER_TEST_COMPANY_INIT_COMPLETED";
 
     private static bool _ranForThisBundle;
