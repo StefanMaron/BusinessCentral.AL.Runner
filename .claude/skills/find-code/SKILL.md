@@ -5,8 +5,9 @@ description: Find where a C# symbol is defined and what calls it in AlRunner/, u
 
 # Find code without grepping
 
-`AlRunner/` is ~81,000 lines across 194 files, and two files are over 8,000 lines
-each. Grep gives you line numbers you then have to read windows around; measured on
+`AlRunner/` is ~139,000 lines across 341 tracked `.cs` files, the largest `Program.cs`
+at 6,952 (`git ls-files | xargs wc -l`, 2026-09-10). #3676 split the two files that used
+to dominate this — `RecordPatches.cs` and `MockTestPage.cs` — into partials by surface. Grep gives you line numbers you then have to read windows around; measured on
 one implementation agent, that loop was **63% of all its tool calls**. The language
 server answers the same questions exactly, in one call.
 
@@ -27,9 +28,9 @@ tools/lsp-query.py def  <file> <line> <col>   # definition of the symbol here
 
 ```
 $ tools/lsp-query.py callers GetDataAccessForTableCore
-object RecordPatches.GetDataAccessForTableCore(object self, NCLMetaTable table, bool isTemporary)  [defined AlRunner/Patches/RecordPatches.cs:1314]
+object RecordPatches.GetDataAccessForTableCore(object self, NCLMetaTable table, bool isTemporary)  [defined AlRunner/Patches/RecordPatches.DataAccessDispatch.cs:87]
     AlRunner/Patches/RecordPatches.InstallBaselineDisk.cs:68:20
-    AlRunner/Patches/RecordPatches.cs:1301:26
+    AlRunner/Patches/RecordPatches.DataAccessDispatch.cs:71:26
 ```
 
 That is complete — including the call site in a different partial-class file, which
@@ -69,6 +70,6 @@ not have to go looking:
 
 ```
 # LSP CONTEXT (pre-resolved)
-GetDataAccessForTableCore — AlRunner/Patches/RecordPatches.cs:1314
-callers: RecordPatches.cs:1301, RecordPatches.InstallBaselineDisk.cs:68
+GetDataAccessForTableCore — AlRunner/Patches/RecordPatches.DataAccessDispatch.cs:87
+callers: RecordPatches.DataAccessDispatch.cs:71, RecordPatches.InstallBaselineDisk.cs:68
 ```

@@ -28,9 +28,12 @@ public sealed class TestPageGoToRecordPositionCaptionTests
         // AlRunner.Tests/bin/<config>/<tfm>/ -> repo root is four levels up.
         var dir = AppContext.BaseDirectory;
         var repoRoot = Path.GetFullPath(Path.Combine(dir, "..", "..", "..", ".."));
-        var path = Path.Combine(repoRoot, "AlRunner", "Patches", "MockTestPage.cs");
-        Assert.True(File.Exists(path), $"expected to find {path}");
-        return File.ReadAllText(path);
+        // The whole MockTestPage family: #3676 split the one file into partials by surface,
+        // so "every call site in the TestPage implementation" is now spread over MockTestPage*.cs.
+        var dirPath = Path.Combine(repoRoot, "AlRunner", "Patches");
+        var files = Directory.GetFiles(dirPath, "MockTestPage*.cs");
+        Assert.NotEmpty(files);
+        return string.Join("\n", files.OrderBy(f => f, StringComparer.Ordinal).Select(File.ReadAllText));
     }
 
     [Fact]

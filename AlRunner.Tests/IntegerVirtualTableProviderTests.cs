@@ -24,7 +24,7 @@ public sealed class IntegerVirtualTableProviderTests
         Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 
     private static string RecordPatchesSource => File.ReadAllText(
-        Path.Combine(RepoRoot, "AlRunner", "Patches", "RecordPatches.cs"));
+        Path.Combine(RepoRoot, "AlRunner", "Patches", "RecordPatches.DataAccessDispatch.cs"));
 
     private static string RewriteSource => File.ReadAllText(
         Path.Combine(RepoRoot, "AlRunner", "Infrastructure", "NclCecilRewrite.Runtime.cs"));

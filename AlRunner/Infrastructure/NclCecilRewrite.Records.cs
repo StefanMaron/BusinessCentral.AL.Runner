@@ -1089,7 +1089,7 @@ public static partial class NclCecilRewrite
         // of 99.1% of all al-language failures (1394 of 1406 tests).
         //
         // The helper NavDataAccessSource_GetDataAccessForTable already existed in
-        // RecordPatches.cs but had no install site — neither a JmpHook nor a Cecil
+        // RecordPatches.DataAccessDispatch.cs but had no install site — neither a JmpHook nor a Cecil
         // rewrite ever wired it. This block is the missing install site.
         //
         // Replacement routes every (DataAccessSource, tableId) pair to a
@@ -1133,8 +1133,8 @@ public static partial class NclCecilRewrite
         // set up. This is the root cause of 119 al-language failures (45.9% of
         // remaining failures after the GetDataAccessForTable fix).
         //
-        // The helper NavSession_get_SortingProperties already existed in RecordPatches.cs
-        // (line 791) but had no install site — neither a JmpHook nor a Cecil rewrite
+        // The helper NavSession_get_SortingProperties already existed in
+        // RecordPatches.SkeletonSession.cs but had no install site — neither a JmpHook nor a Cecil rewrite
         // ever wired it. This block is the missing install site.
         //
         // Replacement returns the pre-built _sqlSortingProperties singleton from

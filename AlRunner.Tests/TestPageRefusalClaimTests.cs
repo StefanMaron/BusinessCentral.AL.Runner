@@ -71,15 +71,31 @@ public sealed class TestPageRefusalClaimTests
 
     private static string PathOf(string file) => Path.Combine(RepoRoot, "AlRunner", "Patches", file);
 
+    /// <summary>
+    /// The files a spec names. A spec containing <c>*</c> is a FAMILY: #3676 split
+    /// MockTestPage.cs into partials by surface, so what used to be one file's worth of
+    /// refusals is now spread over MockTestPage*.cs. The counts below are unchanged, because
+    /// the code is unchanged — widening this to a glob is what keeps them exact rather than
+    /// what loosens them.
+    /// </summary>
+    private static string[] PathsOf(string spec)
+    {
+        if (!spec.Contains('*')) return new[] { PathOf(spec) };
+        var found = Directory.GetFiles(Path.Combine(RepoRoot, "AlRunner", "Patches"), spec)
+            .OrderBy(f => f, StringComparer.Ordinal).ToArray();
+        Assert.True(found.Length > 0, $"{spec} matched no file — was the family renamed?");
+        return found;
+    }
+
     /// <summary>File contents with comment lines stripped — the file headers quote the OLD
     /// wording on purpose, and the claim under test is about code.</summary>
     private static string CodeOf(string file)
-    {
-        var path = PathOf(file);
-        Assert.True(File.Exists(path), $"{file} not found — was it renamed?");
-        return string.Join('\n', File.ReadAllLines(path)
-            .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
-    }
+        => string.Join('\n', PathsOf(file).Select(path =>
+        {
+            Assert.True(File.Exists(path), $"{file} not found — was it renamed?");
+            return string.Join('\n', File.ReadAllLines(path)
+                .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+        }));
 
     /// <summary>
     /// <see cref="CodeOf"/> with adjacent string literals joined, so a refusal written as five
@@ -397,7 +413,7 @@ public sealed class TestPageRefusalClaimTests
         // also what covers the four sites the marker theories cannot address individually,
         // because two PAIRS of them render identical text (the two "could not be driven live"
         // branches, and the frozen/live "is not a Boolean" pair).
-        var mock = CodeOf("MockTestPage.cs");
+        var mock = CodeOf("MockTestPage*.cs");
         var page = CodeOf("RunnerPageInstance.cs");
 
         // 11 since #2362/#3642 gave LiveNavTestField.AssistEdit a real dispatch: like its
@@ -443,15 +459,15 @@ public sealed class TestPageRefusalClaimTests
     /// <summary>The fourteen corrected sites, by the sentence each one renders.</summary>
     public static IEnumerable<object[]> CorrectedMarkers() => new[]
     {
-        new object[] { "MockTestPage.cs", "could not resolve this control to a subpage part" },
-        new object[] { "MockTestPage.cs", "the hosting page was built without an ITreeObject owner" },
-        new object[] { "MockTestPage.cs", "the part's own page could not be driven live" },
-        new object[] { "MockTestPage.cs", "the part's own field this link constrains could not be resolved" },
-        new object[] { "MockTestPage.cs", "must be the parent's field number" },
-        new object[] { "MockTestPage.cs", "nor to a page variable the runner could resolve" },
-        new object[] { "MockTestPage.cs", "bound to an Option with no option metadata" },
-        new object[] { "MockTestPage.cs", "so its OnLookup trigger cannot be reached" },
-        new object[] { "MockTestPage.cs", "so its OnDrillDown trigger cannot be reached" },
+        new object[] { "MockTestPage*.cs", "could not resolve this control to a subpage part" },
+        new object[] { "MockTestPage*.cs", "the hosting page was built without an ITreeObject owner" },
+        new object[] { "MockTestPage*.cs", "the part's own page could not be driven live" },
+        new object[] { "MockTestPage*.cs", "the part's own field this link constrains could not be resolved" },
+        new object[] { "MockTestPage*.cs", "must be the parent's field number" },
+        new object[] { "MockTestPage*.cs", "nor to a page variable the runner could resolve" },
+        new object[] { "MockTestPage*.cs", "bound to an Option with no option metadata" },
+        new object[] { "MockTestPage*.cs", "so its OnLookup trigger cannot be reached" },
+        new object[] { "MockTestPage*.cs", "so its OnDrillDown trigger cannot be reached" },
         new object[] { "RunnerPageInstance.cs", "which is not a Boolean" },
         new object[] { "RunnerPageInstance.cs", "which cannot be evaluated:" },
         new object[] { "RunnerPageInstance.cs", "the runner cannot tell which trigger belongs to it" },
@@ -471,11 +487,11 @@ public sealed class TestPageRefusalClaimTests
     /// </summary>
     public static IEnumerable<object[]> KeptMarkers() => new[]
     {
-        new object[] { "MockTestPage.cs", "this page has no SourceTable" },
-        new object[] { "MockTestPage.cs", "OnQueryClosePage returned false" },
-        new object[] { "MockTestPage.cs", "so it cannot be used to locate a row" },
-        new object[] { "MockTestPage.cs", "is not an acceptable value" },
-        new object[] { "MockTestPage.cs", "is not one of the option's values" },
+        new object[] { "MockTestPage*.cs", "this page has no SourceTable" },
+        new object[] { "MockTestPage*.cs", "OnQueryClosePage returned false" },
+        new object[] { "MockTestPage*.cs", "so it cannot be used to locate a row" },
+        new object[] { "MockTestPage*.cs", "is not an acceptable value" },
+        new object[] { "MockTestPage*.cs", "is not one of the option's values" },
         new object[] { "RunnerPageInstance.cs", "would open the related table's list page" },
         new object[] { "RunnerPageInstance.cs", "so there is no table-field OnLookup to fall back to" },
     };
@@ -510,7 +526,7 @@ public sealed class TestPageRefusalClaimTests
         //
         // Was six until #3384 removed the Date round-trip refusal — see KeptMarkers for why
         // that one was wrong rather than swept. The number moves only with a reason recorded.
-        Assert.Equal(5, Regex.Matches(CodeOf("MockTestPage.cs"), "docs/scope\\.md").Count);
+        Assert.Equal(5, Regex.Matches(CodeOf("MockTestPage*.cs"), "docs/scope\\.md").Count);
     }
 
     [Fact]

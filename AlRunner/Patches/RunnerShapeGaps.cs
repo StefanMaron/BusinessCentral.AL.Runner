@@ -167,7 +167,7 @@
 //   Filed as #2999, which lists all sixteen by line AND lists the fourteen in those same two
 //   files that are genuinely permanent, so the follow-up cannot over-sweep them.
 //
-//   RecordPatches.DateVirtualTable.cs (7) and RecordPatches.cs:1773 (1) — the Date virtual
+//   RecordPatches.DateVirtualTable.cs (7) and RecordPatches.DataAccessDispatch.cs (1) — the Date virtual
 //   table, including the sibling site that spells "date-virtual-table" itself instead of
 //   calling a factory, which is the same defect #2945 fixed for four other tables. #2648 is
 //   editing that file concurrently; recorded on #2965 rather than split off.

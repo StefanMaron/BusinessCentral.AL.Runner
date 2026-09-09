@@ -98,6 +98,9 @@ public sealed class VirtualTableRefusalClaimTests
     private static readonly string[] SiblingFiles =
     {
         "RecordPatches.cs",
+        // The dispatch chain those 3 refusals live in moved to its own partial in #3676's
+        // mechanical split; the count below is unchanged because the code is.
+        "RecordPatches.DataAccessDispatch.cs",
         "AllProfileWritePatches.cs",
     };
 

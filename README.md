@@ -275,7 +275,11 @@ section, then proceed however you can.**
 
 Why it matters: navigation is the dominant cost of agent work in this repo. Measured on one
 implementation agent's transcript, 63% of its 180 tool calls were greps and partial file reads
-— `AlRunner/` is ~81,000 lines across 194 files, with two files over 8,000 lines each.
+— `AlRunner/` is ~139,000 lines across 341 tracked `.cs` files, the largest of them
+`Program.cs` at 6,952 and the largest under `AlRunner/Patches/`
+`RunnerPageInstance.cs` at 2,929 (`git ls-files | xargs wc -l`, 2026-09-10). #3676 split
+`RecordPatches.cs` and `MockTestPage.cs`, the two that used to dominate this, into
+partials by surface.
 
 ### 1. C# language server (answers "who calls this") — main session only
 
@@ -299,8 +303,8 @@ that name.
 
 Verified against this repo: it loads `AlRunner.slnx`, does not trip the
 `EnsureBCServiceTierDlls` target, and resolves `GetDataAccessForTableCore` to its full signature
-at `AlRunner/Patches/RecordPatches.cs:1314`, with `findReferences` returning all three call
-sites across two partial-class files.
+at `AlRunner/Patches/RecordPatches.DataAccessDispatch.cs:87` (it moved there in #3676),
+with `findReferences` returning its call sites across the partial-class family.
 
 If the `LSP` tool reports "No LSP server available for file type: .cs", the plugin is not active
 in that session. That is a **setup** answer, not a "no results" answer — never read it as

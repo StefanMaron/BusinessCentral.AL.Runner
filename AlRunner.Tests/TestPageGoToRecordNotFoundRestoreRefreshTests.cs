@@ -27,7 +27,9 @@ public sealed class TestPageGoToRecordNotFoundRestoreRefreshTests
     {
         var dir = AppContext.BaseDirectory;
         var repoRoot = Path.GetFullPath(Path.Combine(dir, "..", "..", "..", ".."));
-        var path = Path.Combine(repoRoot, "AlRunner", "Patches", "MockTestPage.cs");
+        // FindRowFromFieldValues moved to MockTestPage.LivePage.Filters.cs in #3676's
+        // mechanical split; the body this brackets is unchanged.
+        var path = Path.Combine(repoRoot, "AlRunner", "Patches", "MockTestPage.LivePage.Filters.cs");
         Assert.True(File.Exists(path), $"expected to find {path}");
         return File.ReadAllText(path);
     }

@@ -94,7 +94,7 @@ public sealed class BcInternalsNullForgivingGuardTests
           "ImmutableArray<T>.Empty — BCL" },
         { ("AlRunner/Patches/RecordPatches.NclMetaTableBuilder.cs", "kvpType", "new[] { typeof(int), _tMetaField! }"),
           "KeyValuePair<int, TMetaField>..ctor — BCL" },
-        { ("AlRunner/Patches/RecordPatches.cs", "stackType", "\"Push\""),
+        { ("AlRunner/Patches/RecordPatches.SkeletonSession.cs", "stackType", "\"Push\""),
           "Stack<T>.Push — BCL" },
 
         // KeyValuePair<,> in the metadata differ. The receiver is a local, so `typeof(...)`

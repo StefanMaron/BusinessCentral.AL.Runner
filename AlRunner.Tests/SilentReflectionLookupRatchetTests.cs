@@ -236,8 +236,8 @@ public sealed class SilentReflectionLookupRatchetTests
         ("AlRunner/Patches/MetadataPatches.cs", "tDiag?", "GetField", "\"GetMostSpecificInstance\"", 1),
         ("AlRunner/Patches/MetadataPatches.cs", "tDiagForTenant?", "GetProperty", "\"GetMostSpecificInstance\"", 1),
         ("AlRunner/Patches/MetadataPatches.cs", "tDiagForTenant?", "GetField", "\"GetMostSpecificInstance\"", 1),
-        // MockTestPage.cs — 1
-        ("AlRunner/Patches/MockTestPage.cs", "_expression.GetType()", "GetProperty", "\"Name\"", 1),
+        // MockTestPage.Fields.cs — 1
+        ("AlRunner/Patches/MockTestPage.Fields.cs", "_expression.GetType()", "GetProperty", "\"Name\"", 1),
         // NavAppResourcePatches.cs — 2
         ("AlRunner/Patches/NavAppResourcePatches.cs", "session?.GetType()", "GetProperty", "\"Tenant\"", 1),
         ("AlRunner/Patches/NavAppResourcePatches.cs", "tenant?.GetType()", "GetProperty", "\"DefaultEncoding\"", 1),
@@ -333,8 +333,9 @@ public sealed class SilentReflectionLookupRatchetTests
         // RecordPatches.WindowsLanguageVirtualTable.cs — 2
         ("AlRunner/Patches/RecordPatches.WindowsLanguageVirtualTable.cs", "helper", "GetField", "\"AllCultures\"", 1),
         ("AlRunner/Patches/RecordPatches.WindowsLanguageVirtualTable.cs", "helper", "GetProperty", "\"AllCultures\"", 1),
-        // RecordPatches.cs — 5
-        ("AlRunner/Patches/RecordPatches.cs", "self?.GetType().BaseType?", "GetField", "\"database\"", 1),
+        // RecordPatches.SkeletonSession.cs — 1
+        ("AlRunner/Patches/RecordPatches.SkeletonSession.cs", "self?.GetType().BaseType?", "GetField", "\"database\"", 1),
+        // RecordPatches.cs — 4
         ("AlRunner/Patches/RecordPatches.cs", "tSqlDbProps", "GetField", "\"applicationFamily\"", 1),
         ("AlRunner/Patches/RecordPatches.cs", "tSqlDbProps", "GetField", "\"databasePropertiesReady\"", 1),
         ("AlRunner/Patches/RecordPatches.cs", "tSqlDbProps", "GetField", "\"invalidIdentifierChars\"", 1),

@@ -166,7 +166,8 @@ public sealed class TestPartPageIdAndSearchStartTests
     [Fact]
     public void ControlFieldSearchResumesFromTheCursor_TableFieldSearchRestarts()
     {
-        var source = SourceOf("MockTestPage.cs");
+        // The find-by-value entry points moved to MockTestPage.LivePage.Filters.cs in #3676.
+        var source = SourceOf("MockTestPage.LivePage.Filters.cs");
 
         var byControl = Slice(source,
             "public override bool FindRowFromControlFieldValue(int controlId, object value, bool forward)", 300);
@@ -191,7 +192,7 @@ public sealed class TestPartPageIdAndSearchStartTests
     [Fact]
     public void TheResumeBranchRequiresAnActualCurrentRow()
     {
-        var scan = Slice(SourceOf("MockTestPage.cs"),
+        var scan = Slice(SourceOf("MockTestPage.LivePage.Filters.cs"),
             "private bool FindRowFromFieldValues(int[] fieldNos, object[] values, bool forward, bool startFromCurrentRow)",
             7000);
 
