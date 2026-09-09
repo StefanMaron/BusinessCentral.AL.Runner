@@ -117,8 +117,8 @@ first rather than arguing about which tier to believe.
   that look like they assert opposite things about one AL shape, both green, mean you have not
   found the distinction yet (#2170). Name the mechanism you found, not the symptom you could
   not explain.
-- **An entry whose `Note` asserts something about BC that no service tier has confirmed is a
-  guess wearing a schema** (#2170).
+- **Support every BC claim in an expectation entry's `Note` with a service-tier result** — the
+  run or the corpus test that measured it — or say plainly that no verdict exists (#2170).
 
 ## What an `expect-fail-known-gap` entry may rest on
 
