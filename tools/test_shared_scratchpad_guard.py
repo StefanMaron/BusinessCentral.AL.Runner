@@ -14,7 +14,7 @@ import pathlib
 import subprocess
 import sys
 
-HOOK = pathlib.Path(__file__).resolve().parent / "shared-scratchpad-guard.py"
+HOOK = pathlib.Path(__file__).resolve().parent.parent / ".claude" / "hooks" / "shared-scratchpad-guard.py"
 SP = "/tmp/claude-1000/-home-stefan-Documents-Repos-Comunity-BusinessCentral-AL-Runner/2a9b731a/scratchpad"
 
 CASES = []

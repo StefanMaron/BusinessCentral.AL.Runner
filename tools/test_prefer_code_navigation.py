@@ -10,11 +10,12 @@ Exits 0 when every case passes, 1 on the first failure.
 """
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
 
-HOOK = pathlib.Path(__file__).resolve().parent / "prefer-code-navigation.py"
+HOOK = pathlib.Path(__file__).resolve().parent.parent / ".claude" / "hooks" / "prefer-code-navigation.py"
 
 CASES = []
 
@@ -56,8 +57,15 @@ def run():
     failures = 0
     for name, command, should_fire, tool in CASES:
         payload = json.dumps({"tool_name": tool, "tool_input": {"command": command}})
+        # Strip any agent identity the invoking session carries: these cases
+        # assert the ADVISORY behaviour, which a set AL_RUNNER_AGENT_ID turns
+        # into a block (#3707).
+        env = dict(os.environ)
+        for k in ("AL_RUNNER_AGENT_ID", "CLAUDE_AGENT_ID", "AL_RUNNER_HOOK_CONTEXT"):
+            env.pop(k, None)
         r = subprocess.run(
-            [sys.executable, str(HOOK)], input=payload, capture_output=True, text=True
+            [sys.executable, str(HOOK)], input=payload, capture_output=True, text=True,
+            env=env
         )
         fired = "Code-navigation reminder" in r.stderr
         ok = (fired == should_fire) and r.returncode == 0

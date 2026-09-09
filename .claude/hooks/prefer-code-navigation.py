@@ -21,14 +21,38 @@ The cost driver is the NUMBER of round trips, not the size of any one result --
 the whole conversation is re-sent on every call, so 500 small reads cost far
 more than 50 targeted ones.
 
-This hook is ADVISORY. It never blocks a call; it prints one short reminder so
-an agent does not have to remember, or discover, the cheaper path. It fires for
-reads and searches aimed at C# under AlRunner/, which is where the navigation
-tools answer better than the shell does.
+It fires for reads and searches aimed at C# under AlRunner/, which is where the
+navigation tools answer better than the shell does, and it has two strengths
+(#3707):
+
+  * in an IMPL or REVIEWER context it BLOCKS (exit 2, stderr fed back);
+  * anywhere else -- the coordinator session in the main checkout -- it stays
+    advisory, exit 0, because grep over the C# tree is sometimes exactly right
+    there and a hook that blocks legitimate work gets switched off wholesale.
+
+A context is an agent context when AL_RUNNER_AGENT_ID / CLAUDE_AGENT_ID is set,
+or when the payload's cwd or the command itself names a `.claude/worktrees/`
+path. AL_RUNNER_HOOK_CONTEXT=coordinator overrides all of that, and a
+`# hook:allow-grep` marker in the command downgrades one single call.
+
+Tested by tools/test_prefer_code_navigation.py (firing) and
+tools/test_agent_workflow_hooks.py (blocking, context and the escape hatch).
+CI globs tools/test_*.py only, which is why neither suite lives beside the hook.
 """
 import json
+import os
 import re
 import sys
+
+BLOCK = 2
+ALLOW = 0
+
+# Both separators, because the cwd arrives Windows-shaped on a Windows box and
+# POSIX-shaped in CI, and the same hook has to recognise each.
+WORKTREE_PATH = re.compile(r'[\\/]\.claude[\\/]worktrees[\\/]')
+# One call's opt-out. Without one, an agent whose grep really is the right tool
+# has no move except to stop using the hook.
+ALLOW_MARKER = re.compile(r'#\s*hook:allow-grep\b')
 
 # `command grep` is the spelling CLAUDE.md mandates here, so it must match too.
 TEXT_SEARCH = re.compile(r'(?:^|[|;&]\s*)\s*(?:command\s+)?(?:grep|rg|ag)\b')
@@ -46,8 +70,16 @@ TARGETS_CS = re.compile(r'AlRunner[\w./-]*|--include[= ]\S*\.cs|\*\.cs|\.cs\b')
 NOT_A_SYMBOL_LOOKUP = re.compile(
     r'\.(log|json|trx|txt|md|xml|al)\b|/tmp/|scratchpad|git log|gh \w|dmesg|journalctl')
 
+ADVISORY_HEADER = "Code-navigation reminder (advisory, nothing was blocked).\n"
+BLOCK_HEADER = (
+    "BLOCKED: shell read/search over AlRunner/*.cs in an agent context\n"
+    "(CLAUDE.md, 'Code navigation: use these before grepping').\n"
+    "WHY: the cost is the NUMBER of round trips -- every call re-sends the whole\n"
+    "conversation -- and a grep hit over 81,000 lines of C# costs several follow-up reads to\n"
+    "interpret, with comment and string false positives you then discount by hand.\n"
+    "Append `# hook:allow-grep` to this command if the shell really is the right tool here.\n"
+)
 MESSAGE = (
-    "Code-navigation reminder (advisory, nothing was blocked).\n"
     "For reading or searching AlRunner/*.cs, these answer in ONE call what a sequence of\n"
     "sed/cat/head/grep approximates, and without comment/string false positives:\n"
     "  tools/lsp-query.py symbol  <Name>      # definition\n"
@@ -63,27 +95,37 @@ MESSAGE = (
 )
 
 
+def is_agent_context(cwd: str, cmd: str, env) -> bool:
+    """Whether this call is an impl or reviewer agent's, so the hook blocks."""
+    if (env.get("AL_RUNNER_HOOK_CONTEXT") or "").strip().lower() == "coordinator":
+        return False
+    if (env.get("AL_RUNNER_AGENT_ID") or env.get("CLAUDE_AGENT_ID") or "").strip():
+        return True
+    return bool(WORKTREE_PATH.search(cwd) or WORKTREE_PATH.search(cmd))
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
     except Exception:
-        return 0
+        return ALLOW
     if payload.get("tool_name") != "Bash":
-        return 0
+        return ALLOW
     cmd = (payload.get("tool_input") or {}).get("command", "") or ""
 
     searching = bool(TEXT_SEARCH.search(cmd)) and bool(TARGETS_CS.search(cmd))
     reading = bool(READ_VERB.search(cmd)) and bool(NAMES_CS_FILE.search(cmd))
     if not (searching or reading):
-        return 0
+        return ALLOW
     if WRITES_CS.search(cmd):
-        return 0
+        return ALLOW
     if NOT_A_SYMBOL_LOOKUP.search(cmd):
-        return 0
-    print(MESSAGE, file=sys.stderr)
-    # Exit 0: advisory only. Never block -- grep over C# is sometimes exactly right,
-    # and a hook that blocks would cost more than the greps it prevents.
-    return 0
+        return ALLOW
+
+    blocking = (is_agent_context(payload.get("cwd") or "", cmd, os.environ)
+                and not ALLOW_MARKER.search(cmd))
+    print((BLOCK_HEADER if blocking else ADVISORY_HEADER) + MESSAGE, file=sys.stderr)
+    return BLOCK if blocking else ALLOW
 
 
 if __name__ == "__main__":
