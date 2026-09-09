@@ -104,8 +104,9 @@ def main(argv):
     if not os.path.isdir(args.root):
         print(
             f"corpus-app-dirs: '{args.root}' is not a directory. "
-            "If this is the tests/al-language submodule, it is not checked out: "
-            "run `git submodule update --init --recursive`.",
+            "If this is the al-language corpus, it is not checked out here: "
+            "run `tools/corpus-checkout.py`. It is resolved per run rather than "
+            "committed (#3737), so a fresh clone or worktree does not have it.",
             file=sys.stderr,
         )
         return 1
