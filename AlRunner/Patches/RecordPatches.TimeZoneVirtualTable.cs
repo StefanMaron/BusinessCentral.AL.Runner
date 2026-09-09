@@ -132,7 +132,7 @@ public static partial class RecordPatches
                 field => BuildTimeZoneValue(field, number, zone));
         }
 
-        _tzPopulatedProviders.Add(provider, new object());
+        _tzPopulatedProviders.AddOrUpdate(provider, new object());
     }
 
     /// <summary>

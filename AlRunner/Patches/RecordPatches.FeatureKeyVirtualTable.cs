@@ -166,7 +166,7 @@ public static partial class RecordPatches
                 + "that BC ships no features. Silently answering empty would put back exactly "
                 + "the wrong-legacy-path bug this fixes. See AlRunner#2585");
 
-        _fkPopulatedProviders.Add(store, new object());
+        _fkPopulatedProviders.AddOrUpdate(store, new object());
     }
 
     /// <summary>

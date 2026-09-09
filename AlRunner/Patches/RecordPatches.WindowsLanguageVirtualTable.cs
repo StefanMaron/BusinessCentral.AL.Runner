@@ -147,7 +147,7 @@ public static partial class RecordPatches
                 field => BuildWindowsLanguageValue(field, culture, languageId));
         }
 
-        _wlPopulatedProviders.Add(provider, new object());
+        _wlPopulatedProviders.AddOrUpdate(provider, new object());
     }
 
     private static object? BuildWindowsLanguageValue(NCLMetaField field, CultureInfo culture, int languageId)
