@@ -75,6 +75,7 @@ gh issue edit <N> --add-label "status: needs-input" --repo StefanMaron/BusinessC
 
 ### D. Already-fixed / duplicate
 - Quick duplicate search (`gh issue list --search "<keyword>" --state all`); if one exists, comment linking to it.
+- Run the exact-title search from `.claude/rules/file-issues-for-gaps.md` § File once as well: identical titles minutes apart are one agent retrying a timed-out `gh issue create`. Close the newer ones as duplicates of the oldest, and comment there with the reason.
 - If a recent commit clearly shipped the fix, comment linking the commit/PR.
 
 ### Closing rule

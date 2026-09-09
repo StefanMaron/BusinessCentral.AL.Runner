@@ -490,7 +490,8 @@ a merge can turn `main` red, which outranks everything you were about to do.
    count-baseline update — folded into the runner PR that needs it when the fix is new, or as
    its own catch-up PR when that fix has already merged (`al-language-submodule.md`).
 5. **An issue is ready to work.** Take the highest-value one — prefer a measured failure count
-   over a guess — and implement it. One issue at a time.
+   over a guess — and implement it. One issue at a time. Where value does not separate two
+   candidates, take the older (`orchestrating-a-session` § The ready queue).
 
    Use the `status: ready` label where it exists, but **do not depend on it.** The loop must work
    on a repository whose labels are absent, stale, or organised differently. Fall back to: open,
@@ -740,6 +741,7 @@ The page carries, in roughly this order of prominence:
 - **When it last updated.** The most important line on the page.
 - What it is working on now, and what it finished in the last few cycles.
 - What is queued for a human decision, with links.
+- The ready queue's three numbers — ready, older than seven days, oldest — read as `orchestrating-a-session` § The ready queue says.
 - The last known-good baseline result and when it ran.
 - A short box summary from the profile — memory, disk, the slot in use.
 

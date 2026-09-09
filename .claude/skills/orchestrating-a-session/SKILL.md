@@ -308,6 +308,8 @@ rather than trusting the earlier verdict. `git merge-tree` only answers the text
 count-baseline will conflict; merge one, then tell the other to rebase and *re-measure*
 rather than carrying its old number forward.
 
+**Expectation-manifest drift is yours to fix, and only yours.** A known-gap entry left behind after its issue closed, or a red `main` from manifest drift, gets one PR from this pass per drift, its title naming the manifest entry — so several loops cannot open the same fix at once. An implementation agent that finds one comments on the issue the entry names and keeps its own task (`.claude/agents/impl-agent.md`).
+
 ## Measurement rules
 
 These exist because each was violated at real cost.
@@ -421,6 +423,22 @@ Otherwise the next agent starts from the wrong premise — which has happened he
 - `tools/agent-cost.py <tasks-dir>` — where a session's agents actually spent their calls.
   Measured once: 85% of Bash calls were shell read/search and the navigation tools were used
   3 times in 3,237 calls. Re-measure rather than assuming it improved.
+
+## The ready queue
+
+Read its age once per cycle:
+
+```bash
+gh issue list --repo StefanMaron/BusinessCentral.AL.Runner --label "status: ready" --state open --limit 500 --json number,createdAt
+```
+
+Every cycle summary carries three numbers from it: how many issues are ready, how many were
+created more than seven days ago, and the number of the oldest. Done when those three appear in
+the summary.
+
+The queue is shared, and age is the tie-break. When nothing else orders it — no measured failure
+count, no red `main` behind an issue — claim the oldest ready issue first, and a pool with no
+ready filings of its own claims from this same queue, oldest first.
 
 ## Reporting to the owner
 
