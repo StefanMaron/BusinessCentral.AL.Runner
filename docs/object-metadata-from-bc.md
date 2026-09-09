@@ -118,6 +118,56 @@ Across the pinned corpus (`19560bd3`), 172 of the corpus app's own 178 tables ta
 route and the whole suite stays green. The six that did not, at that pin, are the scope
 boundary below — narrowed by #3600, which is what most of them now clear.
 
+<a id="modify-deltas"></a>
+
+## `modify(...)` field-property changes, and where BC puts them
+
+A `tableextension` has two halves, and BC's emitter treats them differently. Measured on
+BC 28.1 with a probe declaring both at once (`AL_RUNNER_TRACE_OBJECT_METADATA=2`):
+
+| the extension | where BC puts it |
+|---|---|
+| **adds** `field(50; Extra; Text[20])` | folded into the **base table's** own `<MetaTable>` document, as an ordinary `<Field>` |
+| **modifies** `modify(Description) { Caption = '...' }` | left in the **extension's own** delta document, as `<FieldChange>` |
+
+On that probe the base table's document carried `<Field Name="Extra" ID="50" …/>` while its
+`Description` field still read `CaptionML="ENU=Original Caption"`, and the extension's
+document carried the change:
+
+```xml
+<MetadataRuntimeDeltas ID="70901" Name="Probe Ext" …>
+  <FieldChange TargetID="2" TargetType="MetaField" CaptionML="ENU=Modified Description" />
+</MetadataRuntimeDeltas>
+```
+
+That asymmetry is why #3600's relaxed route guard is sound for an add-only extension and why
+`modify(...)` needed separate work (#3614): a consumer reading only the base table's document
+sees every added field and no modified property, with nothing failing.
+
+`RecordPatches.TableExtensionFieldDeltas.cs` reads the `<FieldChange>` entries and applies
+them. It runs **post-emit**, from `BcRuntime.SetTestAssembly`, for the same ordering reason
+`RebuildTablesFromBcMetadataAll` does: the cold `BuildNCLMetaTable` runs during `AddSourceDir`
+and `Emit` registers the documents afterwards. Measured on the probe, table 70900 was built
+three log lines *before* its extension's delta was registered.
+
+<a id="modify-accepts"></a>
+
+### Which properties AL actually permits in a table field's `modify(...)`
+
+This is much narrower than it looks, and it is the reason `Caption` is what the corpus test
+asserts. One probe bundle per property, BC 28.1, compiled through the runner:
+
+| accepted | rejected, and with what |
+|---|---|
+| `Caption`, `ToolTip`, `Description`, `TableRelation`, `CaptionClass` | `AL0246` — `NotBlank`, `Editable`, `DataClassification`, `ObsoleteState`, `ObsoleteReason`, `ExtendedDatatype`, `AccessByPermission`, `ValidateTableRelation`, `TestTableRelation`, `AutoFormatType`, `Numeric`, `CharAllowed`, `DateFormula`<br>`AL0294` — `MinValue`, `MaxValue`<br>`AL0843` — `OptionCaption` |
+
+Two things this table settles. Every property #3614's own reproducer named — `NotBlank`,
+`MinValue`, `MaxValue` — is rejected by BC's compiler in that position, so that reproducer
+does not compile; the issue's *mechanism* was right and its example was not. And of the five
+accepted, `Description` emits an **empty** `<FieldChange>` (it is design-time only), and
+`ToolTip`/`CaptionClass`/`TableRelation` have no AL-readable surface on the derivation today —
+which leaves `Caption` as the one property that is both permitted here and observable from AL.
+
 <a id="scope"></a>
 
 ## What still takes the derivation, and why
@@ -125,9 +175,10 @@ boundary below — narrowed by #3600, which is what most of them now clear.
 - **A base table a `tableextension` extends with a `modify(...)` block, or from a DIFFERENT
   app than the base table's own.** BC's document for a table is what **one** app's compiler
   emitted. A `modify(...)` block changes an existing field's properties only in the
-  extension's own delta document (`<FieldChange>`), never in the base table's — the derivation
-  applies neither today, so nothing regresses, but nothing is gained either (a separate,
-  still-open gap: #3614 [modify(...) property changes are silently dropped by BOTH routes]). A
+  extension's own delta document (`<FieldChange>`), never in the base table's. The derivation
+  now applies those deltas — #3614, see [`#modify-deltas`](#modify-deltas) above for the
+  measurement and for which properties AL permits there at all — so keeping such a table on
+  the derivation no longer loses the change. A
   cross-app extension's `<FieldAdd>` delta likewise never reaches a base document emitted by a
   DIFFERENT (and possibly earlier, possibly precompiled) compile — the service tier only
   merges it at publish time through `NavAppGroup`'s extension registry, which the runner does
