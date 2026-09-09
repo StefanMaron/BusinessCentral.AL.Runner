@@ -509,10 +509,16 @@ public static class ALDatabasePatches
     /// runs in — BC's pre-body loop, mirrored. Ends the write transaction the same way that
     /// loop does, so a previous test's uncommitted write cannot refuse this test's guarded
     /// <c>Codeunit.Run</c>.</summary>
+    ///
+    /// <remarks>The depth is zeroed here as well as on the way out, because BC's loop ends
+    /// EVERY active transaction before the body: whatever count the surrounding machinery
+    /// left behind cannot be one of the transactions this body is allowed to write inside
+    /// (#3580, now that BC's own Begin/End pair feeds the counter).</remarks>
     public static void EnterNoTransactionScope()
     {
         System.Threading.Volatile.Write(ref _noTransactionScope, true);
         System.Threading.Volatile.Write(ref _inWriteTransaction, false);
+        System.Threading.Volatile.Write(ref _runTransactionDepth, 0);
     }
 
     /// <summary>Leave it. Called for EVERY test, None or not, so the scope can never outlive
@@ -522,6 +528,35 @@ public static class ALDatabasePatches
         System.Threading.Volatile.Write(ref _noTransactionScope, false);
         System.Threading.Volatile.Write(ref _runTransactionDepth, 0);
     }
+
+    /// <summary>BC's own <c>SessionTransactionExtensions.BeginTransaction(NavSession)</c> and
+    /// <c>BeginTransactionWorldAndTransaction(NavSession)</c>, Cecil-prepended (#3580). Every
+    /// BC API whose real Ncl body opens its own transaction reaches one of those two, so this
+    /// is how a construct with no runner seam — <c>XmlPort.Import</c> above all — makes a write
+    /// legal inside a <c>TransactionModel::None</c> body.
+    ///
+    /// <para>Faithful because it counts BC's own decision rather than guessing at one:
+    /// <c>NavXmlPort.Import(DataError)</c> calls <c>navSession.BeginTransaction()</c> on the
+    /// ThrowError branch and <c>BeginTransactionWorldAndTransaction()</c> on the TrapError one,
+    /// each closed by the matching End in a <c>finally</c> (decompiled Ncl 28.1.49838.54308).
+    /// Pinned upstream by corpus 60878 Test12, green on all eight cloud legs.</para>
+    ///
+    /// <para>Not a commit-point change, which is what makes it safe where #2413 was not: the
+    /// only state these two touch is <see cref="_runTransactionDepth"/>, which is read by
+    /// <see cref="ThrowIfNoTransactionForWrite"/> alone and only while
+    /// <see cref="_noTransactionScope"/> is set. Outside a <c>None</c> test body the counter
+    /// changes nothing observable. <see cref="RecordPatches.NoteTransactionEnd"/> stays on
+    /// <c>EndTransactionWorldAndTransaction</c> only, exactly as #2413 left it.</para>
+    /// </summary>
+    public static void NoteBcBeginTransaction() => EnterRunTransaction();
+
+    /// <summary>The other half — BC's <c>EndTransaction(NavSession, bool)</c> /
+    /// <c>EndTransactionWorldAndTransaction(NavSession, bool)</c>. BC calls these from its own
+    /// <c>finally</c>, so the bracket closes on the error path too without any new try/finally
+    /// IL. The <c>commit</c> argument is deliberately not read: whether the nested transaction
+    /// commits is decided elsewhere (see <see cref="RecordPatches.NoteTransactionEnd"/>); the
+    /// only question here is whether one is still open.</summary>
+    public static void NoteBcEndTransaction() => ExitRunTransaction();
 
     /// <summary>The transaction <c>Codeunit.Run</c> begins around the run codeunit — BC's
     /// BeginTransaction on the statement-form branch, BeginTransactionWorldAndTransaction on

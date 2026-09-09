@@ -1446,6 +1446,79 @@ public static partial class NclCecilRewrite
             PrependStaticCall(asm.MainModule, endTransactionMethod, noteTransactionEndHelper, argSlots: 2);
         }
 
+        // 8h. SessionTransactionExtensions.BeginTransaction / EndTransaction /
+        //     BeginTransactionWorldAndTransaction / EndTransactionWorldAndTransaction —
+        //     the TransactionModel::None depth counter (#3580).
+        //
+        //     A `None` test body runs with no transaction, so ALDatabasePatches
+        //     .ThrowIfNoTransactionForWrite refuses a write from it — unless something has
+        //     begun one, which BC's own API bodies routinely do. #3541 bracketed Codeunit.Run
+        //     and #3582 the report and TestPage seams, each in runner-owned C#. XmlPort.Import
+        //     has no runner seam by design (XmlPortPatches.cs: BC's real, unpatched body is the
+        //     right answer), so the count has to come from BC's own transaction calls.
+        //
+        //     Both branches of NavXmlPort.Import(DataError) do exactly that, decompiled Ncl
+        //     28.1.49838.54308: ThrowError calls navSession.BeginTransaction() and closes it
+        //     with navSession.EndTransaction(commit) in a finally; TrapError uses the
+        //     WorldAndTransaction pair the same way. Prepending onto BC's own `finally` call is
+        //     what makes this need no new try/finally IL — the mechanism #3328 warns about.
+        //
+        //     Why this is not #2413. That regression was about COMMIT POINTS: prepending
+        //     RecordPatches.NoteTransactionEnd (block 8g) onto the plain EndTransaction turned
+        //     Query.Open and statement-form XmlPort.Import into commit points, so writes made
+        //     before them survived an asserterror real BC rolls back. NoteBcEndTransaction
+        //     marks nothing and commits nothing; it moves _runTransactionDepth, which is read
+        //     by ThrowIfNoTransactionForWrite and by nothing else, and only while a
+        //     TransactionModel::None body is executing. Every other run in the suite is
+        //     unaffected by construction, and 8g's own prepend is left exactly where #2413 put
+        //     it. The two prepends coexist on EndTransactionWorldAndTransaction.
+        //
+        //     Prepend, not replace: BC's bodies here are one-line forwarders into
+        //     SessionTransactionManager that already run safely today.
+        {
+            var sessTxType3 = asm.MainModule.Types
+                .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.SessionTransactionExtensions")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] SessionTransactionExtensions type not found — Ncl shape changed; do not commit");
+
+            var noteBeginHelper = typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
+                nameof(AlRunner.Patches.ALDatabasePatches.NoteBcBeginTransaction),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] ALDatabasePatches.NoteBcBeginTransaction not found");
+            var noteEndHelper = typeof(AlRunner.Patches.ALDatabasePatches).GetMethod(
+                nameof(AlRunner.Patches.ALDatabasePatches.NoteBcEndTransaction),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] ALDatabasePatches.NoteBcEndTransaction not found");
+
+            // (method name, parameter count, helper) — the two pairs, matched on the exact
+            // one-line forwarder shape so a renamed or re-signatured Ncl member fails the
+            // build here rather than silently leaving a `None` body unable to write.
+            var depthTargets = new (string Name, int ParamCount, System.Reflection.MethodInfo Helper)[]
+            {
+                ("BeginTransaction", 1, noteBeginHelper),
+                ("EndTransaction", 2, noteEndHelper),
+                ("BeginTransactionWorldAndTransaction", 1, noteBeginHelper),
+                ("EndTransactionWorldAndTransaction", 2, noteEndHelper),
+            };
+
+            foreach (var (name, paramCount, helper) in depthTargets)
+            {
+                var target = sessTxType3.Methods
+                    .FirstOrDefault(m => m.Name == name && m.IsStatic && m.HasBody
+                                         && m.Parameters.Count == paramCount)
+                    ?? throw new InvalidOperationException(
+                        $"[Cecil] SessionTransactionExtensions.{name}(…/{paramCount}) not found — "
+                        + "Ncl shape changed; do not commit");
+
+                // argSlots: 0 — the counter needs neither the session nor the commit flag, and
+                // forwarding arguments it does not read is what #3328's arity mismatches are
+                // made of.
+                PrependStaticCall(asm.MainModule, target, helper, argSlots: 0);
+            }
+        }
+
 
         // 9b. TreeHandler.get_Session — see BcRuntime.TreeHandler_get_Session.
         //     The real body is `=> session`, a readonly field set in the ctor from
