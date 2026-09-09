@@ -228,8 +228,11 @@ public sealed class BcInternalsNullForgivingGuardTests
         // failure used to be a silent `yield break` the caller read as "no filters" (#3647);
         // 80 -> 81 for the TableFiltersAndMarks read on the JOIN path in
         // RecordPatches.QueryJoin.cs, whose failure used to answer FiltersAndMarks.Empty —
-        // indistinguishable from a dataitem that genuinely declares no filter (#3656).
-        Assert.Equal(81, converted);
+        // indistinguishable from a dataitem that genuinely declares no filter (#3656);
+        // 81 -> 82 for GetStaticColumnFilters' ColumnFilters lookup in
+        // RecordPatches.QueryProjection.cs, the sibling of those five and the same silent
+        // `yield break` (#3660).
+        Assert.Equal(82, converted);
     }
 
     /// <summary>
