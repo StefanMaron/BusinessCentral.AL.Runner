@@ -142,4 +142,100 @@ codeunit 61952 "RMVT Tests"
             Error('Report Data Items returned %1 row(s) for report 61951, which declares no dataset at all.',
                 ReportDataItems.Count());
     end;
+
+    // ── The dependency path (#3627) ────────────────────────────────────────
+    //
+    // Everything above reads a report the runner SOURCE-COMPILED moments ago,
+    // whose Sorting Fields come from BC's own emitted document (#3620). The
+    // tests below read Base Application report 1306, which lives in a
+    // PRECOMPILED dependency: it has no emitted document at all, so its row is
+    // built from that .app's SymbolReference.json, where DataItemTableView is
+    // AL SOURCE TEXT — sorting("Document No.", "Line No."), field NAMES.
+    //
+    // Before #3627 the runner dropped every token that was not Field<N> and
+    // answered EMPTY here, for all 1759 of Base Application's data items that
+    // state a SORTING clause. The expected values below are field NUMBERS
+    // resolved through those names, and each is chosen so no default can
+    // produce it: Sales Invoice Header."No." is field 3, not field 1, so a
+    // provider echoing the primary key or the first field fails immediately.
+
+    [Test]
+    procedure ReportDataItems_SortingFieldsOfAPrecompiledDependencyReport()
+    var
+        ReportDataItems: Record "Report Data Items";
+    begin
+        // Root data item of Base App 1306 "Standard Sales - Invoice":
+        // dataitem Header over Sales Invoice Header, sorting("No.").
+        // "No." is field 3 of table 112 — NOT field 1 — so "3" cannot come
+        // from a field ordinal, a declaration order, or a primary-key default.
+        ReportDataItems.SetRange("Report ID", 1306);
+        ReportDataItems.SetRange("Indentation Level", 0);
+        if not ReportDataItems.FindFirst() then
+            Error('Report Data Items had no Indentation Level 0 row for Base Application report 1306.');
+
+        if ReportDataItems."Sorting Fields" <> '3' then
+            Error('Report 1306 root data item Sorting Fields was "%1", expected "3" — Sales Invoice Header."No." resolved from the dependency symbol file''s sorting("No.").',
+                ReportDataItems."Sorting Fields");
+    end;
+
+    [Test]
+    procedure ReportDataItems_MultiFieldSortingOfADependencyReportKeepsClauseOrder()
+    var
+        ReportDataItems: Record "Report Data Items";
+    begin
+        // dataitem VATAmountLine over VAT Amount Line, sorting("VAT Identifier",
+        // "VAT Calculation Type", "Tax Group Code", "Use Tax", Positive) —
+        // fields 5, 9, 10, 13 and 16. Five tokens, non-contiguous, and the last
+        // one is BARE (unquoted), which is the other spelling a symbol file
+        // uses. The order is the CLAUSE's, not ascending by chance: any
+        // implementation that sorted, deduplicated, or dropped the bare token
+        // answers something else.
+        ReportDataItems.SetRange("Report ID", 1306);
+        ReportDataItems.SetRange(Name, 'VATAmountLine');
+        if not ReportDataItems.FindFirst() then
+            Error('Report Data Items had no VATAmountLine row for Base Application report 1306.');
+
+        if ReportDataItems."Sorting Fields" <> '5,9,10,13,16' then
+            Error('Report 1306 VATAmountLine Sorting Fields was "%1", expected "5,9,10,13,16".',
+                ReportDataItems."Sorting Fields");
+    end;
+
+    // Negative: a dependency data item whose view states a WHERE clause but NO
+    // sorting(...) must answer EMPTY, not a fabricated primary key. This is
+    // BC's own answer — GetSortingFieldsIfAny returns string.Empty — and it is
+    // what stops the two tests above from being satisfied by an implementation
+    // that always says something. Base Application report 705 "Inventory
+    // Availability" carries one data item of each kind, so both directions are
+    // measured on the same report through the same code path.
+    [Test]
+    procedure ReportDataItems_DependencyDataItemWithNoSortingClauseAnswersEmpty()
+    var
+        ReportDataItems: Record "Report Data Items";
+    begin
+        // dataitem Item, view where(Type = const(Inventory)) — a filter and no
+        // sorting at all. Item's primary key is field 1, so an implementation
+        // defaulting to the primary key would answer "1" here.
+        ReportDataItems.SetRange("Report ID", 705);
+        ReportDataItems.SetRange(Name, 'Item');
+        if not ReportDataItems.FindFirst() then
+            Error('Report Data Items had no Item row for Base Application report 705.');
+
+        if ReportDataItems."Sorting Fields" <> '' then
+            Error('Report 705 data item Item states only where(Type = const(Inventory)) and no sorting(...), so Sorting Fields must be empty; it was "%1".',
+                ReportDataItems."Sorting Fields");
+
+        // Control, same report and same code path: the sibling data item DOES
+        // state a clause and must answer its field numbers — so the empty
+        // answer above is a real distinction, not a report the runner failed to
+        // read at all. Stockkeeping Unit sorts ("Location Code", "Variant Code",
+        // "Item No.") = 1,3,2 — an order that is neither ascending nor field
+        // order, so it cannot be produced by sorting or by echoing a key.
+        ReportDataItems.SetRange(Name, 'Stockkeeping Unit');
+        if not ReportDataItems.FindFirst() then
+            Error('Report Data Items had no Stockkeeping Unit row for Base Application report 705.');
+
+        if ReportDataItems."Sorting Fields" <> '1,3,2' then
+            Error('Report 705 data item Stockkeeping Unit Sorting Fields was "%1", expected "1,3,2".',
+                ReportDataItems."Sorting Fields");
+    end;
 }

@@ -282,6 +282,185 @@ public static partial class RecordPatches
         return sb.ToString();
     }
 
+    /// <summary>
+    /// The comma-separated field NUMBERS for a data item whose <c>DataItemTableView</c> is AL
+    /// SOURCE TEXT rather than BC's compiled normal form — the shape a precompiled
+    /// dependency's SymbolReference.json states (#3627). <paramref name="fieldNoByIdentifier"/>
+    /// resolves an AL field name; a null one means the data item's table could not be
+    /// resolved, and then only the <c>Field&lt;N&gt;</c> tokens survive, exactly as before.
+    ///
+    /// <para><b>Why this exists at all.</b> <see cref="FieldNumbersFrom"/> alone is right for
+    /// BC's document, where the emitter has already resolved every token to
+    /// <c>Field&lt;N&gt;</c>. A symbol file has NOT: measured on Base Application
+    /// 28.1.49838.53910, its 659 reports carry 1927 data items, 1759 of which state a
+    /// <c>SORTING</c> clause, and all 3201 of those tokens are AL identifiers — 988 bare and
+    /// 2213 double-quoted, none in <c>Field&lt;N&gt;</c> form. So the column answered empty for
+    /// every one of them.</para>
+    ///
+    /// <para><b>The resolution order is BC's, not an approximation.</b> A sorting token reaches
+    /// <c>TableViewResolver.AddSortingField</c>, which calls
+    /// <c>TableFilterResolver.ResolveField(field, trapError: true)</c> —
+    /// <c>NCLMetaTable.FindFieldMatch(field, prefixFallback: true, trapError: true)</c>. That
+    /// method, decompiled from BC 28.1: strip a leading <c>Field</c> or <c>#</c> and use
+    /// <c>GetFieldByNo</c> when the remainder parses as an integer; else exact name, then exact
+    /// caption; else, because <c>prefixFallback</c> is true here, a name prefix then a caption
+    /// prefix; else null, which <c>AddSortingField</c> traces and SKIPS. The steps below are
+    /// that list in that order, so a token resolves to the same field BC would pick or is
+    /// dropped the same way. See docs/report-metadata-from-bc.md#sorting-fields-on-the-dependency-path.</para>
+    ///
+    /// <para><b>Cost.</b> Paid once per run, not per read: the only caller is
+    /// <c>EnumerateKnownReports</c>, whose result is cached per (registration epoch, parsed
+    /// report count), and the map it passes is memoized per table for the whole build. See
+    /// that method for why paying it per population would reproduce the #3607 watchdog
+    /// timeout.</para>
+    /// </summary>
+    private static string SortingFieldNumbersFromAlView(
+        string tableView, Func<string, int>? fieldNoByIdentifier)
+    {
+        var clause = AlSortingClauseOf(tableView);
+        if (clause.Length == 0) return string.Empty;
+
+        var sb = new System.Text.StringBuilder();
+        foreach (var raw in SplitSortingTokens(clause))
+        {
+            var token = UnquoteAlIdentifier(raw.Trim());
+            if (token.Length == 0) continue;
+
+            // Step 1 — FindFieldMatch's own first branch, before any name is consulted. A view
+            // already in BC's normal form (SORTING(Field5,Field2)) therefore still resolves
+            // here without a lookup, which is the path #3620 fixed and must not regress.
+            var stripped = token;
+            if (stripped.StartsWith("Field", StringComparison.OrdinalIgnoreCase))
+                stripped = stripped.Substring(5);
+            else if (stripped.StartsWith('#'))
+                stripped = stripped.Substring(1);
+
+            int fieldNo;
+            if (int.TryParse(stripped, out var byNumber)) fieldNo = byNumber;
+            else if (fieldNoByIdentifier == null) continue;   // no table: nothing to look up
+            else fieldNo = fieldNoByIdentifier(token);
+
+            // A token BC's FindFieldMatch would answer null for is DROPPED, not emitted as a
+            // placeholder and not allowed to abandon the rest of the clause — AddSortingField
+            // traces and moves on to the next field.
+            if (fieldNo <= 0) continue;
+
+            if (sb.Length > 0) sb.Append(',');
+            sb.Append(fieldNo);
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// The <c>sorting(...)</c> body of a view written as AL SOURCE TEXT, which differs from
+    /// <see cref="SortingClauseOf"/> in the two ways that matter, both measured on Base
+    /// Application 28.1's SymbolReference.json:
+    ///
+    /// <para>1. <b>The keyword is lowercase.</b> AL writes <c>sorting(</c>; BC's compiled
+    /// normal form writes <c>SORTING(</c>. <see cref="SortingClauseOf"/> matches
+    /// <c>StringComparison.Ordinal</c>, correctly, because the document it reads is always in
+    /// BC's form — pointing it at AL text answers empty for every one of the 1759 data items
+    /// that state a clause, which is exactly the #3627 symptom.</para>
+    ///
+    /// <para>2. <b>The body can contain a <c>)</c>.</b> The document's form cannot, so
+    /// <see cref="SortingClauseOf"/> ends the clause at the first one. AL text can:
+    /// <c>sorting("Amount (LCY)")</c> is a legal field name, and a quoted identifier is where
+    /// a parenthesis hides. So the close is matched by depth, ignoring anything inside AL
+    /// quotes.</para>
+    ///
+    /// <para>Kept separate rather than widening <see cref="SortingClauseOf"/>: that method is
+    /// on the document path, where a case-insensitive match would also accept a WHERE-clause
+    /// filter value that happens to spell "sorting(", and where the first-<c>)</c> rule is a
+    /// stated property of the input rather than a shortcut.</para>
+    /// </summary>
+    private static string AlSortingClauseOf(string tableView)
+    {
+        const string marker = "sorting";
+        int start = -1;
+        for (int i = 0; i + marker.Length <= tableView.Length; i++)
+        {
+            // Skip over a quoted identifier so a field named "Sorting Code" cannot be read as
+            // the keyword.
+            if (tableView[i] == '"')
+            {
+                i = SkipAlQuoted(tableView, i) - 1;
+                continue;
+            }
+            if (string.Compare(tableView, i, marker, 0, marker.Length, StringComparison.OrdinalIgnoreCase) != 0)
+                continue;
+            // A keyword, not the tail of a longer identifier.
+            if (i > 0 && (char.IsLetterOrDigit(tableView[i - 1]) || tableView[i - 1] == '_')) continue;
+            int j = i + marker.Length;
+            while (j < tableView.Length && char.IsWhiteSpace(tableView[j])) j++;
+            if (j < tableView.Length && tableView[j] == '(') { start = j + 1; break; }
+        }
+        if (start < 0) return string.Empty;
+
+        int depth = 1;
+        for (int i = start; i < tableView.Length; i++)
+        {
+            var c = tableView[i];
+            if (c == '"') { i = SkipAlQuoted(tableView, i) - 1; continue; }
+            if (c == '(') depth++;
+            else if (c == ')' && --depth == 0) return tableView.Substring(start, i - start);
+        }
+        // Unbalanced: the AL compiler would not have produced this, so there is no clause to
+        // read rather than a truncated guess.
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// A <c>SORTING(...)</c> body split on the commas that separate fields, ignoring commas
+    /// inside an AL quoted identifier. <c>sorting("Posting Date", "Document No.")</c> is the
+    /// ordinary case, but a field may legitimately be named <c>"Amount, LCY"</c>, and splitting
+    /// that on a bare <c>,</c> yields two tokens that resolve to nothing — dropping a field
+    /// BC would have sorted by.
+    /// </summary>
+    private static List<string> SplitSortingTokens(string clause)
+    {
+        var result = new List<string>();
+        var current = new System.Text.StringBuilder();
+        bool inQuotes = false;
+        for (int i = 0; i < clause.Length; i++)
+        {
+            var c = clause[i];
+            if (c == '"')
+            {
+                // AL doubles a literal quote inside an identifier; both halves stay in the
+                // token so UnquoteAlIdentifier can collapse them.
+                if (inQuotes && i + 1 < clause.Length && clause[i + 1] == '"')
+                {
+                    current.Append('"').Append('"');
+                    i++;
+                    continue;
+                }
+                inQuotes = !inQuotes;
+                current.Append(c);
+                continue;
+            }
+            if (c == ',' && !inQuotes)
+            {
+                result.Add(current.ToString());
+                current.Clear();
+                continue;
+            }
+            current.Append(c);
+        }
+        if (current.Length > 0) result.Add(current.ToString());
+        return result;
+    }
+
+    /// <summary>
+    /// An AL quoted identifier reduced to the name BC matches on: the surrounding quotes
+    /// removed and a doubled <c>""</c> collapsed to one. A bare identifier is returned
+    /// unchanged — 988 of Base Application's 3201 sorting tokens are bare.
+    /// </summary>
+    private static string UnquoteAlIdentifier(string token)
+    {
+        if (token.Length < 2 || token[0] != '"' || token[^1] != '"') return token;
+        return token.Substring(1, token.Length - 2).Replace("\"\"", "\"");
+    }
+
     private static string ReadBcText(XmlElement parent, string name)
     {
         foreach (XmlNode child in parent.ChildNodes)
