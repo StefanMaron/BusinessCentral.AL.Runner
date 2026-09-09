@@ -244,10 +244,9 @@ internal sealed class BuiltInPageModeAction : ITestAction
     /// already open and RunnerTestClientSession.OpenFormsCount is 0 by design. So the three
     /// rules above are the whole gate here, and the eight measured rows agree with them.</para>
     /// </summary>
-    public bool Enabled => _kind switch
-    {
-        BuiltInPageModeActionKind.InPlaceSwitch => _viewMode ? _host.StaticEditableNow : !_host.StaticEditableNow,
-        BuiltInPageModeActionKind.NoTarget => _viewMode,
-        _ => _viewMode || RecordPatches.TryGetAnyPageModifyAllowed(_targetPageId) != false,
-    };
+    public bool Enabled => BuiltInPageModeActionRule.Enabled(
+        _kind, _viewMode, _host.StaticEditableNow,
+        _kind == BuiltInPageModeActionKind.OpenCard
+            ? RecordPatches.TryGetAnyPageModifyAllowed(_targetPageId)
+            : null);
 }
