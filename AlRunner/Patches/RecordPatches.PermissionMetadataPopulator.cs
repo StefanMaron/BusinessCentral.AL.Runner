@@ -638,7 +638,7 @@ public static partial class RecordPatches
         // better here — BuildIncludeList has to resolve a name through PermissionSetIdByName
         // and DROPS what it cannot find, which an already-resolved id cannot hit.
         SetProperty(mps, "IncludedPermissionSets",
-            BuildIncludeListFromIds(RequireBcProperty(_tMetaPermissionSet, "IncludedPermissionSets").PropertyType,
+            BuildIncludeList(RequireBcProperty(_tMetaPermissionSet, "IncludedPermissionSets").PropertyType,
                 declaration.IncludedPermissionSets, declaration.IncludedPermissionSetIds));
         // ExcludedPermissionSets was hardcoded null because the only route into this method
         // stated no exclude edges: SymbolReference.json does not carry them, and Base
@@ -647,7 +647,7 @@ public static partial class RecordPatches
         // emitted document DOES state them, as ids, for anything the runner compiles from
         // source, so that route fills the column and the precompiled route still passes null.
         SetProperty(mps, "ExcludedPermissionSets",
-            BuildIncludeListFromIds(RequireBcProperty(_tMetaPermissionSet, "ExcludedPermissionSets").PropertyType,
+            BuildIncludeList(RequireBcProperty(_tMetaPermissionSet, "ExcludedPermissionSets").PropertyType,
                 null, declaration.ExcludedPermissionSetIds));
 
         return mps;
@@ -665,33 +665,30 @@ public static partial class RecordPatches
     /// version of this code assumed strings and failed loudly at <c>Add()</c> — the right
     /// failure, but only because it was checked at all.</para>
     ///
-    /// <para>THIS NAME AND ARITY ARE PART OF THE CONTRACT, not an implementation detail.
-    /// <c>AlRunner.Tests/PermissionMetadataShapeGapTests.cs</c> reaches this method by
-    /// <c>MethodInfo.Invoke</c> through <c>GetMethod(name, NonPublic | Static)</c>, and that
-    /// resolution is fragile in two different ways at once — #3609 hit both:</para>
+    /// <para>THIS NAME, ARITY, UNIQUENESS AND LIVENESS ARE ALL PART OF THE CONTRACT, not
+    /// implementation details. <c>AlRunner.Tests/PermissionMetadataShapeGapTests.cs</c> reaches
+    /// this method by <c>MethodInfo.Invoke</c> through
+    /// <c>GetMethod(name, NonPublic | Static)</c>, and #3609 broke it three separate ways
+    /// before landing here — each measured, not predicted:</para>
     /// <list type="bullet">
-    /// <item>an optional extra parameter satisfies every C# caller but not
+    /// <item><b>arity</b> — an optional extra parameter satisfies every C# caller but not
     /// <c>Invoke</c>, which matches the EXACT parameter count →
     /// <c>TargetParameterCountException</c>;</item>
-    /// <item>a second overload satisfies <c>Invoke</c> but not the lookup, since
-    /// <c>GetMethod(name, flags)</c> cannot choose between overloads →
-    /// <c>AmbiguousMatchException</c>.</item>
+    /// <item><b>uniqueness</b> — a second overload satisfies <c>Invoke</c> but not the lookup,
+    /// since <c>GetMethod(name, flags)</c> cannot choose between overloads →
+    /// <c>AmbiguousMatchException</c>;</item>
+    /// <item><b>liveness</b> — keeping the old signature as a thin forwarder satisfies both of
+    /// the above and still fails: with every production call site moved to the new name, the
+    /// reflective arms exercise a method nothing else reaches, so they prove nothing about a
+    /// live path. <c>ReflectionDrivenHelperLivenessTests</c> refuses that (#3100).</item>
     /// </list>
-    /// <para>So the id-based route is a SEPARATELY NAMED method
-    /// (<see cref="BuildIncludeListFromIds"/>) rather than a default parameter or an overload
-    /// here. Both alternatives were measured red on exactly the two legs that run the C# suite,
-    /// 27.5 and 28.4.</para>
+    /// <para>So the id-carrying parameter lives HERE, on the one method both production call
+    /// sites use, rather than behind a default, an overload, or a forwarder. If a later change
+    /// needs a fourth parameter, move the reflective arms with it — do not leave a
+    /// compatibility shim behind, because a dead shim is what the liveness guard exists to
+    /// catch.</para>
     /// </summary>
-    private static object BuildIncludeList(Type listType, IReadOnlyList<string>? names)
-        => BuildIncludeListFromIds(listType, names, resolvedIds: null);
-
-    /// <summary>
-    /// #3609's route: the same list, filled from the already-resolved object ids BC's own
-    /// emitted document states, falling back to <paramref name="names"/> when it states none.
-    /// Separately named rather than an overload of <see cref="BuildIncludeList"/> — see that
-    /// method's note on why reflection makes both a default parameter and an overload unsafe.
-    /// </summary>
-    private static object BuildIncludeListFromIds(
+    private static object BuildIncludeList(
         Type listType, IReadOnlyList<string>? names, IReadOnlyList<int>? resolvedIds)
     {
         var list = (System.Collections.IList)Activator.CreateInstance(listType)!;
