@@ -27,9 +27,7 @@ The `al-runner-tests` skill (`.claude/skills/al-runner-tests/SKILL.md`) is autho
 ```
 gh issue list --label "agent: <AGENT-ID>" --label "status: in-progress" --assignee @me --state open --repo StefanMaron/BusinessCentral.AL.Runner
 ```
-If found: fix CI failures (read job log), address review comments, rebase on conflicts. When
-its pull request carries a checkpoint hand-back comment (Step 3), start from the next command
-that comment names.
+If found: fix CI failures (read job log), address review comments, rebase on conflicts.
 If blocked: add `status: blocked` + a comment explaining the blocker, then go to Step 2.
 
 ## Step 2 — Pick up a new issue
@@ -96,7 +94,7 @@ gh pr list --state open --head agent/<AGENT-ID>/issue-<N> --json number,title,is
 
 A branch naming an issue other than yours belongs to another task — stop and report, whatever the prefix says: `agent/<AGENT-ID>/` records who created a branch, and a second agent committing there is a push no check refuses.
 
-The third command has two outcomes. Empty, the draft you opened for this issue, or the PR the invoking session named when it dispatched you onto it (a checkpoint resume or a CI repair) — commit. Any other PR — stop, comment on the issue naming that PR number and that it already holds your branch, and hand back with that comment as your report.
+The third command has two outcomes. Empty, the draft you opened for this issue, or the PR the invoking session named when it dispatched you onto it (a CI repair, Step 1) — commit. Any other PR — stop, comment on the issue naming that PR number and that it already holds your branch, and hand back with that comment as your report.
 
 Never `git add -A` / `git add .` in a tree that might carry another agent's edits — stage only the files you changed, by name.
 
@@ -137,8 +135,9 @@ python -c "import uuid;print(uuid.uuid4().hex[:8])"
 
 Shell state does not survive between tool calls, so copy the printed value and write it
 literally wherever `<SESSION>` appears. The scratchpad guard's suggested `--agent-id <YOUR-ID>`
-is the minimum; pass the full `<AGENT-ID>-issue-<N>-<SESSION>`. Name every scratch directory, `--cache` directory,
-scratch clone and container `<AGENT-ID>-issue-<N>-<SESSION>`, and ask the scratchpad tool for
+is the minimum; pass the full `<AGENT-ID>-issue-<N>-<SESSION>`. Name every scratch directory, `--cache` directory (the
+`al-runner-tests` skill's recipes take it in place of the shared cache), scratch clone and
+container `<AGENT-ID>-issue-<N>-<SESSION>`, and ask the scratchpad tool for
 paths under that same name:
 
 ```bash
@@ -227,16 +226,6 @@ Then push. A pull request runs **three** BC legs — 27.0, 27.5 and 28.4, from `
 
 **Never** report suite results in a PR body that you did not actually run in that state. An unrun claim is worse than no claim.
 
-### The 150-call budget and its checkpoint
-
-Count your tool calls from the start of the task. At 150, checkpoint and stop:
-
-1. Commit what exists — a `wip:` subject is right for an unfinished fix — and push.
-2. Comment once on your pull request: what is done, what remains, and the next command to run.
-3. Return, saying you stopped at the budget. The invoking session resumes you or dispatches a fresh agent, and either starts from that comment.
-
-A checkpoint hand-back is done when the comment is on the pull request and `git status` shows nothing unpushed.
-
 ### Repeat-iteration runs (flakes): cheap "before", expensive "after"
 
 The naive N-before/N-after shape costs hours when the flaky test is also slow. Split the budget asymmetrically:
@@ -306,8 +295,7 @@ Before you return, confirm all four and state them in your report:
 
 1. The branch is pushed (`git push` succeeded; `git status` shows nothing unpushed).
 2. The PR's body contains `Closes #<N>`.
-3. `isDraft` is `false` — a finished fix hands back ready, a checkpoint (Step 3) hands back
-   still draft; say which.
+3. `isDraft` is `false`.
 4. The PR's head SHA equals your local `HEAD` — so whatever CI reports later is measuring
    your actual work.
 
@@ -323,9 +311,8 @@ SHA before returning.
 
 **If `--force-with-lease` is rejected, that is the finding — never force past it.** The rejection means the remote moved since you last fetched, so somebody else wrote to your branch, and the lease is the only thing standing between their work and your overwrite. Fetch, read what arrived with `git log @{u}...HEAD`, and report it. Reach for `git fetch`, never for `--force`.
 
-Then report, starting with your session token: the issue, the PR number, the head SHA, your
-tool-call count, what you changed, what the RED → GREEN proved, and anything you deliberately
-left out. Return. Do not claim another issue.
+Then report, starting with your session token: the issue, the PR number, the head SHA, what
+you changed, what the RED → GREEN proved, and anything you deliberately left out. Return. Do not claim another issue.
 
 **The no-backgrounding rule still applies to everything you start yourself** — builds,
 `dotnet test`, corpus runs (`.claude/rules/no-backgrounding-long-commands.md`). Never end a

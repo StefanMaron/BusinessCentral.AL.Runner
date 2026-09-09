@@ -1,7 +1,8 @@
 # Before claiming or dispatching an issue, look for an open PR that closes it
 
-**An open PR carrying `Closes #N` means issue N is in progress. Do not claim it, do not
-dispatch an agent onto it, whatever the assignee and the labels say.**
+**An open PR carrying `Closes #N` means issue N is in progress. Do not claim it, and dispatch
+an agent onto it only to repair that PR by name (`.claude/agents/impl-agent.md`, Step 1),
+whatever the assignee and the labels say.**
 
 The claiming protocol says the assignee locks and the `agent:` label discriminates. On this
 repository that pair cannot decide ownership, because **every loop pushes under one GitHub
