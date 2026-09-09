@@ -400,7 +400,11 @@ public sealed class TestPageRefusalClaimTests
         var mock = CodeOf("MockTestPage.cs");
         var page = CodeOf("RunnerPageInstance.cs");
 
-        Assert.Equal(10, Regex.Matches(mock, @"throw TestPageShapeGap\.").Count);
+        // 11 since #2362/#3642 gave LiveNavTestField.AssistEdit a real dispatch: like its
+        // Lookup and Drilldown siblings it refuses when there is no AL page object to reach a
+        // trigger through. Note what this 11th site is NOT — a control that simply declares no
+        // OnAssistEdit stays silent, because BC's own ALAssistEdit raises nothing there either.
+        Assert.Equal(11, Regex.Matches(mock, @"throw TestPageShapeGap\.").Count);
         // 6: the SubPageLink FilterType site, the two evaluator-fault arms #3444 added - a
         // fault inside BC's own NavValueEvaluator, and a signature mismatch against it -
         // #3462's bind refusal, which claimed testpage-temporal-evaluator under

@@ -1635,6 +1635,37 @@ internal sealed partial class RunnerPageInstance
     }
 
     /// <summary>
+    /// Run the control's OnAssistEdit trigger — the AL a user's AssistEdit (the "…" button)
+    /// would run. Issues #2362 and #3642.
+    ///
+    /// <para>Reached from BC's own <c>NavTestField.ALAssistEdit</c>, whose whole body is
+    /// <c>CheckError(() =&gt; testField.AssistEdit())</c> — so <c>ITestField.AssistEdit</c>,
+    /// which this runner implements, IS the dispatch surface, and implementing it as
+    /// <c>{ }</c> is what made every declared OnAssistEdit inert.</para>
+    ///
+    /// <para>A control with NO OnAssistEdit does nothing here, and that absence is the whole
+    /// reason this cannot follow RaiseOnDrillDown's shape. Drilldown has a loud documented
+    /// answer to raise ("The NavDrilldownAction method is not supported."); assist-edit has
+    /// none — BC's ALAssistEdit returns void and raises nothing — so a refusal here would
+    /// invent an error real BC does not raise, which is a worse wrong answer than the silence
+    /// it replaces. The silence is faithful; what was unfaithful was staying silent when the
+    /// control DOES declare a trigger.</para>
+    ///
+    /// <para>Resolution is the ordinary <see cref="FindTrigger"/>, which is what makes this
+    /// serve both forms the issues name. Measured on BC 28.1: a base-page control emits
+    /// <c>Name_a45_OnAssistEdit(0)</c> on <c>Page{id}</c>, and a control a pageextension's
+    /// <c>modify()</c> block contributes emits <c>Extra_a45_OnAssistEdit(0)</c> on
+    /// <c>PageExtension{id}</c> — the SAME suffix and arity, differing only in which object
+    /// carries it and in which id space its name hashes. FindTrigger's three arms already
+    /// cover all three of those spaces after #3573, so no new resolution is needed.</para>
+    /// </summary>
+    internal void RaiseOnAssistEdit(int controlId)
+    {
+        var trigger = FindTrigger(controlId, "_OnAssistEdit", "OnAssistEdit");
+        if (trigger != null) Invoke(trigger.Value);
+    }
+
+    /// <summary>
     /// Run the page's own OnAfterGetRecord trigger.
     ///
     /// BC fires it every time the page loads a row, and it is where a page computes the
