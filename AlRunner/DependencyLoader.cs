@@ -405,29 +405,41 @@ public sealed class DependencyLoader
     private static readonly IReadOnlyList<Assembly> EmptyAssemblies = Array.Empty<Assembly>();
 
     /// <summary>
-    /// Environment switch for #3549's dependency metadata production. OFF by default while the
-    /// chain is proven on one dependency at a time, per the issue's own "one dependency proving
-    /// the whole chain is a sufficient verdict".
-    ///
-    /// <para>Default-off is the honest state rather than caution for its own sake: turning this
-    /// on makes every source-shipping dependency compile once, which is a real provisioning
-    /// cost (Business Foundation 3.0s, System Application 14.5s on BC 28.1) and changes the
-    /// metadata a great many tables answer from. Both belong behind a switch until each app has
-    /// been measured, and `docs/dependency-metadata-from-bc.md` records what has been.</para>
-    ///
-    /// <para>A value other than "1" or "0" is a mistake worth naming rather than silently
-    /// reading as off — an unrecognised value is the shape that makes an opt-in look enabled to
-    /// its author while doing nothing.</para>
+    /// True when #3549's dependency metadata production is switched on at all, for any app.
+    /// <see cref="DependencyMetadataAppFilter"/> is the one that decides WHICH apps, and is
+    /// what callers should use; this exists for the "is the feature on" question alone.
     /// </summary>
     internal static bool DependencyMetadataEnabled()
+        => DependencyMetadataAppFilter() is not null;
+
+    /// <summary>
+    /// Which apps the producer runs for, parsed from the same variable: <c>1</c> means every
+    /// source-shipping dependency, a comma-separated list means exactly those app NAMES, and
+    /// absent/<c>0</c> means the feature is off (null).
+    ///
+    /// <para>OFF by default, and the per-app list is not a convenience — it is what makes the
+    /// feature usable at all today. <c>Compilation.Emit</c> is atomic per module, so ONE object
+    /// BC cannot emit zeroes the entire app's metadata: System Application's
+    /// <c>Business Chart.Initialize()</c> raises <c>BadExpression</c> under the runner's .NET
+    /// probing paths and takes all 1,319 files' output with it, while Business Foundation
+    /// compiles clean and yields 55 documents in ~6.2 s. So naming the app is the difference
+    /// between a dependency whose metadata is BC's own and a run that refuses to start;
+    /// #3745 tracks removing the need for it.</para>
+    ///
+    /// <para>Measurements per app, and the RED/GREEN this was proven with:
+    /// docs/dependency-metadata-from-bc.md.</para>
+    /// </summary>
+    internal static IReadOnlyCollection<string>? DependencyMetadataAppFilter()
     {
         var v = Environment.GetEnvironmentVariable("AL_RUNNER_DEP_METADATA_FROM_BC");
-        if (string.IsNullOrEmpty(v) || v == "0") return false;
-        if (v == "1") return true;
+        if (string.IsNullOrEmpty(v) || v == "0") return null;
+        if (v == "1") return Array.Empty<string>();   // empty = no filter = every app
+        var names = v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (names.Length > 0) return names;
         Console.Error.WriteLine(
-            $"[dep-metadata] AL_RUNNER_DEP_METADATA_FROM_BC='{v}' is not '1' or '0'; " +
-            "treating as OFF. Set it to 1 to enable BC-emitted dependency metadata (#3549).");
-        return false;
+            $"[dep-metadata] AL_RUNNER_DEP_METADATA_FROM_BC='{v}' is not '1', '0' or an app-name " +
+            "list; treating as OFF (#3549).");
+        return null;
     }
 
     /// <summary>
@@ -439,7 +451,9 @@ public sealed class DependencyLoader
     /// </summary>
     private void EnsureDependencyMetadata(AppManifest m, string appPath)
     {
-        if (!DependencyMetadataEnabled()) return;
+        var filter = DependencyMetadataAppFilter();
+        if (filter is null) return;
+        if (filter.Count > 0 && !filter.Contains(m.Name, StringComparer.OrdinalIgnoreCase)) return;
         DependencyMetadataProducer.Ensure(m, appPath, _compiler);
     }
 

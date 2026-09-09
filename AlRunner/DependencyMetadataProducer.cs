@@ -10,11 +10,11 @@
 //   SymbolReference hand-derivation and never by BC's own answer, even though the package
 //   ships the source BC would need.
 //
-//   Measured on Business Foundation table 230 "Source Code", BC 28.1: the derivation answers
-//   KeyCount=2 and SystemCreatedBy.Relation=0; BC's own document, loaded through
-//   MetaTable.CreateMetaTableFromXml, answers KeyCount=3 and 2000000120. Both are
-//   AL-observable through RecordRef. docs/dependency-metadata-from-bc.md has the measurement
-//   and the per-shape route table.
+//   Measured on Business Foundation table 310 "No. Series Relationship", BC 28.1, read from AL
+//   through RecordRef: the derivation answers SystemCreatedBy.Relation = 0, and BC's own
+//   document — loaded through MetaTable.CreateMetaTableFromXml, which is what adds the platform
+//   system fields and their relations — answers 2000000120, the User table.
+//   docs/dependency-metadata-from-bc.md has the full RED/GREEN and the per-shape route table.
 //
 // AVAILABILITY DECIDES THE ROUTE — A FAILED COMPILE IS LOUD, NEVER A DOWNGRADE
 //   This is the constraint the issue names as its main risk, and it shapes the whole class.
@@ -35,11 +35,17 @@
 //   swallows a construction failure into a cached null with its log line filtered out by
 //   default, so a failure that reached the consumer would be indistinguishable from absence.
 //
-// COST
+// COST, AND WHY IT IS OPT-IN PER APP
 //   Once per (app id, app version, BC version), never per run: the documents persist to
 //   AlObjectMetadataRegistry's sidecar format under the `dep-metadata` cache root and are
-//   replayed on every later run. Measured cold on this box, BC 28.1: Business Foundation
-//   (96 AL files, 12 tables) 3.0s; System Application (1,319 AL files, 138 tables) 14.5s.
+//   replayed on every later run. Business Foundation (96 AL files): ~6.2 s cold, 55 documents.
+//
+//   Emit is atomic per module, so one object BC cannot emit yields ZERO documents for the whole
+//   app rather than a partial result. System Application hits exactly that — BadExpression on
+//   `Business Chart.Initialize()` under the runner's .NET probing paths — which is why
+//   AL_RUNNER_DEP_METADATA_FROM_BC takes app NAMES and not just "on". #3745 is that blocker;
+//   the same app compiles clean in tools/metadata-ground-truth/, which ships .NET reference
+//   shims the runner's probing paths do not.
 //
 // NOT BASE APPLICATION
 //   Base Application ships 8,025 AL files and is deliberately excluded. Its emit needs a
@@ -80,7 +86,7 @@ internal static class DependencyMetadataProducer
     /// </summary>
     internal static bool HasCompilableSource(string appPath)
     {
-        try { return AppLoader.ExtractAl(appPath).Count > 0; }
+        try { return AppLoader.ExtractAlWithPaths(appPath).Count > 0; }
         catch { return false; }
     }
 
@@ -140,8 +146,27 @@ internal static class DependencyMetadataProducer
         var work = Directory.CreateTempSubdirectory($"al-runner-depmeta-{m.AppId:N}-");
         try
         {
-            foreach (var (name, src) in sources)
-                File.WriteAllText(Path.Combine(work.FullName, SafeFileName(name)), src);
+            // Written at the package's OWN relative paths, not flattened into one directory.
+            // Two things break under flattening, and both present as AL0185 "X is missing" for
+            // objects the app itself declares: a package ships several files with one base name
+            // (System Application has an `EmailOutbox.Page.al` and an `EmailOutbox.Table.al`),
+            // and BC resolves a resource — a control add-in's files, a report layout — relative
+            // to the source that references it.
+            foreach (var (path, src) in sources)
+            {
+                var rel = SafeRelativePath(path);
+                var dest = Path.Combine(work.FullName, rel);
+                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                File.WriteAllText(dest, src);
+            }
+
+            // A shipped .app carries NavxManifest.xml, not app.json, and BcCompiler.Emit reads
+            // its compiler inputs — target, features, preprocessor symbols — from an app.json
+            // beside the source. Without one every input silently falls back to its default,
+            // which is not this app's configuration: `Target` in particular decides whether
+            // OnPrem-scoped objects compile at all. Synthesized rather than defaulted so the
+            // compile matches how Microsoft built the package.
+            WriteSynthesizedAppJson(work.FullName, m, appPath);
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
             try
@@ -177,9 +202,75 @@ internal static class DependencyMetadataProducer
         }
     }
 
-    private static IReadOnlyList<(string Name, string Source)> ReadSource(AppManifest m, string appPath)
+    /// <summary>
+    /// Write an app.json describing <paramref name="m"/> next to the extracted source, carrying
+    /// the attributes BC's compiler reads that the runtime <see cref="AppManifest"/> does not
+    /// model — <c>target</c>, <c>features</c>, <c>preprocessorSymbols</c>, <c>runtime</c> —
+    /// taken from the package's own NavxManifest.xml so the compile matches how the package was
+    /// built. An attribute the manifest omits is omitted here too rather than guessed, leaving
+    /// BcCompiler's own default to apply.
+    /// </summary>
+    private static void WriteSynthesizedAppJson(string dir, AppManifest m, string appPath)
     {
-        try { return AppLoader.ExtractAl(appPath); }
+        var attrs = ReadNavxAppAttributes(appPath);
+        string? Attr(string name) => attrs.TryGetValue(name, out var v) && !string.IsNullOrEmpty(v) ? v : null;
+
+        var json = new System.Text.Json.Nodes.JsonObject
+        {
+            ["id"] = m.AppId.ToString(),
+            ["name"] = m.Name,
+            ["publisher"] = m.Publisher,
+            ["version"] = m.Version.ToString(),
+        };
+        if (Attr("Target") is { } target) json["target"] = target;
+        if (Attr("Runtime") is { } runtime) json["runtime"] = runtime;
+        if (Attr("Platform") is { } platform) json["platform"] = platform;
+        if (Attr("ContextSensitiveHelpUrl") is { } help) json["contextSensitiveHelpUrl"] = help;
+        // `Features` and `PreprocessorSymbols` are space/comma-separated attribute lists in the
+        // NAVX manifest and arrays in app.json.
+        if (Attr("Features") is { } features)
+            json["features"] = ToJsonArray(features);
+        if (Attr("PreprocessorSymbols") is { } symbols)
+            json["preprocessorSymbols"] = ToJsonArray(symbols);
+
+        File.WriteAllText(Path.Combine(dir, "app.json"), json.ToJsonString());
+    }
+
+    private static System.Text.Json.Nodes.JsonArray ToJsonArray(string list)
+    {
+        var arr = new System.Text.Json.Nodes.JsonArray();
+        foreach (var part in list.Split(new[] { ' ', ',', ';' }, StringSplitOptions.RemoveEmptyEntries))
+            arr.Add(part);
+        return arr;
+    }
+
+    /// <summary>
+    /// The <c>&lt;App&gt;</c> element's attributes from a package's NavxManifest.xml, including
+    /// the R2R nested-package case. Returns empty rather than throwing when the manifest cannot
+    /// be read: every attribute it supplies has a working default, so an unreadable manifest
+    /// degrades the compile's fidelity but must not be confused with the app having no source
+    /// (the distinction the class header turns on).
+    /// </summary>
+    private static Dictionary<string, string> ReadNavxAppAttributes(string appPath)
+    {
+        var empty = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var xml = AppLoader.ReadNavxManifestXml(appPath);
+            if (string.IsNullOrEmpty(xml)) return empty;
+            var doc = System.Xml.Linq.XDocument.Parse(xml);
+            var app = doc.Root?.Elements().FirstOrDefault(e => e.Name.LocalName == "App");
+            if (app == null) return empty;
+            foreach (var a in app.Attributes())
+                empty[a.Name.LocalName] = a.Value;
+            return empty;
+        }
+        catch { return empty; }
+    }
+
+    private static IReadOnlyList<(string Path, string Source)> ReadSource(AppManifest m, string appPath)
+    {
+        try { return AppLoader.ExtractAlWithPaths(appPath); }
         catch (Exception ex)
         {
             // Reading the package failed — distinct from the package having no source, which
@@ -221,18 +312,29 @@ internal static class DependencyMetadataProducer
     }
 
     /// <summary>
-    /// A source file name from inside the package, reduced to something writable on this
-    /// filesystem. Collisions are made impossible by appending an index rather than by hoping
-    /// the names are unique — a package may ship two `src/Foo.al` under different folders.
+    /// A package-relative source path, made safe to write under the work directory while
+    /// KEEPING its directory structure and file name — see the extraction loop for why
+    /// flattening breaks the compile.
+    ///
+    /// <para>Package entry names are URL-encoded (`src/User%2520Details/...`), which is
+    /// harmless to write literally and is left as it is: BC resolves object references by
+    /// symbol, not by path, and decoding introduces its own escaping questions for no gain.
+    /// The one thing that must hold is that the result stays inside the work directory, so a
+    /// `..` segment is dropped rather than trusted.</para>
     /// </summary>
-    private static int _fileSeq;
-    private static string SafeFileName(string name)
+    private static string SafeRelativePath(string name)
     {
-        var baseName = Path.GetFileNameWithoutExtension(name);
-        var safe = new string(baseName.Select(c => char.IsLetterOrDigit(c) ? c : '_').ToArray());
-        if (safe.Length > 80) safe = safe[..80];
-        return $"{safe}_{System.Threading.Interlocked.Increment(ref _fileSeq)}.al";
+        var parts = name.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Where(p => p != "." && p != "..")
+            .Select(p => new string(p.Select(c =>
+                Path.GetInvalidFileNameChars().Contains(c) ? '_' : c).ToArray()))
+            .ToArray();
+        return parts.Length == 0
+            ? $"object_{System.Threading.Interlocked.Increment(ref _fileSeq)}.al"
+            : Path.Combine(parts);
     }
+
+    private static int _fileSeq;
 
     private static void Trace(string message)
     {

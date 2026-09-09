@@ -540,6 +540,48 @@ public static class AppLoader
     }
 
     /// <summary>
+    /// The raw text of a package's <c>NavxManifest.xml</c>, including the R2R nested-package
+    /// case, or null when the package carries none.
+    ///
+    /// <para>Distinct from <see cref="ReadManifest"/>, which returns the identity fields the
+    /// runtime models. This exists for a caller that needs an attribute
+    /// <see cref="AppManifest"/> does not carry — <c>Target</c>, <c>Features</c>,
+    /// <c>PreprocessorSymbols</c> — which is what reconstructing a shipped app's COMPILER
+    /// configuration takes (#3549). Adding those to <see cref="AppManifest"/> instead would
+    /// widen a record every dependency load allocates, for a question only the metadata
+    /// producer asks.</para>
+    /// </summary>
+    public static string? ReadNavxManifestXml(string appPath)
+    {
+        using var zip = OpenAppZip(appPath);
+        return ReadNavxManifestXmlFromZip(zip);
+    }
+
+    private static string? ReadNavxManifestXmlFromZip(ZipArchive zip)
+    {
+        var entry = zip.Entries.FirstOrDefault(e =>
+            string.Equals(e.FullName, "NavxManifest.xml", StringComparison.OrdinalIgnoreCase));
+        if (entry != null)
+        {
+            using var s = entry.Open();
+            using var reader = new StreamReader(s);
+            return reader.ReadToEnd();
+        }
+
+        // R2R outer .app — the manifest lives in the nested package, same shape as
+        // ReadManifestFromZip's recursion below.
+        var nested = zip.Entries.FirstOrDefault(e =>
+            e.FullName.EndsWith(".app", StringComparison.OrdinalIgnoreCase) && !e.FullName.Contains('/'));
+        if (nested == null) return null;
+
+        using var ns = nested.Open();
+        using var nms = new MemoryStream();
+        ns.CopyTo(nms);
+        using var innerZip = OpenZipFromNavx(nms.ToArray());
+        return ReadNavxManifestXmlFromZip(innerZip);
+    }
+
+    /// <summary>
     /// Core manifest lookup shared by the streamed (<see cref="OpenAppZip"/>, outer .app)
     /// and byte[]-backed (<see cref="ReadManifestFromBytes"/>, nested .app) entry points —
     /// only the ZipArchive's backing stream differs between callers.
@@ -1257,6 +1299,57 @@ public static class AppLoader
             using var s = entry.Open();
             using var reader = new StreamReader(s, Encoding.UTF8);
             result.Add((entry.Name, reader.ReadToEnd()));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// A package's `.al` under <c>src/</c>, each at its PACKAGE-RELATIVE PATH.
+    ///
+    /// <para>One deliberate difference from <see cref="ExtractAl"/>, which hands the Tier-3
+    /// source compile a flat list of object bodies and is unchanged (#3549): <b>the path, not
+    /// the base name</b>. A package ships several files with one base name — System Application
+    /// has both an <c>EmailOutbox.Page.al</c> and an <c>EmailOutbox.Table.al</c> — so writing a
+    /// flat list to a directory silently loses one of each such pair, and the lost object is
+    /// then reported as AL0185 "is missing" rather than as source the compile never saw.</para>
+    ///
+    /// <para>The <c>src/</c> filter is the same one <see cref="ExtractAl"/> applies, and it
+    /// costs nothing on Microsoft's apps: measured on BC 28.1.49838, Business Foundation keeps
+    /// 96 of 96 and System Application 1,319 of 1,319 of their `.al` under <c>src/</c>. It is
+    /// kept rather than widened because a package's other directories hold entitlements and
+    /// permission sets that reference objects from apps NOT being compiled, which turns into
+    /// AL1024 against the whole module.</para>
+    /// </summary>
+    public static IReadOnlyList<(string Path, string Source)> ExtractAlWithPaths(string appPath)
+    {
+        var bytes = File.ReadAllBytes(appPath);
+        var direct = ReadAlWithPathsFromNavx(bytes);
+        if (direct.Count > 0) return direct;
+
+        using var zip = OpenZipFromNavx(bytes);
+        var nested = zip.Entries.FirstOrDefault(e =>
+            e.FullName.EndsWith(".app", StringComparison.OrdinalIgnoreCase)
+            && !e.FullName.Contains('/'));
+        if (nested == null) return Array.Empty<(string, string)>();
+
+        using var ns = nested.Open();
+        using var nms = new MemoryStream();
+        ns.CopyTo(nms);
+        return ReadAlWithPathsFromNavx(nms.ToArray());
+    }
+
+    private static List<(string Path, string Source)> ReadAlWithPathsFromNavx(byte[] data)
+    {
+        var result = new List<(string, string)>();
+        using var zip = OpenZipFromNavx(data);
+        foreach (var entry in zip.Entries
+            .Where(e => e.FullName.StartsWith("src/", StringComparison.OrdinalIgnoreCase)
+                     && e.FullName.EndsWith(".al", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(e => e.FullName, StringComparer.Ordinal))
+        {
+            using var s = entry.Open();
+            using var reader = new StreamReader(s, Encoding.UTF8);
+            result.Add((entry.FullName, reader.ReadToEnd()));
         }
         return result;
     }
