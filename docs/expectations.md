@@ -389,7 +389,7 @@ context, and this one is not required yet, so `tools/ci-wait.py`'s
 Note what that does **not** mean. Measured against the live branch ruleset on
 2026-09-06, `main` requires **ten** contexts: `BC test matrix passed` (renamed
 by #3141 — the retired name is deliberately not written out here, because
-`BcMatrixDocumentationDriftTests.NoDocumentNamesTheRetiredAggregateCheck`
+`tools/test_matrix_docs_drift.py`'s retired-aggregate-name check
 forbids any document under `docs/` from carrying it: a doc that names a context
 which no longer reports sends an agent looking for a check that will never
 arrive, indistinguishable from one that has not started), `Tests updated`, and
