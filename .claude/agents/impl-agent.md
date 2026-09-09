@@ -14,11 +14,8 @@ label is `agent: <AGENT-ID>`. If none was provided, stop and ask.
 `<tag>` derives from the account the session is logged in as. Several loops can then run under
 one account, and several accounts against one repository, without ever colliding on a label, a
 branch name or a worktree path. A finished agent's identity is immediately free and should be
-reused; the next loop to start reclaims it.
-
-This replaces the old global `impl-N` pool, which was a counter with no owner: it drifted to
-`impl-69` and left 82 worktrees and 10 GB of disk behind, because nothing ever reclaimed a
-number. If you are handed an identity that is not namespaced, use it but say so in your report.
+reused; the next loop to start reclaims it. If you are handed an identity that is not
+namespaced, use it and say so in your report.
 
 **GitHub access:** `gh` does not exist in web/remote sessions. Detect once at the start and use `gh` or the `mcp__github__*` tools accordingly (`.claude/rules/github-access.md` has the operation→tool map). The `gh` commands below are the local-CLI spelling; with `gh`, pass `--repo StefanMaron/BusinessCentral.AL.Runner` on every command.
 
@@ -30,7 +27,9 @@ The `al-runner-tests` skill (`.claude/skills/al-runner-tests/SKILL.md`) is autho
 ```
 gh issue list --label "agent: <AGENT-ID>" --label "status: in-progress" --assignee @me --state open --repo StefanMaron/BusinessCentral.AL.Runner
 ```
-If found: fix CI failures (read job log), address review comments, rebase on conflicts.
+If found: fix CI failures (read job log), address review comments, rebase on conflicts. When
+its pull request carries a checkpoint hand-back comment (Step 3), start from the next command
+that comment names.
 If blocked: add `status: blocked` + a comment explaining the blocker, then go to Step 2.
 
 ## Step 2 — Pick up a new issue
@@ -59,42 +58,11 @@ Read it: `gh issue view <N> --repo StefanMaron/BusinessCentral.AL.Runner`.
 
 **Verify you understand the AL pattern that triggered the issue before implementing.** If the body lacks a runnable AL reproducer, a specific failing assertion, or surrounding context (codeunit/table definitions), do NOT guess: add `status: needs-input`, post a comment asking for the missing detail, remove your `agent:` claim, set back to `status: ready` only if appropriate, and skip to a different issue (`.claude/rules/no-assumption-fixes.md`).
 
-## Step 3 — Implement (strict TDD)
+### Isolate your working tree
 
-### The session scratchpad is SHARED — namespace before you write to it
+If you were not handed an isolated checkout, run `git status --short` on the tree you were given before touching git. Uncommitted changes you did not make mean another agent is mid-edit there — take a worktree rather than `git checkout -b`, which would either drag their work onto your branch or yank the tree out from under them.
 
-The scratchpad directory in your prompt looks per-agent and is not: every agent of
-this session gets the same one. Measured 2026-09-07 in one session's scratchpad —
-**200 entries, one of them namespaced.** It has published PRs #2973/#2974/#3181
-carrying another agent's body and a wrong `Closes #N`, buried a bug report inside a
-closed issue (#3073), and made a full-corpus run silently omit the tests it was
-measuring (#2980). Those are wrong answers in the shape of results, not tidiness.
-
-Get a private path rather than remembering to invent one:
-
-```bash
-p=$(tools/agent_scratchpad.py path pr-body.md --agent-id <AGENT-ID>)
-gh pr create --title "..." --body-file "$p"
-
-tools/agent_scratchpad.py dir --agent-id <AGENT-ID>       # clone corpora in here
-tools/agent_scratchpad.py check <path> --agent-id <AGENT-ID>   # exit 1 if shared
-```
-
-Never stage a PR body, clone a corpus, or write a probe bundle at a bare path in
-the scratchpad root — `body.md`, `corpus/`, `probe/` are the exact names that have
-already collided. `docs/agent-scratchpad.md` has the incident list.
-
-**And after `gh pr create`/`gh pr edit`, re-read what you published:**
-`gh pr view <N> --json closingIssuesReferences` must list exactly the issues you
-meant. That is what caught #3181 before it merged.
-
-### Isolate your working tree first
-
-If you were not handed an isolated checkout, run `git status --short` on the tree you were given before touching git. Uncommitted changes you did not make mean another agent is mid-edit there — do **not** `git checkout -b`, you will either drag their work onto your branch or yank the tree out from under them. Take a worktree instead.
-
-Your working tree is `.claude/worktrees/<AGENT-ID>-issue-<N>` — the identity **and** the issue number, mirroring the branch name `agent/<AGENT-ID>/issue-<N>`. Both halves are load-bearing, and the issue number is the one that is easy to leave out.
-
-A path built from the identity alone is the #3014 defect. Two autonomous loops claimed the slot `stma-auto-1`, so both rendered the same directory `.claude/worktrees/stma-auto-1` — while their branch names, which *do* carry the issue number, stayed distinct. A directory is what `git commit` and `git push` consult to decide which branch they act on, so the second loop's two commits (554 added lines across 9 files, belonging to a different issue) landed on the first loop's PR branch, and the Test Matrix reported **success** on the mixture. Same account on both sides, so the author field, the branch prefix and the commit shape were all identical, and nothing objected at any layer.
+Your working tree is `.claude/worktrees/<AGENT-ID>-issue-<N>` — the identity **and** the issue number, mirroring the branch name `agent/<AGENT-ID>/issue-<N>`. Two loops can hold one identity at the same time, so a path built from the identity alone renders the same directory for both; a directory is what `git commit` and `git push` consult to decide which branch they act on, so one loop's commits land on the other's PR branch and the Test Matrix reports success on the mixture (#3014). The issue number is what keeps them apart.
 
 The directory normally does not exist yet. It exists only when you are **resuming the same issue** (Step 1), because the issue number is part of the name. **Do not pick a fresh identity just to get a clean directory** — reset the one you have:
 
@@ -104,36 +72,89 @@ git fetch origin main
 # Only if the worktree already exists, i.e. you are resuming this same issue:
 git -C .claude/worktrees/<AGENT-ID>-issue-<N> status --porcelain              # must be empty
 git -C .claude/worktrees/<AGENT-ID>-issue-<N> log --oneline origin/main..HEAD # must be empty
-rm -rf .claude/worktrees/<AGENT-ID>-issue-<N> && git worktree prune   # NOT `git worktree remove` — see below
+rm -rf .claude/worktrees/<AGENT-ID>-issue-<N> && git worktree prune
 
 git worktree add .claude/worktrees/<AGENT-ID>-issue-<N> -b agent/<AGENT-ID>/issue-<N> origin/main
 cd .claude/worktrees/<AGENT-ID>-issue-<N>
 ```
 
-**`git worktree remove` refuses on every worktree in this repository.** It reports
-`fatal: working trees containing submodules cannot be moved or removed`, because each one
-carries `tests/al-language/`. `--force` does not help. Run the two checks below, then
-`rm -rf .claude/worktrees/<AGENT-ID>-issue-<N> && git worktree prune`, which is the only sequence that
-works here.
-
-**If that directory already exists and you are not resuming this issue, stop and report.** Somebody else is in it. Do not reset it, do not `cd` into it, and do not run the two checks as though it were yours to reclaim — a foreign claim looks identical whether the agent that made it is live or gone.
+`rm -rf` followed by `git worktree prune` is the only sequence that works here: `git worktree remove` answers `fatal: working trees containing submodules cannot be moved or removed` on every worktree in this repository, because each one carries `tests/al-language/`, and `--force` does not help.
 
 **Never remove a worktree without running both checks first.** An agent that crashed mid-task leaves its only copy of that work there — nowhere else. If either check prints anything, stop and report rather than discard.
 
+**If that directory already exists and you are not resuming this issue, stop and report.** Somebody else is in it. Do not reset it, do not `cd` into it, and do not run the two checks as though it were yours to reclaim — a foreign claim looks identical whether the agent that made it is live or gone.
+
 Per-issue directories do not accumulate: `tools/preflight.py --reap` removes the worktrees of MERGED pull requests once they are clean, keyed on the pull request's state rather than on the directory's name.
 
-Before your first commit, verify **both** the directory and the branch:
+Before your first commit, check the directory, the branch, and who holds the branch on the remote:
 
 ```
 git rev-parse --show-toplevel        # the worktree you meant to be in
 git rev-parse --abbrev-ref HEAD      # MUST equal agent/<AGENT-ID>/issue-<N>
+gh pr list --state open --head agent/<AGENT-ID>/issue-<N> --json number,title,isDraft --repo StefanMaron/BusinessCentral.AL.Runner
 ```
 
-The second line is the one that catches #3014, and it catches it even if the first passes. That agent was in a checkout whose HEAD was `agent/stma-auto-1/issue-3005` while it was working issue 3011; the directory looked right to it, and the branch did not match its issue. **A branch that names an issue other than yours is not yours to commit to** — stop and report, whatever the prefix says.
+A branch naming an issue other than yours belongs to another task — stop and report, whatever the prefix says: `agent/<AGENT-ID>/` records who created a branch, and a second agent committing there is a push no check refuses.
 
-Note what that prefix does and does not mean. `agent/<AGENT-ID>/` records who **created** a branch, not who may write to it, and nothing enforces it: a second agent committing there is a normal push that no check refuses. It is a naming convention, not an ownership boundary, and today it was used as one on `agent/impl-4/issue-2771` by two different writers. The assignee locks an *issue*; nothing plays that role for a *branch*.
+The third command has two outcomes. Empty, or the draft you opened for this issue — commit. A PR you did not open — stop, comment on the issue naming that PR number and that it already holds your branch, and hand back (Step 5).
 
 Never `git add -A` / `git add .` in a tree that might carry another agent's edits — stage only the files you changed, by name.
+
+### Finish the claim with a draft PR
+
+Other loops read a claim as a pull request, so open one before you implement. From the worktree:
+
+```
+git commit --allow-empty -m "chore(claim): start work on #<N>"
+git push -u origin agent/<AGENT-ID>/issue-<N>
+gh pr create --draft --title "<type>(<area>): <issue title>" --label "agent: <AGENT-ID>" --body "Closes #<N>
+
+Claimed by <AGENT-ID>; draft until the fix is pushed." --repo StefanMaron/BusinessCentral.AL.Runner
+```
+
+The claim is complete when
+
+```
+gh pr list --state open --head agent/<AGENT-ID>/issue-<N> --repo StefanMaron/BusinessCentral.AL.Runner
+```
+
+returns that pull request. Ask for the head branch with `--head`, which reads the pull-request list; `--search "head:<branch>"` reads the search index, which came back empty for a PR opened seconds earlier (#3717). Step 4 rewrites the body and marks the draft ready.
+
+## Step 3 — Implement (strict TDD)
+
+### Namespace every path you write to
+
+The scratchpad directory in your prompt is shared — every agent of this session gets the same
+one — and a path built from your identity alone is shared again whenever two loops hold that
+identity. Either collision publishes a wrong answer in the shape of a result — a PR body
+carrying another agent's `Closes #N`, a corpus run that omitted the tests it was measuring
+(`docs/agent-scratchpad.md`).
+
+Generate a session token once, before anything else, and put it in the first line of your
+report:
+
+```bash
+python -c "import uuid;print(uuid.uuid4().hex[:8])"
+```
+
+Shell state does not survive between tool calls, so copy the printed value and write it
+literally wherever `<SESSION>` appears. Name every scratch directory, `--cache` directory,
+scratch clone and container `<AGENT-ID>-issue-<N>-<SESSION>`, and ask the scratchpad tool for
+paths under that same name:
+
+```bash
+p=$(tools/agent_scratchpad.py path pr-body.md --agent-id <AGENT-ID>-issue-<N>-<SESSION>)
+gh pr edit <pr-N> --body-file "$p" ...     # Step 4, in this same call: $p is gone by the next one
+
+tools/agent_scratchpad.py dir --agent-id <AGENT-ID>-issue-<N>-<SESSION>            # clone corpora in here
+tools/agent_scratchpad.py check <path> --agent-id <AGENT-ID>-issue-<N>-<SESSION>   # exit 1 if shared
+```
+
+Done when every path you write to carries the issue number: the worktree as
+`<AGENT-ID>-issue-<N>`, everything else as `<AGENT-ID>-issue-<N>-<SESSION>`.
+
+**After `gh pr create`/`gh pr edit`, re-read what you published:**
+`gh pr view <N> --json closingIssuesReferences` must list exactly the issues you meant.
 
 ### RED → GREEN
 
@@ -159,11 +180,9 @@ Not scope creep: fixing one of N instances closes the issue while leaving the bu
 
 **The same three questions apply to the open-issue queue, not just to the code** — scan it for the symbol, file and subsystem your fix will land in, and fold in any issue whose fix lands in the same file, each with its own RED → GREEN. That is one PR closing several issues, not several claims. `.claude/rules/batch-sibling-issues-by-file.md` has the boundaries and why there is no fixed cap.
 
-In one day this step found: a sibling `_parsedPages` gap in `GetInsertAllowedForPage`, called at every TestPage construction site (#2088); five more call sites doing the same unrooted `Path.Combine` on a home directory (#2114); a `--help` section listing a shipped feature as unimplemented (#2118); a wrong statement-attribution bug an existing test had encoded as correct (#2074); a `WorkDate` regression that would have broken nearly every `execute` call (#2117). CI was green in all five and would have stayed green.
-
 ### Where the prose goes
 
-Measured on `AlRunner/**/*.cs`, 295 files with `obj/` and `bin/` excluded: **54,520 comment lines against 63,256 code lines — 46% of every non-blank line.** Over the hundred files added since #3260 was filed, comment prose grew about twice as fast as code. Finding and reading code is already the largest token cost in this repository (`CLAUDE.md`), and every read pays for the prose sitting in it.
+Comment prose is about 46% of every non-blank line under `AlRunner/`, and finding and reading code is already the largest token cost in this repository (`CLAUDE.md`), so every read pays for it.
 
 This is not "write fewer comments", and several rules require one: `loud-failures.md` requires the *observably equivalent* justification in a code comment on every new patch under `AlRunner/Patches/`, and `precompiled-dll-respect.md`'s token-shift constraint belongs at the Cecil call site that could violate it. Those stay. What changes is where everything else goes.
 
@@ -178,7 +197,7 @@ This is not "write fewer comments", and several rules require one: `loud-failure
 
 Ask it of yourself and you will answer "it stays" — everyone does about their own prose. The question is written about the *reader* so that a reviewer, who did not write it, can answer it too.
 
-**The trigger is a comment block over ten lines.** Blocks longer than that hold 60% of all comment mass, and they hold it in `///` doc comments as much as in `//` ones — 12,892 of 21,013 doc-comment lines against 19,343 of 32,763 plain ones. Moving an essay into XML doc syntax does not make it shorter. Under ten lines, just write it; over ten, answer the question above and say in one line of the PR body where you put it.
+**The trigger is a comment block over ten lines.** Blocks longer than that hold 60% of all comment mass, in `///` doc comments as much as in `//` ones: moving an essay into XML doc syntax does not make it shorter. Under ten lines, just write it; over ten, answer the question above and say in one line of the PR body where you put it.
 
 Three shapes are the wrong place whatever their length:
 
@@ -198,7 +217,7 @@ General rule: `.claude/rules/local-test-scope.md`. Concretely:
 2. **A FILTERED `AlRunner.Tests` run** over the surface you changed: `dotnet test AlRunner.Tests --filter FullyQualifiedName~<YourTestClass>`. Seconds to a couple of minutes, and where a runtime/compiler regression shows up first.
 3. **The one AL bundle your change plausibly affects**, if there is an obvious one. Not all 32.
 
-**Do not run the whole `dotnet test AlRunner.Tests` as a matter of routine.** This line used to call it "cheap relative to an AL suite"; measured, it is **15 minutes on a quiet machine and 31 on a loaded one**, and that sentence is why agents ran it four times in a two-hour task and spent half the task waiting. The cost is concentrated: 1231 of 1435 tests finish under a second and the top 50 are 64% of all test time, because they spawn the runner as a subprocess. A filter naming your class skips essentially all of it.
+**Do not run the whole `dotnet test AlRunner.Tests` as a matter of routine.** It takes 15 minutes on a quiet machine and 31 on a loaded one, and the cost is concentrated in the 50 tests that spawn the runner as a subprocess — 64% of all test time. A filter naming your class skips essentially all of it.
 
 Then push. A pull request runs **three** BC legs — 27.0, 27.5 and 28.4, from `.github/pr-bc-versions.txt` — not the eight in `.github/bc-versions.txt`; those eight run on push to `main`, on `main-verdict-floor.yml`'s 30-minute cadence, and on the release path (#3141, #3200). Every leg runs the corpus, all of `runner-extras`, the xmlport isolation guard and server-mode. The full `AlRunner.Tests` suite runs only on the unit legs — the newest minor of each major, 27.5 and 28.4 — two legs of whichever matrix ran, not the whole matrix (#2674). All of it in parallel with you rather than in front of you.
 
@@ -207,6 +226,16 @@ Then push. A pull request runs **three** BC legs — 27.0, 27.5 and 28.4, from `
 **Run wider anyway** (judgement, not routine) when you changed the shared compile/dispatch path with a broad blast radius — `BcCompiler`, `CodeunitEventDispatcher`, `RecordPatches`, the loader/cache layer — or when CI came back red and iterating locally beats burning matrix runs guessing.
 
 **Never** report suite results in a PR body that you did not actually run in that state. An unrun claim is worse than no claim.
+
+### The 150-call budget and its checkpoint
+
+Count your tool calls from the start of the task. At 150, checkpoint and stop:
+
+1. Commit what exists — a `wip:` subject is right for an unfinished fix — and push.
+2. Comment once on your pull request: what is done, what remains, and the next command to run.
+3. Return, saying you stopped at the budget. The invoking session resumes you or dispatches a fresh agent, and either starts from that comment.
+
+A checkpoint hand-back is done when the comment is on the pull request and `git status` shows nothing unpushed.
 
 ### Repeat-iteration runs (flakes): cheap "before", expensive "after"
 
@@ -255,33 +284,35 @@ Required doc updates:
 - `README.md`, `PrintGuide()` in `AlRunner/Program.cs`, `docs/limitations.md`, `docs/scope.md` — only if behaviour changes.
 - Never edit `CHANGELOG.md` (`.claude/rules/no-changelog-edits.md`).
 
-## Step 4 — Open PR
-```
-gh pr create --title "<title>" --body "Closes #<N>
+## Step 4 — Rewrite the body and mark the draft ready
 
-<description>" --repo StefanMaron/BusinessCentral.AL.Runner
-gh pr edit <pr-N> --add-label "agent: <AGENT-ID>" --add-label "status: review-ready" --repo StefanMaron/BusinessCentral.AL.Runner
 ```
+gh pr edit <pr-N> --body-file <the scratchpad path from Step 3> --repo StefanMaron/BusinessCentral.AL.Runner
+gh pr ready <pr-N> --repo StefanMaron/BusinessCentral.AL.Runner
+gh pr edit <pr-N> --add-label "status: review-ready" --repo StefanMaron/BusinessCentral.AL.Runner
+```
+
+The rewritten body keeps `Closes #<N>` and replaces the draft's placeholder line with the full description: what changed, what the RED → GREEN proved, and the three "fix the shape" answers.
 
 ## Step 5 — Hand the PR back, do NOT wait for CI
 
-**"PR opened and pushed" IS your deliverable.** Open the PR, label it, and return
-immediately. Do not call `tools/ci-wait.py`. Do not poll `gh pr checks`. Do not wait for the
-run to finish, and do not merge.
+**A draft marked ready IS your deliverable.** Mark it, label it, and return immediately. Do
+not call `tools/ci-wait.py`. Do not poll `gh pr checks`. Do not wait for the run to finish, and
+do not merge.
 
-Waiting costs an agent slot for 15-25 minutes while it watches a run it cannot influence.
-The coordinator watches CI instead, and will either resume you or dispatch a fresh agent if
-your PR goes red — so a failure is never lost by returning early.
+The coordinator watches CI and resumes you or dispatches a fresh agent if the PR goes red.
 
-Before you return, confirm all three and state them in your report:
+Before you return, confirm all four and state them in your report:
 
 1. The branch is pushed (`git push` succeeded; `git status` shows nothing unpushed).
-2. The PR exists and its body contains `Closes #<N>`.
-3. The PR's head SHA equals your local `HEAD` — so whatever CI reports later is measuring
+2. The PR's body contains `Closes #<N>`.
+3. `isDraft` is `false` — a finished fix hands back ready, a checkpoint (Step 3) hands back
+   still draft; say which.
+4. The PR's head SHA equals your local `HEAD` — so whatever CI reports later is measuring
    your actual work.
 
 ```
-gh pr view <pr-N> --json number,headRefOid,mergeStateStatus --repo StefanMaron/BusinessCentral.AL.Runner
+gh pr view <pr-N> --json number,headRefOid,isDraft,mergeStateStatus --repo StefanMaron/BusinessCentral.AL.Runner
 git rev-parse HEAD
 ```
 
@@ -290,10 +321,11 @@ with `main`, not a CI problem — rebase, resolve, re-run your targeted tests (n
 stale test result across a rebase), force-push with `--force-with-lease`, and re-check the
 SHA before returning.
 
-**If `--force-with-lease` is rejected, that is the finding — never force past it.** The rejection means the remote moved since you last fetched, so somebody else wrote to your branch, and the lease is the only thing standing between their work and your overwrite. Twice on 2026-09-06 it was the sole reason work survived: once where the repository owner had pushed to a corpus branch 44 minutes earlier, once where two agents shared a branch. Fetch, read what arrived with `git log @{u}...HEAD`, and report it. Do not reach for `--force`.
+**If `--force-with-lease` is rejected, that is the finding — never force past it.** The rejection means the remote moved since you last fetched, so somebody else wrote to your branch, and the lease is the only thing standing between their work and your overwrite. Fetch, read what arrived with `git log @{u}...HEAD`, and report it. Reach for `git fetch`, never for `--force`.
 
-Then report: the issue, the PR number, the head SHA, what you changed, what the RED → GREEN
-proved, and anything you deliberately left out. Return. Do not claim another issue.
+Then report, starting with your session token: the issue, the PR number, the head SHA, your
+tool-call count, what you changed, what the RED → GREEN proved, and anything you deliberately
+left out. Return. Do not claim another issue.
 
 **The no-backgrounding rule still applies to everything you start yourself** — builds,
 `dotnet test`, corpus runs (`.claude/rules/no-backgrounding-long-commands.md`). Never end a
@@ -311,7 +343,7 @@ Full detail in `.claude/rules/` (`branch-and-pr.md`, `al-language-submodule.md`,
 - Isolate your work in a dedicated worktree/branch — never `git checkout -b` in a shared tree that may carry another agent's uncommitted edits, never `git add -A`/`git add .` there, never `git stash`.
 - Object IDs unique within the `app.json` whose `idRanges` you allocate from — check the range and check for in-flight collisions before creating AL files.
 - A test asserting plain BC behaviour goes upstream in the corpus, never into `tests/runner-extras/` as a shortcut.
-- One issue at a time. Open and push the PR, then return — do NOT wait on CI or merge; the coordinator does both.
+- One issue at a time. Open the draft at claim time, mark it ready once the fix is pushed, then return — do NOT wait on CI or merge; the coordinator does both.
 - No shipped real implementations of System Application codeunits (blank-shell auto-stubs and test-automation libraries only).
 - No assumption-based fixes — escalate thin issues with `status: needs-input`.
 - Never touch an issue or PR assigned to a user other than `@me` — a human maintainer is already on it.

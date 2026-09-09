@@ -11,7 +11,11 @@ account**. Three signals, and only one of them answers the question:
 |---|---|---|
 | assignee | that *somebody* claimed it | **who** — every loop is the same login |
 | `agent: <tag>` label | which loop *last wrote a label* | whether that loop is live, finished, or dead |
-| open PR with `Closes #N` | that work exists **and is real** | — |
+| open **draft** PR with `Closes #N` | that a loop claimed it, minutes after it claimed | whether the fix is written yet |
+| open **ready** PR with `Closes #N` | that work exists **and is real** | — |
+
+The draft is what makes a claim visible that early: an implementation agent opens one as the
+last act of claiming (`.claude/agents/impl-agent.md`, Step 2).
 
 ## The check
 
@@ -19,18 +23,20 @@ Per issue, at claim time:
 
 ```bash
 gh pr list --repo StefanMaron/BusinessCentral.AL.Runner --state open --limit 100 \
-  --json number,closingIssuesReferences,labels \
-  --jq '.[] | select(.closingIssuesReferences[]?.number == <N>) | {number, labels: [.labels[].name]}'
+  --json number,isDraft,closingIssuesReferences,labels \
+  --jq '.[] | select(.closingIssuesReferences[]?.number == <N>) | {number, isDraft, labels: [.labels[].name]}'
 ```
 
-Non-empty → in progress. Pick something else.
+Non-empty → in progress, draft or ready alike. Pick something else. `--state open` on its own
+returns both kinds, which is the point — the draft is the claim this lookup is for, and
+`isDraft` tells you which kind you found.
 
 **A coordinator dispatching several agents builds the map once per cycle**, not once per
 issue — one call, then check every candidate against it:
 
 ```bash
 gh pr list --repo StefanMaron/BusinessCentral.AL.Runner --state open --limit 100 \
-  --json number,closingIssuesReferences,labels
+  --json number,isDraft,closingIssuesReferences,labels
 ```
 
 `closingIssuesReferences` is GitHub's own parse of the PR, so it reflects what will actually
