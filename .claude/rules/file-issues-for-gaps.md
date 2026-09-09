@@ -17,4 +17,4 @@ If AL code fails to run and the reason is **not** in `docs/limitations.md`, that
    ```
    A title equal to yours, by your login, created in the last ten minutes is the issue you just filed — `gh issue create` reports a timeout on a call that already created it. Comment there and stop.
 
-Done when the step-1 search returns a title equal to yours exactly once.
+Done when you have commented on one issue whose title equals yours (the oldest, when several exist; name the others in that comment), or created one.

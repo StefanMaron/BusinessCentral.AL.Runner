@@ -40,7 +40,7 @@ gh issue list --label "status: ready" --state open --limit 500 --json number,tit
 
 **Skip any issue assigned to a user other than the bot's own account (`@me`)** — this is a public repo and a non-@me assignee means a human is already handling it. Eligible: no assignee, or exactly `@me`.
 
-Claim the oldest eligible `status: ready` issue with no `agent:` label (oldest `createdAt`; `orchestrating-a-session` § The ready queue) — label **and** assign in one shot:
+Claim the eligible `status: ready` issue with no `agent:` label that the priority order in `orchestrating-a-session` selects (measured failure count, a red `main` behind it); when nothing separates two, the older `createdAt` (§ The ready queue) — label **and** assign in one shot:
 ```
 gh issue edit <N> --add-label "agent: <AGENT-ID>" --add-label "status: in-progress" --remove-label "status: ready" --add-assignee @me --repo StefanMaron/BusinessCentral.AL.Runner
 ```

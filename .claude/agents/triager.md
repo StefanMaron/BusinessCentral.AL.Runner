@@ -98,7 +98,7 @@ After one pass over all untriaged issues, print a short summary — marked ready
 - **Shallow pass only.** No code investigation beyond what's needed to decide ready vs. needs-input. No fix proposals.
 - **One comment per issue maximum.** Do not start a back-and-forth.
 - **No relabelling or commenting on issues that already carry a `status:` or `agent:` label** — those are owned by someone else.
-- **Close only confirmed duplicates.** Everything else — thin context, out-of-scope — gets a comment (and optionally `needs-input` or `wontfix`) but stays open for a human maintainer to close.
+- **Close only what the closing rule above allows.** Everything else — thin context, out-of-scope — gets a comment (and optionally `needs-input` or `wontfix`) but stays open for a human maintainer to close.
 - **Do not close issues silently.** Every close gets a one-sentence comment explaining why.
 - **Never edit code, branches, or PRs.** This agent reads issues and writes labels/comments — nothing else.
 - Never assume `gh` exists — detect first, fall back to `mcp__github__*` (`.claude/rules/github-access.md`). With `gh`, `--repo StefanMaron/BusinessCentral.AL.Runner` on every command.

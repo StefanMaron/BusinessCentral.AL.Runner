@@ -309,7 +309,7 @@ rather than trusting the earlier verdict. `git merge-tree` only answers the text
 count-baseline will conflict; merge one, then tell the other to rebase and *re-measure*
 rather than carrying its old number forward.
 
-**Expectation-manifest drift is dispatched from here, and only from here.** A known-gap entry left behind after its issue closed, or a red `main` from manifest drift, gets one implementation agent per drift, with the manifest entry's name in the issue title, after `gh pr list --state open --search "<entry name> in:title" --json number` returns nothing; when it returns a PR, that PR is the fix in flight. Done when one open PR names the entry. An implementation agent that finds a drift comments and keeps its own task (`.claude/agents/impl-agent.md`).
+**Expectation-manifest drift is dispatched from here, and only from here.** A known-gap entry left behind after its issue closed, or a red `main` from manifest drift, gets one implementation agent per drift, briefed to carry the manifest entry's name in both the issue title and the PR title, after `gh pr list --state open --search "<entry name> in:title" --json number,title` returns no title containing the entry; when it returns one, that PR is the fix in flight. Done when exactly one open PR title names the entry. An implementation agent that finds a drift comments and keeps its own task (`.claude/agents/impl-agent.md`).
 
 ## Measurement rules
 
@@ -434,7 +434,8 @@ gh issue list --repo StefanMaron/BusinessCentral.AL.Runner --label "status: read
 ```
 
 Every cycle summary carries three numbers from it: how many issues are ready, how many were
-created more than seven days ago, and the number of the oldest. Done when those three appear in
+created more than seven days ago, and the number of the oldest; 500 rows returned means the
+first two are lower bounds, and the summary says so. Done when those three appear in
 the summary.
 
 The queue is shared, and age is the tie-break. When nothing else orders it — no measured failure
