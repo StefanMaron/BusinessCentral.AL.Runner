@@ -867,7 +867,7 @@ def pr_map(slug: Optional[str]) -> tuple[dict, str]:
     if not slug or not shutil.which("gh"):
         return {}, "unavailable"
     r = run_retry(["gh", "pr", "list", "--repo", slug, "--state", "all", "--limit", "300",
-                   "--json", "number,headRefName,state,headRefOid,mergedAt,labels"], timeout=90)
+                   "--json", "number,headRefName,state,headRefOid,mergedAt"], timeout=90)
     if not r.ok:
         return {}, f"gh pr list failed: {(r.err or r.out).strip()[:200]}"
     try:
@@ -925,7 +925,8 @@ def agent_label(pr: Optional[dict]) -> Optional[str]:
 
 
 def judge_branch_ownership(*, cwd: str, branch: Optional[str], pr: Optional[dict],
-                           agent_id: Optional[str]) -> CheckResult:
+                           agent_id: Optional[str],
+                           lookup_status: str = "ok") -> CheckResult:
     """Whether the branch you are standing on already heads another loop's PR (#3707).
 
     The `agent:` label on the OPEN pull request is the only signal here that names
@@ -949,6 +950,14 @@ def judge_branch_ownership(*, cwd: str, branch: Optional[str], pr: Optional[dict
             summary="detached HEAD in an agent worktree - no branch, so no pull request "
                     "to compare against",
             remedy="Check out the branch this worktree belongs to before working in it.")
+    if lookup_status != "ok":
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary=f"the open pull requests for {branch} could not be read "
+                    f"({lookup_status}), so whether another loop owns this branch is "
+                    f"unmeasured",
+            remedy="Authenticate gh (`gh auth status`) and re-run; an unreadable pull-request "
+                   "list is not evidence that the branch is free.")
     state = str((pr or {}).get("state") or "").upper()
     if not pr or state != "OPEN":
         return CheckResult(name=name, status="PASS", command=cmd,
@@ -983,16 +992,42 @@ def judge_branch_ownership(*, cwd: str, branch: Optional[str], pr: Optional[dict
                f"elsewhere.")
 
 
-def check_branch_ownership(repo: str, prs: dict, agent_id: Optional[str],
-                           cwd: Optional[str] = None) -> CheckResult:
+def open_pr_for_branch(slug: Optional[str], branch: str) -> tuple[Optional[dict], str]:
+    """The OPEN pull request whose head is `branch`, asked for by name.
+
+    Deliberately not `pr_map()`: that is `--state all --limit 300` over a
+    repository with thousands of pull requests, so an open PR older than the 300
+    newest is simply absent from it -- and absent reads as "nobody owns this
+    branch", the false PASS this check exists to prevent. `--head` reads the
+    pull-request list rather than the search index, which is why a PR opened
+    seconds earlier is found (#3717).
+    """
+    if not slug:
+        return None, "no repository slug"
+    if not shutil.which("gh"):
+        return None, "gh is not installed"
+    r = run_retry(["gh", "pr", "list", "--repo", slug, "--state", "open",
+                   "--head", branch, "--json", "number,state,labels"], timeout=60)
+    if not r.ok:
+        return None, f"gh pr list failed: {(r.err or r.out).strip()[:160]}"
+    try:
+        prs = json.loads(r.out)
+    except ValueError:
+        return None, "gh pr list returned unparseable JSON"
+    return (prs[0] if prs else None), "ok"
+
+
+def check_branch_ownership(repo: str, agent_id: Optional[str],
+                           cwd: Optional[str] = None, lookup=None) -> CheckResult:
     here = cwd or os.getcwd()
     r = run(["git", "-C", here, "rev-parse", "--abbrev-ref", "HEAD"], timeout=30)
     branch = r.out.strip() if r.ok else ""
     if branch in ("HEAD", ""):
-        branch = None
-    return judge_branch_ownership(cwd=here, branch=branch,
-                                  pr=prs.get(branch) if branch else None,
-                                  agent_id=agent_id)
+        return judge_branch_ownership(cwd=here, branch=None, pr=None, agent_id=agent_id)
+    ask = lookup or (lambda b: open_pr_for_branch(repo_slug(repo), b))
+    pr, status = ask(branch)
+    return judge_branch_ownership(cwd=here, branch=branch, pr=pr, agent_id=agent_id,
+                                  lookup_status=status)
 
 
 def check_worktrees(rows: list[tuple], repo: str, pr_status: str) -> CheckResult:
@@ -2890,7 +2925,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         check_headroom(scratch_root, repo, mounts, mem, per_worker, per_worker_label),
         check_budget(skip_fallback=args.skip_budget_fallback),
         check_worktrees(rows, repo, pr_status),
-        check_branch_ownership(repo, prs, agent_id),
+        check_branch_ownership(repo, agent_id),
         check_stale_scratch(scratch_root, rows, args.stale_hours),
         classify_checkout(lags),
         check_push(repo, identity),

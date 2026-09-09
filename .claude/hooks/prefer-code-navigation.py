@@ -30,10 +30,18 @@ navigation tools answer better than the shell does, and it has two strengths
     advisory, exit 0, because grep over the C# tree is sometimes exactly right
     there and a hook that blocks legitimate work gets switched off wholesale.
 
-A context is an agent context when AL_RUNNER_AGENT_ID / CLAUDE_AGENT_ID is set,
-or when the payload's cwd or the command itself names a `.claude/worktrees/`
-path. AL_RUNNER_HOOK_CONTEXT=coordinator overrides all of that, and a
-`# hook:allow-grep` marker in the command downgrades one single call.
+The context comes from the payload's own `agent_type`, measured on harness
+2.1.266: a dispatched subagent's payload carries `agent_type: "impl-agent"` and a
+`cwd` of the PROJECT ROOT -- not of the agent's worktree -- so a cwd test alone
+would never fire for the agents this hook is for. `AL_RUNNER_AGENT_ID` /
+`CLAUDE_AGENT_ID`, and a `.claude/worktrees/` path in the cwd or the command,
+are kept as secondary signals for a loop that runs as its own session.
+
+`AL_RUNNER_HOOK_CONTEXT=coordinator` downgrades a session to advisory but
+deliberately does NOT outrank `agent_type`: the environment is inherited by
+every subagent the session dispatches, so letting it win would disarm the hook
+for exactly the agents it guards. The per-call escape is a `# hook:allow-grep`
+marker in the command, which always wins.
 
 Tested by tools/test_prefer_code_navigation.py (firing) and
 tools/test_agent_workflow_hooks.py (blocking, context and the escape hatch).
@@ -47,6 +55,9 @@ import sys
 BLOCK = 2
 ALLOW = 0
 
+# The payload's own answer, measured on harness 2.1.266. `orchestrator` is not
+# here: the coordinator's own greps stay advisory.
+BLOCKING_AGENT_TYPES = {"impl-agent", "reviewer"}
 # Both separators, because the cwd arrives Windows-shaped on a Windows box and
 # POSIX-shaped in CI, and the same hook has to recognise each.
 WORKTREE_PATH = re.compile(r'[\\/]\.claude[\\/]worktrees[\\/]')
@@ -95,12 +106,15 @@ MESSAGE = (
 )
 
 
-def is_agent_context(cwd: str, cmd: str, env) -> bool:
+def is_agent_context(payload: dict, cmd: str, env) -> bool:
     """Whether this call is an impl or reviewer agent's, so the hook blocks."""
+    if str(payload.get("agent_type") or "").strip().lower() in BLOCKING_AGENT_TYPES:
+        return True
     if (env.get("AL_RUNNER_HOOK_CONTEXT") or "").strip().lower() == "coordinator":
         return False
     if (env.get("AL_RUNNER_AGENT_ID") or env.get("CLAUDE_AGENT_ID") or "").strip():
         return True
+    cwd = payload.get("cwd") or ""
     return bool(WORKTREE_PATH.search(cwd) or WORKTREE_PATH.search(cmd))
 
 
@@ -122,7 +136,7 @@ def main() -> int:
     if NOT_A_SYMBOL_LOOKUP.search(cmd):
         return ALLOW
 
-    blocking = (is_agent_context(payload.get("cwd") or "", cmd, os.environ)
+    blocking = (is_agent_context(payload, cmd, os.environ)
                 and not ALLOW_MARKER.search(cmd))
     print((BLOCK_HEADER if blocking else ADVISORY_HEADER) + MESSAGE, file=sys.stderr)
     return BLOCK if blocking else ALLOW

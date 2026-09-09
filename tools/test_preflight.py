@@ -2034,6 +2034,16 @@ _nolabel = pf.judge_branch_ownership(cwd=_WT, branch="agent/fbk-3/issue-3707",
 check("an open PR carrying no agent: label is undetermined, not a PASS",
       _nolabel.status == "WARN", _nolabel.summary)
 
+# The lookup itself failing must not read as "the branch is free" -- an
+# unauthenticated gh, or a repository whose open PRs could not be listed, is the
+# third state and not a PASS.
+_blind = pf.judge_branch_ownership(cwd=_WT, branch="agent/fbk-3/issue-3707", pr=None,
+                                   agent_id="fbk-3", lookup_status="gh is not installed")
+check("an unreadable pull-request list is undetermined, not a PASS",
+      _blind.status == "WARN", _blind.summary)
+check("...and it says the list could not be read", "could not be read" in _blind.summary,
+      _blind.summary)
+
 _detached = pf.judge_branch_ownership(cwd=_WT, branch=None, pr=None, agent_id="fbk-3")
 check("a detached HEAD in a worktree is undetermined, not a PASS",
       _detached.status == "WARN", _detached.summary)
@@ -2052,16 +2062,31 @@ try:
     _wt_path = os.path.join(_own_tmp, ".claude", "worktrees", "fbk-9-issue-77")
     _g(_own_tmp, "worktree", "add", "-q", "-b", "agent/fbk-9/issue-77", _wt_path)
 
-    _prs = {"agent/fbk-9/issue-77": _pr(4242, ["agent: fbk-1"])}
-    _res = pf.check_branch_ownership(_own_tmp, _prs, agent_id="fbk-9", cwd=_wt_path)
+    _asked = []
+
+    def _lookup(branch):
+        _asked.append(branch)
+        return (_pr(4242, ["agent: fbk-1"]), "ok")
+
+    _res = pf.check_branch_ownership(_own_tmp, agent_id="fbk-9", cwd=_wt_path,
+                                     lookup=_lookup)
     check("the real worktree's branch is read and refused for the right PR",
           _res.status == "FAIL" and "4242" in _res.summary, _res.summary)
-    _res_ok = pf.check_branch_ownership(_own_tmp, _prs, agent_id="fbk-1", cwd=_wt_path)
+    check("...and the pull request was asked for BY BRANCH, not looked up in a window",
+          _asked == ["agent/fbk-9/issue-77"], str(_asked))
+    _res_ok = pf.check_branch_ownership(_own_tmp, agent_id="fbk-1", cwd=_wt_path,
+                                        lookup=_lookup)
     check("...and the loop that owns that PR may stand in it",
           _res_ok.status == "PASS", _res_ok.summary)
-    _res_main = pf.check_branch_ownership(_own_tmp, _prs, agent_id="fbk-9", cwd=_own_tmp)
+    _res_main = pf.check_branch_ownership(_own_tmp, agent_id="fbk-9", cwd=_own_tmp,
+                                          lookup=_lookup)
     check("...while the main checkout of the same repository is a PASS",
           _res_main.status == "PASS", _res_main.summary)
+    _res_blind = pf.check_branch_ownership(
+        _own_tmp, agent_id="fbk-9", cwd=_wt_path,
+        lookup=lambda b: (None, "gh pr list failed: network unreachable"))
+    check("...and a failed lookup from the worktree is a WARN, never a PASS",
+          _res_blind.status == "WARN", _res_blind.summary)
 finally:
     shutil.rmtree(_own_tmp, ignore_errors=True)
 

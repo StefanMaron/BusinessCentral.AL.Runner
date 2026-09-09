@@ -44,13 +44,16 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 
 
 def fire(hook: str, command: str, *, background: bool = False, cwd: str = "",
-         tool: str = "Bash", env_extra: dict | None = None) -> subprocess.CompletedProcess:
+         tool: str = "Bash", env_extra: dict | None = None,
+         agent_type: str = "") -> subprocess.CompletedProcess:
     tool_input: dict = {"command": command}
     if background:
         tool_input["run_in_background"] = True
     payload = {"tool_name": tool, "tool_input": tool_input}
     if cwd:
         payload["cwd"] = cwd
+    if agent_type:
+        payload["agent_type"] = agent_type
     env = dict(os.environ)
     # The invoking session's own identity must never leak into a case asserting
     # what happens WITHOUT one.
@@ -164,6 +167,22 @@ NAV_BLOCKED = [
 for name, cmd in NAV_BLOCKED:
     ok, d = blocks(NAV, cmd, "context-pack.py", cwd=WORKTREE)
     check(name, ok, d)
+
+# The signal the payload itself carries, measured on harness 2.1.266: a dispatched
+# subagent's payload has agent_type="impl-agent" and a cwd of the PROJECT ROOT, so
+# a cwd test alone would never fire for the agents this hook exists for.
+for _t in ("impl-agent", "reviewer"):
+    ok, d = blocks(NAV, "cat AlRunner/BcRuntime.cs", "context-pack.py",
+                   cwd=MAIN_CHECKOUT, agent_type=_t)
+    check("agent_type=" + _t + " blocks even from the project root", ok, d)
+
+r = fire(NAV, "cat AlRunner/BcRuntime.cs", cwd=MAIN_CHECKOUT, agent_type="impl-agent",
+         env_extra={"AL_RUNNER_HOOK_CONTEXT": "coordinator"})
+check("a coordinator env var inherited by a dispatched agent does NOT disarm the block",
+      r.returncode == 2, f"exit={r.returncode}")
+
+r = fire(NAV, "cat AlRunner/Program.cs", cwd=MAIN_CHECKOUT, agent_type="orchestrator")
+check("agent_type=orchestrator stays advisory", r.returncode == 0, f"exit={r.returncode}")
 
 ok, d = blocks(NAV, "cat AlRunner/BcRuntime.cs", "context-pack.py",
                env_extra={"AL_RUNNER_AGENT_ID": "fbk-9"})

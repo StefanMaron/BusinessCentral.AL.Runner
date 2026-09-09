@@ -64,10 +64,9 @@ tools/context-pack.py <Name> [<Name>...]   # definition + source + call sites fo
 
 Prefer it whenever you have more than one symbol to resolve; that is the whole point of it.
 A `PreToolUse` hook (`.claude/hooks/prefer-code-navigation.py`) acts when a shell read or
-search targets `AlRunner/**/*.cs`: it **blocks** in an impl or reviewer context (a
-`.claude/worktrees/` cwd, or `AL_RUNNER_AGENT_ID` set) and stays an advisory reminder
-elsewhere, so the coordinator keeps grep (#3707). Append `# hook:allow-grep` to override one
-call. Grep stays right everywhere for logs, JSON, TRX, markdown and `.al` sources.
+search targets `AlRunner/**/*.cs`: it **blocks** when the PreToolUse payload's `agent_type` is
+`impl-agent` or `reviewer` and stays an advisory reminder elsewhere, so the coordinator keeps
+grep (#3707). Append `# hook:allow-grep` to override one call. Grep stays right everywhere for logs, JSON, TRX, markdown and `.al` sources.
 
 **1. Knowledge graph — this is the one a subagent has.**
 
