@@ -48,8 +48,9 @@ Step 3 is the one that is never optional. Full detail, including escape hatches:
 **No local BC container is not a blocker** — open the corpus PR and let its CI adjudicate (step
 2). **No verdict available at all** (corpus CI broken, BC legs failing for unrelated reasons,
 behaviour not expressible in the corpus): you may not substitute a runner-local BC-behaviour
-test to unblock yourself. Say so plainly, land the runner fix with whatever runner-specific
-coverage is legitimately available, and record the missing upstream test as follow-up.
+test to unblock yourself. **Say plainly that no verdict exists, name what would settle it**,
+land the runner fix with whatever runner-specific coverage is legitimately available, and record
+the missing upstream test as follow-up.
 
 ## Declare the linkage in the PR body — the gate accepts exactly one shape
 

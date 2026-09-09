@@ -7,13 +7,17 @@
 - **Set `status: review-ready`** on the PR once CI is green — that is how the orchestrator finds your work.
 - **Assign the issue to `@me` when you claim it** (`gh issue edit <N> --add-assignee @me`, or `mcp__github__issue_write` with `method: update` and your login in `assignees`), and skip any issue or PR assigned to a user other than `@me`: the assignee is the boundary between agent-owned and human-owned work on a public repo, and only the repo owner waives it. What each claim signal is worth between agents, and how to release a claim, are in `check-open-prs-before-claiming.md`.
 - **GitHub access:** `gh` is absent in web and remote sessions (`github-access.md`).
-- **Edit a PR body with `tools/pr-body.py`**, never by hand fetch-modify-upload: it refuses an empty or short fetch, holds every anchor to its expected count, refuses to drop a declared closing reference or add a foreign one, refuses a large shrink, and verifies by re-reading, because a write's exit code is not evidence that the write landed (#2790). `--check` re-asserts a body against its diff after a rebase; `--dry-run` prints the diff and every assertion. Before any of that: a note belongs in a comment, not in the body.
+- **Edit a PR body with `tools/pr-body.py`**, never by hand fetch-modify-upload: it refuses an empty or short fetch, holds every anchor to its expected count, refuses to drop a declared closing reference or add a foreign one, refuses a large shrink, and verifies by **re-reading**, because a write's exit code is not evidence that the write landed (#2790). Two traps it exists for: `gh pr view --json body --jq .body` returns an **empty string** on a network failure, so a hand-rolled edit appends to `""` and uploads it over a real body; and a guard of the shape `changed if b != orig` **cannot fail** after an append, because appending always changes the string. `--check` re-asserts a body against its diff after a rebase; `--dry-run` prints the diff and every assertion. Before any of that: a note belongs in a comment, not in the body.
 
 ## This repo squash-merges: your COMMIT MESSAGES become the merge commit, the PR body links the issues
 
 `squash_merge_commit_message` is `COMMIT_MESSAGES` and `squash_merge_commit_title` is
 `COMMIT_OR_PR_TITLE` on this repository, so text reaches the merged result by two
-independent routes and both fire (#2491):
+independent routes and both fire (#2491). Re-read the setting rather than trusting this line:
+
+```bash
+gh api repos/StefanMaron/BusinessCentral.AL.Runner --jq '{squash_merge_commit_title, squash_merge_commit_message}'
+```
 
 | route | source text | what acts on it |
 |---|---|---|
