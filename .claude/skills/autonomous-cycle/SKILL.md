@@ -606,14 +606,15 @@ Scheduler entry as optional restart-on-boot hardening.
 **End the session after 10 cycles and let the timer start the next one.** A session running for
 days accumulates state that is not context — tool handles, temp files, harness state. On the
 tenth cycle, comment the cycle state on the session's status issue, then end the session; the
-next one starts from that comment. The status issue is found at startup: `gh issue list
---state open --search "Coordinator status in:title" --json number,createdAt --jq
-'max_by(.createdAt).number'` picks the newest; when none exists, open one titled `Coordinator
-status <date>`; write its number as the first line of the cycle log so a cold start reads it
-there. The comment lists every open PR by number with its
+next one starts from that comment. The status issue is found at startup: the number on the
+first line of the cycle log wins; otherwise `gh issue list --state open --search "Coordinator
+status <identity> in:title" --json number,createdAt --jq 'max_by(.createdAt).number'` picks
+this loop's newest; when none exists, open one titled `Coordinator status <identity> <date>`.
+Write its number as the first line of the cycle log so a cold start reads it there. The comment lists every open PR by number with its
 `ci-wait` verdict, armed or not, and what is held for a person. Done when every number
 `gh pr list --state open --limit 500 --json number --repo <owner>/<repo>` prints appears in the
-comment with those three fields.
+comment with those three fields, and that listing returned fewer than 500 rows (500 means it
+may be cut: say so instead of claiming completeness).
 
 **Where compaction lands matters more than when it fires.** A compaction inside a unit of work
 discards that unit's working context; one between units costs nothing, because everything
