@@ -635,11 +635,20 @@ public static partial class RecordPatches
     /// for the "Page Control Field" (2000000192) virtual table. Same base+extension merge
     /// rule as <see cref="GetPageControlFieldMap"/> (only extensions of THIS page), same
     /// Rec.-bound-only scope as <see cref="ParsePageControls"/> — see that method's remarks.
-    /// <para>Sequence is assigned here, at merge time, 1-based in enumeration order (base
-    /// page controls first, then each matching extension's, in registration order) — never
+    /// <para>Sequence is assigned here, at merge time, in enumeration order (base page
+    /// controls first, then each matching extension's, in registration order) — never
     /// trusted from the per-object parse pass, since a base page and an extension each start
-    /// their own local layout walk at 1 and merging them naively would produce duplicate
-    /// Sequence values.</para>
+    /// their own local layout walk and merging them naively would produce duplicate Sequence
+    /// values.</para>
+    /// <para><b>0-based</b>, because BC's is (#3604). <c>GetControlsOnPage</c> numbers the
+    /// walk with <c>Select((cd, i) =&gt; (sequence: i, control: cd))</c> — a 0-based
+    /// enumeration index, captured BEFORE the <c>OrderBy</c> that sorts the rows by control
+    /// id — and writes it straight to the column. This counter was 1-based, so every row of
+    /// every page was off by one. No corpus test pins Sequence, so nothing was ever going to
+    /// catch it either way; it is corrected here because the BC-document path beside it
+    /// (RecordPatches.PageControlFieldFromBcDocument.cs) reproduces BC's numbering exactly,
+    /// and leaving the fallback disagreeing with it would make the column mean two different
+    /// things depending on which route answered.</para>
     /// </summary>
     internal static List<PageControlRow> GetSourceParsedPageControlRows(int pageId)
     {
@@ -650,7 +659,7 @@ public static partial class RecordPatches
         void AddAll(IReadOnlyList<PageControlRow> controls)
         {
             foreach (var c in controls)
-                result.Add(c with { Sequence = ++seq });
+                result.Add(c with { Sequence = seq++ });
         }
 
         AddAll(page.Controls);
