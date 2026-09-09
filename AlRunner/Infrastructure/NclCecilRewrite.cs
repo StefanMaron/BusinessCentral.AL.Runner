@@ -106,6 +106,11 @@ public static partial class NclCecilRewrite
         // Library - No. Series.CreateNoSeriesLine validating an enum/option field). Listing
         // its key here makes JmpHook.Apply skip it → single-mechanism (Cecil) → no spin.
         set.Add("Microsoft.Dynamics.Nav.Runtime.NCLEnumMetadata::Create/1");
+        // NCLFieldEnumMetadata.GetEnumMetadataFromMetadataProvider() — #3594. The other route
+        // into enum metadata: an `Enum`-typed FIELD's option metadata, resolved through
+        // NavGlobal.MetadataProvider -> NCLMetadata rather than through Create(int). Rewritten
+        // to the same AlEnumMetadataRegistry (see RewriteNcl, just after the Create(int) block).
+        set.Add("Microsoft.Dynamics.Nav.Runtime.NCLFieldEnumMetadata::GetEnumMetadataFromMetadataProvider/0");
         // get_ApplicationObjectConstructor + Populate + CompileAndLoadClrObject (Batch 7
         // — completes the insert/construction path so ALInsertAsync→get_OldRecord→
         // CreateObjectInstance→{getter,Populate,CompileAndLoadClrObject} is single-mechanism).
@@ -266,6 +271,54 @@ public static partial class NclCecilRewrite
             {
                 Console.Error.WriteLine("[Cecil] WARN: NCLEnumMetadata.Create(int) not found — dependency enum metadata may NRE");
             }
+        }
+
+        // NCLFieldEnumMetadata.GetEnumMetadataFromMetadataProvider() — #3594. The sibling of
+        // the Create(int) rewrite above, for the OTHER route into enum metadata: a table field
+        // declared `Enum "X"` states an EnumTypeId, so BC's own MetaField factory builds an
+        // NCLFieldEnumMetadata, and every accessor on it (OptionString, Options, OrdinalValues,
+        // GetNames, …) funnels through GetAppGroupAwareEnumMetadata into this one virtual. Its
+        // real body goes to NavGlobal.MetadataProvider.GetEnumMetadata(enumId), which resolves
+        // NCLMetadata.TryGetMetaApplicationObject(ObjectType.Enum, id) — a lookup the runner
+        // never populates for Enum objects, so reading the Field virtual table (2000000041) for
+        // any table with an enum-typed field threw NavMetadataNotFoundException and aborted the
+        // whole app. Route it to the same AlEnumMetadataRegistry the Create(int) hook uses.
+        // Derivation and the corpus measurement: docs/field-enum-metadata-resolution.md.
+        {
+            var fieldEnumType = asm.MainModule.GetType(
+                "Microsoft.Dynamics.Nav.Runtime.NCLFieldEnumMetadata")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLFieldEnumMetadata type not found — Ncl shape changed; do not commit");
+
+            var getFromProvider = fieldEnumType.Methods.FirstOrDefault(m =>
+                m.Name == "GetEnumMetadataFromMetadataProvider"
+                && m.HasBody
+                && m.Parameters.Count == 0
+                && m.ReturnType.FullName == "Microsoft.Dynamics.Nav.Runtime.NCLOptionMetadata")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLFieldEnumMetadata.GetEnumMetadataFromMetadataProvider() not found "
+                    + "— Ncl shape changed; do not commit");
+
+            // The helper reads `enumId` off the instance by reflection, because the Id property
+            // is `GetAppGroupAwareEnumMetadata().Id` and would recurse into this very method.
+            // If the field is gone the rewrite is meaningless, so refuse here rather than at
+            // the first AL read.
+            if (!fieldEnumType.Fields.Any(f => f.Name == "enumId" && f.FieldType.FullName == "System.Int32"))
+                throw new InvalidOperationException(
+                    "[Cecil] NCLFieldEnumMetadata.enumId (System.Int32) not found — Ncl shape "
+                    + "changed; the replacement body could not learn which enum a field names. "
+                    + "Do not commit");
+
+            var fieldEnumHelper = typeof(AlRunner.BcRuntime).GetMethod(
+                nameof(AlRunner.BcRuntime.NCLFieldEnumMetadata_GetEnumMetadataFromRegistry),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] BcRuntime.NCLFieldEnumMetadata_GetEnumMetadataFromRegistry not found");
+
+            ReplaceBodyWithHelper(asm.MainModule, getFromProvider, fieldEnumHelper);
+            Console.Error.WriteLine(
+                "[Cecil] Replaced NCLFieldEnumMetadata.GetEnumMetadataFromMetadataProvider() "
+                + "\u2192 BcRuntime.NCLFieldEnumMetadata_GetEnumMetadataFromRegistry");
         }
 
         // ALCompiler.ToInterface(ITreeObject, NavOption, int) relies on the

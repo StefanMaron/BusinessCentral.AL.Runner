@@ -39,6 +39,7 @@ using NavOption = Microsoft.Dynamics.Nav.Runtime.NavOption;
 using NavText = Microsoft.Dynamics.Nav.Runtime.NavText;
 using ITreeObject = Microsoft.Dynamics.Nav.Runtime.ITreeObject;
 using StringHelper = Microsoft.Dynamics.Nav.Runtime.StringHelper;
+using NavMetadataNotFoundException = Microsoft.Dynamics.Nav.Types.NavMetadataNotFoundException;
 
 namespace AlRunner;
 
@@ -697,6 +698,214 @@ public static partial class BcRuntime
             }
         }
         return NCLOptionMetadata.Default;
+    }
+
+    /// <summary>
+    /// BC's own 16 platform ("system") enums — ids 2000000001..2000000017 — registered into
+    /// <see cref="AlEnumMetadataRegistry"/> from <c>PlatformMetadataProvider</c>, which is the
+    /// inventory BC itself resolves them from.
+    ///
+    /// <para>Why this is needed at all: every OTHER enum reaches the registry because some app
+    /// declares it (<c>RecordPatches.AddBcAppPath</c> reads each dependency .app's symbols).
+    /// A system enum is declared by the PLATFORM — it appears in no app's SymbolReference.json,
+    /// so nothing put it in the registry, and a field typed by one could not resolve. Base
+    /// Application table 2000000132 has such a field (enum 2000000002 "Entity Text Scenario").</para>
+    ///
+    /// <para>Source of truth, and why it is BC's own: <c>GetEnumALCodeById</c> returns the AL
+    /// source BC ships for the enum, so the values, ordinals and captions parsed here are
+    /// Microsoft's own declaration rather than anything this runner invents. Measured on BC
+    /// 28.1: 16 enums, 57 <c>value(...)</c> declarations, 73 captions, all in the one shape the
+    /// regex below matches; three of the sixteen declare no values at all (they are extensible
+    /// enums an app is expected to extend), and an empty option set is the correct answer for
+    /// those rather than a reason to refuse.</para>
+    /// </summary>
+    private static int _systemEnumsRegistered;
+
+    private static readonly System.Text.RegularExpressions.Regex _rxSystemEnumValue = new(
+        // value(<ordinal>; <Name>) — the name is bare or "quoted"; an optional { Caption = '...'; }
+        // body follows. Both name forms occur in BC's own source (measured: 27 of 57 quoted).
+        @"value\s*\(\s*(?<ord>-?\d+)\s*;\s*(?:""(?<qname>[^""]*)""|(?<name>[A-Za-z_][A-Za-z0-9_]*))\s*\)"
+        + @"(?<body>\s*\{(?<inner>[^{}]*)\})?",
+        System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    private static readonly System.Text.RegularExpressions.Regex _rxSystemEnumCaption = new(
+        @"Caption\s*=\s*'(?<cap>[^']*)'", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// Register BC's platform enums, once per process. Idempotent and never throws: a BC build
+    /// that does not expose this inventory leaves the registry exactly as it was, and a field
+    /// typed by a system enum then fails the same loud way it did before this existed — a
+    /// missing optimisation, not a silent wrong answer.
+    /// </summary>
+    internal static void EnsureSystemEnumsRegistered()
+    {
+        if (System.Threading.Interlocked.Exchange(ref _systemEnumsRegistered, 1) != 0) return;
+        try
+        {
+            var pmpT = typeof(NCLOptionMetadata).Assembly
+                .GetType("Microsoft.Dynamics.Nav.Runtime.PlatformMetadataProvider");
+            // BcShape.Property, not `GetProperty(...)?` (#3663): a null here would propagate
+            // through `?.` and leave the guard below reading "there is no inventory", which is
+            // the same answer a BC build that genuinely exposes none gives. Those two must not
+            // look alike — one is a rename to react to, the other is nothing to do — so an
+            // absent member refuses loudly and the catch below turns it back into the
+            // documented degradation, with the shape gap named.
+            var inst = pmpT == null ? null : AlRunner.Infrastructure.BcShape.Property(
+                pmpT, "Instance", BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic,
+                "system enum registration",
+                "the PlatformMetadataProvider singleton BC resolves its own platform enums through")
+                .GetValue(null);
+            // BcShape.FindMethod, not a name-only GetMethod (#3069): an overload appearing on
+            // either of these would otherwise pick one silently, and BC moving them is exactly
+            // the case this whole method must degrade on rather than guess through. Absence
+            // still returns null, which the guard below treats as "no inventory to read".
+            var getEnums = pmpT == null ? null : AlRunner.Infrastructure.BcShape.FindMethod(
+                pmpT, "GetSystemEnums", BindingFlags.Public | BindingFlags.Instance,
+                "system enum registration", "PlatformMetadataProvider.GetSystemEnums",
+                "BC's own inventory of the platform enums no app declares — see "
+                + "docs/field-enum-metadata-resolution.md",
+                types: Type.EmptyTypes);
+            var getAl = pmpT == null ? null : AlRunner.Infrastructure.BcShape.FindMethod(
+                pmpT, "GetEnumALCodeById", BindingFlags.Public | BindingFlags.Instance,
+                "system enum registration", "PlatformMetadataProvider.GetEnumALCodeById",
+                "the AL source BC ships for one platform enum, parsed for its value declarations",
+                types: new[] { typeof(int) });
+            if (inst == null || getEnums == null || getAl == null) return;
+            if (getEnums.Invoke(inst, null) is not System.Collections.IDictionary dict) return;
+
+            foreach (System.Collections.DictionaryEntry de in dict)
+            {
+                if (de.Key is not int id) continue;
+                // Never overwrite a registration an app made: an enumextension on a system enum
+                // is registered separately and merged by TryGet, and a base entry already
+                // present is the one that came from real symbols.
+                if (AlEnumMetadataRegistry.TryGet(id, out _)) continue;
+
+                // Same reasoning as the Instance lookup above: a renamed Name property would
+                // otherwise degrade to the empty string, registering all 16 platform enums
+                // under no name at all rather than saying the shape moved.
+                var name = de.Value == null ? string.Empty
+                    : AlRunner.Infrastructure.BcShape.Property(
+                        de.Value.GetType(), "Name", BindingFlags.Public | BindingFlags.Instance,
+                        "system enum registration",
+                        "the display name of one platform enum, carried into AlEnumMetadataRegistry")
+                      .GetValue(de.Value) as string ?? string.Empty;
+                if (getAl.Invoke(inst, new object[] { id }) is not byte[] al || al.Length == 0)
+                    continue;
+
+                var (options, ordinals, captions) = ParseSystemEnumValues(
+                    System.Text.Encoding.UTF8.GetString(al));
+                AlEnumMetadataRegistry.Register(id, name, options, ordinals, captions: captions);
+            }
+        }
+        catch
+        {
+            // Reading BC's inventory is best-effort by design (see the doc comment above): the
+            // failure mode without it is the pre-existing loud one, never a wrong value.
+        }
+    }
+
+    /// <summary>
+    /// The <c>value(ord; Name) { Caption = '...'; }</c> declarations of one system enum's AL
+    /// source. A doc comment can carry the word <c>value</c>, so matches are taken only from
+    /// source with comments stripped.
+    /// </summary>
+    internal static (string[] Options, int[] Ordinals, string?[] Captions) ParseSystemEnumValues(string alSource)
+    {
+        var src = StripAlComments(alSource);
+        var options = new List<string>();
+        var ordinals = new List<int>();
+        var captions = new List<string?>();
+        foreach (System.Text.RegularExpressions.Match m in _rxSystemEnumValue.Matches(src))
+        {
+            if (!int.TryParse(m.Groups["ord"].Value, out var ord)) continue;
+            var name = m.Groups["qname"].Success ? m.Groups["qname"].Value : m.Groups["name"].Value;
+            var inner = m.Groups["inner"].Success ? m.Groups["inner"].Value : string.Empty;
+            var cap = _rxSystemEnumCaption.Match(inner);
+            options.Add(name);
+            ordinals.Add(ord);
+            // null means "declares no Caption", the same convention Register/AlEnumOptionMetadata
+            // already use — the consumer then applies AL's own default (the member name).
+            captions.Add(cap.Success ? cap.Groups["cap"].Value : null);
+        }
+        return (options.ToArray(), ordinals.ToArray(), captions.ToArray());
+    }
+
+    /// <summary>Strip <c>//</c> (including <c>///</c>) and <c>/* */</c> comments, leaving string
+    /// literals alone so a caption containing <c>//</c> survives.</summary>
+    private static string StripAlComments(string src)
+    {
+        var sb = new System.Text.StringBuilder(src.Length);
+        bool inStr = false, inLine = false, inBlock = false;
+        for (int i = 0; i < src.Length; i++)
+        {
+            char c = src[i];
+            char n = i + 1 < src.Length ? src[i + 1] : '\0';
+            if (inLine) { if (c == '\n') { inLine = false; sb.Append(c); } continue; }
+            if (inBlock) { if (c == '*' && n == '/') { inBlock = false; i++; } continue; }
+            if (inStr) { sb.Append(c); if (c == '\'') inStr = false; continue; }
+            if (c == '\'') { inStr = true; sb.Append(c); continue; }
+            if (c == '/' && n == '/') { inLine = true; continue; }
+            if (c == '/' && n == '*') { inBlock = true; i++; continue; }
+            sb.Append(c);
+        }
+        return sb.ToString();
+    }
+
+    // NCLFieldEnumMetadata.enumId — `private readonly int`. Read by field, never through the
+    // Id property: that property is `GetAppGroupAwareEnumMetadata().Id`, which calls the very
+    // method this helper replaces, so reading it here would recurse.
+    private static FieldInfo? _fFieldEnumMetadataEnumId;
+
+    /// <summary>
+    /// Replacement for <c>NCLFieldEnumMetadata.GetEnumMetadataFromMetadataProvider()</c> — the
+    /// single point through which every accessor of an <c>Enum</c>-typed FIELD's option
+    /// metadata resolves. <c>OptionString</c>, <c>Options</c>, <c>OrdinalValues</c>,
+    /// <c>GetNames</c> and the rest all funnel through <c>GetAppGroupAwareEnumMetadata</c>,
+    /// which caches per app group and calls this one virtual.
+    ///
+    /// <para>Observably equivalent: the real body is
+    /// <c>NavGlobal.MetadataProvider.GetEnumMetadata(enumId)</c>, which resolves
+    /// <c>NCLMetadata.TryGetMetaApplicationObject(ObjectType.Enum, id)</c> and returns that
+    /// object's declared values, ordinals and captions. <see cref="AlEnumMetadataRegistry"/>
+    /// holds exactly those, for a source-compiled enum and for a precompiled dependency's
+    /// alike — <c>RecordPatches.AddBcAppPath</c> loads every dependency .app's enums into it.
+    /// So this substitutes the lookup's DATA SOURCE, not its outcome: an enum id nothing
+    /// declares still raises BC's own <c>NavMetadataNotFoundException</c>, which is the only
+    /// exception <c>TryGetMetaApplicationObject</c> can answer <c>false</c> for.</para>
+    ///
+    /// <para>Same shape and same reason as
+    /// <c>NCLMetaForm.ApplyAppGroupAwareEnumMetadataToPageExpressions</c> (#1896,
+    /// PageEnumFieldMetadataPatches.cs): a by-id Enum lookup at a consumption point the runner
+    /// never populated. Derivation, the corpus measurement and the residual system-enum gap
+    /// are in docs/field-enum-metadata-resolution.md.</para>
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
+    public static NCLOptionMetadata NCLFieldEnumMetadata_GetEnumMetadataFromRegistry(object self)
+    {
+        if (self == null) throw new ArgumentNullException(nameof(self));
+
+        var f = _fFieldEnumMetadataEnumId ??= self.GetType().GetField(
+            "enumId", BindingFlags.NonPublic | BindingFlags.Instance)
+            ?? throw new InvalidOperationException(
+                "[EnumMetadata] NCLFieldEnumMetadata.enumId not found — Ncl shape changed. "
+                + "This helper replaces GetEnumMetadataFromMetadataProvider and has no other "
+                + "way to learn which enum the field names.");
+
+        var enumId = (int)(f.GetValue(self) ?? 0);
+
+        // BC's own platform enums are declared by no app, so nothing else puts them in the
+        // registry. Registered lazily here — the only consumption point that needs them.
+        EnsureSystemEnumsRegistered();
+
+        if (AlEnumMetadataRegistry.TryGet(enumId, out _))
+            return NCLEnumMetadata_CreateByIdAlAware(enumId);
+
+        // Not a fallback to Default: an enum id no app declares is a real metadata failure, and
+        // BC's own type is what lets TryGetMetaApplicationObject answer `false` rather than
+        // propagate. Answering Default here would make an unknown enum silently read as a
+        // valueless one — the silent fake loud-failures.md forbids.
+        throw new NavMetadataNotFoundException(Microsoft.Dynamics.Nav.Types.ObjectType.Enum, enumId);
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)]
