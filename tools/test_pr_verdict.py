@@ -208,6 +208,26 @@ check("a malformed verdict line exits 3, not 0", r.exit_code == 3, str(r.exit_co
 check("...and says malformed rather than absent",
       any("malformed" in l.lower() for l in r.lines), str(r.lines))
 
+# A malformed line NEWER than a readable verdict must not leave the older one
+# standing: a FIX-FIRST that forgot its reason would otherwise be armed as the
+# MERGE below it, which is the mis-arming the grammar exists to stop.
+STALE_MERGE_UNDER_MALFORMED = [
+    comment("Verdict: MERGE " + pv.stamp(HEAD, PATCH, "full"), "2026-09-01T10:00:00Z", 1),
+    comment(f"Verdict: FIX-FIRST — head {HEAD} — patch {PATCH} — kind: full",
+            "2026-09-02T10:00:00Z", 2)]
+r = result(STALE_MERGE_UNDER_MALFORMED)
+check("a malformed line newer than a readable MERGE exits 3, not 0", r.exit_code == 3,
+      f"{r.exit_code} {r.lines}")
+check("...and says the malformed line is the newer one",
+      any("NEWER" in l for l in r.lines), str(r.lines))
+
+v, bad = pv.newest_verdict(STALE_MERGE_UNDER_MALFORMED)
+check("newest_verdict reports the older verdict AND the newer malformed line",
+      v is not None and bad is not None, f"{v} {bad}")
+
+v, bad = parsed(f"**Verdict: MERGE** — head {HEAD} — patch {PATCH} — kind: full")
+check("a bolded marker is reported as malformed, not absent", bad is not None, repr(bad))
+
 r = result([comment("Verdict: MERGE " + pv.stamp(HEAD, PATCH, "full"), "2026-09-02T10:00:00Z")],
            pr_json=None)
 check("an unreadable PR exits 3", r.exit_code == 3, str(r.exit_code))
@@ -231,7 +251,8 @@ greens = 0
 for comments in ([comment("Verdict: MERGE " + pv.stamp(OTHER, PATCH, "full"), "2026-09-02T10:00:00Z")],
                  [comment("Verdict: FIX-FIRST (x) " + pv.stamp(HEAD, PATCH, "full"),
                           "2026-09-02T10:00:00Z")],
-                 [comment(LEGACY[0], "2026-09-02T10:00:00Z")], []):
+                 [comment(LEGACY[0], "2026-09-02T10:00:00Z")], [],
+                 STALE_MERGE_UNDER_MALFORMED):
     if result(comments).exit_code == 0:
         greens += 1
 check("no non-MERGE fixture exits 0", greens == 0, f"{greens} green(s)")

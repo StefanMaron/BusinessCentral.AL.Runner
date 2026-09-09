@@ -129,7 +129,11 @@ def parse_verdict(body: str) -> tuple[Verdict | None, str | None]:
     last = lines[-1].strip()
     m = VERDICT_RE.match(last)
     if not m:
-        if last.lstrip().startswith("Verdict:"):
+        # "Verdict:" ANYWHERE in the line, not just at its start: a bolded
+        # marker (`**Verdict: MERGE**`) is the shape a reviewer writes by
+        # accident, and reporting it as absent sends them looking for a comment
+        # they already posted.
+        if "Verdict:" in last:
             return None, f"malformed verdict line: {last!r}"
         return None, None
     decision, reason = m.group("decision"), m.group("reason")
@@ -144,7 +148,15 @@ def parse_verdict(body: str) -> tuple[Verdict | None, str | None]:
 
 
 def newest_verdict(comments: list[dict]) -> tuple[Verdict | None, str | None]:
-    """The newest parseable verdict, and the newest malformed line seen above it."""
+    """The newest parseable verdict, and any malformed line NEWER than it.
+
+    The pair matters: a malformed line above a readable verdict means the newest
+    thing the reviewer wrote is unreadable, so the older verdict is not the
+    current answer. `evaluate` refuses on that pair rather than judging on the
+    older one -- otherwise a FIX-FIRST that forgot its reason would leave an
+    earlier MERGE standing, which is the exact mis-arming this grammar exists to
+    stop (https://fbakkensen.github.io/al-runner-retro/#e-11).
+    """
     ordered = sorted(comments or [],
                      key=lambda c: (str(c.get("created_at") or ""), c.get("id") or 0),
                      reverse=True)
@@ -289,6 +301,13 @@ def evaluate(repo: str, pr: str, *, runner=None, patch_id_of=None) -> Result:
             return Result(3, lines)
 
         verdict, malformed = newest_verdict(comments)
+        if verdict is not None and malformed:
+            lines.append(malformed)
+            lines.append("That line is NEWER than the newest readable verdict "
+                         f"({verdict.decision} on {verdict.head[:12]}), so the readable "
+                         "one is not the current answer -- refusing to judge on it.")
+            lines.append("  " + GRAMMAR)
+            return Result(3, lines)
         if verdict is None:
             if malformed:
                 lines.append(malformed)
