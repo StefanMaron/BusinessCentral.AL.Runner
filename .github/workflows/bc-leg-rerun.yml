@@ -52,6 +52,16 @@ on:
         description: 'BC version prefix from .github/bc-versions.txt, e.g. 28.4'
         required: true
         type: string
+      corpus-ref:
+        description: >-
+          Corpus ref to measure against, e.g. master or refs/pull/293/head.
+          Empty means master. A dispatch has no pull request context, so there is
+          no `Corpus-PR:` line to read: name the ref here when the leg you are
+          re-measuring belongs to a pull request that declares one, or the
+          re-run measures a different corpus than the run it is repeating (#3737).
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   # Per leg, not per ref: re-running 28.4 must not cancel a 27.3 diagnostic on the same
@@ -67,3 +77,4 @@ jobs:
     uses: ./.github/workflows/bc-tests.yml
     with:
       bc-version-filter: ${{ inputs.bc-version }}
+      corpus-ref: ${{ inputs.corpus-ref }}

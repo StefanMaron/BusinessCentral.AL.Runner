@@ -1,4 +1,0 @@
-[submodule "tests/al-language"]
-	path = tests/al-language
-	url = https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests.git
-	branch = master

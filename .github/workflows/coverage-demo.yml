@@ -11,9 +11,10 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     steps:
+      # No corpus: the fixtures below are AlRunner.Tests/Fixtures/, not
+      # tests/al-language. It carried `submodules: true` only because the corpus
+      # used to be a submodule of this repository (#3737).
       - uses: actions/checkout@v6
-        with:
-          submodules: true
 
       - uses: actions/setup-dotnet@v5
         with:

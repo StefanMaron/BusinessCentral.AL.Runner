@@ -30,6 +30,20 @@ on:
         type: string
         required: false
         default: ''
+      corpus-ref:
+        description: >-
+          The corpus ref every job in this workflow checks tests/al-language out
+          at. Empty (the default) means `master`, which is right for a push to
+          main, a release and a dispatch.
+
+          A pull request's ref is resolved ONCE by the caller
+          (test-matrix.yml, via .github/actions/resolve-corpus-ref) and passed in
+          here, rather than resolved per leg: `master` moves, so eight legs
+          resolving it independently could measure eight different corpora and
+          the count comparison would be over numbers from different trees (#3737).
+        type: string
+        required: false
+        default: ''
       bc-version-filter:
         description: >-
           Run ONE leg instead of the whole matrix: a prefix from
@@ -94,10 +108,12 @@ jobs:
       required-version: ${{ steps.resolve.outputs.required-version }}
       versions-json: ${{ steps.resolve.outputs.versions-json }}
     steps:
+      # No corpus here: this job reads .github/bc-versions.txt and nothing else.
+      # It carried `submodules: true` only because the corpus was a submodule of
+      # this repository (#3737).
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
-          submodules: true
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
@@ -350,7 +366,16 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
-          submodules: true
+
+      # The corpus is resolved, not pinned (#3737). `corpus-ref` is empty on every
+      # path but a pull request, and empty means master; a pull request's ref was
+      # resolved once, in test-matrix.yml, from its `Corpus-PR:` line. This step
+      # prints `corpus: <sha> (<ref>)`, which is this leg's record of what it
+      # measured -- there is no gitlink to read it off afterwards.
+      - uses: ./.github/actions/checkout-corpus
+        id: corpus
+        with:
+          corpus-ref: ${{ inputs.corpus-ref }}
 
       # createdump does NOT create the directory in DOTNET_DbgMiniDumpName's path — it
       # fails to write and says so on stderr of a process that is already dying, which
@@ -831,7 +856,10 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
-          submodules: recursive
+
+      - uses: ./.github/actions/checkout-corpus
+        with:
+          corpus-ref: ${{ inputs.corpus-ref }}
 
       # BC 28.1 runs on .NET 8; the runner targets net8.0. net8 SDK builds + runs it.
       - uses: actions/setup-dotnet@v5
@@ -908,10 +936,11 @@ jobs:
     if: inputs.bc-version-filter == ''
     runs-on: ubuntu-latest
     steps:
+      # No corpus here: this job builds and packs the runner and names no corpus
+      # path (#3737).
       - uses: actions/checkout@v6
         with:
           ref: ${{ inputs.ref }}
-          submodules: true
 
       - uses: actions/setup-dotnet@v5
         with:
