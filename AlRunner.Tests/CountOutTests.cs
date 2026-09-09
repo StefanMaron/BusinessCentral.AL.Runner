@@ -146,6 +146,83 @@ public sealed class CountOutTests
         }
     }
 
+    // ── --jobs ──────────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The fan-out must know `--count-out` takes a value, or it reads the PATH as a bundle
+    /// directory — the whole class of bug `ParallelFanOutFlagDriftTests` exists for, and the
+    /// one this flag walked into on its first CI run (run 34415016792, BC 27.5).
+    /// </summary>
+    [Fact]
+    public void CountOut_IsDeclaredToTheFanOutAsValueTaking()
+    {
+        Assert.Contains("--count-out", ParallelFanOut.ValueTakingFlags);
+    }
+
+    /// <summary>
+    /// ...and knowing the shape is not enough: under `--jobs` each worker would write ITS OWN
+    /// shard's counts to the one path the caller named, so the last worker to finish silently
+    /// becomes "the run's" count — a fraction of the tests, reported as the whole, which is
+    /// exactly the silent shrinkage the comparison downstream exists to catch.
+    ///
+    /// <para>So the combination is REFUSED, loudly, rather than aggregated. Aggregating is the
+    /// other defensible answer and was not taken: the parent fans out before it runs anything
+    /// (`Program.cs`, the `--jobs` branch sits above the bundle run), so it has no counts of its
+    /// own and would have to merge the workers' documents — code whose correctness cannot be
+    /// shown by any test this repository can run cheaply. `bc-tests.yml` passes no `--jobs` on
+    /// the corpus step, so the refusal costs that path nothing, and anyone who adds `--jobs`
+    /// there later gets a message naming the reason instead of a quietly smaller baseline.</para>
+    ///
+    /// <para>Refused at the point the fan-out actually happens, not on the flag's presence:
+    /// `--jobs 4` with ONE bundle does not fan out, and there `--count-out` is correct.</para>
+    /// </summary>
+    [SkippableFact]
+    public void CountOutUnderJobs_IsRefusedLoudly_RatherThanRecordingOneShardsCount()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var scratch = TestScratch.Dir("al-runner-count-out-jobs");
+        var countPath = Path.Combine(scratch, "corpus-count.json");
+        var fixtures = Path.Combine(RepoRoot, "AlRunner.Tests", "Fixtures");
+
+        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
+        args.Append(TestBuildConfig.BcVersionArg);
+        // Two bundles, because one bundle never fans out however large --jobs is.
+        args.Append($" \"{Path.Combine(fixtures, "RecordTriggerXRec")}\"");
+        args.Append($" \"{Path.Combine(fixtures, "CoverageBranch")}\"");
+        args.Append(" --jobs 2");
+        args.Append($" --count-out \"{countPath}\"");
+
+        var psi = new ProcessStartInfo
+        {
+            FileName = "dotnet", Arguments = args.ToString(),
+            RedirectStandardOutput = true, RedirectStandardError = true,
+            UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
+        };
+        var sb = new StringBuilder();
+        var p = Process.Start(psi)!;
+        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+        if (!p.WaitForExit(600_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
+        p.WaitForExit();
+        string output;
+        lock (sb) output = sb.ToString();
+
+        Assert.True(p.ExitCode == 2,
+            $"expected exit 2 (bad invocation), got {p.ExitCode}.\n{output}");
+        Assert.Contains("--count-out", output);
+        Assert.Contains("--jobs", output);
+        // The message must say what would otherwise happen, not merely that it is refused.
+        Assert.Contains("shard", output);
+        Assert.False(File.Exists(countPath),
+            "a refused invocation must leave no count document behind — a partial one would be "
+            + "read by the comparison as a real measurement.");
+
+        try { Directory.Delete(scratch, true); } catch { }
+    }
+
     // ── the flag, end to end ────────────────────────────────────────────────────
 
     /// <summary>

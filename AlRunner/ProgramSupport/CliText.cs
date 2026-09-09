@@ -731,6 +731,9 @@ internal static partial class ProgramSupport
         w.WriteLine("                          so a caller can compare it against a count from another");
         w.WriteLine("                          run (#3675). Written even when the run failed, and it is");
         w.WriteLine("                          NOT --out, which is a failure report carrying no counts.");
+        w.WriteLine("                          Refused together with a --jobs fan-out (exit 2): each");
+        w.WriteLine("                          shard would write its own counts to the same path and");
+        w.WriteLine("                          the last one to finish would be recorded as the run.");
         w.WriteLine();
         w.WriteLine("SUBCOMMANDS");
         w.WriteLine("  provision [<bundle-dir>] Download and install the BC artifacts matching the");

@@ -1585,7 +1585,31 @@ foreach (var deferredLine in deferredStartupLines) deferredLine();
 // processes whose whole contract is warm in-process state, and one bundle cannot be split
 // across processes without splitting it by test, which this does not do yet.
 if (jobs > 1 && bundles.Count > 1 && !watchMode && !serverMode && !dapMode)
+{
+    // --count-out reports what THE RUN executed, and a fan-out has no such number to report:
+    // the parent hands every bundle to a worker and never runs one itself, so each worker
+    // would write ITS OWN shard's counts to the single path the caller named and whichever
+    // finished last would silently become "the run's" count -- a fraction reported as the
+    // whole. That is precisely the silent shrinkage the comparison downstream exists to
+    // catch (#3675), so it is refused rather than aggregated.
+    //
+    // Aggregating is the other defensible answer. It was not taken because the merge would
+    // live in the parent, which has no results of its own, and nothing in this repository
+    // can show that merge correct cheaply; `bc-tests.yml` passes no --jobs on the corpus
+    // step, so the refusal costs the path that needs the file nothing.
+    //
+    // Refused HERE, where the fan-out actually happens, not at parse time: `--jobs 4` with
+    // one bundle does not fan out, and --count-out is correct in that run.
+    if (countOutPath != null)
+    {
+        Console.Error.WriteLine(
+            "--count-out cannot be combined with a --jobs fan-out: each shard would write its "
+            + "own counts to the same path and the last shard to finish would be recorded as "
+            + "the whole run. Run the counted invocation without --jobs, or drop --count-out.");
+        return 2;
+    }
     return AlRunner.Infrastructure.ParallelFanOut.Run(bundles, args, jobs);
+}
 
 
 var packageCacheDirs = packageCacheArgs.Count > 0

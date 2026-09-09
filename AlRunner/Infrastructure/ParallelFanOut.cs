@@ -27,7 +27,8 @@ internal static class ParallelFanOut
     /// </summary>
     public static readonly IReadOnlySet<string> ValueTakingFlags = new HashSet<string>(StringComparer.Ordinal)
     {
-        "--artifact-path", "--bc-version", "--cache", "--count-baseline", "--country",
+        "--artifact-path", "--bc-version", "--cache", "--count-baseline", "--count-out",
+        "--country",
         "--coverage-out", "--define", "--dump-csharp", "--expectations", "--filter",
         "--isolation", "--out", "--output-junit", "--package-cache", "--preprocessor-symbols",
         "--resolve-version", "--test", "--test-data-company", "--test-isolation",
@@ -37,6 +38,13 @@ internal static class ParallelFanOut
         // --resume-aborts would fall back to the default budget and start its own resume chain.
         "--exclude-test", "--resume-aborts", "--merge-counts", "--merge-results",
     };
+    // `--count-out` is listed above so its PATH is read as a value rather than as a bundle
+    // directory -- the drift this class exists to prevent, and the one that flag walked into
+    // on its first CI run (run 34415016792). It never actually reaches a worker: Program.cs
+    // REFUSES `--count-out` together with a fan-out, because each worker would write its own
+    // shard's counts to the one path the caller named and the last one to finish would
+    // silently become the run's count. See the refusal there for why that rather than an
+    // aggregation.
 
     /// <summary>
     /// The command line for one worker: the parent's own arguments, with the bundle positionals
