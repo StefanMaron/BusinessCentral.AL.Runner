@@ -228,13 +228,12 @@ Merge when **all of**:
    `main` via `main-verdict-floor.yml`, not on the PR.
 2. `git merge-tree --write-tree --messages origin/main origin/<branch>` is clean.
    `mergeStateStatus: CLEAN` only covers textual conflicts.
-3. The proving test exists, and every corpus PR the body declares printed `MERGED` in the
-   arming-list read above.
+3. The proving test exists, and the corpus-PR condition of the arming list above holds.
 
 **One listing per sweep, one verdict per PR you arm:** `gh pr list --repo <owner>/<repo> --state
-open --limit 100 --json number,headRefOid,isDraft,mergeStateStatus,statusCheckRollup` returns
+open --limit 500 --json number,headRefOid,isDraft,mergeStateStatus,statusCheckRollup` returns
 every open PR's head, merge state and rollup in one call, which orders the sweep and replaces
-per-PR run listings; page with `--search "sort:updated-asc"` when it returns 100 rows. The
+per-PR run listings; 500 rows returned means the list is cut, so say so and stop. The
 rollup is never the verdict: run `tools/ci-wait.py <PR> --timeout 0` for every PR you consider
 arming, and never block on it. One pass, one answer, returns at once: 0 green on current head, 1 failed
 with the log already fetched, 2 still running (*not* a verdict, and the ordinary answer on a PR

@@ -42,7 +42,7 @@ If you are `impl-1` or `impl-2`:
 
 If you are `orchestrator`:
 
-1. **PRs first.** Find PRs labeled `status: review-ready`. CI green + no unresolved threads + no `CHANGELOG.md` in diff + no edits under `tests/al-language/` + relevant expectation entries / runner-extras tests cited in the body + every `Corpus-PR:` line in the body reading `MERGED` (the arming list in `orchestrating-a-session`) → approve and squash-merge (`gh pr merge --auto --squash`, or `mcp__github__merge_pull_request` with `merge_method: "squash"` — `gh` is absent in web/remote sessions, see `.claude/rules/github-access.md`). Otherwise leave actionable review comments.
+1. **PRs first.** Find PRs labeled `status: review-ready`. CI green + no unresolved threads + no `CHANGELOG.md` in diff + no edits under `tests/al-language/` + relevant expectation entries / runner-extras tests cited in the body + every condition of the arming list in `orchestrating-a-session` ("A reviewer that approves a PR arms auto-merge") → approve and squash-merge (`gh pr merge --auto --squash`, or `mcp__github__merge_pull_request` with `merge_method: "squash"` — `gh` is absent in web/remote sessions, see `.claude/rules/github-access.md`). Otherwise leave actionable review comments.
 2. **Unblock.** Review `status: blocked` issues; resolve if possible.
 3. Triage of new untriaged issues is owned by the `triager` sub-agent (Opus), which runs at the start of a cycle and sets `status: ready` vs. `status: needs-input`. The orchestrator does not triage.
 
@@ -61,7 +61,7 @@ Once detected, here is which tool covers which operation:
 | Label / assign / close issue | `gh issue edit`, `gh issue close` | `mcp__github__issue_write` (`method: update`) |
 | Comment on issue or PR | `gh issue comment`, `gh pr comment` | `mcp__github__add_issue_comment` (PRs too — pass the PR number) |
 | List PRs | `gh pr list` | `mcp__github__list_pull_requests` |
-| PR detail / diff / files / CI | `gh pr view`, `gh pr diff`, `tools/ci-wait.py <N> --timeout 0` | `mcp__github__pull_request_read` (`get`, `get_diff`, `get_files`, `get_check_runs`) |
+| PR detail / diff / files / CI | `gh pr view`, `gh pr diff`, `tools/ci-wait.py <N> --timeout 0` | `mcp__github__pull_request_read` (`get`, `get_diff`, `get_files`); `get_check_runs` reads checks but is not the verdict (`ci-wait.py` needs `gh`), so without `gh` a PR is reviewed and held, never armed |
 | Merge a PR | `gh pr merge --squash` | `mcp__github__merge_pull_request` (`merge_method: "squash"`) |
 | Open a PR | `gh pr create` | `mcp__github__create_pull_request` |
 | Label a PR | `gh pr edit --add-label` | `mcp__github__update_pull_request` |

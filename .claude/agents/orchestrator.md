@@ -27,10 +27,10 @@ git fetch origin main
 **Concurrency with human maintainers.** Public repo with multiple maintainers: only touch PRs and issues whose assignee is `@me` (the bot's own account) or which have no assignee. Anything assigned to another user is human-owned — hands off.
 
 ```
-gh pr list --label "status: review-ready" --assignee @me --state open --limit 100 --json number,title,assignees,headRefOid,isDraft,mergeStateStatus,statusCheckRollup --repo StefanMaron/BusinessCentral.AL.Runner
+gh pr list --label "status: review-ready" --assignee @me --state open --limit 500 --json number,title,assignees,headRefOid,isDraft,mergeStateStatus,statusCheckRollup --repo StefanMaron/BusinessCentral.AL.Runner
 ```
 
-(Or filter the unrestricted list to PRs whose `assignees` is empty or `@me` only.) When checking the linked issue, skip the whole PR if that issue is assigned to a non-@me user. That one call replaces per-PR run listings: it carries each PR's head SHA, merge state and rollup, which order the pass; the verdict on any PR you arm comes from step 2. When it returns 100 rows, page with `--search "sort:updated-asc"` until a call returns fewer.
+(Or filter the unrestricted list to PRs whose `assignees` is empty or `@me` only.) When checking the linked issue, skip the whole PR if that issue is assigned to a non-@me user. That one call replaces per-PR run listings: it carries each PR's head SHA, merge state and rollup, which order the pass; the verdict on any PR you arm comes from step 2. `--limit 500` is the whole queue; 500 rows returned means the list is cut, so report that and stop.
 
 For each PR:
 
@@ -56,7 +56,7 @@ For each PR:
    Do **not** merge until it's resolved. (No `docs/coverage.yaml` to check for — retired at the v1→v2 cutover, see `al-runner-tests` skill.)
 6. **No shipped SA implementations.** Auto-generated blank shells for dependency objects are fine — that is how the runner works. Forbidden is a *real implementation* of a System Application codeunit inside the runner (an actual Image processing / Cryptography / File Mgt. implementation, as AL the runner emits or as C# under `AlRunner/Patches/` standing in for the SA codeunit's body). The only exceptions are test-automation libraries (`LibraryAssert` 130, `LibraryVariableStorage` 131004). If the diff adds anything else under that umbrella, block with:
    > The runner does not ship real implementations of System Application codeunits — only auto-generated blank shells (normal) and test-automation libraries (`LibraryAssert`, `LibraryVariableStorage`). This change appears to add a real SA implementation; please remove it. If the AL under test actually needs SA behavior to mean anything, file a runner-gap issue describing the AL pattern instead.
-7. Sanity check passed (step 1) + CI green + no CHANGELOG + no stray `tests/al-language/` edits + no forbidden SA implementation + every condition in the arming list (`.claude/skills/orchestrating-a-session/SKILL.md`) holds, every `Corpus-PR:` line in the body among them — an unmerged corpus PR means commenting with its number and moving to the next PR:
+7. Sanity check passed (step 1) + CI green + no CHANGELOG + no stray `tests/al-language/` edits + no forbidden SA implementation + every condition in the arming list (`.claude/skills/orchestrating-a-session/SKILL.md`, "A reviewer that approves a PR arms auto-merge") holds; a failed condition means commenting with what failed and moving to the next PR:
    - CI in progress: `gh pr merge <N> --auto --squash --repo StefanMaron/BusinessCentral.AL.Runner` (auto-merge is a repo setting — `allow_auto_merge=true`, `delete_branch_on_merge=true` — so this queues the merge rather than failing; it won't show in a checkout diff). **`--auto` only queues while the required checks are still pending. If they are already green it MERGES IMMEDIATELY** — `gh` branches on that itself — so do not reach for it as a safe "arm it and decide later": running it on a green PR is the merge (#3127).
    - CI complete: `gh pr merge <N> --squash --repo StefanMaron/BusinessCentral.AL.Runner`
    - Skip `gh pr review --approve` (fails when you are the repo owner).
@@ -65,20 +65,20 @@ For each PR:
 **Stuck PR:** same CI run ID across loops + no new commits → close with comment, then Step 2 (closed-unmerged branch).
 
 ## Step 2 — Close linked issues and clear their labels
-Merging closes what `closingIssuesReferences` names; the labels stay behind, so clear them here. After every merge or close, list the issues the PR names with `gh pr view <PR> --json state,mergedAt,closingIssuesReferences,body,headRefName --repo StefanMaron/BusinessCentral.AL.Runner`: the `closingIssuesReferences` numbers, every `Part of #N` line in the body (your own read of the body, not a GitHub parse), and the `issue-<N>` in the branch name. Read each issue's labels first (`gh issue view <N> --json state,labels`); remove a `status:` label whatever its value, and an `agent:` label only when it names a loop this session dispatched — a foreign `agent:` label stays and goes into the pass summary (`check-open-prs-before-claiming.md`). Then, per issue:
+Merging closes what `closingIssuesReferences` names; the labels stay behind, so clear them here. After every merge or close, list the issues the PR names with `gh pr view <PR> --json state,mergedAt,closingIssuesReferences,body,headRefName --repo StefanMaron/BusinessCentral.AL.Runner`: the `closingIssuesReferences` numbers, every `Part of #N` line in the body (your own read of the body, not a GitHub parse), and the `issue-<N>` in the branch name. Your brief lists the identities the invoking session dispatched this cycle and which of them have returned; without that list, remove no `agent:` label. For each issue, read its state and labels (`gh issue view <N> --json state,labels`) and whether another open PR names it (the check in `check-open-prs-before-claiming.md`), pick the one branch below, and only then edit labels. An `agent:` label outside your brief's list stays and goes into the pass summary.
 
-- **PR merged, issue closed** — remove its `status:` label and your own `agent:` label. Close it yourself when the merge did not: `gh issue close <N> --comment "Closed — implemented in #<PR>"`.
-- **PR merged, `Part of #N`** — comment on N naming what this PR landed and what remains, remove its `status:` and your own `agent:` label, add `status: ready`.
-- **PR merged, named by the branch only, still open** — comment on it naming the PR, so the next agent reads what already landed.
-- **PR closed unmerged** — every issue it named that is still open and has no other open PR (`check-open-prs-before-claiming.md`, the check) gets your own `agent:` label removed, `status: in-progress` replaced by `status: ready`, and a comment naming the closed PR.
+- **PR merged, issue closed** — remove its `status:` label (whatever the value) and the listed `agent:` label. Close it yourself when the merge did not: `gh issue close <N> --comment "Closed — implemented in #<PR>"`.
+- **PR merged, `Part of #N`, N open** — comment on N naming what this PR landed and what remains; then remove its `status:` and the listed `agent:` label and add `status: ready`.
+- **PR merged, named by the branch only, still open** — comment on it naming the PR; labels unchanged.
+- **PR closed unmerged** — an issue it named that is open, has no other open PR, and whose `agent:` label names a returned loop: remove that label, replace `status: in-progress` by `status: ready`, comment naming the closed PR. An issue with another open PR: labels unchanged.
 
-Done when `gh issue view <N> --json state,labels` shows, for every issue the PR named: no `status:` label on a closed issue, `status: ready` on an open one this step released, and no `agent:` label of a loop this session dispatched.
+Done when `gh issue view <N> --json state,labels` shows, for every issue the PR named: no `status:` label on a closed issue; `status: ready` and no listed `agent:` label on an open issue this step released; labels unchanged on every other.
 
 ## Step 3 — Unblock issues
 ```
 gh issue list --label "status: blocked" --assignee @me --state open --json number,title,body,assignees --repo StefanMaron/BusinessCentral.AL.Runner
 ```
-Skip any blocked issue assigned to a non-@me user. Read comments; resolve if possible and remove the label, or leave a comment if it needs human input. A `status: in-progress` issue with no open PR whose `agent:` label names a loop this session dispatched is released as in Step 2's closed-unmerged branch.
+Skip any blocked issue assigned to a non-@me user. Read comments; resolve if possible and remove the label, or leave a comment if it needs human input. A `status: in-progress` issue with no open PR, whose `agent:` label names a loop your brief lists as returned, is released: remove that label, replace `status: in-progress` by `status: ready`, comment that the loop returned without a PR. A loop your brief lists as running keeps its claim.
 
 ## Step 4 — Done
 Triage of new untriaged issues is owned by the **`triager`** sub-agent (Opus, runs at the start of a cycle); the orchestrator does not triage. If the `status: ready` queue is empty and there are no PRs to review, the iteration is done.

@@ -130,7 +130,7 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
 - No release run is in progress (`publish.yml` pushes a fast-forward; a merge during its
   ~40-minute run kills it).
 - `git merge-tree --write-tree --messages origin/<base> origin/<branch>` is clean.
-- Every corpus PR the body declares reads `MERGED`, by the arming-list read in `orchestrating-a-session`.
+- The corpus-PR condition of the arming list in `orchestrating-a-session` holds.
 - No *other* PR in the same batch conflicts with it. Where two do — two submodule pin bumps to
   different revisions, say — arm only the one that must merge first and report the ordering.
 
@@ -438,7 +438,7 @@ a merge can turn `main` red, which outranks everything you were about to do.
    - every required check is green **on the current head**, with no `CANCELLED` required context;
    - `git merge-tree` is clean against current `main`, and the affected tests were re-run if the
      branch was rebased;
-   - every corpus PR its body declares reads `MERGED` (arming list, `orchestrating-a-session`);
+   - the corpus-PR condition of the arming list (`orchestrating-a-session`) holds;
    - it is not a release window (`publish.yml` pushes a fast-forward; a merge during its run
      kills it).
 
@@ -605,12 +605,14 @@ Scheduler entry as optional restart-on-boot hardening.
 
 **End the session after 10 cycles and let the timer start the next one.** A session running for
 days accumulates state that is not context — tool handles, temp files, harness state. On the
-tenth cycle, comment the cycle state on the session's status issue — the one this session
-opened at startup, or the one the previous session's last comment named; open one titled
-`Coordinator status <date>` when neither exists — every open PR by number with its verdict, what
-is armed, what is held for a person — then end the session; the next one starts from that
-comment. Done when the comment names every number `gh pr list --state open --limit 100 --json
-number --repo <owner>/<repo>` prints.
+tenth cycle, comment the cycle state on the session's status issue, then end the session; the
+next one starts from that comment. The status issue is found at startup: `gh issue list
+--state open --search "Coordinator status in:title" --json number` picks the newest; when none
+exists, open one titled `Coordinator status <date>`; write its number into the cycle log's
+header so a cold start reads it there. The comment lists every open PR by number with its
+`ci-wait` verdict, armed or not, and what is held for a person. Done when every number
+`gh pr list --state open --limit 500 --json number --repo <owner>/<repo>` prints appears in the
+comment with those three fields.
 
 **Where compaction lands matters more than when it fires.** A compaction inside a unit of work
 discards that unit's working context; one between units costs nothing, because everything
