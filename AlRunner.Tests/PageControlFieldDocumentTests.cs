@@ -16,10 +16,15 @@
 //     `int.TryParse` a faithful reproduction of ControlDefinition.IsBoundToTableField;
 //   * an unbound control's source expression lives in <Expressions>, keyed by that same
 //     DataColumnName, and nowhere on the control element itself;
-//   * Enabled/Visible are omitted when defaulted while Editable is omitted when defaulted
-//     AND has no default, which is why the three are not filled in the same way.
+//   * Enabled, Editable and Visible are all omitted from the document when defaulted, so
+//     the document alone does not say what the virtual table's column then reports.
 //
 // docs/page-control-field-from-bc-document.md has the measurements behind all three.
+//
+// This file asserts what the emitted DOCUMENT contains and deliberately stops there. It
+// used to carry the further inference that an undeclared Editable makes the COLUMN answer
+// "" — refuted by corpus codeunit 60424 on eight cloud legs (run 34329910568), which
+// answered "True". #3653 is correcting the runner.
 
 using Xunit;
 
@@ -253,14 +258,18 @@ public sealed class PageControlFieldDocumentTests : IDisposable
         Assert.Equal("false", Named(controls, "PcfDocHidden").GetAttribute("Visible"));
         Assert.Equal("false", Named(controls, "PcfDocEditable").GetAttribute("Editable"));
 
-        // Negative, and the asymmetry the fix turns on: an UNDECLARED property is absent from
-        // the document, so what the column reports is whatever BC's deserializer supplies.
-        // ControlDefinition carries [DefaultValue("true")] on Enabled and Visible and NONE on
-        // Editable, so Enabled/Visible read "true" and Editable reads "". Substituting "true"
-        // for all three — which the AL derivation did — is therefore wrong for exactly one of
-        // them. See docs/page-control-field-from-bc-document.md#the-three-property-defaults.
-        // Corpus PR #310 (codeunit 60424) puts the Editable half in front of a real tier;
-        // until its cloud legs report, the "" answer is a reading, not a measurement.
+        // Negative: an UNDECLARED property is simply absent from the emitted document. That
+        // is all this test claims, and it is the part that is measured — what the virtual
+        // table COLUMN then reports is a separate question this test does not answer.
+        //
+        // Do not restore the inference that used to sit here. It read the absent attribute
+        // plus ControlDefinition's [DefaultValue] attributes ("true" on Enabled/Visible, none
+        // on Editable) as meaning the column answers "" for an undeclared Editable. Corpus
+        // codeunit 60424 asked a real tier and all eight cloud legs answered "True"
+        // (run 34329910568). A property read off a freshly constructed instance is not
+        // evidence about what the provider reports for a DESERIALIZED one. #3653 is
+        // correcting CollectBcPageControls; see
+        // docs/page-control-field-from-bc-document.md#the-three-property-defaults.
         var plain = Named(controls, "Entry No.");
         Assert.False(plain.HasAttribute("Enabled"));
         Assert.False(plain.HasAttribute("Editable"));

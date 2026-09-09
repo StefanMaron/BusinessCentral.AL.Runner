@@ -14,9 +14,9 @@ The corpus adjudication for this one is
 [corpus PR #300](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/300)
 (page 60427, codeunit 60426), extended by
 [corpus PR #310](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/310)
-(page 60425, codeunit 60424) for the two columns #300 left unmeasured — see
-[the three property defaults](#the-three-property-defaults) and
-[`OptionString` and Enum](#option-and-enum).
+(page 60425, codeunit 60424) for the two columns #300 left unmeasured. #310 settled the
+`Enum`-bound [`OptionString`](#option-and-enum) in the runner's favour and **refuted** the
+undeclared-[`Editable`](#the-three-property-defaults) reading, which #3653 is correcting.
 
 <a id="what-bc-does"></a>
 
@@ -168,7 +168,16 @@ is why it is written down here rather than left implicit at the call site.
 
 <a id="the-three-property-defaults"></a>
 
-## The three property defaults, and why `Editable` is not `"true"`
+## The three property defaults
+
+> **The `Editable` half of this section is REFUTED and is being rewritten by
+> [#3653](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3653).** Corpus
+> codeunit 60424 asked a real service tier what the column reports for a control declaring no
+> `Editable` property, and all eight cloud legs of run `34329910568` answered **`True`** —
+> `Assert.AreEqual failed. Expected:<> (Text). Actual:<True> (Text)`. The runner answers `''`,
+> so this is a live runner defect, not a documentation lag. Read nothing below about
+> `Editable` as current. `Enabled` and `Visible` are unaffected: both were asked in the same
+> codeunit and both answered `'true'` on all eight legs, as this section says.
 
 `Enabled`, `Editable` and `Visible` are **text** columns carrying the declared property
 expression, so a control with `Visible = NoFieldVisible` reports the variable's name. The
@@ -186,33 +195,26 @@ and reading each property off a fresh instance:
 | `Editable` | **no** | **`null`** |
 
 `Enabled` and `Visible` therefore default to `"true"`, which is what the AL derivation already
-substituted and what corpus codeunit 60921 pins for `Visible`. `Editable` does **not**: BC
-passes the null straight to `NavText.CreateTruncated`, which renders it as the empty string.
-The AL derivation substituted `"true"` there too, so this change makes `Editable` answer `""`
-for a control that does not declare it.
+substituted and what corpus codeunit 60921 pins for `Visible` — and codeunit 60424 has since
+confirmed both on eight cloud legs.
 
-The table above was re-measured for #3625 on **27.0, 27.5, 28.1 and 28.4**, and every cell is
-identical on all four — so the asymmetry is a stable property of the type across the whole
-matrix, not a quirk of one build. `Editable` is declared on `ControlDataboundDefinition`
-while `Enabled` and `Visible` are declared on `UIElementDefinition`, which is the structural
-reason the three do not share a default.
+~~`Editable` does **not**: BC passes the null straight to `NavText.CreateTruncated`, which
+renders it as the empty string. The AL derivation substituted `"true"` there too, so this
+change makes `Editable` answer `""` for a control that does not declare it.~~ **Refuted —
+the tier answers `True`; see the note at the top of this section. #3653 replaces this
+paragraph with the measurement.**
 
-**That last cell is still measured from BC's own type, not from a service tier.** No *merged*
-corpus test pins `Editable` — codeunit 60921 pins `Visible` only, and corpus PR #300's
-codeunit 60426 asserts `Editable` nowhere. So the claim rests on the reflection measurement
-above plus BC's decompiled `array[7] = NavText.CreateTruncated(len, control.Editable)`, and
-not on a real tier having answered it. It is the honest reading of both, and it is the kind
-of claim `.claude/rules/ask-the-corpus-before-claiming-bc-behavior.md` says to name rather
-than to assert quietly.
+**What the tier refuted was the inference, not the reflection.** The table above re-measures
+identically on every build it was tried on, and `Editable` is genuinely declared on
+`ControlDataboundDefinition` while `Enabled` and `Visible` come from `UIElementDefinition` —
+that structural difference is real and unrefuted. What does not follow is the step from *a
+fresh reflected instance's field value* to *what the column reports*: something between
+deserialization and `GetControlsOnPage` supplies a default that a bare `Activator`-constructed
+instance never sees. #3653 owns finding it and correcting `CollectBcPageControls`.
 
-[Corpus PR #310](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/310)
-(codeunit 60424, page 60425), filed for #3625, is what settles it: it asserts all three
-columns on one control that declares none of them, so the asymmetry is pinned rather than
-assumed, plus the declared-`false` direction for `Editable` and `Enabled` so an empty answer
-cannot be read as the column never carrying anything. **Until those eight cloud legs report,
-this row is a reading.** If the tier answers `'true'`, the fix is
-`CollectBcPageControls` — the single place the three defaults are applied — and not the
-corpus assertion.
+The general lesson is worth more than the column: a property read off an object nobody
+deserialized into is not evidence about what a provider reading a deserialized object
+answers, however many builds agree on it.
 
 <a id="option-and-enum"></a>
 
@@ -243,26 +245,28 @@ reading an enum-typed record field, so the metadata side has to match or every
 (`RecordPatches.NclMetaTableBuilder.cs`). So `FieldNavType == NavType.Option` is true for an
 Enum-bound control here as well, and it answers the enum's members.
 
-**This is a reading of BC's document and BC's decompiled provider, not a tier measurement.**
-No *merged* corpus test pins `OptionString` for an Enum-bound page control — corpus codeunit
-60426's `OptionBoundControl_OptionStringIsTheFieldsMembers` uses `ALT Universal`'s
-`"Option Field"`, which is genuinely `Option`-typed, and `ALT Universal` also has an
-`Enum`-typed `"Status Field"` that no test binds a control to. An implementation keyed on
-"has option metadata" and one keyed on `NavType` therefore agree on everything the merged
-corpus measures, and this file takes the `NavType` route because it is what BC's code says.
+**This was a reading of BC's document and BC's decompiled provider. It is now a
+measurement.** Corpus codeunit 60424 (page 60425) binds a control to `"Status Field"`,
+declared `Enum "ALT Status"`, and asserts the members;
+`Record_PageControlField_EnumBoundControl_OptionStringIsTheEnumsMembers` passed on **all
+eight cloud legs** of run
+[`34329910568`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/actions/runs/34329910568)
+— 27.0, 27.3, 27.5, 28.0, 28.1, 28.2, 28.3 and 28.4. An Enum-bound control reports the
+enum's members, and the runner already answers that.
 
-Note which way the two readings point here, because it is the opposite of the `Editable`
-case: the decompiled guard (`f.Type == NavType.Option`, with `NavType.Enum` a distinct
-member) reads as `''`, while the emitted document (`Datatype="Option"` on an `Enum` field
-too) reads as the enum's members. They disagree, so no amount of further reading settles it.
+The count is what makes it a measurement rather than a non-emptiness check: `ALT Status` has
+**five** values against `"Option Field"`'s four, so the assertion separates the right answer
+both from an empty one and from the wrong field's members. Its negative arm,
+`IntegerBoundControl_OptionStringIsEmpty`, passed on the same eight legs, so the column is
+not simply filled unconditionally.
 
-[Corpus PR #310](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/310)
-binds a control to `"Status Field"` on page 60425 and asserts the members. `ALT Status` has
-**five** values against `"Option Field"`'s four, so the asserted count separates the right
-answer both from an empty one and from the wrong field's members. If the tier answers `''`,
-the fix is the `FieldNavType` guard in `GetPageControlFieldRowsFromBcDocument` — and note
-that changing how the runner *types* an enum field is not available as a fix there, for the
-`ValidateExpectedType` reason above.
+Worth recording because it came out against the more obvious reading. The two available
+readings pointed opposite ways — the decompiled guard (`f.Type == NavType.Option`, with
+`NavType.Enum` a distinct member) reads as `''`, while the emitted document
+(`Datatype="Option"` on an `Enum` field too) reads as the enum's members — so nothing but a
+tier could settle it. The document won. This is also the direction the `ValidateExpectedType`
+constraint above required, which is why the two independent reasons for the `NavType.Option`
+route agreeing is a fact about the design and not a coincidence.
 
 <a id="scope"></a>
 
