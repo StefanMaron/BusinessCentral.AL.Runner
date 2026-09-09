@@ -353,8 +353,8 @@ possible to red-test something with AL tests, that should add tests to the corpu
 the fix can be proven by AL running against a real service tier, it owes an upstream test even
 when its claim does not read as a statement about BC. The service-tier clause is the boundary:
 runner-only claims are red-testable in AL too, and they stay in `tests/runner-extras/`.
-Nothing about this changes when a PR may merge — a PR asserting BC behaviour still merges only
-after its corpus PR has, pin bump folded in.
+Nothing about this changes when a PR may merge: the corpus-PR condition of the arming list
+above decides.
 
 **"The corpus cannot express this" is a claim, and it needs its evidence like any other.** It
 is sometimes true and the reason is usually structural: corpus tests are compiled from AL
