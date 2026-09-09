@@ -179,11 +179,40 @@ Order findings by whether they would change the merge decision. For each: what i
 evidence, and what would settle it. Say plainly when you found nothing — a review that invents
 findings to look thorough is worse than no review.
 
-State explicitly whether, in your judgement, the PR meets the merge bar. The invoking session
-decides; you do not merge.
+State explicitly whether, in your judgement, the PR meets the merge bar, and end the comment
+with the verdict line below. The invoking session decides; you do not merge.
 
 That verdict goes **on the PR**, not only into your reply. Post it as a comment before you
 return, and say in your reply that you did. Where `gh` exists, `gh pr comment <N> --repo <owner>/<repo>
 --body-file <file>` is the shortest route; where it does not (web and remote sessions — see
 `github-access.md`), use `mcp__github__add_issue_comment`, which serves PRs too. Sign it as an
 agent review, since it posts under the account holder's name.
+
+## The verdict line
+
+A verdict is only actionable if a machine can find it and tell whether it still belongs to the
+code that is about to merge. Of 796 merged pull requests in the measured window, 1 carries a
+GitHub review object; the comments carrying the real verdicts use at least five header styles,
+so nothing could extract one, and a hold-worded review could be armed for auto-merge by mistake
+([e-11](https://fbakkensen.github.io/al-runner-retro/#e-11)).
+
+So the **last line** of your comment is fixed, and nothing follows it:
+
+```
+Verdict: MERGE|FIX-FIRST|HOLD (<reason, only for FIX-FIRST/HOLD>) — head <full 40-char sha> — patch <patch-id first 12 hex> — kind: full|arm-check
+```
+
+Run `tools/pr-verdict.py --stamp <PR>` at review time: it prints everything from `— head`
+onward for you to paste after your decision. It reads the head from `gh pr view --json
+headRefOid` and the patch from `git diff <merge-base>...<head> | git patch-id --stable`.
+
+- **The reason is required for FIX-FIRST and HOLD, and forbidden on MERGE.** A line that gets
+  this wrong is reported as *malformed*, which is not a verdict.
+- **Your signature goes above the verdict line.** A sign-off after it makes the comment carry
+  no verdict at all — `tools/pr-verdict.py <PR>` then exits 3, and no arming step accepts that.
+- **`kind:`** says which pass produced the verdict. `full` is the review above. `arm-check` is
+  the cheap pass for a re-review whose diff has not changed: run `tools/arm-check.py <PR>`,
+  which checks the mechanical preconditions and prints the stamp itself when they all hold.
+  It refuses when the patch-id has moved, because that means the diff changed and a full review
+  is owed — a rebase keeps the patch-id while the head SHA moves, and that pair is what tells
+  the two apart.

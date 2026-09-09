@@ -153,10 +153,17 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
   and count-baseline update are folded in.
 - No *other* PR in the same batch conflicts with it. Where two do — two submodule pin bumps to
   different revisions, say — arm only the one that must merge first and report the ordering.
+- **`tools/pr-verdict.py <N>` exits 0** — a MERGE verdict, on this head and this patch-id. Exit
+  1 is a FIX-FIRST or HOLD, 2 means the code moved under the verdict, 3 means there is no
+  parseable verdict at all; none of the three may be armed. `tools/arm-check.py <N>` runs that
+  check together with every mechanical one above in a single pass and exits 0 only if all hold,
+  which is what a re-review runs instead of reading the diff again.
 
-**Record the SHA you armed against** in the verdict. If the head moves afterwards, GitHub keeps
-auto-merge armed against the new head, which nobody has reviewed; the coordinator needs the SHA
-to notice.
+**Record the head and the patch-id you armed against** — that is what the verdict line's stamp
+carries (`.claude/agents/reviewer.md`, "The verdict line"), and `tools/pr-verdict.py --stamp <N>`
+prints it. If the head moves afterwards, GitHub keeps auto-merge armed against the new head,
+which nobody has reviewed; the coordinator needs both to notice, because the pair also says
+whether what moved was a rebase (same patch-id) or a new push.
 
 **One command, two outcomes — and on a green PR it MERGES.** `--auto` is not "queue it for
 later":
