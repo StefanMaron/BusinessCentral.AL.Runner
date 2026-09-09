@@ -119,9 +119,11 @@ public sealed class SuiteRootAlFilesTests : IDisposable
     }
 
     /// <summary>
-    /// Regression pin: an app that keeps everything under src/ still gets exactly [src].
-    /// ComputeAlCacheKey hashes the folder-relative layout, so widening this list would miss
-    /// every existing suite's cache once for no gain.
+    /// Regression pin: an app that keeps everything under src/ still gets exactly [src] — the
+    /// widening is reserved for suites that need it, so the emitter, the RecordPatches
+    /// registration and the per-call cost of every existing src/ suite are untouched.
+    /// (ComputeAlCacheKey hashes the .al files relative to their common directory, not this
+    /// list, so the key would survive a widening anyway; the pin is about the paths.)
     /// </summary>
     [Fact]
     public void SrcOnly_StillReturnsExactlySrc()
@@ -189,6 +191,114 @@ public sealed class SuiteRootAlFilesTests : IDisposable
         var paths = ProgramSupport.CollectSuitePaths(_root);
 
         Assert.Equal(new[] { Path.Combine(_root, "src") }, paths);
+    }
+
+    [Fact]
+    public void AppDirOnly_StillReturnsExactlyTheAppDir()
+    {
+        Touch(Path.Combine(_root, "app.json"), "{}");
+        Touch(Path.Combine(_root, "app", "A.al"));
+
+        var paths = ProgramSupport.CollectSuitePaths(_root);
+
+        Assert.Equal(new[] { Path.Combine(_root, "app") }, paths);
+    }
+
+    [Fact]
+    public void TestDirOnly_StillReturnsExactlyTheTestDir()
+    {
+        Touch(Path.Combine(_root, "test", "A.al"));
+
+        var paths = ProgramSupport.CollectSuitePaths(_root);
+
+        Assert.Equal(new[] { Path.Combine(_root, "test") }, paths);
+    }
+
+    /// <summary>
+    /// Legacy bucket layout with the suite AS the bucket root: <c>_shared/</c> holds AL and is
+    /// appended by CollectSuitePaths itself, so it is not "outside" and must not widen.
+    /// </summary>
+    [Fact]
+    public void SharedDirUnderTheSuite_IsCoveredNotOutside()
+    {
+        Touch(Path.Combine(_root, "app.json"), "{}");
+        Touch(Path.Combine(_root, "src", "A.al"));
+        Touch(Path.Combine(_root, "_shared", "Assert.al"));
+
+        var paths = ProgramSupport.CollectSuitePaths(_root, bucketRoot: _root);
+
+        Assert.Equal(new[] { Path.Combine(_root, "src"), Path.Combine(_root, "_shared") }, paths);
+    }
+
+    /// <summary>
+    /// A dot-directory is never an AL source root and can be huge (.git). AL under one does not
+    /// widen the suite; the predicate does not even walk it.
+    /// </summary>
+    [Fact]
+    public void AlUnderADotDirectory_DoesNotWidenThePaths()
+    {
+        Touch(Path.Combine(_root, "app.json"), "{}");
+        Touch(Path.Combine(_root, "src", "A.al"));
+        Touch(Path.Combine(_root, ".git", "stray.al"));
+
+        var paths = ProgramSupport.CollectSuitePaths(_root);
+
+        Assert.Equal(new[] { Path.Combine(_root, "src") }, paths);
+    }
+
+    /// <summary>
+    /// A suite's sub-directories are part of that suite by design, nested app.json or not
+    /// (Suites.cs: "a suite's own sub-directories are part of that suite, never separate
+    /// buckets"). A flat suite has always compiled such a child; a src/ suite now does the same
+    /// instead of silently dropping it.
+    /// </summary>
+    [Fact]
+    public void NestedAppInASiblingDir_IsPartOfThisSuite_LikeAFlatSuite()
+    {
+        Touch(Path.Combine(_root, "app.json"), "{}");
+        Touch(Path.Combine(_root, "src", "A.al"));
+        Touch(Path.Combine(_root, "fixtures", "child", "app.json"), "{}");
+        Touch(Path.Combine(_root, "fixtures", "child", "src", "C.al"));
+
+        var paths = ProgramSupport.CollectSuitePaths(_root);
+
+        Assert.Equal(new[] { _root }, paths);
+    }
+
+    private static bool TryMakeUnreadable(string path)
+    {
+        try { File.SetUnixFileMode(path, UnixFileMode.None); }
+        catch { return false; }
+        try { Directory.GetDirectories(path); return false; }
+        catch (UnauthorizedAccessException) { return true; }
+        catch (IOException) { return true; }
+    }
+
+    /// <summary>
+    /// A sibling the predicate cannot read is "could not tell", not "no AL there": the suite
+    /// widens to its root rather than quietly returning [src] with a helper possibly hidden
+    /// behind the permission bits. (Same third-state rule as the guards: an unmeasurable case
+    /// must not resolve to the answer that runs fewer tests.)
+    /// </summary>
+    [SkippableFact]
+    public void UnreadableSiblingDir_WidensToTheRoot()
+    {
+        Touch(Path.Combine(_root, "app.json"), "{}");
+        Touch(Path.Combine(_root, "src", "A.al"));
+        var locked = Path.Combine(_root, "locked");
+        Directory.CreateDirectory(Path.Combine(locked, "inner"));
+        Skip.IfNot(TryMakeUnreadable(locked), "permission bits do not bite here (Windows, or running as root)");
+        try
+        {
+            var paths = ProgramSupport.CollectSuitePaths(_root);
+
+            Assert.Equal(new[] { _root }, paths);
+        }
+        finally
+        {
+            try { File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute); }
+            catch { }
+        }
     }
 
     // ── end to end, spawning the runner ──────────────────────────────────────────────────
