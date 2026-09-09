@@ -63,9 +63,66 @@ public sealed record ExpectationEntry(
     string? Issue,              // required when Mode == ExpectFailKnownGap; forbidden for ExpectDivergence
     string? Doc,                // required when Mode == ExpectDivergence
     string? Note,
-    string SourceFile)          // the .json this entry came from, for diagnostics
+    string SourceFile,          // the .json this entry came from, for diagnostics
+    // #3347: the suite roots that can cover this entry, or empty = every run.
+    // See ExpectationManifest.FindUnmatchedEntries and docs/expectations.md#suites--which-runs-are-answerable-for-an-entry-3347.
+    IReadOnlyList<string>? Suites = null)
 {
     public bool MatchesAll => Method == "*";
+
+    /// <summary>
+    /// True when a run over <paramref name="runRoots"/> could have loaded this entry's test,
+    /// so the match audit may hold that run responsible for it (#3347).
+    ///
+    /// An entry with no <c>Suites</c> is answerable by every run — the pre-#3347 behaviour and
+    /// what all ten corpus entries want. So is any entry when the caller passes no roots at
+    /// all: a caller that cannot say what it ran must not get a quieter audit than one that can.
+    /// </summary>
+    public bool IsAnsweredBy(IReadOnlyList<string>? runRoots)
+    {
+        if (Suites == null || Suites.Count == 0) return true;
+        if (runRoots == null || runRoots.Count == 0) return true;
+        foreach (var scope in Suites)
+            foreach (var root in runRoots)
+                if (PathScope.Covers(scope, root)) return true;
+        return false;
+    }
+}
+
+/// <summary>
+/// Whether one repo-relative path denotes the same suite tree as another (#3347).
+/// </summary>
+internal static class PathScope
+{
+    /// <summary>
+    /// True when <paramref name="root"/> IS <paramref name="scope"/> or sits beneath it.
+    ///
+    /// Two constraints a simplification here would break. Do NOT reduce this to a string
+    /// <c>StartsWith</c>: <c>tests/runner-extras</c> would then cover
+    /// <c>tests/runner-extras-isolation-disabled</c>, a different suite under different
+    /// flags, and a scope matching more than it names is the untracked-gap hole the audit
+    /// exists to close. Do NOT anchor the match at segment 0: a bundle root arrives however
+    /// the caller spelled it, relative or absolute, so anchoring makes an entry's scope
+    /// depend on the caller's working directory.
+    /// See docs/expectations.md#suites--which-runs-are-answerable-for-an-entry-3347.
+    /// </summary>
+    public static bool Covers(string scope, string root)
+    {
+        var s = Split(scope);
+        var r = Split(root);
+        if (s.Length == 0 || r.Length < s.Length) return false;
+        for (int start = 0; start + s.Length <= r.Length; start++)
+        {
+            var all = true;
+            for (int i = 0; i < s.Length && all; i++)
+                all = string.Equals(s[i], r[start + i], StringComparison.OrdinalIgnoreCase);
+            if (all) return true;
+        }
+        return false;
+    }
+
+    private static string[] Split(string path) =>
+        path.Replace('\\', '/').Split('/', StringSplitOptions.RemoveEmptyEntries);
 }
 
 /// <summary>
@@ -215,7 +272,27 @@ public sealed class ExpectationManifest
     /// <c>--expectations-require-match</c>, which is opted into only by an invocation
     /// that really is expected to cover every entry.
     /// </summary>
-    public IReadOnlyList<UnmatchedExpectation> FindUnmatchedEntries()
+    public IReadOnlyList<UnmatchedExpectation> FindUnmatchedEntries() => FindUnmatchedEntries(null);
+
+    /// <summary>
+    /// The entries this run has no standing to audit, because their <c>Suites</c> scope names
+    /// no root it ran (#3347). Reported alongside a green audit so "all N matched" can never
+    /// silently stand for "some were skipped" — the number a green audit accounts for has to
+    /// be the number it actually looked at.
+    /// </summary>
+    public IReadOnlyList<ExpectationEntry> EntriesOutOfScopeFor(IReadOnlyList<string>? runRoots)
+        => Entries
+            .Where(e => e.Mode != ExpectationMode.AcceptPartialCompanyInit && !e.IsAnsweredBy(runRoots))
+            .ToList();
+
+    /// <inheritdoc cref="FindUnmatchedEntries()"/>
+    /// <param name="runRoots">
+    /// The suite roots this invocation ran, or null when the caller cannot say (#3347). An
+    /// entry declaring <c>Suites</c> none of these roots covers is skipped, because no run
+    /// over these roots could have loaded its test and reporting it would accuse a correct
+    /// entry of a typo. Passing null audits every entry, as before.
+    /// </param>
+    public IReadOnlyList<UnmatchedExpectation> FindUnmatchedEntries(IReadOnlyList<string>? runRoots)
     {
         DiscoveredTestCodeunit[] discovered;
         lock (_discoveredLock) discovered = _discovered.ToArray();
@@ -226,6 +303,9 @@ public sealed class ExpectationManifest
             // #3561: not a test expectation - see the constructor. Its own drift check is the
             // end-of-run one in Program.cs ("the codeunit completed, remove the entry").
             if (entry.Mode == ExpectationMode.AcceptPartialCompanyInit) continue;
+            // #3347: this run does not cover the suite the entry names, so it has no standing
+            // to call the entry unmatched. The run that DOES cover it still audits it.
+            if (!entry.IsAnsweredBy(runRoots)) continue;
             // Mirrors LookupExpectation: entries may be written against the AL object
             // name OR the CLR type name, and "*" matches every test method.
             var named = discovered
@@ -381,6 +461,27 @@ public sealed class ExpectationManifest
             return v.ValueKind == JsonValueKind.String ? v.GetString() : null;
         }
 
+        IReadOnlyList<string>? OptStringArray(string name)
+        {
+            if (!el.TryGetProperty(name, out var v)) return null;
+            if (v.ValueKind != JsonValueKind.Array)
+                throw new InvalidOperationException(
+                    $"{relName}[{idx}]: '{name}' must be a JSON array of repo-relative suite root paths");
+            var list = new List<string>();
+            foreach (var item in v.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(item.GetString()))
+                    throw new InvalidOperationException(
+                        $"{relName}[{idx}]: every '{name}' element must be a non-empty string");
+                list.Add(item.GetString()!.Trim());
+            }
+            if (list.Count == 0)
+                throw new InvalidOperationException(
+                    $"{relName}[{idx}]: '{name}' is present but empty. An empty scope would exempt the "
+                    + "entry from every audit — omit the field to be audited everywhere instead.");
+            return list;
+        }
+
         var codeunitId = ReqInt("codeunitId");
         var codeunitName = Req("CodeunitName");
         var method = Req("Method");
@@ -389,6 +490,9 @@ public sealed class ExpectationManifest
         var issue = Opt("Issue");
         var docAnchor = Opt("Doc");
         var note = Opt("Note");
+        // #3347. Which suite roots can cover this entry. Optional; absent = every run, which
+        // is what every entry written before #3347 means and gets.
+        var suites = OptStringArray("Suites");
 
         var mode = modeRaw switch
         {
@@ -453,7 +557,7 @@ public sealed class ExpectationManifest
         }
 
         return new ExpectationEntry(
-            codeunitId, codeunitName, method, mode, reason, issue, docAnchor, note, relName);
+            codeunitId, codeunitName, method, mode, reason, issue, docAnchor, note, relName, suites);
     }
 
     /// <summary>

@@ -29,6 +29,14 @@ naming convention:
 Sharding by area keeps PR diffs small. A single PR adding or removing one
 expectation should touch one file with one entry.
 
+An entry may also carry an optional `"Suites": [...]` naming the suite roots that can
+cover it (#3347). Absent — the case for every entry naming a `tests/al-language`
+test — it is audited by every run, unchanged. Present, it is audited only by a run that
+covered a matching root, which is what lets an entry name a `tests/runner-extras/`
+codeunit without failing the full-corpus leg that could never load it. It is not an
+exemption: the run that owns the suite still audits the entry in full. See
+[`docs/expectations.md`](../../docs/expectations.md#suites--which-runs-are-answerable-for-an-entry-3347).
+
 The file prefix and the entry's `Mode` must agree — the prefix is what a human
 scanning the directory reads. Moving an entry between modes means moving it
 between files. A `known-gaps-*.json` holding entries that are not

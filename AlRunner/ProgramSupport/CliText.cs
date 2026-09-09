@@ -694,8 +694,9 @@ internal static partial class ProgramSupport
         w.WriteLine("                          company-init exit 0->2 escalation (never 1/3/4/5, unlike");
         w.WriteLine("                          --no-strict-exit). The abort is still reported everywhere.");
         w.WriteLine("  --expectations-require-match");
-        w.WriteLine("                          Assert that this RUN discovers a test for EVERY entry in");
-        w.WriteLine("                          the active manifest, and fail (exit 5) on any that");
+        w.WriteLine("                          Assert that this RUN discovers a test for every entry in");
+        w.WriteLine("                          the active manifest IN SCOPE FOR IT, and fail (exit 5) on");
+        w.WriteLine("                          any that");
         w.WriteLine("                          matched nothing, naming the file, the codeunit and the");
         w.WriteLine("                          method. Without it such an entry is silently inert: one");
         w.WriteLine("                          wrong letter in CodeunitName or Method untracks a declared");
@@ -707,7 +708,11 @@ internal static partial class ProgramSupport
         w.WriteLine("                          every entry is actually true. After a watchdog resume the");
         w.WriteLine("                          final attempt folds the earlier attempts carried in with");
         w.WriteLine("                          --merge-results into what it audits, so the claim is about");
-        w.WriteLine("                          the run and not one process (#3168).");
+        w.WriteLine("                          the run and not one process (#3168). An entry may also");
+        w.WriteLine("                          narrow itself with \"Suites\": [...], naming the suite roots");
+        w.WriteLine("                          that can cover it; a run over none of them skips it rather");
+        w.WriteLine("                          than calling it unmatched, and a green audit counts only");
+        w.WriteLine("                          what it looked at and names what it skipped (#3347).");
         w.WriteLine("  --count-baseline PATH   Load a per-suite test/app-group expected-count manifest");
         w.WriteLine("                          (schema: AlRunner/Infrastructure/CountBaseline.cs) and");
         w.WriteLine("                          fail the run (exit 4) if a suite's count does not exactly");

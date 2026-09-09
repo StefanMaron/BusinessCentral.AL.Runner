@@ -339,7 +339,7 @@ public sealed class ExpectationManifestWiringTests : IDisposable
             + $"--test GreenPath_KnownGapDeclared \"{SuitePath}\"");
 
         AssertCount(output, "pass-known-gap:", 1);
-        Assert.Contains("all 1 entries matched a discovered test", output, StringComparison.Ordinal);
+        Assert.Contains("all 1 entry in scope for this run matched a discovered test", output, StringComparison.Ordinal);
         Assert.DoesNotContain("UNMATCHED", output, StringComparison.Ordinal);
         Assert.True(exit == 0, $"a matched entry must not fail the run. exit={exit}\n{output}");
     }
@@ -390,6 +390,87 @@ public sealed class ExpectationManifestWiringTests : IDisposable
         Assert.Contains("declares no test method 'GreenPath_PlainPas'", output, StringComparison.Ordinal);
         Assert.Contains("GreenPath_PlainPass", output, StringComparison.Ordinal);
         Assert.True(exit == 5, $"expected exit 5, got {exit}\n{output}");
+    }
+
+    // ── Suite scoping (#3347) ────────────────────────────────────────────────────
+    //
+    // The pure tests over the scoping predicate live in ExpectationMatchAuditTests. These
+    // two are the end-to-end proof that the scope reaches the EXIT CODE, which is what
+    // actually broke: PR #3711's two entries named a tests/runner-extras/ codeunit, the
+    // corpus step is the only invocation passing --expectations-require-match, and all
+    // three BC legs failed with exit 5 on entries that were correct — while the same two
+    // entries matched and reclassified normally in the runner-extras step of the same leg.
+
+    /// <summary>Writes a one-entry manifest carrying a Suites scope, and returns its directory.</summary>
+    private string OneEntryManifestScopedTo(
+        string name, string codeunitName, string method, string suite)
+    {
+        var dir = Path.Combine(_scratchRoot, name);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "known-gaps-fixture.json"), $$"""
+        [
+          {
+            "codeunitId": 60810,
+            "CodeunitName": "{{codeunitName}}",
+            "Method": "{{method}}",
+            "Mode": "expect-fail-known-gap",
+            "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3347",
+            "Suites": ["{{suite}}"]
+          }
+        ]
+        """);
+        return dir;
+    }
+
+    /// <summary>
+    /// A wrong entry scoped to a suite this run did not cover must NOT fail the run. Wrong
+    /// on purpose — the same misspelled CodeunitName that reaches exit 5 unscoped two tests
+    /// above — so the green can only come from the scope, never from the entry being right.
+    /// </summary>
+    [SkippableFact]
+    public void RequireMatch_AnEntryScopedToAnotherSuite_DoesNotFailThisRun()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = OneEntryManifestScopedTo(
+            "scope-elsewhere", "Expct Fixture Test", "GreenPath_PlainPass", "tests/runner-extras");
+
+        var (output, exit) = RunRunner(
+            $"--expectations \"{dir}\" --expectations-require-match "
+            + $"--test GreenPath_PlainPass \"{SuitePath}\"");
+
+        Assert.DoesNotContain("UNMATCHED", output, StringComparison.Ordinal);
+        // The green must not silently absorb it: a skipped entry is named, and the count
+        // reports what was actually looked at rather than the manifest's size.
+        Assert.Contains("all 0 entries in scope for this run matched a discovered test", output, StringComparison.Ordinal);
+        Assert.Contains("1 scoped to another suite, not audited here", output, StringComparison.Ordinal);
+        Assert.Contains("Expct Fixture Test.GreenPath_PlainPass", output, StringComparison.Ordinal);
+        Assert.True(exit == 0,
+            $"an entry scoped to a suite this run did not cover must not fail it. exit={exit}\n{output}");
+    }
+
+    /// <summary>
+    /// The negative that stops the scope from becoming a blanket exemption: the same wrong
+    /// entry, scoped to a suite this run DOES cover, still reaches exit 5 with the sharp
+    /// diagnostic. Without this pair, an implementation that skipped every scoped entry
+    /// would pass the test above.
+    /// </summary>
+    [SkippableFact]
+    public void RequireMatch_AnEntryScopedToTheSuiteThisRunCovers_StillFailsTheRun()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = OneEntryManifestScopedTo(
+            "scope-here", "Expct Fixture Test", "GreenPath_PlainPass",
+            "AlRunner.Tests/Fixtures/ExpectationsBundle");
+
+        var (output, exit) = RunRunner(
+            $"--expectations \"{dir}\" --expectations-require-match "
+            + $"--test GreenPath_PlainPass \"{SuitePath}\"");
+
+        AssertCount(output, "  fail:", 0);
+        Assert.Contains("UNMATCHED", output, StringComparison.Ordinal);
+        Assert.Contains("object id 60810 was loaded as \"Expct Fixture Tests\"", output, StringComparison.Ordinal);
+        Assert.True(exit == 5,
+            $"a scoped entry is still audited by the run that covers its suite. exit={exit}\n{output}");
     }
 
     /// <summary>
@@ -449,7 +530,7 @@ public sealed class ExpectationManifestWiringTests : IDisposable
     //   entry "Ghost Resume Tests"."RanInAnEarlierAttempt", carried, --merge-results
     //     → exit 5, "no codeunit named ... was loaded in this run"
     // and after:
-    //     → exit 0, "all 1 entries matched a discovered test"
+    //     → exit 0, "all 1 entry in scope for this run matched a discovered test"
     //
     // The codeunit is deliberately one the run's OWN bundle does not contain, so the
     // test cannot pass on the final attempt's own discovery — which is what a version of
@@ -519,7 +600,7 @@ public sealed class ExpectationManifestWiringTests : IDisposable
         AssertCount(output, "  pass:", 1);
         AssertCount(output, "  fail:", 0);
         Assert.DoesNotContain("UNMATCHED", output, StringComparison.Ordinal);
-        Assert.Contains("all 1 entries matched a discovered test", output, StringComparison.Ordinal);
+        Assert.Contains("all 1 entry in scope for this run matched a discovered test", output, StringComparison.Ordinal);
         Assert.True(exit == 0,
             $"an entry whose test ran in an earlier resume attempt must not fail the run. "
             + $"exit={exit}\n{output}");
