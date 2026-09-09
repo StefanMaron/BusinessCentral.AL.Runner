@@ -33,9 +33,21 @@ there but was compiled by Microsoft ahead of time, and **we do not want to compi
 
 That is a deliberate choice, not a limitation. `.claude/rules/no-base-app-in-csharp-tests.md` has the
 measurements: loading the Base Application floor costs about **70 seconds cold and 6 seconds warm per
-runner invocation**. Recompiling it to obtain metadata is far worse — roughly **2 minutes and ~9 GB
-peak RSS**. For an app that already ships a working DLL, that is spending a compile to learn what
-`SymbolReference.json` already states.
+runner invocation**. For an app that already ships a working DLL, recompiling it would be spending a
+compile to learn what `SymbolReference.json` already states.
+
+**And for Base Application specifically it is not merely expensive — it does not work at all.** From
+`tests/expectations/metadata-equivalence/apps.json`, which is why that app is absent from the
+equivalence harness:
+
+> Base Application is deliberately ABSENT. Its emit needs a `PublicKeyToken=null` copy of
+> `Microsoft.AspNetCore.StaticFiles` that no BC artifact ships, and without it the emitter produces
+> **ZERO objects** (issue #3549).
+
+So the symbol-file route is not a cost-saving fallback for this app. It is the only route that
+produces anything. (Compiling Base Application is separately expensive — roughly 2 minutes and ~9 GB
+peak RSS — but that is the *cost*, not the reason, and stating the cost as the reason has misled a
+reader of this repository before.)
 
 **So for this shape the answer is the symbol file, and the symbol file is held to a standard rather
 than treated as second-class.**
@@ -51,6 +63,28 @@ The standard, from #3533:
 That is testable rather than aspirational, and it is tested: any app the runner source-compiles
 yields **both** derivations in the same run — BC's metadata XML from `CaptureOutputter`, and ours
 from `SymbolReference.json` — so the standard is a differential assertion over the same tables.
+
+**It is enforced on every leg, not run by hand.** `MetadataEquivalenceHarnessTests` runs in
+`bc-tests.yml` behind the step *"Generate BC metadata ground truth"*, which is explicitly **not**
+`continue-on-error`. The ground truth is regenerated per leg rather than checked in, for two reasons
+the workflow states: it is Microsoft's compiler output over Microsoft's source, which is not ours to
+redistribute; and it belongs to one exact BC build, so a checked-in copy would either churn on every
+Microsoft release or go stale silently — *"which is the failure mode this whole harness exists to
+remove."*
+
+Two properties make it hard to weaken by accident, and both matter more than the assertion itself:
+
+- **`allowlist.json` fails in BOTH directions** — on any difference not listed, *and* on any listed
+  entry that no longer matches anything. So a reader fix must delete its entries in the same change,
+  and a BC version that introduces a new property surfaces as a new undeclared difference rather
+  than passing silently. Every entry carries exactly one reason **kind** — `issue`, `outOfScope`,
+  `oracleLimitation`, `cannotExpress` — because the four need different evidence.
+- **`apps.json` makes coverage mandatory.** Declaring an app there means the harness *fails* if no
+  ground-truth bundle exists for it, so it cannot quietly measure less than it claims. Currently
+  Business Foundation and System Application.
+
+This is what replaced trial and error. A claim about the symbol path expressed inside this harness
+cannot rot silently; the same claim as a standalone test can.
 
 The gap that measurement found was one-directional every time: BC sets a real value, the runner took
 a constructor default.
