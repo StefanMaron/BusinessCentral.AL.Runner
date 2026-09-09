@@ -56,8 +56,8 @@ command line contains the pattern, including the outer tool shell, so
 `while pgrep -f "dotnet run"; do ...; done` never terminates. Filtering `$$` out does not rescue
 it, and fails twice over: `grep -v $$` is a substring filter, so with a PID of `123` it also
 drops `1234` and `4123`, and `grep -vx` fixes that half while leaving the ancestor half. Use
-`$!` on a job you started, or `wait` — better still, run it in the foreground
-(`no-backgrounding-long-commands.md` owns that).
+`$!` on a job you started, or `wait`. Whether to wait at all is
+`no-backgrounding-long-commands.md`'s call, not this rule's.
 
 ## Sister rules
 

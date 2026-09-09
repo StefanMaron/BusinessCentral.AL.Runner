@@ -147,12 +147,11 @@ technique for an observable a rollback would otherwise destroy.
 
 ## When no verdict is available
 
-A reference-tier run that errored before executing anything is *no verdict*, not a negative
-one. Say so plainly, name what would settle it, and land the runner change with whatever
-coverage is legitimately available — the escape hatch in `bc-behavior-tests-go-upstream.md`
-applies here too. What is not acceptable is substituting confident reasoning for the
-measurement and writing it into a comment, a doc table, or an issue as though it were
-established.
+**A reference-tier run that errored before executing anything is *no verdict*, not a negative
+one** — the fourth row of the table above. What to do then is
+`bc-behavior-tests-go-upstream.md`'s "No verdict available at all", and it applies unchanged to
+a claim: what is never acceptable is substituting confident reasoning for the measurement and
+writing it into a comment, a doc table, or an issue as though it were established.
 
 ## Sister rules
 

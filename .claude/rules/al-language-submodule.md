@@ -91,12 +91,10 @@ Manifest drift is loud in both directions: a test that starts passing despite an
 entry fails the run with "remove the entry"; one that starts throwing OOS without an entry
 fails with "add an entry".
 
-## Runner-specific positive tests live elsewhere
+## Which tests belong here at all
 
-A test asserting runner-only behaviour (for example that a specific surface throws
-`RunnerOutOfScopeException` with reason `email-smtp`) goes in `tests/runner-extras/`, not in the
-corpus. The converse is a hard rule too: a test asserting plain BC behaviour may **not** be
-written as a runner-local test because that is quicker (`bc-behavior-tests-go-upstream.md`).
+`bc-behavior-tests-go-upstream.md` decides that in both directions — what goes upstream, and
+what stays in `tests/runner-extras/`. Nothing in the corpus is written by us either way.
 
 ## Sister rules
 

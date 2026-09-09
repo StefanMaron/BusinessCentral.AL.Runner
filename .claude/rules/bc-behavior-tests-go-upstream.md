@@ -37,8 +37,9 @@ Step 3 is the one that is never optional. Full detail, including escape hatches:
 3. **Open a pull request into
    [`StefanMaron/BusinessCentral.AL.Language.Tests`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests).**
    Mandatory — a test becomes part of the corpus only by merging into that repo's `master`. The
-   orchestrator merges it, not the authoring agent, once the corpus's eight required BC legs —
-   one per version — are green. Eight OnPrem legs run alongside without gating.
+   orchestrator merges it, not the authoring agent, once the corpus's required BC legs are green
+   (`verify-execution-not-the-tick.md` § "Which legs were ever going to run it" says which of the
+   sixteen those are, and which of them ever run your tests).
 4. **After that PR merges, bump the submodule pin** in this repo, in whichever PR
    `al-language-submodule.md` says it belongs in.
 5. **Then merge the runner change here**, showing the corpus test going RED → GREEN against the
