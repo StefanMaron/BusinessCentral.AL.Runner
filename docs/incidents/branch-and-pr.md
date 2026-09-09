@@ -26,3 +26,22 @@ unless the effect is intended. Four real bugs share this one root cause:
 - GitHub matches several CI-skip spellings (`[skip ci]`, `[ci skip]`, `[no ci]`, `[skip actions]`, `[actions skip]`, `***NO_CI***`) ANYWHERE in a commit message, so writing one in a PR body — even just to document it — silently skips every workflow on the resulting merge commit, including the one required check on `main` (this happened for real on #2115's merge, see #2116). `pr-gate.yml`'s `reject-ci-skip-directives` job catches it before merge, and blocks it.
 - The same parser fires on a **commit message**, which the PR-body guard could not see: PR #2486 declared exactly two closing references (`closingIssuesReferences` confirmed #2478 and #2480), a commit message said "It does not close #2479", and merge commit `28cdcf65` closed #2479 anyway. The issue had to be reopened by hand. `reject-bad-closing-references` and `reject-ci-skip-directives` now scan the commit messages too (#2491).
 - GitHub's closing-reference parser (`Closes`/`Fixes`/`Resolves` + `#N`) fires on that pattern anywhere in the message and does not understand negation or qualifying prose: PR #2127's body said "This does not close #2125" and merge commit `fe789a13` closed #2125 regardless. The mirror bug is the parser missing entirely — a PR with no closing reference merges fine and leaves its linked issue open and labeled in-progress. `pr-gate.yml`'s `reject-bad-closing-references` job catches both directions. (This line used to cite #2046, #1642 and #1640 as instances. None of them was: PR #2050 opened with "Addresses #2046 (does not close it)" and PR #2048 with "Part of #1642 — not closing it", both deliberate partial landings of a tracking issue, which is the correct way to land part of a tracked effort; and #1640 was closed on merge by PR #2040's `Closes #1640`, only its `status: in-progress` / `agent:` labels went stale — a label-hygiene defect, not a parser miss. #2186 has the record.)
+
+## The branch is the third place a PR names an issue, and nothing read it (#3678)
+
+Measured over the 30-day agent-workflow retrospective window
+(https://fbakkensen.github.io/al-runner-retro/, finding b-20): **31 merged PRs sat on a branch
+named `agent/<id>/issue-N` while declaring no closing reference for N**, and **12 of those
+issues were still open afterwards** — labelled in progress, invisible to the ready queue, and
+worked on by nobody. The companion finding (b-8): 5 of the 8 open in-progress issues sat behind
+a merged "Part of #N" PR that nobody relabelled.
+
+The gate had covered two of the three places a PR names an issue — the title/body and the
+commit messages — because both are text GitHub's own parser reads. The branch name is the third,
+and it is the one an implementation agent cannot get wrong, since the workflow contract derives
+it from the issue number. PR #3744 added `PR_HEAD_REF` to `check_closing_reference.sh` and the
+`Part of #N` shape alongside `Closes #N`, plus the two label workflows that act on each.
+
+Blast radius when it landed: of the 5 open PRs at that moment, **none** would have been failed
+by the new direction.
+

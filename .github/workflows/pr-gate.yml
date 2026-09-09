@@ -143,6 +143,11 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_COMMITS: ${{ steps.commits.outputs.messages }}
+          # #3678, the third direction: a branch named agent/<id>/issue-N names
+          # an issue, and the body must either close it or declare "Part of #N".
+          # 31 merged PRs in the retrospective window declared neither and left
+          # 12 issues open with nobody working them.
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: bash .github/scripts/check_closing_reference.sh
 
   require-corpus-linkage:

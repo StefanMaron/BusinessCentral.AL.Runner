@@ -371,6 +371,129 @@ else
     "fix: something" "$(printf '%s' "$template_body" | sed 's/^No linked issue:$/No linked issue: docs typo/')"
 fi
 
+# --- #3678: the branch names an issue the body never declares -----------------
+#
+# 31 merged PRs in the 30-day retrospective window sat on a branch named
+# agent/<id>/issue-N and declared no closing reference for N; 12 of those
+# issues were still open afterwards, invisible to the ready queue because
+# nothing relabelled them (retrospective finding b-20).
+#
+# So when the head branch names an issue, the body must say what the PR does
+# about it, in exactly one of two shapes, each on its own line:
+#
+#   Closes #N     -- the PR closes it (already the canonical trailer)
+#   Part of #N    -- the PR lands part of it; N stays open and the merge pass
+#                    puts it back on the ready queue
+#
+# "Part of" carries no closing keyword, so it neither closes N nor trips the
+# stray check. A "Part of #N" naming the branch issue also counts as the
+# body's declaration when there is no "Closes" line at all: a partial landing
+# has a linked issue, and pushing those authors at the "No linked issue:"
+# escape hatch would make the escape hatch a lie.
+#
+# PR_HEAD_REF is optional and empty by default, so every case above -- none of
+# which sets it -- must keep behaving exactly as it did.
+
+assert_exit_branch() {
+  local desc="$1" expected_rc="$2" branch="$3" title="$4" body="$5"
+  local rc
+  PR_TITLE="$title" PR_BODY="$body" PR_HEAD_REF="$branch" "$SCRIPT" >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" = "$expected_rc" ]; then
+    echo "ok   - $desc"
+    pass=$((pass + 1))
+  else
+    echo "FAIL - $desc: expected exit $expected_rc, got $rc"
+    fail=$((fail + 1))
+  fi
+}
+
+# "fail with the named message" is part of the contract, so one case reads
+# stderr rather than only the exit code -- an author who gets a generic
+# "no closing reference" error is not told that "Part of #N" is available.
+assert_stderr_branch() {
+  local desc="$1" needle="$2" branch="$3" title="$4" body="$5"
+  local err
+  err=$(PR_TITLE="$title" PR_BODY="$body" PR_HEAD_REF="$branch" "$SCRIPT" 2>&1 >/dev/null)
+  if printf '%s' "$err" | command grep -qF "$needle"; then
+    echo "ok   - $desc"
+    pass=$((pass + 1))
+  else
+    echo "FAIL - $desc: stderr did not contain '$needle'; got: $err"
+    fail=$((fail + 1))
+  fi
+}
+
+assert_exit_branch "branch issue declared by a Closes line passes" 0 \
+  "agent/fbk-2/issue-3678" "fix: something" "Closes #3678"
+
+assert_exit_branch "branch issue declared by a full-URL Closes line passes" 0 \
+  "agent/fbk-2/issue-3678" "fix: something" \
+  "Closes https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3678"
+
+assert_exit_branch "branch issue undeclared but carried by a Part of line passes" 0 \
+  "agent/fbk-2/issue-3678" "fix: something" "Closes #123
+
+Part of #3678"
+
+assert_exit_branch "a Part of line alone, with no Closes at all, passes" 0 \
+  "agent/fbk-2/issue-3678" "fix: something" "Part of #3678
+
+This lands the first half; the rest stays open."
+
+assert_exit_branch "Part of is case-insensitive and survives a trailing period" 0 \
+  "agent/fbk-2/issue-3678" "fix: something" "Closes #123
+
+part of #3678."
+
+assert_exit_branch "Part of survives CRLF line endings" 0 \
+  "agent/fbk-2/issue-3678" "fix: something" \
+  "$(printf 'Closes #123\r\nPart of #3678\r\n\r\nOrdinary prose.\r\n')"
+
+assert_exit_branch "branch issue undeclared and no Part of line fails" 1 \
+  "agent/fbk-2/issue-3678" "fix: something" "Closes #123
+
+An ordinary body that never mentions the branch's own issue."
+
+assert_stderr_branch "the failure names both accepted shapes" "Part of #3678" \
+  "agent/fbk-2/issue-3678" "fix: something" "Closes #123"
+assert_stderr_branch "the failure names the Closes shape too" "Closes #3678" \
+  "agent/fbk-2/issue-3678" "fix: something" "Closes #123"
+
+assert_exit_branch "a Part of line naming a DIFFERENT issue does not satisfy the branch" 1 \
+  "agent/fbk-2/issue-3678" "fix: something" "Closes #123
+
+Part of #999"
+
+assert_exit_branch "an inline 'part of #N' in a sentence does not satisfy the branch" 1 \
+  "agent/fbk-2/issue-3678" "fix: something" "Closes #123
+
+This is part of #3678, landing the first half."
+
+assert_exit_branch "the escape hatch does not excuse a branch that names an issue" 1 \
+  "agent/fbk-2/issue-3678" "docs: fix typo" "No linked issue: this only fixes a typo."
+
+# A branch outside the agent/<id>/issue-N shape says nothing about an issue,
+# so the whole check stands down: these must behave exactly as they do with
+# PR_HEAD_REF unset.
+assert_exit_branch "a non-agent branch with a clean Closes line passes" 0 \
+  "feature/some-work" "fix: something" "Closes #123"
+assert_exit_branch "a non-agent branch with the escape hatch passes" 0 \
+  "docs/typo" "docs: fix typo" "No linked issue: this only fixes a typo."
+assert_exit_branch "a non-agent branch with no declaration still fails" 1 \
+  "feature/some-work" "fix: something" "Nothing linked here."
+assert_exit_branch "an agent branch with no issue-N segment stands down" 0 \
+  "agent/fbk-2/experiment" "fix: something" "Closes #123"
+assert_exit_branch "an empty PR_HEAD_REF stands down" 0 \
+  "" "fix: something" "Closes #123"
+
+# The stray check still runs first: a branch-satisfying body with an
+# unintended inline close must still fail for THAT reason.
+assert_exit_branch "a stray close is still caught on an agent branch" 1 \
+  "agent/fbk-2/issue-3678" "fix: something" "Closes #3678
+
+This also fixes #999 in passing."
+
 echo ""
 echo "$pass passed, $fail failed"
 if [ "$fail" -ne 0 ]; then

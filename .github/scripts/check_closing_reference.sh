@@ -66,6 +66,20 @@
 #                treated the same as stray body text, since GitHub honors
 #                them there too)
 #   PR_BODY    - the pull request's body/description
+#   PR_HEAD_REF - the pull request's head branch name (optional; defaults to
+#                empty, in which case the branch check below stands down
+#                entirely, so every caller predating #3678 keeps working).
+#                When it has the shape agent/<id>/issue-<N>, the branch
+#                itself names an issue, and the body must say what the PR
+#                does about N: either a canonical "Closes #N" line, or a
+#                standalone "Part of #N" line. Thirty-one merged PRs in the
+#                30-day retrospective window named an issue in their branch
+#                and declared neither, and twelve of those issues were still
+#                open afterwards -- in progress by their labels, invisible to
+#                the ready queue, and worked on by nobody (finding b-20).
+#                "Part of" carries no closing keyword, so it neither closes N
+#                nor trips the stray check above; it is the signal the merge
+#                pass reads to put N back on the ready queue.
 #   PR_COMMITS - every commit message on the branch, concatenated (optional;
 #                defaults to empty so the script stays callable with just a
 #                title and body). Scanned for STRAY references only: a
@@ -84,6 +98,8 @@ set -uo pipefail
 : "${PR_BODY?PR_BODY is required (may be empty)}"
 # Optional and additive: callers that predate #2491 pass only a title and body.
 PR_COMMITS="${PR_COMMITS-}"
+# Optional and additive the same way (#3678): unset means no branch check.
+PR_HEAD_REF="${PR_HEAD_REF-}"
 
 KEYWORDS='close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved'
 
@@ -233,7 +249,50 @@ if [ -n "$stray_number" ]; then
   exit 1
 fi
 
+# --- Pass 3: the branch names an issue the body must account for (#3678) ----
+#
+# Only the agent/<id>/issue-<N> shape is read as naming an issue -- that is
+# the branch convention in .claude/rules/branch-and-pr.md, and it is the only
+# one where a number in a branch name reliably IS an issue number. Any other
+# branch stands the whole check down, so a human's feature/ branch is
+# unaffected.
+
+branch_issue=""
+if [ -n "$PR_HEAD_REF" ]; then
+  branch_issue=$(printf '%s' "$PR_HEAD_REF" | command grep -oP '^agent/[^/]+/issue-\K[0-9]+$' || true)
+fi
+
+part_of_declared=""
+if [ -n "$branch_issue" ] && ! is_declared "$branch_issue"; then
+  # Anchored to its own line, exactly like CANONICAL_LINE_RE, and for the same
+  # reason: a declaration a reviewer can see at a glance, not a phrase buried
+  # in a sentence ("this is part of #N, landing the first half" is prose about
+  # the issue, not a statement that the issue stays open on purpose).
+  PART_REF="(?:(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#${branch_issue}|https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:issues|pull)/${branch_issue})"
+  PART_OF_LINE_RE="^[[:space:]]*Part of${SEP}${PART_REF}[[:space:]]*[.]?[[:space:]]*\$"
+  while IFS= read -r line; do
+    if printf '%s' "$line" | command grep -qiP "$PART_OF_LINE_RE"; then
+      part_of_declared="1"
+      break
+    fi
+  done <<< "$PR_BODY"
+
+  if [ -z "$part_of_declared" ]; then
+    echo "::error::This PR's head branch is '$PR_HEAD_REF', so it names issue $branch_issue, but the body neither closes that issue nor says it stays open. Add ONE of these two lines, on its own line, to the PR BODY: 'Closes #$branch_issue' if this PR finishes the issue, or 'Part of #$branch_issue' if it lands only part of it and the issue stays open. 'Part of' carries no closing keyword, so it does not close anything -- it is what tells the merge pass to put issue $branch_issue back on the ready queue instead of leaving it labelled in-progress forever. This is the missing direction of #2121 seen from the branch: 31 merged PRs sat on a branch named issue-N while declaring nothing about N, and 12 of those issues were left open and invisible to the ready queue. If the branch name is simply wrong -- it names an issue this PR has nothing to do with -- rename the branch." >&2
+    exit 1
+  fi
+fi
+
 if [ -z "$declared_targets" ]; then
+  # A partial landing has a linked issue: it is the branch's own, declared by
+  # the "Part of #N" line Pass 3 just found. Pushing that author at the
+  # "No linked issue:" escape hatch would make the escape hatch state
+  # something false, so the Part of line satisfies this direction too.
+  if [ -n "$part_of_declared" ]; then
+    echo "No closing reference, and none needed: this PR declares 'Part of #$branch_issue', the issue its branch names."
+    exit 0
+  fi
+
   escape_reason=""
   escape_found=""
   while IFS= read -r line; do
