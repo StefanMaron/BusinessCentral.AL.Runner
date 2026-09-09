@@ -746,8 +746,21 @@ public static partial class BcRuntime
                 .GetType("Microsoft.Dynamics.Nav.Runtime.PlatformMetadataProvider");
             var inst = pmpT?.GetProperty("Instance",
                 BindingFlags.Public | BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null);
-            var getEnums = pmpT?.GetMethod("GetSystemEnums");
-            var getAl = pmpT?.GetMethod("GetEnumALCodeById");
+            // BcShape.FindMethod, not a name-only GetMethod (#3069): an overload appearing on
+            // either of these would otherwise pick one silently, and BC moving them is exactly
+            // the case this whole method must degrade on rather than guess through. Absence
+            // still returns null, which the guard below treats as "no inventory to read".
+            var getEnums = pmpT == null ? null : AlRunner.Infrastructure.BcShape.FindMethod(
+                pmpT, "GetSystemEnums", BindingFlags.Public | BindingFlags.Instance,
+                "system enum registration", "PlatformMetadataProvider.GetSystemEnums",
+                "BC's own inventory of the platform enums no app declares — see "
+                + "docs/field-enum-metadata-resolution.md",
+                types: Type.EmptyTypes);
+            var getAl = pmpT == null ? null : AlRunner.Infrastructure.BcShape.FindMethod(
+                pmpT, "GetEnumALCodeById", BindingFlags.Public | BindingFlags.Instance,
+                "system enum registration", "PlatformMetadataProvider.GetEnumALCodeById",
+                "the AL source BC ships for one platform enum, parsed for its value declarations",
+                types: new[] { typeof(int) });
             if (inst == null || getEnums == null || getAl == null) return;
             if (getEnums.Invoke(inst, null) is not System.Collections.IDictionary dict) return;
 
@@ -828,6 +841,35 @@ public static partial class BcRuntime
     // Id property: that property is `GetAppGroupAwareEnumMetadata().Id`, which calls the very
     // method this helper replaces, so reading it here would recurse.
     private static FieldInfo? _fFieldEnumMetadataEnumId;
+
+    /// <summary>
+    /// Whether an enum object with this id can be resolved to real values in THIS bundle — i.e.
+    /// whether <see cref="NCLFieldEnumMetadata_GetEnumMetadataFromRegistry"/> would answer
+    /// rather than raise.
+    ///
+    /// <para>The MetaField builder asks before stating a field's <c>enumTypeId</c>, because
+    /// stating it is what makes BC resolve it (#3594). A bundle that never loaded the symbols
+    /// of the app declaring the enum has nothing to resolve: the corpus names Base Application
+    /// as an explicit dependency and so registers its 721 enums, while a bundle declaring only
+    /// an <c>application</c> FLOOR with <c>dependencies: []</c> resolves the stripped platform
+    /// packages, which carry no enum symbols at all. Stating an id that cannot be resolved
+    /// turned the whole bundle into a 0-of-N abort — the exact failure #3594 exists to remove,
+    /// reproduced on a different manifest shape
+    /// (<c>AlRunner.Tests/Fixtures/BcFloorSkip/healthy-suite</c>).</para>
+    ///
+    /// <para>Not stating the id is the FAITHFUL answer for such a bundle, not a silent fake:
+    /// with no enum id the upstream BC factory builds the plain
+    /// <c>NCLOptionMetadataWithCaptions</c> from the field's own inline option string, which is
+    /// exactly what the runner answered before #3594 and what every such bundle has always
+    /// seen. The value is stated wherever it can be backed and withheld where it cannot, rather
+    /// than asserted everywhere and failing where it is unbacked.</para>
+    /// </summary>
+    public static bool CanResolveEnumMetadata(int enumId)
+    {
+        if (enumId == 0) return false;
+        EnsureSystemEnumsRegistered();
+        return AlEnumMetadataRegistry.TryGet(enumId, out _);
+    }
 
     /// <summary>
     /// Replacement for <c>NCLFieldEnumMetadata.GetEnumMetadataFromMetadataProvider()</c> — the

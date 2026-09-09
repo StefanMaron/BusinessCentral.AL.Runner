@@ -63,7 +63,8 @@ rewrite (`AlRunner/Patches/PageEnumFieldMetadataPatches.cs`): a by-id `Enum` loo
 consumption point the runner never populated.
 
 **2. Register BC's own platform enums.**
-The redirect alone is not enough. **System enums** — ids `2000000001`..`2000000017` — are
+The redirect alone is not enough. **System enums** — 16 of them, spanning `2000000001` to
+`2000000017` with `2000000016` absent — are
 declared by the platform, appear in no app's `SymbolReference.json`, and so were in no registry.
 Base Application table `2000000132` has a field typed by enum `2000000002` "Entity Text
 Scenario", which is why the corpus still aborted with the redirect in place, now naming that id
@@ -80,7 +81,7 @@ Measured on BC 28.1.49838.53910:
 
 | | |
 |---|---|
-| system enums exposed | 16 (`2000000001`–`2000000015`, `2000000017`) |
+| system enums exposed | 16 — `2000000001`–`2000000015` and `2000000017`; there is no `2000000016` |
 | `value(...)` declarations across all of them | 57 |
 | declarations using a `"quoted"` name | 27 |
 | `Caption = '...'` occurrences | 73 |
@@ -103,6 +104,32 @@ entry an app already registered, and never throws: a BC build that does not expo
 inventory leaves the registry untouched, and a field typed by a system enum then fails the same
 loud way it did before. That is a missing optimisation, not a silent wrong answer.
 
+**3. Withhold the id where it cannot be backed.**
+The two steps above cover every enum some app *declares*. They do not cover a bundle that never
+loaded the declaring app's symbols at all, and that turned out to be a whole manifest shape
+rather than an edge case.
+
+A bundle whose `app.json` carries an `application` **floor** with `dependencies: []` resolves
+the stripped platform packages, which carry **no enum symbols whatsoever** — measured on
+`AlRunner.Tests/Fixtures/BcFloorSkip/healthy-suite`: 721 enums registered, Base Application's
+8889 among the absent, against **zero** such misses on the corpus, which names Base Application
+as an explicit dependency and so registers its enums through `RecordPatches.AddBcAppPath`. Four
+fixtures in this repository have that shape (`BcFloorSkip/healthy-suite`,
+`BcFloorSkip/future-suite`, `CrossMajorNote`, `SubscriberScanAudit`).
+
+Stating an id that cannot be resolved reproduced the **same 0-of-N abort** on those bundles that
+this whole change exists to remove elsewhere. So `BuildMetaField` asks
+`BcRuntime.CanResolveEnumMetadata(id)` first, and states `enumTypeId`/`enumTypeName` — together
+or not at all — only when the answer is yes.
+
+**Withholding is the faithful answer here, not a silent fake.** With no enum id BC's own factory
+builds the plain `NCLOptionMetadataWithCaptions` from the field's inline option string, which is
+exactly what such a bundle saw before this change and what it still sees. The value is stated
+wherever it can be backed and withheld where it cannot, rather than asserted everywhere and
+failing where it is unbacked. A bundle that *can* resolve the enum is unaffected, which is what
+keeps the guard from being satisfiable by withholding the id everywhere —
+`FloorOnlyBundleEnumFieldTests` asserts both directions.
+
 ## Result
 
 At corpus pin `c9d5f656`, BC 28.1.49838.53910:
@@ -111,7 +138,14 @@ At corpus pin `c9d5f656`, BC 28.1.49838.53910:
 |---|---|---|---|
 | before (baseline) | 3,112 | 3,112 | 0 |
 | stating the id alone | 0 | 0 | **1** |
-| after (both halves) | 3,112 | 3,112 | 0 |
+| after (all three parts) | 3,112 | 3,112 | 0 |
+
+and on `AlRunner.Tests/Fixtures/BcFloorSkip/healthy-suite`, the floor-only shape:
+
+| | tests | pass | exec-fail |
+|---|---|---|---|
+| without the resolvability guard | **0** | **0** | **1** |
+| with it | 1 | 1 | 0 |
 
 and `MetaField.EnumTypeId` moves from a declared difference to an agreeing one, so its entry is
 deleted from `tests/expectations/metadata-equivalence/allowlist.json` and
@@ -123,10 +157,18 @@ supplies the empty string.
 
 ## Two failure modes worth keeping in mind
 
-**The redirect and the system-enum registration are separately load-bearing**, and removing
-either aborts the corpus with a *different* id — 8889 (an app enum, table 1366) without the
-Cecil rewrite, 2000000002 (a platform enum, table 2000000132) without
-`EnsureSystemEnumsRegistered`. That asymmetry is what distinguishes the two guards.
+**All three parts are separately load-bearing**, and each fails differently, which is what
+distinguishes them:
+
+| removed | fails as |
+|---|---|
+| the Cecil rewrite | corpus aborts on enum **8889**, table 1366 |
+| `EnsureSystemEnumsRegistered` | corpus aborts on enum **2000000002**, table 2000000132 |
+| the resolvability guard | every **floor-only** bundle aborts on enum 8889 — while the corpus stays green |
+
+That last row is the one worth remembering: the corpus is not a sufficient test bed for this
+change, because the manifest shape that breaks is one the corpus does not have. CI caught it;
+the corpus run could not.
 
 **`enumId` must be read as a field, never through the `Id` property.**
 `NCLFieldEnumBaseMetadata.Id` is `GetAppGroupAwareEnumMetadata().Id`, which calls the very

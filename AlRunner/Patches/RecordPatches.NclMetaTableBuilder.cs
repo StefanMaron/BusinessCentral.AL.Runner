@@ -579,14 +579,27 @@ public static partial class RecordPatches
             }
             // #3594 — the enum object an `Enum "X"`-typed field names. Stating this makes BC's
             // own FieldDataProvider.GetFieldRecordBuffer resolve the id through NCLMetadata, so
-            // it is only safe once that lookup can answer: BcRuntime's Cecil rewrite of
-            // NCLFieldEnumMetadata.GetEnumMetadataFromMetadataProvider serves it from
-            // AlEnumMetadataRegistry, and EnsureSystemEnumsRegistered adds BC's own platform
-            // enums, which no app declares. Both halves must ship together — stating the id
-            // without them aborted the whole corpus app (0 of 3,112 tests) on the enum of Base
-            // Application table 1366. See docs/field-enum-metadata-resolution.md.
-            if (p.Name == "enumTypeId" && f.EnumTypeId != 0) { args[i] = f.EnumTypeId; continue; }
-            if (p.Name == "enumTypeName" && !string.IsNullOrEmpty(f.EnumTypeName)) { args[i] = f.EnumTypeName; continue; }
+            // it is only safe where that lookup can answer. Three things make it answer:
+            // BcRuntime's Cecil rewrite of NCLFieldEnumMetadata.GetEnumMetadataFromMetadataProvider
+            // serves it from AlEnumMetadataRegistry; EnsureSystemEnumsRegistered adds BC's own
+            // platform enums, which no app declares; and the guard below withholds the id in a
+            // bundle that loaded no symbols for the declaring app. Any one of them missing turns
+            // the bundle into a 0-of-N abort — measured for all three.
+            // See docs/field-enum-metadata-resolution.md.
+            // Stated together or not at all, and only when the enum can actually be resolved in
+            // THIS bundle — see BcRuntime.CanResolveEnumMetadata for why an unresolvable id is
+            // withheld rather than asserted (it aborts the whole bundle) or faked.
+            if (p.Name == "enumTypeId" && AlRunner.BcRuntime.CanResolveEnumMetadata(f.EnumTypeId))
+            {
+                args[i] = f.EnumTypeId;
+                continue;
+            }
+            if (p.Name == "enumTypeName" && !string.IsNullOrEmpty(f.EnumTypeName)
+                && AlRunner.BcRuntime.CanResolveEnumMetadata(f.EnumTypeId))
+            {
+                args[i] = f.EnumTypeName;
+                continue;
+            }
             if (p.Name == "fieldClass" && _tFieldClass != null && (f.IsFlowField || f.IsFlowFilter))
             {
                 // #1716 — FlowFilter must reach the metadata as FlowFilter. NCLMetaTable
