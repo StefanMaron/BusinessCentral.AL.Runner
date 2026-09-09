@@ -36,14 +36,25 @@
 //   shared inventory AllObj reads, so AllObj and CodeUnit Metadata cannot disagree about
 //   which codeunits exist.
 //
-// COLUMNS NOT IMPLEMENTED
-//   Everything outside ID / Name / TableNo / SingleInstance / Subtype — the owning app id,
-//   the two permission-mask strings, TestType, RequiredTestIsolation, Namespace — gets BC's
-//   own NavValue.GetDefaultNavValue for that column's type, which is also what a real row
-//   carries for a codeunit that declares none of them. Filling them needs sources the
-//   runner does not have yet (the app-id column needs per-object app attribution, which is
-//   the same data issue #2326 tracks for AllObj's "Object Subtype"); inventing a value
-//   would be a silent wrong answer, so they are left at BC's default and named here.
+// COLUMNS FROM BC'S OWN METADATA DOCUMENT (#3606)
+//   AL Namespace, InherentPermissions and InherentEntitlements are read off the document
+//   BC's emitter produced for the codeunit — see
+//   RecordPatches.CodeunitMetadataFromBcDocument.cs. A codeunit with no document keeps BC's
+//   default for all three; that is every codeunit in a precompiled dependency, whose .app
+//   ships no metadata XML, and every codeunit on a compile-cache HIT with no replayed
+//   sidecar.
+//
+// COLUMNS STILL NOT IMPLEMENTED, AND WHY NONE IS WAITING ON THE CONVERSION ABOVE
+//   App ID, TestType and RequiredTestIsolation get BC's own NavValue.GetDefaultNavValue.
+//   App ID is not an object property at all (BC fills it from the PUBLISHING app, per-run
+//   state a compiler cannot emit — the same data #2326 tracks for AllObj). TestType is
+//   emitted 0 times in Base Application's 1,690 codeunit documents because BC DERIVES it
+//   rather than reading it; deriving it is a separate claim about BC needing its own corpus
+//   test. RequiredTestIsolation IS stated in the document, as TestIsolation — and reading it
+//   is WRONG: a real service tier answers None for every codeunit, so BC's default is the
+//   faithful answer and the document value is not. Eight cloud legs measured that (corpus PR
+//   296) and Ncl.dll says why: the property BC's row builder reads is never assigned.
+//   docs/codeunit-metadata-from-bc.md#requiredtestisolation.
 //
 // PRECOMPILED-DLL RESPECT
 //   Runtime-engine types only (NCLMetaTable, NCLMetaField, NavValue, ReadOnlyRecordBuffer,
@@ -131,21 +142,26 @@ public static partial class RecordPatches
         {
             if (!done.TryAdd(row.Id, 0)) continue;
 
-            // Keep this resolution OUT of the per-field builder: a throw from inside
+            // Keep BOTH resolutions OUT of the per-field builder: a throw from inside
             // InsertVirtualRow escapes GetDataAccessForTable and no row of the table is served
-            // at all (#3536, docs/limitations.md#codeunit-metadata-subtype). The `[warn]` tag
-            // is load-bearing too — any other tag is dropped at default verbosity by Log.cs.
+            // at all (#3536, docs/limitations.md#codeunit-metadata-subtype). The document read
+            // joins the subtype resolution here for exactly that reason — it refuses on a
+            // malformed document and on a permission mask it cannot read, either of which
+            // would otherwise take the whole table down. The `[warn]` tag is
+            // load-bearing too — any other tag is dropped at default verbosity by Log.cs.
             int subtypeOrdinal;
+            BcCodeunitDocumentValues? document;
             try
             {
                 subtypeOrdinal = ResolveCodeunitSubtypeOrdinal(
                     subtypeOrdinals, _cmvSubtypeOptionString, row.Subtype, row.Id);
+                document = TryReadCodeunitMetadataDocument(row.Id);
             }
             catch (RunnerOutOfScopeException ex)
             {
                 Console.Error.WriteLine(
                     $"[warn] RecordPatches: CodeUnit Metadata has NO ROW for codeunit {row.Id} "
-                    + $"\"{row.Name}\" — its SubType could not be resolved: {ex.Message}. Every other "
+                    + $"\"{row.Name}\" — {ex.Message}. Every other "
                     + "codeunit is still reported, but AL asking for this one will fail to find "
                     + "it: Get() answers false and a FindSet/Count is one row short, with no "
                     + "error raised at the read.");
@@ -154,7 +170,7 @@ public static partial class RecordPatches
 
             InsertVirtualRow(provider, metaTable,
                 new object[] { CodeunitMetadataVirtualTableId, row.Id, 0, 0 },
-                field => BuildCodeunitMetadataValue(field, row, subtypeOrdinal));
+                field => BuildCodeunitMetadataValue(field, row, subtypeOrdinal, document));
         }
     }
 
@@ -163,11 +179,17 @@ public static partial class RecordPatches
     /// the mapping tracks whatever the System package in the resolved artifact declares
     /// rather than a hardcoded field-number table.
     /// </summary>
+    /// <param name="document">BC's own metadata document for this codeunit, already parsed, or
+    /// null when none is registered for it. The three columns it states fall through to BC's
+    /// default when it is null, which is the honest answer for a codeunit whose .app ships no
+    /// metadata XML — never a value derived from something else.</param>
     private static object? BuildCodeunitMetadataValue(
-        NCLMetaField field, CodeunitMetaRow row, int subtypeOrdinal)
+        NCLMetaField field, CodeunitMetaRow row, int subtypeOrdinal,
+        BcCodeunitDocumentValues? document)
     {
         object? Text(string s) => _aovNavTextCreateTruncated!.Invoke(
             null, new object?[] { field.FieldDefinedLength, s ?? string.Empty });
+        object? Default() => _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
 
         switch (NormalizeObjectTypeName(field.FieldName ?? string.Empty))
         {
@@ -186,8 +208,14 @@ public static partial class RecordPatches
                 {
                     field.FieldOptionMetadata, subtypeOrdinal
                 });
+            case "alnamespace":
+                return document == null ? Default() : Text(document.AlNamespace);
+            case "inherentpermissions":
+                return document == null ? Default() : Text(document.InherentPermissions);
+            case "inherententitlements":
+                return document == null ? Default() : Text(document.InherentEntitlements);
             default:
-                return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
+                return Default();
         }
     }
 
