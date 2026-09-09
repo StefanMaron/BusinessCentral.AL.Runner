@@ -535,16 +535,9 @@ between them. Nothing may depend on them talking to each other.
 assignee is what stops two agents working the same issue, and your own agent label is what lets
 you (and anyone reading the repository later) tell which work came from which loop. Set both.
 
-**The GitHub assignee is the lock**, and it decides the order you look in. It is visible to
-everyone, survives a crashed box, and needs no shared state between contributors. A dedicated
-label is useful for telling afterwards which work the loop produced — but the label is
-bookkeeping; the assignee is what prevents two agents doing the same issue.
-
-**Between two loops on the same account, neither signal decides ownership**, and the check that
-does is one call: an **open PR carrying `Closes #N`** means the issue is in progress no matter
-what the assignee and labels say. Resolve it before claiming, and — as a coordinator — build the
-whole map once per cycle before dispatching. Three collisions in four hours came from skipping
-it. `.claude/rules/check-open-prs-before-claiming.md` has the command and the incidents.
+**What each claim signal is worth, and the one call that decides ownership, live in
+`.claude/rules/check-open-prs-before-claiming.md`** — read it before claiming, and as a
+coordinator build the whole open-PR map once per cycle before dispatching.
 
 **Look in this order, and it works for any account:**
 
