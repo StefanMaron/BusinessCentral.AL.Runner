@@ -1,50 +1,34 @@
 #!/usr/bin/env python3
-"""Read a pull request's newest REVIEW VERDICT and say whether it still applies.
+"""Read a pull request's newest review verdict and say whether it still applies.
 
-Claim: a review verdict is only actionable if a machine can find it and tell
-whether it belongs to the code that is about to merge. Review here happens in
-comments, in at least five header styles, so nothing could extract a verdict and
-a FIX-FIRST could be armed for auto-merge by mistake
-(https://fbakkensen.github.io/al-runner-retro/#e-11 has the counts).
-
-So `.claude/agents/reviewer.md` now requires one fixed last line per review
-comment, and this tool is the reader of it. The grammar lives here in `GRAMMAR`
-and is pinned against reviewer.md by `tools/test_pr_verdict.py`, so the prose
-and the parser cannot drift apart.
-
-    tools/pr-verdict.py <PR>            # read the newest verdict, judge it
-    tools/pr-verdict.py --stamp <PR>    # print the line's tail, to paste
+    tools/pr-verdict.py <PR>            # judge the newest verdict on the PR
+    tools/pr-verdict.py --stamp <PR>    # print the tail of the verdict line, to paste
     tools/pr-verdict.py --stamp <PR> --head <sha> [--patch <id>]
-                                        # ...in a session with no `gh`
+                                        # stamp without `gh` (head read through MCP)
 
-Reading a verdict needs `gh`: it is a GitHub query with no local equivalent, so
-in an MCP-only session (`github-access.md`) that half is unavailable and the
-tool says so instead of guessing. Stamping does not -- pass the head SHA you
-read through `mcp__github__pull_request_read` and the fingerprint is computed
-from your own checkout with `git`.
+The verdict line is defined once, in `.claude/agents/reviewer.md`; `GRAMMAR` below is that
+line and `tools/test_pr_verdict.py` pins the two to each other.
 
 Exit codes
 ----------
-    0  the newest verdict is MERGE, on THIS head and THIS patch-id -- and this
-       is the only path that returns 0
+    0  the newest verdict is MERGE, on THIS head and THIS patch; the only path that returns 0
     1  the newest verdict is FIX-FIRST or HOLD
-    2  a MERGE verdict exists but the head or the patch-id has moved since; the
-       output says which
-    3  no verdict comment at all, a malformed verdict line, the PR or the API
-       could not be read, or this copy is behind origin/main
+    2  a MERGE verdict exists but the head or the patch has moved since; the output says which
+    3  no verdict, a malformed verdict line, the PR or the API could not be read, or this
+       copy is behind origin/main
 
-Two traps, both load-bearing:
+Traps
+-----
+* `patch` is sha256 of `git diff <base>...<head>` with hunk headers and blob hashes removed,
+  everything else byte for byte: unchanged by a clean rebase, changed by any edit including
+  whitespace. `git patch-id` is not used because it normalises whitespace away.
+* Only comments whose author_association is OWNER, MEMBER or COLLABORATOR carry a verdict.
+* A verdict marker that is not the last line of its comment makes that comment malformed,
+  and a malformed comment newer than a readable verdict yields exit 3, never the older verdict.
+* Reading a verdict needs `gh`; stamping does not.
 
-* The patch field is a fingerprint of `git diff <base>...<head>` with hunk
-  headers and blob hashes removed and everything else kept byte for byte, so it
-  survives a clean rebase (the head SHA moves, the fingerprint does not) and is
-  **whitespace-sensitive on purpose** -- `git patch-id` normalises whitespace
-  away and answers the same id for a line moved into or out of a Python
-  conditional, which is a behaviour change. Anything that moves the fingerprint
-  costs a full review, which is the safe direction. See `canonical_diff`.
-* A verdict must be the LAST non-empty line of its comment, so an agent
-  signature belongs above it. A trailing "thanks" makes the comment carry no
-  verdict at all, which is exit 3 -- never a silent green.
+Why: a verdict a tool can read cannot be armed by mistake
+(https://fbakkensen.github.io/al-runner-retro/#e-11).
 """
 from __future__ import annotations
 

@@ -1,31 +1,27 @@
 #!/usr/bin/env python3
-"""The cheap re-review pass: everything the arming decision needs, no judgement.
+"""The cheap re-review pass: the mechanical arming conditions, one PR, no judgement.
 
-Claim: most reviewer runs re-confirm a PR that has not changed, and re-reading
-an untouched diff is what that spends
-(https://fbakkensen.github.io/al-runner-retro/#e-12 has the run counts and the
-median output tokens). The mechanical preconditions in
-`.claude/skills/orchestrating-a-session/SKILL.md` -- branch ownership, a clean
-merge-tree, green required checks, corpus linkage, no release run -- are
-checkable without reading anything.
+    tools/arm-check.py <PR>
 
-So: when the diff is unchanged since your last full review, run this instead of
-reviewing again, and stamp the verdict `kind: arm-check`. When the patch-id has
-moved, this refuses and a full review is owed.
+Run this instead of a full review when the diff is unchanged since the last full review.
+Checks, each printed PASS/FAIL: (a) branch prefix is one this loop may own, (b) merge-tree
+against the base is clean, (c) `tools/ci-wait.py <PR> --timeout 0` exits 0, (d) every
+`Corpus-PR:` declared in the body is MERGED and a pin bump carries the count baseline,
+(e) no `publish.yml` run is in progress, (f) `pr-verdict.py` finds a MERGE on this patch
+(a moved head with the same patch is a rebase and passes; a moved patch refuses).
 
-    tools/arm-check.py <PR> [--repo owner/repo]
+Exit 0 only when every check passes; then the last line is the verdict stamp
+(`kind: arm-check`) to paste. Never arms, never comments.
 
-Exit 0 only when every check passes; then, and only then, the last line is a
-verdict stamp to paste. It never arms auto-merge and never comments -- the
-reviewer does both, so that the actor and the check stay separate.
+Traps
+-----
+* Every check is bound to the head SHA read at start; a head that moves during the run
+  makes the tool refuse (exit 2) rather than stamp a head it did not check.
+* A failed `git fetch` refuses (exit 3); a check against cached refs is not a check.
+* `--repo` other than the default refuses: `ci-wait.py` has no repository switch.
 
-Trap: check (f) accepts a MERGE verdict whose head has moved as long as the
-diff fingerprint has not, because that pair means a rebase. The fingerprint
-(`pr-verdict.py`'s `canonical_diff`) drops hunk headers and blob hashes and
-keeps everything else byte for byte, so a rebase that had to resolve anything --
-or a whitespace-only edit, which `git patch-id` cannot see at all -- moves it
-and lands you in a full review. That is the safe direction, and the reason the
-fingerprint is checked rather than the SHA alone.
+Why: most reviewer runs re-confirm an unchanged PR
+(https://fbakkensen.github.io/al-runner-retro/#e-12).
 """
 from __future__ import annotations
 

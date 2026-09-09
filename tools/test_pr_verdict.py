@@ -1,20 +1,10 @@
 #!/usr/bin/env python3
-"""Unit tests for tools/pr-verdict.py: the verdict grammar and its exit codes.
+"""Tests for tools/pr-verdict.py: the verdict grammar and its exit codes.
 
-The grammar is the whole point of the tool, so it is proven here against the
-comment shapes that actually exist on this repository rather than only against
-the one shape the tool was written for: review happens in comments, in at least
-five header styles, none of them parseable
-(https://fbakkensen.github.io/al-runner-retro/#e-11 has the counts). Each of
-those five is a fixture below and each must come back "no verdict", never a
-green.
-
-The asymmetry that matters: exit 0 is the only answer that lets a PR be armed
-for auto-merge, so every fixture that is not an exact MERGE on the current head
-AND the current patch-id asserts a NON-ZERO exit. A parser bug that loses a
-FIX-FIRST is the failure this suite exists to catch.
-
-Run: python3 tools/test_pr_verdict.py
+Exit 0 is the only answer that lets a PR be armed, so every fixture that is not an exact
+MERGE on the current head and patch asserts a non-zero exit. Legacy comment shapes without a
+verdict line, a stale head, a foreign author, a misplaced marker and a malformed newer
+comment are all fixtures here. Run: python tools/test_pr_verdict.py
 """
 from __future__ import annotations
 

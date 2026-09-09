@@ -112,17 +112,9 @@ were measured:
   ancestor of the other. **A one-PR-at-a-time reviewer cannot see that**, and neither can the
   coordinator, who is not reading the diffs.
 
-**A reviewer that approves a PR arms auto-merge on it immediately, in the same pass** — the
-command, the conditions that must all hold, and what the verdict has to record are one list, in
-the `orchestrating-a-session` skill under "A reviewer that approves a PR arms auto-merge".
-Follow it there. This section used to carry a verbatim copy of it, which is how the two skills
-came to give different instructions about the same act while both read as authoritative.
-
-Two of its consequences bite harder in an unattended loop than anywhere else. On a PR whose
-checks are already green, `--auto` **merges on the spot** rather than queueing, so the approval
-decision is the merge decision and nobody looks again. And the command's exit code is not
-decoration — `gh pr merge` exits non-zero for real reasons, and a loop that printed "armed"
-regardless of it once left four green PRs sitting unarmed.
+**Arming is defined once**, in the `orchestrating-a-session` skill under "A reviewer that
+approves a PR arms auto-merge": the command, the conditions, the stamp to record. Run that
+list; on a green PR it is the merge decision.
 
 When it arms rather than merges, arming is still not merging, and it does not replace the merge
 bar — it is the bar expressed as a standing instruction to GitHub, so a PR lands the moment its

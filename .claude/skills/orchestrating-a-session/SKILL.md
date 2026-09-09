@@ -153,22 +153,17 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
   and count-baseline update are folded in.
 - No *other* PR in the same batch conflicts with it. Where two do — two submodule pin bumps to
   different revisions, say — arm only the one that must merge first and report the ordering.
-- **`tools/pr-verdict.py <N>` exits 0** — a MERGE verdict, on this head and this patch-id. Exit
-  1 is a FIX-FIRST or HOLD, 2 means the code moved under the verdict, 3 means there is no
-  parseable verdict at all; none of the three may be armed.
+- **`tools/pr-verdict.py <N>` exits 0**: a MERGE verdict on this head and this patch.
+  Exit 1 (FIX-FIRST or HOLD), 2 (code moved under the verdict) and 3 (no readable verdict)
+  all mean: do not arm.
 
-`tools/arm-check.py <N>` runs **five** of the conditions above in one pass — branch ownership,
-merge-tree, corpus linkage with the count-baseline, no release run, and the required checks
-through `ci-wait.py --timeout 0` — plus the verdict check, and exits 0 only if all six hold.
-That is what a re-review runs instead of reading an unchanged diff again. **The last condition,
-"no other PR in the same batch conflicts with it", is not among them and stays yours**: it is a
+`tools/arm-check.py <N>` runs every condition above except the batch conflict, and exits 0
+with the stamp as its last line when all hold. The batch-conflict condition is yours: it is a
 statement about the batch, which no per-PR tool can see.
 
-**Record the head and the patch-id you armed against** — that is what the verdict line's stamp
-carries (`.claude/agents/reviewer.md`, "The verdict line"), and `tools/pr-verdict.py --stamp <N>`
-prints it. If the head moves afterwards, GitHub keeps auto-merge armed against the new head,
-which nobody has reviewed; the coordinator needs both to notice, because the pair also says
-whether what moved was a rebase (same patch-id) or a new push.
+**Record the stamp you armed against** (`— head … — patch …`, from `tools/pr-verdict.py
+--stamp <N>`) in the verdict. Same patch with a moved head is a rebase; a moved patch is new
+code nobody has reviewed.
 
 **One command, two outcomes — and on a green PR it MERGES.** `--auto` is not "queue it for
 later":

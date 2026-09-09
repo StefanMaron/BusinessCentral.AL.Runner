@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
-"""Unit tests for tools/arm-check.py: the cheap re-review pass.
+"""Tests for tools/arm-check.py.
 
-Claim being pinned: the arm-check is only safe if EVERY check is required to
-pass. Most reviewer runs re-confirm a PR nobody has touched
-(https://fbakkensen.github.io/al-runner-retro/#e-12), so the cheap pass is
-worth having -- and worth proving that no single failing check can be lost in
-the aggregate. Each fixture below fails exactly one check and asserts a
-non-zero exit.
-
-Run: python3 tools/test_arm_check.py
+Each fixture fails exactly one check and asserts a non-zero exit, so no single failing
+check can be lost in the aggregate; the production ci-wait wrapper and fetch path are
+exercised, not replaced. Run: python tools/test_arm_check.py
 """
 from __future__ import annotations
 

@@ -190,38 +190,28 @@ agent review, since it posts under the account holder's name.
 
 ## The verdict line
 
-A verdict is only actionable if a machine can find it and tell whether it still belongs to the
-code that is about to merge. Of 796 merged pull requests in the measured window, 1 carries a
-GitHub review object; the comments carrying the real verdicts use at least five header styles,
-so nothing could extract one, and a hold-worded review could be armed for auto-merge by mistake
-([e-11](https://fbakkensen.github.io/al-runner-retro/#e-11)).
-
-So the **last line** of your comment is fixed, and nothing follows it:
+End every review comment with one verdict line, and nothing after it:
 
 ```
 Verdict: MERGE|FIX-FIRST|HOLD (<reason, only for FIX-FIRST/HOLD>) — head <full 40-char sha> — patch <diff fingerprint, 12 hex> — kind: full|arm-check
 ```
 
-Run `tools/pr-verdict.py --stamp <PR>` at review time: it prints everything from `— head`
-onward for you to paste after your decision, and nothing else on stdout. It reads the head from
-`gh pr view --json headRefOid` and fingerprints `git diff <merge-base>...<head>` with hunk
-headers and blob hashes removed — so the fingerprint survives a clean rebase and is
-**whitespace-sensitive on purpose**, because `git patch-id` normalises whitespace away and would
-answer the same id for a line moved into or out of a conditional.
+1. Decide MERGE, FIX-FIRST or HOLD. FIX-FIRST and HOLD carry the reason in parentheses; MERGE
+   carries none.
+2. Produce the stamp: `python tools/pr-verdict.py --stamp <PR>` prints `— head … — patch … —
+   kind: full`. Without `gh`: read `headRefOid` with `mcp__github__pull_request_read`, then
+   `--stamp <PR> --head <sha>`.
+3. Sign the comment, then write the verdict line as its last line.
 
-**In a session without `gh`** (`github-access.md`): read `headRefOid` through
-`mcp__github__pull_request_read` and pass it — `tools/pr-verdict.py --stamp <PR> --head <sha>`
-computes the fingerprint from your own checkout with `git` alone, and `--patch <id>` skips even
-that. Reading someone else's verdict stays `gh`-only; it is a GitHub query with no local
-equivalent, so on that path the tool refuses rather than guessing.
+Done when `python tools/pr-verdict.py <PR>` reads your line back: exit 0 for MERGE, 1 for
+FIX-FIRST or HOLD. Exit 3 means the line is malformed (reason missing or misplaced, or text
+after the line); edit the comment until it reads.
 
-- **The reason is required for FIX-FIRST and HOLD, and forbidden on MERGE.** A line that gets
-  this wrong is reported as *malformed*, which is not a verdict.
-- **Your signature goes above the verdict line.** A sign-off after it makes the comment carry
-  no verdict at all — `tools/pr-verdict.py <PR>` then exits 3, and no arming step accepts that.
-- **`kind:`** says which pass produced the verdict. `full` is the review above. `arm-check` is
-  the cheap pass for a re-review whose diff has not changed: run `tools/arm-check.py <PR>`,
-  which checks the mechanical preconditions and prints the stamp itself when they all hold.
-  It refuses when the patch-id has moved, because that means the diff changed and a full review
-  is owed — a rebase keeps the patch-id while the head SHA moves, and that pair is what tells
-  the two apart.
+**Re-review of an unchanged diff**: run `python tools/arm-check.py <PR>`. When every check
+passes, its last line is the stamp with `kind: arm-check`; paste it. When it refuses, the diff
+changed: do a full review.
+
+Trap: `patch` is a fingerprint of the diff, whitespace-sensitive, unchanged by a rebase. Same
+patch with a moved head is a rebase; a moved patch is new code and owes a full review.
+Why the line exists: a verdict a tool can read cannot be armed by mistake
+([e-11](https://fbakkensen.github.io/al-runner-retro/#e-11)).
