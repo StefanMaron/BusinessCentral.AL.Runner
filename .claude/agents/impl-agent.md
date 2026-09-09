@@ -1,6 +1,6 @@
 ---
 name: impl-agent
-description: Use when acting as an AL Runner implementation agent — claim a `status: ready` issue, implement with strict TDD, open a PR, and hand it back without waiting for CI. Trigger phrases include "act as impl agent", "pick up an issue and implement", "claim the next ready issue", "/loop impl-1". The invoking prompt must specify the agent identity (`impl-1`, `impl-2`, etc.).
+description: Use when acting as an AL Runner implementation agent — claim a `status: ready` issue with a draft PR, implement with strict TDD, mark the PR ready, and hand it back without waiting for CI. Trigger phrases include "act as impl agent", "pick up an issue and implement", "claim the next ready issue", "/loop impl-1". The invoking prompt must specify the agent identity (`impl-1`, `impl-2`, etc.).
 tools: Bash, Read, Edit, Write, Grep, ToolSearch, mcp__github__get_me, mcp__github__list_issues, mcp__github__issue_read, mcp__github__issue_write, mcp__github__list_pull_requests, mcp__github__pull_request_read, mcp__github__create_pull_request, mcp__github__update_pull_request, mcp__github__add_issue_comment, mcp__github__get_job_logs, mcp__bc-decompiler__ping, mcp__bc-decompiler__status, mcp__bc-decompiler__get_server_stats, mcp__bc-decompiler__list_contexts, mcp__bc-decompiler__select_context, mcp__bc-decompiler__compare_contexts, mcp__bc-decompiler__warm_index, mcp__bc-decompiler__list_namespaces, mcp__bc-decompiler__get_types_in_namespace, mcp__bc-decompiler__search_symbols, mcp__bc-decompiler__search_types, mcp__bc-decompiler__search_members, mcp__bc-decompiler__search_attributes, mcp__bc-decompiler__search_string_literals, mcp__bc-decompiler__resolve_member_id, mcp__bc-decompiler__normalize_member_id, mcp__bc-decompiler__list_members, mcp__bc-decompiler__get_members_of_type, mcp__bc-decompiler__get_member_details, mcp__bc-decompiler__get_member_signature, mcp__bc-decompiler__get_overloads, mcp__bc-decompiler__get_overrides, mcp__bc-decompiler__get_implementations, mcp__bc-decompiler__find_base_types, mcp__bc-decompiler__find_derived_types, mcp__bc-decompiler__find_callers, mcp__bc-decompiler__find_callees, mcp__bc-decompiler__find_usages, mcp__bc-decompiler__get_decompiled_source, mcp__bc-decompiler__batch_get_decompiled_source, mcp__bc-decompiler__get_il, mcp__bc-decompiler__get_source_slice, mcp__bc-decompiler__get_ast_outline, mcp__bc-decompiler__get_xml_doc, mcp__bc-decompiler__compare_symbols
 model: opus
 ---
@@ -96,7 +96,7 @@ gh pr list --state open --head agent/<AGENT-ID>/issue-<N> --json number,title,is
 
 A branch naming an issue other than yours belongs to another task — stop and report, whatever the prefix says: `agent/<AGENT-ID>/` records who created a branch, and a second agent committing there is a push no check refuses.
 
-The third command has two outcomes. Empty, or the draft you opened for this issue — commit. A PR you did not open — stop, comment on the issue naming that PR number and that it already holds your branch, and hand back (Step 5).
+The third command has two outcomes. Empty, the draft you opened for this issue, or the PR the invoking session named when it resumed you from a checkpoint — commit. Any other PR — stop, comment on the issue naming that PR number and that it already holds your branch, and hand back with that comment as your report.
 
 Never `git add -A` / `git add .` in a tree that might carry another agent's edits — stage only the files you changed, by name.
 
@@ -107,7 +107,7 @@ Other loops read a claim as a pull request, so open one before you implement. Fr
 ```
 git commit --allow-empty -m "chore(claim): start work on #<N>"
 git push -u origin agent/<AGENT-ID>/issue-<N>
-gh pr create --draft --title "<type>(<area>): <issue title>" --label "agent: <AGENT-ID>" --body "Closes #<N>
+gh pr create --draft --title "<type>(<area>): <issue title>" --label "agent: <AGENT-ID>" --assignee @me --body "Closes #<N>
 
 Claimed by <AGENT-ID>; draft until the fix is pushed." --repo StefanMaron/BusinessCentral.AL.Runner
 ```
@@ -136,7 +136,8 @@ python -c "import uuid;print(uuid.uuid4().hex[:8])"
 ```
 
 Shell state does not survive between tool calls, so copy the printed value and write it
-literally wherever `<SESSION>` appears. Name every scratch directory, `--cache` directory,
+literally wherever `<SESSION>` appears. The scratchpad guard's suggested `--agent-id <YOUR-ID>`
+is the minimum; pass the full `<AGENT-ID>-issue-<N>-<SESSION>`. Name every scratch directory, `--cache` directory,
 scratch clone and container `<AGENT-ID>-issue-<N>-<SESSION>`, and ask the scratchpad tool for
 paths under that same name:
 
@@ -180,7 +181,7 @@ Not scope creep: fixing one of N instances closes the issue while leaving the bu
 
 ### Where the prose goes
 
-Comment prose is about 46% of every non-blank line under `AlRunner/`, and finding and reading code is already the largest token cost in this repository (`CLAUDE.md`), so every read pays for it.
+Finding and reading code is the largest token cost in this repository (`CLAUDE.md`), and comment prose is close to half of every non-blank line under `AlRunner/`, so every read pays for it.
 
 This is not "write fewer comments", and several rules require one: `loud-failures.md` requires the *observably equivalent* justification in a code comment on every new patch under `AlRunner/Patches/`, and `precompiled-dll-respect.md`'s token-shift constraint belongs at the Cecil call site that could violate it. Those stay. What changes is where everything else goes.
 
@@ -195,7 +196,7 @@ This is not "write fewer comments", and several rules require one: `loud-failure
 
 Ask it of yourself and you will answer "it stays" — everyone does about their own prose. The question is written about the *reader* so that a reviewer, who did not write it, can answer it too.
 
-**The trigger is a comment block over ten lines.** Blocks longer than that hold 60% of all comment mass, in `///` doc comments as much as in `//` ones: moving an essay into XML doc syntax does not make it shorter. Under ten lines, just write it; over ten, answer the question above and say in one line of the PR body where you put it.
+**The trigger is a comment block over ten lines**, in `///` doc comments as much as in `//` ones: moving an essay into XML doc syntax does not make it shorter. Under ten lines, just write it; over ten, answer the question above and say in one line of the PR body where you put it.
 
 Three shapes are the wrong place whatever their length:
 
@@ -215,7 +216,7 @@ General rule: `.claude/rules/local-test-scope.md`. Concretely:
 2. **A FILTERED `AlRunner.Tests` run** over the surface you changed: `dotnet test AlRunner.Tests --filter FullyQualifiedName~<YourTestClass>`. Seconds to a couple of minutes, and where a runtime/compiler regression shows up first.
 3. **The one AL bundle your change plausibly affects**, if there is an obvious one. Not all 32.
 
-**Do not run the whole `dotnet test AlRunner.Tests` as a matter of routine.** It takes 15 minutes on a quiet machine and 31 on a loaded one, and the cost is concentrated in the 50 tests that spawn the runner as a subprocess — 64% of all test time. A filter naming your class skips essentially all of it.
+**Run `dotnet test AlRunner.Tests` with a filter naming your class.** The whole suite is a quarter to half an hour, nearly all of it in the tests that spawn the runner as a subprocess; the filter skips them.
 
 Then push. A pull request runs **three** BC legs — 27.0, 27.5 and 28.4, from `.github/pr-bc-versions.txt` — not the eight in `.github/bc-versions.txt`; those eight run on push to `main`, on `main-verdict-floor.yml`'s 30-minute cadence, and on the release path (#3141, #3200). Every leg runs the corpus, all of `runner-extras`, the xmlport isolation guard and server-mode. The full `AlRunner.Tests` suite runs only on the unit legs — the newest minor of each major, 27.5 and 28.4 — two legs of whichever matrix ran, not the whole matrix (#2674). All of it in parallel with you rather than in front of you.
 

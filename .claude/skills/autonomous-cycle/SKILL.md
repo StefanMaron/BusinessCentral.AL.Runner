@@ -284,9 +284,10 @@ Two things about the verdicts it produces, because both change what "stop" means
    `impl-69`, 82 worktrees, 10 GB — was caused by nothing ever *deleting* a worktree. Preflight's
    stale-worktree check is the actual fix for that.
 
-   Use that one identity everywhere: labels, branch names, worktree directories, scratch and
-   cache paths. Several loops can then run under one account, and several accounts against one
-   repository, without ever writing the same name.
+   Use that identity in labels and branch names; worktrees add the issue number and scratch,
+   cache and clone paths add the issue and a session token (`.claude/agents/impl-agent.md`,
+   "Namespace every path you write to"). Several loops can then run under one account, and
+   several accounts against one repository, without ever writing the same name.
 
    The existing `agent: impl-N` convention is the counter-example worth avoiding: a global
    counter with no owner, which drifted to `impl-69` while leaving 82 worktrees and 10 GB of disk

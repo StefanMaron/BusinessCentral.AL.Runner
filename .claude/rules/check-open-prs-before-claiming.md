@@ -27,9 +27,8 @@ gh pr list --repo StefanMaron/BusinessCentral.AL.Runner --state open --limit 100
   --jq '.[] | select(.closingIssuesReferences[]?.number == <N>) | {number, isDraft, labels: [.labels[].name]}'
 ```
 
-Non-empty → in progress, draft or ready alike. Pick something else. `--state open` on its own
-returns both kinds, which is the point — the draft is the claim this lookup is for, and
-`isDraft` tells you which kind you found.
+Non-empty → in progress, draft or ready alike. Pick something else. `--state open` returns
+both kinds; `isDraft` tells you which you found.
 
 **A coordinator dispatching several agents builds the map once per cycle**, not once per
 issue — one call, then check every candidate against it:
