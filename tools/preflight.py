@@ -1519,7 +1519,7 @@ def classify_checkout(lags: list) -> CheckResult:
         detail=detail,
         remedy="Refresh before reading anything out of it as current:\n"
                "    git fetch origin && git merge --ff-only origin/main\n"
-               "    git submodule update --init --recursive\n"
+               "    tools/corpus-checkout.py      # the corpus is not in git (#3737)\n"
                "A branch mid-task is legitimately behind -- the point is not to MEASURE from a "
                "tree this old, or to conclude anything about a tool from the copy in it.",
         data={"lags": lags})
@@ -2323,8 +2323,13 @@ def check_corpus_checkout(repo: str) -> CheckResult:
 
 
 def check_corpus(repo: str, enabled: bool) -> CheckResult:
-    """The skill's step 1: the corpus is the known-good baseline, and its expected
-    count is checked in at tests/expectations/count-baseline/.
+    """The skill's step 1: the corpus is the known-good baseline for this box.
+
+    There is no checked-in expected count for it since #3675 -- the corpus is
+    resolved per run (#3737), so a committed number would go stale on every
+    upstream merge. What is asserted here is everything a single run can read for
+    itself: no failures, no lost suites, a summary that exists, and that summary
+    agreeing with the per-bundle PASS lines.
 
     Off by default because it is a multi-minute run and this script is meant to be
     run before every cycle; --with-corpus turns it on. A SKIP is reported as a

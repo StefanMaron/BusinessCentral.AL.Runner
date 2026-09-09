@@ -611,7 +611,7 @@ jobs:
       # exit 4, with nothing in this repository to fix. The comparison is against
       # the LAST COUNT A MAIN RUN RECORDED instead, carried in the Actions cache:
       # main writes it, and every branch can read main's caches. A cache miss is a
-      # warning and a recorded count, never a failure.
+      # ::warning:: and a recorded count, never a failure.
       - name: Restore the last corpus count main recorded
         id: prev-count
         uses: actions/cache/restore@v4
@@ -702,25 +702,56 @@ jobs:
       # miss -- and because this step's own exit 3 means "nothing was measured",
       # which is worth saying out loud rather than inheriting the earlier failure.
       - name: Compare the corpus count against main's last recorded one
+        id: count
         if: ${{ always() }}
         run: |
           # --previous and --out are the SAME path on purpose: the script reads the
           # restored document before writing this run's, so the directory the cache
           # save step stores below holds the count this leg just measured.
+          rc=0
           python3 .github/scripts/compare_corpus_count.py \
               --results al-language-results.json \
               --corpus-sha "${{ steps.corpus.outputs.sha }}" \
               --bc-version "${{ matrix.target.bc-version }}" \
               --previous corpus-count/corpus-count.json \
-              --out corpus-count/corpus-count.json
+              --out corpus-count/corpus-count.json || rc=$?
 
-      # Only main records. A pull request comparing against its own earlier count
-      # would ratchet against itself: drop 50 tests, record 50 fewer, and the next
-      # push is green against the smaller number. publish.yml runs on a tag and is
-      # excluded by the ref test; main-verdict-floor.yml runs on main and is not,
-      # which is deliberate -- it measures main's HEAD, so its count is main's.
+          # `measured` decides whether the record step below may run, and it is NOT
+          # the same question as "did this step pass".
+          #
+          # 0 and 1 both mean a count was measured and written to corpus-count/ --
+          # exit 1 is a DROP, and recording it is what makes the recovery this guard
+          # promises reachable at all. Gating the save on success() instead wedges
+          # the repository: main drops once, never records the smaller number, and
+          # every later main run and every pull request restores the same larger one
+          # through the shared prefix key and fails against it forever, with no
+          # in-repo remedy (caught in review of #3737).
+          #
+          # 3 means NOTHING was measured, and the script returns before writing
+          # --out -- so corpus-count/ still holds the RESTORED PREVIOUS document.
+          # Saving that under this run's corpus SHA would launder an old number onto
+          # a new commit, which is worse than not saving. Hence measured=false here
+          # rather than a bare always() or !cancelled() on the step below.
+          if [ "$rc" -eq 0 ] || [ "$rc" -eq 1 ]; then
+            echo "measured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "measured=false" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$rc"
+
+      # Only main records, and only a run that measured something.
+      #
+      # A pull request comparing against its own earlier count would ratchet against
+      # itself: drop 50 tests, record 50 fewer, and the next push is green against
+      # the smaller number. publish.yml runs on a tag and is excluded by the ref
+      # test; main-verdict-floor.yml runs on main and is not, which is deliberate --
+      # it measures main's HEAD, so its count is main's.
+      #
+      # `inputs.corpus-ref == ''` excludes a single-leg diagnostic dispatched with
+      # `--ref main -f corpus-ref=refs/pull/N/head`, which otherwise satisfies both
+      # conditions above and would write a CORPUS PULL REQUEST's count as main's.
       - name: Record this count for the next run
-        if: ${{ success() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+        if: ${{ always() && steps.count.outputs.measured == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.corpus-ref == '' }}
         uses: actions/cache/save@v4
         with:
           path: corpus-count
@@ -744,7 +775,7 @@ jobs:
         # cannot make it miss anything. It also passes only the platform-apps cache,
         # so pointing it at every corpus app would make it depend on each app's
         # dependency closure resolving from that one cache. The gate that must
-        # enumerate is the --count-baseline step above.
+        # enumerate is the corpus step above, whose count the compare step guards.
         if: ${{ always() }}
         run: |
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \

@@ -58,9 +58,11 @@ origin/master origin/<branch>` for a conflict check in the corpus, `origin/main`
 - **`_fixtures/Assert.al`, table fixtures, helper codeunits — all off-limits.** If
   `Assert.IsNumber` excludes a type and that causes failures, the bug is that the runner
   classifies that type differently from real BC; fix the classification.
-- **A corpus commit is measured here as soon as it is on `master`.** So an upstream PR merged
-  with red runner-side consequences shows up as a red `main` here, not as a pin nobody moved:
-  the corpus PR and the runner fix that needs it belong to one merge step, in that order.
+- **A corpus commit is measured here on the next run that resolves `master`** — the next push
+  to `main`, or the next floor run that is not debounced away (`main-verdict-floor.yml` keys a
+  conclusive verdict on the *runner* SHA, which no longer implies a corpus). So an upstream PR
+  merged with red runner-side consequences shows up as a red `main` here, not as a pin nobody
+  moved: the corpus PR and the runner fix that needs it belong to one merge step, in that order.
 - **The test count is compared in CI, not committed** (#3675). `tests/expectations/count-baseline/`
   no longer declares the corpus suites; each leg counts what it ran and compares against the
   last count a `main` run recorded, naming both corpus SHAs on a drop. Growth is allowed and

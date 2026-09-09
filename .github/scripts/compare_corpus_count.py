@@ -47,6 +47,18 @@ Exit codes
   0  measured, and not a drop (equal, growth, or nothing to compare against)
   1  measured, and FEWER tests than the previous run -- names both corpus SHAs
   3  could not measure: a results file that is missing, unreadable, or has no tests
+
+0 AND 1 BOTH WRITE --out; 3 DOES NOT, AND THE CALLER DEPENDS ON THAT
+--------------------------------------------------------------------
+A drop is a measurement, so exit 1 records the smaller number. The workflow may
+then save it, which is the only thing that makes the recovery promised below
+reachable: without it, main drops once and every later run -- and every pull
+request reading main's cache -- restores the same larger number and fails against
+it forever, with no in-repo remedy (caught in review of #3737).
+
+Exit 3 returns BEFORE writing --out, so whatever the caller restored is still on
+disk untouched. That is deliberate and load-bearing: saving it under this run's
+corpus SHA would launder an old number onto a new commit.
 """
 from __future__ import annotations
 
@@ -104,9 +116,13 @@ def compare(now: int, previous: dict | None, corpus_sha: str) -> tuple[int, list
     """(exit code, lines to print). The whole decision, with no I/O in it."""
     lines = [f"corpus tests run: {now} (corpus {corpus_sha})"]
     if previous is None:
+        # ::warning:: rather than a plain line: a run summary and the annotations are
+        # where this is read, and "nothing was compared" is exactly the state that
+        # must not look like a comparison that passed.
         lines.append(
-            "no previous count to compare against -- recording this one. That is the "
-            "first run after a cache miss or after #3675 landed, not a finding.")
+            "::warning::no previous count to compare against -- recording this one. "
+            "That is the first run after a cache miss or after #3675 landed, not a "
+            "finding, but it means this leg's count was NOT checked against anything.")
         return 0, lines
 
     was, was_sha = previous["tests"], previous.get("corpusSha", "<unrecorded>")

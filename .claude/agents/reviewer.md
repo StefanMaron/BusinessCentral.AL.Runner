@@ -61,10 +61,7 @@ the reason and puts its proving test in `tests/runner-extras/`. Do not accept it
 writing the upstream test.
 
 Check which corpus the run measured, from the `corpus: <sha> (<ref>)` line each leg prints
-(`al-language-submodule.md`). There is no pin. Folded into the fix
-PR when the corpus test and the fix are both new, and never before the corpus PR has merged. But a
-bump **alone is legitimate** when the fix has already merged (catch-up), or when it advances the pin
-only as far as the open work allows — do not reject those as unaccompanied.
+(`al-language-submodule.md`). There is no pin.
 
 ## 3. Is the measurement sound?
 

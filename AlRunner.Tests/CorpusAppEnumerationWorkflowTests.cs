@@ -125,6 +125,30 @@ public sealed class CorpusAppEnumerationWorkflowTests
         var guard = save[..save.IndexOf("uses:", StringComparison.Ordinal)];
         Assert.Contains("github.ref == 'refs/heads/main'", guard);
         Assert.Contains("github.event_name != 'pull_request'", guard);
+        // ...and a single-leg diagnostic dispatched against main with an explicit
+        // corpus-ref must not write a corpus PULL REQUEST's count as main's.
+        Assert.Contains("inputs.corpus-ref == ''", guard);
+
+        // THE WEDGE (caught in review of #3737). `success()` here means a DROP is never
+        // recorded, so main restores the same larger count on every later run — and so
+        // does every pull request, through the shared prefix key — and fails against it
+        // forever with no in-repo remedy. The save must be gated on whether a count was
+        // MEASURED, which the compare step reports as an output, not on whether the step
+        // passed. Exit 3 must still be excluded: the script returns before writing --out,
+        // so the restored PREVIOUS document is what a bare always() would save under this
+        // run's corpus SHA.
+        Assert.DoesNotContain("success()", guard);
+        Assert.Contains("steps.count.outputs.measured == 'true'", guard);
+
+        var compare = wf[wf.IndexOf("- name: Compare the corpus count against main's last recorded one",
+            StringComparison.Ordinal)..];
+        compare = compare[..compare.IndexOf("- name: Record this count", StringComparison.Ordinal)];
+        Assert.Contains("id: count", compare);
+        // measured=true for exit 0 and exit 1, false otherwise — and the step still fails
+        // on a drop, so the leg goes red while the number is recorded.
+        Assert.Contains("measured=true", compare);
+        Assert.Contains("measured=false", compare);
+        Assert.Contains("exit \"$rc\"", compare);
     }
 
     /// <summary>

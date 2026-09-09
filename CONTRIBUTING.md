@@ -91,9 +91,9 @@ dotnet run --project AlRunner -c Release -- "${CORPUS_APPS[@]}"
 ```
 
 Naming `tests/al-language/tests/al-language` directly still works and is the right thing when
-you want that one app. It is not the corpus: it is whichever apps the pin happened to carry
-when the path was written, which is how a second corpus app rode in on a pin bump without ever
-being executed (#2984).
+you want that one app. It is not the corpus: it is whichever app the path named when it was
+written, which is how a second corpus app arrived and was never executed (#2984). The corpus
+moves on its own now (#3737), so enumerate.
 
 ### Run with extra options
 

@@ -79,6 +79,8 @@ check("zero with NO previous count is a pass, not the biggest possible drop",
       rc == 0)
 check("and says there was nothing to compare against",
       any("no previous count" in l for l in lines), str(lines))
+check("...as a ::warning::, so it reaches the run summary and the annotations",
+      any(l.startswith("::warning::") for l in lines), str(lines))
 
 
 # ------------------------------------------------------------------ read_results
@@ -161,6 +163,53 @@ with tempfile.TemporaryDirectory() as tmp:
     rc = cc.main(["--results", os.path.join(tmp, "gone.json"),
                   "--corpus-sha", "e" * 40, "--previous", out])
     check("a missing results file exits 3, never 1 and never 0", rc == 3, f"rc={rc}")
+
+
+# ------------------------------------------- what the workflow may cache afterwards
+#
+# The wedge, caught in review of #3737. The record step is allowed to run when a
+# count was MEASURED -- exit 0 or 1 -- and never on exit 3. That is only safe if
+# what is on disk afterwards matches:
+#
+#   * a DROP must leave the NEW SMALLER count in --out, or main can never record
+#     it and every later run restores the same larger number and fails against it
+#     forever, with no in-repo remedy;
+#   * an exit 3 must leave --out EXACTLY as the caller restored it, because
+#     --previous and --out are the same path and saving the restored document
+#     under this run's corpus SHA would launder an old number onto a new commit.
+#
+# Both are properties of main(), not of the workflow, so they are asserted here.
+
+with tempfile.TemporaryDirectory() as tmp:
+    countfile = os.path.join(tmp, "corpus-count", "corpus-count.json")
+    os.makedirs(os.path.dirname(countfile))
+    write(countfile, {"corpusSha": "a" * 40, "bcVersion": "28.4", "tests": 3152})
+    before = open(countfile, encoding="utf-8").read()
+
+    # A drop: same path for --previous and --out, exactly as the workflow calls it.
+    dropped = write(os.path.join(tmp, "dropped.json"), results_doc(3100))
+    rc = cc.main(["--results", dropped, "--corpus-sha", "b" * 40,
+                  "--bc-version", "28.4",
+                  "--previous", countfile, "--out", countfile])
+    check("a drop still exits 1", rc == 1, f"rc={rc}")
+    after = json.load(open(countfile, encoding="utf-8"))
+    check("...and RECORDS the new smaller count, which is what unwedges main",
+          after["tests"] == 3100, str(after))
+    check("...at this run's corpus SHA, not the previous one",
+          after["corpusSha"] == "b" * 40, str(after))
+
+    # An exit 3, over the same file the caller restored.
+    write(countfile, {"corpusSha": "a" * 40, "bcVersion": "28.4", "tests": 3152})
+    before = open(countfile, encoding="utf-8").read()
+    rc = cc.main(["--results", os.path.join(tmp, "never-written.json"),
+                  "--corpus-sha", "c" * 40, "--bc-version", "28.4",
+                  "--previous", countfile, "--out", countfile])
+    check("a run that measured nothing exits 3", rc == 3, f"rc={rc}")
+    check("...and leaves the restored document untouched, byte for byte",
+          open(countfile, encoding="utf-8").read() == before,
+          open(countfile, encoding="utf-8").read())
+    check("...so nothing re-stamps the old count with this run's corpus SHA",
+          json.load(open(countfile, encoding="utf-8"))["corpusSha"] == "a" * 40)
 
 print()
 if FAILURES:
