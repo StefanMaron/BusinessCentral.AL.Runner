@@ -102,6 +102,18 @@ public sealed class BcMatrixDocumentationDriftTests
         ("docs/virtual-tables-allobj.md", "27.0 27.3 27.5 28.2 28.3",
             "the corpus legs that had reported when the upstream Install-subtype assertion was "
             + "adjudicated — a historical observation of which legs answered, not the matrix"),
+        // The two halves of one measured version split (#3640). Corpus run 34328827788
+        // answered differently on the two families for closing a page after a refused write
+        // that a successful write had followed; the arms were then split so each half is
+        // green on all eight, confirmed by run 34331496862. Both rows record which legs gave
+        // which answer on a particular run — a historical measurement, and the whole finding.
+        // Rewriting either into a matrix set would delete the observation the table exists for.
+        ("docs/testpage-write-buffer.md", "28.0 28.1 28.2 28.3 28.4",
+            "the legs that closed the page cleanly after a refused-then-successful write, "
+            + "corpus run 34328827788 — a measured half of a version split, not the matrix"),
+        ("docs/testpage-write-buffer.md", "27.0 27.3 27.5",
+            "the legs that raised \"The record that you tried to open is not available.\" on "
+            + "the same write sequence, corpus run 34328827788 — the other measured half"),
     };
 
     // ---- version lists written out in prose --------------------------------------------
