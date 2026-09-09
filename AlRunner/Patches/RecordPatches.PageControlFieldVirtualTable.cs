@@ -141,7 +141,7 @@ public static partial class RecordPatches
     /// both counts means true.</para>
     ///
     /// <para>Neither of BC's other two rules is reachable from here: these paths carry no
-    /// <c>ExpressionIsAssignable</c> and no page-level <c>Editable</c>, so a control that BC
+    /// <c>SourceExpressionIsAssignable</c> and no page-level <c>Editable</c>, so a control that BC
     /// would force to False through either can only be reached on the document path. That is
     /// a narrower answer rather than a wrong one — a page served from these paths has no
     /// document, so there is nothing to read it from — and it is why this is a separate

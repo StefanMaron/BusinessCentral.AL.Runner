@@ -251,8 +251,14 @@ gated on `control.Editable == null`, so a declared value never reaches it. That 
 
 `SolveDocumentControlEditable` in `RecordPatches.PageControlFieldFromBcDocument.cs` implements
 rules 1-3. `SolveParsedControlEditable` in `RecordPatches.PageControlFieldVirtualTable.cs`
-implements rule 2 for the AL-parsed and precompiled-dependency paths, which carry neither an
-`ExpressionIsAssignable` nor a page-level `Editable` to evaluate the other rules against.
+implements rule 2 for the AL-parsed and precompiled-dependency paths, which carry neither a
+`SourceExpressionIsAssignable` nor a page-level `Editable` to evaluate the other rules against.
+
+BC has two near-identical attribute names on **different** elements, and confusing them is what
+made #3659's rule 1 dead code before review caught it: a **control**
+(`ControlDataboundDefinition`) carries `SourceExpressionIsAssignable`, while an `<Expression>`
+entry (`DataFieldDefinition`) carries `ExpressionIsAssignable`. The sample above is an
+`<Expression>`, so its shorter spelling is correct.
 
 **Rule 4 is deliberately not reproduced**, on any path: the runner has no personalization or
 configuration layer, so `SourceAppId` is never `PersonalizationAppId`/`ConfigurationAppId` and
