@@ -756,8 +756,14 @@ namespace AlRunnerShim
             return result;
         }
 
+        // `params`, mirroring BC's own NavTextExtensions.ALSplit(string, params string[]): the
+        // compiler emits Text.Split(Sep1, Sep2, ...) as ALSplit(text, a, b, ...) — one argument
+        // per separator, never an array. Without a params overload the dependency compile died
+        // with CS1501 ""No overload for method 'ALSplit' takes 3 arguments"" on every
+        // two-separator call (#3712). Each separator is a whole-string delimiter, as in BC;
+        // corpus 60119 TextSplit_TwoSeparatorLiterals_SplitsOnEither and siblings adjudicate.
         public static Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavText> ALSplit(
-            string text, string[] separators)
+            string text, params string[] separators)
         {
             var parts = text.Split(separators, global::System.StringSplitOptions.None);
             var result = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavText>.Default;
@@ -813,6 +819,32 @@ namespace AlRunnerShim
             string t = text == null ? global::System.String.Empty : text.ToString();
             string sep = separator == null ? global::System.String.Empty : separator.ToString();
             return ALSplit(t, sep);
+        }
+
+        // The exact shapes the emitted C# uses for several separators (#3712, measured with
+        // --dump-csharp on BC 28.1): every separator is wrapped as `new NavText(..)`, and the
+        // receiver is a string for a literal or a NavText field for a Text variable —
+        //     ALSplit(""a,b;c"", new NavText("",""), new NavText("";""))
+        //     ALSplit(this.input, this.sep1, this.sep2)
+        // Typed exactly so overload resolution needs no conversion; the (string, string) form a
+        // single separator binds to today is applicable in its normal form and still wins there.
+        public static Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavText> ALSplit(
+            string text, params Microsoft.Dynamics.Nav.Runtime.NavText[] separators)
+        {
+            var seps = new string[separators.Length];
+            for (int i = 0; i < seps.Length; i++)
+            {
+                string s = separators[i];
+                seps[i] = s ?? global::System.String.Empty;
+            }
+            return ALSplit(text, seps);
+        }
+
+        public static Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavText> ALSplit(
+            Microsoft.Dynamics.Nav.Runtime.NavText text, params Microsoft.Dynamics.Nav.Runtime.NavText[] separators)
+        {
+            string t = text;
+            return ALSplit(t ?? global::System.String.Empty, separators);
         }
 
         // ALMaxStrLen: unlimited Text/Code returns Int32.MaxValue; bounded returns the
