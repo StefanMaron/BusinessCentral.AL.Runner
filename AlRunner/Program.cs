@@ -3903,7 +3903,10 @@ foreach (var bundle in bundles)
     results.Add(new BucketResult(bundleAbs, bundleStage,
         bundleErrors, null, bundleTests,
         bundleEmit, bundleComp, bundleRun, ranGroupCount, bundleProvisionGaps,
-        CompanyInitializer.DrainFailures()));
+        // #3561: collapsed (identical aborts across app groups sharing one cached baseline) and
+        // marked with any accept-partial-company-init reason the manifest declares, in the one
+        // helper --server's per-request drain calls too.
+        Reporter.FinalizeCompanyInitFailures(CompanyInitializer.DrainFailures(), expectations)));
     // Appended here, not buffered to process exit: a run that dies mid-way still
     // yields a row for every bundle it did finish. The row's wall clock covers this
     // whole loop turn, so wall − (emit+compile+run) is the per-bundle overhead
@@ -4501,16 +4504,44 @@ if (!serverMode && !watchMode && !dapMode
 // a zero as "the company was initialized". Never RAISED above what the tests earned, so a
 // failing run still reports its own, more specific code, and --no-strict-exit still forces 0
 // for a consumer that wants the old behaviour.
-var companyInitFailures = Reporter.CompanyInitFailures(allResults);
+// #3561: an abort the expectations manifest accepts is still printed, still in --out, still in
+// --output-json and still in the JUnit comment — only the escalation is suppressed, and only for
+// the codeunit the entry names. The alternative a project had was --no-strict-exit, which also
+// forces 0 for a failing test, a compile failure and a lost output file.
+var companyInitFailures = Reporter.UnacceptedCompanyInitFailures(allResults);
 if (companyInitFailures.Count > 0 && computedExitCode == 0)
 {
     Console.Error.WriteLine(
-        $"[warn] company-init: {companyInitFailures.Count} company initialization abort(s) — "
+        $"[warn] company-init: {companyInitFailures.Sum(f => f.Count)} company initialization abort(s) — "
         + "every test in this run used a PARTIALLY initialized company, so AL reading a setup "
         + "row the codeunit never reached will fail for that reason and not its own; "
         + "exiting 2 because the run is not clean. See the summary above, and "
         + "docs/partial-company-initialization.md.");
     computedExitCode = 2;
+}
+
+// #3561: the drift half, mirroring expect-oos's "test passed, remove the entry". An acceptance
+// entry is a standing statement that THIS codeunit aborts here; once it stops aborting, the
+// entry is a suppression nobody is watching. It fires only when the named codeunit actually RAN
+// TO COMPLETION in this run, for the reason --expectations-require-match is opt-in: the manifest
+// directory is auto-probed and shared by every invocation in a project, so an entry naming a
+// codeunit this run never attempted (no Base App in the bundle, or a dependency-company baseline
+// restored from disk without re-running it) is inert rather than wrong.
+if (expectations != null && expectations.CompanyInitAcceptances.Count > 0)
+{
+    var reported = Reporter.CompanyInitFailures(allResults);
+    var completed = CompanyInitializer.CompletedInitializations;
+    var stale = expectations.CompanyInitAcceptances
+        .Where(e => completed.Any(c => c.Id == e.CodeunitId && c.Name == e.CodeunitName))
+        .Where(e => !reported.Any(f => f.CodeunitId == e.CodeunitId && f.CodeunitName == e.CodeunitName))
+        .ToList();
+    foreach (var e in stale)
+        Console.Error.WriteLine(
+            $"[warn] company-init: {e.SourceFile} declares accept-partial-company-init for codeunit "
+            + $"{e.CodeunitId} \"{e.CodeunitName}\" (reason: {e.Reason}), but that codeunit ran to "
+            + "completion in this run — the company initialized cleanly. Remove the entry: it is now "
+            + "an exit-code suppression with nothing behind it. See docs/partial-company-initialization.md.");
+    if (stale.Count > 0 && computedExitCode == 0) computedExitCode = 2;
 }
 
 // #2403: an output file the caller asked for and did not get. Ranked exactly like
@@ -6490,6 +6521,19 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     forcedReasons.Count > 0 ? string.Join(" | ", forcedReasons) : null);
             }
 
+            // #3561: drained ONCE PER REQUEST, here. CompanyInitializer's accumulator is
+            // run-wide and the CLI drains it where it builds a bucket's BucketResult, a path
+            // --server never takes: the static therefore grew for the life of the server
+            // process and no response ever carried the condition, so a client had no surface
+            // saying its tests had run against a company real BC cannot produce. Same
+            // Finalize call as the CLI, so collapse and manifest acceptance behave identically
+            // on both transports; the escalation mirrors the CLI's, because a client reading
+            // only exitCode is exactly the consumer #3538 was filed for.
+            var companyInitFailures = Reporter.FinalizeCompanyInitFailures(
+                CompanyInitializer.DrainFailures(), expectations);
+            if (exitCode == 0 && companyInitFailures.Any(f => f.AcceptedReason == null))
+                exitCode = 2;
+
             lock (outputLock)
             {
                 output.WriteLine(AlRunner.ServerProtocol.Summary(
@@ -6498,7 +6542,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     cancelled: cancelled, wallSeconds: reqSw.Elapsed.TotalSeconds,
                     selection: requestSelection,
                     statementTable: statementTable,
-                    perTestStatementTable: requestPerTestCoverage ? perTestStatementTable : null));
+                    perTestStatementTable: requestPerTestCoverage ? perTestStatementTable : null,
+                    companyInitFailures: companyInitFailures));
                 output.Flush();
             }
         }
@@ -6635,6 +6680,12 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     "affectedOnly selection is applied to runTests; execute always runs the lowest-object-id OnRun codeunit");
             }
 
+            // #3561: drained once per request, as in the runTests handler above.
+            var companyInitFailures = Reporter.FinalizeCompanyInitFailures(
+                CompanyInitializer.DrainFailures(), expectations);
+            if (exitCode == 0 && companyInitFailures.Any(f => f.AcceptedReason == null))
+                exitCode = 2;
+
             return AlRunner.ServerProtocol.Execute(allTests, exitCode,
                 AlRunner.Infrastructure.AlMessageCapture.Snapshot(),
                 AlRunner.Infrastructure.AlIterationTracker.Enabled
@@ -6642,7 +6693,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 allCompileErrors.Count > 0 ? allCompileErrors : null,
                 selection: selection,
                 statementTable: statementTable,
-                perTestStatementTable: perTestStatementTable);
+                perTestStatementTable: perTestStatementTable,
+                companyInitFailures: companyInitFailures);
         }
         finally
         {

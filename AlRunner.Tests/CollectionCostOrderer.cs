@@ -182,6 +182,30 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // the true figure is a little higher; re-measure with scripts/trx-occupancy.py
             // rather than trusting this line if the class changes shape again.
             ["PartialCompanyInitializationTests"] = 113,
+            // #3561: 8 arms (one of them a 3-case theory), every one a runner spawn and one of
+            // them two — a plain run then --output-json, which redirects everything else to
+            // stderr. 9 spawns per run of the class. Absent from this table on its first review
+            // pass; recorded at 71 from the BC 28.4 leg of run 34322324604 (71.3s summed), which
+            // is the clock this table is written in. A local 4-way Windows run of the five
+            // company-init classes measured 184.9s for the same 8 arms, and the review pass
+            // measured 189.8s — a dev box runs a runner spawn ~2.6x the leg's cost, and the
+            // sibling PartialCompanyInitializationTests shows the same gap (365.5s local against
+            // the 113.5s its own line records from a leg). Recording the local figure would rank
+            // this class alongside genuinely 190s ones and displace them.
+            ["PartialCompanyInitAcceptanceTests"] = 71,
+            // #3561: the two escalation arms are their own collection precisely so the entry
+            // above does not grow — a collection is strictly serial, so a longer one is a longer
+            // tail. 58.2s local, no leg figure yet (the class is new); by the ~2.6x local/leg
+            // ratio measured directly above, the leg figure is likely nearer 25, so this entry
+            // is an over-estimate carried until a leg measures it rather than a scaled guess.
+            ["PartialCompanyInitAcceptanceEscalationTests"] = 58,
+            // #3561: 2 arms, each driving its own CliServer subprocess (the abort is a
+            // startup-time env var, so this class cannot share SharedCliServer), and each now
+            // forcing a dependency-company-baseline MISS so codeunit 2 is genuinely attempted —
+            // see that file's header. 80.6s local after that change, against 52.6s local and
+            // 58.3s before it; the forced MISS is most of the difference and it is permanent, so
+            // the post-change figure is the one recorded.
+            ["ServerCompanyInitDrainTests"] = 80,
             // #2348: EmptySetupTable_Get/EmptySetupTable_TestField now call DeleteAll() on
             // "Source Code Setup" before asserting it's empty (fixing IncludeSender's
             // sender-position dispatch also fixed a latent install-time bug that used to

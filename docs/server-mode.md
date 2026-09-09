@@ -546,8 +546,40 @@ seen. So adding/removing/retyping a *field* (or other table-shape change) is not
 reliably picked up by a warm reload — restart the server after a schema change.
 Trigger/logic edits within an unchanged field layout are fine.
 
+## `companyInitFailures` — the company the tests ran against (#3561)
+
+Present on a `runTests` summary and on an `execute` response exactly when a company
+initialization codeunit did not run to completion during **that request**; absent otherwise,
+never an empty array, and there is no request field that opts into it. Each entry is
+`{codeunitId, codeunit, exceptionType, message, count, accepted|omitted}`:
+
+```json
+{"type":"summary","exitCode":2,"passed":1,"failed":0,"errors":0,"total":1,
+ "companyInitFailures":[{"codeunitId":2,"codeunit":"Company-Initialize",
+   "exceptionType":"InvalidOperationException","message":"…","count":1}],
+ "protocolVersion":2}
+```
+
+Real BC cannot present a half-initialized company, so this says the DATABASE the AL ran against
+was not the one asked for — not that anything about the AL failed. `count` is how many app
+groups reported the same abort (identical records are collapsed into one entry). `accepted`
+carries the expectations-manifest reason when the project declares the condition accepted, and
+then the escalation below does not happen; see
+[partial-company-initialization.md](partial-company-initialization.md).
+
+Two consequences of the manifest being resolved at **server startup**, not per request: the
+acceptance only applies when the server was started with `--expectations <dir>` (or from a
+working directory carrying `tests/expectations`), and the stale-entry drift check is CLI-only —
+"this codeunit completed" is a per-process fact, and a long-lived server has no end of run to
+judge it at.
+
+The accumulator is drained once per request, so a response reports its own request's aborts and
+never a previous one's.
+
 ## Exit codes
 
 Same ladder as normal mode: `0` all pass · `1` test failures · `2` execution
 error · `3` compilation error. In server mode the code rides on each `runTests`
-response's `exitCode`; the process itself exits `0` on `shutdown`/EOF.
+response's `exitCode`; the process itself exits `0` on `shutdown`/EOF. A request whose company
+initialization did not complete reports `2` on that response — the same escalation the CLI
+makes, and for the same reason: a client reading only `exitCode` must not read the run as clean.

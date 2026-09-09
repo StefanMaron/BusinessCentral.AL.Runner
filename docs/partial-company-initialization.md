@@ -46,7 +46,53 @@ refuse to run, and it does not discard results.
 | `--output-json` | `companyInitFailures`: `codeunitId`, `codeunit`, `exceptionType`, `message`. Additive and null-omitted — a clean run's document is unchanged |
 | `--out` | a record with `"kind": "company-init"` and `"classification": "company-init/partial"`, ranked ahead of the test failures it may explain |
 | `--output-junit` | an XML comment per affected bucket, the same convention #2919 chose for a lost suite: a synthetic `testsuite` would have to invent counts, and this reports a condition without moving the numbers a dashboard plots |
-| exit code | **2**, and only when the run would otherwise have exited 0 |
+| exit code | **2**, and only when the run would otherwise have exited 0 — unless the manifest accepts the abort (below) |
+
+### The targeted opt-out, and what the blanket one costs (#3561)
+
+`--no-strict-exit` is not an opt-out from *this*: it forces exit **0 for everything** — a failing
+test, a compile failure (3), a lost `--out` file, a carried resume attempt that did not arrive.
+A suite that accepts one known abort had to give up its exit code entirely to stop tripping over
+it, which is a strictly worse trade than the one it wanted.
+
+The targeted opt-out is an expectations-manifest entry naming the initialization codeunit
+(`docs/expectations.md` § `accept-partial-company-init`), with a mandatory free-text `Reason`:
+
+```jsonc
+{ "codeunitId": 2, "CodeunitName": "Company-Initialize", "Method": "*",
+  "Mode": "accept-partial-company-init", "Reason": "<why this project accepts it>" }
+```
+
+It suppresses the 0 → 2 escalation and **nothing else**. The abort is still in the summary
+(`[accepted: <reason>]`), `--out`, `--output-json` (`accepted`) and the JUnit comment; 1/3/4/5
+are untouched; an abort of a codeunit no entry names still exits 2. An entry whose codeunit ran
+to completion is drift and fails the run with "remove the entry".
+
+**The residual, deliberately.** Drift fires only when the codeunit actually ran to completion in
+this run. A run that never attempted it — no Base App in the bundle, or a clean dependency-company
+baseline restored from disk without re-running codeunit 2 — leaves the entry inert, so a stale
+entry is caught on the first run that initializes cleanly for real rather than on every run. The
+alternative, failing whenever an entry did not match, is exactly what `--expectations-require-match`
+is opt-in to avoid: the manifest directory is auto-probed and shared by every invocation.
+
+### One abort, one line
+
+N app groups sharing one cached dependency-company baseline each re-report the abort on their
+cache HIT — deliberately: each really did run its tests against the partial company. Identical
+records (same codeunit id, codeunit name, exception type and message) are collapsed into one
+summary line carrying `×N app group(s)` and one `--output-json` entry carrying `count: N`; the
+header keeps counting app groups. `--out` carries the within-bucket collapse and no cross-bucket
+one, because it is a per-bucket triage worklist and each bucket's record belongs to that bucket. The app id is not part of "identical":
+the accumulator records none, and the codeunit it records is always Base App's codeunit 2.
+
+### Server mode
+
+`--server` never builds a `BucketResult`, so before #3561 it never drained the accumulator: the
+static list grew for the life of the process and no response carried the condition at all. It is
+now drained once per request, in both the `runTests` and `execute` handlers, and the responses
+carry `companyInitFailures` (same field shape as `--output-json`, null-omitted). The response's
+`exitCode` escalates exactly as the CLI's does, because a client reading only `exitCode` is the
+consumer this was filed for.
 
 ### Why exit 2, and why it is safe
 

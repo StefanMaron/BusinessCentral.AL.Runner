@@ -134,8 +134,32 @@
           "items": { "$ref": "#/definitions/FileStatements" },
           "description": "Present only when the request set `coverage:true` (#2042). One entry per AL source file with per-statement hit counts and positions — see StatementRecord/FileStatements. Supersedes the older, never-implemented FileCoverage{lines[], totalStatements, hitStatements} shape (this repo shipped no working `coverage` producer for it, so there is no compatibility break): per-statement detail with positions strictly subsumes a line-hit rollup, which a caller can still derive client-side by grouping `statements` on `line`."
         },
+        "companyInitFailures": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/CompanyInitFailure" },
+          "description": "Present only when a company initialization codeunit did not run to completion during this request (#3538/#3561). Absent means the company initialized cleanly \u2014 never an empty array. Every test in the response ran against a company real BC cannot produce, so `exitCode` is 2 unless the run earned something more specific, or unless the expectations manifest accepts the abort (see `accepted`)."
+        },
         "wallSeconds": { "type": "number", "minimum": 0 },
         "protocolVersion": { "const": 2 }
+      }
+    },
+    "CompanyInitFailure": {
+      "type": "object",
+      "required": ["codeunitId", "codeunit", "exceptionType", "message", "count"],
+      "properties": {
+        "codeunitId": { "type": "integer" },
+        "codeunit": { "type": "string" },
+        "exceptionType": { "type": "string" },
+        "message": { "type": "string" },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many app groups reported this same abort. Identical records are collapsed into one entry (#3561); each counted app group really did run its tests against the partial company."
+        },
+        "accepted": {
+          "type": "string",
+          "description": "Present only when the run's expectations manifest declares this abort accepted (Mode: accept-partial-company-init); carries that entry's Reason. The condition is still reported \u2014 only the exit 0 \u2192 2 escalation is suppressed."
+        }
       }
     },
     "Ack": {

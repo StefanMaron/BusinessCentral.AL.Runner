@@ -19,6 +19,12 @@ naming convention:
   differently from real BC. `Mode: expect-divergence`; carries `Reason` + `Doc`
   and no `Issue`, because there is no open work to link.
 - `disabled-<area>.json` — won't compile or won't run; pure skip.
+- `accept-<area>.json` — a RUN-level condition this project knowingly accepts, not
+  a test expectation. Today one mode: `accept-partial-company-init`, which names an
+  initialization codeunit whose abort is accepted here and carries a mandatory
+  free-text `Reason` and no `Issue`. It suppresses only the company-init exit 0 → 2
+  escalation; the abort is still reported on every surface. See
+  [`docs/partial-company-initialization.md`](../../docs/partial-company-initialization.md).
 
 Sharding by area keeps PR diffs small. A single PR adding or removing one
 expectation should touch one file with one entry.

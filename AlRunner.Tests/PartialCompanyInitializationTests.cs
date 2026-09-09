@@ -353,8 +353,52 @@ public sealed class PartialCompanyInitializationTests
             // The HIT is what makes this test about the carry rather than about two aborts.
             Assert.Contains("InstallBaseline.DepCompanyCache HIT", run.Output);
             // One abort per app group: each ran its tests against the partial company, and the
-            // one that reused the snapshot has no other way to say so.
+            // one that reused the snapshot has no other way to say so. The header still counts
+            // app groups...
             Assert.Contains("Company initialization: INCOMPLETE (2 abort(s))", run.Output);
+            // ...and #3561 collapses the two IDENTICAL lines below it into one carrying the
+            // count, instead of printing the same codeunit, exception and message twice.
+            Assert.Contains("×2 app group(s)", run.Output);
+            // Exactly one line in the summary block, not two identical ones. The `[warn]`
+            // lines printed at abort time are excluded by the leading tag: those are per
+            // occurrence by design and are not what collapses.
+            var summaryLines = run.Output.Split("\n")
+                .Select(l => l.Trim())
+                .Where(l => l.StartsWith("codeunit 2 \"Company-Initialize\" did not complete",
+                    StringComparison.Ordinal))
+                .ToList();
+            Assert.Single(summaryLines);
+        }
+        finally { try { Directory.Delete(root, true); } catch { } }
+    }
+
+    /// <summary>
+    /// The same two app groups in --output-json (#3561): ONE entry carrying `count: 2`, not two
+    /// identical objects a consumer has to deduplicate itself. The count is the claim — each app
+    /// group really did run its tests against the partial company — and losing it would be the
+    /// opposite defect to the duplication.
+    /// </summary>
+    [SkippableFact]
+    public void PartialCompanyInit_AcrossAppGroups_CollapsesToOneEntryWithACount()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.Dir("al-runner-cip-collapse");
+        try
+        {
+            var (appA, appB, _) = InstallSeedClosure.WriteSharedClosure(root, "cipcol", 61930);
+            var run = RunRunner(NewCacheDir(), injectAbort: true,
+                bundles: new[] { appA, appB }, outputJson: true, perfMarkers: true);
+
+            Assert.Equal(2, run.Exit);
+            var doc = JsonDocument.Parse(run.Output[run.Output.IndexOf('{')..]).RootElement;
+            var failures = doc.GetProperty("companyInitFailures").EnumerateArray().ToList();
+            Assert.Single(failures);
+            Assert.Equal(2, failures[0].GetProperty("count").GetInt32());
+            Assert.Equal(InjectedReason, failures[0].GetProperty("message").GetString());
+            // Nothing accepted it, so the field is absent rather than carrying a null a consumer
+            // would have to interpret.
+            Assert.False(failures[0].TryGetProperty("accepted", out _));
         }
         finally { try { Directory.Delete(root, true); } catch { } }
     }
