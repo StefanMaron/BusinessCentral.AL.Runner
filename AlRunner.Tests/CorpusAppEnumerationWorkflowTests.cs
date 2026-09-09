@@ -140,6 +140,21 @@ public sealed class CorpusAppEnumerationWorkflowTests
         Assert.DoesNotContain("success()", guard);
         Assert.Contains("steps.count.outputs.measured == 'true'", guard);
 
+        // ...and `measured` alone is not enough, which is the trap the wedge fix opened.
+        // It answers "could the compare script read a results document", NOT "did the
+        // corpus run finish": Program.cs writes --out from the results it has whatever the
+        // exit code, so a leg exiting 2 (a bundle could not execute) or 3 (a bundle could
+        // not compile) still produces a SHORT results file. On main that would be: leg red
+        // for the real failure, compare sees a large drop, measured=true, and the PARTIAL
+        // count becomes main's baseline — after which a genuine suite disappearance inside
+        // that margin passes, and the next full run reads the recovery as growth and bakes
+        // the drop in. An upstream corpus commit the runner cannot compile yet is the
+        // routine way a corpus move lands here (caught in round 2 of #3737's review).
+        //
+        // This cannot reintroduce the wedge: a legitimate corpus shrink has a GREEN corpus
+        // step and a compare that exits 1, so it still records and still unwedges main.
+        Assert.Contains("steps.al-language.outcome == 'success'", guard);
+
         var compare = wf[wf.IndexOf("- name: Compare the corpus count against main's last recorded one",
             StringComparison.Ordinal)..];
         compare = compare[..compare.IndexOf("- name: Record this count", StringComparison.Ordinal)];

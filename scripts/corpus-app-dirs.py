@@ -5,9 +5,8 @@ Issue #2984. `.github/workflows/bc-tests.yml` used to point the runner at exactl
 one path, `tests/al-language/tests/al-language`. The corpus then gained a second
 test app (`tests/al-language-onprem`, target OnPrem, for the `Scope = OnPrem`
 system tables a Cloud-target app cannot name at all). Because the workflow named
-one path, the submodule pin bump that pulls a new app in is green by
-construction: the app is checked out, never executed, and the leg still reports
-success. Nothing is even skipped visibly -- those tests never enter the run.
+one path, a corpus that gains an app is green by construction: the app is
+checked out, never executed, and the leg still reports success. Nothing is even skipped visibly -- those tests never enter the run.
 
 So the workflow enumerates instead. Adding a test app to the corpus is enough to
 make this repository's CI execute it.

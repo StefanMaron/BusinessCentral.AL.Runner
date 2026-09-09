@@ -750,8 +750,22 @@ jobs:
       # `inputs.corpus-ref == ''` excludes a single-leg diagnostic dispatched with
       # `--ref main -f corpus-ref=refs/pull/N/head`, which otherwise satisfies both
       # conditions above and would write a CORPUS PULL REQUEST's count as main's.
+      #
+      # `steps.al-language.outcome == 'success'` is the other half of `measured`, and
+      # they are different questions. `measured` says the compare script could READ a
+      # results document; it does not say the run that produced it FINISHED. Program.cs
+      # writes --out from the results it has whatever the exit code, so a leg exiting 2
+      # (a bundle could not execute) or 3 (a bundle could not compile) still writes a
+      # SHORT one -- and an upstream corpus commit the runner cannot compile yet is the
+      # routine way a corpus move lands here. Without this clause that partial count
+      # becomes main's baseline: a suite disappearing inside that margin then passes,
+      # and the next full run reads the recovery as growth and bakes the drop in.
+      #
+      # It cannot reintroduce the wedge the clause above fixes: a legitimate corpus
+      # shrink has a GREEN corpus step -- the tests that remain all pass -- and a compare
+      # that exits 1, so it still records and still unwedges main.
       - name: Record this count for the next run
-        if: ${{ always() && steps.count.outputs.measured == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.corpus-ref == '' }}
+        if: ${{ always() && steps.al-language.outcome == 'success' && steps.count.outputs.measured == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && inputs.corpus-ref == '' }}
         uses: actions/cache/save@v4
         with:
           path: corpus-count

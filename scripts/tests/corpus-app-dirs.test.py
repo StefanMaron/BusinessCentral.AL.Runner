@@ -3,8 +3,8 @@
 
 RED before #2984: this module did not exist, and `.github/workflows/bc-tests.yml`
 named `tests/al-language/tests/al-language` directly, so a second corpus test app
-was checked out by the submodule pin and never executed -- a leg green because it
-ran nothing.
+was checked out with the corpus and never executed -- a leg green because it ran
+nothing.
 
 GREEN proves both directions:
 
