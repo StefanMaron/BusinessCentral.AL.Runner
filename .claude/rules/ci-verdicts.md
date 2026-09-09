@@ -16,9 +16,10 @@ tools/ci-wait.py 2379 --timeout 0     # reads the verdict now; does not block
 refused by `argparse` rather than behaving like zero, and `--timeout 1` still means "wait up to
 a second" (#3351). Never hand-roll `gh run view` plus `sleep` — one call replaces the loop.
 
-**Who reads it, and when.** An implementation agent opens its PR and hands back; it never
-waits and never merges (`.claude/agents/impl-agent.md`). The coordinator sweeps open PRs once
-per cycle and reads each verdict then, and nothing is lost by reading late:
+**Who reads it, and when.** An implementation agent marks its PR ready and hands back; it never
+waits and never merges (`.claude/agents/impl-agent.md`). The coordinator lists open PRs once
+per cycle (`orchestrating-a-session`, one listing per sweep) and reads the verdict of each PR it
+considers arming then, and nothing is lost by reading late:
 `gh pr merge --auto` lands a reviewed PR the moment its checks go green with nobody present.
 
 **Trap: an answer that could not have come out any other way is not evidence.** Under the

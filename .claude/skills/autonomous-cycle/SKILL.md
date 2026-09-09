@@ -90,8 +90,8 @@ The queue grows by arithmetic, not by anyone choosing badly. The balancing ratio
 agents whenever a slot frees will fall behind indefinitely without ever making an obvious
 mistake.
 
-**Count an open unreviewed PR against the concurrency budget, exactly like an unfinished
-implementation.** A coordinator running 6 implementation agents with 6 unreviewed PRs is
+**Count an open unreviewed ready PR against the concurrency budget, exactly like an unfinished
+implementation** (a draft is the claim of an implementation already counted). A coordinator running 6 implementation agents with 6 unreviewed PRs is
 running at 12, not 6, and should stop starting new work. This is the accounting that makes
 priority 3 below fire on its own instead of needing to be remembered — the priority order
 already puts "a PR is waiting on review" *above* "an issue is ready to work", and it still got
@@ -112,64 +112,9 @@ were measured:
   ancestor of the other. **A one-PR-at-a-time reviewer cannot see that**, and neither can the
   coordinator, who is not reading the diffs.
 
-**A reviewer that approves a PR arms auto-merge on it immediately, in the same pass.** Do not
-hand an approval back to the coordinator and wait for it to act — that round trip is where the
-verdict goes stale, and staleness is the main cost of reviewing in batches. The reviewer has
-just read the head SHA; it is the only actor that knows the verdict and the SHA are consistent
-at that instant.
-
-```bash
-gh pr merge <N> --repo <owner>/<repo> --squash --auto
-```
-
-Arm **only** when all of these hold. Any one missing means report it to the coordinator instead:
-
-- **The PR is on a branch this loop owns.** Check the **branch prefix**, never the author field
-  — every loop running under one account reports that account as the author, and an outside
-  contributor's PR is never merged by us.
-- No release run is in progress (`publish.yml` pushes a fast-forward; a merge during its
-  ~40-minute run kills it).
-- `git merge-tree --write-tree --messages origin/<base> origin/<branch>` is clean.
-- If the PR asserts anything about BC's behaviour, its corpus PR has **merged**, and the pin bump
-  and count-baseline update are folded in.
-- No *other* PR in the same batch conflicts with it. Where two do — two submodule pin bumps to
-  different revisions, say — arm only the one that must merge first and report the ordering.
-
-**Record the SHA you armed against** in the verdict. If the head moves afterwards, GitHub keeps
-auto-merge armed against the new head, which nobody has reviewed; the coordinator needs the SHA
-to notice.
-
-**One command, two outcomes — and on a green PR it MERGES.** `--auto` is not "queue it for
-later":
-
-- required checks **not yet green** → auto-merge is armed, and the PR lands when they pass;
-- required checks **already green** → the PR **merges on the spot**.
-
-`gh` picks between the two itself, before calling anything — its merge command carries a
-function named `isImmediatelyMergeable` for exactly this. Both outcomes are intended: if review
-approves and CI is green, the PR should merge.
-
-**So on a green PR, the approval decision IS the merge decision.** There is no coordinator
-checkpoint after it, and nobody looks again. This matters more in an unattended loop than
-anywhere else: every condition in the list above has to hold at the moment you run the command,
-because running it is the merge — not a request for one.
-
-An earlier version of this section claimed the opposite: that GitHub *refuses* to arm an
-already-mergeable PR, answering `Pull request is in clean status`, and that the coordinator
-would merge it by hand. That was wrong, and a reviewer following it would report "it refused,
-please merge it yourself" about a PR that had already merged. It was falsified on PR #3095 —
-the documented command returned rc=0 and merged it immediately at the reviewed SHA. `gh` never
-produces that message at all; the phrase does not occur anywhere in the binary. It appears to be
-a GitHub API error from the `enablePullRequestAutoMerge` mutation, which is the call `gh` skips
-when the PR is already mergeable — so it is not something this command can produce. See #3127.
-
-**Check the exit code either way.** It is not decoration: `gh pr merge` exits non-zero for real
-reasons (`Pull request #N is not mergeable: ...`), and a loop that printed "armed" regardless of
-it once left four green PRs sitting unarmed.
-
-When it arms rather than merges, arming is still not merging, and it does not replace the merge
-bar — it is the bar expressed as a standing instruction to GitHub, so a PR lands the moment its
-checks go green instead of at the coordinator's next sweep.
+**Arming is defined once**, in the `orchestrating-a-session` skill under "A reviewer that
+approves a PR arms auto-merge": the command, the conditions, the head to record. Run that
+list.
 
 **Keep one reviewer continuously alive rather than spawning one when a queue becomes visible.**
 Reactive spawning is what produces the pile-up: by the time the queue is obvious it is already
@@ -180,7 +125,8 @@ replacement when a reviewer returns.
 minutes when other loops and outside contributors are pushing. A verdict without a SHA cannot be
 checked for staleness, and merging on a stale one has already nearly merged a commit whose CI was
 red. Re-read the head immediately before merging and pass `--match-head-commit`, so the merge
-refuses rather than silently taking something else.
+refuses rather than silently taking something else. The SHA is the head in the verdict line
+(`.claude/agents/reviewer.md`, "The verdict line"); the arming list compares it.
 
 These numbers come from a single session and review time varies with PR size. Re-measure with
 `tools/agent-cost.py` before treating the ratio as fixed.
@@ -284,9 +230,10 @@ Two things about the verdicts it produces, because both change what "stop" means
    `impl-69`, 82 worktrees, 10 GB — was caused by nothing ever *deleting* a worktree. Preflight's
    stale-worktree check is the actual fix for that.
 
-   Use that one identity everywhere: labels, branch names, worktree directories, scratch and
-   cache paths. Several loops can then run under one account, and several accounts against one
-   repository, without ever writing the same name.
+   Use that identity in labels and branch names; worktrees add the issue number and scratch,
+   cache and clone paths add the issue and a session token (`.claude/agents/impl-agent.md`,
+   "Namespace every path you write to"). Several loops can then run under one account, and
+   several accounts against one repository, without ever writing the same name.
 
    The existing `agent: impl-N` convention is the counter-example worth avoiding: a global
    counter with no owner, which drifted to `impl-69` while leaving 82 worktrees and 10 GB of disk
@@ -419,10 +366,8 @@ a merge can turn `main` red, which outranks everything you were about to do.
    found only by a manual sweep, because the priority order below asks about *red* and a
    conflicted PR never becomes red.
 
-   ```bash
-   gh pr list --repo <owner>/<repo> --state open \
-     --json number,mergeStateStatus,statusCheckRollup
-   ```
+   The one listing per sweep (`orchestrating-a-session`, the merge bar) returns
+   `mergeStateStatus` beside the rollup; take both from it.
 
    `DIRTY`/`CONFLICTING` → rebase on the base branch, resolve, force-push with
    `--force-with-lease`, re-check until it reads `BLOCKED` or `CLEAN`. **Resolve on the merits,
@@ -442,12 +387,13 @@ a merge can turn `main` red, which outranks everything you were about to do.
    - every required check is green **on the current head**, with no `CANCELLED` required context;
    - `git merge-tree` is clean against current `main`, and the affected tests were re-run if the
      branch was rebased;
-   - if it asserts anything about BC's behaviour, the corpus PR proving it **has merged**, and
-     its pin bump and count-baseline update are folded into this PR;
+   - the corpus-PR condition of the arming list (`orchestrating-a-session`) holds;
    - it is not a release window (`publish.yml` pushes a fast-forward; a merge during its run
      kills it).
 
-   A PR from anyone else is reviewed, and its findings go to the human queue. Never merged.
+   A PR from anyone else is reviewed, and its findings go to the human queue. Never merged. After
+   a merge lands, clear the labels of every issue the PR named (`.claude/agents/orchestrator.md`
+   Step 2), with this loop's own dispatch record as the identity list that step requires.
 
    The reviewer is dispatched by the loop, so it is not independent oversight — it is a second
    pass by the same lineage. It catches carelessness, not a shared wrong assumption. That is why
@@ -491,7 +437,8 @@ a merge can turn `main` red, which outranks everything you were about to do.
    count-baseline update — folded into the runner PR that needs it when the fix is new, or as
    its own catch-up PR when that fix has already merged (`al-language-submodule.md`).
 5. **An issue is ready to work.** Take the highest-value one — prefer a measured failure count
-   over a guess — and implement it. One issue at a time.
+   over a guess — and implement it. One issue at a time. Where value does not separate two
+   candidates, take the older (`orchestrating-a-session` § The ready queue).
 
    Use the `status: ready` label where it exists, but **do not depend on it.** The loop must work
    on a repository whose labels are absent, stale, or organised differently. Fall back to: open,
@@ -505,7 +452,7 @@ a merge can turn `main` red, which outranks everything you were about to do.
    run a Microsoft BaseApp bucket in a known-good configuration
      -> cluster the failures
        -> re-run the top cluster against a CLEAN cache to confirm it is real
-         -> only then file an issue, with the measured count
+         -> only then file an issue, with the measured count (`file-issues-for-gaps.md` § File once)
    ```
 
    **The clean-cache confirmation is not optional.** It is the difference between the loop
@@ -570,8 +517,8 @@ the issue so it returns to the pool. An issue you cannot finish should not stay 
 name. Release by removing **your own** `agent:` label — on a shared account the assignee you would
 remove may be another loop's lock, and a foreign `agent:` label is never yours to clear.
 
-**Your own stale claims are yours to reclaim** — a claim of yours with no linked PR and no
-activity for hours is from a run that died, and rule 1 above picks it up automatically.
+**Your own stale claims are yours to reclaim** — a claim of yours whose draft has had no commit for 24 hours
+(`check-open-prs-before-claiming.md`) is from a run that died, and rule 1 above picks it up automatically.
 **Someone else's stale claim is not yours to take**, even if it looks abandoned. You cannot tell
 a dead box from a contributor who is asleep — and that refusal covers a foreign `agent:` label
 too, which looks identical whether the loop that wrote it is live or gone. Surface it to the
@@ -598,10 +545,18 @@ time. Deliberately not an OS scheduler as the mechanism: contributors run Window
 Linux and macOS, and a shell loop behaves identically on all three, with a systemd unit or Task
 Scheduler entry as optional restart-on-boot hardening.
 
-**Bound the session's lifetime either way.** Even with compaction, a session running for days
-accumulates state that is not context — tool handles, temp files, harness state. Have the loop
-end itself after a set period or number of cycles and let the timer restart it. That keeps the
-`/loop` experience while capping accumulation, and it is better than either pure option.
+**End the session after 10 cycles and let the timer start the next one.** A session running for
+days accumulates state that is not context — tool handles, temp files, harness state. On the
+tenth cycle, comment the cycle state on the session's status issue, then end the session; the
+next one starts from that comment. The status issue is found at startup: the number on the
+first line of the cycle log wins; otherwise `gh issue list --state open --search "Coordinator
+status <identity> in:title" --json number,createdAt --jq 'max_by(.createdAt).number'` picks
+this loop's newest; when none exists, open one titled `Coordinator status <identity> <date>`.
+Write its number as the first line of the cycle log so a cold start reads it there. The comment lists every open PR by number with its
+`ci-wait` verdict, armed or not, and what is held for a person. Done when every number
+`gh pr list --state open --limit 500 --json number --repo <owner>/<repo>` prints appears in the
+comment with those three fields, and that listing returned fewer than 500 rows (500 means it
+may be cut: say so instead of claiming completeness).
 
 **Where compaction lands matters more than when it fires.** A compaction inside a unit of work
 discards that unit's working context; one between units costs nothing, because everything
@@ -733,6 +688,7 @@ The page carries, in roughly this order of prominence:
 - **When it last updated.** The most important line on the page.
 - What it is working on now, and what it finished in the last few cycles.
 - What is queued for a human decision, with links.
+- The ready queue's three numbers — ready, older than seven days, oldest — read as `orchestrating-a-session` § The ready queue says.
 - The last known-good baseline result and when it ran.
 - A short box summary from the profile — memory, disk, the slot in use.
 

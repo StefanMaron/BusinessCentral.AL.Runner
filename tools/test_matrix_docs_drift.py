@@ -155,6 +155,9 @@ NOT_A_MATRIX_CLAIM = [
     ("docs/testpage-write-buffer.md", "27.0 27.3 27.5",
      "the legs that raised \"The record that you tried to open is not available.\" on "
      "the same write sequence, corpus run 34328827788 -- the other measured half"),
+    ("docs/runtime-packages.md", "27.5 28.1 28.4",
+     "the three BC compilers that built the three genuine third-party runtime packages measured "
+     "for #3537 -- a historical measurement of which builds were compared, not the matrix"),
 ]
 
 

@@ -129,7 +129,7 @@ public static partial class RecordPatches
             ?? throw AllProfileShapeGap("data access has no in-memory provider");
 
         if (_apvPopulatedProviders.TryGetValue(provider, out _)) return;
-        _apvPopulatedProviders.Add(provider, new object());
+        _apvPopulatedProviders.AddOrUpdate(provider, new object());
 
         foreach (var row in EnumerateKnownProfiles())
             InsertVirtualRow(provider, metaTable, AllProfileSystemIdArgs(row),

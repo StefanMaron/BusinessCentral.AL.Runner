@@ -18,10 +18,10 @@ If you are `impl-1` or `impl-2`:
 1. Check for issues labeled `agent: <your-id>` AND `status: in-progress` — that is your active issue if one exists.
 2. If no active issue, find the next unclaimed issue: `status: ready` with no `agent:` label and no human assignee. Claim it: add `agent: <your-id>`, `status: in-progress`, assignee `@me`. Remove `status: ready`.
 3. **Verify you understand the AL pattern.** If the issue body lacks a runnable AL reproducer or a specific failing assertion, do not guess. Add `status: needs-input`, ask the reporter, stop (`.claude/rules/no-assumption-fixes.md`).
-4. Branch: `agent/<your-id>/issue-<N>`.
+4. Branch `agent/<your-id>/issue-<N>`, pushed, with a draft PR carrying `Closes #N`, the label `agent: <your-id>`, assigned to `@me` (`.claude/agents/impl-agent.md`, Step 2).
 5. Implement red → green (`.claude/rules/tdd.md`). The right test depends on what kind of issue this is — see "Issue kinds" below.
-6. Open PR with `Closes #N` in the body. Label PR `agent: <your-id>` + `status: review-ready`. Assign to `@me`.
-7. Fix CI failures or review comments.
+6. Rewrite the body, mark the draft ready, label `status: review-ready`.
+7. Return. The coordinator reads CI and resumes you, or dispatches a fresh agent onto the PR, when it goes red.
 8. Auto-merge fires when approved + green (`allow_auto_merge=true` is a repo setting, not visible in the checkout). Return to step 1.
 
 **One issue at a time per impl agent.** No second claim while a PR is open.
@@ -42,7 +42,7 @@ If you are `impl-1` or `impl-2`:
 
 If you are `orchestrator`:
 
-1. **PRs first.** Find PRs labeled `status: review-ready`. CI green + no unresolved threads + no `CHANGELOG.md` in diff + no edits under `tests/al-language/` + relevant expectation entries / runner-extras tests cited in the body → approve and squash-merge (`gh pr merge --auto --squash`, or `mcp__github__merge_pull_request` with `merge_method: "squash"` — `gh` is absent in web/remote sessions, see `.claude/rules/github-access.md`). Otherwise leave actionable review comments.
+1. **PRs first.** Find PRs labeled `status: review-ready`. CI green + no unresolved threads + no `CHANGELOG.md` in diff + no edits under `tests/al-language/` + relevant expectation entries / runner-extras tests cited in the body + every condition of the arming list in `orchestrating-a-session` ("A reviewer that approves a PR arms auto-merge") → approve and squash-merge (`gh pr merge --auto --squash`). Where `gh` is absent (web and remote sessions, `.claude/rules/github-access.md`) the verdict cannot be read: review, comment, and hold. Otherwise leave actionable review comments.
 2. **Unblock.** Review `status: blocked` issues; resolve if possible.
 3. Triage of new untriaged issues is owned by the `triager` sub-agent (Opus), which runs at the start of a cycle and sets `status: ready` vs. `status: needs-input`. The orchestrator does not triage.
 
@@ -61,7 +61,7 @@ Once detected, here is which tool covers which operation:
 | Label / assign / close issue | `gh issue edit`, `gh issue close` | `mcp__github__issue_write` (`method: update`) |
 | Comment on issue or PR | `gh issue comment`, `gh pr comment` | `mcp__github__add_issue_comment` (PRs too — pass the PR number) |
 | List PRs | `gh pr list` | `mcp__github__list_pull_requests` |
-| PR detail / diff / files / CI | `gh pr view`, `gh pr diff`, `gh pr checks` | `mcp__github__pull_request_read` (`get`, `get_diff`, `get_files`, `get_check_runs`) |
+| PR detail / diff / files / CI | `gh pr view`, `gh pr diff`, `tools/ci-wait.py <N> --timeout 0` | `mcp__github__pull_request_read` (`get`, `get_diff`, `get_files`); `get_check_runs` reads checks but is not the verdict (`ci-wait.py` needs `gh`), so without `gh` a PR is reviewed and held, never armed |
 | Merge a PR | `gh pr merge --squash` | `mcp__github__merge_pull_request` (`merge_method: "squash"`) |
 | Open a PR | `gh pr create` | `mcp__github__create_pull_request` |
 | Label a PR | `gh pr edit --add-label` | `mcp__github__update_pull_request` |
@@ -89,7 +89,7 @@ The **GitHub assignee field** is the boundary between agent-owned and human-owne
 - Impl agents never self-assign work outside the orchestrator queue.
 - Branch name: `agent/<agent-id>/issue-<N>` — no exceptions.
 - PR body must contain `Closes #N`.
-- Set `status: review-ready` on the PR once CI is green.
+- Set `status: review-ready` on the PR when you mark it ready; the coordinator reads CI.
 - One PR at a time per impl agent.
 - Never edit `CHANGELOG.md`.
 - Never edit a file inside `tests/al-language/`. A pin bump is folded into the fix PR it enables when that fix is new; a catch-up bump, whose fix already merged, is its own PR (`al-language-submodule.md`).
@@ -102,7 +102,7 @@ The **GitHub assignee field** is the boundary between agent-owned and human-owne
 |---|---|
 | `status: ready` | Unclaimed, ready for an impl agent to pick up |
 | `status: in-progress` | Currently being worked on by the labeled `agent: *` |
-| `status: review-ready` | PR is open, CI green, ready for orchestrator review/merge |
+| `status: review-ready` | PR is marked ready; the orchestrator reads CI and reviews |
 | `status: blocked` | Needs human or cross-issue input |
 | `status: needs-input` | Issue body too thin to identify root cause; reporter must elaborate (set by triager — see `no-assumption-fixes`) |
 | `agent: impl-1` / `agent: impl-2` | Identity claim on an issue or PR |

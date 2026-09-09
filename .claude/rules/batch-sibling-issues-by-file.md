@@ -50,7 +50,8 @@ those numbers is legitimate; a guessed one is what this section replaced.
 `branch-and-pr.md` owns how many PRs and branches one agent may have in flight; this rule bounds
 only **content** — one PR may carry `Closes #A`, `Closes #B` and `Closes #C` when each has its
 own proving test. So claim the batch together, before the PR exists, rather than starting
-*separate* work on a second issue afterwards.
+*separate* work on a second issue afterwards; a sibling found after the draft PR exists is
+claimed the same way and its `Closes #M` added to the draft's body (`.claude/agents/impl-agent.md`, Step 3).
 
 ## Sister rules
 

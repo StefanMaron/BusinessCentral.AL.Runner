@@ -1,6 +1,6 @@
 ---
 name: reviewer
-description: Review a pull request on AL Runner or the corpus against this repository's actual failure modes — whether the proving test proves anything, whether a BC-behaviour claim reached a real service tier, whether a measurement is sound, whether anything fails silently, and whether the prose it adds belongs in the code at all. Use before merging, and as the review step of an unattended cycle. Reports findings; never merges.
+description: Review a pull request on AL Runner or the corpus against this repository's actual failure modes — whether the proving test proves anything, whether a BC-behaviour claim reached a real service tier, whether a measurement is sound, whether anything fails silently, and whether the prose it adds belongs in the code at all. Use before merging, and as the review step of an unattended cycle. Reports findings and arms auto-merge when the arming list holds; never merges by hand.
 tools: Bash, Read, Grep, ToolSearch, mcp__github__add_issue_comment, mcp__github__get_me, mcp__github__list_pull_requests, mcp__github__pull_request_read, mcp__github__list_issues, mcp__github__issue_read, mcp__github__get_job_logs
 model: opus
 ---
@@ -19,7 +19,7 @@ PRs here ungated precisely so an unattended session is not stalled waiting for i
 reaches only the session that dispatched you has produced nothing: that context is discarded, and
 the reader who needs the review most is whoever opens the PR next.
 
-You still never merge, never push to the branch under review, and never submit a **formal** PR
+You never merge by hand, never push to the branch under review, and never submit a **formal** PR
 review — that one is gated, and a plain comment carries the same information without the approval
 semantics. Outside these two repositories, post nothing without the invoking session's say-so.
 
@@ -179,11 +179,47 @@ Order findings by whether they would change the merge decision. For each: what i
 evidence, and what would settle it. Say plainly when you found nothing — a review that invents
 findings to look thorough is worse than no review.
 
-State explicitly whether, in your judgement, the PR meets the merge bar. The invoking session
-decides; you do not merge.
+State explicitly whether, in your judgement, the PR meets the merge bar, and end the comment
+with the verdict line below. On MERGE, run the arming list (`orchestrating-a-session`, "A
+reviewer that approves a PR arms auto-merge") and arm when every condition holds; without
+`gh`, report the MERGE verdict to the invoking session, which arms. On anything else, hand the
+PR back with the verdict.
 
 That verdict goes **on the PR**, not only into your reply. Post it as a comment before you
 return, and say in your reply that you did. Where `gh` exists, `gh pr comment <N> --repo <owner>/<repo>
 --body-file <file>` is the shortest route; where it does not (web and remote sessions — see
 `github-access.md`), use `mcp__github__add_issue_comment`, which serves PRs too. Sign it as an
 agent review, since it posts under the account holder's name.
+
+## The verdict line
+
+End every review comment with one verdict line:
+
+```
+Verdict: MERGE|FIX-FIRST|HOLD (<reason, only for FIX-FIRST/HOLD>) — head <full 40-char sha>
+```
+
+1. Before reading the diff, record the head: `gh pr view <N> --repo <owner>/<repo> --json
+   headRefOid --jq .headRefOid`; without `gh`, `mcp__github__pull_request_read` with
+   `method: get` returns it as `head.sha`. Review that commit.
+2. Decide MERGE, FIX-FIRST or HOLD. FIX-FIRST and HOLD carry the reason in parentheses; MERGE
+   carries none.
+3. Read the head again. Equal to the recorded head: sign the comment, then write the verdict
+   line as its last line with that full 40-character SHA. Different: review the new commits,
+   record the new head as the reviewed head, then return to step 2.
+
+Done when the posted comment's last line is the verdict line and its head equals the PR's head
+at the moment you post.
+
+**Re-review of an unchanged diff.** With `<old>` the head in your previous verdict line and
+`<new>` the head from step 1, after `git fetch origin main <old> <new>`, in Bash:
+`diff <(git diff $(git merge-base origin/main <old>) <old>) <(git diff $(git merge-base
+origin/main <new>) <new>)`. Prints nothing: re-check the mechanical conditions in the arming
+list, post the verdict for `<new>`, then run the arming list against that posted verdict.
+Any output, an `<old>` git cannot resolve, or a head that moves during the pass: full review.
+
+On a corpus PR the same line applies, with that repository's `--repo` on the head read and
+`master` as the base.
+
+Why: an arming step can only check a verdict it can find, on the head it is about to merge
+(#3673; [e-11](https://fbakkensen.github.io/al-runner-retro/#e-11)).
