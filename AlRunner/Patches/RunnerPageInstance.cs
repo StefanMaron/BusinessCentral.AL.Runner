@@ -2275,11 +2275,11 @@ internal sealed partial class RunnerPageInstance
         // BASE page's id space against the EXTENSION's methods. Last, not first, so an
         // extension-added control keeps the ordinary path above unchanged.
         //
-        // A `modify()` block accepts OnLookup, OnDrillDown and OnAssistEdit alongside the
-        // before/after validate pair (measured on BC 28.1: the compiler rejects OnValidate and
-        // OnControlAddIn there with AL0162, and accepts these), so this belongs in FindTrigger
-        // rather than only on the validate path — RaiseOnLookup and RaiseOnDrillDown resolve
-        // through here and were refusing a control that plainly declares the trigger.
+        // Here rather than only on the validate path, because a `modify()` block carries more
+        // than the before/after validate pair: the compiler's own TriggerTypeKind enum names
+        // six ControlExtension* triggers. RaiseOnLookup and RaiseOnDrillDown resolve through
+        // this method and were refusing a control that plainly declares the trigger. Two of
+        // the six have no dispatch surface anywhere in the runner — #3642.
         var modified = FindModifiedControlTriggers(memberId, suffix, arity);
         return modified.Count > 0 ? modified[0] : null;
     }
