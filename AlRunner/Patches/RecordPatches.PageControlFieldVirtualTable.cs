@@ -176,8 +176,18 @@ public static partial class RecordPatches
                     && GetPageControlFieldRowsFromBcDocument(page.Id) is { } fromDocument)
                 {
                     rows.AddRange(fromDocument);
+                    // #3750 — emitted here, after the document actually produced rows and
+                    // before they are handed on, so a page whose document did not parse falls
+                    // through to the derivation below and is traced as `derived` rather than
+                    // claiming a route it did not take.
+                    TracePageMetadataSource(page.Id, "bc-document");
                     continue;
                 }
+
+                // #3750 — the fall-through arm: no document was available for this page, OR
+                // one was and did not parse. Those two are indistinguishable from here and
+                // from the trace (#3590); TracePageMetadataSource says so at length.
+                TracePageMetadataSource(page.Id, "derived");
 
                 var tableId = GetSourceTableIdForPage(page.Id);
                 var table = tableId != 0 && _parsedTables.TryGetValue(tableId, out var t) ? t : null;
@@ -206,6 +216,12 @@ public static partial class RecordPatches
             {
                 if (sourceParsedPageIds.Contains(symbol.Id)) continue;
                 if (symbol.Controls == null || symbol.Controls.Count == 0) continue;
+
+                // #3750 — a THIRD route value, which the table trace has no analogue for: a
+                // precompiled dependency's page is served from its SymbolReference.json, not
+                // from AL text and not from a document. Folding it into `derived` would make
+                // the compiled-vs-precompiled split the trace exists to measure unreadable.
+                TracePageMetadataSource(symbol.Id, "symbol");
 
                 var symTable = symbol.SourceTableId != 0 && _parsedTables.TryGetValue(symbol.SourceTableId, out var st)
                     ? st : null;

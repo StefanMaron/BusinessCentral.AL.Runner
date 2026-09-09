@@ -119,6 +119,34 @@ public static partial class RecordPatches
         => AlObjectMetadataRegistry.TryGet(BcPageMetadataKind, pageId, out var xml)
            && !string.IsNullOrEmpty(xml);
 
+    /// <summary>
+    /// One line per built page naming which of the three routes produced its Page Control
+    /// Field rows (#3750). Off unless <c>AL_RUNNER_TRACE_PAGE_METADATA_SOURCE</c> is exactly
+    /// <c>"1"</c> — any other value, <c>"true"</c> included, is a silent no-op. Mirrors
+    /// <c>TraceTableMetadataSource</c> (#3552), for the same reason: all three routes produce
+    /// the same ROW TYPE, so nothing downstream can be asked which one ran.
+    ///
+    /// <para><c>Console.Out</c>, never <c>Console.Error</c> — the runner re-execs itself
+    /// (<c>Program.cs</c>), so a stderr diagnostic can vanish and read as a false negative.</para>
+    ///
+    /// <para>There is no failure route, and there must not be one: AVAILABILITY decides which
+    /// route a page takes, so reporting a failure AS a route is the substitution
+    /// <c>.claude/rules/loud-failures.md</c> exists to prevent.</para>
+    ///
+    /// <para><b>The limit this inherits, stated rather than implied away.</b> A failure here is
+    /// not loud. <see cref="TryGetBcPageControlDocument"/> memoises a null on a parse failure
+    /// and the table-side builder swallows a cold-build throw into a cached null the same way
+    /// (pre-existing, <b>#3590</b>). So a page whose document genuinely failed to load and a
+    /// page that never had one are <b>indistinguishable from this trace</b>: both show as the
+    /// derivation route. A trace implying a guarantee #3590 makes impossible would be worse
+    /// than no trace — see docs/where-metadata-comes-from.md.</para>
+    /// </summary>
+    private static void TracePageMetadataSource(int pageId, string source)
+    {
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PAGE_METADATA_SOURCE") != "1") return;
+        Console.Out.WriteLine($"[page-metadata] {pageId} source={source}");
+    }
+
     private static BcPageDocument? TryGetBcPageControlDocument(int pageId)
         => _bcPageControlDocuments.GetOrAdd(pageId, static id =>
         {

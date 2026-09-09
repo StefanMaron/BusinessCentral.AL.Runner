@@ -244,7 +244,13 @@ and is tracked as **#3590**; it is not a claim this page makes about the cold pa
 ```
 AL_RUNNER_TRACE_TABLE_METADATA_SOURCE=1   # one line per built table: id, route
 AL_RUNNER_TRACE_TABLE_METADATA_SOURCE=2   # ...and one line per field
+AL_RUNNER_TRACE_PAGE_METADATA_SOURCE=1    # one line per built page:  id, route (#3750)
 ```
+
+The page flag is the same instrument one object kind over, with three route values rather than
+two — `bc-document`, `derived`, `symbol` — and no level 2. `docs/where-metadata-comes-from.md`
+has the contract, the measured compiled-vs-precompiled split, and the #3590 limit both flags
+inherit.
 
 Level 2 prints `Editable`, `DataClassification`, `EnumTypeId` and `EnumTypeName`. All four live
 on `Types.Metadata.MetaField`, reachable only through the original `MetaTable` the
