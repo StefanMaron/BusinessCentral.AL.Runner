@@ -418,6 +418,14 @@ public static partial class RecordPatches
         // able to go stale across a --server reload.
         _parsedProfiles.Clear();
         _parsedPermissionSets.Clear();
+        // #3226: and the directory -> owning-app memo the two lines above re-read THROUGH.
+        // ResolveOwningApp answers "the nearest app.json at or above this directory" once per
+        // directory and keeps it for the life of the process, so a --watch cycle that edits
+        // app.json's name or id re-parsed every profile, permission set and table-metadata
+        // source and attributed all of them to the PREVIOUS identity — the clear above without
+        // this one only re-reads the declarations, not who owns them. Cost: one app.json
+        // walk-up per source directory per cycle (measured in #3226's PR body).
+        _owningAppByDir.Clear();
         _metaFormCache.Clear();
         // #1957: the "already (successfully|un-)loaded" bookkeeping is a statement about
         // the NCLMetaForm instances _metaFormCache.Clear() just discarded — it must go

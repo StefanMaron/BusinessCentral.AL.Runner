@@ -411,7 +411,10 @@ public static partial class RecordPatches
 
     /// <summary>
     /// Drop the built-<c>NCLMetaPermissionSet</c> cache on a bundle reload, called from
-    /// <see cref="RecordPatches.ResetForReload"/> next to the other built-metadata caches.
+    /// <see cref="RecordPatches.ResetForReload"/> next to the other built-metadata caches —
+    /// together with the four other pieces of permission-metadata state this file memoizes for
+    /// the process (#3226, #3249): the app-owner cache, the populate latch and the two name
+    /// indexes, each with its reason at the line.
     /// <para>
     /// Every entry is derived from <see cref="EnumerateKnownPermissionSets"/>, i.e. from
     /// <c>_parsedPermissionSets</c>, which that same method clears — so without this the
@@ -424,7 +427,39 @@ public static partial class RecordPatches
     /// </summary>
     internal static void ResetPermissionSetMetadataForReload()
     {
-        lock (_permMetaGate) _metaPermissionSetCache.Clear();
+        lock (_permMetaGate)
+        {
+            _metaPermissionSetCache.Clear();
+            // #3226: the app-identity state on the INPUT side goes with it, under the same lock
+            // that guards every read and write of both.
+            //
+            // _appOwnerCache is keyed by app id ALONE while CARRYING the name, so a --watch
+            // cycle that renames an app.json without changing its id resolves the fresh
+            // (id, name) out of ResolveOwningApp and is then handed back the previous cycle's
+            // NavAppRuntimeMetadata, still naming the old app. Cleared rather than re-keyed on
+            // (id, name): within one cycle an app id resolves through one app.json to one name,
+            // so the id-only key is correct there, and re-keying would keep every dead
+            // NavAppRuntimeMetadata alive for the life of the process. Reasoning in #3226's PR.
+            _appOwnerCache.Clear();
+            // The latch in front of EnsurePermissionMetadataPopulated, without which the clear
+            // above is unobservable on the app-group path: it short-circuits on
+            // `known.Count == _permMetaPopulatedForCount`, so a bundle declaring the same NUMBER
+            // of permission sets under a renamed app never re-enters the populate at all and
+            // NavAppGroup.BaseGroup keeps the previous bundle's summaries and their owner.
+            // Safe to reset: the method's own contract is "idempotent and re-runnable", and it
+            // installs a fresh lazy on every run.
+            _permMetaPopulatedForCount = -1;
+            // #3249's second half, and it must go with the line above rather than be left to
+            // the invalidation inside EnsurePermissionMetadataPopulated: that one runs AFTER
+            // the count guard, so the two failures compounded — the guard short-circuited and
+            // the memo it would have dropped survived with it. Both are built from
+            // EnumerateKnownPermissionSets, i.e. from _parsedPermissionSets plus the registered
+            // .app set, both of which ResetForReload discards. Stale, an IncludedPermissionSets
+            // name resolves to the previous bundle's object id, and a set only the new bundle
+            // declares does not resolve at all.
+            _permissionSetIdByName = null;
+            _permissionSetNameById = null;
+        }
     }
 
     /// <summary>The number of permission-set ids currently memoized (including the ids
