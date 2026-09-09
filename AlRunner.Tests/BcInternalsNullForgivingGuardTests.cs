@@ -225,8 +225,11 @@ public sealed class BcInternalsNullForgivingGuardTests
         // converted, and a drop means a conversion was undone. 74 -> 75 for the
         // DataItemTableFilter read in RecordPatches.QueryProjection.cs (#3571); 75 -> 80 for
         // the five lookups in that same method's GetSingleDataItemTableFilterTuples, whose
-        // failure used to be a silent `yield break` the caller read as "no filters" (#3647).
-        Assert.Equal(80, converted);
+        // failure used to be a silent `yield break` the caller read as "no filters" (#3647);
+        // 80 -> 81 for the TableFiltersAndMarks read on the JOIN path in
+        // RecordPatches.QueryJoin.cs, whose failure used to answer FiltersAndMarks.Empty —
+        // indistinguishable from a dataitem that genuinely declares no filter (#3656).
+        Assert.Equal(81, converted);
     }
 
     /// <summary>
