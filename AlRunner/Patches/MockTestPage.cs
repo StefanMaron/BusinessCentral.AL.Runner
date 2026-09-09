@@ -1870,6 +1870,13 @@ internal class LiveNavTestPage : MockITestPage
                 "testpage-close-veto — the page's OnQueryClosePage returned false, which in BC "
                 + "leaves the page open awaiting the user. See docs/scope.md");
         }
+        // The EXPLICIT close route's flush. The modal route does not come through here at all
+        // -- it reaches Dispose() instead (see there) -- and the two ROUTES nevertheless agree
+        // about an uncommitted subpage-part row, because both end in a flush. That agreement is
+        // real BC's, not a runner convention: corpus codeunit 60420 "TPMF Tests"
+        // (StefanMaron/BusinessCentral.AL.Language.Tests#311, merged 22e226c4) drives one page
+        // through both routes and both persist the row, green on all eight cloud legs of run
+        // 34345468218. So neither call site may lose its flush; issue #3682.
         FlushParts(); FlushRow(); _opened = false;
 
         // The triggers above are this page's close, so BC's own form state has to agree that
@@ -1878,6 +1885,22 @@ internal class LiveNavTestPage : MockITestPage
         // the triggers have already run once (issue #3091).
         _page?.ForceCloseForm();
     }
+    // The MODAL route's flush, and the only one it has. A [ModalPageHandler] never calls
+    // Close(): BC wraps the handler in a scope and disposes the page handle as the refcount
+    // drops, which lands here -- NavTestExecution.TestHandleModalForm -> NavTestPageHandle
+    // .Dispose -> TreeObjectReferenceHandler.Dispose -> NavTestPage.Dispose -> this.
+    //
+    // Equivalent to what BC does, and measured rather than assumed: corpus codeunit 60420
+    // "TPMF Tests" (StefanMaron/BusinessCentral.AL.Language.Tests#311, merged 22e226c4) asserts
+    // the two close routes AGREE about an uncommitted part row, green on all eight cloud legs
+    // of run 34345468218. Its arms F/G/H invoke no action precisely so the ACTION write-back
+    // (OK().Invoke() -> SaveCurrentRow()) cannot stand in for the close.
+    //
+    // The trap, and why TestPageModalClosePartFlushTests exists: these two calls are REDUNDANT
+    // for a part row here -- FlushParts() reaches each part's FlushRow(), and each part page's
+    // own Dispose() calls its own FlushRow() -- so removing EITHER one alone leaves every
+    // behavioural test green. Only removing both goes red. The IL guard in that file is what
+    // fails on a single-call edit. Issue #3682.
     public override void Dispose() { FlushParts(); FlushRow(); }
 
     /// <summary>
