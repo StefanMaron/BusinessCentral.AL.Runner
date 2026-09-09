@@ -212,7 +212,7 @@ Done when the posted comment's last line is the verdict line and its head equals
 at the moment you post.
 
 **Re-review of an unchanged diff.** With `<old>` the head in your previous verdict line and
-`<new>` the head from step 1, after `git fetch origin main`, in Bash:
+`<new>` the head from step 1, after `git fetch origin main <old> <new>`, in Bash:
 `diff <(git diff $(git merge-base origin/main <old>) <old>) <(git diff $(git merge-base
 origin/main <new>) <new>)`. Prints nothing: re-check the mechanical conditions in the arming
 list, post the verdict for `<new>`, then run the arming list against that posted verdict.

@@ -61,8 +61,10 @@ Agent({
 
 Substitute `<AGENT-ID>` with the actual identity (`impl-1` or `impl-2`).
 
-**Step C — Run an orchestrator pass (foreground).**
-While impls work, sweep the PR queue once:
+**Step C — Review, then run an orchestrator pass (foreground).**
+While impls work, dispatch the `reviewer` agent on every `status: review-ready` PR that has no
+comment ending in a `Verdict:` line for its current head (`.claude/agents/reviewer.md`, "The
+verdict line"); then sweep the PR queue once:
 
 ```
 Agent({
