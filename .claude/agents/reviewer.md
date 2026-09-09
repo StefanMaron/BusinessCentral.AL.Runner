@@ -196,7 +196,7 @@ agent review, since it posts under the account holder's name.
 End every review comment with one verdict line:
 
 ```
-Verdict: MERGE|FIX-FIRST|HOLD (<reason, only for FIX-FIRST/HOLD>) — head <full 40-char sha> — kind: full|re-review
+Verdict: MERGE|FIX-FIRST|HOLD (<reason, only for FIX-FIRST/HOLD>) — head <full 40-char sha>
 ```
 
 1. Before reading the diff, record the head: `gh pr view <N> --repo <owner>/<repo> --json
@@ -211,16 +211,15 @@ Verdict: MERGE|FIX-FIRST|HOLD (<reason, only for FIX-FIRST/HOLD>) — head <full
 Done when the posted comment's last line is the verdict line and its head equals the PR's head
 at the moment you post.
 
-`kind:` says which pass produced it. `full` is the review above. `re-review` is a pass over a
-diff unchanged since your last full review: with `<old>` the head in your previous verdict
-line and `<new>` the head from step 1, after `git fetch upstream main` the command
-`diff <(git diff $(git merge-base upstream/main <old>) <old>) <(git diff $(git merge-base
-upstream/main <new>) <new>)` prints nothing. Then post the verdict for `<new>` stamped
-`re-review`, and run the arming list against that posted verdict. Any output, or an `<old>`
-git cannot resolve: full review, stamp `full`.
+**Re-review of an unchanged diff.** With `<old>` the head in your previous verdict line and
+`<new>` the head from step 1, after `git fetch origin main`, in Bash:
+`diff <(git diff $(git merge-base origin/main <old>) <old>) <(git diff $(git merge-base
+origin/main <new>) <new>)`. Prints nothing: re-check the mechanical conditions in the arming
+list, post the verdict for `<new>`, then run the arming list against that posted verdict.
+Any output, an `<old>` git cannot resolve, or a head that moves during the pass: full review.
 
 On a corpus PR the same line applies, with that repository's `--repo` on the head read and
 `master` as the base.
 
 Why: an arming step can only check a verdict it can find, on the head it is about to merge
-([e-11](https://fbakkensen.github.io/al-runner-retro/#e-11)).
+(#3673; [e-11](https://fbakkensen.github.io/al-runner-retro/#e-11)).
