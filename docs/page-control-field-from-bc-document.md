@@ -12,7 +12,11 @@ The siblings are [`object-metadata-from-bc.md`](object-metadata-from-bc.md), whi
 [`report-metadata-from-bc.md`](report-metadata-from-bc.md), which did reports at #3607.
 The corpus adjudication for this one is
 [corpus PR #300](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/300)
-(page 60427, codeunit 60426).
+(page 60427, codeunit 60426), extended by
+[corpus PR #310](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/310)
+(page 60425, codeunit 60424) for the two columns #300 left unmeasured — see
+[the three property defaults](#the-three-property-defaults) and
+[`OptionString` and Enum](#option-and-enum).
 
 <a id="what-bc-does"></a>
 
@@ -187,14 +191,28 @@ passes the null straight to `NavText.CreateTruncated`, which renders it as the e
 The AL derivation substituted `"true"` there too, so this change makes `Editable` answer `""`
 for a control that does not declare it.
 
-**That last cell is measured from BC's own type, not from a service tier.** No corpus test
-pins `Editable` today — codeunit 60921 pins `Visible` only, and corpus PR #300's codeunit
-60426 asserts `Editable` nowhere. So the claim rests on the reflection measurement above plus
-BC's decompiled `array[7] = NavText.CreateTruncated(len, control.Editable)`, and not on a real
-tier having answered it. It is the honest reading of both, and it is the kind of claim
-`.claude/rules/ask-the-corpus-before-claiming-bc-behavior.md` says to name rather than to
-assert quietly. A corpus test asserting `Editable` on an undeclared control is the follow-up
-that would settle it; #3625 tracks it.
+The table above was re-measured for #3625 on **27.0, 27.5, 28.1 and 28.4**, and every cell is
+identical on all four — so the asymmetry is a stable property of the type across the whole
+matrix, not a quirk of one build. `Editable` is declared on `ControlDataboundDefinition`
+while `Enabled` and `Visible` are declared on `UIElementDefinition`, which is the structural
+reason the three do not share a default.
+
+**That last cell is still measured from BC's own type, not from a service tier.** No *merged*
+corpus test pins `Editable` — codeunit 60921 pins `Visible` only, and corpus PR #300's
+codeunit 60426 asserts `Editable` nowhere. So the claim rests on the reflection measurement
+above plus BC's decompiled `array[7] = NavText.CreateTruncated(len, control.Editable)`, and
+not on a real tier having answered it. It is the honest reading of both, and it is the kind
+of claim `.claude/rules/ask-the-corpus-before-claiming-bc-behavior.md` says to name rather
+than to assert quietly.
+
+[Corpus PR #310](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/310)
+(codeunit 60424, page 60425), filed for #3625, is what settles it: it asserts all three
+columns on one control that declares none of them, so the asymmetry is pinned rather than
+assumed, plus the declared-`false` direction for `Editable` and `Enabled` so an empty answer
+cannot be read as the column never carrying anything. **Until those eight cloud legs report,
+this row is a reading.** If the tier answers `'true'`, the fix is
+`CollectBcPageControls` — the single place the three defaults are applied — and not the
+corpus assertion.
 
 <a id="option-and-enum"></a>
 
@@ -226,14 +244,25 @@ reading an enum-typed record field, so the metadata side has to match or every
 Enum-bound control here as well, and it answers the enum's members.
 
 **This is a reading of BC's document and BC's decompiled provider, not a tier measurement.**
-No corpus test pins `OptionString` for an Enum-bound page control — corpus codeunit 60426's
-`OptionBoundControl_OptionStringIsTheFieldsMembers` uses `ALT Universal`'s `"Option Field"`,
-which is genuinely `Option`-typed, and `ALT Universal` also has an `Enum`-typed
-`"Status Field"` that no test binds a control to. An implementation keyed on "has option
-metadata" and one keyed on `NavType` therefore agree on everything the corpus currently
-measures, and this file takes the `NavType` route because it is what BC's code says.
-[#3625](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3625) tracks getting
-the Enum case in front of a real tier.
+No *merged* corpus test pins `OptionString` for an Enum-bound page control — corpus codeunit
+60426's `OptionBoundControl_OptionStringIsTheFieldsMembers` uses `ALT Universal`'s
+`"Option Field"`, which is genuinely `Option`-typed, and `ALT Universal` also has an
+`Enum`-typed `"Status Field"` that no test binds a control to. An implementation keyed on
+"has option metadata" and one keyed on `NavType` therefore agree on everything the merged
+corpus measures, and this file takes the `NavType` route because it is what BC's code says.
+
+Note which way the two readings point here, because it is the opposite of the `Editable`
+case: the decompiled guard (`f.Type == NavType.Option`, with `NavType.Enum` a distinct
+member) reads as `''`, while the emitted document (`Datatype="Option"` on an `Enum` field
+too) reads as the enum's members. They disagree, so no amount of further reading settles it.
+
+[Corpus PR #310](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/310)
+binds a control to `"Status Field"` on page 60425 and asserts the members. `ALT Status` has
+**five** values against `"Option Field"`'s four, so the asserted count separates the right
+answer both from an empty one and from the wrong field's members. If the tier answers `''`,
+the fix is the `FieldNavType` guard in `GetPageControlFieldRowsFromBcDocument` — and note
+that changing how the runner *types* an enum field is not available as a fix there, for the
+`ValidateExpectedType` reason above.
 
 <a id="scope"></a>
 

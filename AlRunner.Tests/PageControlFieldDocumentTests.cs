@@ -258,8 +258,9 @@ public sealed class PageControlFieldDocumentTests : IDisposable
         // ControlDefinition carries [DefaultValue("true")] on Enabled and Visible and NONE on
         // Editable, so Enabled/Visible read "true" and Editable reads "". Substituting "true"
         // for all three — which the AL derivation did — is therefore wrong for exactly one of
-        // them. See docs/page-control-field-from-bc-document.md#the-three-property-defaults;
-        // #3625 tracks getting the Editable half in front of a real tier.
+        // them. See docs/page-control-field-from-bc-document.md#the-three-property-defaults.
+        // Corpus PR #310 (codeunit 60424) puts the Editable half in front of a real tier;
+        // until its cloud legs report, the "" answer is a reading, not a measurement.
         var plain = Named(controls, "Entry No.");
         Assert.False(plain.HasAttribute("Enabled"));
         Assert.False(plain.HasAttribute("Editable"));
