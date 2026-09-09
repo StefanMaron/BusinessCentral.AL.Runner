@@ -1132,7 +1132,21 @@ public static class FlowFieldPatches
             // virtual table the runner serves — AllObj, Field, Page Metadata, … — is materialised
             // into a TempTableDataProvider and is answered correctly by the code below; routing
             // those through BC's helper too would be a much wider change than the defect needs.
-            if (_tTempTableDataProvider != null && !_tTempTableDataProvider.IsInstanceOfType(srcTtdp))
+            // The discriminator is asked of a handle that must EXIST. Gating this on
+            // `_tTempTableDataProvider != null` read false when the Type lookup had failed, and
+            // false here means "fall through into the store path" — which then reaches
+            // `primaryKeySortingFields` against the very computed provider this branch exists to
+            // divert, reproducing #3622's ArgumentException with the guard bypassed. A missing
+            // handle is a BC-layout gap, so it refuses by name (#3622).
+            var tTtdpNow = _tTempTableDataProvider
+                ?? throw new BcShapeGapException(
+                    "AL FlowField calculation", "TempTableDataProvider",
+                    "type not found — it is the discriminator that decides whether a CalcFormula's "
+                    + "source table is served by a stored-row provider or by a computed one. "
+                    + "Without it the runner cannot tell the two apart, and reading the store path's "
+                    + "`primaryKeySortingFields` off a computed provider throws a raw "
+                    + "ArgumentException instead of answering (#3622)");
+            if (!tTtdpNow.IsInstanceOfType(srcTtdp))
             {
                 if (_mCalcSingleFieldFromVirtualTable == null)
                     throw new RunnerOutOfScopeException(
@@ -1250,10 +1264,30 @@ public static class FlowFieldPatches
             // Enumerate source rows via TempTableDataProvider.Filter to mirror the runner's
             // CalcNumeric path (company-scoped, key-ordered, current in-memory rows).
             IEnumerable? rows = null;
+
+            // Resolved OUTSIDE the try, deliberately. Both handles must exist, and `?.` absorbed
+            // a missing one and let the OTHER run against a receiver the guard above would have
+            // diverted — the second half of #3622. A null sorting-field list is not a neutral
+            // default; it is the runner having failed to read BC's layout. They sit outside
+            // because the catch below reports "BC's filter machinery rejected the conditions",
+            // which a layout gap is not.
+            var fSorting = _fTtdpPrimaryKeySortingFields
+                ?? throw new BcShapeGapException(
+                    "AL FlowField calculation", "TempTableDataProvider.primaryKeySortingFields",
+                    "field not found — it supplies the key order the source rows of a CalcFormula "
+                    + "are walked in. Passing null instead would ask BC's Filter to enumerate with "
+                    + "no sort order at all (#3622)");
+            var mFilter = _mTtdpFilter
+                ?? throw new BcShapeGapException(
+                    "AL FlowField calculation", "TempTableDataProvider.Filter(5 args)",
+                    "method not found — it is the only route the runner has to the source rows of a "
+                    + "CalcFormula over a stored-row table. Without it the aggregate would be "
+                    + "computed over no rows and answer 0 for every formula (#3622)");
+
             try
             {
-                var sortingFields = _fTtdpPrimaryKeySortingFields?.GetValue(srcTtdp);
-                rows = _mTtdpFilter?.Invoke(srcTtdp, new object?[]
+                var sortingFields = fSorting.GetValue(srcTtdp);
+                rows = mFilter.Invoke(srcTtdp, new object?[]
                 {
                     companyToken,
                     srcFiltersAndMarks,
