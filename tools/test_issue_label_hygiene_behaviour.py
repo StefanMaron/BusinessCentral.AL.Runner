@@ -117,9 +117,17 @@ def invoke(block: str, env: dict[str, str], issue_json: dict | None = None
 
 
 BASH = shutil.which("bash")
-if not BASH or not shutil.which("jq"):
-    print("SKIP - bash and jq are both required to run the workflow's own shell")
-    sys.exit(0)
+missing = [t for t in ("bash", "jq") if not shutil.which(t)]
+if missing:
+    # Loud, not skipped. This suite runs under the required "tools/ unit tests"
+    # context, where the only codes available are 0 and non-zero, so a skip
+    # would report "measured, and fine" for a run that measured nothing --
+    # the failure guards-need-a-third-state.md exists to prevent. ubuntu-latest
+    # ships both, so this can only fire on a box that cannot answer.
+    print(f"FAIL - cannot run the workflow's shell: {', '.join(missing)} not found")
+    print("")
+    print("0 passed, 1 failed")
+    sys.exit(1)
 
 STRIP = run_block("strip-labels-on-close")
 RELEASE = run_block("release-part-of-issues")
