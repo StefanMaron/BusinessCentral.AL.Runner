@@ -29,8 +29,13 @@
 //     TableNo            BC states the page's source table on EVERY row, including one with
 //                        no source field.
 //
-//   docs/page-control-field-from-bc-document.md has the emitted document, the reflection
-//   measurements behind the three attribute defaults, and what is deliberately left alone.
+//   Editable is a fifth, and it does not come from the document at all: BC's
+//   SolvePropertiesDefaulting pass overwrites it before the provider reads it, so the value
+//   is computed here by SolveDocumentControlEditable rather than read off the attribute
+//   (#3653 — a tier answered True where reading the absent attribute predicted '').
+//
+//   docs/page-control-field-from-bc-document.md has the emitted document, the SolveEditable
+//   chain, and what is deliberately left alone.
 //
 // WHY THE XML AND NOT THE MERGED MetaPageDefinition EnsureRealPageMetadata BUILDS
 //   Written down rather than rediscovered, because it is the same trap #3607 hit one table
@@ -68,18 +73,30 @@ public static partial class RecordPatches
     /// <c>ControlDefinition.IsBoundToTableField(out fieldNo)</c> is
     /// <c>int.TryParse(DataColumnName, out fieldNo)</c> and nothing else.
     /// </summary>
+    /// <param name="DeclaredEditable">The raw <c>Editable</c> attribute, or null when the
+    /// document omits it. Null is a distinct state from <c>""</c> here and must stay one:
+    /// SolveEditable's whole shape is <c>if (control.Editable == null)</c>, so collapsing the
+    /// two is what made an undeclared Editable answer <c>''</c> (#3653).</param>
+    /// <param name="SourceExpressionIsAssignable">BC's <c>SourceExpressionIsAssignable</c>, default
+    /// true (<c>[DefaultValue(true)]</c> on <c>ControlDataboundDefinition</c>). False forces
+    /// Editable to False regardless of what the control declares.</param>
     private sealed record BcPageControl(
         int ControlId, string ControlName, string DataColumnName,
-        string Enabled, string Editable, string Visible, int Sequence);
+        string Enabled, string? DeclaredEditable, string Visible, int Sequence,
+        bool SourceExpressionIsAssignable = true);
 
     /// <summary>The subset of BC's page document this table reads.
     /// <paramref name="Expressions"/> is <c>page.Expressions</c> — the
     /// <c>DataFieldDefinition</c> list BC looks an unbound control's source expression up in,
     /// keyed by the control's <c>DataColumnName</c>.</summary>
+    /// <param name="PageEditable"><c>PageProperties.Editable</c>, default true
+    /// (<c>[DefaultValue(true)]</c>). A non-editable PAGE forces every control that does not
+    /// already say False to False — SolveEditable's third rule.</param>
     private sealed record BcPageDocument(
         int SourceTableId,
         List<BcPageControl> Controls,
-        Dictionary<string, (string SourceExpression, string OptionString, bool IsOption)> Expressions);
+        Dictionary<string, (string SourceExpression, string OptionString, bool IsOption)> Expressions,
+        bool PageEditable = true);
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, BcPageDocument?>
         _bcPageControlDocuments = new();
@@ -128,6 +145,7 @@ public static partial class RecordPatches
         var controls = new List<BcPageControl>();
         var expressions = new Dictionary<string, (string, string, bool)>(StringComparer.Ordinal);
         int sourceTableId = 0;
+        var pageEditable = true;
 
         foreach (XmlNode node in root.ChildNodes)
         {
@@ -135,6 +153,11 @@ public static partial class RecordPatches
             switch (e.Name)
             {
                 case "Properties":
+                    // The document writes Editable="1"/"0" here rather than true/false, which
+                    // is why this goes through BcPropertyIsFalse (BC's own PropertyHelper
+                    // accepts NO/FALSE/0) instead of bool.TryParse.
+                    if (e.HasAttribute("Editable"))
+                        pageEditable = !BcPropertyIsFalse(e.GetAttribute("Editable"));
                     foreach (XmlNode p in e.ChildNodes)
                         if (p is XmlElement so && so.Name == "SourceObject")
                             sourceTableId = ReadBcAttrInt(so, "SourceTable");
@@ -161,7 +184,7 @@ public static partial class RecordPatches
             }
         }
 
-        return new BcPageDocument(sourceTableId, controls, expressions);
+        return new BcPageDocument(sourceTableId, controls, expressions, pageEditable);
     }
 
     /// <summary>
@@ -194,17 +217,25 @@ public static partial class RecordPatches
                     ControlId: ReadBcAttrInt(e, "ID"),
                     ControlName: e.GetAttribute("Name"),
                     DataColumnName: e.GetAttribute("DataColumnName"),
-                    // Enabled and Visible carry [DefaultValue("true")] on
-                    // ControlDefinition, so BC's deserializer supplies "true" when the
-                    // attribute is absent. Editable carries NO DefaultValue and defaults to
-                    // null, which BC renders as the empty string through
-                    // NavText.CreateTruncated — so absent means "" here, not "true". Measured
-                    // by reflection over Microsoft.Dynamics.Nav.Types 28.1; see
-                    // docs/page-control-field-from-bc-document.md#the-three-property-defaults.
+                    // Enabled and Visible carry [DefaultValue("true")] on ControlDefinition,
+                    // so BC's deserializer supplies "true" when the attribute is absent and
+                    // NOTHING later rewrites them — no method on PropertiesSolveHelper writes
+                    // either one. Editable is the odd one out and is deliberately left null
+                    // here rather than defaulted: what it answers is decided by
+                    // SolveDocumentControlEditable below, not by the document.
                     Enabled: ReadBcAttrOrDefault(e, "Enabled", "true"),
-                    Editable: e.GetAttribute("Editable"),
+                    DeclaredEditable: e.HasAttribute("Editable") ? e.GetAttribute("Editable") : null,
                     Visible: ReadBcAttrOrDefault(e, "Visible", "true"),
-                    Sequence: sequence++));
+                    Sequence: sequence++,
+                    // SourceExpressionIsAssignable, NOT ExpressionIsAssignable. Both names
+                    // are real and they are different elements: DataFieldDefinition (an
+                    // <Expression> entry) carries ExpressionIsAssignable, while a CONTROL
+                    // carries SourceExpressionIsAssignable. Reading the shorter name here
+                    // makes HasAttribute never match, the `||` short-circuit answer true for
+                    // every control, and rule 1 unreachable — measured, and shipped in the
+                    // first cut of #3653.
+                    SourceExpressionIsAssignable: !e.HasAttribute("SourceExpressionIsAssignable")
+                        || !BcPropertyIsFalse(e.GetAttribute("SourceExpressionIsAssignable"))));
             }
 
             CollectBcPageControls(e, into, ref sequence);
@@ -274,6 +305,82 @@ public static partial class RecordPatches
         return result;
     }
 
+    /// <summary>
+    /// <c>Types.Metadata.PropertyHelper.PropertyIsFalse</c>: a property expression counts as
+    /// false when it trims to <c>NO</c>, <c>FALSE</c> or <c>0</c>, case-insensitively.
+    /// Anything else — including a variable name — is not false.
+    /// </summary>
+    private static bool BcPropertyIsFalse(string? property)
+    {
+        if (property == null) return false;
+        var p = property.Trim();
+        return p.Equals("NO", StringComparison.OrdinalIgnoreCase)
+            || p.Equals("FALSE", StringComparison.OrdinalIgnoreCase)
+            || p.Equals("0", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// What <c>Editable</c> reports for one control, reproducing
+    /// <c>Types.Metadata.PropertiesSolveHelper.SolveEditable</c> (BC 28.1).
+    ///
+    /// <para>The claim: for an in-scope caller this is observably equivalent to what BC's
+    /// provider reads, because BC does not read the deserialized property either — the
+    /// solver has already overwritten it. <c>MetadataProvider.GetMasterPageForDesigner</c>
+    /// (which <c>GetControlsOnPage</c> calls) runs <c>MergePageAndTable</c> →
+    /// <c>SolvePropertiesDefaulting</c> → <c>SolvePropertiesDefaultingControls</c> →
+    /// <c>ControlDataboundDefinition.SolveProperties</c> → <c>SolveEditable</c> over every
+    /// control before returning, so <c>control.Editable</c> is never null by the time
+    /// <c>array[7]</c> is assigned. Adjudicated on a real service tier: corpus codeunit
+    /// 60424 answered <c>True</c> for an undeclared Editable on all eight cloud legs
+    /// (PR #310, run 34329910568), against the <c>''</c> a raw attribute read produced
+    /// (#3653). See docs/page-control-field-from-bc-document.md#solveeditable.</para>
+    ///
+    /// <para>The trap for a later editor: the four rules below are ORDERED and the first two
+    /// return. Reordering them, or collapsing "attribute absent" and "attribute empty" into
+    /// one state, reintroduces #3653 — a declared <c>Editable = false</c> must survive, and
+    /// only a genuinely absent one resolves against the field.</para>
+    ///
+    /// <para>Two of BC's four rules are deliberately not reproduced, because neither input
+    /// exists here: <c>TableAllowInCustomizations</c>/<c>AllowInCustomizations</c> and the
+    /// personalization/configuration <c>SourceAppId</c> checks. The runner has no
+    /// personalization or configuration layer at all — a page is served as compiled — so
+    /// those rules cannot fire, and reproducing them would mean inventing the state they
+    /// read. If personalization ever lands, this is one of its call sites.</para>
+    /// </summary>
+    private static string SolveDocumentControlEditable(
+        BcPageControl control, bool fieldEditable, bool fieldResolved, bool pageEditable)
+    {
+        // Rule 1 — a non-assignable source expression is never editable, and this outranks
+        // even a declared value. BC: `if (!control.SourceExpressionIsAssignable) { … return; }`
+        if (!control.SourceExpressionIsAssignable) return "False";
+
+        // Rule 2 — the undeclared case, and the whole of #3653. BC resolves the null against
+        // the BOUND FIELD's own Editable, falling back to true when there is no field, and
+        // renders it with Boolean.ToString(InvariantCulture) — hence "True"/"False" with a
+        // capital, not the lower-case "true" the Enabled/Visible attribute default carries.
+        // The two spellings are observably different to AL, so this is not cosmetic.
+        if (control.DeclaredEditable == null)
+            return (fieldResolved ? fieldEditable : true)
+                .ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        // Rule 3 — a non-editable PAGE forces a control that does not already read false to
+        // False. Note BC compares with PropertyIsFalse rather than string equality, so a
+        // control declaring "NO" or "0" is already false and is left alone.
+        //
+        // BC FALLS THROUGH here and this RETURNS, which is a deliberate structural
+        // divergence and is observably equivalent: the only thing rule 4 can do is assign
+        // the same "False" this line already assigned, and its guard
+        // (!PropertyIsFalse(control.Editable)) is false by construction once it has. Since
+        // rule 4 is not reproduced at all (see the method summary), the early return also
+        // cannot skip work that would otherwise happen. If rule 4 is ever implemented, this
+        // must become a fall-through again.
+        if (!BcPropertyIsFalse(control.DeclaredEditable) && !pageEditable) return "False";
+
+        // Otherwise the declared expression stands verbatim — including a variable NAME,
+        // which is why this column is Text and not Boolean.
+        return control.DeclaredEditable;
+    }
+
     private static int ReadBcAttrInt(XmlElement e, string name)
         => int.TryParse(e.GetAttribute(name), out var v) ? v : 0;
 
@@ -320,6 +427,11 @@ public static partial class RecordPatches
             var isBound = int.TryParse(c.DataColumnName, out var fieldNo);
             var sourceExpression = string.Empty;
             var optionString = string.Empty;
+            // SolveEditable's `field` argument: the SAME MetaField the SourceExpression /
+            // OptionString branch below resolves, so "the field was found" is one fact here
+            // and cannot disagree between the two readings.
+            var fieldResolved = false;
+            var fieldEditable = true;
 
             if (isBound)
             {
@@ -332,6 +444,8 @@ public static partial class RecordPatches
                     var field = FindMetaFieldById(doc.SourceTableId, fieldNo);
                     if (field != null)
                     {
+                        fieldResolved = true;
+                        fieldEditable = GetMetaFieldEditable(doc.SourceTableId, fieldNo);
                         sourceExpression = field.FieldName ?? string.Empty;
                         // BC gates this on `f.Type == NavType.Option`, so the guard is the
                         // field's NavType and not "does the field carry option metadata".
@@ -362,7 +476,9 @@ public static partial class RecordPatches
             rows.Add(new PageControlFieldRow(
                 pageId, c.ControlId, c.ControlName,
                 doc.SourceTableId, isBound ? fieldNo : 0,
-                c.Enabled, c.Editable, c.Visible,
+                c.Enabled,
+                SolveDocumentControlEditable(c, fieldEditable, fieldResolved, doc.PageEditable),
+                c.Visible,
                 sourceExpression, optionString, c.Sequence));
         }
 
@@ -376,6 +492,62 @@ public static partial class RecordPatches
     /// object that carries tableextension-added fields and the resolved option metadata for an
     /// Enum-typed field; the parsed table carries neither.
     /// </summary>
+    /// <summary>
+    /// The bound field's <c>Editable</c>, the value SolveEditable's null branch resolves
+    /// against. Defaults to true — AL's own field default, and BC's <c>field?.Editable ?? true</c>.
+    ///
+    /// <para><c>NCLMetaField</c> does not expose it: measured over Ncl 28.1's 83 properties and
+    /// 34 fields, there is no editable member of any accessibility, and the constructor does
+    /// not retain the <c>MetaField</c> it was built from. So the only readable copy is the
+    /// original <c>Types.Metadata.MetaField</c> hanging off the NCLMetaTable's
+    /// <c>metadataAppGroupMetaTable</c> — the same route
+    /// <c>RecordPatches.NclMetaTableFromBcDocument.DescribeMetaFields</c> already uses, and
+    /// the reason that trace exists at all
+    /// (docs/object-metadata-from-bc.md#reading-the-values-back).</para>
+    ///
+    /// <para>A table whose structure does not expose it answers true rather than throwing:
+    /// this is a defaulting rule, and true is the value BC itself substitutes when it has no
+    /// field. Reflection is cached per (table, field) because the virtual table asks about
+    /// every control on every known page.</para>
+    /// </summary>
+    private static bool GetMetaFieldEditable(int tableId, int fieldNo)
+        => _bcMetaFieldEditable.GetOrAdd((tableId, fieldNo), static key =>
+        {
+            var meta = GetOrBuildNCLMetaTable(key.TableId);
+            if (meta == null) return true;
+
+            var original = meta.GetType()
+                .GetField("metadataAppGroupMetaTable",
+                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                ?.GetValue(meta);
+            var metaTable = original?.GetType()
+                .GetProperty("Item", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+                ?.GetValue(original);
+            if (metaTable?.GetType()
+                    .GetProperty("Fields", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+                    ?.GetValue(metaTable) is not System.Collections.IEnumerable fields)
+                return true;
+
+            foreach (var f in fields)
+            {
+                if (f == null) continue;
+                var t = f.GetType();
+                if (t.GetProperty("Id")?.GetValue(f) is not int id || id != key.FieldNo) continue;
+                return t.GetProperty("Editable")?.GetValue(f) is not bool e || e;
+            }
+            return true;
+        });
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int TableId, int FieldNo), bool>
+        _bcMetaFieldEditable = new();
+
+    /// <summary>
+    /// Drop the per-field Editable memo on a <c>--watch</c>/<c>--server</c> reload, for the
+    /// same reason <see cref="ClearBcPageControlDocuments"/> exists: table and field ids
+    /// repeat across reloads, so an entry from the previous bundle is a wrong answer.
+    /// </summary>
+    internal static void ClearBcMetaFieldEditable() => _bcMetaFieldEditable.Clear();
+
     private static Microsoft.Dynamics.Nav.Runtime.NCLMetaField? FindMetaFieldById(int tableId, int fieldNo)
     {
         var meta = GetOrBuildNCLMetaTable(tableId);

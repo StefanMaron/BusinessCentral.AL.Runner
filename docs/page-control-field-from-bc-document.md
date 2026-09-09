@@ -163,38 +163,121 @@ approximation of one, and it stops being true the moment a BC release adds a sub
 is why it is written down here rather than left implicit at the call site.
 
 <a id="the-three-property-defaults"></a>
+<a id="solveeditable"></a>
 
-## The three property defaults, and why `Editable` is not `"true"`
+## The three property defaults, and why `Editable` answers `True` where the others answer `true`
 
 `Enabled`, `Editable` and `Visible` are **text** columns carrying the declared property
 expression, so a control with `Visible = NoFieldVisible` reports the variable's name. The
 question this section answers is narrower: what does BC report when the property is *absent*
 from the document, which is the common case?
 
-The document omits an attribute when the property is at its default, so the answer is whatever
-BC's deserializer supplies. Measured by instantiating `ControlDefinition` through reflection
-and reading each property off a fresh instance:
+**It does not answer alike, and the casing is the tell.** Measured on a real service tier —
+corpus codeunit 60424 against fixture page 60425, run
+[`34329910568`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/310),
+identically on 27.0, 27.3, 27.5, 28.0, 28.1, 28.2, 28.3 and 28.4:
 
-| property | `DefaultValueAttribute` | value on a fresh instance |
-|---|---|---|
-| `Enabled` | yes | `"true"` |
-| `Visible` | yes | `"true"` |
-| `Editable` | **no** | **`null`** |
+| column, control declaring none of the three | BC answers |
+|---|---|
+| `Enabled` | `true` |
+| `Visible` | `true` |
+| `Editable` | **`True`** |
 
-`Enabled` and `Visible` therefore default to `"true"`, which is what the AL derivation already
-substituted and what corpus codeunit 60921 pins for `Visible`. `Editable` does **not**: BC
-passes the null straight to `NavText.CreateTruncated`, which renders it as the empty string.
-The AL derivation substituted `"true"` there too, so this change makes `Editable` answer `""`
-for a control that does not declare it.
+Two different mechanisms produce those two spellings, and separating them is the whole of
+this section.
 
-**That last cell is measured from BC's own type, not from a service tier.** No corpus test
-pins `Editable` today — codeunit 60921 pins `Visible` only, and corpus PR #300's codeunit
-60426 asserts `Editable` nowhere. So the claim rests on the reflection measurement above plus
-BC's decompiled `array[7] = NavText.CreateTruncated(len, control.Editable)`, and not on a real
-tier having answered it. It is the honest reading of both, and it is the kind of claim
-`.claude/rules/ask-the-corpus-before-claiming-bc-behavior.md` says to name rather than to
-assert quietly. A corpus test asserting `Editable` on an undeclared control is the follow-up
-that would settle it; #3625 tracks it.
+### `Enabled` and `Visible`: the deserializer's own default, verbatim
+
+Both are declared on `UIElementDefinition` and carry `[DefaultValue("true")]` — a **string**
+literal. The document omits an attribute at its default, the deserializer substitutes that
+string, and nothing afterwards rewrites it: no method on `PropertiesSolveHelper` writes either
+property. So the lower-case `"true"` a caller sees is the attribute's own text, copied through.
+
+### `Editable`: resolved afterwards by `SolveEditable`, and rendered from a `Boolean`
+
+`Editable` is declared on `ControlDataboundDefinition` and carries **no**
+`DefaultValueAttribute`, so a freshly deserialized control really does read `null` — and
+`NavText.CreateTruncated` really does render null as `""`. Both facts are true and neither
+decides the answer, because **BC's provider never reads that null.**
+
+`GetControlsOnPage` obtains its page from `MetadataProvider.GetMasterPageForDesigner`, and the
+chain below runs to completion before a single row is built:
+
+```
+GetMasterPageForDesigner
+  -> GetMasterPageWithoutConfiguration
+       -> MergePageAndTable
+            -> PropertiesSolveHelper.SolvePropertiesDefaulting
+                 -> SolvePropertiesDefaultingControls        // per control, with its MetaField
+                      -> ControlDataboundDefinition.SolveProperties
+                           -> PropertiesSolveHelper.SolveEditable   // writes control.Editable
+```
+
+`SolveEditable` (`Microsoft.Dynamics.Nav.Types` 28.1) is the specification, four rules in
+order, the first two returning:
+
+```csharp
+control.TableEditable = field?.Editable ?? true;
+control.TableAllowInCustomizations = field?.AllowInCustomizations ?? AllowInCustomizations.ToBeClassified;
+
+if (!control.SourceExpressionIsAssignable) {                       // 1
+    control.Editable = false.ToString(CultureInfo.InvariantCulture); return; }
+
+if (control.Editable == null) {                                    // 2  <- the undeclared case
+    control.Editable = (field != null ? field.Editable : true)
+                          .ToString(CultureInfo.InvariantCulture);  return; }
+
+if (!PropertyHelper.PropertyIsFalse(control.Editable)              // 3
+    && masterPage?.PageProperties?.Editable == false)
+    control.Editable = false.ToString(CultureInfo.InvariantCulture);
+
+if (!PropertyHelper.PropertyIsFalse(control.Editable)              // 4
+    && control.TableAllowInCustomizations != AllowInCustomizations.AsReadWrite) {
+    // personalization / configuration SourceAppId, or "Editable" in Personalized/ConfiguredProperties
+    control.Editable = false.ToString(CultureInfo.InvariantCulture); }
+```
+
+Rule 2 is the one that answers the question, and it explains the capital directly:
+`Boolean.ToString(InvariantCulture)` returns `"True"`, not `"true"`. So the value **and** its
+spelling both come from the same place — a `Boolean` being formatted, rather than a string
+literal being copied. `Entry No.` on fixture page 60425 declares no `Editable` and neither
+does the field it binds to, so `field.Editable` is `true` and the column reports `True`.
+
+Rule 2 also explains why a declared `Editable = false` round-trips unchanged: the branch is
+gated on `control.Editable == null`, so a declared value never reaches it. That is corpus test
+`Record_PageControlField_DeclaredEditableFalse_RoundTripsAsFalse`, green throughout.
+
+### What the runner reproduces, and what it does not
+
+`SolveDocumentControlEditable` in `RecordPatches.PageControlFieldFromBcDocument.cs` implements
+rules 1-3. `SolveParsedControlEditable` in `RecordPatches.PageControlFieldVirtualTable.cs`
+implements rule 2 for the AL-parsed and precompiled-dependency paths, which carry neither an
+`ExpressionIsAssignable` nor a page-level `Editable` to evaluate the other rules against.
+
+**Rule 4 is deliberately not reproduced**, on any path: the runner has no personalization or
+configuration layer, so `SourceAppId` is never `PersonalizationAppId`/`ConfigurationAppId` and
+`PersonalizedProperties`/`ConfiguredProperties` are never populated. The rule cannot fire, and
+reproducing it would mean inventing the state it reads. If personalization ever lands, those
+two methods are its call sites.
+
+### How this was got wrong, and what generalizes
+
+The reading this section replaces was: `Editable` has no `DefaultValueAttribute`, so a fresh
+`ControlDefinition` reads `null`, so `CreateTruncated` renders `''`. Every step of that is
+true and the conclusion was false, because a **fresh reflected instance is not the object the
+provider reads** — something ran in between and overwrote the field.
+
+The general form, worth carrying to the next virtual-table column: *reading a default off a
+freshly constructed instance answers what the constructor does, never what a caller observes.*
+The question to ask instead is what runs between deserialization and the read, and BC's
+answer here — a whole property-defaulting pass, `SolvePropertiesDefaulting` — was two call
+levels above the provider method already being read.
+
+**And the check that would have caught it costs one PR**:
+`.claude/rules/ask-the-corpus-before-claiming-bc-behavior.md`. The claim was correctly flagged
+in this file as resting on a reflection measurement rather than a tier verdict, and #3625 was
+filed to settle it. That is the process working — the cost was one wrong column shipped in the
+meantime, not a wrong claim left standing.
 
 <a id="option-and-enum"></a>
 
