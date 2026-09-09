@@ -578,8 +578,8 @@ the issue so it returns to the pool. An issue you cannot finish should not stay 
 name. Release by removing **your own** `agent:` label — on a shared account the assignee you would
 remove may be another loop's lock, and a foreign `agent:` label is never yours to clear.
 
-**Your own stale claims are yours to reclaim** — a claim of yours with no linked PR and no
-activity for hours is from a run that died, and rule 1 above picks it up automatically.
+**Your own stale claims are yours to reclaim** — a claim of yours whose draft has had no commit for 24 hours
+(`check-open-prs-before-claiming.md`) is from a run that died, and rule 1 above picks it up automatically.
 **Someone else's stale claim is not yours to take**, even if it looks abandoned. You cannot tell
 a dead box from a contributor who is asleep — and that refusal covers a foreign `agent:` label
 too, which looks identical whether the loop that wrote it is live or gone. Surface it to the

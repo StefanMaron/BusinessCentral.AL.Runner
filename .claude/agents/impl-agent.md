@@ -151,7 +151,7 @@ tools/agent_scratchpad.py --scratchpad "$S" --agent-id <AGENT-ID>-issue-<N>-<SES
 ```
 
 Done when every path you write to carries the issue number: the worktree as
-`<AGENT-ID>-issue-<N>`, everything else as `<AGENT-ID>-issue-<N>-<SESSION>`. Delete every
+`<AGENT-ID>-issue-<N>`, everything else as `<AGENT-ID>-issue-<N>-<SESSION>`. You delete every
 `<AGENT-ID>-issue-<N>-<SESSION>` directory in the same step that removes the worktree.
 
 **After `gh pr create`/`gh pr edit`, re-read what you published:**
@@ -278,7 +278,7 @@ Required doc updates:
 ## Step 4 — Rewrite the body and mark the draft ready
 
 ```
-python tools/pr-body.py <pr-N> --body-file <the scratchpad path from Step 3> --closes <N> --repo StefanMaron/BusinessCentral.AL.Runner
+python tools/pr-body.py <pr-N> --body-file <the scratchpad path from Step 3> --closes <N> --min-bytes 40 --repo StefanMaron/BusinessCentral.AL.Runner   # the draft body is under the default 200-byte floor
 gh pr ready <pr-N> --repo StefanMaron/BusinessCentral.AL.Runner
 gh pr edit <pr-N> --add-label "status: review-ready" --repo StefanMaron/BusinessCentral.AL.Runner
 ```
