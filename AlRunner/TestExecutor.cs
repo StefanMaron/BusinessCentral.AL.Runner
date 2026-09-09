@@ -588,6 +588,16 @@ public sealed class TestExecutor
                     // "not in the list of allowed tables". Seeded inside this MISS branch so
                     // the rows are part of the captured snapshot a later cache HIT restores.
                     AlRunner.Patches.RecordPatches.EnsurePublishedApplicationDependencyRowsSeeded();
+                    // #3698 — the session user's ROW, before the DEPENDENCY install triggers on
+                    // the next line. A dependency's install code that looks UserSecurityId() up
+                    // in User (2000000120), or writes a row relating to it, must find the row
+                    // there — on a real tier the session user predates every extension install.
+                    // This is the CAPTURE half of the split: the row lands inside the window and
+                    // is part of the snapshot a later HIT restores. The identity DECISION is
+                    // re-made per app group by the second call after this block, because
+                    // adoption is a poke at the skeleton session that no snapshot carries. See
+                    // docs/session-user-seed-ordering.md.
+                    AlRunner.Patches.RecordPatches.EnsureUserSystemTableRowSeeded();
                     InstallTriggerRunner.RunDependenciesOnly();
                     CompanyInitializer.EnsureCompanyInitialized();
                     var initFailure = CompanyInitializer.LastRecordedFailure;
@@ -627,14 +637,11 @@ public sealed class TestExecutor
             }
         }
         // #2296 — the session user's own row in the User system table, and with it the #2983
-        // adoption decision. BEFORE this bundle's own install triggers below (#3268): install
-        // code that stores UserSecurityId() must see the identity the tests will see, and on a
-        // real tier the session user is a row in the database long before any extension is
-        // installed. Seeded after the dep-company block above, never inside it, because
-        // adoption is a poke at the skeleton session rather than a row: a cached snapshot
-        // restores the row on a HIT but cannot re-make the decision, so the decision has to be
-        // re-made per app group outside the cached window. See
-        // docs/session-user-seed-ordering.md.
+        // adoption DECISION, re-made here per app group on every path. The row itself is seeded
+        // one call earlier, inside the dep-company window (#3698), so a dependency's install
+        // code sees it; this call is what a cache HIT needs, because adoption is a poke at the
+        // skeleton session rather than a row and no snapshot carries it. Also before this
+        // bundle's own install triggers below (#3268). See docs/session-user-seed-ordering.md.
         //
         // Still before CaptureInstallBaseline below, the constraint it has always had: the
         // per-codeunit restore puts the store back to that baseline, so a row added after it

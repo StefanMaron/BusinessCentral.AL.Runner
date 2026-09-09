@@ -259,8 +259,10 @@ public static partial class RecordPatches
     /// to see), BEFORE the bundle's OWN install triggers — install code that stores
     /// <c>UserSecurityId()</c> must see the identity the tests will see, #3268 — and BEFORE
     /// <c>CaptureInstallBaseline()</c>, so the row is part of the restored baseline.
-    /// Why it cannot move inside the dep-company cached window instead:
-    /// docs/session-user-seed-ordering.md.
+    /// <para>Called TWICE per app group since #3698: inside the dep-company window on a MISS,
+    /// so a dependency's install code finds the row, and again after that window on every path,
+    /// so the identity decision is re-made from whatever the table then holds. The row is
+    /// cacheable; the decision is not. docs/session-user-seed-ordering.md has the ordering.</para>
     /// </summary>
     /// <returns>
     /// Which of the outcomes in <see cref="UserRowSeedOutcome"/> this call reached. The
@@ -269,7 +271,12 @@ public static partial class RecordPatches
     /// </returns>
     internal static UserRowSeedOutcome EnsureUserSystemTableRowSeeded()
     {
-        if (_userRowSeededForThisBundle) return UserRowSeedOutcome.AlreadySeededThisBundle;
+        // #3698: NO short-circuit on _userRowSeededForThisBundle. TestExecutor calls this twice
+        // per app group — once inside the dep-company window for the row, once after it for the
+        // identity decision — and between the two, install code and a --test-data load can both
+        // change what the User table holds. A latch would answer from the first call's state and
+        // skip a decision the second call exists to make; the outcome is decided from the table
+        // each time instead, and re-deciding is a Get on an unchanged table when nothing moved.
         // The flag is no longer set before the work, so the insert below — which re-enters
         // NavRecord and, through UserTableTriggerPatches, a second table — is now inside the
         // window where re-entry would recurse. This guard closes it explicitly rather than
@@ -426,8 +433,12 @@ public static partial class RecordPatches
                 //     in play — and this line is what tells the reader why that exception is
                 //     about to appear.
                 //
-                // _userRowSeededForThisBundle is deliberately NOT set: no row was seeded, and a
-                // flag claiming otherwise is the defect this branch exists to remove.
+                // _userRowSeededForThisBundle is CLEARED here, not merely left unset. Since #3698
+                // this method runs twice per app group, so an earlier call can have set it true
+                // over a row that install code has since deleted — and the flag's stated
+                // invariant is that it is true only while the table holds a row for the session
+                // user's security id. AccessControlSeed reads it.
+                _userRowSeededForThisBundle = false;
                 Console.Error.WriteLine(
                     $"[warn] UserSystemTable: the User row (2000000120) for the session user "
                     + $"'{userName}' ({userSid}) was REFUSED and is NOT present — {refusalDetail}. "

@@ -1,39 +1,26 @@
-// Puts a DIFFERENT user, carrying the session user's NAME, into User (2000000120) before the
-// runner's seed runs.
+// Replaces the session user's row in User (2000000120) with a DIFFERENT user carrying the same
+// name - the state a --test-data backup containing its own TESTUSER produces.
 //
-// TestExecutor runs the DEPENDENCY install triggers -- inside the dep-company baseline window --
-// before RecordPatches.EnsureUserSystemTableRowSeeded, so this row is in place when the seed
-// executes. It has to be a dependency: since #3268 the seed runs ahead of a bundle's own install
-// triggers, and from there BC's uniqueness rule would refuse this insert outright because the
-// session user's row already exists. This is the shape a --test-data backup containing its own
-// TESTUSER produces.
-//
-// WHAT REFUSES A DUPLICATE USER NAME, AND WHERE
-//   On a real tier it is BC's system-table TRIGGER, not an index. Ncl's
-//   SystemTableTriggers.OnBeforeInsertAsync has a `case 2000000120:` arm that validates a unique
-//   user name -- along with the Windows SID, authentication email and application id -- before
-//   the row is written. AlRunner/Patches/UserTableTriggerPatches.cs reproduces that arm (#2983),
-//   so the runner refuses this collision the way BC does. Until it did, the store behind the
-//   User table -- BC's own CreateTempDataAccess -- enforced the primary key and nothing else,
-//   the seed landed anyway, and the run was left holding two rows that share a user name where
-//   BC would hold one.
+// THE ORDERING, AND WHY IT CHANGED (#3698). The seed's ROW is now written inside TestExecutor's
+// dep-company baseline window, ahead of the DEPENDENCY install triggers, so a dependency cannot
+// simply INSERT a same-named user any more: BC refuses a duplicate user name from a TRIGGER
+// (SystemTableTriggers.OnBeforeInsertAsync's `case 2000000120:` arm calls
+// IsUserFieldUniqueAsync(recordBuffer, 2, insert: true), and AlRunner/Patches/UserTableTriggerPatches.cs
+// reproduces it, #2983), and the seeded row is already there. So this codeunit DELETES the
+// seeded row first and inserts the stand-in in its place, which is what restoring a backup over
+// the table does.
 //
 // WHAT THE SEED DOES ABOUT IT: ADOPT (maintainer decision, 2026-09-06)
-//   BC's refusal is right about the ROW, and it leaves open what the SESSION should be. The
-//   runner ADOPTS: it takes this stand-in row's security id as the session's own, so
-//   UserSecurityId() answers {A17E9C42-5B08-4D6F-9E31-0C7A2F84B155} for the rest of the run and
-//   no row is written. The alternative -- refuse, and run as a user present in no row -- is the
-//   state AlRunner#2296 exists to remove, and it was this fixture that measured it.
+//   The seed's second call - the identity DECISION, made after the window on every path - finds
+//   no row for the session's own security id and one carrying its name, so it ADOPTS that row's
+//   security id: UserSecurityId() answers {A17E9C42-5B08-4D6F-9E31-0C7A2F84B155} for the rest of
+//   the run and no row is written. The alternative - refuse, and run as a user present in no row
+//   - is the state AlRunner#2296 exists to remove, and it was this fixture that measured it.
 //
 // WHAT THIS FIXTURE IS FOR
-//   It measures the hazard the #2941 review predicted, end to end, and it has now flipped twice.
-//   SurcTheSessionUserStillGetsItsOwnRow (the seed landing) became
-//   SurcTheSessionUserIsRefusedItsOwnRowOverTheDuplicateName when #2983 added the uniqueness
-//   arm, and that became SurcTheSessionAdoptedTheExistingRowsSecurityId when the maintainer
-//   chose adoption. What it pins from here on is the ADOPTION being complete and loud: the
-//   session resolves to THIS row, no second row is written, UserId() is untouched, the adopted
-//   user keeps its User Property companion row, and the seed says on stderr where the id came
-//   from.
+//   The ADOPTION being complete and loud: the session resolves to THIS row, no second row is
+//   written, UserId() is untouched, the adopted user keeps its User Property companion row, and
+//   the seed says on stderr where the id came from.
 codeunit 70520 "SURC Installer"
 {
     Subtype = Install;
@@ -44,11 +31,19 @@ codeunit 70520 "SURC Installer"
         UserProperty: Record "User Property";
         CollidingSid: Guid;
     begin
+        // Asserted rather than tested: this is the #3698 precondition (dependency install code
+        // finds the session user's row), and without the delete below the insert that follows
+        // would be refused over the duplicate name instead of arranging the collision.
+        if not UserRec.Get(UserSecurityId()) then
+            Error(
+              'precondition: the session user %1 must already be a row in User (2000000120) when '
+              + 'a DEPENDENCY install trigger runs (AlRunner#3698)', Format(UserSecurityId()));
+        UserRec.Delete();
+
         Evaluate(CollidingSid, CollidingSidTok);
         UserRec.Init();
         UserRec."User Security ID" := CollidingSid;
-        // Same NAME as the runner's session user, different security id. This is the collision
-        // BC's OnBeforeInsertAsync case 2000000120: arm would refuse and the runner does not.
+        // Same NAME as the runner's session user, different security id.
         UserRec."User Name" := CopyStr(UserId(), 1, MaxStrLen(UserRec."User Name"));
         UserRec."Full Name" := BackupUserTok;
         UserRec.Insert();

@@ -1,0 +1,20 @@
+{
+  "id": "3a08f5c7-91be-4d26-8f43-6c5b71ea2d94",
+  "name": "Runner Tests Fixture - Dep Install Trigger Session Identity",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#3698: reads back what the sibling DEPENDENCY app's install trigger observed, and asserts the session user was already a row in User (2000000120) with the identity the tests still see.",
+  "description": "AlRunner#3698: the session-user seed ran after the dep-company baseline window, so a DEPENDENCY's install trigger observed an empty User table and an identity the seed could still move onto an adopted row. The dependency here records what it saw; these tests assert the session user's row was present, carried the session user's name, and that the security id install code saw is the one the tests see.",
+  "dependencies": [
+    {
+      "id": "b7f41d92-3c65-4a08-9d17-52e6c8a3b410",
+      "name": "Runner Tests Fixture - Dep Install Trigger Session Identity Observer",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [ { "from": 70820, "to": 70839 } ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}

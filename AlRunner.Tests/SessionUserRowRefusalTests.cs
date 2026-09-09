@@ -144,9 +144,16 @@ public sealed class SessionUserRowRefusalTests
 
             // THE DISCRIMINATOR. The pre-fix runner printed the "seeded" line here, because it
             // discarded ALInsert's false and ran its success trace regardless. Asserting the
-            // exact text both ways is what makes this a RED→GREEN rather than a smoke test.
+            // exact text is what makes this a RED→GREEN rather than a smoke test.
             Assert.Contains("UserSystemTable: User row 'TESTUSER' was already present", stderr);
-            Assert.DoesNotContain("UserSystemTable: seeded User row", stderr);
+            // EXACTLY ONE "seeded" line, not none. Since #3698 the seed is called twice per app
+            // group — once inside the dep-company window, which is where that line comes from,
+            // and once after it for the identity decision, which is the call under test here.
+            // A second "seeded" line would be the late call claiming an insert it did not make,
+            // which is the defect this test was written for.
+            var seeded = stderr.Split("UserSystemTable: seeded User row").Length - 1;
+            Assert.True(seeded == 1,
+                $"expected exactly one in-window seed line, saw {seeded}\nstderr:\n{stderr}");
 
             // The benign refusal must not be reported as a failure — this is the negative
             // control on the loud path. An implementation that shouted on every non-insert
@@ -194,7 +201,13 @@ public sealed class SessionUserRowRefusalTests
             // adopting is allowed to be silent about nothing.
             Assert.Contains("ADOPTED the security id", stderr);
             Assert.DoesNotContain("was REFUSED and is NOT present", stderr);
-            Assert.DoesNotContain("UserSystemTable: seeded User row", stderr);
+            // EXACTLY ONE "seeded" line: the in-window seed the dependency then replaces with
+            // its stand-in row (#3698). A second would mean the identity decision after the
+            // window had written a row instead of adopting one, which is the state real BC
+            // refuses to hold and the whole subject of this fixture.
+            var seeded = stderr.Split("UserSystemTable: seeded User row").Length - 1;
+            Assert.True(seeded == 1,
+                $"expected exactly one in-window seed line, saw {seeded}\nstderr:\n{stderr}");
 
             // THE ADOPTION IS VISIBLE, in the terms the objection to adopting demanded: the
             // user, the id taken, the id it replaced, and that it came from the data. A reader
@@ -250,9 +263,10 @@ public sealed class SessionUserRowRefusalTests
     ///
     /// <para>The two fixtures can share a process at all because their object id ranges do not
     /// overlap — 70520-70539 against 70500-70519 — and each declares only its own sibling seed
-    /// app, which #3268 made the place a fixture's pre-seed User write has to live: the
-    /// session-user seed now runs ahead of a bundle's OWN install triggers and after the
-    /// dependency ones.</para>
+    /// app, which is where a fixture's User write has to live: the identity decision runs ahead
+    /// of a bundle's OWN install triggers (#3268) and after the dependency ones, and since #3698
+    /// the seeded ROW is in place before those dependency triggers run, so each seed app
+    /// replaces or modifies that row rather than inserting beside it.</para>
     ///
     /// <para>--watch and --server are the two other multi-bundle modes and reduce to the same
     /// per-bundle reset; this asserts the mechanism through the cheapest of the three. Note that
