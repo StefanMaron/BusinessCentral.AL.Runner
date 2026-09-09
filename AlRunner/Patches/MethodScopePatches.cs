@@ -468,6 +468,13 @@ public static partial class BcRuntime
             // (invoked below) can rewrap it too. An `is` test would miss both.
             throw;
         }
+        catch (Exception ex) when (AlRunner.Infrastructure.BcAppSymbolReadException.Find(ex) != null)
+        {
+            // A corrupt dependency package is the same claim — the runner could not read
+            // something it needs, on a path real BC completes — so swallowing it here inverts
+            // the result exactly as the clause above describes (#3241). Wrapped or bare.
+            throw;
+        }
         catch (Exception ex)
         {
             // Real BC's own AssertError body (decompiled) is:

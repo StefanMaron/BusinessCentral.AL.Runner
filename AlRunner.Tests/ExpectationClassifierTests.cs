@@ -244,4 +244,85 @@ public class ExpectationClassifierTests
         Assert.Equal(ExpectationResult.FailManifestDrift, c.Result);
         Assert.Contains("Declare it expect-oos", c.Diagnostic);
     }
+
+    // ── a corrupt dependency package may never be declared expected (#3241) ───
+
+    private static BcAppSymbolReadException SymbolRead(Exception inner) =>
+        new("/artifacts/Some.Publisher_Some App_1.0.0.0.app", "table symbols", inner);
+
+    [Fact]
+    public void ExpectOos_SymbolReadFailureWrappingAMatchingOosReason_IsDriftNotPassOos()
+    {
+        // THE RED, and why this type needed its own branch rather than riding on the shape
+        // gap's structural unabsorbability: BcAppSymbolReadException wraps whatever failed the
+        // read, and OutOfScopeMessage.FromException walks that chain to depth 16. So a
+        // corrupt package whose inner failure happened to be an out-of-scope refusal with the
+        // entry's own anchor classified as PassOos — the run went green over a dependency the
+        // runner could not read at all.
+        var c = ExpectationClassifier.Classify(
+            Failed(SymbolRead(new RunnerOutOfScopeException(
+                "HttpClient.Get", "external-http", "docs/scope.md#external-http"))),
+            Oos("external-http"));
+
+        Assert.Equal(ExpectationResult.FailManifestDrift, c.Result);
+        Assert.Contains("could not read", c.Diagnostic);
+        Assert.Contains("Some.Publisher_Some App_1.0.0.0.app", c.Diagnostic);
+        Assert.Contains("table symbols", c.Diagnostic);
+    }
+
+    [Fact]
+    public void ExpectOos_SymbolReadFailure_DiagnosticDoesNotAdviseRaisingAnOosRefusal()
+    {
+        // With an ordinary inner failure the entry already could not absorb it — what was
+        // wrong was the ADVICE. The no-signal branch tells the author to make the throw site
+        // raise RunnerOutOfScopeException, which is exactly wrong for a package the runner
+        // cannot read: nothing about the throw site is at fault.
+        var c = ExpectationClassifier.Classify(
+            Failed(SymbolRead(new InvalidOperationException(
+                "The requested operation requires an element of type 'String'."))),
+            Oos("external-http"));
+
+        Assert.Equal(ExpectationResult.FailManifestDrift, c.Result);
+        Assert.DoesNotContain("raise RunnerOutOfScopeException", c.Diagnostic);
+        Assert.Contains("Repair or re-provision", c.Diagnostic);
+    }
+
+    [Fact]
+    public void ExpectDivergence_SymbolReadFailure_IsDriftNotPassDivergence()
+    {
+        var c = ExpectationClassifier.Classify(
+            Failed(SymbolRead(new InvalidOperationException("unreadable"))),
+            Divergence("task-scheduler-create-task"));
+
+        Assert.Equal(ExpectationResult.FailManifestDrift, c.Result);
+        Assert.Contains("no answer at all", c.Diagnostic);
+    }
+
+    [Fact]
+    public void ExpectFailKnownGap_SymbolReadFailure_StillAbsorbs()
+    {
+        // The control on the two refusals above: expect-fail-known-gap means "must fail, and
+        // this open issue tracks it", so it is unaffected — a fix that refused the type
+        // everywhere would fail here.
+        var known = new ExpectationEntry(
+            60000, "Cu", "M", ExpectationMode.ExpectFailKnownGap, null, "#3241", null, null, File);
+        var c = ExpectationClassifier.Classify(
+            Failed(SymbolRead(new InvalidOperationException("unreadable"))), known);
+
+        Assert.Equal(ExpectationResult.PassKnownGap, c.Result);
+    }
+
+    [Fact]
+    public void NoEntry_SymbolReadFailureWrappingAnOosRefusal_IsAPlainFailNotUndeclaredOos()
+    {
+        // The undeclared-OOS branch would tell a reviewer to add an expect-oos entry for a
+        // surface that was never touched.
+        var c = ExpectationClassifier.Classify(
+            Failed(SymbolRead(new RunnerOutOfScopeException(
+                "HttpClient.Get", "external-http", "docs/scope.md#external-http"))),
+            null);
+
+        Assert.Equal(ExpectationResult.Fail, c.Result);
+        Assert.Null(c.Diagnostic);
+    }
 }

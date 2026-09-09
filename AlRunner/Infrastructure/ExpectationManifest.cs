@@ -527,10 +527,22 @@ public static class ExpectationClassifier
         // RunnerOutOfScopeException") is exactly wrong for a layout gap.
         var shapeGap = outcome.Passed ? null : BcShapeGapException.Find(outcome.Exception);
 
+        // Nor is a corrupt/unreadable dependency package (#3241). Unlike a shape gap this one
+        // is NOT already structurally unabsorbable: BcAppSymbolReadException wraps whatever
+        // failed the read, and OutOfScopeMessage.FromException walks that chain — so an inner
+        // RunnerOutOfScopeException whose reason anchor matched the entry classified the
+        // corrupt package as PassOos. Found first, so the read failure wins over the signal.
+        var symbolRead = outcome.Passed ? null : BcAppSymbolReadException.Find(outcome.Exception);
+
         if (entry == null)
         {
             // No manifest entry — normal pass/fail. Unexpected OOS surfaces as a
             // distinct fail with diagnostic so reviewers know to add an entry.
+            // A corrupt dependency package wrapping an out-of-scope inner failure is not an
+            // undeclared OOS surface — advising a reviewer to add an expect-oos entry for a
+            // surface that was never touched would be worse than saying nothing (#3241).
+            if (symbolRead != null)
+                return new Classification(ExpectationResult.Fail, null);
             if (signal is { } undeclared)
             {
                 return new Classification(
@@ -547,6 +559,14 @@ public static class ExpectationClassifier
                 return new Classification(ExpectationResult.Skipped, null);
 
             case ExpectationMode.ExpectOos:
+                if (symbolRead != null)
+                    return new Classification(
+                        ExpectationResult.FailManifestDrift,
+                        $"Manifest declares expect-oos (reason: {entry.Reason}) but the runner could not "
+                        + $"read {Path.GetFileName(symbolRead.AppPath)}'s {symbolRead.Surface} from its "
+                        + "SymbolReference.json. That is not a scope boundary, it is a dependency package "
+                        + "the runner cannot read on this machine, so it must not be declared expected. "
+                        + $"Repair or re-provision the .app: {symbolRead.AppPath}");
                 if (shapeGap != null)
                     return new Classification(
                         ExpectationResult.FailManifestDrift,
@@ -598,6 +618,14 @@ public static class ExpectationClassifier
                 // out-of-scope throw is a different claim with its own mode, and
                 // conflating them would let expect-divergence quietly absorb new OOS
                 // surfaces that expect-oos is supposed to declare.
+                if (symbolRead != null)
+                    return new Classification(
+                        ExpectationResult.FailManifestDrift,
+                        $"Manifest declares expect-divergence (reason: {entry.Reason}) but the runner could "
+                        + $"not read {Path.GetFileName(symbolRead.AppPath)}'s {symbolRead.Surface} from its "
+                        + "SymbolReference.json. A divergence is an answer the runner gives on purpose; an "
+                        + "unreadable dependency package is no answer at all. Repair or re-provision the "
+                        + $".app: {symbolRead.AppPath}");
                 if (shapeGap != null)
                     return new Classification(
                         ExpectationResult.FailManifestDrift,

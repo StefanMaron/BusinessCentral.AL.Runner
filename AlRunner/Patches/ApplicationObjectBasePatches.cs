@@ -193,6 +193,10 @@ public static partial class BcRuntime
             // trappable, and BC's own RemapToALExceptionAndThrow can hand it back wrapped in a
             // NavBaseException that the next clause would swallow. See BcShapeGapException.cs.
             if (AlRunner.Infrastructure.BcShapeGapException.Find(ex) != null) throw;
+            // Same posture for a corrupt dependency package, and the ordering matters for the
+            // same reason: bare it would reach `throw` below anyway, remapped into a trappable
+            // NavBaseException it would not (#3241). See BcAppSymbolReadException.Find.
+            if (AlRunner.Infrastructure.BcAppSymbolReadException.Find(ex) != null) throw;
             // Rethrow untrappable errors; swallow trappable NavBaseExceptions.
             if (ex is Microsoft.Dynamics.Nav.Types.Exceptions.NavBaseException nbe && !nbe.UntrappableError)
                 return false;
@@ -274,6 +278,7 @@ public static partial class BcRuntime
         {
             // Same ordering as TryInvoke, and for the same reason — see there.
             if (AlRunner.Infrastructure.BcShapeGapException.Find(ex) != null) throw;
+            if (AlRunner.Infrastructure.BcAppSymbolReadException.Find(ex) != null) throw;
             if (ex is Microsoft.Dynamics.Nav.Types.Exceptions.NavBaseException nbe && !nbe.UntrappableError)
                 return new System.Threading.Tasks.ValueTask<bool>(false);
             // Same permanent-OOS trap as TryInvoke — see IsPermanentOutOfScope.

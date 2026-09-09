@@ -9,6 +9,11 @@
 // produce meaningful results, so it stops here instead — the same posture as
 // DependencyLoadException for a dependency that fails to compile.
 //
+// It tears through BOTH of AL's error-trapping seams — `asserterror` and [TryFunction] —
+// the same posture BcShapeGapException takes, and for the same reason: on real BC the read
+// succeeds, so swallowing the refusal INVERTS the result rather than merely hiding a gap
+// (#3241). Find() below is what the two seams ask.
+//
 // See: .claude/rules/loud-failures.md.
 
 namespace AlRunner.Infrastructure;
@@ -29,6 +34,35 @@ public sealed class BcAppSymbolReadException : Exception
     {
         AppPath = appPath;
         Surface = surface;
+    }
+
+    /// <summary>
+    /// The symbol-read refusal anywhere in <paramref name="ex"/>'s inner-exception chain,
+    /// else null.
+    ///
+    /// <para>A chain walk, not an <c>is</c> test, for the same reason as
+    /// <see cref="BcShapeGapException.Find"/>: a refusal raised behind
+    /// <see cref="System.Reflection.MethodBase.Invoke(object, object[])"/> arrives wrapped in
+    /// a <see cref="System.Reflection.TargetInvocationException"/>, and BC's own
+    /// <c>RemapToALExceptionAndThrow</c> can rewrap it again. The AL trapping seams
+    /// (<c>MethodScopePatches.NavMethodScope_AssertError</c>,
+    /// <c>ApplicationObjectBasePatches.NavApplicationObjectBase_TryInvoke</c>) ask this
+    /// before anything else so a corrupt dependency package cannot be swallowed into a green
+    /// <c>asserterror</c> or a <c>[TryFunction]</c> answering false (#3241).</para>
+    /// </summary>
+    public static BcAppSymbolReadException? Find(Exception? ex)
+    {
+        const int MaxDepth = 16;   // guard against self-referential inner chains
+        var e = ex;
+        for (var d = 0; e != null && d < MaxDepth; d++, e = e.InnerException)
+        {
+            if (e is BcAppSymbolReadException read) return read;
+            if (e is AggregateException agg)
+                foreach (var inner in agg.InnerExceptions)
+                    if (inner is not null && !ReferenceEquals(inner, e) && Find(inner) is { } nested)
+                        return nested;
+        }
+        return null;
     }
 
     // No leading `[tag]`: Log's default-verbosity filter drops lines that START with a
