@@ -181,32 +181,79 @@ public sealed class TestPageWriteBufferTests
         Assert.True(ran);
     }
 
-    // The two callers, pinned in IL — a wiring claim, so that removing the unwind from either
-    // write path fails here rather than only in the corpus.
+    // Every call this type makes into TestPageWriteBuffer, from the named method's OWN body
+    // only — not from a lambda the compiler lifted into a nested type, and not from a local
+    // function, which lands beside the method as `<Name>g__Local|0_0` rather than under it.
     //
-    // The Rec-bound path is the one with a constraint on HOW it calls: it snapshots inline and
-    // restores in its own catch, because TestPageNewRowLinePromotionTests reads
-    // LiveNavTestField.Write's IL for the #2923 ordering and a lambda would hide all three of
-    // its markers inside a closure. This arm holds that spelling in place; without it a later
-    // editor tidying Write into RunRestoringOnRefusal turns the ordering test green-for-the-
-    // wrong-reason and nothing objects.
-    [Theory]
-    [InlineData("AlRunner.LiveNavTestField", "Write", "Snapshot")]
-    [InlineData("AlRunner.PageVariableTestField", "set_Value", "RunRestoringOnRefusal")]
-    public void BothWritePathsUnwindTheirBuffer(string typeName, string methodName, string expectedCall)
+    // Measured rather than assumed (net8.0, `dotnet build`): a lambda body compiles to
+    // `<>c.<WithLambda>b__1_0` inside a NESTED type, a local function to a method named
+    // `<WithLocal>g__Local|0_0` on the DECLARING type. Neither is `Write`, so restricting to
+    // the exact method name excludes both — which is the point here, not an oversight.
+    private static List<string> DirectCallsIntoWriteBuffer(string typeName, string methodName)
     {
         var module = AssemblyDefinition
             .ReadAssembly(typeof(TestPageWriteBuffer).Assembly.Location).MainModule;
         var type = module.GetType(typeName);
         Assert.NotNull(type);
 
-        // The call can sit in the method itself or in a closure the compiler lifted out of it,
-        // which is exactly the difference the two spellings are about — so both are searched
-        // and the ASSERTION is on which entry point is reached, not on where it is reached from.
-        var bodies = type!.Methods.Where(m => m.HasBody && m.Name == methodName)
-            .Concat(type.NestedTypes.SelectMany(n => n.Methods).Where(m => m.HasBody));
+        var method = type!.Methods.SingleOrDefault(m => m.HasBody && m.Name == methodName);
+        Assert.True(method != null, $"{typeName}.{methodName} not found, or not unique — this "
+            + "test reads one specific method body and cannot answer if the name is ambiguous.");
 
-        var calls = bodies
+        return method!.Body.Instructions
+            .Where(i => i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt)
+            .Select(i => i.Operand as MethodReference)
+            .Where(mr => mr != null && mr.DeclaringType.Name == nameof(TestPageWriteBuffer))
+            .Select(mr => mr!.Name)
+            .ToList();
+    }
+
+    // The Rec-bound path, and the one arm with a constraint on HOW it calls.
+    //
+    // LiveNavTestField.Write must reach TestPageWriteBuffer.Snapshot from its own body, so the
+    // restore is an inline try/catch rather than a wrapped lambda.
+    // TestPageNewRowLinePromotionTests reads THAT method's IL to pin the #2923 ordering
+    // (_onBeforeEdit before ALValidateAsync, _onEdited after), and wrapping the body in a
+    // lambda moves all three markers into a nested closure type where that test cannot see
+    // them — it then finds none of its three markers and fails for the wrong reason, which is
+    // what happened while #3640 was being implemented.
+    //
+    // A local function has the same effect for the same reason and is NOT caught by looking in
+    // nested types, which is why this reads one exact method body and nothing else.
+    [Fact]
+    public void TheRecBoundWritePathSnapshotsInline()
+    {
+        var calls = DirectCallsIntoWriteBuffer("AlRunner.LiveNavTestField", "Write");
+
+        Assert.Contains("Snapshot", calls);
+
+        // And specifically NOT the wrapping spelling: reaching for RunRestoringOnRefusal here
+        // is exactly the tidy-up that would hide the ordering markers.
+        Assert.DoesNotContain("RunRestoringOnRefusal", calls);
+    }
+
+    // The page-variable path has no such constraint — nothing reads its IL for ordering — so it
+    // uses the wrapping spelling, which cannot get the try/catch wrong. Pinned so that removing
+    // the unwind from this path fails here rather than only in the corpus.
+    //
+    // Searched WIDELY on purpose, unlike the arm above: this setter hands a lambda to
+    // RunRecordingRefusal, so its own body makes no direct call at all and the call to
+    // RunRestoringOnRefusal sits in the compiler-generated closure type. Measured — restricting
+    // this arm to the setter's own body finds an empty collection. The asymmetry between the
+    // two arms IS the claim: one path must call inline, the other may call through a closure.
+    [Fact]
+    public void ThePageVariableWritePathWrapsItsWrite()
+    {
+        var module = AssemblyDefinition
+            .ReadAssembly(typeof(TestPageWriteBuffer).Assembly.Location).MainModule;
+        var type = module.GetType("AlRunner.PageVariableTestField");
+        Assert.NotNull(type);
+
+        var calls = type!.Methods.Where(m => m.HasBody && m.Name == "set_Value")
+            .Concat(type.NestedTypes.SelectMany(n => n.Methods).Where(m => m.HasBody))
+            // A local function lands beside the method rather than under it, so the
+            // compiler-generated `<set_Value>g__...` spelling is picked up here too.
+            .Concat(type.Methods.Where(m => m.HasBody && m.Name.StartsWith("<set_Value>g__")))
             .SelectMany(m => m.Body.Instructions)
             .Where(i => i.OpCode == OpCodes.Call || i.OpCode == OpCodes.Callvirt)
             .Select(i => i.Operand as MethodReference)
@@ -214,6 +261,6 @@ public sealed class TestPageWriteBufferTests
             .Select(mr => mr!.Name)
             .ToList();
 
-        Assert.Contains(expectedCall, calls);
+        Assert.Contains("RunRestoringOnRefusal", calls);
     }
 }

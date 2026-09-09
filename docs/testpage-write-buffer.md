@@ -57,7 +57,60 @@ Stated separately because the gap is where a future editor is most likely to ove
 - Whether the discard is a restore or a re-read from the database. Observationally the corpus
   cannot distinguish them for a row that was never written; the runner restores, and corpus
   arm `AWriteAfterARefusedOneTracesFromTheRestoredBuffer` pins that whichever mechanism BC
-  uses leaves the page usable with a clean buffer.
+  uses leaves the buffer **clean for a subsequent write** — it does *not* claim the page stays
+  usable in every respect. See the next section: on 27.x it does not.
+
+## Closing the page afterwards is version-split, and the corpus says so
+
+The claim above — that the buffer is restored — is green on all eight cloud legs. **Closing
+the page after a refused write is not uniform**, and an earlier revision of the corpus arm
+overstated it by folding the two together.
+
+Measured, corpus run
+[`34328827788`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/actions/runs/34328827788):
+
+| legs | a refused write, then a **successful** one, then `Close()` |
+|---|---|
+| 28.0, 28.1, 28.2, 28.3, 28.4 | closes cleanly |
+| 27.0, 27.3, 27.5 | raises `The record that you tried to open is not available. The page will close or show the next record.` |
+
+Three of eight, unanimous within the 27.x family and deterministic.
+
+**What the failure was not.** The `Assert.AreEqual` on the trace passed on all eight. Two
+independent signals say so: the stack frame is `Test Runner - Mgt.RunTests` with **no `Assert`
+codeunit frame** (a real mismatch shows one, and shows the expected/actual pair), and the
+message is a UI message rather than a value comparison. The leg summary reads
+`3211 total, 3210 passed, 1 failed`, so the suite reached the test phase and the other arms
+executed.
+
+**What discriminates it.** All three of the failed-write arms do `asserterror` then `Close()`,
+and two of them pass on those same three legs. The only structural difference in the failing
+one was the extra **successful write following the refused one**. So the split is not "a
+refused write leaves the page unusable on 27.x" — that is refuted by the two passing arms on
+the same legs — but the narrower "a refused write *followed by a successful one* leaves 27.x
+unable to close the page".
+
+**How the corpus states it now.** Two arms rather than one:
+
+- `AWriteAfterARefusedOneTracesFromTheRestoredBuffer` asserts the trace and **does not close
+  the page** — green on all eight.
+- `APageIsStillClosableAfterARefusedWrite` closes the page after a refusal with no second
+  write — green on all eight.
+
+The version split itself is recorded in a comment at the arm, with the run id, and is
+deliberately **not** asserted with a version branch: a test that branches on the platform
+version to pick an expected value records a split rather than testing anything. Neither
+version's answer is asserted as the correct one.
+
+**Not settled: whether the 27.x behaviour is BC or the Linux image.** The corpus tier is
+`MsDyn365Bc.On.Linux`, which patches BC, and the message is a client/server resource string
+that is not in `Microsoft.Dynamics.Nav.Ncl.dll` — so it cannot be read with the decompiler
+from the runner side. The route to settle it is the `run-nightly-windows` label on the corpus
+PR, per `.claude/rules/ask-the-corpus-before-claiming-bc-behavior.md`. Until that runs, the
+table above is what the tier answered and nothing here claims more than that.
+
+**Nothing in the runner changed for this.** The runner's restore is green on both families;
+this section documents a corpus-side scoping decision, not a runner behaviour.
 
 ## How the runner does it
 
@@ -97,9 +150,24 @@ is what happened while implementing #3640, before the shape was changed back.
 
 So that one caller uses `TestPageWriteBuffer.Snapshot(record)` plus its own `catch`; every
 other caller uses `RunRestoringOnRefusal`, which cannot get the try/catch wrong.
-`TestPageWriteBufferTests.BothWritePathsUnwindTheirBuffer` pins both spellings in IL, so a
-later tidy-up that collapses them fails there rather than silently making the ordering test
-vacuous.
+
+Two tests pin the two spellings, and they are deliberately **asymmetric**:
+
+- `TheRecBoundWritePathSnapshotsInline` reads `LiveNavTestField.Write`'s own body **only** and
+  requires a direct `Snapshot` call, plus the absence of `RunRestoringOnRefusal`.
+- `ThePageVariableWritePathWrapsItsWrite` searches the setter, its nested closure types and
+  any lifted local function, because that setter legitimately hands a lambda to
+  `RunRecordingRefusal` and so makes no direct call at all.
+
+The asymmetry is the claim: one path must call inline, the other may call through a closure.
+
+**Why the narrow arm is narrow.** A first version searched nested types for both, and a
+reviewer found the hole: a **local function** does not compile into a nested type. Measured on
+net8.0 — a lambda body becomes `<>c.<M>b__1_0` inside a nested type, a local function becomes
+`<M>g__Local|0_0` as a method on the *declaring* type. So re-wrapping `Write`'s body in a
+local function would have kept the old test green while hiding the ordering markers, leaving
+the hazard caught only by the ordering test failing for a reason that does not name it.
+Verified by applying exactly that rewrite: the old shape passed, the current one fails.
 
 ## Sister documents
 
