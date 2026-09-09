@@ -1,5 +1,7 @@
 // RecordPatches.IntegerVirtualTable — the Integer system virtual table (2000000026) is
-// served by BC's OWN IntegerDataProvider, the way a service tier serves it.
+// served by BC's OWN IntegerDataProvider, the way a service tier serves it. This file also
+// hosts GetBcVirtualDataAccess, the one reflection bind onto BC's virtual-table factory, which
+// RecordPatches.DateVirtualTable.cs calls for 2000000007 (#3506).
 //
 // WHAT A SERVICE TIER DOES
 //   DataAccessSource.GetVirtualDataAccess(table) builds
@@ -47,30 +49,37 @@ public static partial class RecordPatches
     private static bool IsIntegerVirtualTable(NCLMetaTable? table)
         => table != null && table.TableId == IntegerVirtualTableId;
 
-    private static MethodInfo? _ivtGetVirtualDataAccess;
+    private static MethodInfo? _bcGetVirtualDataAccess;
+
+    /// <summary>The DataAccess BC's own factory builds for 2000000026 — one over IntegerDataProvider.</summary>
+    internal static object GetIntegerVirtualDataAccess(object dataAccessSource, NCLMetaTable table)
+        => GetBcVirtualDataAccess(dataAccessSource, table,
+            "every Record Integer read would answer from an empty store");
 
     /// <summary>
     /// The DataAccess a service tier builds for a virtual table — for 2000000026 that is one
-    /// over BC's own <c>IntegerDataProvider</c>. BC caches it per table id on the
-    /// DataAccessSource instance itself (<c>virtualDataAccesses</c>), so repeat handouts share
-    /// one provider exactly as they do on a tier, and a new source starts clean.
+    /// over BC's own <c>IntegerDataProvider</c>, for 2000000007 one over its
+    /// <c>DateDataProvider</c>. BC caches it per table id on the DataAccessSource instance
+    /// itself (<c>virtualDataAccesses</c>), so repeat handouts share one provider exactly as
+    /// they do on a tier, and a new source starts clean.
     /// </summary>
     /// <remarks>
     /// A bind failure throws rather than falling back to the temp store: falling back would
-    /// silently restore the empty-store answer this table spent three issues escaping
-    /// (#2350, #3438, #3485), and an empty Integer table makes every `dataitem(N; Integer)`
-    /// report body simply not run.
+    /// silently restore the empty-store answer these tables spent four issues escaping
+    /// (#2350, #3438, #3485, #3506), and an empty Integer table makes every
+    /// `dataitem(N; Integer)` report body simply not run.
     /// </remarks>
-    internal static object GetIntegerVirtualDataAccess(object dataAccessSource, NCLMetaTable table)
+    internal static object GetBcVirtualDataAccess(
+        object dataAccessSource, NCLMetaTable table, string whatBreaksWithoutIt)
     {
-        var factory = _ivtGetVirtualDataAccess ??= dataAccessSource.GetType().GetMethod(
+        var factory = _bcGetVirtualDataAccess ??= dataAccessSource.GetType().GetMethod(
             "GetVirtualDataAccess",
             BindingFlags.NonPublic | BindingFlags.Instance,
             binder: null, types: new[] { typeof(NCLMetaTable) }, modifiers: null)
             ?? throw new InvalidOperationException(
                 "DataAccessSource.GetVirtualDataAccess(NCLMetaTable) not found — BC shape changed. "
-                + "Table 2000000026 is served by BC's own IntegerDataProvider through it; without "
-                + "it every Record Integer read would answer from an empty store.");
+                + $"Table {table.TableId} is served by BC's own computed data provider through it; "
+                + "without it " + whatBreaksWithoutIt + ".");
 
         try
         {

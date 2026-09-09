@@ -1,19 +1,23 @@
-// Issue #2309 — the runner-specific half of the Date system virtual table (2000000007).
+// Issues #2309, #2648, #3006, #3483 and #3506 — the runner-specific half of the Date system
+// virtual table (2000000007).
 //
-// On the service tier the table is computed per find and spans years 1 through 9999: about
-// 3.6 million Date-type rows alone. The runner serves it from an in-memory store, so it has to
-// materialise rows, and it cannot materialise all of them. It materialises a window (default
-// 1900-01-01 to 2099-12-31) and widens that window at find time to cover any CLOSED bound an
-// AL "Period Start" filter names, up to a row cap (default 500,000).
+// On the service tier the table is computed per request by DateDataProvider and spans years 1
+// through 9999: about 3.6 million Date-type rows alone. The runner used to serve it from an
+// in-memory store it had to fill, so it filled a WINDOW (1900-01-01 .. 2099-12-31 by default),
+// widened that window at request time up to a row cap (500,000), and refused a range open at
+// one end whose closed end lay outside the window. Since #3506 it hands out BC's own
+// DateDataProvider instead, so no row is materialised and none of those three numbers exists.
 //
-// The two claims below exist only because that window exists. What the rows themselves say —
-// weekday numbers, ISO week numbers, month ends, "Period End" being a closing date — is plain
-// BC behaviour and lives upstream in the al-language corpus (codeunit 60983, "Test Date Virtual
+// What the table itself answers — weekday numbers, ISO week numbers, month ends, "Period End"
+// being a closing date, and what an open-ended "Period Start" range selects — is plain BC
+// behaviour and lives upstream in the al-language corpus (codeunit 60983, "Test Date Virtual
 // Table"); none of it is repeated here.
 //
-// Without the find-time guard the second test below is the damaging case: the runner would
-// answer a filter spanning eight centuries with the ~87,000 rows it happens to hold, and the
-// caller would read a wrong "earliest matching date" from a green test.
+// So each arm below asserts a LOWER BOUND past a number the runner used to impose, never the
+// exact answer: a count above the old 500,000-row cap, a first row before the window's 1900
+// edge, a last row past its 2099 edge, a keyed Get eight centuries outside any store. An arm
+// that named the exact count would be asserting BC's claim in the wrong repository, and would
+// pass just as well against a store that happened to hold that many rows.
 
 codeunit 64561 "Dvtw Tests"
 {
@@ -24,347 +28,187 @@ codeunit 64561 "Dvtw Tests"
         Assert: Codeunit "Dvtw Assert";
 
     [Test]
-    procedure Date_ClosedBoundBeforeTheWindow_IsMaterialisedOnDemand()
+    procedure Date_HalfOpenRangeClosedBeforeTheOldWindow_IsAnsweredInsteadOfRefused()
     var
         DateRec: Record Date;
     begin
-        // [GIVEN] a filter naming a closed range in 1850 — before the default window starts
-        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
-        DateRec.SetRange("Period Start", DMY2Date(1, 1, 1850), DMY2Date(7, 1, 1850));
-
-        // [THEN] the window widens to cover it, and the rows are real periods, not blanks.
-        // 1 January 1850 was a Tuesday, so its "Period No." is 2 under BC's Monday = 1 numbering.
-        // Count() takes the count path, FindFirst() the find path, and each has to widen the
-        // window on its own — Count() runs first here deliberately, so a guard wired only into
-        // the find path fails this test.
-        Assert.AreEqual(7, DateRec.Count(), 'Expected 7 Date-type rows for 1-7 January 1850.');
-        Assert.IsTrue(DateRec.FindFirst(), 'Record Date found no row for 1 January 1850.');
-        Assert.AreEqual(DMY2Date(1, 1, 1850), DateRec."Period Start", 'Expected the range to start on 1 January 1850.');
-        Assert.AreEqual(2, DateRec."Period No.", '1 January 1850 was a Tuesday, so Period No. is 2.');
-    end;
-
-    [Test]
-    procedure Date_KeyedGetBeforeTheWindow_MaterialisesOnDemand()
-    var
-        DateRec: Record Date;
-    begin
-        // Issue #2648. A full-primary-key Get never reaches the find path at all: DataAccess has
-        // its own primary-key route straight to the provider, which is why #2504 needed a
-        // separate guard there for the Aggregate Permission Set table. The Date table shares that
-        // route and was left behind, so the window was never widened for a keyed read.
-        //
-        // Measured on main before the fix, each call in its own process so no earlier read had
-        // already widened the window: this Get answered FALSE while a FindFirst over the very
-        // same day answered TRUE. Same table, same period, opposite answers — and a Get returning
-        // false reads as "no such period", so nothing looked wrong.
-        //
-        // The year is 2100 rather than 1850 ON PURPOSE, for two reasons. It sits one year past
-        // the window's UPPER edge, which no other test in this suite touches, so this test proves
-        // the same thing whatever order the suite runs in — the sibling test above widens the
-        // window down to 1850, and a Get for 1850 placed after it would pass without the guard
-        // ever running. And one year of extension is a few hundred rows rather than the ~22,000
-        // a 50-year reach costs, which matters in the suite issue #2648 is about.
-        //
-        // [GIVEN] a period one year past the default window's upper edge
-        // [WHEN]  a keyed Get names it
-        // [THEN]  the window widens for the Get exactly as it does for a find
-        Assert.IsTrue(
-            DateRec.Get(DateRec."Period Type"::Date, DMY2Date(1, 1, 2100)),
-            'Record Date.Get found no row for 1 January 2100, though a FindFirst for the same day finds one.');
-
-        // Not merely "a row came back": the row must be the period asked for, and a real one.
-        Assert.AreEqual(DMY2Date(1, 1, 2100), DateRec."Period Start", 'Get returned a different period.');
-    end;
-
-    [Test]
-    procedure Date_KeyedGetInsideTheWindow_StillWorks()
-    var
-        DateRec: Record Date;
-    begin
-        // The control for the test above. A Get inside the default window never needed the guard,
-        // and must keep working unchanged — a guard that widened the window on every keyed Get,
-        // or that threw on one it could not parse, would fail here.
-        Assert.IsTrue(
-            DateRec.Get(DateRec."Period Type"::Date, DMY2Date(1, 1, 1950)),
-            'Record Date.Get found no row for 1 January 1950, which is inside the default window.');
-        Assert.AreEqual(DMY2Date(1, 1, 1950), DateRec."Period Start", 'Get returned a different period.');
-    end;
-
-    [Test]
-    procedure Date_IsEmptyBeforeTheWindow_WidensTheWindowLikeCountDoes()
-    var
-        DateRec: Record Date;
-    begin
-        // Issue #3006. IsEmpty() is a FOURTH request path into the table, not a spelling of
-        // Count(). Decompiled from Ncl.dll 28.1: NavRecord.GetALIsEmptyAsync ->
-        // RecordImplementation.IsEmptyAsync -> RecordImplementation.ExistsAsync ->
-        // dataAccess.ExistsAsync(new ExistsCacheRequest(...)). It never reaches CountAsync, so
-        // the count guard never saw it and the window was never widened for an IsEmpty().
-        //
-        // Measured on main before the fix, this exact pair on consecutive lines:
-        //   IsEmpty() -> TRUE      Count() -> 7
-        // Same record variable, same filter, opposite answers. On a service tier the Date
-        // table spans years 1 through 9999, so TRUE is a wrong answer rather than a missing
-        // feature — and the quiet kind, since "this range holds no periods" is exactly what an
-        // IsEmpty() returning true normally means.
-        //
-        // The year is 1820 rather than 1850 ON PURPOSE. The first test in this codeunit widens
-        // the window down to 1850 through Count(), so an IsEmpty() over 1850 placed after it
-        // would pass with no guard on the exists path at all. 1820 is named by nothing else in
-        // this suite, so this test proves the same thing whatever order the suite runs in.
-        //
-        // [GIVEN] a closed range a century before the default window starts
-        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
-        DateRec.SetRange("Period Start", DMY2Date(1, 1, 1820), DMY2Date(7, 1, 1820));
-
-        // [WHEN] IsEmpty() asks FIRST — before anything else has widened the window for it
-        // [THEN] it answers over the widened window, and the other three paths agree with it
-        Assert.IsFalse(DateRec.IsEmpty(), 'Record Date.IsEmpty() reported 1-7 January 1820 as empty.');
-        Assert.AreEqual(7, DateRec.Count(), 'Expected 7 Date-type rows for 1-7 January 1820.');
-        Assert.IsTrue(DateRec.FindFirst(), 'Record Date found no row for 1 January 1820.');
-        Assert.AreEqual(DMY2Date(1, 1, 1820), DateRec."Period Start", 'Expected the range to start on 1 January 1820.');
-        // Not merely "a row came back": 1 January 1820 was a Saturday, so its "Period No." is 6
-        // under BC's Monday = 1 numbering. A blank or defaulted row fails here.
-        Assert.AreEqual(6, DateRec."Period No.", '1 January 1820 was a Saturday, so Period No. is 6.');
-    end;
-
-    [Test]
-    procedure Date_IsEmptyInsideTheWindow_StillAnswersTrueWhenNothingMatches()
-    var
-        DateRec: Record Date;
-    begin
-        // The negative arm, and the control for the test above. A guard that widened the window
-        // and then reported every range as non-empty would pass that test and fail this one.
-        //
-        // 3 January 1950 is a Tuesday and sits inside the default window, so it is already
-        // materialised: there IS a Date period starting that day, and there is NO Week period,
-        // because BC's weeks start on Monday. So the same single-day filter must answer
-        // opposite things for the two period types, and both answers are about rows that exist
-        // rather than about rows that were never built.
-        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
-        DateRec.SetRange("Period Start", DMY2Date(3, 1, 1950), DMY2Date(3, 1, 1950));
-        Assert.IsFalse(DateRec.IsEmpty(), '3 January 1950 is a Date period, so IsEmpty() must be false.');
-        Assert.AreEqual(1, DateRec.Count(), 'Expected exactly one Date-type row for 3 January 1950.');
-
-        DateRec.Reset();
-        DateRec.SetRange("Period Type", DateRec."Period Type"::Week);
-        DateRec.SetRange("Period Start", DMY2Date(3, 1, 1950), DMY2Date(3, 1, 1950));
-        Assert.IsTrue(DateRec.IsEmpty(), 'No Week period starts on Tuesday 3 January 1950, so IsEmpty() must be true.');
-        Assert.AreEqual(0, DateRec.Count(), 'Expected no Week-type row starting on Tuesday 3 January 1950.');
-    end;
-
-    [Test]
-    procedure Date_ClosedRangePastTheRowCap_ThrowsOutOfScope()
-    var
-        DateRec: Record Date;
-    begin
-        // [GIVEN] a filter naming a closed range of nearly nine thousand years
-        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
-        DateRec.SetRange("Period Start", DMY2Date(1, 1, 1200), DMY2Date(31, 12, 9998));
-
-        // [THEN] the runner refuses by name rather than answering from the window it happens to
-        // hold. Answering would return the first row of the WINDOW as if it were the first row
-        // of the RANGE — a wrong date in a passing test.
-        asserterror DateRec.FindFirst();
-        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
-        Assert.ExpectedError('past the');
-    end;
-
-    [Test]
-    procedure Date_ClosedRangePastTheRowCap_ThrowsOnTheCountPathToo()
-    var
-        DateRec: Record Date;
-    begin
-        // Same range, reached through Count() instead of FindFirst(). Count() would otherwise
-        // answer with the window's row count and look like a real number.
-        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
-        DateRec.SetRange("Period Start", DMY2Date(1, 1, 1200), DMY2Date(31, 12, 9998));
-
-        asserterror CountRows(DateRec);
-        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
-    end;
-
-    [Test]
-    procedure Date_ClosedRangePastTheRowCap_ThrowsOnTheIsEmptyPathToo()
-    var
-        DateRec: Record Date;
-    begin
-        // Issue #3006, the other half. The same range through IsEmpty() instead of Count() or
-        // FindFirst(). Without the exists-path guard the runner would answer FALSE from the
-        // rows it happens to hold — "this eight-century range has periods in it" — which is
-        // true by accident and says nothing about the range that was asked for.
-        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
-        DateRec.SetRange("Period Start", DMY2Date(1, 1, 1200), DMY2Date(31, 12, 9998));
-
-        asserterror IsEmptyRows(DateRec);
-        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
-        Assert.ExpectedError('past the');
-    end;
-
-    [Test]
-    procedure Date_RowCapRefusal_TearsThroughATryFunction_InsteadOfReadingAsFalse()
-    var
-        DateRec: Record Date;
-        Reached: Boolean;
-    begin
-        // Issue #2965 — the runtime consequence of what the refusal CLAIMS, not its wording.
-        //
-        // All nine Date refusals used to end "see docs/scope.md".
-        // ApplicationObjectBasePatches.IsPermanentOutOfScope reads the reason's FIRST token:
-        //
-        //     return oos != null && !oos.Reason.StartsWith("not-yet-implemented", ...);
-        //
-        // so under the old anchor it returned TRUE and an AL [TryFunction] trapped the refusal
-        // into `false` — the silent default .claude/rules/loud-failures.md exists to prevent.
-        // AL would then carry on having quietly done without the table, and the test would go
-        // green. docs/scope.md is the manifest of what is permanently out of scope (SMTP, HTTP
-        // egress, printing); it names no table, and real BC computes this one on demand across
-        // years 1 through 9999 and never refuses a Date read at all.
-        //
-        // [GIVEN] a range far past the row cap — the one Date refusal AL can actually provoke
-        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
-        DateRec.SetRange("Period Start", DMY2Date(1, 1, 1200), DMY2Date(31, 12, 9998));
-
-        // [WHEN] a [TryFunction] reads it
-        // [THEN] the refusal tears through rather than being reported as "it just did not work"
-        asserterror Reached := TryFindFirst(DateRec);
-        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
-        Assert.IsFalse(Reached, 'TryFindFirst must not have completed.');
-    end;
-
-    [Test]
-    procedure Date_OpenLowRangeClosedBeforeTheWindow_IsRefused()
-    var
-        DateRec: Record Date;
-    begin
-        // Issue #3483. `'..1850-01-01'` is closed at its HIGH end only, and that closed end sits
-        // before the window starts. The window holds no period on or before 1850, so answering
-        // the request from it returns no rows at all while a service tier returns 675,332
-        // (measured on BC 28.4.53241.0, container fbk1-probe: first row 0001-01-03, last
-        // 1850-01-01). A silent zero, reported as success.
+        // Issue #3506. `..1850-01-01` is closed at its HIGH end only, and that closed end sits
+        // before the old window started. The window held no period on or before 1850, so the
+        // request could not be answered from it at all: it returned zero rows until #3483, and a
+        // RunnerOutOfScopeException after it. BC runs the open end back to its own first period
+        // start for the period type, so there are hundreds of thousands of rows to return.
         DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
         DateRec.SetFilter("Period Start", '..%1', DMY2Date(1, 1, 1850));
 
-        asserterror CountRows(DateRec);
-        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
-        Assert.ExpectedError('date-virtual-table');
-        Assert.ExpectedError('1850-01-01');
-        Assert.ExpectedError('with its other end open');
+        // Past the old 500,000-row cap AND past what the old window could hold, so neither a
+        // refusal nor a windowed store can produce this number.
+        Assert.IsTrue(DateRec.Count() > 500000,
+            'Count() over a range closed at 1850-01-01 with its low end open must exceed the old 500,000-row cap.');
+        Assert.IsFalse(DateRec.IsEmpty(), 'IsEmpty() must be false for a range reaching back to the first period start.');
+
+        // The first row is BEFORE the old window's 1900 edge — the divergence itself, not its size.
+        Assert.IsTrue(DateRec.FindFirst(), 'FindFirst() found no row in a range of hundreds of thousands.');
+        Assert.IsTrue(DateRec."Period Start" < DMY2Date(1, 1, 1900),
+            'The first row of an open-low range must precede the old window lower edge 1900-01-01.');
+        // And it is a real period, not a defaulted row: the day it names must satisfy the filter.
+        Assert.IsTrue(DateRec."Period Start" <= DMY2Date(1, 1, 1850),
+            'The first row must satisfy the filter it was selected by.');
     end;
 
     [Test]
-    procedure Date_OpenLowRangeClosedBeforeTheWindow_IsRefusedOnTheFindPathToo()
+    procedure Date_HalfOpenRangeOpenAtTheHighEnd_ReachesPastTheOldWindowsUpperEdge()
     var
         DateRec: Record Date;
     begin
-        // The refusal is decided in the one helper all four request paths funnel into, so the
-        // find path has to raise it as well. Reached through FindSet(), which would otherwise
-        // answer FALSE — "there is no period on or before 1850" — and read as a fact.
+        // The mirror image, and the truncation #3506 names in its first bullet: `2026-01-16..`
+        // was answered FROM the window, so a descending read stopped at 2099-12-31 instead of
+        // running out to BC's own last period start. FindLast is the shape that sees it.
         DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
-        DateRec.SetFilter("Period Start", '..%1', DMY2Date(1, 1, 1850));
+        DateRec.SetFilter("Period Start", '%1..', DMY2Date(16, 1, 2026));
 
-        asserterror DateRec.FindSet();
-        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
-        Assert.ExpectedError('date-virtual-table');
-        Assert.ExpectedError('1850-01-01');
-        Assert.ExpectedError('with its other end open');
+        Assert.IsTrue(DateRec.Count() > 500000,
+            'Count() over a range open at its high end must exceed the old 500,000-row cap.');
+        Assert.IsTrue(DateRec.FindLast(), 'FindLast() found no row in an open-ended range.');
+        Assert.IsTrue(DateRec."Period Start" > DMY2Date(31, 12, 2099),
+            'The last row of an open-high range must lie past the old window upper edge 2099-12-31.');
     end;
 
     [Test]
-    procedure Date_MultiRangeWithAHalfOpenRangePastTheWindow_IsRefused()
+    procedure Date_MultiRangeWithAnOpenEnd_AnswersBothRangesNotJustTheFirst()
     var
         DateRec: Record Date;
     begin
-        // Issue #3483, the multi-range half. A filter may name several ranges and BC answers
-        // their union: `'2000-01-01..2000-01-10|2300-01-01..'` is 2,812,377 rows on a service
-        // tier (measured on BC 28.4.53241.0, container fbk1-probe). The first range sits inside
-        // the window and the second reaches past it, so reading only the filter's outermost
-        // closed bounds — 2000-01-01 and 2000-01-10 — makes the request look answerable and
-        // drops the second range whole, for a plausible-looking 10.
+        // Issue #3483's multi-range half, now answered rather than refused. The first range sits
+        // inside the old window and the second reaches past it, so a store that served the first
+        // and dropped the second answered a plausible-looking 10. BC answers their union.
         DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
         DateRec.SetFilter("Period Start", '%1..%2|%3..',
             DMY2Date(1, 1, 2000), DMY2Date(10, 1, 2000), DMY2Date(1, 1, 2300));
 
-        // The bound is asserted, not just the fact of a refusal: this arm has two ranges and
-        // only the second one is refusable, so a refusal naming 2000-01-01 or 2000-01-10 would
-        // mean the per-range decision landed on the wrong range.
-        asserterror CountRows(DateRec);
-        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
-        Assert.ExpectedError('date-virtual-table');
-        Assert.ExpectedError('2300-01-01');
-        Assert.ExpectedError('with its other end open');
+        Assert.IsTrue(DateRec.Count() > 500000,
+            'The union of a 10-day range and an open-ended one must exceed the old 500,000-row cap.');
+        // Both ends of the union, so dropping either range fails: the first row is the first day
+        // of the first range, the last row is past where the second range starts.
+        Assert.IsTrue(DateRec.FindFirst(), 'FindFirst() found no row for the first range.');
+        Assert.AreEqual(DMY2Date(1, 1, 2000), DateRec."Period Start", 'The union must start at the first range first day.');
+        Assert.IsTrue(DateRec.FindLast(), 'FindLast() found no row for the open-ended second range.');
+        Assert.IsTrue(DateRec."Period Start" > DMY2Date(1, 1, 2300),
+            'The union last row must lie past 2300-01-01, i.e. inside the second range.');
     end;
 
     [Test]
-    procedure Date_MultiRangeClosedPastTheWindow_IsMaterialisedNotRefused()
+    procedure Date_ClosedRangeFarPastTheOldRowCap_IsCountedInsteadOfRefused()
     var
         DateRec: Record Date;
     begin
-        // The other side of the per-range decision, and the reason it is per RANGE rather than
-        // "any range outside the window". Both ranges here are CLOSED, and one of them lies
-        // entirely past the window's 2099 edge, so the span is materialised on demand and the
-        // union is answered exactly — 10 days in 2000 plus 10 days in 2150.
+        // The old row cap refused this outright — nearly nine thousand years of days is far more
+        // than 500,000 rows, and materialising them was the only way the runner could answer.
+        // BC counts the span arithmetically (DateDataProvider.CountPeriodsWithinRange) and
+        // materialises nothing.
         DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
-        DateRec.SetFilter("Period Start", '%1..%2|%3..%4',
-            DMY2Date(1, 1, 2000), DMY2Date(10, 1, 2000), DMY2Date(1, 1, 2150), DMY2Date(10, 1, 2150));
+        DateRec.SetRange("Period Start", DMY2Date(1, 1, 1200), DMY2Date(31, 12, 9998));
 
-        Assert.AreEqual(20, DateRec.Count(), 'Expected the union of two closed ranges: 10 days in 2000 and 10 in 2150.');
-        Assert.IsTrue(DateRec.FindLast(), 'Record Date found no row for the second closed range.');
-        Assert.AreEqual(DMY2Date(10, 1, 2150), DateRec."Period Start", 'Expected the last row to be 10 January 2150.');
+        Assert.IsTrue(DateRec.Count() > 500000,
+            'A range of nearly nine thousand years must count past the old 500,000-row cap rather than refusing.');
+        Assert.IsFalse(DateRec.IsEmpty(), 'IsEmpty() must be false for a range of nearly nine thousand years.');
+        Assert.IsTrue(DateRec.FindFirst(), 'FindFirst() found no row in a range of nearly nine thousand years.');
+        Assert.AreEqual(DMY2Date(1, 1, 1200), DateRec."Period Start", 'The first row must be the range own first day.');
     end;
 
     [Test]
-    procedure Date_HalfOpenRangeWithASiblingRangeFurtherOut_IsStillRefused()
+    procedure Date_ATryFunctionOverAHalfOpenRange_CompletesInsteadOfTearingThrough()
     var
         DateRec: Record Date;
+        Reached: Boolean;
     begin
-        // A CONTROL, not a RED -> GREEN: this passes on both sides of #3483's follow-up commit.
-        // It pins that a sibling range cannot move the bar the half-open range is judged
-        // against. Two things hold that, and only one of them is ours: the refusal compares
-        // against the window constants rather than the envelope-widened span, and BC's own
-        // ToRangeList merges this filter's second range into its first — a range wide enough to
-        // widen the envelope's low bound below 1850-01-01 necessarily overlaps `..1850-01-01`.
-        // Measured on 511d5b7f, before that commit: already refused, naming 1850-01-01.
+        // Issue #2965 pinned the opposite claim: that a Date refusal tears through an AL
+        // [TryFunction] rather than being trapped into `false`. There is no refusal left to tear
+        // through, and the failure mode that replaces it is the one worth pinning — a
+        // [TryFunction] that returns false here would read as "the platform could not do it".
         DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
-        DateRec.SetFilter("Period Start", '..%1|%2..%3',
-            DMY2Date(1, 1, 1850), DMY2Date(1, 1, 1800), DMY2Date(10, 1, 1800));
-
-        asserterror CountRows(DateRec);
-        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
-        Assert.ExpectedError('date-virtual-table');
-        Assert.ExpectedError('1850-01-01');
-        Assert.ExpectedError('with its other end open');
-    end;
-
-    [Test]
-    procedure Date_HalfOpenRangeOnAYearTypeRead_IsRefusedWithoutClaimingDatesBounds()
-    var
-        DateRec: Record Date;
-    begin
-        // The refusal reads the "Period Start" filter and never the period type, so the same
-        // shape on a Year-type read has to raise the same way — and the message must not tell
-        // the reader that BC would run the open end back to 0001-01-03, which is the FIRST
-        // Date period. Year starts at 0002-01-01
-        // (DateTimeHelper.datePeriodStartMinimumDate, Ncl 28.4.53241.54318, cited in #3506).
-        DateRec.SetRange("Period Type", DateRec."Period Type"::Year);
         DateRec.SetFilter("Period Start", '..%1', DMY2Date(1, 1, 1850));
 
-        asserterror CountRows(DateRec);
-        Assert.ExpectedError('out-of-scope: Date (virtual table 2000000007)');
-        Assert.ExpectedError('date-virtual-table');
-        Assert.ExpectedError('1850-01-01');
-        Assert.ExpectedError('for the period type');
-        Assert.ExpectedError('0002-01-01 for Year');
+        Reached := TryFindFirst(DateRec);
+
+        Assert.IsTrue(Reached, 'A [TryFunction] reading a half-open Date range must succeed, not report failure.');
+        Assert.IsTrue(DateRec."Period Start" <= DMY2Date(1, 1, 1850), 'The row the [TryFunction] found must satisfy the filter.');
     end;
 
-    local procedure CountRows(var DateRec: Record Date): Integer
+    [Test]
+    procedure Date_KeyedGetFarOutsideAnyOldWindow_StillAnswers()
+    var
+        DateRec: Record Date;
     begin
-        exit(DateRec.Count());
+        // Issue #2648's arm, kept and moved further out. A keyed Get takes its own primary-key
+        // route to the provider, and 1200 is eight centuries outside the old window — no
+        // widening could reach it under the old cap, and BC resolves it without a store.
+        Assert.IsTrue(
+            DateRec.Get(DateRec."Period Type"::Date, DMY2Date(1, 1, 1200)),
+            'Record Date.Get found no row for 1 January 1200.');
+        Assert.AreEqual(DMY2Date(1, 1, 1200), DateRec."Period Start", 'Get returned a different period.');
     end;
 
-    local procedure IsEmptyRows(var DateRec: Record Date): Boolean
+    [Test]
+    procedure Date_KeyedGetAtTheRepresentableBoundary_AnswersInsteadOfOverflowing()
+    var
+        DateRec: Record Date;
     begin
-        exit(DateRec.IsEmpty());
+        // A CONTROL, not a RED -> GREEN: measured, it passes on origin/main too.
+        //
+        // #3513 reports 30 Microsoft-surface failures where a keyed Get reached
+        // RecordPatches.DateMissingSpans — which added or subtracted a day from a requested
+        // boundary to work out what was not materialised yet — and threw
+        // ArgumentOutOfRangeException, "The added or subtracted value results in an
+        // un-representable DateTime". That method is deleted with the store, so the arithmetic
+        // cannot overflow any more; but this AL does not reproduce the throw on the old code
+        // (checked against origin/main: PASS), so it does not close that issue and must not
+        // claim to. What it does pin is the boundary itself, so a store-backed Date table
+        // cannot come back without something failing here.
+        //
+        // BC's own DateDataProvider has no window to diff, so both boundary periods are ordinary
+        // rows: 0001-01-03 is its FIRST Date period start and 9999-12-31 its last
+        // (DateTimeHelper.DatePeriodStartMinimumDate / DatePeriodStartMaximumDate).
+        Assert.IsTrue(
+            DateRec.Get(DateRec."Period Type"::Date, DMY2Date(3, 1, 1)),
+            'Record Date.Get found no row for 0001-01-03, the first Date period start.');
+        Assert.AreEqual(DMY2Date(3, 1, 1), DateRec."Period Start", 'Get returned a different period at the low boundary.');
+
+        Assert.IsTrue(
+            DateRec.Get(DateRec."Period Type"::Date, DMY2Date(31, 12, 9999)),
+            'Record Date.Get found no row for 9999-12-31, the last Date period start.');
+        Assert.AreEqual(DMY2Date(31, 12, 9999), DateRec."Period Start", 'Get returned a different period at the high boundary.');
+
+        // The negative arm, one day past each edge: those are NOT period starts, so Get must
+        // answer false rather than throw and rather than inventing a row. 0001-01-02 precedes the
+        // platform's first Date period.
+        Assert.IsFalse(
+            DateRec.Get(DateRec."Period Type"::Date, DMY2Date(2, 1, 1)),
+            'Record Date.Get returned a row for 0001-01-02, which is before the first Date period start.');
+    end;
+
+    [Test]
+    procedure Date_RangeInsideTheOldWindow_StillAnswersNormally()
+    var
+        DateRec: Record Date;
+    begin
+        // The control. Every arm above asserts a number the old store could not produce, so all
+        // of them would also pass against a provider that answered nonsense in the ordinary
+        // case. This one is exact, small, and inside the old window: one calendar week.
+        DateRec.SetRange("Period Type", DateRec."Period Type"::Date);
+        DateRec.SetRange("Period Start", DMY2Date(1, 1, 1950), DMY2Date(7, 1, 1950));
+
+        Assert.AreEqual(7, DateRec.Count(), 'Expected 7 Date-type rows for 1-7 January 1950.');
+        Assert.IsFalse(DateRec.IsEmpty(), '1-7 January 1950 holds seven Date periods, so IsEmpty() must be false.');
+        Assert.IsTrue(DateRec.FindFirst(), 'Record Date found no row for 1 January 1950.');
+        Assert.AreEqual(DMY2Date(1, 1, 1950), DateRec."Period Start", 'Expected the range to start on 1 January 1950.');
+
+        // The negative arm: no Week period starts on Sunday 1 January 1950, because BC's weeks
+        // start on Monday. Same single-day filter, opposite answer, on rows that exist either way.
+        DateRec.Reset();
+        DateRec.SetRange("Period Type", DateRec."Period Type"::Week);
+        DateRec.SetRange("Period Start", DMY2Date(1, 1, 1950), DMY2Date(1, 1, 1950));
+        Assert.IsTrue(DateRec.IsEmpty(), 'No Week period starts on Sunday 1 January 1950, so IsEmpty() must be true.');
+        Assert.AreEqual(0, DateRec.Count(), 'Expected no Week-type row starting on Sunday 1 January 1950.');
     end;
 
     [TryFunction]

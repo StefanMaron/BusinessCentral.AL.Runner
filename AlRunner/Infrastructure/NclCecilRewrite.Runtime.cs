@@ -858,42 +858,10 @@ public static partial class NclCecilRewrite
                 ByParams(Rt + "TempTableDataProvider", "CalcNumeric", "CalcNumericProviderRequest"),
                 H(recordPatches, "TempTableDataProvider_CalcNumeric"));
 
-            // ── TempTableDataProvider.{Exists,CalcMinMax,CalcSums} — the Date store's safety
-            //    net under per-request materialisation (issue #2648) ────────────────────────
-            // The find, count and keyed-Get guards on DataAccess materialise exactly what their
-            // request can select. Three read paths never reach DataAccess at all — a FlowField
-            // calculation (FlowFieldsHelper) and a TableRelation check
-            // (RecordImplementation.ValidateRelation) go straight to the provider — so they carry
-            // no request the guards could read. MEASURED on this branch with a prepend on
-            // DataAccess.ExistsAsync / CalcMinMaxAsync / CalcSumsAsync instead: the prepend
-            // applied and never fired once, and `count(Date …)` went 73,049 -> 0,
-            // `exist(Date …)` Yes -> No, `min(Date."Period Start")` 1900-01-01 -> blank.
-            //
-            // The helper materialises the whole configured window on the first such read of the
-            // Date store and is a ConditionalWeakTable miss for every other table. CalcNumeric is
-            // not in this list because Cecil REPLACES its body above; the same call sits at the
-            // top of the replacement instead.
-            //
-            // It takes the PROVIDER REQUEST as well as the provider (#3044). Every one of these
-            // three reads carries a DataProviderRequest, and a DataProviderRequest carries the
-            // same FiltersAndMarks a DataCacheRequest does — on the Exists path it is literally
-            // the same object, since DataAccess.ExistsAsync passes request.FiltersAndMarks
-            // straight through. That lets the net tell "nothing has narrowed this request" from
-            // "a DataAccess-level guard already materialised every row this request can select",
-            // which is what Record.IsEmpty() over a closed range hits: the ExistsAsync guard
-            // materialises 25 rows and the net used to materialise 86,885 more behind it.
-            foreach (var providerRead in new[]
-                     {
-                         ("Exists", "ExistsProviderRequest"),
-                         ("CalcMinMax", "CalcMinMaxProviderRequest"),
-                         ("CalcSums", "CalcSumsProviderRequest"),
-                     })
-            {
-                PrependStaticCall(nclMod,
-                    ByParams(Rt + "TempTableDataProvider", providerRead.Item1, providerRead.Item2),
-                    H(recordPatches, "EnsureDateStoreCoversProviderRequest"),
-                    argSlots: 2); // `this` — the provider — and the provider request
-            }
+            // No Date (2000000007) net on TempTableDataProvider.{Exists,CalcMinMax,CalcSums}:
+            // since #3506 the table is served by BC's own DateDataProvider, which computes rows
+            // per request and stores none, so no Date read reaches a TempTableDataProvider at all
+            // and there is no store for a net to fill. See RecordPatches.DateVirtualTable.cs.
 
             // ── BLOB store isolation for database-backed tables (issue #1751) ──────
             // Ncl's TempTableDataProvider.Insert copies the record's NavBLOB into the
@@ -996,30 +964,16 @@ public static partial class NclCecilRewrite
             // The helper returns a boxed ValueTask<ResultSetEnumerator>; the prepended IL
             // unbox.any's it to the declared return type. See RecordPatches.FieldFindIntercept.cs.
             //
-            // The predicate is also where the Date virtual table (2000000007) gets its window
-            // guard: a Date find passes through the predicate on its way to the ORIGINAL
-            // InnerFindAsync, and the predicate widens the materialised Date window to cover
-            // the closed bounds that find's "Period Start" filter names (or throws past the
-            // row cap). The find request is the only place the runner ever sees that filter.
+            // The Date virtual table (2000000007) no longer takes a side effect here: since
+            // #3506 it is served by BC's own DateDataProvider and never reaches this predicate.
             PrependFieldFindGuard(nclMod,
                 ByParams(Rt + "DataAccess", "InnerFindAsync", "FindCacheRequest", "Boolean", "Func`1"),
                 H(recordPatches, "DataAccess_IsManagedFindRequest"),
                 H(recordPatches, "DataAccess_FieldFindManaged"));
 
-            // ── DataAccess.CountAsync — Date virtual table (2000000007) window guard ─────
-            // Record.Count() reaches a CountCacheRequest, not a FindCacheRequest, so the find
-            // guard above never sees it. Without this prepend a Count over a range outside the
-            // materialised Date window would answer with however many rows the window happens
-            // to hold — the silent short answer the window guard exists to prevent. The helper
-            // widens the window (or throws past the row cap) and returns; the original
-            // CountAsync body then runs unchanged, for this and every other table.
-            //
-            // This comment used to read "Record.Count() / IsEmpty()". IsEmpty() has never
-            // reached CountAsync — see the ExistsAsync prepend below (#3006).
-            PrependStaticCall(nclMod,
-                ByParams(Rt + "DataAccess", "CountAsync", "CountCacheRequest"),
-                H(recordPatches, "DataAccess_DateWindowGuardForCount"),
-                argSlots: 2); // `this` — the DataAccess — and the count request
+            // No Date (2000000007) prepend on CountAsync, InternalTryGetByPrimaryKeyAsync or
+            // ExistsAsync: BC's own DateDataProvider answers all three since #3506, so there is
+            // no materialised window for a guard to widen.
 
             // ── DataAccess.CountAsync — virtual Field table (2000000041) on-demand populate ──
             // Same gap, one table over. The Field table's rows for a given TableNo are built on
@@ -1061,18 +1015,6 @@ public static partial class NclCecilRewrite
                 H(recordPatches, "DataAccess_AggregatePermissionSetGuardForGet"),
                 argSlots: 2); // `this` — the DataAccess — and the primary-key request
 
-            // ── DataAccess.InternalTryGetByPrimaryKeyAsync — Date window guard (issue #2648) ──
-            // The Date table shares the primary-key path described above and was left behind
-            // when #2504 fixed it for Aggregate Permission Set: a keyed Date.Get() reached
-            // neither the InnerFindAsync guard nor the CountAsync one, so the materialised
-            // window was never extended for it. Measured on main, in separate processes:
-            // Date.Get(Date, 18500101D) answered FALSE while a FindFirst over the same day
-            // answered TRUE. Same table, same period, opposite answers.
-            PrependStaticCall(nclMod,
-                ByParams(Rt + "DataAccess", "InternalTryGetByPrimaryKeyAsync", "PrimaryKeyCacheRequest"),
-                H(recordPatches, "DataAccess_DateWindowGuardForGet"),
-                argSlots: 2); // `this` — the DataAccess — and the primary-key request
-
             // ── DataAccess.InternalTryGetByPrimaryKeyAsync — virtual Field table (#2792) ──────
             // The third of the three request paths, and the Field table was left behind on it by
             // both #2504 and #2648. Measured on main, table 5803 never opened as a Record:
@@ -1084,26 +1026,6 @@ public static partial class NclCecilRewrite
                 ByParams(Rt + "DataAccess", "InternalTryGetByPrimaryKeyAsync", "PrimaryKeyCacheRequest"),
                 H(recordPatches, "DataAccess_FieldGuardForGet"),
                 argSlots: 2); // `this` — the DataAccess — and the primary-key request
-
-            // ── DataAccess.ExistsAsync — Date virtual table (2000000007), the FOURTH path ───
-            // Record.IsEmpty() does not take the count path. RecordImplementation.IsEmptyAsync
-            // calls its OWN ExistsAsync, which builds an ExistsCacheRequest and reaches
-            // DataAccess.ExistsAsync — decompiled from Ncl.dll 28.1, and not what the count
-            // guard's comment claimed for a whole release. Measured on main, one process, one
-            // record variable, on consecutive lines:
-            //
-            //   Date.SetRange("Period Start", 18500101D..18500107D);
-            //   IsEmpty() -> TRUE      Count() -> 7
-            //
-            // A service tier computes this table across years 1..9999 and answers 7 both ways,
-            // so TRUE is a wrong answer, not a missing feature — and the quiet kind, because
-            // "this range holds no periods" is what IsEmpty() returning true normally means.
-            // ExistsAsync is a large async state machine, so unlike the tiny FindAsync it is
-            // not R2R-inlined past the prepend.
-            PrependStaticCall(nclMod,
-                ByParams(Rt + "DataAccess", "ExistsAsync", "ExistsCacheRequest"),
-                H(recordPatches, "DataAccess_DateWindowGuardForExists"),
-                argSlots: 2); // `this` — the DataAccess — and the exists request
 
             // ── Permission Set system table (2000000004), all three non-find paths (#3344) ──
             // 2000000004 is served from permission-set metadata on a real tier, and BC

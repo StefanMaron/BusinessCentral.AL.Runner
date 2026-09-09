@@ -2108,3 +2108,20 @@ a path the runner replaces. Nothing registered them. `RunnerPageInstance` now bi
 construction, and the same four run 4P/0F.
 
 Written by the fbk-3 agent.
+
+## runner-extras `date-virtual-table-window` 15 -> 8 (#3506)
+
+The Date system virtual table (2000000007) is served by BC's own `DateDataProvider` from this PR
+on, so the materialised window, the 500,000-row cap and the half-open refusal are gone. Eight of
+that bundle's fifteen tests asserted a refusal or a window edge that no longer exists; the suite
+was rewritten to eight arms: six that each assert a LOWER BOUND past a number the runner used
+to impose (a count above the old cap, a first row before the 1900 edge, a last row past the 2099
+edge, a keyed Get eight centuries outside any store), one exact in-window control, and one
+boundary control at 0001-01-03 / 9999-12-31 that passes on `origin/main` too. Measured 8P/0F/0E
+on the rewritten bundle, not computed from the diff.
+
+No al-language change in this half: the two corpus arms the fix turns green were already pinned
+at `23a9e869` and carried `expect-oos` entries in
+`tests/expectations/oos-date-virtual-table.json`, which this PR deletes.
+
+Written by the fbk-3 agent.

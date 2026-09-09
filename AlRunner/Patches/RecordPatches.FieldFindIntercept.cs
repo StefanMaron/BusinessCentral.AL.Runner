@@ -127,25 +127,14 @@ public static partial class RecordPatches
     /// EVERY find. True means "take the managed Field-table bypass"; false means "run BC's
     /// original InnerFindAsync unchanged", which is what every table but 2000000041 does.
     ///
-    /// Table 2000000007 (Date) passes through here on its way to the ORIGINAL find, and takes
-    /// the one side effect this method has: EnsureDateWindowCoversRequest widens the
-    /// materialised Date window to cover the closed bounds this request's "Period Start"
-    /// filter names, or throws RunnerOutOfScopeException when that would exceed the row cap.
-    /// The find request is the first and only place the runner sees that filter, so it is the
-    /// only place the check can happen. See RecordPatches.DateVirtualTable.cs.
-    ///
-    /// Table 2000000026 (Integer) does NOT pass through here at all since #3485: it is served by
-    /// BC's own IntegerDataProvider, whose rows are computed per request, so this method never
-    /// sees a DataAccess of that table's.
+    /// Tables 2000000007 (Date) and 2000000026 (Integer) do NOT pass through here at all, since
+    /// #3506 and #3485 respectively: both are served by BC's own computed data providers
+    /// (DateDataProvider, IntegerDataProvider), whose rows are computed per request, so this
+    /// method never sees a DataAccess of either table's.
     /// </summary>
     public static bool DataAccess_IsManagedFindRequest(object self, object request)
     {
         var tableId = FindRequestTableId(request);
-        if (tableId == DateVirtualTableId)
-        {
-            EnsureDateWindowCoversRequest(self, request);
-            return false;
-        }
         if (tableId == AggregatePermissionSetVirtualTableId)
         {
             // Find()/FindSet() side of issue #2504: this table's rows are recomputed on
