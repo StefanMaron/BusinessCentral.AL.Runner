@@ -290,6 +290,11 @@ public static partial class RecordPatches
         // for it. Report ids repeat across reloads, so a stale entry is a wrong answer rather
         // than a miss.
         ClearBcReportDocuments();
+        // #3604, the same statement one object kind over: the memo holds the control tree
+        // parsed out of the PREVIOUS bundle's page documents, and a --watch cycle that adds
+        // or hides a control would otherwise keep answering the old tree. Page ids repeat
+        // across reloads, so a stale entry is a wrong answer rather than a miss.
+        ClearBcPageControlDocuments();
         // #3121: every table is rebuilt from scratch below, so carrying the previous bundle's
         // pending CalcFormula rebuilds forward only buys a wasted repopulate pass on the next
         // .app registration.

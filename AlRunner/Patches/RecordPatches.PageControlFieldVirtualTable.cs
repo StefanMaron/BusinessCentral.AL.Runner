@@ -75,7 +75,8 @@ public static partial class RecordPatches
     /// <summary>One field control as Page Control Field exposes it.</summary>
     private sealed record PageControlFieldRow(
         int PageNo, int ControlId, string ControlName, int TableNo, int FieldNo,
-        string Enabled, string Editable, string Visible, string SourceExpression, int Sequence);
+        string Enabled, string Editable, string Visible, string SourceExpression,
+        string OptionString, int Sequence);
 
     private static List<PageControlFieldRow>? _pageControlFieldRows;
     // The .app term is RecordPatches' registration EPOCH, never _bcAppPaths.Count (#2888):
@@ -122,10 +123,8 @@ public static partial class RecordPatches
             "editable" => Text(row.Editable),
             "visible" => Text(row.Visible),
             "sourceexpression" => Text(row.SourceExpression),
+            "optionstring" => Text(row.OptionString),
             "sequence" => Int(row.Sequence),
-            // "OptionString" is derived from the source field's OptionMembers on a real
-            // tier; the runner does not resolve that here, so it gets the type default
-            // rather than a guess.
             _ => _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false }),
         };
     }
@@ -142,11 +141,23 @@ public static partial class RecordPatches
             var rows = new List<PageControlFieldRow>();
             var sourceParsedPageIds = new HashSet<int>();
 
-            // 1. Pages the runner source-compiled (base page controls merged with matching
-            //    pageextensions' — see GetSourceParsedPageControlRows).
+            // 1. Pages the runner source-compiled. BC's own emitted document wins whenever
+            //    the emitter captured one (#3604) — it is what BC's provider reads, and it
+            //    differs from the AL text on four columns; see
+            //    RecordPatches.PageControlFieldFromBcDocument.cs. The AL derivation below
+            //    remains reachable and is NOT dead: a page compiled before the object-metadata
+            //    registry existed, or served from a cache written without it, has no document.
             foreach (var page in _parsedPages.Values)
             {
                 sourceParsedPageIds.Add(page.Id);
+
+                if (HasBcPageMetadataDocument(page.Id)
+                    && GetPageControlFieldRowsFromBcDocument(page.Id) is { } fromDocument)
+                {
+                    rows.AddRange(fromDocument);
+                    continue;
+                }
+
                 var tableId = GetSourceTableIdForPage(page.Id);
                 var table = tableId != 0 && _parsedTables.TryGetValue(tableId, out var t) ? t : null;
 
@@ -157,7 +168,7 @@ public static partial class RecordPatches
                         page.Id, c.ControlId, c.ControlName,
                         pField != null ? tableId : 0, pField?.FieldId ?? 0,
                         c.EnabledExpr ?? "true", c.EditableExpr ?? "true", c.VisibleExpr ?? "true",
-                        c.SourceExpressionText, c.Sequence));
+                        c.SourceExpressionText, string.Empty, c.Sequence));
                 }
             }
 
@@ -177,7 +188,11 @@ public static partial class RecordPatches
                     rows.Add(new PageControlFieldRow(
                         symbol.Id, c.Id, c.Name, tableNo, fieldNo,
                         c.EnabledExpr ?? "true", c.EditableExpr ?? "true", c.VisibleExpr ?? "true",
-                        c.SourceExpression, c.Sequence));
+                        // A dependency page's SymbolReference.json does not state the source
+                        // field's option members, and DependencyPageMetadataXml.EmitPageXml
+                        // reconstructs no <Controls> element to read them from, so this stays
+                        // the empty string it answered before rather than becoming a guess.
+                        c.SourceExpression, string.Empty, c.Sequence));
                 }
             }
 
