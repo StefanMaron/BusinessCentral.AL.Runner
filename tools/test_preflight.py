@@ -1977,6 +1977,95 @@ finally:
     shutil.rmtree(_pin_tmp, ignore_errors=True)
 
 
+# -------------------------------------------------- a branch that already heads
+# someone else's pull request (#3707)
+#
+# Two loops can hold one identity, and a worktree path built from the identity
+# alone renders the same directory for both, so one loop's commits land on the
+# other's PR branch. The `agent:` label on the OPEN pull request heading this
+# branch is the one signal that names a loop; the assignee cannot, because every
+# loop pushes under the same account (check-open-prs-before-claiming.md).
+
+def _pr(number, labels, state="OPEN"):
+    return {"number": number, "state": state,
+            "labels": [{"name": n} for n in labels]}
+
+
+_WT = "/repo/BusinessCentral.AL.Runner/.claude/worktrees/fbk-3-issue-3707"
+_MAIN = "/repo/BusinessCentral.AL.Runner"
+
+_foreign = pf.judge_branch_ownership(cwd=_WT, branch="agent/fbk-3/issue-3707",
+                                     pr=_pr(3742, ["agent: fbk-7"]), agent_id="fbk-3")
+check("a branch heading another loop's open PR is a FAIL",
+      _foreign.status == "FAIL", _foreign.summary)
+check("...and the refusal names the pull request and the label that owns it",
+      "3742" in _foreign.summary and "fbk-7" in _foreign.summary, _foreign.summary)
+
+_own = pf.judge_branch_ownership(cwd=_WT, branch="agent/fbk-3/issue-3707",
+                                 pr=_pr(3742, ["agent: fbk-3"]), agent_id="fbk-3")
+check("your own open PR is a PASS", _own.status == "PASS", _own.summary)
+
+_none = pf.judge_branch_ownership(cwd=_WT, branch="agent/fbk-3/issue-3707",
+                                  pr=None, agent_id="fbk-3")
+check("no open PR on the branch is a PASS", _none.status == "PASS", _none.summary)
+
+_closed = pf.judge_branch_ownership(cwd=_WT, branch="agent/fbk-9/issue-1",
+                                    pr=_pr(1, ["agent: fbk-7"], state="MERGED"),
+                                    agent_id="fbk-3")
+check("a MERGED PR by another loop does not refuse", _closed.status == "PASS",
+      _closed.summary)
+
+_outside = pf.judge_branch_ownership(cwd=_MAIN, branch="main",
+                                     pr=_pr(3742, ["agent: fbk-7"]), agent_id="fbk-3")
+check("the main checkout is never refused, whatever PR exists",
+      _outside.status == "PASS", _outside.summary)
+
+# The third state: distinct from PASS, and it says which of the three it is
+# (guards-need-a-third-state.md). Neither of these may resolve toward success.
+_noid = pf.judge_branch_ownership(cwd=_WT, branch="agent/fbk-3/issue-3707",
+                                  pr=_pr(3742, ["agent: fbk-7"]), agent_id=None)
+check("no identity to compare against is undetermined, not a PASS",
+      _noid.status == "WARN", _noid.summary)
+check("...and it names the flag that would settle it",
+      "--agent-id" in (_noid.remedy + _noid.summary), _noid.remedy)
+
+_nolabel = pf.judge_branch_ownership(cwd=_WT, branch="agent/fbk-3/issue-3707",
+                                     pr=_pr(3742, []), agent_id="fbk-3")
+check("an open PR carrying no agent: label is undetermined, not a PASS",
+      _nolabel.status == "WARN", _nolabel.summary)
+
+_detached = pf.judge_branch_ownership(cwd=_WT, branch=None, pr=None, agent_id="fbk-3")
+check("a detached HEAD in a worktree is undetermined, not a PASS",
+      _detached.status == "WARN", _detached.summary)
+
+# End to end against a real repository: the branch has to be READ, and reading it
+# from the wrong directory is exactly the mistake this check exists to catch.
+_own_tmp = tempfile.mkdtemp(prefix="preflight-ownership-")
+try:
+    subprocess.run(["git", "init", "-q", "-b", "main", _own_tmp], check=True,
+                   capture_output=True)
+    _g(_own_tmp, "config", "user.email", "t@example.invalid")
+    _g(_own_tmp, "config", "user.name", "T")
+    open(os.path.join(_own_tmp, "F"), "w").write("x")
+    _g(_own_tmp, "add", "F")
+    _g(_own_tmp, "commit", "-qm", "init")
+    _wt_path = os.path.join(_own_tmp, ".claude", "worktrees", "fbk-9-issue-77")
+    _g(_own_tmp, "worktree", "add", "-q", "-b", "agent/fbk-9/issue-77", _wt_path)
+
+    _prs = {"agent/fbk-9/issue-77": _pr(4242, ["agent: fbk-1"])}
+    _res = pf.check_branch_ownership(_own_tmp, _prs, agent_id="fbk-9", cwd=_wt_path)
+    check("the real worktree's branch is read and refused for the right PR",
+          _res.status == "FAIL" and "4242" in _res.summary, _res.summary)
+    _res_ok = pf.check_branch_ownership(_own_tmp, _prs, agent_id="fbk-1", cwd=_wt_path)
+    check("...and the loop that owns that PR may stand in it",
+          _res_ok.status == "PASS", _res_ok.summary)
+    _res_main = pf.check_branch_ownership(_own_tmp, _prs, agent_id="fbk-9", cwd=_own_tmp)
+    check("...while the main checkout of the same repository is a PASS",
+          _res_main.status == "PASS", _res_main.summary)
+finally:
+    shutil.rmtree(_own_tmp, ignore_errors=True)
+
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")

@@ -10,6 +10,9 @@ warns you.
 Do not run `git stash`, `git stash pop`, `git stash apply`, or `git stash drop` in this
 repository — not in a worktree, not in the top-level checkout.
 
+A `PreToolUse` hook refuses every form of it — `.claude/hooks/refuse-stash-and-ci-waits.py`,
+`git stash list` included, in every session (#3707).
+
 The obvious workarounds do not help: `git stash push --` with a pathspec and `-m` names still
 write to the shared `refs/stash`, `git stash list` interleaves every agent's entries with yours,
 and `stash@{0}` shifts under you when another agent pushes. There is no per-worktree stash.
