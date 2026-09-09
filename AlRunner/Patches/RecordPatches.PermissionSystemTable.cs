@@ -54,13 +54,11 @@
 //   wrapper at most once, so a later Get()/FindSet() on that same variable never re-dispatches
 //   and reads whatever this file last stored. The Aggregate Permission Set sibling closes that
 //   with a per-request redrive prepended to DataAccess.InternalTryGetByPrimaryKeyAsync (#2504),
-//   which is the right shape here too — and it is NOT done here, deliberately, because the
-//   registration lives in AlRunner/Infrastructure/NclCecilRewrite.Runtime.cs, held by another
-//   open pull request while this was written. It costs nothing today: this table's rows derive
-//   from the permission-set inventory, which is fixed for the lifetime of one runner
-//   invocation, so a redrive on an already-open variable can only ever recompute the same rows.
-//   It starts costing something the moment a permission set can be declared mid-run. #3697
-//   tracks it.
+//   which is the right shape here too — and it is NOT done here, deliberately, because it costs
+//   nothing today: this table's rows derive from the permission-set inventory, which is fixed
+//   for the lifetime of one runner invocation, so a redrive on an already-open variable can only
+//   ever recompute the same rows. It starts costing something the moment a permission set can be
+//   declared mid-run. #3705 tracks it.
 //
 // PRECOMPILED-DLL RESPECT
 //   PermissionDataProvider, PermissionDataProviderBase, PermissionProvider, NCLMetadata,
