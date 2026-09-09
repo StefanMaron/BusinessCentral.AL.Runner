@@ -176,7 +176,7 @@ public static partial class RecordPatches
             new object[] { SessionVirtualTableId, row.ConnectionId, 0, 0 },
             field => BuildSessionValue(field, row));
 
-        _sessionPopulatedProviders.Add(provider, new object());
+        _sessionPopulatedProviders.AddOrUpdate(provider, new object());
     }
 
     /// <summary>
