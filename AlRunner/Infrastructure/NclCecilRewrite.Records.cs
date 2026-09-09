@@ -1771,6 +1771,46 @@ public static partial class NclCecilRewrite
         // The (ITreeObject, int, SecurityFiltering, NCLMetaQuery) overload chains to
         // : this(parent, securityFiltering, metaQuery) so it inherits the fix.
 
+        // === NCLMetaTable.get_DefinedTriggers — #3556 ===
+        // The private property behind IsInsertTriggerDefined / IsModifyTriggerDefined /
+        // IsOnAfterModifyTriggerDefined / IsDeleteTriggerDefined / IsRenameTriggerDefined. BC's
+        // body reflects over the table's own Record{id} class AND over every NCLTableExtension in
+        // orderedExtensionObjects; the runner hand-builds this metatable and carries none, so a
+        // trigger a TABLEEXTENSION declares read false — and NavRecord.ALInsert/ALModify/ALDelete/
+        // ALRename then skipped the whole OnBefore/On block on the write. The replacement runs
+        // BC's own declaration check against the runner's tableextension registry — see
+        // RecordPatches.TableTriggerMetadata.cs.
+        //
+        // Same TRAP as the NCLMetaForm twin (NclCecilRewrite.Forms.cs, 8b2b): the helper returns
+        // System.Int32 while the target returns the private TableTriggers enum, and
+        // ReplaceBodyWithHelper emits no conversion for a VALUE-type return. Valid only while the
+        // enum's underlying type is int32, which the guard below asserts rather than assumes.
+        {
+            var metaTableType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NCLMetaTable")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLMetaTable type not found — Ncl shape changed; do not commit");
+
+            var getter = metaTableType.Methods
+                .FirstOrDefault(m => m.Name == "get_DefinedTriggers" && m.HasBody && m.Parameters.Count == 0)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NCLMetaTable.get_DefinedTriggers not found — Ncl shape changed; do not commit");
+
+            var enumType = getter.ReturnType.Resolve();
+            if (enumType == null || !enumType.IsEnum
+                || enumType.Fields.FirstOrDefault(f => f.Name == "value__")?.FieldType.FullName != "System.Int32")
+                throw new InvalidOperationException(
+                    "[Cecil] NCLMetaTable.get_DefinedTriggers no longer returns an Int32-backed enum "
+                    + "— do not commit");
+
+            var helper = typeof(AlRunner.Patches.RecordPatches).GetMethod(
+                nameof(AlRunner.Patches.RecordPatches.NCLMetaTable_get_DefinedTriggers),
+                BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] RecordPatches.NCLMetaTable_get_DefinedTriggers not found");
+
+            ReplaceBodyWithHelper(asm.MainModule, getter, helper);
+            Console.Error.WriteLine("[Cecil] Rewrote NCLMetaTable.get_DefinedTriggers → RecordPatches.NCLMetaTable_get_DefinedTriggers");
+        }
     }
 
     private static void AddRecordsOwned(HashSet<string> set)
@@ -1805,6 +1845,10 @@ public static partial class NclCecilRewrite
         // to RecordPatches.NCLMetaTable_ComputeReferencingRelations over the runner's
         // metatable cache (BC's body reads the null ObjectLoader and NREs).
         set.Add("Microsoft.Dynamics.Nav.Runtime.NCLMetaTable::ComputeReferencingRelations/2");
+        // Table-trigger metadata (#3556) — Cecil-forwarded to
+        // RecordPatches.NCLMetaTable_get_DefinedTriggers so a tableextension's declared
+        // OnBefore/On/OnAfter triggers set the flags BC's write path branches on.
+        set.Add("Microsoft.Dynamics.Nav.Runtime.NCLMetaTable::get_DefinedTriggers/0");
         // DataAccessSource + TempTableDataProvider
         set.Add("Microsoft.Dynamics.Nav.Runtime.DataAccessSource::GetDataAccessForTable/2");
         // NavRecord::UpdateReferencesOnRenameAsync/2 is deliberately NOT here: BC's real

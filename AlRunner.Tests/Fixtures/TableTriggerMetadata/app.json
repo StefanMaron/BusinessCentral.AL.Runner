@@ -1,0 +1,12 @@
+{
+  "id": "3ad9f6c1-70b2-4e8d-9c33-51b7ad20e4f9",
+  "name": "Runner Tests Fixture - Table Trigger Metadata",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3556: NCLMetaTable's five Is<Trigger>Defined flags must answer true exactly when the table - or a tableextension over it - declares the trigger.",
+  "description": "Runner-mechanism fixture. The flags themselves are table METADATA with no AL surface; what AL observes is which triggers a write dispatches, and that belongs upstream (corpus PR 307). This bundle pins the runner's own computation: AL_RUNNER_TABLE_TRIGGER_AUDIT=1 prints the mask per table and TableTriggerMetadataTests asserts the exact set. Declares no application floor.",
+  "dependencies": [],
+  "platform": "1.0.0.0",
+  "idRanges": [ { "from": 70740, "to": 70759 } ],
+  "runtime": "14.0"
+}

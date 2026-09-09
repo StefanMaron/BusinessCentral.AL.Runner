@@ -2511,6 +2511,11 @@ public static partial class RecordPatches
             // this arm a pageextension receiver fell to the table default and resolved
             // Record{id}, so BC's own CheckTrigger threw "OnOpenPage missing on Record{id}".
             "PageExtension" => FindClrTypeByName($"PageExtension{id}"),
+            // TableExtension{id} — the table twin (#3556). BC reads this property on an
+            // NCLTableExtension too (NCLMetaTable.DefinedTriggers walks orderedExtensionObjects
+            // and asks each one), and without an arm such a receiver fell to the table default
+            // and resolved Record{extId} — a different object, usually absent.
+            "TableExtension" => FindTableExtensionType(id),
             "Report"   => FindClrTypeByName($"Report{id}"),
             "CodeUnit" => FindClrTypeByName($"Codeunit{id}"),
             _          => FindRecordType(id),

@@ -56,7 +56,7 @@ public static partial class RecordPatches
         foreach (var trigger in _pageTriggerNames!)
         {
             if (IsTriggerImplemented(typeof(Microsoft.Dynamics.Nav.Runtime.NavForm),
-                                     pageClrType, trigger.Key, isPublic: false))
+                                     pageClrType, trigger.Key, isPublic: false, PageTriggerSurface))
             {
                 mask |= trigger.Value;
                 continue;
@@ -64,7 +64,7 @@ public static partial class RecordPatches
             if (_pageOnlyTriggers.Contains(trigger.Key)) continue;
             foreach (var extType in extensionTypes)
                 if (IsTriggerImplemented(typeof(Microsoft.Dynamics.Nav.Runtime.Extensions.NavFormExtension),
-                                         extType, trigger.Key, isPublic: true))
+                                         extType, trigger.Key, isPublic: true, PageTriggerSurface))
                 {
                     mask |= trigger.Value;
                     break;
@@ -81,58 +81,68 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// BC's own declaration check, transcribed rather than called.
+    /// BC's own declaration check, transcribed rather than called — shared by the page flags
+    /// (#3447) and the table flags (#3556).
     ///
     /// <para>Calling BC's <c>NCLMetaApplicationObject.IsTriggerImplemented</c> is not portable
     /// across the versions this runner supports: the <b>static</b>
     /// <c>(Type, string, bool)</c> overload the extension arm needs — the runner holds an
-    /// extension's Type, not an NCLPageExtension instance — exists on 27.5 and 28.x and does NOT
-    /// exist on 27.0, which declares only the instance <c>(string, bool)</c> form reading its own
-    /// receiver. Resolving it and answering "no triggers" when it is absent is what made every
-    /// flag false on the 27.0 leg of PR #3557 while 28.x passed.</para>
+    /// extension's Type, not an NCLPageExtension / NCLTableExtension instance — exists on 27.5
+    /// and 28.x and does NOT exist on 27.0, which declares only the instance <c>(string, bool)</c>
+    /// form reading its own receiver. Resolving it and answering "no triggers" when it is absent
+    /// is what made every flag false on the 27.0 leg of PR #3557 while 28.x passed.</para>
     ///
     /// <para>The body below is BC's <c>CheckTrigger</c> local function, whose decision is
     /// identical on 27.0, 27.5 and 28.4: look the name up, then the <c>…Async</c> spelling, and
     /// answer whether the resolved method was declared somewhere OTHER than
     /// <paramref name="platformBase"/>. Not a transcription character for character — the guard
     /// before the throw is the runner's, and it is what decides that an absent name is a BC-shape
-    /// gap rather than an ordinary "this page declares nothing".</para>
+    /// gap rather than an ordinary "this object declares nothing".</para>
     /// </summary>
-    private static bool IsTriggerImplemented(Type platformBase, Type clrType, string triggerName, bool isPublic)
-        => CheckTrigger(platformBase, clrType, triggerName, isPublic)
-        || CheckTrigger(platformBase, clrType, triggerName + "Async", isPublic);
+    internal readonly record struct TriggerSurface(string Surface, string Subject, string Doc);
 
-    private static bool CheckTrigger(Type platformBase, Type clrType, string name, bool isPublic)
+    private static readonly TriggerSurface PageTriggerSurface = new(
+        "page trigger metadata", "page", "docs/page-rowset-triggers.md#page-trigger-metadata");
+
+    private static bool IsTriggerImplemented(
+        Type platformBase, Type clrType, string triggerName, bool isPublic, TriggerSurface surface)
+        => CheckTrigger(platformBase, clrType, triggerName, isPublic, surface)
+        || CheckTrigger(platformBase, clrType, triggerName + "Async", isPublic, surface);
+
+    private static bool CheckTrigger(
+        Type platformBase, Type clrType, string name, bool isPublic, TriggerSurface surface)
     {
         var flags = BindingFlags.Instance | (isPublic ? BindingFlags.Public : BindingFlags.NonPublic);
-        var method = LookupTrigger(clrType, name, flags);
+        var method = LookupTrigger(clrType, name, flags, surface);
         if (method != null) return method.DeclaringType != platformBase;
 
         // BC throws here, and so must this: the lookup searches the whole hierarchy, so a null
         // means platformBase itself no longer declares the trigger — the shape this computation
         // rests on. Answering false instead would silently report "declares nothing" for every
-        // page in the run, which is #3447 reappearing with no signal.
-        if (LookupTrigger(clrType, name + "Async", flags) != null
-         || LookupTrigger(platformBase, name, flags) != null) return false;
+        // object in the run, which is #3447 reappearing with no signal.
+        if (LookupTrigger(clrType, name + "Async", flags, surface) != null
+         || LookupTrigger(platformBase, name, flags, surface) != null) return false;
 
         throw new AlRunner.Infrastructure.BcShapeGapException(
-            "page trigger metadata", $"{platformBase.Name}.{name}",
+            surface.Surface, $"{platformBase.Name}.{name}",
             $"neither {name} nor {name}Async resolves on {clrType.Name}, so the runner cannot say "
-            + "which page triggers this page declares — see docs/page-rowset-triggers.md#page-trigger-metadata");
+            + $"which {surface.Subject} triggers this {surface.Subject} declares — see {surface.Doc}");
     }
 
     /// <summary>
-    /// One BC-typed method lookup for the whole file, through <see cref="BcShape"/> (#3069): a
-    /// trigger name that grows a second declaration must arrive as a named gap, not as an
-    /// <c>AmbiguousMatchException</c> an <c>asserterror</c> can absorb. No <c>types:</c> filter —
-    /// the twelve triggers have twelve different signatures and BC resolves them by name too.
+    /// One BC-typed method lookup for both trigger-metadata computations, through
+    /// <see cref="BcShape"/> (#3069): a trigger name that grows a second declaration must arrive
+    /// as a named gap, not as an <c>AmbiguousMatchException</c> an <c>asserterror</c> can absorb.
+    /// No <c>types:</c> filter — the triggers have different signatures and BC resolves them by
+    /// name too.
     /// </summary>
-    private static MethodInfo? LookupTrigger(Type declaring, string name, BindingFlags flags)
+    private static MethodInfo? LookupTrigger(
+        Type declaring, string name, BindingFlags flags, TriggerSurface surface)
         => BcShape.FindMethod(declaring, name, flags,
-            surface: "page trigger metadata", member: $"{declaring.Name}.{name}",
-            detail: "the runner asks which page triggers this page declares, and two declarations "
-                  + "of one trigger name leave no way to say which body BC would have counted — "
-                  + "see docs/page-rowset-triggers.md#page-trigger-metadata");
+            surface: surface.Surface, member: $"{declaring.Name}.{name}",
+            detail: $"the runner asks which {surface.Subject} triggers this {surface.Subject} declares, "
+                  + "and two declarations of one trigger name leave no way to say which body BC "
+                  + $"would have counted — see {surface.Doc}");
 
     /// <summary>The compiled <c>PageExtension{id}</c> classes extending this page, in id order.</summary>
     private static List<Type> PageExtensionTypesFor(object metaForm, out bool allResolved)
