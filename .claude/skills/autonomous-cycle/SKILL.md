@@ -444,7 +444,7 @@ a merge can turn `main` red, which outranks everything you were about to do.
 
    A PR from anyone else is reviewed, and its findings go to the human queue. Never merged. After
    a merge lands, clear the labels of every issue the PR named (`.claude/agents/orchestrator.md`
-   Step 2).
+   Step 2), with this loop's own dispatch record as the identity list that step requires.
 
    The reviewer is dispatched by the loop, so it is not independent oversight — it is a second
    pass by the same lineage. It catches carelessness, not a shared wrong assumption. That is why
@@ -607,9 +607,10 @@ Scheduler entry as optional restart-on-boot hardening.
 days accumulates state that is not context — tool handles, temp files, harness state. On the
 tenth cycle, comment the cycle state on the session's status issue, then end the session; the
 next one starts from that comment. The status issue is found at startup: `gh issue list
---state open --search "Coordinator status in:title" --json number` picks the newest; when none
-exists, open one titled `Coordinator status <date>`; write its number into the cycle log's
-header so a cold start reads it there. The comment lists every open PR by number with its
+--state open --search "Coordinator status in:title" --json number,createdAt --jq
+'max_by(.createdAt).number'` picks the newest; when none exists, open one titled `Coordinator
+status <date>`; write its number as the first line of the cycle log so a cold start reads it
+there. The comment lists every open PR by number with its
 `ci-wait` verdict, armed or not, and what is held for a person. Done when every number
 `gh pr list --state open --limit 500 --json number --repo <owner>/<repo>` prints appears in the
 comment with those three fields.

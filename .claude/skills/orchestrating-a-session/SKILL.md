@@ -150,7 +150,8 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
   ~40-minute run kills it).
 - `git merge-tree --write-tree --messages origin/<base> origin/<branch>` is clean.
 - **Every `Corpus-PR:` line in the body names a merged corpus PR**, pin bump and count-baseline
-  update folded in: `gh pr view <M> --repo StefanMaron/BusinessCentral.AL.Language.Tests --json
+  update folded in; a PR touching an AL-observable path with neither a `Corpus-PR:` nor a
+  `Corpus-NA:` line is held (the linkage gate, `bc-behavior-tests-go-upstream.md`): `gh pr view <M> --repo StefanMaron/BusinessCentral.AL.Language.Tests --json
   state,mergedAt --jq '"\(.state) \(.mergedAt)"'` prints `MERGED` and a date before the arm
   command runs. Any other answer means reporting that corpus PR's number instead of arming.
 - No *other* PR in the same batch conflicts with it. Where two do — two submodule pin bumps to
@@ -233,7 +234,7 @@ Merge when **all of**:
 **One listing per sweep, one verdict per PR you arm:** `gh pr list --repo <owner>/<repo> --state
 open --limit 500 --json number,headRefOid,isDraft,mergeStateStatus,statusCheckRollup` returns
 every open PR's head, merge state and rollup in one call, which orders the sweep and replaces
-per-PR run listings; 500 rows returned means the list is cut, so say so and stop. The
+per-PR run listings; 500 rows returned means the list may be cut, so say so and stop. The
 rollup is never the verdict: run `tools/ci-wait.py <PR> --timeout 0` for every PR you consider
 arming, and never block on it. One pass, one answer, returns at once: 0 green on current head, 1 failed
 with the log already fetched, 2 still running (*not* a verdict, and the ordinary answer on a PR
@@ -243,7 +244,7 @@ cancelled required context (below), or a required context that produced no check
 once every workflow run finished (#2807).
 
 After a merge lands, clear the labels of every issue the PR named (`.claude/agents/orchestrator.md`
-Step 2).
+Step 2), with your own dispatch record as the identity list that step requires.
 
 **A FAILED verdict names what has reported so far.** While other required checks are
 still running the failing list can grow, and the tool says how many have not reported.
