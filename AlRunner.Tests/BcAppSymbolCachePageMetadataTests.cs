@@ -136,7 +136,14 @@ public class BcAppSymbolCachePageMetadataTests
             Assert.NotNull(card.Controls);
             Assert.Equal(3, card.Controls!.Count);
 
-            // Sequence follows document order, 1-based, depth-first through the group.
+            // Sequence follows document order, 0-BASED, depth-first through the group.
+            // 0-based because that is what BC's own provider answers: GetControlsOnPage
+            // numbers its FindAll walk with `Select((cd, i) => …)`, an index captured before
+            // the OrderBy that sorts rows by control id. #3628 corrected the two
+            // source-compiled paths and deliberately left this one 1-based because the file
+            // was being changed by another PR; #3631 is that residue. These assertions said
+            // 1/2/3 and passed the whole time, which is why nothing noticed — a column
+            // answering a plausible wrong value that no test contradicts.
             var no = card.Controls[0];
             Assert.Equal(640644145, no.Id);
             Assert.Equal("No.", no.Name);
@@ -144,7 +151,7 @@ public class BcAppSymbolCachePageMetadataTests
             // A Visible driven by a variable name is stored VERBATIM — not coerced to a
             // boolean, not dropped. Real BC's own column is Text for exactly this reason.
             Assert.Equal("NoFieldVisible", no.VisibleExpr);
-            Assert.Equal(1, no.Sequence);
+            Assert.Equal(0, no.Sequence);
 
             var name = card.Controls[1];
             Assert.Equal("Name", name.Name);
@@ -153,12 +160,19 @@ public class BcAppSymbolCachePageMetadataTests
             // the parser must not invent a value; the provider (not this parser) supplies
             // the "true" default. See RecordPatches.PageControlFieldVirtualTable.cs.
             Assert.Null(name.VisibleExpr);
-            Assert.Equal(2, name.Sequence);
+            Assert.Equal(1, name.Sequence);
 
             var name2 = card.Controls[2];
             Assert.Equal("Name 2", name2.Name);
             Assert.Equal("false", name2.VisibleExpr);
-            Assert.Equal(3, name2.Sequence);
+            Assert.Equal(2, name2.Sequence);
+
+            // The point of #3631 is CONSISTENCY, not the absolute value: Page Control Field's
+            // Sequence must mean the same thing whether the page was source-compiled or came
+            // from a precompiled dependency, because AL cannot see which one it has. So pin
+            // the property that matters — the first control is index 0 on this path too.
+            Assert.Equal(0, card.Controls.Min(c => c.Sequence));
+            Assert.Equal(new[] { 0, 1, 2 }, card.Controls.Select(c => c.Sequence).ToArray());
         }
         finally
         {

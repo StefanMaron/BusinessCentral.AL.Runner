@@ -257,23 +257,102 @@ Two consequences follow, and both are the reason the AL derivation is **not** de
 state the source field's option members and there is no `<Controls>` element to read them
 from, so answering anything else would be a guess rather than a narrower answer.
 
+<a id="pageextension-deltas"></a>
+
+## Pageextension deltas — a second document, not a second branch
+
+A `pageextension`'s added controls are **not** in the base page's `<PageDefinition>`. BC emits
+them in the extension's own document, rooted `<MetadataRuntimeDeltas>`, and the runner keeps it
+in `AlObjectMetadataRegistry` under kind `PageExtension` (#3548). Measured on
+`AlRunner.Tests/Fixtures/ObjectMetadataCapture` with `AL_RUNNER_TRACE_OBJECT_METADATA=2`, where
+`pageextension 70663` adds `Extra Note` to `page 70660`: the string `Extra Note` appears
+**zero** times in the page's document and only in the extension's.
+
+**Tables are the exact inverse** (#3600): a same-app `tableextension`'s added fields *are*
+folded into the base `<MetaTable>`. A table intuition carried across produces the wrong
+conclusion here, which is why this is written down rather than left to be re-derived.
+
+The delta's payload is the same element shape the base document uses, so the same collector
+reads both:
+
+```xml
+<MetadataRuntimeDeltas ID="70663" Name="OMR Thing List Ext">
+  <ControlAdd ParentContainer="ContentArea" SemanticKind="Content" Operation="ContentLast">
+    <Controls xsi:type="ControlDefinition" ID="114635149" Name="Extra Note"
+              DataColumnName="50" ExtensionId="70662" ApplicationArea="#All" Visible="true" />
+  </ControlAdd>
+</MetadataRuntimeDeltas>
+```
+
+`DataColumnName="50"` is the `tableextension`'s field number, so the bound branch resolves it
+against the extended table exactly as a base-page control resolves. The control `ID` is hashed
+in the **extension's** id space, not the base page's — `RunnerPageInstance.MemberId(70663,
+"Extra Note")`, matching what BC asks `LiveNavTestPage.GetField` for.
+
+Only `<ControlAdd>` is read. `<ControlChange>` and `<ControlMove>` modify an *existing* row
+rather than adding one; applying them is a separate claim, tracked by #3614 for the table twin.
+
+### This was a regression, and the shape of it is worth keeping
+
+Before #3628 the AL derivation merged extensions — `GetSourceParsedPageControlRows` folds
+`_parsedPageExtensions` into the base page's rows. The document path short-circuits before
+reaching it, so converting the table silently dropped every extension-added control. Measured
+on a live probe (page 70700, `pageextension` 70702 adding `Extra Note`):
+
+| runner | Page Control Field rows for page 70700 |
+|---|---|
+| `e2d96307~1` (before #3628) | `Entry No.`, `Extra Note` |
+| `84068be8` (after #3628) | `Entry No.` |
+| with #3605 | `Entry No.`, `Extra Note` |
+
+**`TestPage` binding was never affected**, and that is measured rather than assumed: the same
+probe reads `tp."Extra Note"` as `HELLO` on all three, because `GetPageControlFieldMap` merges
+extensions on its own path. The damage was confined to the virtual table.
+
+### `GetExtensionDeltasForAppObject` is not the route, and returning deltas there changes nothing
+
+#3605 proposed making `RunnerXmlMetadataLoader.GetExtensionDeltasForAppObject` return the real
+deltas instead of `null`. Decompiled on BC 28.1, that would have had no effect, because BC
+reaches a page's extensions by a different path and three independent gates on it are shut:
+
+```
+NCLMetaForm.CreatePageDefinitionWithExtensions
+  -> GetExtensionObjects<NCLPageExtension>(MetadataAppGroup)     <- gate 1 and 2
+  -> ApplyPageExtensions -> ApplyExtensionObjects
+       -> NCLApplicationObjectExtension.ApplyRuntimeDeltas       <- reads .Deltas
+```
+
+`GetExtensionDeltasForAppObject` is called from exactly one place —
+`NCLApplicationObjectExtension.LoadMetadata`, which sets `base.Deltas` on an
+`NCLPageExtension` object that BC only ever obtains through `GetExtensionObjects`. So the
+loader method cannot be reached until that enumeration returns something:
+
+| gate | BC's condition | runner |
+|---|---|---|
+| 1 | `group != NavAppGroup.BaseGroup` | `SessionPatches.NavSession_NavAppGroup` returns `BaseGroup` |
+| 2 | `ObjectLoader.MetadataCache != null` | `RunnerMetaApplicationObjectLoader.MetadataCache` **throws** |
+| 3 | `NCLMetadata.GetExtensionApplicationObjects` walks `navAppGroup.OrderedAppMetadata` | empty — the runner's app group carries no object metadata summaries (measured for #2893) |
+
+Populating all three means constructing a real `NavAppGroup` with per-app runtime metadata and
+an extension registry — the same obstacle `RecordPatches.PermissionMetadataPopulator.cs`
+documents for permission sets, where replacing `BaseGroup` would disturb roughly 60 BC call
+sites that compare group identity. Reading the delta document directly is both reachable and
+strictly less invasive, so that is what this file does. `GetExtensionDeltasForAppObject`
+therefore still answers `null`, which is BC's own "no deltas" value.
+
 <a id="not-done"></a>
 
 ## Deliberately not done here
 
-* **Pageextension deltas (#3605).** A `pageextension`'s added controls do not appear in the
-  base page's `<PageDefinition>` at all; BC emits them in a separate `MetadataRuntimeDeltas`
-  document with `<ControlAdd>`/`<ControlChange>` elements. That is a second document source
-  reached through a different registry entry, not a different branch of this file's parse, so
-  it stays its own change.
-* **`Sequence` on the dependency-symbol path.** BC's `Sequence` is a **0-based** enumeration
-  index, captured before the `OrderBy` that sorts rows by control id
-  (`Select((cd, i) => (sequence: i, control: cd))`). Both paths this change touches now
-  produce that: the document path by construction, and the AL fallback by correcting
-  `GetSourceParsedPageControlRows` from `++seq` to `seq++`. The **precompiled-dependency**
-  path in `BcAppSymbolCache.CollectPageControlSymbols` is still 1-based and is deliberately
-  left alone here — that file is being changed by another open pull request, and the fix is a
-  one-character edit that belongs with whoever owns it rather than in a merge conflict. No
-  corpus test pins `Sequence` on any path, so nothing catches any of this either way; the
-  document and AL paths were corrected because leaving them disagreeing with each other would
-  make one column mean two different things depending on which route answered.
+* **`<ControlChange>` / `<ControlMove>`.** Only `<ControlAdd>` is applied; see above.
+* **`Sequence` is now 0-based on all three paths.** BC's `Sequence` is a 0-based enumeration
+  index captured before the `OrderBy` that sorts rows by control id
+  (`Select((cd, i) => (sequence: i, control: cd))`). The document path produces that by
+  construction and the AL fallback by `seq++`; the precompiled-dependency path in
+  `BcAppSymbolCache.CollectPageControlSymbols` was left 1-based by #3628 only because that file
+  was being changed by another open pull request, and #3631 closed that residue once it merged.
+  The inconsistency mattered more than either value: AL cannot see whether a page was
+  source-compiled or came from a dependency, so one column meant two different things.
+  `BcAppSymbolCachePageMetadataTests` pins it on the dependency path, which no corpus test can
+  reach — corpus tests are compiled from AL source by the runner, so they always take the
+  source-compiled route.
