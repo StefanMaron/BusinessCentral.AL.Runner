@@ -149,8 +149,10 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
 - No release run is in progress (`publish.yml` pushes a fast-forward; a merge during its
   ~40-minute run kills it).
 - `git merge-tree --write-tree --messages origin/<base> origin/<branch>` is clean.
-- If the PR asserts anything about BC's behaviour, its corpus PR has **merged**, and the pin bump
-  and count-baseline update are folded in.
+- **Every `Corpus-PR:` line in the body names a merged corpus PR**, pin bump and count-baseline
+  update folded in: `gh pr view <M> --repo StefanMaron/BusinessCentral.AL.Language.Tests --json
+  state,mergedAt --jq '"\(.state) \(.mergedAt)"'` prints `MERGED` and a date before the arm
+  command runs. Any other answer means reporting that corpus PR's number instead of arming.
 - No *other* PR in the same batch conflicts with it. Where two do — two submodule pin bumps to
   different revisions, say — arm only the one that must merge first and report the ordering.
 
@@ -226,18 +228,22 @@ Merge when **all of**:
    `main` via `main-verdict-floor.yml`, not on the PR.
 2. `git merge-tree --write-tree --messages origin/main origin/<branch>` is clean.
    `mergeStateStatus: CLEAN` only covers textual conflicts.
-3. The proving test exists. If the claim is about BC's behavior, that test is upstream and
-   merged, or merging in the same pass.
+3. The proving test exists, and every corpus PR the body declares printed `MERGED` in the
+   arming-list read above.
 
-**Read the verdict with `tools/ci-wait.py <PR> --timeout 0`; never block on it.** One pass,
-one answer, returns at once: 0 green on current head, 1 failed with the log already fetched,
-2 still running (*not* a verdict), 3 undetermined, 4 blocked with everything green — a
+**One CI read per sweep:** `gh pr list --repo <owner>/<repo> --state open --json
+number,headRefOid,isDraft,mergeStateStatus,statusCheckRollup` returns every open PR's head and
+verdict in one call. Run `tools/ci-wait.py <PR> --timeout 0` for the PRs that call leaves
+undecided — a rollup carrying a non-success conclusion, or one short of a conclusion — and
+never block on it. One pass, one answer, returns at once: 0 green on current head, 1 failed
+with the log already fetched, 2 still running (*not* a verdict, and the ordinary answer on a PR
+just opened — leave it for the next sweep, since arming `--auto` lands a reviewed PR the moment
+its checks go green with nobody present), 3 undetermined, 4 blocked with everything green — a
 cancelled required context (below), or a required context that produced no check run at all
 once every workflow run finished (#2807).
 
-Exit 2 is the ordinary answer on a PR you just opened, and it is not a problem: leave it and
-read again on the next sweep. Waiting buys nothing, because arming `--auto` lands a reviewed
-PR the moment its checks go green with nobody present (`.claude/rules/ci-verdicts.md` §0).
+After a merge lands, clear the labels of every issue the PR named (`.claude/agents/orchestrator.md`
+Step 2).
 
 **A FAILED verdict names what has reported so far.** While other required checks are
 still running the failing list can grow, and the tool says how many have not reported.

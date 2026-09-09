@@ -130,8 +130,7 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
 - No release run is in progress (`publish.yml` pushes a fast-forward; a merge during its
   ~40-minute run kills it).
 - `git merge-tree --write-tree --messages origin/<base> origin/<branch>` is clean.
-- If the PR asserts anything about BC's behaviour, its corpus PR has **merged**, and the pin bump
-  and count-baseline update are folded in.
+- Every corpus PR the body declares reads `MERGED`, by the arming-list read in `orchestrating-a-session`.
 - No *other* PR in the same batch conflicts with it. Where two do — two submodule pin bumps to
   different revisions, say — arm only the one that must merge first and report the ordering.
 
@@ -418,10 +417,8 @@ a merge can turn `main` red, which outranks everything you were about to do.
    found only by a manual sweep, because the priority order below asks about *red* and a
    conflicted PR never becomes red.
 
-   ```bash
-   gh pr list --repo <owner>/<repo> --state open \
-     --json number,mergeStateStatus,statusCheckRollup
-   ```
+   The one CI read per sweep (`orchestrating-a-session`, the merge bar) returns
+   `mergeStateStatus` beside the rollup; take both from it.
 
    `DIRTY`/`CONFLICTING` → rebase on the base branch, resolve, force-push with
    `--force-with-lease`, re-check until it reads `BLOCKED` or `CLEAN`. **Resolve on the merits,
@@ -441,12 +438,13 @@ a merge can turn `main` red, which outranks everything you were about to do.
    - every required check is green **on the current head**, with no `CANCELLED` required context;
    - `git merge-tree` is clean against current `main`, and the affected tests were re-run if the
      branch was rebased;
-   - if it asserts anything about BC's behaviour, the corpus PR proving it **has merged**, and
-     its pin bump and count-baseline update are folded into this PR;
+   - every corpus PR its body declares reads `MERGED` (arming list, `orchestrating-a-session`);
    - it is not a release window (`publish.yml` pushes a fast-forward; a merge during its run
      kills it).
 
-   A PR from anyone else is reviewed, and its findings go to the human queue. Never merged.
+   A PR from anyone else is reviewed, and its findings go to the human queue. Never merged. After
+   a merge lands, clear the labels of every issue the PR named (`.claude/agents/orchestrator.md`
+   Step 2).
 
    The reviewer is dispatched by the loop, so it is not independent oversight — it is a second
    pass by the same lineage. It catches carelessness, not a shared wrong assumption. That is why
@@ -605,10 +603,12 @@ time. Deliberately not an OS scheduler as the mechanism: contributors run Window
 Linux and macOS, and a shell loop behaves identically on all three, with a systemd unit or Task
 Scheduler entry as optional restart-on-boot hardening.
 
-**Bound the session's lifetime either way.** Even with compaction, a session running for days
-accumulates state that is not context — tool handles, temp files, harness state. Have the loop
-end itself after a set period or number of cycles and let the timer restart it. That keeps the
-`/loop` experience while capping accumulation, and it is better than either pure option.
+**End the session after 10 cycles and let the timer start the next one.** A session running for
+days accumulates state that is not context — tool handles, temp files, harness state. On the
+tenth cycle, comment the cycle state on the tracking issue, or on the status issue this session
+opened — every open PR by number with its verdict, what is armed, what is held for a person —
+then end the session; the next one starts from that comment. Done when the comment names every
+number `gh pr list --state open --json number --repo <owner>/<repo>` prints.
 
 **Where compaction lands matters more than when it fires.** A compaction inside a unit of work
 discards that unit's working context; one between units costs nothing, because everything

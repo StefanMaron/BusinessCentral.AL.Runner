@@ -27,10 +27,10 @@ git fetch origin main
 **Concurrency with human maintainers.** Public repo with multiple maintainers: only touch PRs and issues whose assignee is `@me` (the bot's own account) or which have no assignee. Anything assigned to another user is human-owned — hands off.
 
 ```
-gh pr list --label "status: review-ready" --assignee @me --state open --json number,title,assignees --repo StefanMaron/BusinessCentral.AL.Runner
+gh pr list --label "status: review-ready" --assignee @me --state open --json number,title,assignees,headRefOid,isDraft,mergeStateStatus,statusCheckRollup --repo StefanMaron/BusinessCentral.AL.Runner
 ```
 
-(Or filter the unrestricted list to PRs whose `assignees` is empty or `@me` only.) When checking the linked issue, skip the whole PR if that issue is assigned to a non-@me user.
+(Or filter the unrestricted list to PRs whose `assignees` is empty or `@me` only.) When checking the linked issue, skip the whole PR if that issue is assigned to a non-@me user. That one call is the pass's whole CI read: it carries each PR's head SHA and rollup, so nothing needs a per-PR run listing.
 
 For each PR:
 
@@ -42,7 +42,7 @@ For each PR:
 
    If the diff looks like nonsense — implementation doesn't match the issue, the test doesn't exercise the reported AL pattern, or it is suspicious for any reason a quick read surfaces — leave one specific actionable comment naming what's wrong and **do not merge**. Do not approve "to be safe"; the goal is catching obvious-bad PRs, not deep-reviewing correct ones. Otherwise continue to the mechanical checks.
 
-2. `gh pr checks <N> --repo StefanMaron/BusinessCentral.AL.Runner`
+2. `tools/ci-wait.py <N> --timeout 0` — run it only for a PR whose rollup from that one call carries a non-success conclusion or is short of one; a green rollup on the current head is the verdict already.
 3. `gh pr diff <N> --name-only --repo StefanMaron/BusinessCentral.AL.Runner | grep -E "CHANGELOG|^tests/al-language/"`
 4. **CHANGELOG.md in diff** → check existing comments (`gh pr view <N> --json comments`); if not yet posted:
    > Please revert all changes to CHANGELOG.md — it is generated from commit messages post-merge and must not be edited in PRs.
@@ -56,18 +56,22 @@ For each PR:
    Do **not** merge until it's resolved. (No `docs/coverage.yaml` to check for — retired at the v1→v2 cutover, see `al-runner-tests` skill.)
 6. **No shipped SA implementations.** Auto-generated blank shells for dependency objects are fine — that is how the runner works. Forbidden is a *real implementation* of a System Application codeunit inside the runner (an actual Image processing / Cryptography / File Mgt. implementation, as AL the runner emits or as C# under `AlRunner/Patches/` standing in for the SA codeunit's body). The only exceptions are test-automation libraries (`LibraryAssert` 130, `LibraryVariableStorage` 131004). If the diff adds anything else under that umbrella, block with:
    > The runner does not ship real implementations of System Application codeunits — only auto-generated blank shells (normal) and test-automation libraries (`LibraryAssert`, `LibraryVariableStorage`). This change appears to add a real SA implementation; please remove it. If the AL under test actually needs SA behavior to mean anything, file a runner-gap issue describing the AL pattern instead.
-7. Sanity check passed (step 1) + CI green + no CHANGELOG + no stray `tests/al-language/` edits + no forbidden SA implementation:
+7. Sanity check passed (step 1) + CI green + no CHANGELOG + no stray `tests/al-language/` edits + no forbidden SA implementation + every condition in the arming list (`.claude/skills/orchestrating-a-session/SKILL.md`) holds, every `Corpus-PR:` line in the body among them — an unmerged corpus PR means commenting with its number and moving to the next PR:
    - CI in progress: `gh pr merge <N> --auto --squash --repo StefanMaron/BusinessCentral.AL.Runner` (auto-merge is a repo setting — `allow_auto_merge=true`, `delete_branch_on_merge=true` — so this queues the merge rather than failing; it won't show in a checkout diff). **`--auto` only queues while the required checks are still pending. If they are already green it MERGES IMMEDIATELY** — `gh` branches on that itself — so do not reach for it as a safe "arm it and decide later": running it on a green PR is the merge (#3127).
    - CI complete: `gh pr merge <N> --squash --repo StefanMaron/BusinessCentral.AL.Runner`
    - Skip `gh pr review --approve` (fails when you are the repo owner).
 8. CI failing: read job log, post a specific actionable comment.
 
-**Stuck PR:** same CI run ID across loops + no new commits → close with comment, reset linked issue (remove `status: in-progress` + `agent: <X>`, add `status: ready`).
+**Stuck PR:** same CI run ID across loops + no new commits → close with comment, then clear its issues' labels per Step 2, returning each to `status: ready`.
 
-## Step 2 — Close linked issues
-```
-gh issue close <N> --comment "Closed — implemented in #<PR>" --repo StefanMaron/BusinessCentral.AL.Runner
-```
+## Step 2 — Close linked issues and clear their labels
+Merging closes what `closingIssuesReferences` names; the labels stay behind, so clear them here. After every merge or close, list the issues the PR names with `gh pr view <PR> --json closingIssuesReferences,body,headRefName --repo StefanMaron/BusinessCentral.AL.Runner`: the `closingIssuesReferences` numbers, every `Part of #N` line in the body (your own read of the body, not a GitHub parse), and the `issue-<N>` in the branch name. Then, per issue:
+
+- **Closed** — `gh issue edit <N> --remove-label "status: in-progress" --remove-label "agent: <X>" --repo StefanMaron/BusinessCentral.AL.Runner`. Close it yourself when the merge did not: `gh issue close <N> --comment "Closed — implemented in #<PR>" --repo StefanMaron/BusinessCentral.AL.Runner`.
+- **`Part of #N`** — comment on N naming what this PR landed and what remains, then `gh issue edit <N> --add-label "status: ready" --remove-label "status: in-progress" --remove-label "agent: <X>" --repo StefanMaron/BusinessCentral.AL.Runner`.
+- **Named by the branch only, and still open** — comment on it naming the PR, so the next agent reads what already landed.
+
+Done when `gh issue view <N> --json state,labels --repo StefanMaron/BusinessCentral.AL.Runner` shows no `status:` and no `agent:` label on every closed issue the PR named.
 
 ## Step 3 — Unblock issues
 ```
