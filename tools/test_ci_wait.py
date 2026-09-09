@@ -1599,6 +1599,137 @@ check("#3589: the excerpt keeps the emoji as UTF-8", ROBOT_UTF8 in _child.stdout
 check("#3589: the excerpt keeps the em dash as UTF-8, not as cp1252 0x97",
       DASH_UTF8 in _child.stdout and DASH_CP1252 not in _child.stdout, _detail)
 
+# --------------------------------------------------------------------------
+# #3679 -- the floor verdict for `main`, printed beside the PR verdict.
+#
+# A PR branched during a red window inherits a failure it did not cause, and
+# nothing in this tool said so. The claim proved here is narrow and is the whole
+# point: the line reports a verdict about `main`, it NEVER changes the PR's exit
+# code, and a network failure comes out as "unavailable", never as GREEN.
+# --------------------------------------------------------------------------
+import datetime as _dt
+
+# updated_at is UTC and so is this clock, or the age would be measured against
+# the local zone and the test would pass or fail by geography.
+_NOW = _dt.datetime(2026, 9, 9, 12, 0, 0, tzinfo=_dt.timezone.utc).timestamp()
+
+
+def _fr(path, conclusion, sha, updated):
+    return {"path": f".github/workflows/{path}", "conclusion": conclusion,
+            "head_sha": sha, "updated_at": updated}
+
+
+def _line(runs, reason=""):
+    return cw.floor_verdict(runs, reason, _NOW)
+
+
+_green = _line([_fr("main-verdict-floor.yml", "success", "1a2b3c4d5e6f", "2026-09-09T11:48:00Z")])
+check("#3679: a successful floor run on main reads GREEN with the sha and workflow",
+      _green.startswith("main floor: GREEN on 1a2b3c4d")
+      and "main-verdict-floor.yml" in _green, _green)
+check("#3679: ...and carries an age, so a stale floor is visible as stale",
+      "12m" in _green, _green)
+
+_red = _line([_fr("test-matrix.yml", "failure", "aaaaaaaabbbb", "2026-09-09T11:00:00Z")])
+check("#3679: a failed matrix run on main reads RED",
+      _red.startswith("main floor: RED on aaaaaaaa"), _red)
+check("#3679: ...and its age is reported in hours", "1h" in _red, _red)
+
+# The newest conclusive run decides, not the first in the list.
+_newer = _line([_fr("test-matrix.yml", "failure", "old00000", "2026-09-09T09:00:00Z"),
+                _fr("main-verdict-floor.yml", "success", "new00000", "2026-09-09T11:55:00Z")])
+check("#3679: the NEWEST conclusive run decides the verdict",
+      _newer.startswith("main floor: GREEN on new00000"), _newer)
+
+# A floor run concludes `success` when it SKIPS -- the commit already had a
+# verdict, and that verdict can be a FAILURE. Red wins on the same commit, or
+# the line would report green for a commit measured red.
+_skip = _line([_fr("test-matrix.yml", "failure", "deadbeef1234", "2026-09-09T11:30:00Z"),
+               _fr("main-verdict-floor.yml", "success", "deadbeef1234", "2026-09-09T11:40:00Z")])
+check("#3679: a floor run that SKIPPED a red commit does not turn it green",
+      _skip.startswith("main floor: RED on deadbeef"), _skip)
+
+# Cancelled and in-progress runs are not verdicts, in either direction.
+_none = _line([_fr("test-matrix.yml", "cancelled", "ccccccc0", "2026-09-09T11:59:00Z"),
+               _fr("main-verdict-floor.yml", None, "ccccccc0", "2026-09-09T11:59:30Z")])
+check("#3679: cancelled/unfinished runs yield no verdict, never a green one",
+      _none == "main floor: no conclusive run found", _none)
+
+# An unrelated workflow that happens to run on main is not a matrix verdict.
+_other = _line([_fr("sync-changelog-unreleased.yml", "success", "eeeeeeee", "2026-09-09T11:59:00Z")])
+check("#3679: a non-matrix workflow on main is not read as a floor verdict",
+      _other == "main floor: no conclusive run found", _other)
+
+# The third state: a read that did not happen is never a verdict.
+_unavail = _line(None, "gh api failed for main-verdict-floor.yml")
+check("#3679: an unreadable run list is 'unavailable', not GREEN and not RED",
+      _unavail.startswith("main floor: unavailable")
+      and "GREEN" not in _unavail and "RED" not in _unavail, _unavail)
+check("#3679: ...and names the reason it could not tell",
+      "main-verdict-floor.yml" in _unavail, _unavail)
+
+# The fetch half: both workflows are asked, on main, and one failure refuses.
+_calls = []
+
+
+def _floor_gh(ok=(0, "[]"), fail_on=None):
+    def _gh(args, attempts=4):
+        _calls.append(list(args))
+        if fail_on and fail_on in args[1]:
+            return 1, "dial tcp: lookup api.github.com: no such host"
+        return ok
+    return _gh
+
+
+_old_gh = cw.gh
+try:
+    _calls.clear()
+    cw.gh = _floor_gh(ok=(0, '[{"path": ".github/workflows/main-verdict-floor.yml",'
+                             ' "conclusion": "success", "head_sha": "abcdef1234",'
+                             ' "updated_at": "2026-09-09T11:59:00Z"}]'))
+    _runs, _why = cw.fetch_floor_runs()
+    check("#3679: the fetch asks for BOTH producers of a main verdict",
+          any("main-verdict-floor.yml" in a[1] for a in _calls)
+          and any("test-matrix.yml" in a[1] for a in _calls), repr(_calls))
+    check("#3679: ...scoped to the main branch",
+          all("branch=main" in a[1] for a in _calls if a[0] == "api"), repr(_calls))
+    check("#3679: ...and returns what it read", _runs is not None and len(_runs) == 2, repr(_runs))
+
+    _calls.clear()
+    cw.gh = _floor_gh(fail_on="test-matrix.yml")
+    _runs, _why = cw.fetch_floor_runs()
+    check("#3679: one failed read refuses rather than answering from half the data",
+          _runs is None and "test-matrix.yml" in _why, f"{_runs!r} {_why!r}")
+    check("#3679: ...and that refusal prints as unavailable",
+          cw.floor_verdict(_runs, _why).startswith("main floor: unavailable"),
+          cw.floor_verdict(_runs, _why))
+
+    # print_floor_verdict() must never raise and never return an exit code.
+    _calls.clear()
+    cw.gh = _floor_gh(ok=(1, "boom"))
+    _buf = io.StringIO()
+    _stdout = sys.stdout
+    sys.stdout = _buf
+    try:
+        _ret = cw.print_floor_verdict()
+    finally:
+        sys.stdout = _stdout
+    check("#3679: printing the floor line returns nothing (it cannot change an exit code)",
+          _ret is None, repr(_ret))
+    check("#3679: ...and a broken gh prints unavailable, on one line",
+          _buf.getvalue().startswith("main floor: unavailable")
+          and len(_buf.getvalue().rstrip().splitlines()) == 1, repr(_buf.getvalue()))
+finally:
+    cw.gh = _old_gh
+
+# main() must actually print it next to the verdict, on every path that reached
+# GitHub -- a helper nobody calls is the #3679 defect with extra steps.
+_main_src = open(os.path.join(HERE, "ci-wait.py"), encoding="utf-8").read()
+check("#3679: main() prints the floor line on every verdict path",
+      _main_src.count("print_floor_verdict()") >= 5,
+      f"only {_main_src.count('print_floor_verdict()')} call site(s)")
+
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")

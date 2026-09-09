@@ -38,6 +38,11 @@ progress detail belongs. Check a new invocation against a PR whose state you alr
 **Exit 2 is the ordinary answer here, not a failure**, and never a green: the checks have not
 reported, so move on and read again later.
 
+**Beside every verdict it prints one line about `main` itself** — `main floor: RED on 8b6885f4
+(main-verdict-floor.yml, 1h ago)` (#3679), so a PR branched during a red window is visible as
+inheriting a failure it did not cause. It is a report: it never changes the exit code, and a
+read that did not happen prints `unavailable`, never a verdict.
+
 `ci-wait.py` reads the required contexts from the **live branch ruleset** on each invocation
 (`GET /repos/{owner}/{repo}/rules/branches/main`, which reports only *active* rulesets),
 falling back to its built-in list and saying so loudly; `check_required_contexts.py` fails CI
@@ -180,7 +185,8 @@ tolerates in either state while a by-hand ruleset edit catches up with a merged 
 
 **A pull request runs three legs, not eight** (#3141): `.github/pr-bc-versions.txt` — 27.0,
 27.5 and 28.4. `main` runs all eight on every push, every 30 minutes from
-`main-verdict-floor.yml` (#3003), and on the release path. So a green pull request has not been
+`main-verdict-floor.yml` and again about ten minutes after a merge burst ends (#3003, #3679 —
+that workflow's own header states both triggers), and on the release path. So a green pull request has not been
 measured on 27.3, 28.0, 28.1, 28.2 or 28.3 — dispatch `bc-leg-rerun.yml` for one of those
 against your branch — and section 5's leg-set evidence is thin on a PR, where three legs give
 few distinguishable failing sets; prefer the dispatch or an empty commit.

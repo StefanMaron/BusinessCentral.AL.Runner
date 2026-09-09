@@ -80,6 +80,12 @@ public sealed class MainVerdictFloorWorkflowTests
     /// </summary>
     private const int LongestObservedRunMinutes = 27;
 
+    /// <summary>
+    /// Median interval between merges to `main` in the same sample, in minutes. The #3679
+    /// debounce must exceed it, or a burst still produces one floor run per merge.
+    /// </summary>
+    private const int MedianMergeIntervalMinutes = 6;
+
     private static string Read(string name)
     {
         var path = Path.Combine(WorkflowDir, name);
@@ -91,12 +97,66 @@ public sealed class MainVerdictFloorWorkflowTests
         string.Join('\n', text.Split('\n').Where(l => !l.TrimStart().StartsWith('#')));
 
     [Fact]
-    public void Floor_RunsOnlyOnAScheduleAndOnDemand()
+    public void Floor_RunsOnASchedule_OnDemand_AndAfterAMergeToMain()
     {
-        // The cost guard. A `push` trigger here would run a SECOND eight-leg matrix on every
-        // merge — 130 extra runs a day — and a `pull_request` trigger would put a
-        // non-gating reporter on the same events the real gate uses.
-        Assert.Equal(new[] { "schedule", "workflow_dispatch" }, WorkflowTriggers.TriggersOf(Read(Floor)));
+        // #3679 added the `push`. What made a push trigger unaffordable before was one
+        // eight-leg matrix per merge; the debounce below is what removes that, so the two
+        // must be asserted together — a push trigger with no wait job is the cost guard this
+        // test used to be, defeated. A `pull_request` trigger stays forbidden outright: it
+        // would put a non-gating reporter on the same events the real gate uses.
+        var triggers = WorkflowTriggers.TriggersOf(Read(Floor));
+
+        Assert.Equal(new[] { "schedule", "workflow_dispatch", "push" }, triggers);
+        Assert.Matches(new Regex(@"push:\s*\n\s*branches:\s*\[\s*main\s*\]"), CodeOnly(Read(Floor)));
+    }
+
+    [Fact]
+    public void Floor_DebouncesAMergeBurst_IntoOneRunAfterIt()
+    {
+        // #3679: a merge is when a verdict is most wanted and least likely — the
+        // push-triggered matrix is cancelled by the next merge 83% of the time — but one
+        // floor matrix per merge is unaffordable at ~130 merges a day. The wait job is the
+        // whole design: a newer merge cancels it, so a burst collapses to one run after it.
+        var code = CodeOnly(Read(Floor));
+        var jobs = WorkflowParity.SplitJobs(code);
+
+        var wait = jobs.Single(j => Regex.IsMatch(j.Value, @"sleep\s+\d+"));
+        Assert.Contains("github.event_name == 'push'", wait.Value, StringComparison.Ordinal);
+        Assert.Matches(new Regex(@"cancel-in-progress:\s*true"), wait.Value);
+
+        var seconds = int.Parse(Regex.Match(wait.Value, @"sleep\s+(\d+)").Groups[1].Value);
+        Assert.True(seconds > MedianMergeIntervalMinutes * 60,
+            $"the debounce is {seconds}s, at or under the {MedianMergeIntervalMinutes}-minute "
+            + "median merge interval — a burst would still produce one floor run per merge.");
+
+        var cadence = int.Parse(Regex.Match(code, @"cron:\s*'\*/(\d+) \* \* \* \*'").Groups[1].Value);
+        Assert.True(seconds < cadence * 60,
+            $"the debounce is {seconds}s against a {cadence}-minute cadence — a wait at least "
+            + "as long as the cadence buys nothing the schedule would not already have done.");
+
+        // A wait that was CANCELLED must not reach the matrix, or the debounce is decoration
+        // and every merge in the burst still runs one.
+        var needed = jobs["verdict-needed"];
+        Assert.Contains(wait.Key, WorkflowParity.NeedsOf(needed));
+        Assert.Matches(new Regex($@"needs\.{wait.Key}\.result\s*==\s*'success'"), needed);
+    }
+
+    [Fact]
+    public void Floor_DoesNotDuplicateAFloorRunAlreadyEstablishingThisCommit()
+    {
+        // Without this, every quiet-period merge costs two full matrices: the push-triggered
+        // floor run takes ~33 min (10 debounce + 23 matrix), the cadence is 30, so a
+        // scheduled run lands inside it, finds no CONCLUSIVE run yet, and starts a second one
+        // on the same commit. The guard defers to an in-flight FLOOR run only — an in-flight
+        // `test-matrix.yml` run on `main` is the thing the next merge cancels (#3003), so
+        // deferring to that would reproduce the gap this workflow exists to close.
+        var needed = WorkflowParity.SplitJobs(CodeOnly(Read(Floor)))["verdict-needed"];
+
+        Assert.Contains("status", needed, StringComparison.Ordinal);
+        Assert.Contains("completed", needed, StringComparison.Ordinal);
+        // ...and it must exclude ITSELF, or the check sees this very run in flight and the
+        // floor never runs again.
+        Assert.Contains("GITHUB_RUN_ID", needed, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -117,15 +177,39 @@ public sealed class MainVerdictFloorWorkflowTests
     }
 
     [Fact]
-    public void Floor_NeverCancelsItself_AndDoesNotShareTheGatingGroup()
+    public void Floor_NeverCancelsItsMatrix_AndDoesNotShareTheGatingGroup()
     {
-        // A cancelled floor run reproduces the bug it exists to fix. Sharing the gating
-        // workflow's group would be worse still: a merge would cancel the floor, so the
+        // A cancelled floor MATRIX reproduces the bug this workflow exists to fix. Sharing the
+        // gating workflow's group would be worse still: a merge would cancel the floor, so the
         // floor could never outlive the merge rate that defeats the push-triggered run.
+        //
+        // Since #3679 the file also contains a cancellable job, so "somewhere in this file
+        // there is a `cancel-in-progress: false`" is no longer a guard — a file with both
+        // spellings passes it while the matrix is the cancellable one. Attribute each
+        // concurrency block to its job instead.
         var code = CodeOnly(Read(Floor));
+        var jobs = WorkflowParity.SplitJobs(code);
 
-        Assert.Matches(new Regex(@"cancel-in-progress:\s*false"), code);
+        // Nothing may hold the whole RUN. A workflow-level group with cancellation off would
+        // queue a merge's run behind a floor matrix already in flight, and a QUEUED run runs
+        // no jobs — so its wait could not start, could not cancel the previous wait, and the
+        // debounce would serialise instead of debouncing.
+        Assert.DoesNotMatch(new Regex(@"^concurrency:", RegexOptions.Multiline), code);
+
+        var matrix = jobs.Single(j => j.Value.Contains(WorkflowParity.DelegationMarker, StringComparison.Ordinal));
+        Assert.Matches(
+            new Regex(@"group:\s*main-verdict-floor\s*\n\s*cancel-in-progress:\s*false"),
+            matrix.Value);
         Assert.DoesNotMatch(new Regex(@"group:.*github\.ref"), code);
+
+        // Exactly one cancellable job, and it is the wait rather than the work.
+        var cancellable = jobs
+            .Where(j => Regex.IsMatch(j.Value, @"cancel-in-progress:\s*true"))
+            .Select(j => j.Key)
+            .ToArray();
+        Assert.Single(cancellable);
+        Assert.DoesNotContain(WorkflowParity.DelegationMarker, jobs[cancellable[0]],
+            StringComparison.Ordinal);
     }
 
     [Fact]

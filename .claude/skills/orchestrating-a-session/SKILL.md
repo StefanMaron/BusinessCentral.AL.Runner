@@ -231,7 +231,10 @@ Merge when **all of**:
    legs green" would refuse a legitimate PR or send you hunting for legs that do not exist.
    The legs are not required contexts anyway — the aggregate `BC test matrix passed` is, and
    it fails when any leg of whatever matrix ran fails. The other five versions run on
-   `main` via `main-verdict-floor.yml`, not on the PR.
+   `main` via `main-verdict-floor.yml`, not on the PR — on a 30-minute cadence and
+   again about ten minutes after a merge burst ends (#3679). `tools/ci-wait.py` prints that
+   floor's newest verdict beside the PR's, so a red `main` a PR merely inherited is visible
+   before you arm it.
 2. `git merge-tree --write-tree --messages origin/main origin/<branch>` is clean.
    `mergeStateStatus: CLEAN` only covers textual conflicts.
 3. The proving test exists, and the corpus-PR condition of the arming list above holds.

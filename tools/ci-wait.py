@@ -36,6 +36,15 @@ Usage
     tools/ci-wait.py 2379 --timeout 0     # single pass: look once, do not wait
     tools/ci-wait.py 2379 --no-log        # skip the failure log fetch
 
+Beside every verdict it prints one more line -- the newest conclusive matrix
+verdict for `main` itself (#3679):
+
+    main floor: RED on 8b6885f4 (main-verdict-floor.yml, 1h ago)
+
+A pull request branched during a red window inherits a failure it did not cause,
+and that was invisible here. The line is a REPORT: it never changes the exit
+code, and a read that did not happen prints as `unavailable`, never as GREEN.
+
 Exit codes
 ----------
     0  every required check passed ON THE CURRENT HEAD -- safe to report green
@@ -143,6 +152,7 @@ exit-4 output names any entry that fails the condition.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import re
@@ -280,6 +290,108 @@ def workflow_runs_for(sha: str) -> list[dict] | None:
     except Exception:
         return None
     return got if isinstance(got, list) else None
+
+
+# --- the floor verdict for `main` (#3679) ----------------------------------
+#
+# A pull request branched during a red window inherits a failure it did not
+# cause. `main`'s own verdict is measurable -- main-verdict-floor.yml and
+# test-matrix.yml are its only two producers -- so this tool prints it beside
+# the PR verdict rather than leaving the agent to go and ask. It is a REPORT:
+# it never touches the exit code, and a read that did not happen prints as
+# `unavailable`, never as a verdict (guards-need-a-third-state.md).
+FLOOR_WORKFLOWS = ("main-verdict-floor.yml", "test-matrix.yml")
+
+
+def _workflow_file(run: dict) -> str:
+    return (run.get("path") or "").rsplit("/", 1)[-1]
+
+
+def _age_of(updated_at: str | None, now: float) -> str:
+    """`updated_at` as an age, or "age unknown" when it cannot be parsed."""
+    if not updated_at:
+        return "age unknown"
+    try:
+        when = datetime.datetime.strptime(updated_at, "%Y-%m-%dT%H:%M:%SZ")
+        when = when.replace(tzinfo=datetime.timezone.utc).timestamp()
+    except Exception:
+        return "age unknown"
+    secs = max(0.0, now - when)
+    if secs < 60:
+        return "just now"
+    if secs < 3600:
+        return f"{int(secs // 60)}m ago"
+    if secs < 86400:
+        return f"{int(secs // 3600)}h ago"
+    return f"{int(secs // 86400)}d ago"
+
+
+def fetch_floor_runs(branch: str = "main"):
+    """(runs, reason): completed runs of both producers of a `main` verdict.
+
+    Asked per workflow rather than as one `?branch=main` sweep: `main` carries
+    enough unrelated traffic that a 100-run page can hold no matrix run at all,
+    and an empty page would then read as "no conclusive run found" -- a wrong
+    answer wearing the shape of a right one.
+
+    One failed read refuses the whole answer. Judging `main` from whichever half
+    responded is the #3002 shape: a partial read and a genuinely empty one are
+    indistinguishable from here, and the smaller set is the one that produces a
+    false GREEN.
+    """
+    out: list[dict] = []
+    for wf in FLOOR_WORKFLOWS:
+        rc, body = gh(["api",
+                       f"repos/{REPO}/actions/workflows/{wf}/runs"
+                       f"?branch={branch}&status=completed&per_page=20",
+                       "--jq", "[.workflow_runs[] | {path, conclusion, head_sha, updated_at}]"])
+        if rc != 0:
+            return None, f"could not read {wf} runs on {branch}"
+        try:
+            got = json.loads(body)
+        except Exception:
+            return None, f"unreadable run list for {wf} on {branch}"
+        if not isinstance(got, list):
+            return None, f"unexpected run list shape for {wf} on {branch}"
+        out.extend(got)
+    return out, ""
+
+
+def floor_verdict(runs: list[dict] | None, reason: str = "",
+                  now: float | None = None) -> str:
+    """One line: the newest conclusive matrix verdict for `main`.
+
+    RED wins over GREEN on the SAME commit, because a floor run concludes
+    `success` when it SKIPS -- its `verdict-needed` guard counts a `failure` as
+    a verdict too, so a floor success can sit on top of a red commit and mean
+    only "somebody already measured this one".
+    """
+    now = time.time() if now is None else now
+    if runs is None:
+        why = reason or "could not read main's recent workflow runs"
+        return f"main floor: unavailable ({why})"
+    conclusive = [r for r in runs
+                  if _workflow_file(r) in FLOOR_WORKFLOWS
+                  and r.get("conclusion") in ("success", "failure")]
+    if not conclusive:
+        return "main floor: no conclusive run found"
+    newest = max(conclusive, key=lambda r: r.get("updated_at") or "")
+    sha = newest.get("head_sha") or ""
+    same = [r for r in conclusive if (r.get("head_sha") or "") == sha]
+    red = [r for r in same if r.get("conclusion") == "failure"]
+    decider = max(red, key=lambda r: r.get("updated_at") or "") if red else newest
+    state = "RED" if red else "GREEN"
+    return (f"main floor: {state} on {sha[:8] or '<unknown sha>'} "
+            f"({_workflow_file(decider)}, {_age_of(decider.get('updated_at'), now)})")
+
+
+def print_floor_verdict() -> None:
+    """Print the floor line. Returns nothing, raises nothing, gates nothing."""
+    try:
+        runs, why = fetch_floor_runs()
+        print(floor_verdict(runs, why))
+    except Exception as exc:  # pragma: no cover - a report may never break a verdict
+        print(f"main floor: unavailable ({type(exc).__name__} while reading main's runs)")
 
 
 def contexts_from_branch_rules(payload) -> tuple[str, ...] | None:
@@ -1277,6 +1389,9 @@ def main() -> int:
             print(f"\nFAILED on {sha[:8]} -- " + v.lines[0])
             for line in v.lines[1:]:
                 print(line)
+            # Beside the PR verdict, never instead of it: a red PR branched from
+            # a red `main` is often not this PR failure to own (#3679).
+            print_floor_verdict()
             if not args.no_log:
                 # The check-run `id` is NOT the Actions job id that `gh run view --job`
                 # wants; passing it fails with "could not find job". The job id is the
@@ -1308,12 +1423,14 @@ def main() -> int:
             print(f"\nUNDETERMINED on {sha[:8]} -- " + v.lines[0])
             for line in v.lines[1:]:
                 print(line)
+            print_floor_verdict()
             return 3
 
         if v.code == 4:
             print(f"\nBLOCKED on {sha[:8]} -- " + v.lines[0].split(" -- ", 1)[1])
             for line in v.lines[1:]:
                 print(line)
+            print_floor_verdict()
             return 4
 
         if v.code == 0:
@@ -1321,6 +1438,7 @@ def main() -> int:
             for line in v.lines[1:]:
                 print(line)
             print("Confirm this SHA is still the PR head before reporting it.")
+            print_floor_verdict()
             return 0
 
         if time.time() >= deadline:
@@ -1338,6 +1456,7 @@ def main() -> int:
     else:
         print(f"\nSTILL RUNNING after {args.timeout}s ({reason}). "
               "This is NOT a verdict -- call again; do not report a result.")
+    print_floor_verdict()
     return 2
 
 
