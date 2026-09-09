@@ -56,6 +56,7 @@
 //   the same NCLMetaTable the runner already builds. No BC method body is rewritten and no
 //   AL business logic is touched.
 using System.Xml;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -505,38 +506,113 @@ public static partial class RecordPatches
     /// the reason that trace exists at all
     /// (docs/object-metadata-from-bc.md#reading-the-values-back).</para>
     ///
-    /// <para>A table whose structure does not expose it answers true rather than throwing:
-    /// this is a defaulting rule, and true is the value BC itself substitutes when it has no
-    /// field. Reflection is cached per (table, field) because the virtual table asks about
-    /// every control on every known page.</para>
+    /// <para>A table that genuinely has no such field answers true — BC's own
+    /// <c>field?.Editable ?? true</c>. A member the runner could not READ refuses instead
+    /// (#3669): true is a load-bearing answer about a field here, not a neutral sentinel, so
+    /// substituting it for a failed lookup reports a non-editable field as editable. The
+    /// per-read split is in <see cref="ReadMetaFieldEditable"/>. Reflection is cached per
+    /// (table, field) because the virtual table asks about every control on every known
+    /// page.</para>
     /// </summary>
     private static bool GetMetaFieldEditable(int tableId, int fieldNo)
         => _bcMetaFieldEditable.GetOrAdd((tableId, fieldNo), static key =>
         {
             var meta = GetOrBuildNCLMetaTable(key.TableId);
+            // The runner's OWN build declining to produce a metatable is a fact about the
+            // runner's state, not about BC's layout, so it stays silent — BcShapeGapException.cs
+            // draws that line explicitly.
             if (meta == null) return true;
-
-            var original = meta.GetType()
-                .GetField("metadataAppGroupMetaTable",
-                    System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                ?.GetValue(meta);
-            var metaTable = original?.GetType()
-                .GetProperty("Item", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                ?.GetValue(original);
-            if (metaTable?.GetType()
-                    .GetProperty("Fields", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
-                    ?.GetValue(metaTable) is not System.Collections.IEnumerable fields)
-                return true;
-
-            foreach (var f in fields)
-            {
-                if (f == null) continue;
-                var t = f.GetType();
-                if (t.GetProperty("Id")?.GetValue(f) is not int id || id != key.FieldNo) continue;
-                return t.GetProperty("Editable")?.GetValue(f) is not bool e || e;
-            }
-            return true;
+            return ReadMetaFieldEditable(meta, key.FieldNo);
         });
+
+    /// <summary>
+    /// <see cref="GetMetaFieldEditable"/>'s reflection walk, over the NCLMetaTable's original
+    /// <c>Types.Metadata.MetaTable</c>. Split out and taking <paramref name="meta"/> as
+    /// <c>object</c> so the refusals below can be driven with fakes standing in for a moved
+    /// member, without a BC install — the idiom
+    /// <c>AlRunner.Tests/PageControlFieldEditableShapeGapTests</c> uses, after
+    /// QueryDataItemFilterShapeGapTests. Production passes exactly the NCLMetaTable the old
+    /// body read.
+    ///
+    /// <para>#3669 — a FAILED LOOKUP refuses; BC's OWN ANSWER stays silent. Every exit used to
+    /// be <c>true</c>, and <c>true</c> here is not a neutral sentinel: SolveEditable's rule 2
+    /// renders it as the AL-visible "True", so a field BC reports non-editable would be
+    /// reported editable on the BC version where any of these members moves. Which exit is
+    /// which, and the member types that decide it, are in
+    /// docs/page-control-field-from-bc-document.md#a-failed-lookup-refuses.</para>
+    /// </summary>
+    private static bool ReadMetaFieldEditable(object meta, int fieldNo)
+    {
+        const string surface = "Page Control Field (system table 2000000192)";
+        var tMeta = meta.GetType();
+
+        // The field LOOKUP refuses; its VALUE reading null does not. BC's own
+        // GetMetaTableOriginal() is `metadataAppGroupMetaTable?.Item` (Ncl 28.1), so a null
+        // there is an answer BC itself produces and falls back from, and the runner's
+        // AssignMetaTableOriginal is best-effort by the same design.
+        var original = BcShape.Field(
+                tMeta, "metadataAppGroupMetaTable",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+                surface)
+            .GetValue(meta);
+        if (original == null) return true;
+
+        // Same split one level down: MetadataExtension`1.Item is reference-typed and BC's `?.`
+        // chain treats a null Item as "no original MetaTable".
+        var metaTable = BcShape.Property(
+                original.GetType(), "Item",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
+                surface)
+            .GetValue(original);
+        if (metaTable == null) return true;
+
+        // MetaTable.Fields is ImmutableArray<MetaField> — a STRUCT, so GetValue boxes it and it
+        // is never null. Neither a null nor a non-enumerable read can be BC answering; both
+        // mean the runner could not perform the read.
+        var tMetaTable = metaTable.GetType();
+        var rawFields = BcShape.Property(
+                tMetaTable, "Fields",
+                System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance,
+                surface)
+            .GetValue(metaTable);
+        if (rawFields == null)
+            throw new BcShapeGapException(
+                surface, $"{tMetaTable.Name}.Fields",
+                "read as null — BC declares it as a non-nullable ImmutableArray<MetaField>, so "
+                + "the runner cannot tell an empty field list from a member that moved");
+        var fields = BcShape.RequiredEnumerable(
+            rawFields, $"{tMetaTable.Name}.Fields", surface,
+            "the runner walks it to find the bound field's Editable");
+
+        foreach (var f in fields)
+        {
+            if (f == null) continue;   // structural: a null element cannot be interrogated
+            var t = f.GetType();
+
+            // Id is System.Int32 and Editable is System.Boolean on BC, so neither GetValue can
+            // answer null. A non-int Id is the most deceptive form of the original defect:
+            // every field misses the fieldNo test and the walk falls out reporting editable.
+            var rawId = BcShape.Property(t, "Id", surface).GetValue(f);
+            if (rawId is not int id)
+                throw new BcShapeGapException(
+                    surface, $"{t.Name}.Id",
+                    $"holds {(rawId == null ? "null" : "a " + rawId.GetType().Name)}, not the "
+                    + "Int32 BC declares — the runner compares it against the bound field number");
+            if (id != fieldNo) continue;
+
+            var rawEditable = BcShape.Property(t, "Editable", surface).GetValue(f);
+            if (rawEditable is not bool e)
+                throw new BcShapeGapException(
+                    surface, $"{t.Name}.Editable",
+                    $"holds {(rawEditable == null ? "null" : "a " + rawEditable.GetType().Name)},"
+                    + " not the Boolean BC declares — it is the value this column reports");
+            return e;
+        }
+
+        // BC's own `field?.Editable ?? true`: the walk completing is a real "this table has no
+        // such field", not a failed read. Converting it would error every unbound control.
+        return true;
+    }
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int TableId, int FieldNo), bool>
         _bcMetaFieldEditable = new();

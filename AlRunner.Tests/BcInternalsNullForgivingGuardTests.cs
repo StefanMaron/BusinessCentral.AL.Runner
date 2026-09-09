@@ -231,8 +231,13 @@ public sealed class BcInternalsNullForgivingGuardTests
         // indistinguishable from a dataitem that genuinely declares no filter (#3656);
         // 81 -> 82 for GetStaticColumnFilters' ColumnFilters lookup in
         // RecordPatches.QueryProjection.cs, the sibling of those five and the same silent
-        // `yield break` (#3660).
-        Assert.Equal(82, converted);
+        // `yield break` (#3660); 82 -> 87 for the five reads in ReadMetaFieldEditable in
+        // RecordPatches.PageControlFieldFromBcDocument.cs, whose failure used to answer
+        // `true` — a load-bearing "this field is editable" rather than a neutral sentinel,
+        // so a non-editable field was reported editable (#3669). Three exits in that same
+        // method deliberately stay silent, because a null there is BC's own answer; the
+        // per-read split is in docs/page-control-field-from-bc-document.md#a-failed-lookup-refuses.
+        Assert.Equal(87, converted);
     }
 
     /// <summary>

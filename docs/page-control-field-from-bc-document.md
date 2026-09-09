@@ -285,6 +285,59 @@ in this file as resting on a reflection measurement rather than a tier verdict, 
 filed to settle it. That is the process working — the cost was one wrong column shipped in the
 meantime, not a wrong claim left standing.
 
+<a id="a-failed-lookup-refuses"></a>
+
+### Reading the field's `Editable`: a failed lookup refuses, BC's own answer stays silent
+
+Rule 2 above resolves an undeclared `Editable` against the bound field's own `Editable`. That
+value is not on `NCLMetaField` — it lives on the original `Types.Metadata.MetaField` hanging
+off the NCLMetaTable's private `metadataAppGroupMetaTable`, so `GetMetaFieldEditable` reaches
+it through five reflection lookups.
+
+Every one of those used to answer `true` on failure (#3669). That is not a neutral sentinel
+here: rule 2 renders the value as the AL-visible `"True"`, so a field BC reports non-editable
+would be reported **editable** on the BC version where any of the five members moves — a
+plausible wrong value, which is worse than an empty one, and the shape
+`.claude/rules/loud-failures.md` forbids. Latent, not live: every BC version this repository
+tests resolves all five.
+
+The conversion is per read, because getting it wrong in the other direction breaks an ordinary
+page on **every** BC version rather than only a future one. What decides each case is whether a
+null can be BC's own answer. Measured off `Microsoft.Dynamics.Nav.Types.dll` and
+`Microsoft.Dynamics.Nav.Ncl.dll` at 28.1.49838.54308, via `MetadataLoadContext`:
+
+| read | BC's declared type | a null means | verdict |
+|---|---|---|---|
+| `NCLMetaTable.metadataAppGroupMetaTable` (lookup) | `MetadataExtension<MetaTable>` | the field is gone | **refuses** |
+| …its **value** | reference type | never assigned | silent |
+| `MetadataExtension\`1.Item` (lookup) | — | the property is gone | **refuses** |
+| …its **value** | `MetaTable`, reference type | no original MetaTable | silent |
+| `MetaTable.Fields` | `ImmutableArray<MetaField>` — a **struct** | impossible; boxes, never null | **refuses** |
+| `MetaField.Id` | `System.Int32` | impossible | **refuses** |
+| `MetaField.Editable` | `System.Boolean` | impossible | **refuses** |
+| the `foreach` completing | — | the table has no such field | silent |
+
+The three struct/value-typed members are the load-bearing half: `GetValue` on them cannot
+return null, so a null read can only be a lookup that failed, and there is no BC answer for it
+to be confused with. `Fields` being an `ImmutableArray` is also why a **non-enumerable** read
+refuses rather than folding into the null branch — a member that is present and holds an
+uninterpretable shape is the same "BC's layout moved" case, and folding the two is how #2786's
+silent skip happened.
+
+The three silent exits are BC's own answers, not failed reads, and the citation for the first
+two is BC's own code: `NCLMetaTable.GetMetaTableOriginal()` is literally
+`return metadataAppGroupMetaTable?.Item;` (Ncl 28.1), so BC treats a null at either level as an
+answer and its callers take name-based fallbacks. The runner's `AssignMetaTableOriginal` is
+best-effort by the same design — its own comment says BC "keeps its existing fallbacks rather
+than the table failing to build". Refusing there would turn every table whose original MetaTable
+was never assigned into an error. The third is BC's `field?.Editable ?? true`.
+
+`ReadMetaFieldEditable` takes the metatable as `object` so each refusal can be driven with a
+fake standing in for a moved member, without a BC install — the idiom of #3657 and #3664.
+`AlRunner.Tests/PageControlFieldEditableShapeGapTests` has an arm per refusal, each asserting
+the member name *and* the absence of the sibling branch's wording, plus a negative control per
+silent exit.
+
 <a id="option-and-enum"></a>
 
 ## `OptionString`, and why an Enum field takes the same branch
