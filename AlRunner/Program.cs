@@ -419,6 +419,12 @@ bool expectationsRequireMatch = false;
 // xmlport-isolation CI leg passes --test against the SAME al-language root), so this
 // only ever activates when the caller explicitly opts in.
 string? countBaselinePath = null;
+// `--count-out <path>` writes what this run actually ran, per suite, as JSON (#3675).
+// Independent of --count-baseline: it REPORTS a count rather than judging one, and CI
+// judges it against the last count a main run recorded, because the corpus is resolved per
+// run (#3737) and a committed number would go stale on every upstream merge.
+// Deliberately not --out, which is a failure report and carries no test list at all.
+string? countOutPath = null;
 // `provision` subcommand: `al-runner provision [<project>]` provisions the BC artifacts
 // for the project's version and exits (no test run). `--auto-provision` provisions on the
 // fly when artifacts are missing, then continues the normal run.
@@ -521,6 +527,7 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--expectations" && i + 1 < args.Length) { expectationsDirArg = args[++i]; continue; }
     if (args[i] == "--expectations-require-match") { expectationsRequireMatch = true; continue; }
     if (args[i] == "--count-baseline" && i + 1 < args.Length) { countBaselinePath = args[++i]; continue; }
+    if (args[i] == "--count-out" && i + 1 < args.Length) { countOutPath = args[++i]; continue; }
     // #1821: the SAME --cache value also becomes the isolation root for every other
     // cache CacheRoots redirects (compiled-deps/workspace-deps/ncl-cecil/bc-symbols/
     // ncl-shadow/app-manifests/r2r-chunks/install-baseline) — see
@@ -4094,6 +4101,35 @@ var allResults = carriedResults.Count == 0
 // match, not a floor: a mismatch in EITHER direction fails the run (PR #1882 review —
 // a "growth never fails" rule lets the baseline go stale on a passing run, and a
 // later real drop can then land above the stale number unnoticed).
+//
+// The tally is computed ONCE, above the check, because `--count-out` reports the same
+// numbers `--count-baseline` judges (#3675). Two tallies would be two answers to one
+// question, and the one nobody reads goes wrong quietly.
+var countsBySuite = AlRunner.Infrastructure.CountOut.Tally(
+    allResults.Select(b => (b.BucketPath, b.Tests.Count, b.RanGroupCount)));
+var countBcVersionKey =
+    $"{AlRunner.Infrastructure.BcArtifacts.SelectedVersion.Major}."
+    + $"{AlRunner.Infrastructure.BcArtifacts.SelectedVersion.Minor}";
+
+if (countOutPath != null)
+{
+    // Written even when the run FAILED: a leg that is red for another reason still ran a
+    // measurable number of tests, and CI decides separately whether to record it (the
+    // corpus step's own outcome gates that). What must never happen is silence -- the
+    // comparison then cannot tell "nothing was measured" from "zero tests".
+    try
+    {
+        AlRunner.Infrastructure.CountOut.Write(countOutPath, countBcVersionKey, countsBySuite);
+    }
+    catch (Exception ex)
+    {
+        // Loud, and not fatal to the run: the tests already ran and their verdict stands.
+        // A caller that needs the file treats its absence as "could not measure" (exit 3
+        // in compare_corpus_count.py), never as a count of zero.
+        Console.Error.WriteLine($"[count-out] could not write {countOutPath}: {ex.Message}");
+    }
+}
+
 bool countBaselineMismatch = false;
 if (countBaseline != null)
 {
@@ -4119,22 +4155,10 @@ if (countBaseline != null)
     }
     else
     {
-        var actualBySuite = new Dictionary<string, AlRunner.Infrastructure.SuiteCountActual>();
-        foreach (var b in allResults)   // #2719: the run, not this attempt's slice
-        {
-            var suiteKey = Path.GetFileName(b.BucketPath.TrimEnd(
-                Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-            var testCount = b.Tests.Count;
-            var groupCount = b.RanGroupCount;
-            if (actualBySuite.TryGetValue(suiteKey, out var prior))
-                actualBySuite[suiteKey] = new AlRunner.Infrastructure.SuiteCountActual(
-                    prior.Tests + testCount, prior.AppGroups + groupCount);
-            else
-                actualBySuite[suiteKey] = new AlRunner.Infrastructure.SuiteCountActual(testCount, groupCount);
-        }
-
-        var selectedVersion = AlRunner.Infrastructure.BcArtifacts.SelectedVersion;
-        var bcVersionKey = $"{selectedVersion.Major}.{selectedVersion.Minor}";
+        // #2719: the run, not this attempt's slice. Shared with --count-out above so the
+        // reported count and the judged count are the same number.
+        var actualBySuite = countsBySuite;
+        var bcVersionKey = countBcVersionKey;
 
         var (drops, growths) = AlRunner.Infrastructure.CountBaselineCheck.Evaluate(
             countBaseline, actualBySuite, bcVersionKey);

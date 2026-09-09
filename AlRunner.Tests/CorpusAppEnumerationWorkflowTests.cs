@@ -113,8 +113,15 @@ public sealed class CorpusAppEnumerationWorkflowTests
         Assert.Contains(".github/scripts/compare_corpus_count.py", wf);
         // The comparison is only as good as the two ends it names: what this leg ran, and
         // the corpus it ran it against.
-        Assert.Contains("--results al-language-results.json", wf);
         Assert.Contains("--corpus-sha", wf);
+
+        // ...and it must read the COUNT document, never the failure report. `--out` carries
+        // `generated`/`total_failures`/`classifications`/`all_failures` and no test list at
+        // all, so a comparison pointed at it refuses on every leg and the guard silently
+        // never runs — which is exactly what shipped and what run 34412771210 caught.
+        Assert.Contains("--count-out corpus-count-measured.json", wf);
+        Assert.Contains("--counts corpus-count-measured.json", wf);
+        Assert.DoesNotContain("--results al-language-results.json", wf);
         // Restored from the cache before the run, recorded after it.
         Assert.Contains("actions/cache/restore@v4", wf);
         Assert.Contains("actions/cache/save@v4", wf);

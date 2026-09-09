@@ -687,6 +687,7 @@ jobs:
               --package-cache "$HOME/.al-runner/test-apps" \
               --strict \
               --expectations-require-match \
+              --count-out corpus-count-measured.json \
               --out al-language-results.json || rc=$?
           elapsed=$(( SECONDS - start ))
           echo "elapsed=${elapsed}s" >> "$GITHUB_OUTPUT"
@@ -705,12 +706,18 @@ jobs:
         id: count
         if: ${{ always() }}
         run: |
+          # --counts is the runner's --count-out document, NOT --out. `--out` is a
+          # failure report (`generated`, `total_failures`, `classifications`,
+          # `all_failures`) and carries no test list, so pointing this at it made
+          # every leg answer "no 'tests' array" and the guard never ran once (run
+          # 34412771210). --count-out writes the same tally --count-baseline judges.
+          #
           # --previous and --out are the SAME path on purpose: the script reads the
           # restored document before writing this run's, so the directory the cache
           # save step stores below holds the count this leg just measured.
           rc=0
           python3 .github/scripts/compare_corpus_count.py \
-              --results al-language-results.json \
+              --counts corpus-count-measured.json \
               --corpus-sha "${{ steps.corpus.outputs.sha }}" \
               --bc-version "${{ matrix.target.bc-version }}" \
               --previous corpus-count/corpus-count.json \

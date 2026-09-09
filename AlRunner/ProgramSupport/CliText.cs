@@ -724,6 +724,13 @@ internal static partial class ProgramSupport
         w.WriteLine("                          this never auto-activates. A mismatch in EITHER direction");
         w.WriteLine("                          (growth or drop) fails and prints a diagnostic naming");
         w.WriteLine("                          expected vs actual — bump the baseline in the same PR.");
+        w.WriteLine("  --count-out PATH        Write what this run actually ran, per suite, as JSON:");
+        w.WriteLine("                          { \"bcVersion\": \"27.0\", \"suites\": { \"<suite>\":");
+        w.WriteLine("                          { \"tests\": N, \"appGroups\": M } } }. The same tally");
+        w.WriteLine("                          --count-baseline judges, but REPORTED rather than judged,");
+        w.WriteLine("                          so a caller can compare it against a count from another");
+        w.WriteLine("                          run (#3675). Written even when the run failed, and it is");
+        w.WriteLine("                          NOT --out, which is a failure report carrying no counts.");
         w.WriteLine();
         w.WriteLine("SUBCOMMANDS");
         w.WriteLine("  provision [<bundle-dir>] Download and install the BC artifacts matching the");
