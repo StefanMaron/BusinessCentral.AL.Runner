@@ -2,8 +2,8 @@
 
 A backgrounded process is killed when the turn ends: no completion notification arrives, the
 work sits uncommitted, and you wait forever on something already dead. This applies to **any**
-long command **that runs on this box** — corpus runs, repeat-iteration flake loops, `dotnet
-test` sweeps, provisioning, artifact downloads. Run it in the **foreground** with a
+long command **that runs on this box** — corpus runs, repeat-iteration flake loops,
+`dotnet test` sweeps, provisioning, artifact downloads. Run it in the **foreground** with a
 correspondingly generous timeout, and never chain short sleeps to fake a wait.
 
 **Commit and push before you start anything long.** A push is the only thing that makes your

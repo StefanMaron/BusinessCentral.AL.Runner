@@ -17,8 +17,8 @@ Never hand-roll `gh run view` plus `sleep` — one call replaces the loop.
 
 **Who reads it, and when.** An implementation agent opens its PR and hands back; it never
 waits and never merges (`.claude/agents/impl-agent.md`). The coordinator sweeps open PRs once
-per cycle and reads each verdict then, and nothing is lost by reading late: `gh pr merge
---auto` lands a reviewed PR the moment its checks go green with nobody present.
+per cycle and reads each verdict then, and nothing is lost by reading late:
+`gh pr merge --auto` lands a reviewed PR the moment its checks go green with nobody present.
 
 **Trap: an answer that could not have come out any other way is not evidence.** Under the
 pre-#3351 zero-timeout path a green PR, a red PR and a PR with no checks all printed `STILL
@@ -91,8 +91,9 @@ Two things the guard cannot do:
   directory produces are fine *there only*, because you extracted the files from `origin/main`
   yourself; elsewhere an `unknown` that fails open is the defect #3296 fixed.
 - **It cannot turn a network failure into a verdict.** `refs/remotes/origin/main` is shared by
-  every worktree, so the check costs no network; an unreachable remote is a loud note and the
-  local check stands, never a refusal.
+  every worktree, so the check costs no network, and one `git ls-remote` confirms that shared
+  ref against the remote. An unreachable remote is a loud note and the local check stands,
+  never a refusal.
 
 ### A cancelled run's leftovers sit in the same rollup as the live run, and `gh pr checks` hides which is which
 
@@ -238,7 +239,8 @@ gh api repos/<owner>/<repo>/actions/jobs/<job-id>/logs --allow-escape-sequences
 ```
 
 `--allow-escape-sequences` is not optional on the API form: without it `gh` writes nothing to
-stdout and puts the reason on stderr, so a `$(...)` capture sees an empty log and no error.
+stdout and puts `the response contains terminal escape sequences` on stderr, so a `$(...)`
+capture sees an empty log and no error.
 `tools/ci-wait.py` tries both on exit 1 and, when both come back empty, says both were refused
 rather than that the job has no log (#3309).
 
