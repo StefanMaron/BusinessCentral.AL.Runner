@@ -209,9 +209,9 @@ count has grown by roughly 20 or the queue has visibly drifted. Sonnet is a fine
 The queue grows for a reason worth naming: **issues get fixed by a PR that cites a different
 number, so nothing auto-closes them.** Ask triage for three things — already-fixed issues
 with the commit that fixed each, duplicate clusters with a canonical, and status labels for
-the untriaged. Have it **apply labels directly** (mechanical) and **close only retry duplicates** (identical
-title, minutes apart, `.claude/agents/triager.md` § D); every other closure comes back as a
-list for approval, with the comment it would carry.
+the untriaged. Have it **apply labels directly** (mechanical) and **close only confirmed duplicates** (its
+closing rule: the exact prior issue or merged PR found, or a retry duplicate per `.claude/agents/triager.md` § D);
+every other closure comes back as a list for approval, with the comment it would carry.
 
 ## The merge bar
 
@@ -309,7 +309,7 @@ rather than trusting the earlier verdict. `git merge-tree` only answers the text
 count-baseline will conflict; merge one, then tell the other to rebase and *re-measure*
 rather than carrying its old number forward.
 
-**Expectation-manifest drift is yours to fix, and only yours.** A known-gap entry left behind after its issue closed, or a red `main` from manifest drift, gets one PR from this pass per drift, its title naming the manifest entry — so several loops cannot open the same fix at once. An implementation agent that finds one comments on the issue the entry names and keeps its own task (`.claude/agents/impl-agent.md`).
+**Expectation-manifest drift is dispatched from here, and only from here.** A known-gap entry left behind after its issue closed, or a red `main` from manifest drift, gets one implementation agent per drift, with the manifest entry's name in the issue title, after `gh pr list --state open --search "<entry name> in:title" --json number` returns nothing; when it returns a PR, that PR is the fix in flight. Done when one open PR names the entry. An implementation agent that finds a drift comments and keeps its own task (`.claude/agents/impl-agent.md`).
 
 ## Measurement rules
 

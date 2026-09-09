@@ -64,7 +64,7 @@ For each PR:
 
 **Stuck PR:** same CI run ID across loops + no new commits → close with comment, reset linked issue (remove `status: in-progress` + `agent: <X>`, add `status: ready`).
 
-Expectation-manifest drift (a known-gap entry left behind after its issue closed, a red `main` from manifest drift) is this pass's to fix: one PR per drift, its title naming the manifest entry (`orchestrating-a-session`, the merge pass).
+Expectation-manifest drift (a known-gap entry left behind after its issue closed, a red `main` from manifest drift) is not fixed in this pass: report it to the invoking session naming the manifest entry, which dispatches one implementation agent per drift (`orchestrating-a-session`, the merge pass).
 
 ## Step 2 — Close linked issues
 ```

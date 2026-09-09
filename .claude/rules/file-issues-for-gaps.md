@@ -10,11 +10,11 @@ If AL code fails to run and the reason is **not** in `docs/limitations.md`, that
    ```
    gh issue list --state open --search "\"<exact title>\" in:title" --json number,title --repo StefanMaron/BusinessCentral.AL.Runner
    ```
-   A match is the issue you were about to file: comment your findings there and stop. Quote the title — an unquoted `in:title` search answered zero for an existing title containing an apostrophe, and the quoted form found it (#3724).
+   A returned `title` equal to yours, character for character, is the issue you were about to file: comment your findings there and stop; a returned title that merely contains yours is not. Quote the title — an unquoted `in:title` search answered zero for an existing title containing an apostrophe, and the quoted form found it (#3724).
 2. **After a timeout or an error from `gh issue create`, list the newest issues before retrying:**
    ```
-   gh issue list --state open --limit 10 --json number,title,createdAt --repo StefanMaron/BusinessCentral.AL.Runner
+   gh issue list --state open --limit 10 --json number,title,createdAt,author --repo StefanMaron/BusinessCentral.AL.Runner
    ```
-   A matching title created in the last ten minutes is the issue you just filed — `gh issue create` reports a timeout on a call that already created it. Comment there and stop.
+   A title equal to yours, by your login, created in the last ten minutes is the issue you just filed — `gh issue create` reports a timeout on a call that already created it. Comment there and stop.
 
-Done when the step-1 search returns that title exactly once.
+Done when the step-1 search returns a title equal to yours exactly once.
