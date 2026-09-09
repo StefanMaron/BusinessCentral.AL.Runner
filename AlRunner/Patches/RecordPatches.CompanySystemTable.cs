@@ -52,27 +52,113 @@ public static partial class RecordPatches
 {
     internal const int CompanySystemTableId = 2000000006;
 
-    private static bool _companyRowSeededForThisBundle;
+    /// <summary>
+    /// Which exit <see cref="EnsureCompanySystemTableRowSeeded"/> reached (AlRunner#3187). The
+    /// production call site ignores it; the point of naming the exits is that
+    /// <see cref="CompanySeedIsSettled"/> can decide the once-per-bundle latch PER EXIT, which
+    /// a single bool set at the top of the method could not.
+    /// </summary>
+    internal enum CompanyRowSeedOutcome
+    {
+        /// <summary>A settled outcome was already reached for this bundle; nothing ran.</summary>
+        AlreadySeededThisBundle,
+        /// <summary>No Company metatable in this bundle's closure — nothing to seed, ever.</summary>
+        NoCompanyTable,
+        /// <summary>The skeleton session has no DataAccessSource YET. Reported, and retried.</summary>
+        NoDataAccessSource,
+        /// <summary>The skeleton NavCompany exposes no company name YET. Reported, and retried.</summary>
+        NoCompanyIdentity,
+        /// <summary>The row was written by this call.</summary>
+        Inserted,
+        /// <summary>The row was already there (BC's own already-exists refusal).</summary>
+        AlreadyPresent,
+        /// <summary>The seed threw. Reported at <c>[warn]</c>, NOT latched, retried.</summary>
+        Failed,
+    }
 
-    internal static void ResetCompanySystemTableForNewBundle() => _companyRowSeededForThisBundle = false;
+    private static CompanyRowSeedOutcome? _companySeedOutcomeForThisBundle;
+    private static bool _companyRowSeedInProgress;
+
+    /// <summary>The last outcome this bundle reached, or null before the first call.</summary>
+    internal static CompanyRowSeedOutcome? CompanySeedOutcomeForThisBundle
+        => _companySeedOutcomeForThisBundle;
+
+    /// <summary>
+    /// Whether an outcome settles the question for this bundle, so a later call may return
+    /// early. #3187: only the three outcomes that answer "the row is there, or there is no row
+    /// to write in this bundle at all" settle it. A report and a throw are NOT-YET answers —
+    /// latching either one makes the flag mean "someone started" rather than "the row is
+    /// there", which is the silent-wrong-answer .claude/rules/loud-failures.md forbids.
+    /// </summary>
+    internal static bool CompanySeedIsSettled(CompanyRowSeedOutcome outcome)
+        => outcome is CompanyRowSeedOutcome.Inserted
+                   or CompanyRowSeedOutcome.AlreadyPresent
+                   or CompanyRowSeedOutcome.NoCompanyTable;
+
+    internal static void ResetCompanySystemTableForNewBundle()
+        => _companySeedOutcomeForThisBundle = null;
 
     /// <summary>
     /// Insert the runner's own company into the Company system table (2000000006), once per
     /// bundle. Call AFTER install triggers and company initialization and BEFORE
     /// <c>CaptureInstallBaseline()</c>, so the row is part of the restored baseline.
     /// </summary>
-    internal static void EnsureCompanySystemTableRowSeeded()
-    {
-        if (_companyRowSeededForThisBundle) return;
-        _companyRowSeededForThisBundle = true;
+    internal static CompanyRowSeedOutcome EnsureCompanySystemTableRowSeeded()
+        => EnsureCompanySystemTableRowSeededCore(
+            resolveMeta: () => EnsureTableInMetadataCache(CompanySystemTableId),
+            resolveSource: ResolveSkeletonDataAccessSource,
+            readIdentity: ReadSkeletonCompanyIdentity,
+            insertRow: (meta, source, name, id) =>
+                InsertCompanyRow((NCLMetaTable)meta, source, name, id));
 
-        var meta = EnsureTableInMetadataCache(CompanySystemTableId);
+    /// <summary>
+    /// The seed with its four BC-typed steps handed in, so the once-per-bundle policy above can
+    /// be driven by a test: <c>NCLMetaTable</c>, the DataAccessSource and BC's own provider
+    /// Insert cannot be constructed in a unit test, and cannot be made to throw in one either.
+    /// The steps are the seam — there is no environment variable, and nothing here behaves
+    /// differently in production. See CompanySystemTableSeedLatchTests.
+    /// </summary>
+    internal static CompanyRowSeedOutcome EnsureCompanySystemTableRowSeededCore(
+        Func<object?> resolveMeta,
+        Func<object?> resolveSource,
+        Func<(string? Name, object? Id)> readIdentity,
+        Action<object, object, string, object?> insertRow)
+    {
+        if (_companySeedOutcomeForThisBundle is { } previous && CompanySeedIsSettled(previous))
+            return CompanyRowSeedOutcome.AlreadySeededThisBundle;
+        // The latch is no longer set before the work, so a re-entrant call would now run the
+        // seed a second time inside itself. Nothing reaches it today — this row goes straight
+        // to the in-memory provider and runs no AL — but the sibling User seeder closed the
+        // same window explicitly when it made this move (#2941), and the cost is one bool.
+        if (_companyRowSeedInProgress) return CompanyRowSeedOutcome.AlreadySeededThisBundle;
+        _companyRowSeedInProgress = true;
+        try
+        {
+            var outcome = SeedCompanyRowCore(resolveMeta, resolveSource, readIdentity, insertRow);
+            _companySeedOutcomeForThisBundle = outcome;
+            return outcome;
+        }
+        finally
+        {
+            _companyRowSeedInProgress = false;
+        }
+    }
+
+    private static CompanyRowSeedOutcome SeedCompanyRowCore(
+        Func<object?> resolveMeta,
+        Func<object?> resolveSource,
+        Func<(string? Name, object? Id)> readIdentity,
+        Action<object, object, string, object?> insertRow)
+    {
+        var meta = resolveMeta();
         if (meta == null)
             // A bundle with no Company metatable has no company concept to seed — the same
-            // shape as CompanyInitializer's "no Base App in this bundle" early return.
-            return;
+            // shape as CompanyInitializer's "no Base App in this bundle" early return. SETTLED:
+            // a closure does not gain a metatable part-way through its own bundle, so a retry
+            // could only re-answer the same question.
+            return CompanyRowSeedOutcome.NoCompanyTable;
 
-        var source = ResolveSkeletonDataAccessSource();
+        var source = resolveSource();
         if (source == null)
         {
             // #3068: `[warn]`, not `[CompanySystemTable]` — Log.cs suppresses component tags at
@@ -85,33 +171,46 @@ public static partial class RecordPatches
                 "[warn] CompanySystemTable: the skeleton session has no DataAccessSource yet, so the "
                 + "Company row (2000000006) was not seeded — Company.Get(CompanyName()) will fail. "
                 + "See AlRunner#2329.");
-            return;
+            // NOT settled (#3187): "yet" is the whole content of this branch.
+            return CompanyRowSeedOutcome.NoDataAccessSource;
         }
 
-        var (companyName, companyId) = ReadSkeletonCompanyIdentity();
+        var (companyName, companyId) = readIdentity();
         if (companyName == null)
         {
             Console.Error.WriteLine(
                 "[warn] CompanySystemTable: the skeleton NavCompany exposes no company name, so the "
                 + "Company row (2000000006) was not seeded — Company.Get(CompanyName()) will fail. "
                 + "See AlRunner#2329.");
-            return;
+            return CompanyRowSeedOutcome.NoCompanyIdentity;
         }
 
         try
         {
-            InsertCompanyRow(meta, source, companyName, companyId);
+            insertRow(meta, source, companyName, companyId);
             PerfTrace.Log($"CompanySystemTable: seeded Company row '{companyName}'");
+            return CompanyRowSeedOutcome.Inserted;
         }
         catch (Exception ex)
         {
             var inner = ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
             if (inner.GetType().Name == "NavRecordAlreadyExistsException")
-                return; // already present — nothing to do, and not a failure.
+            {
+                PerfTrace.Log($"CompanySystemTable: Company row '{companyName}' was already present");
+                return CompanyRowSeedOutcome.AlreadyPresent; // already present — not a failure.
+            }
+            // #3187: reported, and NOT settled. Reported rather than rethrown because this
+            // seeder's caller makes that choice deliberately — the row is seeded per app group
+            // OUTSIDE the persisted install-baseline snapshot, so this line fires on every run
+            // rather than once on the run that poisons a cache, and a missing row takes the
+            // tests that read it RED by itself. The argument is stated in full in
+            // SeededRowColumns.cs's header ("WHY IT THROWS RATHER THAN REPORTING"); what #3187
+            // changes is only that a run which reported this may try again.
             Console.Error.WriteLine(
                 $"[warn] CompanySystemTable: could not seed the Company row (2000000006): "
                 + $"{inner.GetType().Name}: {inner.Message} — Company.Get(CompanyName()) will fail. "
                 + "See AlRunner#2329.");
+            return CompanyRowSeedOutcome.Failed;
         }
     }
 
