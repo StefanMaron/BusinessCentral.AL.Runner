@@ -8,15 +8,15 @@ name: Issue label hygiene
 #     first or drown in closed issues (finding b-8);
 #   * 5 of the 8 open in-progress issues sat behind a MERGED "Part of #N" pull
 #     request that nobody relabelled, so the work was neither in progress nor
-#     on the ready queue -- invisible to the next agent (finding b-8, b-20).
+#     on the ready queue -- invisible to the next agent (findings b-8, b-20).
 #
 # Both were manual steps in the orchestrator's merge pass. A step that has to
 # be remembered on every merge is one that gets skipped, and the numbers above
 # are what skipping it looks like after a month.
 #
 # Deliberately NOT here: closing issues, commenting, and any judgement about
-# whether the remaining work is understood. Those stay in the merge pass,
-# where an agent that read the diff can say what actually landed.
+# what remains to be done. Those stay in the merge pass, where an agent that
+# read the diff can say what actually landed.
 
 on:
   # `closed` only. `reopened` is a separate event type, so an issue coming back
@@ -52,8 +52,8 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t doomed < <(
-            printf '%s' "$LABELS" \
-              | jq -r '.[] | select(startswith("status:") or startswith("agent:"))'
+            printf '%s' "$LABELS" |
+              jq -r '.[] | select(startswith("status:") or startswith("agent:"))'
           )
           if [ ${#doomed[@]} -eq 0 ]; then
             echo "Issue #$ISSUE carries no status: or agent: label -- nothing to do."
@@ -64,14 +64,14 @@ jobs:
             args+=(--remove-label "$label")
           done
           printf 'Removing from #%s:' "$ISSUE"
-          printf ' %s;' "${doomed[@]}"
+          printf ' [%s]' "${doomed[@]}"
           printf '\n'
           gh issue edit "$ISSUE" "${args[@]}"
 
   release-part-of-issues:
-    name: Put a merged PR's Part of issues back on the ready queue
+    name: Put a merged PR's Part of issue back on the ready queue
     # A fork PR's token is read-only, so the job would fail on the first label
-    # edit rather than do anything useful; the branch convention this reads is
+    # edit rather than do anything useful; the branch convention it reads is
     # in-repo anyway.
     if: >-
       github.event_name == 'pull_request'
@@ -84,59 +84,78 @@ jobs:
           # The default branch, NOT the pull request's own merge ref: this job
           # holds a write token, and checking out the head of the pull request
           # that just merged would run whatever version of the extractor that
-          # branch shipped.
+          # branch happened to ship.
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
-      - name: Relabel each open Part of issue this PR named
+      - name: Relabel the branch's own issue when the PR only landed part of it
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
           set -uo pipefail
-          numbers=$(bash .github/scripts/part_of_references.sh) || exit 1
-          if [ -z "$numbers" ]; then
-            echo "PR #$PR_NUMBER declares no 'Part of #N' line -- nothing to do."
+
+          # Narrowed to the issue the BRANCH names -- the pairing pr-gate.yml
+          # refuses to merge without. A "Part of #N" naming some OTHER issue is
+          # usually the tracking issue each stage of an epic cites, and putting
+          # an epic on the ready queue invites an agent to claim the epic
+          # itself. Those stay with the merge pass, which can read what landed.
+          branch_issue=$(printf '%s' "$PR_HEAD_REF" | grep -oP '^agent/[^/]+/issue-\K[0-9]+$' || true)
+          if [ -z "$branch_issue" ]; then
+            echo "Head branch '$PR_HEAD_REF' names no issue -- nothing to do."
             exit 0
           fi
+
+          declared=0
+          while IFS= read -r n; do
+            if [ "$n" = "$branch_issue" ]; then
+              declared=1
+            else
+              echo "#$n is declared 'Part of' but is not the branch's own issue -- left to the merge pass."
+            fi
+          done < <(bash .github/scripts/part_of_references.sh)
+
+          if [ "$declared" -eq 0 ]; then
+            echo "PR #$PR_NUMBER declares no 'Part of #$branch_issue' line -- nothing to do."
+            exit 0
+          fi
+
+          meta=$(gh issue view "$branch_issue" --json state,labels 2>/dev/null) || {
+            echo "#$branch_issue is not a readable issue in this repository -- nothing to do."
+            exit 0
+          }
+          state=$(printf '%s' "$meta" | jq -r '.state')
+          if [ "$state" != "OPEN" ]; then
+            echo "#$branch_issue is $state -- the close path already cleared its labels."
+            exit 0
+          fi
+
           # The PR's own agent: labels. An issue whose agent: labels are all in
-          # this set was claimed by the loop that opened this PR, so releasing
-          # it is releasing this PR's own claim. Any OTHER agent: label means a
-          # second loop is on that issue, and preservation comes first: the
-          # issue is left exactly as it is and the merge pass decides.
+          # this set was claimed by the loop that opened this PR, so releasing it
+          # releases this PR's own claim. Any OTHER agent: label means a second
+          # loop is on that issue, and preservation comes first: the issue is
+          # left exactly as it is and the merge pass decides.
           mine=$(printf '%s' "$PR_LABELS" | jq -r '.[] | select(startswith("agent:"))')
-          for n in $numbers; do
-            meta=$(gh issue view "$n" --json state,labels 2>/dev/null) || {
-              echo "#$n is not an issue in this repository (or is not readable) -- skipped."
-              continue
-            }
-            state=$(printf '%s' "$meta" | jq -r '.state')
-            if [ "$state" != "OPEN" ]; then
-              echo "#$n is $state -- the close path already cleared its labels."
-              continue
-            fi
-            foreign=$(
-              printf '%s' "$meta" \
-                | jq -r --arg mine "$mine" '
-                    ($mine | split("\n") | map(select(length > 0))) as $m
-                    | .labels[].name
-                    | select(startswith("agent:"))
-                    | select(. as $l | $m | index($l) | not)'
-            )
-            if [ -n "$foreign" ]; then
-              echo "#$n carries an agent: label this PR does not ($(printf '%s' "$foreign" | tr '\n' ' ')) -- left untouched."
-              continue
-            fi
-            args=()
-            while IFS= read -r label; do
-              [ -n "$label" ] && args+=(--remove-label "$label")
-            done < <(
-              printf '%s' "$meta" \
-                | jq -r '.labels[].name | select(startswith("status:") or startswith("agent:"))'
-            )
-            echo "Releasing #$n: PR #$PR_NUMBER merged and declared 'Part of #$n'."
-            gh issue edit "$n" "${args[@]}" --add-label "status: ready" || exit 1
-          done
+          foreign=$(printf '%s' "$meta" | jq -r --arg mine "$mine" '
+            ($mine | split("\n") | map(select(length > 0))) as $m
+            | .labels[].name
+            | select(startswith("agent:"))
+            | select(. as $l | $m | index($l) | not)')
+          if [ -n "$foreign" ]; then
+            echo "#$branch_issue carries an agent: label this PR does not -- left untouched for the merge pass."
+            exit 0
+          fi
+
+          args=()
+          while IFS= read -r label; do
+            [ -n "$label" ] && args+=(--remove-label "$label")
+          done < <(
+            printf '%s' "$meta" |
+              jq -r '.labels[].name | select(startswith("status:") or startswith("agent:"))'
+          )
+          echo "Releasing #$branch_issue: PR #$PR_NUMBER merged and declared 'Part of #$branch_issue'."
+          gh issue edit "$branch_issue" "${args[@]}" --add-label "status: ready"
