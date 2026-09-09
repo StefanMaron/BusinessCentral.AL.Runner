@@ -1,8 +1,12 @@
 # CodeUnit Metadata columns from BC's own document
 
 `CodeUnit Metadata` (2000000137) has 11 columns. Five are built from the runner's own object
-inventory; four are read from the metadata document BC's emitter produces for each codeunit
-(#3606); two are left at BC's default, for reasons that are not "not implemented yet".
+inventory; three are read from the metadata document BC's emitter produces for each codeunit
+(#3606); three are left at BC's default, for reasons that are not "not implemented yet".
+
+One of those three — `RequiredTestIsolation` — **is** stated in the document, and reading it
+is wrong. A real service tier answers `None` for every codeunit. That is the section worth
+reading first, because the obvious implementation is the incorrect one.
 
 The code is `AlRunner/Patches/RecordPatches.CodeunitMetadataFromBcDocument.cs`, wired into the
 row builder in `RecordPatches.CodeunitMetadataVirtualTable.cs`. This document holds the
@@ -26,38 +30,95 @@ BC's own row builder is `Microsoft.Dynamics.Nav.Runtime.CodeUnitDataProvider.Get
 | 7 | InherentPermissions | `InherentPermissions` | `CreatePermissionMaskString(…Permissions)` | **BC's document** |
 | 8 | InherentEntitlements | `InherentEntitlements` | `CreatePermissionMaskString(…Entitlements)` | **BC's document** |
 | 9 | TestType | `TestType` | `GetOptionValue(9, (int)TestType)` | **BC's default** |
-| 10 | RequiredTestIsolation | `RequiredTestIsolation` | `GetOptionValue(10, (int)RequiredTestIsolation)` | **BC's document** |
+| 10 | RequiredTestIsolation | `RequiredTestIsolation` | `GetOptionValue(10, (int)RequiredTestIsolation)` | **BC's default** (see below) |
 | 11 | AL Namespace | `AL Namespace` | `GetNormalizedNamespace(11, …ALNamespace)` | **BC's document** |
 
 `GetNormalizedNamespace` is `NavText.Create(fieldValue)` — a passthrough despite the name.
 
-<a id="the-attribute-name-trap"></a>
+<a id="requiredtestisolation"></a>
 
-## The attribute-name trap: `TestIsolation` versus `RequiredTestIsolation`
+## `RequiredTestIsolation`: BC answers `None` for every codeunit, so the runner defaults it
 
-The AL compiler emits `TestIsolation="Disabled"`. BC's own document parser,
-`Microsoft.Dynamics.Nav.Types.Metadata.MetaCodeunit(XmlNode)`, switches on attribute name and
-compares against the string **`RequiredTestIsolation`** — a name the compiler never writes. So
-BC's XML path leaves `MetaCodeunit.RequiredTestIsolation` at its field initializer, `0` /
-`None`, for every codeunit, including one that declares `TestIsolation = Codeunit`.
+This column is **stated in the document** and must not be read from it. That is the one
+counter-intuitive fact on this page, and it cost a full implementation to find out.
 
-That is a fact about BC's XML path, and it is **not** the path a service tier's row travels.
-`CodeUnitDataProvider` reads `NclMetadata.GetMetaCodeunitById(id).RequiredTestIsolation` — an
-`NCLMetaCodeunit` built from the published app's compiled attribute, not from this document.
-The runner therefore reads the name the **compiler** writes, so its answer tracks the
-declaration, which is what the tier reports.
+### What a service tier answers
 
-This is the same asymmetry `SubType` has, where the value reaching the column is what the
-compiler wrote rather than what the AL author declared —
-`RecordPatches.CodeunitMetadataVirtualTable.cs`'s `AlSubtypeTheCompilerDoesNotEmit` records
-that one.
+Corpus PR 296 asked eight cloud legs (27.0, 27.3, 27.5, 28.0, 28.1, 28.2, 28.3, 28.4) what
+this column reports for three shapes. Identical answer on all eight:
 
-If BC ever renames either attribute, corpus PR 296's `RequiredTestIsolation` tests go red on
-that version, and `ReadRequiredTestIsolationOrdinal` is what changes.
+| codeunit | declares | tier answers |
+|---|---|---|
+| `ALT Iso Runner Disabled` | `Subtype = TestRunner`, `TestIsolation = Disabled` | `None` |
+| `ALT Codeunit Meta Probe` | ordinary codeunit, no `Subtype` | `None` |
+| the test codeunit itself | `Subtype = Test` | `None` |
+
+The decisive one is the first: a codeunit that **explicitly declares** `TestIsolation =
+Disabled` still reports `None`. So the column does not track the declaration, and a
+document-read implementation — which by construction answers `Disabled` there — is wrong.
+
+The failing assertion, from the BC 28.1 leg:
+
+```
+FAIL Record_CodeunitMetadata_Get_TestRunnerCodeunits_ReportEachDeclaredTestIsolation
+     Expected:<1> (Integer). Actual:<None> (Integer).
+     A TestRunner declaring TestIsolation = Disabled must report RequiredTestIsolation::Disabled.
+```
+
+### Why, in Ncl.dll
+
+Not a mystery, and not the XML parser. `CodeUnitDataProvider.GetValuesWithinRangeForKeyField`
+fills slot 9 from the `NCLMetaCodeunit`, never from the document:
+
+```csharp
+buffer[9] = codeUnitDataProvider.GetOptionValue(10, (int)metaCodeunitById.RequiredTestIsolation);
+```
+
+And `NCLMetaCodeunit.RequiredTestIsolation` is a property nothing ever assigns:
+
+```csharp
+public TestCodeunitRequiredTestIsolation RequiredTestIsolation { get; private set; }
+```
+
+- The `<RequiredTestIsolation>k__BackingField` has **zero writes** anywhere in `Ncl.dll`
+  (`find_usages` returns an empty set on 28.1).
+- The private constructor sets `subscriberReflectionWrapper` and `base.ALNamespace`, nothing else.
+- `LoadOptionsFromAttributeOrInstance`, which *does* read `NavCodeunitOptionsAttribute`,
+  assigns only `tableId` and `subtype`.
+
+`private set` with no writer means the property is permanently at its default, `0`, which this
+column names `None`. Verified identical on `bc270` and `bc281`, so it is not a version quirk.
+
+**BC's default is therefore the faithful answer**, and `NavValue.GetDefaultNavValue` already
+gives it. This is not a known gap: there is nothing to implement, because the tier value is
+not derived from anything the runner could read better.
+
+### What was tried, and why it is recorded here
+
+The first implementation of #3606 converted this column from the document's `TestIsolation`
+attribute, on the reasoning that BC's own XML parser matches `RequiredTestIsolation` — a name
+the compiler never writes — so the document path must not be the tier's path, and the
+compiler's name must be the one that tracks what a tier reports.
+
+The first half is true and the conclusion does not follow. The tier's row does travel
+`NCLMetaCodeunit` rather than the XML parser, but that path does not carry the value either.
+Both routes leave the property at `None`; the tier's behaviour happens to match what the XML
+parser's name mismatch would produce, for a different reason.
+
+That is the whole lesson: reading BC's parser established which path is *not* used, and was
+taken as evidence for what the used path answers. Only the service tier settled it. The
+conversion, its runner-side tests and the two corpus assertions were removed rather than
+adjusted.
 
 <a id="what-the-compiler-emits"></a>
 
 ## What the compiler actually emits, per declaration shape
+
+This is a measurement of the **document**, which is a different thing from what the column
+answers — see [`#requiredtestisolation`](#requiredtestisolation), where a tier answers `None`
+whatever this table says. It is kept because it explains the figure #3606 was filed on, and
+because the next person to notice `TestIsolation` sitting in the document will otherwise
+re-derive it.
 
 Measured on BC 28.1.49838.53910 by compiling one codeunit of each shape and dumping the
 captured document with `AL_RUNNER_TRACE_OBJECT_METADATA=2`:
@@ -69,14 +130,15 @@ captured document with `AL_RUNNER_TRACE_OBJECT_METADATA=2`:
 | `Subtype = TestRunner`, property declared | the declared member |
 | `Subtype = Test` | **absent** |
 
-So `Disabled` is supplied for everything except a `Subtype = Test` codeunit, and it is the
-**Test subtype**, not an omitted property, that reaches the column's `None` member.
+So the compiler supplies `Disabled` for everything except a `Subtype = Test` codeunit.
 
 That identifies #3606's "stated for 1,658 of 1,690" figure: the 32 Base Application documents
-with no `TestIsolation` attribute are the test codeunits. It also falsifies the obvious
-reading of that figure — that the 32 are codeunits which "declined to state" a property others
-stated — which is the assumption the first draft of the corpus test was written against and
-which a service tier would have rejected.
+with no `TestIsolation` attribute are the test codeunits, not codeunits that "declined to
+state" a property others stated.
+
+**None of it reaches the column.** A tier answers `None` for all four rows above, including
+the third — which is exactly what makes the document a bad source for this column and is why
+`RequiredTestIsolation` is defaulted rather than converted.
 
 **Two AL constraints make most of this unreachable from AL**, which is why the runner-side
 mechanism tests in `AlRunner.Tests/CodeunitMetadataDocumentColumnTests.cs` exist alongside the
@@ -141,13 +203,24 @@ own corpus test, and is deliberately not part of #3606.
 
 ## What adjudicated this
 
-Corpus PR 296 (`StefanMaron/BusinessCentral.AL.Language.Tests`) adds four tests and seven
-fixtures to `record/TestCodeunitMetadataVirtualTable.al`:
+Corpus PR 296 (`StefanMaron/BusinessCentral.AL.Language.Tests`), on eight cloud legs.
 
-- `Record_CodeunitMetadata_Get_TestRunnerCodeunits_ReportEachDeclaredTestIsolation`
-- `Record_CodeunitMetadata_Get_TestSubtypeCodeunit_ReportsADifferentTestIsolationFromAPlainOne`
-- `Record_CodeunitMetadata_Get_InherentPermissionsAndEntitlements_ReadIndependently`
-- `Record_CodeunitMetadata_Get_ALNamespace_ReportsTheDeclaringFilesNamespace`
+**Green, and what the two converted columns rest on:**
 
-All four fail against the runner as it stood before #3606, with concrete wrong values: `None`
-where `Disabled` is declared, `''` where `X` is declared, `''` where a namespace is declared.
+- `Record_CodeunitMetadata_Get_InherentPermissionsAndEntitlements_ReadIndependently` — a
+  codeunit declaring `InherentPermissions = X` reports `'X'` while its entitlement column
+  stays empty, and the reverse for the sibling; a codeunit declaring neither reports both
+  empty.
+- `Record_CodeunitMetadata_Get_ALNamespace_ReportsTheDeclaringFilesNamespace` — a namespaced
+  codeunit reports its full dotted namespace, an un-namespaced one the empty string.
+
+Both fail against the runner as it stood before #3606, with concrete wrong values: `''` where
+`X` is declared, `''` where a namespace is declared.
+
+**Red on all eight, and removed:** two `RequiredTestIsolation` tests, which asserted the
+column tracks the declared property. It does not — see
+[`#requiredtestisolation`](#requiredtestisolation). They were dropped from the corpus PR
+rather than inverted to assert `None`: pinning an observation without a mechanism is what
+`.claude/rules/ask-the-corpus-before-claiming-bc-behavior.md` forbids, and the mechanism that
+*was* established (a property `Ncl.dll` never assigns) is a fact about the runtime engine
+rather than about AL, so it has no AL assertion that would fail if it were different.

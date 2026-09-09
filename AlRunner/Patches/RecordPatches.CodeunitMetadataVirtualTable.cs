@@ -37,21 +37,24 @@
 //   which codeunits exist.
 //
 // COLUMNS FROM BC'S OWN METADATA DOCUMENT (#3606)
-//   AL Namespace, InherentPermissions, InherentEntitlements and RequiredTestIsolation are
-//   read off the document BC's emitter produced for the codeunit — see
+//   AL Namespace, InherentPermissions and InherentEntitlements are read off the document
+//   BC's emitter produced for the codeunit — see
 //   RecordPatches.CodeunitMetadataFromBcDocument.cs. A codeunit with no document keeps BC's
-//   default for all four; that is every codeunit in a precompiled dependency, whose .app
+//   default for all three; that is every codeunit in a precompiled dependency, whose .app
 //   ships no metadata XML, and every codeunit on a compile-cache HIT with no replayed
 //   sidecar.
 //
-// COLUMNS STILL NOT IMPLEMENTED, AND WHY NEITHER IS WAITING ON THE CONVERSION ABOVE
-//   App ID and TestType get BC's own NavValue.GetDefaultNavValue, because neither is in the
-//   document to convert: App ID is not an object property at all (BC fills it from the
-//   PUBLISHING app, per-run state a compiler cannot emit — the same data #2326 tracks for
-//   AllObj), and TestType is emitted 0 times in Base Application's 1,690 codeunit documents
-//   because BC DERIVES it rather than reading it. Deriving it is a separate claim about BC
-//   needing its own corpus test. Inventing a value for either would be a silent wrong answer.
-//   docs/codeunit-metadata-from-bc.md#the-two-columns-left-at-bcs-default.
+// COLUMNS STILL NOT IMPLEMENTED, AND WHY NONE IS WAITING ON THE CONVERSION ABOVE
+//   App ID, TestType and RequiredTestIsolation get BC's own NavValue.GetDefaultNavValue.
+//   App ID is not an object property at all (BC fills it from the PUBLISHING app, per-run
+//   state a compiler cannot emit — the same data #2326 tracks for AllObj). TestType is
+//   emitted 0 times in Base Application's 1,690 codeunit documents because BC DERIVES it
+//   rather than reading it; deriving it is a separate claim about BC needing its own corpus
+//   test. RequiredTestIsolation IS stated in the document, as TestIsolation — and reading it
+//   is WRONG: a real service tier answers None for every codeunit, so BC's default is the
+//   faithful answer and the document value is not. Eight cloud legs measured that (corpus PR
+//   296) and Ncl.dll says why: the property BC's row builder reads is never assigned.
+//   docs/codeunit-metadata-from-bc.md#requiredtestisolation.
 //
 // PRECOMPILED-DLL RESPECT
 //   Runtime-engine types only (NCLMetaTable, NCLMetaField, NavValue, ReadOnlyRecordBuffer,
@@ -129,7 +132,6 @@ public static partial class RecordPatches
         EnsureReportMetadataReflection(metaTable);   // NavBoolean.Create(bool)
         EnsureDataAccessProviderReflection(dataAccess);
         var subtypeOrdinals = EnsureCodeunitSubtypeOrdinals(metaTable);
-        var isolationOrdinals = EnsureCodeunitTestIsolationOrdinals(metaTable);
 
         var provider = _pDataAccessDataProvider!.GetValue(dataAccess)
             ?? throw CodeunitMetadataShapeGap("data access has no in-memory provider");
@@ -144,8 +146,8 @@ public static partial class RecordPatches
             // InsertVirtualRow escapes GetDataAccessForTable and no row of the table is served
             // at all (#3536, docs/limitations.md#codeunit-metadata-subtype). The document read
             // joins the subtype resolution here for exactly that reason — it refuses on a
-            // malformed document and on an isolation member the column does not name, and
-            // either would otherwise take the whole table down. The `[warn]` tag is
+            // malformed document and on a permission mask it cannot read, either of which
+            // would otherwise take the whole table down. The `[warn]` tag is
             // load-bearing too — any other tag is dropped at default verbosity by Log.cs.
             int subtypeOrdinal;
             BcCodeunitDocumentValues? document;
@@ -153,7 +155,7 @@ public static partial class RecordPatches
             {
                 subtypeOrdinal = ResolveCodeunitSubtypeOrdinal(
                     subtypeOrdinals, _cmvSubtypeOptionString, row.Subtype, row.Id);
-                document = TryReadCodeunitMetadataDocument(row.Id, isolationOrdinals);
+                document = TryReadCodeunitMetadataDocument(row.Id);
             }
             catch (RunnerOutOfScopeException ex)
             {
@@ -178,7 +180,7 @@ public static partial class RecordPatches
     /// rather than a hardcoded field-number table.
     /// </summary>
     /// <param name="document">BC's own metadata document for this codeunit, already parsed, or
-    /// null when none is registered for it. The four columns it states fall through to BC's
+    /// null when none is registered for it. The three columns it states fall through to BC's
     /// default when it is null, which is the honest answer for a codeunit whose .app ships no
     /// metadata XML — never a value derived from something else.</param>
     private static object? BuildCodeunitMetadataValue(
@@ -212,17 +214,6 @@ public static partial class RecordPatches
                 return document == null ? Default() : Text(document.InherentPermissions);
             case "inherententitlements":
                 return document == null ? Default() : Text(document.InherentEntitlements);
-            case "requiredtestisolation":
-                // -1 means BC's document states nothing this column can carry, which is every
-                // codeunit AL forbids the property on. BC's default is ordinal 0 = None, the
-                // same value MetaCodeunit's field initializer holds — see
-                // ReadRequiredTestIsolationOrdinal for why it is not mapped onto Disabled.
-                return document == null || document.RequiredTestIsolationOrdinal < 0
-                    ? Default()
-                    : _aovNavOptionCreate!.Invoke(null, new object?[]
-                    {
-                        field.FieldOptionMetadata, document.RequiredTestIsolationOrdinal
-                    });
             default:
                 return Default();
         }

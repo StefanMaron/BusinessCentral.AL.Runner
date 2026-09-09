@@ -1,21 +1,16 @@
-// CodeunitMetadataDocumentColumnTests — how four CodeUnit Metadata (2000000137) columns are
+// CodeunitMetadataDocumentColumnTests — how three CodeUnit Metadata (2000000137) columns are
 // read out of BC's own emitted metadata document, and what happens to a document that states
 // something the runner cannot spell (#3606).
 //
 // WHY THIS IS A RUNNER-SIDE MECHANISM TEST AND NOT (ONLY) AN AL BUNDLE
 // -------------------------------------------------------------------
-// The BC-behaviour claims are upstream, in corpus PR 296 — a TestRunner reporting each
-// declared TestIsolation, a Subtype = Test codeunit reporting None where an ordinary one
-// reports Disabled, an X-declaring codeunit reporting 'X' while its sibling column stays
-// empty, and a namespaced codeunit reporting its full dotted namespace. Nothing here restates
-// them; the same four assertions run there against eight real service tiers.
+// The BC-behaviour claims are upstream, in corpus PR 296 — an X-declaring codeunit reporting
+// 'X' while its sibling column stays empty, and a namespaced codeunit reporting its full
+// dotted namespace. Both are green on eight real service tiers. Nothing here restates them.
 //
 // What this file pins is what no AL assertion can reach. An AL test observes only the
 // documents the AL compiler chose to emit for the bundle it ran on, so it cannot present:
 //
-//   * a TestIsolation value the column's own option string does not name — AL0223 stops the
-//     property on anything but a TestRunner, and the compiler writes only members the column
-//     has, so the refusal path has no AL spelling at all;
 //   * a permission mask other than X — AL0195 rejects every other kind on a codeunit, so the
 //     R/I/M/D letters and the lowercase indirect half are unreachable from AL even though the
 //     same two columns exist on Table and Page Metadata where the mask is not restricted;
@@ -25,12 +20,21 @@
 //     emits ALNamespace="" for an un-namespaced object, so the two are the same answer on any
 //     real bundle and a test written against one cannot tell which the runner read.
 //
+// NO RequiredTestIsolation HERE, AND THAT IS THE POINT
+// ---------------------------------------------------
+// An earlier draft of this file read that column out of the document's TestIsolation
+// attribute and pinned the mapping. Corpus PR 296 put the claim in front of eight cloud legs
+// and every one refuted it: a real tier answers None for EVERY codeunit, including one
+// declaring TestIsolation = Disabled. The conversion and its tests were removed rather than
+// adjusted, and the column went back to BC's own default, which is the faithful answer.
+// docs/codeunit-metadata-from-bc.md#requiredtestisolation has the tier evidence and the
+// mechanism in Ncl.dll.
+//
 // The permission spelling asserted below is BC's own, read out of Ncl.dll:
 // MetadataDataProvider.permissions decodes to R,I,M,D,X and CreatePermissionMaskString
 // lowercases the letter for the indirect bit at n+5. See
 // AlRunner/Patches/RecordPatches.CodeunitMetadataFromBcDocument.cs.
 
-using System.Collections.Generic;
 using AlRunner.Infrastructure;
 using AlRunner.Patches;
 using Xunit;
@@ -39,15 +43,6 @@ namespace AlRunner.Tests;
 
 public sealed class CodeunitMetadataDocumentColumnTests
 {
-    // BC 28.1.49838.53910's own OptionMembers for the RequiredTestIsolation column, read out
-    // of System.app's CodeUnitMetadata.Table.al. Matches Types.TestCodeunitRequiredTestIsolation
-    // member for member, unlike the SubType column beside it — see
-    // MetadataOptionColumnOrdinalTests for that contrast.
-    private const string RealIsolationOptions = "None,Disabled,Codeunit,Function";
-
-    private static Dictionary<string, int> IsolationMap(string optionString = RealIsolationOptions)
-        => RecordPatches.BuildMetadataOptionOrdinals(optionString, bcRuntimeEnum: null);
-
     /// <summary>A document with exactly the attributes named, in BC's own emitted shape.</summary>
     private static string Document(string attributes) =>
         "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
@@ -55,80 +50,8 @@ public sealed class CodeunitMetadataDocumentColumnTests
         + "EventSubscriberInstance=\"StaticAutomatic\" SingleInstance=\"0\" "
         + "xmlns=\"urn:schemas-microsoft-com:dynamics:NAV:MetaObjects\" />";
 
-    private static RecordPatches.BcCodeunitDocumentValues Parse(
-        string attributes, string optionString = RealIsolationOptions)
-        => RecordPatches.ParseCodeunitMetadataDocument(
-            Document(attributes), codeunitId: 60963, IsolationMap(optionString));
-
-    // ── RequiredTestIsolation: the ordinal comes from the COLUMN, not from a constant ──────
-
-    [Fact]
-    public void EachDeclaredTestIsolation_ResolvesItsOwnMemberOrdinal()
-    {
-        // The compiler writes the member name; the ordinal has to come from the column's own
-        // option string. Asserting all three, and that they differ, is what a resolver
-        // answering one constant cannot satisfy.
-        Assert.Equal(1, Parse("TestIsolation=\"Disabled\"").RequiredTestIsolationOrdinal);
-        Assert.Equal(2, Parse("TestIsolation=\"Codeunit\"").RequiredTestIsolationOrdinal);
-        Assert.Equal(3, Parse("TestIsolation=\"Function\"").RequiredTestIsolationOrdinal);
-    }
-
-    [Fact]
-    public void DeclaredTestIsolation_IsLookedUpByName_NotByPosition()
-    {
-        // On the real column Disabled sits at 1, so "resolved the Disabled member" and
-        // "returned 1" are indistinguishable there. Reordered they are not — and no artifact
-        // can present a reordered column, which is why this case only exists here.
-        const string Reordered = "Function,None,Codeunit,Disabled";
-        Assert.Equal(3, Parse("TestIsolation=\"Disabled\"", Reordered).RequiredTestIsolationOrdinal);
-        Assert.Equal(0, Parse("TestIsolation=\"Function\"", Reordered).RequiredTestIsolationOrdinal);
-    }
-
-    [Fact]
-    public void AbsentTestIsolation_IsLeftToBcsDefault_NotMappedOntoAMember()
-    {
-        // -1 is this parse's "the document states nothing this column can carry", and the row
-        // builder turns it into NavValue.GetDefaultNavValue. It is NOT 0: answering 0 here
-        // would be the runner deciding the column's value rather than leaving it to BC, and
-        // the two are indistinguishable downstream on a column whose default happens to be 0.
-        Assert.Equal(-1, Parse("").RequiredTestIsolationOrdinal);
-        Assert.Equal(-1, Parse("TestIsolation=\"\"").RequiredTestIsolationOrdinal);
-
-        // The absent case is the Subtype = Test one — the compiler omits the attribute for a
-        // test codeunit and supplies Disabled for everything else — so this is the branch
-        // 32 of Base Application's 1,690 codeunit documents take.
-        Assert.NotEqual(
-            Parse("TestIsolation=\"Disabled\"").RequiredTestIsolationOrdinal,
-            Parse("").RequiredTestIsolationOrdinal);
-    }
-
-    [Fact]
-    public void TestIsolationTheColumnDoesNotName_IsRefused_NotDefaulted()
-    {
-        // A member the column has no ordinal for is refused rather than silently written as 0,
-        // which would read exactly like a codeunit that declares nothing. Same rule
-        // ResolveCodeunitSubtypeOrdinal applies to SubType (#3080).
-        //
-        // Unreachable from AL: the compiler only ever writes members this column names. It
-        // becomes reachable the day BC adds an isolation mode, and then the runner says so
-        // instead of quietly answering None.
-        var ex = Assert.Throws<RunnerOutOfScopeException>(
-            () => Parse("TestIsolation=\"PerTest\""));
-        Assert.Contains("PerTest", ex.Message);
-        Assert.Contains("60963", ex.Message);
-    }
-
-    [Fact]
-    public void NoIsolationOrdinalsAvailable_LeavesTheColumnToBcsDefault_RatherThanThrowing()
-    {
-        // An artifact whose CodeUnit Metadata has no RequiredTestIsolation column at all: the
-        // value has nowhere to go, and the other three columns are still answerable. Refusing
-        // here would cost the whole row for a column that does not exist.
-        var parsed = RecordPatches.ParseCodeunitMetadataDocument(
-            Document("TestIsolation=\"Codeunit\" ALNamespace=\"A.B\""), 60963, isolationOrdinals: null);
-        Assert.Equal(-1, parsed.RequiredTestIsolationOrdinal);
-        Assert.Equal("A.B", parsed.AlNamespace);
-    }
+    private static RecordPatches.BcCodeunitDocumentValues Parse(string attributes)
+        => RecordPatches.ParseCodeunitMetadataDocument(Document(attributes), codeunitId: 60963);
 
     // ── The two permission columns: BC's own spelling, and they never bleed into each other ──
 
@@ -244,7 +167,7 @@ public sealed class CodeunitMetadataDocumentColumnTests
         // .claude/rules/loud-failures.md exists to prevent.
         var ex = Assert.Throws<RunnerOutOfScopeException>(
             () => RecordPatches.ParseCodeunitMetadataDocument(
-                "<CodeUnit ID=\"60963\"", codeunitId: 60963, IsolationMap()));
+                "<CodeUnit ID=\"60963\"", codeunitId: 60963));
         Assert.Contains("60963", ex.Message);
         Assert.Contains("well-formed", ex.Message);
     }
@@ -253,10 +176,9 @@ public sealed class CodeunitMetadataDocumentColumnTests
     public void UnregisteredCodeunit_ReadsAsNoDocument_RatherThanAnEmptyOne()
     {
         // Every codeunit in a precompiled dependency takes this branch: the .app ships no
-        // metadata XML, so there is nothing to read and the four columns keep BC's defaults.
-        // null and a document whose four attributes are all absent are different states — the
+        // metadata XML, so there is nothing to read and the three columns keep BC's defaults.
+        // null and a document whose three attributes are all absent are different states — the
         // second is a document that says the values are empty, the first is no answer at all.
-        Assert.Null(RecordPatches.TryReadCodeunitMetadataDocument(
-            codeunitId: 2147483600, IsolationMap()));
+        Assert.Null(RecordPatches.TryReadCodeunitMetadataDocument(codeunitId: 2147483600));
     }
 }
