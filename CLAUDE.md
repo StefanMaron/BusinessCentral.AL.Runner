@@ -37,25 +37,25 @@ Operating rules live in `.claude/rules/` and are auto-loaded. Task-specific refe
 - Run **unattended** (never-idle loop, one agent at a time, fixed priority order, weekly-budget pacing, preflight that refuses a box which would produce wrong answers) → skill `autonomous-cycle`
 - Run Microsoft's BaseApp test buckets to find real gaps (sources, the exact configuration, sizing, clustering, and why `--test-data` is mandatory) → skill `running-ms-test-buckets`
 
+### How a rule is written
+
+A rule states a direction only with two independent instances or a cited measurement behind it;
+a governance tool lands before the prose that cites it; and the incident that produced a rule is
+written to `docs/incidents/<rule>.md`, never into the rule. What stays in the rule is claim +
+citation + trap — what to do, what settled it, and the thing a later editor gets wrong
+(`.claude/rules/loud-failures.md` § "The justification is a claim plus a citation, not the
+derivation behind it"). A new rule is done when `.claude/rules/<name>.md` is under 3 KB and its
+incidents file is present.
+
 ## Code navigation: use these before grepping
 
-Finding and reading code is the single biggest token cost in this repo. **Re-measured
-2026-09-02 across 17 subagents in one session: 3,545 tool calls, of which 3,266 were Bash,
-and 2,775 of those (85%) were `grep`/`sed`/`cat`/`head`/`find` over the source tree
-(an earlier count of the same session: 3,237 Bash, 2,716 of them — 84% — such searches).
-`tools/lsp-query.py` was called ONCE in total; `graphify` twice.** Agents doing this ran two
-hours and 300k tokens on a single cluster.
-
-The cost driver is the **number** of round trips, not the size of any one result — the
-average result was 1.3 KB, but every call re-sends the whole accumulated conversation, so
-200 small greps cost far more than 20 targeted ones. `AlRunner/` is ~81,000 lines across
-194 files with two files over 8,000 lines each, so a grep hit usually costs several
-follow-up reads to interpret, and returns comment and string matches you then discount by
-hand.
-
-Re-measure with `tools/agent-cost.py <tasks-dir>` rather than trusting this paragraph — the
-previous figure here ("63 greps + 50 file reads out of 180") sat stale for a long time
-because nobody re-ran it.
+Finding and reading code is the single biggest token cost in this repo, and the cost driver is
+the **number** of round trips, not the size of any one result: every call re-sends the whole
+accumulated conversation, so 200 small greps cost far more than 20 targeted ones. Use the tools
+below before a grep sweep over `AlRunner/**/*.cs`. Re-measure the cost with
+`tools/agent-cost.py <tasks-dir>` rather than trusting a figure written here — the last one to
+sit stale did so for weeks because nobody re-ran it (measurements:
+docs/incidents/CLAUDE.md.md).
 
 **0. `tools/context-pack.py` — one round trip, many answers.**
 
@@ -77,17 +77,14 @@ cd AlRunner && graphify update .              # ~2 seconds, 200 files
 cd AlRunner && graphify query "SomeSymbol callers"
 ```
 
-Both commands default to `graphify-out/graph.json` **relative to the current directory**, so
-a rebuild run from one directory and a query run from another silently use different files —
-that mismatch is why an earlier root-level copy sat 13 days stale while the documented
-rebuild appeared to work. Rebuilding takes ~2 seconds, so rebuild rather than wonder whether
-it is current; in a worktree the graph only drifts by your own edits.
+Both commands default to `graphify-out/graph.json` **relative to the current directory**, so a
+rebuild run from one directory and a query run from another silently use different files.
+Rebuilding takes ~2 seconds, so rebuild rather than wonder whether it is current; in a worktree
+the graph only drifts by your own edits.
 
 **Phrase queries as bare symbols or `Symbol callers` — never as an English question.** The
-start-node resolver matches on the words you type, so `graphify query "what calls
-GetDataAccessForTableCore"` matches **CallSiteArgWrap** on the word *calls*, returns 2 unrelated
-nodes, and gives no sign it failed. The same question as `"GetDataAccessForTableCore callers"`
-returns the correct 66-node neighbourhood.
+start-node resolver matches on the words you type, so an English question matches on a stray
+word, returns unrelated nodes, and gives no sign it failed.
 
 The graph maps **static** structure only: which types and files reference which. It cannot tell
 you whether a `Hook(...)` registration or a Cecil rewrite actually fires at runtime — an
@@ -112,13 +109,9 @@ It answers `findReferences`, `incomingCalls`, `goToDefinition` and `workspaceSym
 `GetDataAccessForTableCore` returns its three call sites across two partial-class files in one
 call.
 
-**The harness disables `LSP` inside subagents on this build (v2.1.252).** Measured: a subagent
-calling it gets `No such tool available: LSP. LSP is disabled for this session, in subagents as
-well as here.` Adding `LSP` to the agent's `tools:` frontmatter does not help, and neither does
-`ENABLE_LSP_TOOL=1`. It did work in subagents on v2.1.152
-(anthropics/claude-code#62904), so this is a harness change, not a property of language servers —
-which is why `tools/lsp-query.py` above exists. If you are a subagent, use that script; do not
-spend calls rediscovering this.
+**The harness disables `LSP` inside subagents** (anthropics/claude-code#62904), and neither the
+agent's `tools:` frontmatter nor `ENABLE_LSP_TOOL=1` re-enables it. **If you are a subagent, use
+`tools/lsp-query.py`** and do not spend calls rediscovering this.
 
 When you are the main session briefing a subagent, resolve its symbols first and paste the
 answers into the brief as `# LSP CONTEXT (pre-resolved)`, so it does not have to go looking.
@@ -166,11 +159,9 @@ load_assembly(assemblyPath: "<artifacts>/<ver>/Microsoft.Dynamics.Nav.Ncl.dll",
 
 **3. `grep` here is a shell function, and it fails silently.**
 
-Measured in this environment: `grep` resolves to a shell **function**, not `/usr/bin/grep`.
-It rejects `-E`, `--include` and some pipelines with `error: unknown option '-G'` — and
-**exits 0 with no output**, which reads exactly like "no matches found". That is a false
-negative, not an error you will notice; an agent burned several calls on it before running
-`type grep`, and it silently corrupted intermediate results before that.
+`grep` resolves to a shell **function**, not `/usr/bin/grep`. It rejects `-E`, `--include` and
+some pipelines with `error: unknown option '-G'` — and **exits 0 with no output**, which reads
+exactly like "no matches found". That is a false negative, not an error you will notice.
 
 ```bash
 command grep -E "pattern" file     # bypasses the function
@@ -194,8 +185,7 @@ identical from the outside:
 This bites harder here than in most repos, because nearly everything that governs agent
 behaviour lives under `.claude/` — `rules/`, `skills/`, `agents/`, `hooks/`, `commands/`. So
 "where is this instruction written down?" is exactly the search that comes back empty while
-being wrong. Measured while correcting a false claim in two `SKILL.md` files: `rg "clean
-status" .` found **nothing**, with the phrase sitting in two files the command never opened.
+being wrong.
 
 ```bash
 rg --hidden "pattern"                          # required for .claude/**
@@ -207,7 +197,7 @@ result with the other one before believing it.
 
 One more empty-looking answer that is not: **`mise` prints a banner on stdout**, so
 `x=$(gh ... )` captures `mise ~/.config/mise/config.toml tools: gh@2.100.0` alongside — or
-instead of — the value you wanted. It has now corrupted a `$(...)` capture, a `preflight`
-health check, and a PR-existence guard that reported "a PR already exists" when none did.
-Filter to the shape you expect (`| command grep -E '^[0-9]+$'`) rather than testing whether
-the capture is non-empty.
+instead of — the value you wanted. **Filter a capture to the shape you expect**
+(`| command grep -E '^[0-9]+$'`) rather than testing whether it is non-empty.
+
+History: docs/incidents/CLAUDE.md.md
