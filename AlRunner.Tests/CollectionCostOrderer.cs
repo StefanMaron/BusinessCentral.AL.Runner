@@ -182,6 +182,30 @@ public sealed class CollectionCostOrderer : ITestCollectionOrderer
             // the true figure is a little higher; re-measure with scripts/trx-occupancy.py
             // rather than trusting this line if the class changes shape again.
             ["PartialCompanyInitializationTests"] = 113,
+            // #3561: 8 arms, every one of them a runner spawn and two of them two (a plain run
+            // then --output-json, which redirects everything else to stderr). Absent from this
+            // table on its first review pass, where check-collection-weights.py --fail-threshold
+            // 75 named it at 189.8s and took the leg red. Recorded at 189: measured 184.9s here
+            // on a 4-way local run of the five company-init classes together (a Windows dev box,
+            // NOT a CI leg — the sibling PartialCompanyInitializationTests summed 365.5s in that
+            // same run against the 113.5s its own line records from a leg), so 189 is the higher
+            // of the two local observations and the table's "carry the observed maximum" rule.
+            // Far above UnmeasuredWeightSeconds either way, which is what makes the entry change
+            // dispatch order rather than decorate the file.
+            ["PartialCompanyInitAcceptanceTests"] = 189,
+            // #3561: the two escalation arms live in their own collection precisely so the entry
+            // above does not grow further — a collection is strictly serial, so a longer one is a
+            // longer tail. 58.2s local; the reviewer's 58.3s figure for the sibling drain class
+            // below is the same order, and both sit between UnmeasuredWeightSeconds and the 60s
+            // report band, which is exactly the range this table exists to keep out of the
+            // fallback.
+            ["PartialCompanyInitAcceptanceEscalationTests"] = 58,
+            // #3561: 3 arms, each driving its own CliServer subprocess (the abort is a
+            // startup-time env var, so this class cannot share SharedCliServer). 52.6s on the
+            // local run above and 58.3s on the review pass's — under both bands, so the gate has
+            // not named it, and listed here for the dispatch-order half rather than the
+            // freshness half. Carries the observed MAXIMUM for the reason the entries below give.
+            ["ServerCompanyInitDrainTests"] = 58,
             // #2348: EmptySetupTable_Get/EmptySetupTable_TestField now call DeleteAll() on
             // "Source Code Setup" before asserting it's empty (fixing IncludeSender's
             // sender-position dispatch also fixed a latent install-time bug that used to
