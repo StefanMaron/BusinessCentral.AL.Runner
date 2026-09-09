@@ -3772,6 +3772,21 @@ internal sealed class LiveNavTestField : ITestField
         // refusal of the value itself would be.
         _onBeforeEdit?.Invoke();
 
+        // #3640: everything from here on can mutate Rec — the field's own OnValidate, the
+        // control's, and any pageextension modify() trigger around them — and real BC discards
+        // those mutations when the write raises. Snapshot AFTER _onBeforeEdit, because the
+        // new-row promotion above writes the row's KEY, which is page state settled before the
+        // value is validated rather than a trigger's mutation of it; the tier measured the
+        // trigger half and says nothing about unwinding the promotion.
+        //
+        // Taken and put back INLINE rather than by wrapping the rest of this method in a
+        // lambda: TestPageNewRowLinePromotionTests reads this method's IL to pin that
+        // _onBeforeEdit precedes ALValidateAsync and _onEdited follows it (#2923), and moving
+        // any of those three into a compiler-generated closure hides the ordering from the
+        // one test that guards it. See TestPageWriteBuffer.
+        var restore = TestPageWriteBuffer.Snapshot(_record);
+        try
+        {
         // Issue #1870 — the Rec-bound half of #1837 that #1869 (the page-variable half)
         // left open. FieldType (sourced from the source table field's own declared type,
         // see TryGetMetaFieldType) answers Boolean for a `field(Flag; Rec.Flag)` control
@@ -3855,6 +3870,12 @@ internal sealed class LiveNavTestField : ITestField
         }
 
         _onEdited?.Invoke();
+        }
+        catch
+        {
+            restore?.Invoke();
+            throw;
+        }
     }
 
     // The stored NavValue, not the unwrapped ClientObject — the option metadata rides on the
@@ -4078,11 +4099,21 @@ internal sealed class PageVariableTestField : ITestField
         // Codeunit134614 asserts the bare text with exact equality for exactly this binding
         // shape (verified mechanically to be page-variable-bound, not Rec-bound). This is the
         // half no service-tier run has confirmed yet — corpus PR #184 asks it.
-        set => _validationErrors.RunRecordingRefusal(() =>
-        {
-            RunnerPageInstance.SetValue(_expression, ToBoundValue(value));
-            _page.RaiseOnValidate(_controlId);
-        }, appendRefreshSuffix: false);
+        //
+        // #3640: the Rec-bound sibling's restore-on-refusal applies here too. A page-variable
+        // control's OnValidate is ordinary AL and can write Rec exactly as a Rec-bound one's
+        // can, and a page-driven write is a page-driven write whichever way the CONTROL that
+        // started it happens to be bound — so leaving this half out would make the same AL
+        // observable depend on a binding detail the tier's claim does not mention. Only Rec is
+        // restored: what a failed write leaves in a page GLOBAL is a separate claim no service
+        // tier has measured, and inventing an answer for it is what
+        // ask-the-corpus-before-claiming-bc-behavior.md forbids.
+        set => _validationErrors.RunRecordingRefusal(
+            () => TestPageWriteBuffer.RunRestoringOnRefusal(_page.Record, () =>
+            {
+                RunnerPageInstance.SetValue(_expression, ToBoundValue(value));
+                _page.RaiseOnValidate(_controlId);
+            }), appendRefreshSuffix: false);
     }
 
     public object? ObjectValue => LiveNavTestPage.Unwrap(RunnerPageInstance.GetValue(_expression));
