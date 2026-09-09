@@ -31,8 +31,8 @@ gh pr list --repo StefanMaron/BusinessCentral.AL.Runner --state open --limit 100
 Non-empty → in progress, draft or ready alike. Pick something else. `--state open` returns
 both kinds; `isDraft` tells you which you found.
 
-A draft is abandoned when its branch has had no push for 24 hours and no agent holds its
-issue (`gh issue view <N> --json labels` shows no `agent:` label, or the label's loop has
+A draft is abandoned when its newest commit (`gh pr view <N> --json commits --jq
+'.commits[-1].committedDate'`) is older than 24 hours and no agent holds its issue (`gh issue view <N> --json labels` shows no `agent:` label, or the label's loop has
 reported it finished). The coordinator, never a claimant, comments on the draft with those
 two facts, closes it, and returns the issue to `status: ready`; only then is the issue free.
 

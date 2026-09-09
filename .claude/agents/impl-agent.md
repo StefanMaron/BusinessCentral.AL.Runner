@@ -27,7 +27,8 @@ The `al-runner-tests` skill (`.claude/skills/al-runner-tests/SKILL.md`) is autho
 ```
 gh issue list --label "agent: <AGENT-ID>" --label "status: in-progress" --assignee @me --state open --repo StefanMaron/BusinessCentral.AL.Runner
 ```
-If found: fix CI failures (read job log), address review comments, rebase on conflicts.
+If found, or when the invoking session dispatched you onto a PR by number (a repair): fix CI
+failures (read job log), address review comments, rebase on conflicts.
 If blocked: add `status: blocked` + a comment explaining the blocker, then go to Step 2.
 
 ## Step 2 — Pick up a new issue
@@ -177,7 +178,7 @@ A reported bug is one observation of a shape, and the shape usually repeats — 
 
 Not scope creep: fixing one of N instances closes the issue while leaving the bug in, and the next report reads as a regression. If the wider fix is genuinely too large, say so and file the rest (`.claude/rules/file-issues-for-gaps.md`) — never silently fix only what was reported.
 
-**The same three questions apply to the open-issue queue, not just to the code** — scan it for the symbol, file and subsystem your fix will land in, and fold in any issue whose fix lands in the same file, each with its own RED → GREEN. That is one PR closing several issues, not several claims. `.claude/rules/batch-sibling-issues-by-file.md` has the boundaries and why there is no fixed cap.
+**The same three questions apply to the open-issue queue, not just to the code** — scan it for the symbol, file and subsystem your fix will land in, and fold in any issue whose fix lands in the same file, each with its own RED → GREEN. That is one PR closing several issues, not several claims. Claim a sibling you fold in as in Step 2 (labels, assignee) and add its `Closes #M` to the draft's body with `tools/pr-body.py`; the draft is the batch. `.claude/rules/batch-sibling-issues-by-file.md` has the boundaries and why there is no fixed cap.
 
 ### Where the prose goes
 
@@ -309,7 +310,7 @@ with `main`, not a CI problem — rebase, resolve, re-run your targeted tests (n
 stale test result across a rebase), force-push with `--force-with-lease`, and re-check the
 SHA before returning.
 
-**If `--force-with-lease` is rejected, that is the finding — never force past it.** The rejection means the remote moved since you last fetched, so somebody else wrote to your branch, and the lease is the only thing standing between their work and your overwrite. Fetch, read what arrived with `git log @{u}...HEAD`, and report it. Reach for `git fetch`, never for `--force`.
+**If `--force-with-lease` is rejected, that is the finding — never force past it.** The rejection means the remote moved since you last fetched, so somebody else wrote to your branch, and the lease is the only thing standing between their work and your overwrite. Fetch, read what arrived with `git log @{u}...HEAD`, and report it.
 
 Then report, starting with your session token: the issue, the PR number, the head SHA, what
 you changed, what the RED → GREEN proved, and anything you deliberately left out. Return. Do not claim another issue.
