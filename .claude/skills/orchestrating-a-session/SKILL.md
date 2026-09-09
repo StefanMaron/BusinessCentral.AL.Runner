@@ -309,7 +309,7 @@ rather than trusting the earlier verdict. `git merge-tree` only answers the text
 count-baseline will conflict; merge one, then tell the other to rebase and *re-measure*
 rather than carrying its old number forward.
 
-**Expectation-manifest drift is dispatched from here, and only from here.** A known-gap entry left behind after its issue closed, or a red `main` from manifest drift, gets one implementation agent per drift, briefed to carry the manifest entry's name in both the issue title and the PR title, after `gh pr list --state open --search "<entry name> in:title" --json number,title` returns no title containing the entry; when it returns one, that PR is the fix in flight. Done when exactly one open PR title names the entry. An implementation agent that finds a drift comments and keeps its own task (`.claude/agents/impl-agent.md`).
+**Expectation-manifest drift is dispatched from here, and only from here.** A known-gap entry left behind after its issue closed, or a red `main` from manifest drift, gets one implementation agent per drift, briefed to carry the entry's key, `<CodeunitName>.<Method>` from the manifest entry, in both the issue title and the PR title, after `gh pr list --state open --search "\"<CodeunitName>.<Method>\" in:title" --json number,title` returns no title containing that key; when it returns one, that PR is the fix in flight. Done when exactly one open PR title carries the key. An implementation agent that finds a drift comments and keeps its own task (`.claude/agents/impl-agent.md`).
 
 ## Measurement rules
 

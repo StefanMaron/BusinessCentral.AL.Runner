@@ -75,7 +75,7 @@ gh issue edit <N> --add-label "status: needs-input" --repo StefanMaron/BusinessC
 
 ### D. Already-fixed / duplicate
 - Quick duplicate search (`gh issue list --search "<keyword>" --state all`); if one exists, comment linking to it.
-- Run the exact-title search from `.claude/rules/file-issues-for-gaps.md` § File once as well, with `--json number,title,createdAt,author`. A retry duplicate is an issue whose title equals another's exactly, by the same author, created within ten minutes of it: close the newer ones as duplicates of the oldest, stating those three facts and the canonical number in each closing comment; the canonical issue itself gets no comment when it carries a `status:` or `agent:` label. Any other pair with the same title stays open, the untriaged one carrying a comment that links the other.
+- Run the exact-title search from `.claude/rules/file-issues-for-gaps.md` § File once as well, with `--json number,title,createdAt,author`. A retry duplicate is an issue whose title equals another's exactly, by the same author, created within ten minutes of it: close the newer ones that carry no `status:` or `agent:` label as duplicates of the oldest, stating those three facts and the canonical number in each closing comment; a labelled newer one and the canonical issue itself get no comment or edit. Any other pair with the same title stays open, the untriaged one carrying a comment that links the other.
 - If a recent commit clearly shipped the fix, comment linking the commit/PR.
 
 ### Closing rule
