@@ -3,8 +3,8 @@
 The runner exists so AL test code can run against **unmodified** MS-AL-compiled DLLs
 (`Microsoft.Dynamics.Nav.SystemApplication.dll`, `Microsoft.Dynamics.Nav.BaseApplication.dll`,
 etc., shipped inside MS `.app` files) and ISV-AL-compiled DLLs, so integration tests exercise
-**real MS / ISV business logic** without us re-implementing or re-compiling it: v1 tried to
-compile those DLLs itself and failed, and v2 accepts them as-is.
+**real MS / ISV business logic** without us re-implementing or re-compiling it. We accept those
+DLLs as they ship.
 
 The one hard constraint: **the public type surface and method bodies of any precompiled
 AL-business-logic DLL must behave exactly as they did when MS/the ISV compiled them.**
@@ -71,8 +71,6 @@ assumption, a signature the precompiled chain depends on — carries a note **at
 that could violate it**, because that is where the next edit happens. Keep it to the constraint
 and its citation.
 
-The walk that established the constraint — the members you decompiled, what `find_callers`
-returned, the versions `compare_symbols` disagreed on, what you tried first — goes to `docs/` or
-the PR body, with a one-line pointer at the call site. `loud-failures.md` § "The justification is
-a claim plus a citation, not the derivation behind it" states that split once for both rules; it
-bounds the *form* of these notes, never whether one is required.
+What that note may contain, and where the derivation behind it goes, is `loud-failures.md` §
+"The justification is a claim plus a citation, not the derivation behind it" — one split stated
+once for both rules. It bounds the *form* of these notes, never whether one is required.

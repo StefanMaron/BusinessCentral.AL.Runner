@@ -24,3 +24,10 @@ that is the bug. Three agents lost work this way in a single day, each having re
 running, I'll confirm" — and note what actually cost them: not that they stopped watching CI,
 but that they ended a turn with an **unpushed worktree**. Pushing first is what would have
 saved every one of them, and it is the fix here rather than a longer wait.
+
+## Residue moved from the rule (#3728 review round 2)
+
+In every documented stall this caused, what cost real work was an unpushed worktree, not the lost
+turn: an agent that had pushed lost a turn; an agent that had not lost the change. The harness
+shape has bitten too — an agent ran `gh run watch` in the foreground, the harness backgrounded it
+and promised a notification, and the agent ended its turn waiting for one that could never arrive.

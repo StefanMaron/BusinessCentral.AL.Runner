@@ -68,8 +68,8 @@ One regex matches the `Corpus-PR:` line: optional leading whitespace, the marker
 `.../BusinessCentral.AL.Language.Tests/pull/<N>` URL, optionally a trailing `/` or `.`, nothing
 else. So a markdown link, a bold marker, an angle-bracket autolink, GitHub's `owner/repo#N`
 shorthand, a mid-sentence mention, and a marker whose URL sits on the next line all fail
-(#3330). The `Corpus-NA:` reason is free text and must not be a placeholder (`n/a`, `none`,
-`TBD`, `-`, …); both forms are case-insensitive.
+(#3330, each pinned in `test_check_corpus_linkage.sh`). The `Corpus-NA:` reason is free text and
+must not be a placeholder (`n/a`, `none`, `TBD`, `-`, …); both forms are case-insensitive.
 
 A `Corpus-PR:` line that fails the regex is reported as *malformed*, not absent, so the log says
 which of the two you have. Check before pushing — the script reads the body and the changed
