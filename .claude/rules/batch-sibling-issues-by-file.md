@@ -75,7 +75,7 @@ to close.
 
 So: one agent, one branch, one open PR, which may carry `Closes #A`, `Closes #B` and `Closes #C`
 when each has its own proving test. What is still forbidden is claiming an issue and starting
-*separate* work on it while your PR is open. Claim the batch together, before the PR exists.
+*separate* work on it while your PR is open. Claim the batch together; a sibling found after the draft exists is claimed the same way and its `Closes #M` added to the draft's body (`.claude/agents/impl-agent.md`, Step 3).
 
 ## The behaviour already exists; it just had no name
 

@@ -75,6 +75,7 @@ gh issue edit <N> --add-label "status: needs-input" --repo StefanMaron/BusinessC
 
 ### D. Already-fixed / duplicate
 - Quick duplicate search (`gh issue list --search "<keyword>" --state all`); if one exists, comment linking to it.
+- Run the exact-title search from `.claude/rules/file-issues-for-gaps.md` § File once as well, with `--json number,title,createdAt,author`. A retry duplicate is an issue whose title equals another's exactly, by the same author, created within ten minutes of it: close the newer ones that carry no `status:` or `agent:` label as duplicates of the oldest, stating those three facts and the canonical number in each closing comment; a labelled newer one and the canonical issue itself get no comment or edit. Any other pair with the same title stays open, the untriaged one carrying a comment that links the other.
 - If a recent commit clearly shipped the fix, comment linking the commit/PR.
 
 ### Closing rule
@@ -97,7 +98,7 @@ After one pass over all untriaged issues, print a short summary — marked ready
 - **Shallow pass only.** No code investigation beyond what's needed to decide ready vs. needs-input. No fix proposals.
 - **One comment per issue maximum.** Do not start a back-and-forth.
 - **No relabelling or commenting on issues that already carry a `status:` or `agent:` label** — those are owned by someone else.
-- **Close only confirmed duplicates.** Everything else — thin context, out-of-scope — gets a comment (and optionally `needs-input` or `wontfix`) but stays open for a human maintainer to close.
+- **Close only what the closing rule above allows.** Everything else — thin context, out-of-scope — gets a comment (and optionally `needs-input` or `wontfix`) but stays open for a human maintainer to close.
 - **Do not close issues silently.** Every close gets a one-sentence comment explaining why.
 - **Never edit code, branches, or PRs.** This agent reads issues and writes labels/comments — nothing else.
 - Never assume `gh` exists — detect first, fall back to `mcp__github__*` (`.claude/rules/github-access.md`). With `gh`, `--repo StefanMaron/BusinessCentral.AL.Runner` on every command.

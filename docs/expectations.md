@@ -90,6 +90,52 @@ The residual, deliberately: an entry with **both** a wrong `CodeunitName` and a 
 loaded. And an entry naming a codeunit no run covers is never audited at all, because
 no invocation can honestly assert it should have been.
 
+### `Suites` — which runs are answerable for an entry (#3347)
+
+"Only the full-corpus step passes the flag, because only there is *every entry is
+covered* true" held only while every entry named a `tests/al-language` test. The first
+entry naming a `tests/runner-extras/` codeunit made it false, and the corpus leg failed
+with exit 5 on an entry that was entirely correct — the corpus run cannot load a
+runner-extras codeunit, so it had no standing to call the entry unmatched. Measured on
+PR #3711: all three BC legs, `2 of 12 entries matched no test`, while the same two
+entries matched and reclassified normally in the runner-extras step of the same leg.
+
+An entry may therefore declare the suite roots that can cover it:
+
+```json
+"Suites": ["tests/runner-extras/precompiled-implicit-return-3347"]
+```
+
+- **Absent** — audited by every run. This is what all ten pre-#3347 entries mean, and
+  the default: adding the field is opting *out* of runs that could never see the test,
+  never opting out of the audit.
+- **Present** — audited only by a run whose bundle roots include one the scope covers.
+  The run that *does* cover it audits it in full: a one-letter typo in a scoped entry
+  still fails that run with the sharp `declares no test method` diagnostic.
+- **Present but empty** — refused at load. An empty scope would exempt the entry from
+  every audit, which is the untracked-gap hole the audit exists to close, arriving
+  through the audit's own escape hatch.
+
+Paths are compared **segment by segment**, never as substrings, so
+`tests/runner-extras` does not cover `tests/runner-extras-isolation-disabled` — a
+different suite run under different flags. The scope is sought anywhere in the root's
+segments rather than only at its head, because a bundle root reaches the runner however
+the caller spelled it: `tests/runner-extras/x` from the repo root and an absolute
+`/home/runner/work/…/tests/runner-extras/x` are the same suite, and anchoring at
+segment 0 would make an entry's scope depend on the caller's working directory.
+
+A green audit counts only what it looked at and names what it skipped:
+
+```
+[expectations] match audit: all 10 entries in scope for this run matched a discovered
+test; 2 scoped to another suite, not audited here (Precompiled Implicit
+Return.PrecompiledBooleanMethodWithNoExit_ReturnsFalse, …).
+```
+
+Counting a skipped entry as matched would be the vacuous green the message exists to
+rule out, and naming them is what makes a scope that quietly exempts an entry from
+*every* run visible in the log of the run that should have owned it.
+
 ## Layout
 
 ```

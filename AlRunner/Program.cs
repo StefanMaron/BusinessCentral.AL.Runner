@@ -4244,7 +4244,15 @@ if (expectationsRequireMatch)
         if (carriedResults.Count > 0)
             expectations.NoteDiscoveredFromCarriedResults(carriedResults.SelectMany(b => b.Tests));
 
-        var unmatched = expectations.FindUnmatchedEntries();
+        // #3347: hand the audit the roots this invocation ran, so an entry declaring a
+        // Suites scope none of them covers is skipped rather than reported. The manifest
+        // directory is shared by every invocation in this repo and only the corpus step
+        // passes this flag, so before this the first entry naming a runner-extras codeunit
+        // failed the corpus leg with exit 5 for an entry that was entirely correct.
+        var unmatched = expectations.FindUnmatchedEntries(bundles);
+        var audited = expectations.Entries.Count
+            - expectations.CompanyInitAcceptances.Count
+            - expectations.EntriesOutOfScopeFor(bundles).Count;
         if (unmatched.Count > 0)
         {
             expectationsMatchFailure = true;
@@ -4261,10 +4269,21 @@ if (expectationsRequireMatch)
         }
         else
         {
-            // Never mute about its scope: a green audit says how much it accounted for.
+            // Never mute about its scope: a green audit says how much it accounted for, and
+            // #3347 made "how much" smaller than "every entry". An entry scoped to a suite
+            // this run did not cover was not checked, so counting it as matched would be the
+            // vacuous green this message exists to rule out — it is reported separately, by
+            // name, so a scope that quietly exempts an entry from EVERY run is visible in the
+            // log of the run that should have owned it.
+            var outOfScope = expectations.EntriesOutOfScopeFor(bundles);
             Console.Error.WriteLine(
-                $"[expectations] match audit: all {expectations.Entries.Count} entries matched a "
-                + "discovered test.");
+                $"[expectations] match audit: all {audited} entr"
+                + $"{(audited == 1 ? "y" : "ies")} in scope for this run matched a discovered test"
+                + (outOfScope.Count == 0
+                    ? "."
+                    : $"; {outOfScope.Count} scoped to another suite, not audited here ("
+                      + string.Join(", ", outOfScope.Select(e => $"{e.CodeunitName}.{e.Method}"))
+                      + ")."));
         }
     }
 }

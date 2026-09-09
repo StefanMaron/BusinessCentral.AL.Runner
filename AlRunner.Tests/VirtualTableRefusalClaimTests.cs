@@ -436,7 +436,16 @@ public sealed class VirtualTableRefusalClaimTests
         // independently confirmed by counting the same regex across CoveredFiles ∪ SiblingFiles
         // on origin/main (75) and on this branch (76): the ONLY per-file movement is
         // RecordPatches.cs, 5 -> 6.
-        Assert.Equal(76, total);
+        // +1 (#3315): the NAV App Extra populator gained one, for a PARTIAL answer from BC's own
+        // NavAppExtraDataProvider — rows already inserted, then a mid-enumeration throw. That
+        // used to latch the store as answered and skip the loaded-module fallback, so every app
+        // BC never reached read false for both Published Application FlowFields with nothing
+        // logged. It cannot be topped up (this file does not read the runtime package id out of
+        // BC's pre-built buffers), so it refuses. A throw with NO rows inserted is NOT a refusal
+        // and deliberately does not appear here: the fallback answers the whole table, on a
+        // `[warn]`.
+        // 77 was READ OUT of this test's own failure message ("Expected: 76, Actual: 77").
+        Assert.Equal(77, total);
     }
 
 

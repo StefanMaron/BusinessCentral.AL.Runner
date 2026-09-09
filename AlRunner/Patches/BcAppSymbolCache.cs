@@ -2516,6 +2516,15 @@ internal static partial class BcAppSymbolCache
             && bytes[2] == (byte)'V' && bytes[3] == (byte)'X'
                 ? (int)BitConverter.ToUInt32(bytes, 4)
                 : 0;
+        // A runtime package's payload is a .NEA container, not a bare zip (#3537). This
+        // reader is the one that reaches SymbolReference.json, which a runtime package does
+        // ship, so it has to see through that layer as well as AppLoader's does. The decode
+        // itself lives in AppLoader so the format has one implementation.
+        if (AlRunner.AppLoader.IsNeaContainer(bytes, offset))
+        {
+            var decoded = AlRunner.AppLoader.NeaDecode(bytes, offset + AlRunner.AppLoader.NeaHeaderLength);
+            return new ZipArchive(new MemoryStream(decoded, writable: false), ZipArchiveMode.Read);
+        }
         var ms = new MemoryStream(bytes, offset, bytes.Length - offset, writable: false);
         return new ZipArchive(ms, ZipArchiveMode.Read);
     }

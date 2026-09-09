@@ -75,7 +75,7 @@ failing test names, the stack top, the counts, the falsified hypotheses — and 
 are cause A and these 10 are cause B, here is the evidence" is a complete answer with no fix.
 Say so explicitly, or agents will force one fix over two causes to make the PR look bigger.
 
-**Agents do NOT wait for CI.** Their deliverable is "PR opened and pushed". Waiting costs an
+**Agents do NOT wait for CI.** Their deliverable is "PR marked ready and pushed". Waiting costs an
 agent slot for 15-25 minutes watching a run it cannot influence, and you are watching CI
 anyway. `impl-agent.md`'s Step 5 says this; keep briefs consistent with it. A failure is never
 lost by returning early — resume the agent, or dispatch a fresh one with the failure in hand.
@@ -119,7 +119,8 @@ Implementation agents take 35-85 minutes and produce one PR each, so six of them
 **5-6 PRs/hour**. One reviewer cannot keep up with six implementation agents. Budget roughly
 **one reviewer per four implementation agents**.
 
-**Treat an open unreviewed PR as unfinished work that counts against your concurrency budget.**
+**Treat an open unreviewed ready PR as unfinished work that counts against your concurrency
+budget** (a draft is the claim of an implementation you already count).
 Six implementation agents plus six unreviewed PRs is twelve, not six. Without that accounting
 you will keep starting implementation agents whenever a slot frees, because starting one feels
 like progress and starting a reviewer feels like overhead - and the queue grows every hour.
@@ -156,10 +157,13 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
   command runs. Any other answer means reporting that corpus PR's number instead of arming.
 - No *other* PR in the same batch conflicts with it. Where two do — two submodule pin bumps to
   different revisions, say — arm only the one that must merge first and report the ordering.
+- **The newest comment on the PR whose last line begins `Verdict:` reads `Verdict: MERGE` with a
+  head equal to the PR's current head** (`gh pr view <N> --json headRefOid`); any other line, or none, sends the
+  PR back to its reviewer naming what is missing.
 
-**Record the SHA you armed against** in the verdict. If the head moves afterwards, GitHub keeps
-auto-merge armed against the new head, which nobody has reviewed; the coordinator needs the SHA
-to notice.
+**Record the head you armed against** — it is the head in that verdict line. If the head moves
+afterwards, GitHub keeps auto-merge armed against the new head, which nobody has reviewed, and
+the head is what lets you notice.
 
 **One command, two outcomes — and on a green PR it MERGES.** `--auto` is not "queue it for
 later":
@@ -212,8 +216,9 @@ count has grown by roughly 20 or the queue has visibly drifted. Sonnet is a fine
 The queue grows for a reason worth naming: **issues get fixed by a PR that cites a different
 number, so nothing auto-closes them.** Ask triage for three things — already-fixed issues
 with the commit that fixed each, duplicate clusters with a canonical, and status labels for
-the untriaged. Have it **apply labels directly** (mechanical) but **close nothing and comment
-nowhere** — bring the closure list back for approval.
+the untriaged. Have it **apply labels directly** (mechanical) and **close only confirmed duplicates** (its
+closing rule: the exact prior issue or merged PR found, or a retry duplicate per `.claude/agents/triager.md` § D);
+every other closure comes back as a list for approval, with the comment it would carry.
 
 ## The merge bar
 
@@ -314,6 +319,8 @@ rather than trusting the earlier verdict. `git merge-tree` only answers the text
 **Order matters when PRs carry submodule pins.** Two PRs both bumping the pin and the
 count-baseline will conflict; merge one, then tell the other to rebase and *re-measure*
 rather than carrying its old number forward.
+
+**Expectation-manifest drift is dispatched from here, and only from here.** A known-gap entry left behind after its issue closed, or a red `main` from manifest drift, gets one implementation agent per drift, briefed to carry the entry's key, `<CodeunitName>.<Method>` from the manifest entry, in both the issue title and the PR title, after `gh pr list --state open --search "\"<CodeunitName>.<Method>\" in:title" --json number,title` returns no title containing that key; when it returns one, that PR is the fix in flight. Done when exactly one open PR title carries the key. An implementation agent that finds a drift comments and keeps its own task (`.claude/agents/impl-agent.md`).
 
 ## Measurement rules
 
@@ -428,6 +435,23 @@ Otherwise the next agent starts from the wrong premise — which has happened he
 - `tools/agent-cost.py <tasks-dir>` — where a session's agents actually spent their calls.
   Measured once: 85% of Bash calls were shell read/search and the navigation tools were used
   3 times in 3,237 calls. Re-measure rather than assuming it improved.
+
+## The ready queue
+
+Read its age once per cycle:
+
+```bash
+gh issue list --repo StefanMaron/BusinessCentral.AL.Runner --label "status: ready" --state open --limit 500 --search "sort:created-asc" --json number,createdAt
+```
+
+Every cycle summary carries three numbers from it: how many issues are ready, how many were
+created more than seven days ago, and the number of the oldest; 500 rows returned means the
+first two are lower bounds, and the summary says so. Done when those three appear in
+the summary.
+
+The queue is shared, and age is the tie-break. When nothing else orders it — no measured failure
+count, no red `main` behind an issue — claim the oldest ready issue first, and a pool with no
+ready filings of its own claims from this same queue, oldest first.
 
 ## Reporting to the owner
 

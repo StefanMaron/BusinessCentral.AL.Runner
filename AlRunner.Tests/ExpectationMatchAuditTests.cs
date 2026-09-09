@@ -166,6 +166,133 @@ public sealed class ExpectationMatchAuditTests
         Assert.Empty(manifest.FindUnmatchedEntries());
     }
 
+    // ── Suite scoping (#3347) ────────────────────────────────────────────────────
+    //
+    // The audit's claim is "this invocation was expected to discover a test for every
+    // entry". That held only while every entry named a corpus test: the manifest
+    // directory is shared by every invocation in this repo, and only the full-corpus CI
+    // step passes --expectations-require-match. The first entry naming a
+    // tests/runner-extras/ codeunit made the claim false — the corpus step can never
+    // load that codeunit, so it reported a correct entry as matching nothing and failed
+    // the leg with exit 5 (measured on PR #3711, all three BC legs).
+    //
+    // The optional "Suites" field is the entry saying which suite roots can cover it.
+    // Absent = audited by every invocation, which is what every pre-existing entry
+    // wants and gets. Present = audited only by an invocation that ran a matching root.
+
+    private static ExpectationManifest LoadOneEntryManifestWithSuites(
+        string codeunitName, string method, string suitesJson)
+    {
+        var dir = TestScratch.Dir("al-runner-match-audit-suites");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "known-gaps-fixture.json"), $$"""
+        [
+          {
+            "codeunitId": 60810,
+            "CodeunitName": "{{codeunitName}}",
+            "Method": "{{method}}",
+            "Mode": "expect-fail-known-gap",
+            "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3123",
+            "Suites": {{suitesJson}}
+          }
+        ]
+        """);
+        try { return ExpectationManifest.LoadFromDirectory(dir); }
+        finally { try { Directory.Delete(dir, recursive: true); } catch { } }
+    }
+
+    [Fact]
+    public void AnEntryScopedToAnotherSuite_IsNotAuditedByThisRun()
+    {
+        // The #3711 shape exactly: the entry names a runner-extras codeunit and the run
+        // is the corpus. Nothing here could have loaded it, so reporting it as unmatched
+        // accuses a correct entry of a typo.
+        var manifest = LoadOneEntryManifestWithSuites(
+            "Precompiled Implicit Return", "PrecompiledBooleanMethodWithNoExit_ReturnsFalse",
+            "[\"tests/runner-extras\"]");
+        manifest.NoteDiscoveredTestCodeunit(TheFixtureCodeunit());
+
+        Assert.Empty(manifest.FindUnmatchedEntries(new[] { "tests/al-language/tests/al-language" }));
+    }
+
+    [Fact]
+    public void AnEntryScopedToTheSuiteThisRunCovers_IsStillAudited()
+    {
+        // The negative that makes the test above mean something: scoping must not become
+        // a blanket exemption. The run DID cover this suite, so a wrong method name is
+        // still reported — the whole point of the audit.
+        var manifest = LoadOneEntryManifestWithSuites(
+            "Expct Fixture Tests", "GreenPath_KnownGapDeclare",
+            "[\"tests/runner-extras\"]");
+        manifest.NoteDiscoveredTestCodeunit(TheFixtureCodeunit());
+
+        var unmatched = manifest.FindUnmatchedEntries(
+            new[] { "tests/runner-extras/precompiled-implicit-return-3347" });
+
+        var u = Assert.Single(unmatched);
+        Assert.Contains("declares no test method", u.Diagnostic, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnEntryScopedToTheSuiteThisRunCovers_AndCorrect_Matches()
+    {
+        // The control for the pair above: same scope, correct entry, no report.
+        var manifest = LoadOneEntryManifestWithSuites(
+            "Expct Fixture Tests", "GreenPath_KnownGapDeclared",
+            "[\"tests/runner-extras\"]");
+        manifest.NoteDiscoveredTestCodeunit(TheFixtureCodeunit());
+
+        Assert.Empty(manifest.FindUnmatchedEntries(
+            new[] { "tests/runner-extras/precompiled-implicit-return-3347" }));
+    }
+
+    [Fact]
+    public void AnUnscopedEntry_IsAuditedByEveryRun()
+    {
+        // Back-compat, and the reason the field is optional: every entry that existed
+        // before #3347 carries no Suites and must keep being audited exactly as before.
+        var manifest = LoadOneEntryManifest("Expct Fixture Test", "GreenPath_KnownGapDeclared");
+        manifest.NoteDiscoveredTestCodeunit(TheFixtureCodeunit());
+
+        var unmatched = manifest.FindUnmatchedEntries(new[] { "tests/al-language/tests/al-language" });
+
+        var u = Assert.Single(unmatched);
+        Assert.Contains("Check CodeunitName for a typo", u.Diagnostic, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SuiteScoping_MatchesOnAPathSegment_NotASubstring()
+    {
+        // "tests/runner-extras" must not be satisfied by a root that merely CONTAINS
+        // those characters in a longer segment. Otherwise a typo'd scope silently
+        // exempts an entry from every run, which is the failure this whole audit exists
+        // to prevent, reintroduced through its own escape hatch.
+        var manifest = LoadOneEntryManifestWithSuites(
+            "Expct Fixture Tests", "GreenPath_KnownGapDeclare",
+            "[\"tests/runner-extras\"]");
+        manifest.NoteDiscoveredTestCodeunit(TheFixtureCodeunit());
+
+        // Covered: the root IS the scope, and a root BELOW it.
+        Assert.Single(manifest.FindUnmatchedEntries(new[] { "tests/runner-extras" }));
+        Assert.Single(manifest.FindUnmatchedEntries(new[] { "tests/runner-extras/some-bundle" }));
+
+        // Not covered: a sibling whose name merely starts with the scope's last segment.
+        Assert.Empty(manifest.FindUnmatchedEntries(new[] { "tests/runner-extras-isolation-disabled" }));
+    }
+
+    [Fact]
+    public void NoRootsGiven_AuditsEveryEntry_ScopedOrNot()
+    {
+        // A caller that cannot say which roots it ran must not get a quieter audit than
+        // one that can. The parameterless overload keeps the pre-#3347 behaviour.
+        var manifest = LoadOneEntryManifestWithSuites(
+            "Precompiled Implicit Return", "PrecompiledBooleanMethodWithNoExit_ReturnsFalse",
+            "[\"tests/runner-extras\"]");
+        manifest.NoteDiscoveredTestCodeunit(TheFixtureCodeunit());
+
+        Assert.Single(manifest.FindUnmatchedEntries());
+    }
+
     // ── Carried resume attempts (#3168) ──────────────────────────────────────────
     //
     // NoteDiscoveredTestCodeunit is called by the executor IN THIS PROCESS. A resumed

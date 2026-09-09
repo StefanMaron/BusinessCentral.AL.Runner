@@ -67,8 +67,9 @@ dotnet run --project AlRunner -c Release -- --isolation codeunit  tests/al-langu
 dotnet run --project AlRunner -c Release -- --isolation test      tests/al-language/tests/al-language
 dotnet run --project AlRunner -c Release -- --isolation disabled  tests/al-language/tests/al-language
 
-# Cache compiled AL output between runs
-dotnet run --project AlRunner -c Release -- --cache ~/.cache/al-runner/al-out tests/al-language/tests/al-language
+# Cache compiled AL output between runs; an agent uses its private directory
+# (`.claude/agents/impl-agent.md`, "Namespace every path you write to")
+dotnet run --project AlRunner -c Release -- --cache ~/.cache/al-runner/<AGENT-ID>-issue-<N>-<SESSION> tests/al-language/tests/al-language
 
 # Extra package caches for dep resolution (repeatable)
 dotnet run --project AlRunner -c Release -- --package-cache "$HOME/.al-runner/platform-apps" tests/al-language/tests/al-language
