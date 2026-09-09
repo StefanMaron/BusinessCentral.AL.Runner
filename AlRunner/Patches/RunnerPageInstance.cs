@@ -1161,28 +1161,43 @@ internal sealed partial class RunnerPageInstance
         {
             if (!string.Equals(field.FieldName, name, StringComparison.OrdinalIgnoreCase)) continue;
 
-            var client = _record.GetFieldValue(field.FieldNo)?.ClientObject;
-            switch (client)
-            {
-                case bool:
-                case string:
-                case int:
-                case long:
-                case short:
-                case byte:
-                case decimal:
-                case double:
-                case float:
-                    value = client;
-                    return true;
-                default:
-                    // A shape the evaluator's Compare cannot order (a Guid, a Blob, a Media...).
-                    // Refusing here is the honest answer: the caller names the expression.
-                    return false;
-            }
+            return TryComparableFieldValue(_record.GetFieldValue(field.FieldNo)?.ClientObject, out value);
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// A field's <c>ClientObject</c> narrowed to the shapes PageControlExpression's Compare can
+    /// order: Boolean, Text/Code, and the numeric family — which is also where an Option/Enum
+    /// arrives, as its ordinal, since the compiler lowers a member comparison to a number
+    /// (<c>Kind = 1</c>).
+    ///
+    /// <para>Anything else — a Guid, a Blob, a Media, a DateFormula — is refused rather than
+    /// passed through, so the caller raises its refusal naming the expression instead of handing
+    /// the evaluator an operand it would have to invent an ordering for
+    /// (.claude/rules/loud-failures.md). Internal so AlRunner.Tests can pin the narrowing without
+    /// a live NavForm.</para>
+    /// </summary>
+    internal static bool TryComparableFieldValue(object? clientObject, out object? value)
+    {
+        switch (clientObject)
+        {
+            case bool:
+            case string:
+            case int:
+            case long:
+            case short:
+            case byte:
+            case decimal:
+            case double:
+            case float:
+                value = clientObject;
+                return true;
+            default:
+                value = null;
+                return false;
+        }
     }
 
     /// <summary>
