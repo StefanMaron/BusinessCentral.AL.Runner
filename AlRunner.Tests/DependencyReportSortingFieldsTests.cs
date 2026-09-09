@@ -29,8 +29,30 @@
 // ---------------------------------
 // Asserting merely "not empty" would pass against any stub. Every assertion below names
 // the exact field numbers, chosen so they are neither the declaration order nor the
-// primary key: the fixture's fields are 1/2/5 and the sorting clauses name them in orders
-// that no default could produce.
+// primary key: the fixture's fields are 1/2/5/7/8/9 and the sorting clauses name them in
+// orders that no default could produce.
+//
+// Arming the guard #3649 left quiet (#3655)
+// -----------------------------------------
+// #3649 replaced a naive SORTING(-to-first-')' scan with a depth-and-quote-aware one,
+// because AL writes lowercase sorting( and a quoted field name can contain a paren. The
+// six tests that shipped with it did not exercise that: no fixture DataItemTableView had
+// a ')' or a ',' inside a quoted name, so REPLACING the new scan with the naive rule
+// still passed all six. Verified by performing that revert, not assumed.
+//
+// The last four tests below are the guard. Each states, in its own comment, the exact
+// answer the naive rule produces instead of the right one — and each of those wrong
+// answers is a plausible-looking sort key or a silently shorter one, never a crash. The
+// fixture field names carry the three characters the clause grammar also uses:
+//
+//   field 7  Amount (LCY)      a ')' inside a quoted name
+//   field 8  Amount, LCY       a ',' inside a quoted name
+//   field 9  Net "A") Gross    an AL doubled-quote escape, followed by a ')'
+//
+// Field 9 needs both because ResolveSortFieldNo has a PREFIX fallback: with a name like
+// Say "Hi", the naive rules mangle the token and the prefix fallback resolves it back to
+// the right field, so the answer is identical and the test proves nothing. Measured while
+// writing these tests.
 using System.Collections;
 using System.Diagnostics;
 using System.IO.Compression;
@@ -56,6 +78,18 @@ public class DependencyReportSortingFieldsTests
     private const int UnknownFieldReportId = 88451104;
     private const int NormalFormReportId = 88451105;
     private const int ExtensionFieldReportId = 88451106;
+
+    // #3655. The three shapes below are the ONLY ones in this fixture whose quoted field
+    // name carries a character the clause grammar also uses — ')' , ',' and '"'. Without
+    // them, replacing AlSortingClauseOf's depth-and-quote-aware scan with the naive
+    // first-')' rule passed all six tests above, so the fix #3649 landed for #3627 was
+    // unguarded. See the per-test comments for the exact answer each one turns from
+    // right to wrong.
+    private const int ParenInNameReportId = 88451107;
+    private const int CommaInNameReportId = 88451108;
+    private const int DoubledQuoteReportId = 88451109;
+    private const int UnbalancedParensReportId = 88451110;
+
     private const int DepTableId = 88451190;
 
     // The fixture table's fields are 1 / 2 / 5, deliberately non-contiguous, so a resolved
@@ -149,6 +183,70 @@ public class DependencyReportSortingFieldsTests
                   ]
                 },
                 {
+                  "Id": 88451107,
+                  "Name": "DRSF Paren In Name",
+                  "Properties": [],
+                  "DataItems": [
+                    {
+                      "Id": 17,
+                      "Name": "Src",
+                      "RelatedTable": "DRSF Sample",
+                      "Indentation": 0,
+                      "Properties": [
+                        { "Name": "DataItemTableView", "Value": "sorting(\"Amount (LCY)\", Description)" }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Id": 88451108,
+                  "Name": "DRSF Comma In Name",
+                  "Properties": [],
+                  "DataItems": [
+                    {
+                      "Id": 18,
+                      "Name": "Src",
+                      "RelatedTable": "DRSF Sample",
+                      "Indentation": 0,
+                      "Properties": [
+                        { "Name": "DataItemTableView", "Value": "sorting(\"Amount, LCY\", \"Alt Code\")" }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Id": 88451109,
+                  "Name": "DRSF Doubled Quote",
+                  "Properties": [],
+                  "DataItems": [
+                    {
+                      "Id": 19,
+                      "Name": "Src",
+                      "RelatedTable": "DRSF Sample",
+                      "Indentation": 0,
+                      "Properties": [
+                        { "Name": "DataItemTableView", "Value": "sorting(\"Net \"\"A\"\") Gross\", Description)" }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "Id": 88451110,
+                  "Name": "DRSF Unbalanced Parens",
+                  "Properties": [],
+                  "DataItems": [
+                    {
+                      "Id": 20,
+                      "Name": "Src",
+                      "RelatedTable": "DRSF Sample",
+                      "Indentation": 0,
+                      "Properties": [
+                        { "Name": "DataItemTableView", "Value": "sorting(\"Alt Code\", Description" }
+                      ]
+                    }
+                  ]
+                },
+                {
                   "Id": 88451105,
                   "Name": "DRSF Normal Form",
                   "Properties": [],
@@ -175,7 +273,10 @@ public class DependencyReportSortingFieldsTests
               "Fields": [
                 { "TypeDefinition": { "Name": "Integer" }, "Properties": [], "Id": 1, "Name": "Entry No." },
                 { "TypeDefinition": { "Name": "Text[50]" }, "Properties": [], "Id": 2, "Name": "Description" },
-                { "TypeDefinition": { "Name": "Code[20]" }, "Properties": [], "Id": 5, "Name": "Alt Code" }
+                { "TypeDefinition": { "Name": "Code[20]" }, "Properties": [], "Id": 5, "Name": "Alt Code" },
+                { "TypeDefinition": { "Name": "Decimal" }, "Properties": [], "Id": 7, "Name": "Amount (LCY)" },
+                { "TypeDefinition": { "Name": "Decimal" }, "Properties": [], "Id": 8, "Name": "Amount, LCY" },
+                { "TypeDefinition": { "Name": "Decimal" }, "Properties": [], "Id": 9, "Name": "Net \"A\") Gross" }
               ]
             }
           ],
@@ -362,6 +463,149 @@ public class DependencyReportSortingFieldsTests
             // And the values survive the caching, so "cached" cannot be satisfied by caching
             // an empty answer.
             Assert.Equal("5,2", SortingFieldsOf(QuotedNamesReportId, dataItemId: 11));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #3655. A quoted field name may contain a <c>)</c> — <c>sorting("Amount (LCY)")</c> is
+    /// the example that motivated half of #3627's diagnosis — and it was the one case with no
+    /// test behind it. The clause must end at the paren that closes <c>sorting(</c>, not at
+    /// the first <c>)</c> in the text.
+    ///
+    /// <para>What this catches: reverting <c>AlSortingClauseOf</c> to the naive first-<c>)</c>
+    /// rule makes the clause <c>"Amount (LCY</c> — an unterminated quoted identifier naming
+    /// no field — so the answer collapses from <c>7,2</c> to the EMPTY string. Not a shifted
+    /// number, the whole data item silently losing its sort key.</para>
+    /// </summary>
+    [Fact]
+    public void SortingToken_QuotedNameContainingACloseParen_EndsTheClauseAtTheMatchingParen()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-report-sorting-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir));
+
+            // "Amount (LCY)" is field 7 and Description is field 2. The second token is what
+            // makes this stronger than a one-token assertion: a scan that ended the clause at
+            // the ')' inside the name would lose BOTH, so an answer of "7" alone would also
+            // be wrong and is distinguishable from the right one.
+            Assert.Equal("7,2", SortingFieldsOf(ParenInNameReportId, dataItemId: 17));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #3655. The comma half of the same gap: <c>SplitSortingTokens</c> must not split inside
+    /// a quoted identifier, because a field may legitimately be named <c>"Amount, LCY"</c>.
+    ///
+    /// <para>What this catches: a plain <c>clause.Split(',')</c> yields <c>"Amount</c> and
+    /// <c>LCY"</c>, neither of which names a field, so the answer drops from <c>8,5</c> to
+    /// <c>5</c> — a SHORTER sort key than BC applies, which is the silent-wrong-answer shape
+    /// rather than a crash.</para>
+    ///
+    /// <para>The trailing <c>"Alt Code"</c> is deliberate. With it, the naive answer is a
+    /// non-empty <c>5</c>, so this test also fails an implementation that merely checked the
+    /// result was non-empty.</para>
+    /// </summary>
+    [Fact]
+    public void SortingToken_QuotedNameContainingAComma_IsNotSplitOnIt()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-report-sorting-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir));
+
+            // "Amount, LCY" is field 8 and "Alt Code" is field 5 — declared order 5 then 8,
+            // named here 8 then 5, so neither declaration order nor a sort of the numbers
+            // produces this answer.
+            Assert.Equal("8,5", SortingFieldsOf(CommaInNameReportId, dataItemId: 18));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #3655. AL doubles a literal quote inside an identifier, so <c>""</c> is an ESCAPE and
+    /// not a close-then-reopen. <c>SkipAlQuoted</c> and <c>SplitSortingTokens</c> both encode
+    /// that, and neither had a test.
+    ///
+    /// <para>Why the fixture field is named <c>Net "A") Gross</c> rather than something
+    /// simpler: a doubled quote on its own does not discriminate. Measured while writing this
+    /// test — with a name like <c>Say "Hi"</c>, the naive rules produce mangled tokens that
+    /// <c>ResolveSortFieldNo</c>'s PREFIX fallback then resolves back to the right field, so
+    /// the answer is identical and the test proves nothing. The escape only changes an
+    /// observable when a <c>)</c> or <c>,</c> follows it, because that is what decides whether
+    /// the parser believes it is inside quotes. So the name carries both.</para>
+    ///
+    /// <para>What this catches: under the naive first-<c>)</c> rule the clause ends at the
+    /// <c>)</c> inside the name, and the answer drops from <c>9,2</c> to <c>9</c> — the token
+    /// carrying the escape still resolves through the prefix fallback, and it is the field
+    /// AFTER it that is silently lost.</para>
+    /// </summary>
+    [Fact]
+    public void SortingToken_WithADoubledQuoteEscape_KeepsTheRestOfTheClause()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-report-sorting-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir));
+
+            // Field 9 is named: Net "A") Gross   (one literal quote pair, then a paren)
+            // The view writes it AL-escaped: sorting("Net ""A"") Gross", Description)
+            Assert.Equal("9,2", SortingFieldsOf(DoubledQuoteReportId, dataItemId: 19));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// #3655. A <c>sorting(</c> whose paren never closes answers EMPTY, not a truncated guess
+    /// at what the author might have meant.
+    ///
+    /// <para>This pins a decision rather than merely observing one. The AL compiler cannot
+    /// emit an unbalanced clause into a symbol file, so reaching this branch means the input
+    /// is not the AL text it claims to be — and the two candidate answers are "no clause" and
+    /// "everything to the end of the string". Empty is the one that matches what this column
+    /// already answers for a data item declaring no SORTING at all, so a caller reading the
+    /// column cannot tell a malformed view from an absent clause and cannot act on a partial
+    /// key it was never given. Deliberately NOT a <c>RunnerOutOfScopeException</c>: the
+    /// surface is in scope and implemented, this is one unreachable input within it, and
+    /// throwing would take down the whole report inventory — every other report's row
+    /// included — for one malformed string in one dependency. See the PR body for the
+    /// argument and #3655 for where it was raised.</para>
+    ///
+    /// <para>What this catches: the naive rule has no notion of balance. Missing a <c>)</c>
+    /// entirely, it takes the rest of the string and answers <c>5,2</c> — a confident sort key
+    /// invented out of malformed input.</para>
+    /// </summary>
+    [Fact]
+    public void SortingClause_WithUnbalancedParens_AnswersEmptyRatherThanAGuess()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-report-sorting-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir));
+
+            // Control on the same .app, so "empty" below cannot be satisfied by nothing
+            // having registered.
+            Assert.Equal("5,2", SortingFieldsOf(QuotedNamesReportId, dataItemId: 11));
+
+            Assert.Equal(string.Empty, SortingFieldsOf(UnbalancedParensReportId, dataItemId: 20));
         }
         finally
         {

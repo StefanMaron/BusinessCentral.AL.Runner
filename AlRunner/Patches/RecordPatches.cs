@@ -298,6 +298,10 @@ public static partial class RecordPatches
         // #3605: and the pageextension deltas that merge into those documents, which are keyed
         // by the EXTENSION's id — a separate id space, so a separate memo to drop.
         ClearBcPageExtensionControls();
+        // #3653: and the per-field Editable those rows resolve against. It is keyed by
+        // (table, field) and read through the rebuilt NCLMetaTable, so a stale entry outlives
+        // the very table it describes.
+        ClearBcMetaFieldEditable();
         // #3121: every table is rebuilt from scratch below, so carrying the previous bundle's
         // pending CalcFormula rebuilds forward only buys a wasted repopulate pass on the next
         // .app registration.

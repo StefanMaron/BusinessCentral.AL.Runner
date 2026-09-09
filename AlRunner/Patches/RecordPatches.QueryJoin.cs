@@ -42,6 +42,9 @@ public static partial class RecordPatches
     // dataitem tables when it executes a join.
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<object, object> _joinSourceByQueryDef = new();
 
+    /// <summary>The AL-visible surface every refusal in this file names.</summary>
+    private const string JoinSurface = "AL query execution (multi-dataitem join)";
+
     // ── lazily-loaded executor handles (resolved by reflection so no compile-time ref to
     //    the AlRunner.QueryJoin assembly leaks Ncl-touching IL into al-runner's startup) ──
     private static Assembly? _joinAsm;
@@ -123,7 +126,30 @@ public static partial class RecordPatches
         => (IEnumerable)_mTtdpFindImpl!.Invoke(provider, new[] { request })!;
 
     private static object? Join_BuildFindAllRequest(object provider, object dataItem, object table)
-        => BuildTableFindAllRequest(provider, dataItem, table);
+    {
+        var nclAsm = provider.GetType().Assembly;
+        const string rt = "Microsoft.Dynamics.Nav.Runtime.";
+
+        // The three BC types the builder reads members off, plus the FindType enum. `!` here
+        // would be the same null-forgiving shape the builder itself no longer has: a type that
+        // MOVED would hand back null and the NullReferenceException would land inside the
+        // builder, on a line naming a parameter rather than the type that went missing.
+        Type NclType(string name) => nclAsm.GetType(rt + name)
+            ?? throw new BcShapeGapException(
+                JoinSurface, rt + name,
+                "type not found in " + nclAsm.GetName().Name + " — the runner builds a join "
+                + "dataitem's read request from it; BC's layout has moved");
+
+        return BuildTableFindAllRequest(
+            provider, dataItem, table,
+            NclType("FindProviderRequest"),
+            NclType("FiltersAndMarks"),
+            NclType("TableFilterDictionary"),
+            _tFindTypeEnum ?? throw new BcShapeGapException(
+                JoinSurface, rt + "FindType",
+                "the FindType enum was not resolved when the query projection reflection was "
+                + "prepared — the runner needs it to ask for a Normal find"));
+    }
 
     private static object Join_MakeReadOnlyRecordBuffer(object metaQuery, Array navValues)
         => _ctorReadOnlyRecordBuffer!.Invoke(new object?[] { metaQuery, navValues })!;
@@ -197,7 +223,7 @@ public static partial class RecordPatches
         EnsureJoinExecutorLoaded();
         var queryDef = BcShape.Property(
             _tNCLMetaQuery!, "QueryDefinition", BindingFlags.Public | BindingFlags.Instance,
-            "AL query execution (multi-dataitem join)")
+            JoinSurface)
             .GetValue(nclMetaQuery)!;
         if (!_joinSourceByQueryDef.TryGetValue(queryDef, out var dataAccessSource))
             throw RunnerShapeGap.Query(
@@ -226,48 +252,78 @@ public static partial class RecordPatches
     // ── FindProviderRequest builder for a full table scan honouring the dataitem's own
     //    filters. Pure reflection; lives here (not in the executor) so the executor needs
     //    no FindProviderRequest knowledge. Ported from the original QueryJoin.cs. ────────
-    private static ConstructorInfo? _ctorFindProviderRequestAll;
-    private static int _normalFindOrdinal = -1;
-
-    private static int NormalFindOrdinal()
+    //
+    //    A FAILED LOOKUP REFUSES; AN EMPTY ANSWER STAYS SILENT (#3656, sibling of #3647).
+    //    Observably equivalent to BC for in-scope AL: on every BC build the runner has seen,
+    //    every member read below resolves, so no refusal fires and the request is the one BC
+    //    would build. What changed is the BC build where one MOVES — that used to answer
+    //    FiltersAndMarks.Empty (an unfiltered join returning too many rows) or null (which
+    //    JoinExecutor.ReadDataItemRows reads as "no rows", collapsing the join to empty),
+    //    both silently. A null TableFiltersAndMarks is BC's own "this dataitem declares no
+    //    DataItemTableFilter" answer — NCLMetaQuery.CreateTableFiltersAndMarksFromDataItem-
+    //    FieldFilters returns null when fieldFilters.Count == 0 — so that one still answers
+    //    Empty. Per-exit table: docs/query-dataitem-table-filter.md#the-join-path-refuses-too
+    private static int NormalFindOrdinal(Type tFindType)
     {
-        if (_normalFindOrdinal < 0)
-        {
-            try { _normalFindOrdinal = Convert.ToInt32(Enum.Parse(_tFindTypeEnum!, "Normal")); }
-            catch { _normalFindOrdinal = 0; }
-        }
-        return _normalFindOrdinal;
+        try { return Convert.ToInt32(Enum.Parse(tFindType, "Normal")); }
+        catch { return 0; }
     }
 
-    private static object? BuildTableFindAllRequest(object provider, object dataItem, object table)
+    private static object? BuildTableFindAllRequest(
+        object provider, object dataItem, object table,
+        Type tFindReq, Type tFiltersAndMarks, Type tTableFilterDictionary, Type tFindType)
     {
-        var nclAsm = provider.GetType().Assembly;
-        const string rt = "Microsoft.Dynamics.Nav.Runtime.";
-        var tFindReq = nclAsm.GetType(rt + "FindProviderRequest")!;
-        _ctorFindProviderRequestAll ??= tFindReq.GetConstructors()
+        var ctor = tFindReq.GetConstructors()
             .FirstOrDefault(c => c.GetParameters().Length >= 13
-                && c.GetParameters()[1].ParameterType.Name == "NCLMetaApplicationObject");
-        if (_ctorFindProviderRequestAll == null) return null;
+                && c.GetParameters()[1].ParameterType.Name == "NCLMetaApplicationObject")
+            ?? throw new BcShapeGapException(
+                JoinSurface, $"{tFindReq.Name}..ctor",
+                "no constructor taking >= 13 parameters whose second is an NCLMetaApplicationObject "
+                + "— the runner builds one to read a join dataitem's table under its own filters; "
+                + "BC's layout for this type has moved");
 
-        object? StaticMember(string typeName, string member)
+        // A static that BC declares as either a field or a property. Absence is a moved member,
+        // never an answer: both of these are `Empty` singletons that always exist on a real Ncl.
+        object StaticMember(Type t, string member)
         {
-            var t = nclAsm.GetType(rt + typeName)!;
-            return t.GetField(member, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null)
-                ?? t.GetProperty(member, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)?.GetValue(null);
+            var v = t.GetField(member, BcShape.AnyStatic)?.GetValue(null)
+                 ?? t.GetProperty(member, BcShape.AnyStatic)?.GetValue(null);
+            return v ?? throw new BcShapeGapException(
+                JoinSurface, $"{t.Name}.{member}",
+                "static field or property not found (or reads null) — the runner reads it to "
+                + "supply the join read request's empty filter set; BC's layout for this member "
+                + "has moved");
         }
 
-        object? filtersAndMarks = null;
+        // The read. The bare `catch { filtersAndMarks = null; }` this replaces swallowed
+        // EVERYTHING the getter raised — a BcShapeGapException from a nested read, the one type
+        // that must tear through both AL trapping seams, and BC's own NavNotSupportedException
+        // for a DataItemTableFilter on a FlowField — and answered FiltersAndMarks.Empty one frame
+        // below where it was raised. Nothing is caught now; the only catch left rethrows.
+        var pTableFilters = BcShape.Property(
+            dataItem.GetType(), "TableFiltersAndMarks", BcShape.AnyInstance, JoinSurface);
+        object? filtersAndMarks;
         try
         {
-            var p = dataItem.GetType().GetProperty("TableFiltersAndMarks",
-                BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            filtersAndMarks = p?.GetValue(dataItem);
+            filtersAndMarks = pTableFilters.GetValue(dataItem);
         }
-        catch { filtersAndMarks = null; }
-        filtersAndMarks ??= StaticMember("FiltersAndMarks", "Empty");
+        catch (TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            // Surface the getter's real exception, via ExceptionDispatchInfo and NOT
+            // `throw tie.InnerException` — same reason as ExecuteJoinQuery above: a bare rethrow
+            // resets the stack trace to this frame and erases where the failure came from.
+            // Without this the caller sees a TargetInvocationException whose text names
+            // reflection rather than the member that moved.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(tie.InnerException);
+            throw; // unreachable; satisfies definite assignment
+        }
 
-        var emptyTfd = StaticMember("TableFilterDictionary", "Empty");
-        var ps = _ctorFindProviderRequestAll.GetParameters();
+        // Reaching here with null means the READ SUCCEEDED and BC answered null: this dataitem
+        // declares no DataItemTableFilter. That is an answer, so it stays silent.
+        filtersAndMarks ??= StaticMember(tFiltersAndMarks, "Empty");
+
+        var emptyTfd = StaticMember(tTableFilterDictionary, "Empty");
+        var ps = ctor.GetParameters();
         var args = new object?[ps.Length];
         for (int i = 0; i < ps.Length; i++)
         {
@@ -281,7 +337,7 @@ public static partial class RecordPatches
                 "flowFieldSecurityFiltering" => ps[i].ParameterType.IsValueType ? Activator.CreateInstance(ps[i].ParameterType) : null,
                 "autoCalcFields" => null,
                 "sortingFields" => null,
-                "findType" => Enum.ToObject(_tFindTypeEnum!, NormalFindOrdinal()),
+                "findType" => Enum.ToObject(tFindType, NormalFindOrdinal(tFindType)),
                 "topNumberOfRowsToReturn" => 0,
                 "skipNumberOfRows" => 0,
                 "fastNumberOfRowsToReturn" => 0,
@@ -290,6 +346,6 @@ public static partial class RecordPatches
                 _ => ps[i].HasDefaultValue ? ps[i].DefaultValue : (ps[i].ParameterType.IsValueType ? Activator.CreateInstance(ps[i].ParameterType) : null)
             };
         }
-        return _ctorFindProviderRequestAll.Invoke(args);
+        return ctor.Invoke(args);
     }
 }

@@ -155,6 +155,18 @@ try:
     import agent_stdio as _stdio
 except Exception:  # pragma: no cover - a copy detached from its sibling module
     _stdio = None
+    # A missing display helper is never a refusal and never moves the exit
+    # code -- but it must not be silent either. .claude/rules/ci-verdicts.md
+    # documents extracting this tool out of origin/main into a scratch dir,
+    # and a copy left without this sibling prints through the console codec:
+    # on cp1252 a failing-log tail carrying one non-cp1252 character raises
+    # UnicodeEncodeError, and the traceback exits 1 -- this tool's "a required
+    # check failed" code (#3658). ASCII only, because the console that makes
+    # this note necessary is the console that would fail to print it.
+    print("note: tools/agent_stdio.py could not be imported alongside this copy of "
+          "ci-wait.py -- output is printed with the console encoding, so on a "
+          "non-UTF-8 console it may be lossy or raise while printing. Extract that "
+          "file too (see .claude/rules/ci-verdicts.md).", file=sys.stderr)
 if _stdio is not None:
     # Before any print: stdout is built from the console codec, and cp1252
     # cannot encode the robot emoji in an agent-authored PR body (#3589).

@@ -172,10 +172,115 @@ codeunit 65863 "Tcm Close Message Tests"
         // Reaching this line at all is the #3179 half; the rest is what came back.
         Assert.IsTrue(Row.Get('SEEN'),
             'the [MessageHandler] must have consumed the close-time message on the RunModal route too');
+        Assert.AreEqual(2, Row."Set ID",
+            'the RunModal route must deliver the close-time message TWICE, where the TestPage route above delivers it once -- the handler''s OK().Invoke() is itself a close attempt, and the round trip then attempts the close again (#3593)');
         Assert.IsTrue(StrPos(Row."Last Text", CloseRefusedTxt) > 0,
             'the handler must receive the trigger''s own error text on the RunModal route');
         Assert.AreEqual(Format(Action::None), Format(Result),
             'RunModal must report an Action once control returns, and a refused close completed none');
+    end;
+
+    // CLAIM 6, and the CONSTRAINT on claim 5: the second close attempt is reachable ONLY after
+    // a refusal.
+    //
+    // Claim 5 above pins that the RunModal route delivers a REFUSED close's message twice,
+    // which the runner reaches by making the handler's OK().Invoke() attempt the close before
+    // the round trip attempts it again. That change would be wrong if it made every RunModal
+    // round trip raise OnQueryClosePage twice: corpus codeunit 60276 "MQC Tests" measured on a
+    // real service tier that this exact OK().Invoke() shape raises the trigger exactly ONCE
+    // when it allows the close, and the runner already matched that before #3593.
+    //
+    // So this arm is the negative side of the pair, and it is not decoration -- a fix that
+    // attempted the close unconditionally twice turns claim 5 green and this one red. The
+    // page's trigger returns true, so the first attempt SUCCEEDS and there is nothing left for
+    // a second to do.
+    //
+    // A concrete count, not a liveness check: asserting merely that the trigger ran would pass
+    // against two raises just as well as against one.
+    [Test]
+    [HandlerFunctions('TcmAllowOkHandler')]
+    procedure RunModalWhenQueryCloseAllows_RaisesTheTriggerExactlyOnce()
+    var
+        Row: Record "Tcm Row";
+        Card: Page "Tcm Allow Card";
+        Result: Action;
+    begin
+        Initialize();
+
+        Result := Card.RunModal();
+
+        Assert.IsTrue(Row.Get('QCP'),
+            'OnQueryClosePage must be raised at all on a RunModal round trip the handler closes with OK');
+        Assert.AreEqual(1, Row."Set ID",
+            'a RunModal round trip whose OnQueryClosePage ALLOWS the close must raise it exactly once -- corpus 60276 measured that on a real tier, and the second attempt #3593 adds must be reachable only after a refusal');
+        Assert.AreEqual(Format(Action::OK), Format(Result),
+            'the close succeeded, so RunModal must report the action the [ModalPageHandler] chose rather than None');
+    end;
+
+    // The TestPage twin of the arm above: this route has one close attempt and must keep it,
+    // whatever the RunModal route does. Its refused-close counterpart is claim 1, which asserts
+    // one delivery -- the two together are why a fix cannot buy the RunModal count by changing
+    // the shared close path.
+    [Test]
+    procedure TestPageCloseWhenQueryCloseAllows_RaisesTheTriggerExactlyOnce()
+    var
+        Row: Record "Tcm Row";
+        Card: TestPage "Tcm Allow Card";
+    begin
+        Initialize();
+
+        Card.OpenEdit();
+        Card.Close();
+
+        Assert.IsTrue(Row.Get('QCP'),
+            'OnQueryClosePage must be raised when the test closes a TestPage itself');
+        Assert.AreEqual(1, Row."Set ID",
+            'TestPage.Close() must raise OnQueryClosePage exactly once -- this route has a single close attempt and #3593 does not touch it');
+    end;
+
+    // CLAIM 7, and the OTHER constraint on claim 5: a page the TEST opened is the test's to
+    // close, and its OK().Invoke() is not a client close.
+    //
+    // #3593 makes the built-in OK invoked from a [ModalPageHandler] attempt the close, because
+    // on BC that invoke is the client pressing OK. It must NOT do so for a page the test opened
+    // itself: BC's client never presses that page's OK button, and
+    // Card.OpenNew(); ...SetValue(...); Card.OK().Invoke(); followed by more calls on the same
+    // variable is ordinary AL that predates this issue by a long way.
+    //
+    // Two independent observations, so the arm cannot pass on a technicality. The trigger must
+    // NOT have been raised at all -- OK().Invoke() on this route is a row commit, not a close --
+    // and the page must still be drivable afterwards, which a page whose close ran would not be:
+    // #3593's success path calls ForceCloseForm, and a subsequent field read on a form BC has
+    // closed does not answer 99.
+    //
+    // Removing the guard turns this arm red and leaves every other arm in this bundle, and the
+    // whole al-language corpus at the current pin, green -- measured, which is why the arm is
+    // here rather than assumed unnecessary.
+    [Test]
+    procedure TestPageOwnOkInvoke_DoesNotCloseThePageTheTestOpened()
+    var
+        Row: Record "Tcm Row";
+        Card: TestPage "Tcm Allow Card";
+    begin
+        Initialize();
+
+        Card.OpenEdit();
+        Card."Set ID".SetValue(99);
+        Card.OK().Invoke();
+
+        Assert.IsTrue(not Row.Get('QCP'),
+            'OK().Invoke() on a page the TEST opened must not attempt the close -- BC''s client does not press that page''s OK button, so OnQueryClosePage must not have been raised');
+        Assert.AreEqual('99', Format(Card."Set ID".Value()),
+            'the page the test opened must still be drivable after its own OK().Invoke() -- a close would have torn the form down, and a torn-down form cannot answer this value');
+    end;
+
+    // Invoked by the allowed-close arm. Same OK().Invoke() shape as TcmOkHandler, against a page
+    // whose trigger permits the close -- so the two handlers differ only in which page they
+    // drive, which is what makes the delivery counts a statement about the refusal.
+    [ModalPageHandler]
+    procedure TcmAllowOkHandler(var Card: TestPage "Tcm Allow Card")
+    begin
+        Card.OK().Invoke();
     end;
 
     // Invoked by the modal arm above. Chooses OK deliberately: the close is refused regardless,

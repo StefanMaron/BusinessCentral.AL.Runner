@@ -1385,6 +1385,84 @@ check("...and every such recipe extracts the freshness helper alongside it",
       all("agent_self_freshness.py" in b for b in _extracting),
       "\n---\n".join(b for b in _extracting if "agent_self_freshness.py" not in b))
 
+# #3658: the same invariant, one sibling further on. ci-wait.py also imports
+# tools/agent_stdio.py, and a copy without it prints through the console codec
+# -- so on a cp1252 box a failing-log tail carrying one non-cp1252 character
+# raises UnicodeEncodeError and the traceback exits 1, which is this tool's
+# "a required check failed" code. A recipe that omits it hands the reader a
+# copy that can report a crash as a red verdict.
+#
+# Two forms, deliberately: the named list gives a readable failure, and the
+# set derived from ci-wait.py's own imports catches the NEXT sibling nobody
+# adds to the rule file.
+_SIBLINGS = ("ci-wait.py", "agent_self_freshness.py", "agent_stdio.py")
+check("...and every such recipe extracts all three siblings by name",
+      all(all(f in b for f in _SIBLINGS) for b in _extracting),
+      str([b for b in _extracting if not all(f in b for f in _SIBLINGS)]))
+
+import re
+
+_imported = set(re.findall(r"^\s*import (agent_\w+)",
+                           open(os.path.join(HERE, "ci-wait.py"),
+                                encoding="utf-8").read(), re.M))
+check("ci-wait.py imports the siblings the recipe is pinned to",
+      _imported == {"agent_self_freshness", "agent_stdio"}, str(_imported))
+check("...and every extraction recipe names every module ci-wait.py imports",
+      all(all(m + ".py" in b for m in _imported) for b in _extracting),
+      f"imports={sorted(_imported)} blocks={_extracting}")
+
+
+# ---------------------------------------------------------------------------
+# #3658 (2): a copy extracted WITHOUT agent_stdio.py must say so.
+#
+# The import already degrades to a no-op, which is right -- a missing display
+# helper may never be a refusal, and the exit code must not move. But the
+# degradation was silent, so the two-file copy the rule file used to recommend
+# printed through the console codec with nothing saying why its output might
+# be lossy. One note on stderr, in the shape of the freshness `unknown` notes.
+#
+# PYTHONUTF8=1 in the child env so this measures whether the NOTE is printed,
+# not what the host console codec happens to be.
+# ---------------------------------------------------------------------------
+_NOTE_MARK = "agent_stdio.py"
+
+
+def _copy_run(names):
+    """Run a copy of ci-wait.py alongside `names`, with --help (no network)."""
+    with tempfile.TemporaryDirectory() as td:
+        for n in names:
+            shutil.copy(os.path.join(HERE, n), os.path.join(td, n))
+        env = dict(os.environ, PATH=td, PYTHONUTF8="1")
+        return subprocess.run([sys.executable, os.path.join(td, "ci-wait.py"), "--help"],
+                              capture_output=True, text=True, env=env, timeout=120)
+
+
+_two = _copy_run(["ci-wait.py", "agent_self_freshness.py"])
+check("a copy without agent_stdio.py still runs (--help), exit 0",
+      _two.returncode == 0, f"(rc={_two.returncode}) {_two.stdout}{_two.stderr}")
+check("...and prints a note naming the missing helper, on stderr",
+      _NOTE_MARK in _two.stderr and _NOTE_MARK not in _two.stdout,
+      f"stdout={_two.stdout[-400:]} stderr={_two.stderr[-400:]}")
+
+
+def _cp1252_safe(text):
+    try:
+        text.encode("cp1252")
+        return True
+    except UnicodeEncodeError:
+        return False
+
+
+check("...and the note is cp1252-safe, so it cannot crash the box it warns about",
+      _cp1252_safe(_two.stderr), ascii(_two.stderr[-200:]))
+check("...and it is a note, never a verdict",
+      "GREEN" not in _two.stderr and "REFUSING" not in _two.stderr, _two.stderr[-200:])
+
+_three = _copy_run(["ci-wait.py", "agent_self_freshness.py", "agent_stdio.py"])
+check("the three-file copy the rule recommends prints no such note, exit 0",
+      _three.returncode == 0 and _NOTE_MARK not in _three.stderr,
+      f"(rc={_three.returncode}) {_three.stderr[-400:]}")
+
 
 # ---------------------------------------------------------------------------
 # #3309 -- an empty failing-log fetch is a REFUSAL, not an empty log.
