@@ -308,6 +308,16 @@ jobs:
     # reason. The changed-file list comes from the local checkout via git, not
     # from api.github.com.
     #
+    # PIN_PATH, the gitlink whose movement fires this, is checked against
+    # .gitmodules before anything else (#3681). It used to be a bare constant
+    # nothing verified, so a submodule rename or a typo would have made no
+    # changed path ever match it -- the gate reporting "no pin bump" on every
+    # pull request, green, forever, with nothing saying it had stopped firing.
+    # An undeclared PIN_PATH is now exit 3, distinct from the missing-entry
+    # failure because the remedy is a constant in the script rather than a
+    # history entry. A repository declaring no submodule at all stays a pass:
+    # there, a pin bump cannot occur, so no entry can be owed.
+    #
     # Scoping, and why it is the PIN and not the count: see the header of
     # check_count_baseline_history.sh. Short version, measured on main at
     # e03dbfc1 -- of the last 12 commits touching test-count-baseline.json, 10
