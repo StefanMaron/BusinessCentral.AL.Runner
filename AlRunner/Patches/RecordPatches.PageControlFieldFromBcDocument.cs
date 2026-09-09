@@ -211,6 +211,69 @@ public static partial class RecordPatches
         }
     }
 
+    /// <summary>The AL compiler's own <c>SymbolKind</c> name for a pageextension, as
+    /// <see cref="AlObjectMetadataRegistry"/> keys it — measured from the emitter's own trace
+    /// (<c>AL_RUNNER_TRACE_OBJECT_METADATA=2</c> prints <c>PageExtension|id:70663</c>).</summary>
+    internal const string BcPageExtensionMetadataKind = "PageExtension";
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, List<BcPageControl>>
+        _bcPageExtensionControls = new();
+
+    /// <summary>
+    /// Drop the parsed pageextension deltas on a <c>--watch</c>/<c>--server</c> reload, for the
+    /// same reason <see cref="ClearBcPageControlDocuments"/> does: extension ids repeat across
+    /// reloads, so an entry from the previous bundle is a wrong answer rather than a miss.
+    /// </summary>
+    internal static void ClearBcPageExtensionControls() => _bcPageExtensionControls.Clear();
+
+    /// <summary>
+    /// The field controls every pageextension over <paramref name="pageId"/> ADDS, read from
+    /// each extension's own <c>MetadataRuntimeDeltas</c> document.
+    ///
+    /// <para>An extension whose document the emitter never captured contributes nothing here;
+    /// it is not silently dropped, because the caller only reaches this path for a page whose
+    /// own document exists, and a missing extension document leaves the base page's rows
+    /// intact rather than replacing them with a guess.</para>
+    /// </summary>
+    private static List<BcPageControl> GetBcPageExtensionControls(int pageId)
+    {
+        var result = new List<BcPageControl>();
+        foreach (var extId in GetPageExtensionIdsForPage(pageId))
+        {
+            var controls = _bcPageExtensionControls.GetOrAdd(extId, static id =>
+            {
+                var into = new List<BcPageControl>();
+                if (!AlObjectMetadataRegistry.TryGet(BcPageExtensionMetadataKind, id, out var xml)
+                    || string.IsNullOrEmpty(xml))
+                    return into;
+                try
+                {
+                    var d = new XmlDocument();
+                    d.LoadXml(xml);
+                    if (d.DocumentElement == null) return into;
+                    // <MetadataRuntimeDeltas><ControlAdd><Controls xsi:type="ControlDefinition" …/>
+                    // The <Controls> element carries exactly the attributes the base document's
+                    // controls do, so the same collector reads both. Only ControlAdd is read:
+                    // ControlChange/ControlMove modify an EXISTING row rather than adding one,
+                    // and applying them is a separate claim this change does not make (#3605).
+                    var sequence = 0;
+                    foreach (XmlNode n in d.DocumentElement.ChildNodes)
+                        if (n is XmlElement add && add.Name == "ControlAdd")
+                            CollectBcPageControls(add, into, ref sequence);
+                }
+                catch (XmlException ex)
+                {
+                    Console.Error.WriteLine(
+                        $"[page-control-field] pageextension {id}: BC's delta document did not "
+                        + $"parse ({ex.Message}) — its added controls are omitted");
+                }
+                return into;
+            });
+            result.AddRange(controls);
+        }
+        return result;
+    }
+
     private static int ReadBcAttrInt(XmlElement e, string name)
         => int.TryParse(e.GetAttribute(name), out var v) ? v : 0;
 
@@ -233,8 +296,26 @@ public static partial class RecordPatches
         var doc = TryGetBcPageControlDocument(pageId);
         if (doc == null) return null;
 
-        var rows = new List<PageControlFieldRow>(doc.Controls.Count);
-        foreach (var c in doc.Controls)
+        // A pageextension's added controls are NOT in the base page's document — measured on
+        // the ObjectMetadataCapture fixture: `Extra Note` appears zero times in
+        // PageDefinition 70660 and only in PageExtension 70663's own MetadataRuntimeDeltas
+        // document. Tables are the opposite (#3600), so a table intuition does not carry.
+        // See docs/page-control-field-from-bc-document.md#pageextension-deltas.
+        var controls = doc.Controls;
+        var extensionControls = GetBcPageExtensionControls(pageId);
+        if (extensionControls.Count > 0)
+        {
+            // BC numbers Sequence by its own FindAll walk over the MERGED page, so an added
+            // control continues the base page's numbering rather than restarting.
+            var merged = new List<BcPageControl>(controls);
+            var sequence = controls.Count;
+            foreach (var c in extensionControls)
+                merged.Add(c with { Sequence = sequence++ });
+            controls = merged;
+        }
+
+        var rows = new List<PageControlFieldRow>(controls.Count);
+        foreach (var c in controls)
         {
             var isBound = int.TryParse(c.DataColumnName, out var fieldNo);
             var sourceExpression = string.Empty;
