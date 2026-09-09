@@ -136,14 +136,23 @@ These numbers come from a single session and review time varies with PR size. Re
 A fresh or drifted box does not announce that it is broken; it produces numbers that look fine.
 Every check below exists because its absence has silently corrupted a result.
 
-**Run `tools/preflight.py`.** It is this section, executable, with a real exit code — 0 all
-passed, 1 something failed and this box would produce untrustworthy results, 2 warnings under
-`--strict`, 3 it could not complete. `--json` for a box profile, `--reap` to remove worktrees
-whose PR is merged and whose tree is clean, `--with-corpus` to include step 1. The prose below
-stays as the specification and the reasoning; the script is how it actually gets run, because a
-check a busy coordinator can decline is not a check — one skipped step 5 across an evening of
-~20 agents and filled a 7.7 GB tmpfs, after which every shell on the box failed without naming
-the cause.
+**Run `tools/preflight.py --agent-id <AGENT-ID>`.** It is this section, executable, with a
+real exit code — 0 all passed, 1 something failed and this box would produce untrustworthy
+results, 2 warnings under `--strict`, 3 it could not complete. `--json` for a box profile,
+`--reap` to remove worktrees whose PR is merged and whose tree is clean, `--with-corpus` to
+include step 1.
+
+**`--agent-id` is what lets the `branch-ownership` check answer at all** — with no identity it
+can only WARN (#3746), so every documented invocation carries it. It travels as an argument
+and not as an exported `AL_RUNNER_AGENT_ID` because shell state does not survive between tool
+calls (`impl-agent.md`): an `export` is gone by the next command and the check drops back to
+WARN without saying so. From the main checkout there is nothing to compare and the check
+PASSes; it earns its keep from a worktree, which is where `impl-agent.md` runs it.
+
+The prose below stays as the specification and the reasoning; the script is how it actually
+gets run, because a check a busy coordinator can decline is not a check — one skipped step 5
+across an evening of ~20 agents and filled a 7.7 GB tmpfs, after which every shell on the box
+failed without naming the cause.
 
 Two things about the verdicts it produces, because both change what "stop" means:
 

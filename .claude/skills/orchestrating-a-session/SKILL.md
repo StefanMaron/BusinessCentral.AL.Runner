@@ -440,6 +440,9 @@ Otherwise the next agent starts from the wrong premise — which has happened he
   `search_members` → `memberId` → `get_decompiled_source` / `find_callers`.
   `compare_symbols` diffs a method between BC versions, which is how a Cecil rewrite that
   stopped being reached gets caught.
+- `tools/preflight.py --agent-id <AGENT-ID>` — the box check, with the identity it needs. Without
+  it the `branch-ownership` check can only WARN (#3746). From this checkout it PASSes, having
+  nothing to compare; it refuses from a worktree, so brief agents to run it there.
 - `tools/agent-cost.py <tasks-dir>` — where a session's agents actually spent their calls.
   Measured once: 85% of Bash calls were shell read/search and the navigation tools were used
   3 times in 3,237 calls. Re-measure rather than assuming it improved.
