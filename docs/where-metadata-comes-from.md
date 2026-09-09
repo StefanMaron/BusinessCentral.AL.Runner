@@ -12,8 +12,16 @@ AL_RUNNER_TRACE_TABLE_METADATA_SOURCE=1    # one line per built table: [table-me
 ```
 
 Exactly `"1"` or `"2"` — any other value, including `"true"`, is a silent no-op. There are exactly
-two route values, `bc-document` and `derived`, and no failure route: a failed document read refuses
-rather than falling through to the derivation (`loud-failures.md`).
+two route values, `bc-document` and `derived`, and **no failure route**: **availability** decides
+which route a table takes, and a failure is never *re-routed* to the derivation — substituting a
+weaker answer on error is what `loud-failures.md` exists to prevent.
+
+**A failure there is not loud, though, and this page must not imply it is.** The site sits inside a
+catch that swallows any throw into `return null` for both routes alike — pre-existing, tracked as
+**#3590**. So a genuine load failure and "no document was available" are **indistinguishable from the
+trace**, and a table that failed to load shows as `derived` exactly like one that never had a
+document. `RecordPatches.NclMetaTableBuilder.cs` says so at the site itself; #3590 is open precisely
+because the guarantee a reader would want here does not yet exist.
 
 ## The three shapes
 
@@ -26,6 +34,12 @@ rather than falling through to the derivation (`loud-failures.md`).
 The middle row is the one that keeps getting mis-stated, so it is worth being exact.
 
 ### An R2R `.app` ships source AND no metadata
+
+**Where to look, because the obvious check contradicts this.** The source is in the **nested inner
+`.app`**; the outer R2R wrapper holds 9 entries and **zero** `.al` files. So a naive unzip of the
+outer package reports no source at all and looks like it disproves the row above. Open the inner
+package. (Re-measured independently on build `28.4.53241.54407`: **8,096** `.al` files, 0 `bin/`
+entries — a one-file drift between 28.4 siblings, which is version drift and not a contradiction.)
 
 Measured on `Microsoft_Base Application_28.4.53241.53989.app`: **8,095 source files, 0 `/bin`
 metadata documents.** So "ships a DLL" does not mean "ships no source" — it means the source is
