@@ -532,9 +532,8 @@ a merge can turn `main` red, which outranks everything you were about to do.
 Several people may run this loop at once, against the same repository, with no coordination
 between them. Nothing may depend on them talking to each other.
 
-**The assignee locks; your label discriminates.** Both matter and they do different jobs: the
-assignee is what stops two agents working the same issue, and your own agent label is what lets
-you (and anyone reading the repository later) tell which work came from which loop. Set both.
+Set both the assignee and your own `agent:` label when claiming; what each is worth is owned
+by the rule below.
 
 **What each claim signal is worth, and the one call that decides ownership, live in
 `.claude/rules/check-open-prs-before-claiming.md`** — read it before claiming, and as a
