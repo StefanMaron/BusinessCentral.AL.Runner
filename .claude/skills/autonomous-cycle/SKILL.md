@@ -114,7 +114,7 @@ were measured:
 
 **Arming is defined once**, in the `orchestrating-a-session` skill under "A reviewer that
 approves a PR arms auto-merge": the command, the conditions, the head to record. Run that
-list; on a green PR it is the merge decision.
+list.
 
 When it arms rather than merges, arming is still not merging, and it does not replace the merge
 bar — it is the bar expressed as a standing instruction to GitHub, so a PR lands the moment its
