@@ -1,61 +1,34 @@
 // BuiltInPageModeAction — AL's `SomePage.View()` and `SomePage.Edit()` on a TestPage.
 //
-// THE GAP (issue #3185)
-//   Both raised "InvalidOperationException: The UISessionManager was expected to be
-//   initialized." from TestPageClientSession.GetTestLogicalDispatcher(), before any page could
-//   open. Two independent causes, and the first one hid the second:
+// THE CLAIM
+//   Nothing in the application declares these actions; the CLIENT supplies them, and BC's
+//   TestPageProxy.View()/Edit() is a lookup rather than an effect. Across every shape BC
+//   distinguishes, Visible is TRUE — including the shapes where nothing happens. Enabled is
+//   the channel BC says "not here" through. Both properties answered a hardcoded true, and the
+//   two no-card shapes were refused outright, until issue #3258.
 //
-//   1. NavTestPageBase.ALView()/ALEdit() wrap their result in TestClientProxy<ITestAction>
-//      .Proxy(...), which needs the client's dispatcher. NclCecilRewrite step 4 strips that
-//      call from NavTestPageBase — but it used to strip it from a hard-coded list of six
-//      method names, and NavTestPageBase has EIGHT Proxy call sites. ALView and ALEdit were
-//      the two the list did not name. That step now sweeps the whole type.
+//   Measured, not read off the builder: corpus codeunit 60479 "TPMS Tests"
+//   (StefanMaron/BusinessCentral.AL.Language.Tests#317, 9 arms, 9/9 on BC 28.4.53241.0) and 60461
+//   "TPVE Tests" (upstream #203). Row by row the table is pinned as assertions in
+//   AlRunner.Tests/BuiltInPageModeActionRuleTests.cs; the builder walk behind it
+//   (ActionBuilder.ResolveCardFormId / IsModifyAllowedInCard, BC 28.1) and the #3185 history
+//   are in this change's pull request.
 //
-//   2. Underneath it, ITestPage.View()/Edit() answered `new MockITestAction()`, whose Invoke()
-//      is a literal no-op. So even with the proxy gone, invoking either did nothing at all.
-//      This file is that half.
+// THE TRAP
+//   The read-only rule reads the HOST page's own Editable, never the target card's.
+//   ResolveCardFormId falls back to the parent page's OWN id only when that parent is not a
+//   List — so a list whose card is read-only keeps its Edit action, Visible and not Enabled,
+//   while a Card declaring Editable = false has no Edit action at all.
 //
-// WHAT REAL BC DOES, AND HOW THAT WAS ESTABLISHED
-//   Nothing in the application declares these actions; the CLIENT supplies them. The
-//   reference implementation is Microsoft.Dynamics.Nav.Client.TestPageClient.TestPageProxy
-//   (BC 28.1), and it is a lookup, not an effect:
+//   The in-place switch moves LiveNavTestPage's own editability (SwitchViewModeInPlace) rather
+//   than driving BC's PageModeAggregator.ChangePageMode: that type operates on a client
+//   LogicalForm, which the runner never builds.
 //
-//     public ITestAction View()  => the first ActionControl whose Action is a
-//         NavOpenTaskPageAction { IsPageModeAction: not false } with ViewMode == PageMode.View,
-//         wrapped in a TestActionProxy — or NULL when the page has none.
-//
-//   Edit() is the same with PageMode.Edit. Those actions are created by
-//   Microsoft.Dynamics.Nav.Client.FormBuilder.ActionBuilder, from MenuActionType.View /
-//   MenuActionType.Edit, and everything this file needs is in three of its methods:
-//
-//     * ResolveCardFormId — the TARGET. For a system menu action `actionDef.TargetID` is 0, so
-//       it falls back to the card page id in the builder context (a list page's CardPageId),
-//       then FormState.CardPageId, and only then — when the parent form is NOT a List — to the
-//       parent page's OWN id.
-//     * IsModifyAllowedInCard — the Edit action is not created at all when the card does not
-//       allow modification, which is why Edit() can legitimately answer null.
-//     * NavOpenTaskPageAction.FindFormState / CreateForm — the ROW and the MODE. `new
-//       FormState(ViewMode)` carries the requested mode onto the target, and the parent
-//       binding manager's CurrentRow bookmark is stamped onto it, so the card opens on the
-//       row the list is standing on.
-//
-//   And the service tier has adjudicated the result: corpus codeunit 60461 "TPVE Tests"
-//   (StefanMaron/BusinessCentral.AL.Language.Tests#203) drives a List with CardPageId, parks it
-//   on its second row, invokes each action, and asserts that the card opens exactly once, on
-//   that row, that the [PageHandler] ran, and that View gives the handler a read-only page
-//   while Edit gives it an editable one.
-//
-// WHAT THIS FILE IMPLEMENTS
-//   Exactly the measured shape: a page that declares a resolvable CardPageId opens that card,
-//   on the host's current row, in the requested mode, through BC's own NavForm front door —
-//   so handler lookup, TestPage.Trap() and the "Unhandled UI" refusal stay BC's.
-//
-// WHAT IT REFUSES, LOUDLY
-//   The in-place variant, where ResolveCardFormId lands on the host page's own id and
-//   NavOpenTaskPageAction.InvokeCore switches THAT page's mode instead of opening anything
-//   (UseCurrentForm -> PageModeAggregator.ChangePageMode). No corpus test measures it, the
-//   runner models a TestPage's editability as a value fixed at open time, and answering it by
-//   opening a second copy of the page would be a silent wrong answer. Issue #3258.
+// WHAT IS STILL REFUSED
+//   A page declaring Editable = false, asked for Edit() — a deliberate divergence, since BC
+//   raises a bare NullReferenceException that names nothing. See
+//   docs/limitations.md#testpage-page-mode-no-edit-action and
+//   LiveNavTestPage.BuiltInPageModeActionFor.
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
 
@@ -103,9 +76,22 @@ internal static class RunnerPendingPageOpenMode
     }
 }
 
+/// <summary>Which of BC's three shapes a built-in page-mode action is. See this file's header.</summary>
+internal enum BuiltInPageModeActionKind
+{
+    /// <summary>Opens the host's CardPageId card (corpus 60461).</summary>
+    OpenCard,
+
+    /// <summary>A list with no card to open: the action exists and does nothing.</summary>
+    NoTarget,
+
+    /// <summary>A non-list host: the page already open changes mode.</summary>
+    InPlaceSwitch,
+}
+
 /// <summary>
-/// A page's built-in View / Edit action, wired to the page it actually opens. See this file's
-/// header for what BC's own client does and where each rule below is read from.
+/// A page's built-in View / Edit action. See this file's header for what BC's own client does
+/// and where each row of the table is measured.
 /// </summary>
 internal sealed class BuiltInPageModeAction : ITestAction
 {
@@ -113,57 +99,109 @@ internal sealed class BuiltInPageModeAction : ITestAction
     private readonly NavRecord? _record;
     private readonly int _targetPageId;
     private readonly bool _viewMode;
+    private readonly BuiltInPageModeActionKind _kind;
 
-    internal BuiltInPageModeAction(LiveNavTestPage host, NavRecord? record, int targetPageId, bool viewMode)
+    internal BuiltInPageModeAction(
+        LiveNavTestPage host, NavRecord? record, int targetPageId, bool viewMode,
+        BuiltInPageModeActionKind kind)
     {
         _host = host;
         _record = record;
         _targetPageId = targetPageId;
         _viewMode = viewMode;
+        _kind = kind;
     }
 
     /// <summary>
-    /// Save the current row, then open the card on it — the same order
-    /// <see cref="LiveNavTestAction"/> uses, and BC's: <c>LogicalAction.RequiresSave</c> is set
-    /// to true in <c>NavOpenTaskPageAction</c>'s constructor, so a real client sends the row it
-    /// is standing on to the server before the action runs.
+    /// Save the current row, then do whatever this action's shape does. The save is BC's order
+    /// too: <c>LogicalAction.RequiresSave</c> is set to true in <c>NavOpenTaskPageAction</c>'s
+    /// constructor, so a real client sends the row it is standing on to the server first.
+    ///
+    /// <para>A DISABLED action does nothing, and does not raise. That is not the runner being
+    /// permissive: it is what a real service tier does with every one of these — corpus 60479
+    /// EditActionOnAnAlreadyEditableCardIsVisibleButNotEnabledAndDoesNothing, its View mirror,
+    /// and ListWhoseCardIsReadOnlyLeavesTheEditActionVisibleButNotEnabled each invoke one and
+    /// assert that the page's mode is unchanged and that nothing opened. Under
+    /// loud-failures.md this is the observably-equivalent answer, not a swallowed failure:
+    /// BC's own <c>LogicalAction.CanInvoke</c> gate produces no effect and no error.</para>
     /// </summary>
     public void Invoke()
     {
         _host.SaveCurrentRow();
 
-        // The mode has to be in place BEFORE the form opens: OnOpenPage is AL that can read
-        // CurrPage.Editable, and the [PageHandler] reads it through TestPage.Editable().
-        RunnerPendingPageOpenMode.Arm(_targetPageId, readOnly: _viewMode);
-        try
+        if (!Enabled) return;
+
+        switch (_kind)
         {
-            // The host's current row, which is what BC stamps onto the target's form state as
-            // `parentBindingManager.CurrentRow.Bookmark` — the runner's equivalent of a
-            // bookmark is handing BC's own page-run front door the record itself, exactly as
-            // an action's `RunPageOnRec` already does (RunnerPageInstance.ActionRunObject).
-            RunnerPageInstance.RunPageThroughBcFrontDoor(_targetPageId, _record);
-        }
-        finally
-        {
-            RunnerPendingPageOpenMode.Disarm();
+            case BuiltInPageModeActionKind.InPlaceSwitch:
+                // Nothing opens: the page already on screen changes mode. BC reaches this
+                // through NavOpenTaskPageAction.InvokeCore's UseCurrentForm branch.
+                _host.SwitchViewModeInPlace(_viewMode);
+                return;
+
+            case BuiltInPageModeActionKind.NoTarget:
+                // A list with no CardPageId: BC resolves no target form and the invoke has no
+                // effect (corpus 60479 PlainListWithoutCardPageIdOffersBothActionsAndEnablesOnlyView
+                // asserts neither card opened).
+                return;
+
+            default:
+                // The mode has to be in place BEFORE the form opens: OnOpenPage is AL that can
+                // read CurrPage.Editable, and the [PageHandler] reads it through
+                // TestPage.Editable().
+                RunnerPendingPageOpenMode.Arm(_targetPageId, readOnly: _viewMode);
+                try
+                {
+                    // The host's current row, which is what BC stamps onto the target's form
+                    // state as `parentBindingManager.CurrentRow.Bookmark` — the runner's
+                    // equivalent of a bookmark is handing BC's own page-run front door the
+                    // record itself, exactly as an action's `RunPageOnRec` already does
+                    // (RunnerPageInstance.ActionRunObject).
+                    RunnerPageInstance.RunPageThroughBcFrontDoor(_targetPageId, _record);
+                }
+                finally
+                {
+                    RunnerPendingPageOpenMode.Disarm();
+                }
+                return;
         }
     }
 
     /// <summary>
-    /// True, and the reason is structural rather than a default: in BC these two properties
-    /// answer <c>LogicalAction.CanInvoke</c>, whereas whether the action EXISTS at all is
-    /// decided earlier, by ActionBuilder — and that is the half this runner models, in
-    /// <see cref="LiveNavTestPage.BuiltInPageModeActionFor"/>. An action that got this far was
-    /// created by the builder's own rules.
-    ///
-    /// <para>What is NOT modelled: CanInvoke additionally refuses a multi-row selection
-    /// (<c>IsMultipleSelectionDisabledAction</c>), and consults the action's FilterContext and
-    /// any already-open form for the same page. None of those has a runner equivalent — the
-    /// runner has no selection model and no window list — and no corpus test reads
-    /// <c>Visible</c>/<c>Enabled</c> on a built-in page-mode action. Issue #3258.</para>
+    /// True in every shape a service tier has been asked about — corpus 60479 (upstream #317)
+    /// and 60461 (#203) assert it on every one. The action's EXISTENCE is what
+    /// LiveNavTestPage.BuiltInPageModeActionFor decides; anything that got this far exists.
     /// </summary>
     public bool Visible => true;
 
-    /// <inheritdoc cref="Visible"/>
-    public bool Enabled => true;
+    /// <summary>
+    /// BC's <c>LogicalAction.CanInvoke</c>, for the conditions that have an answer here:
+    ///
+    /// <list type="bullet">
+    /// <item><b>In place</b> — enabled only when the requested mode differs from the page's
+    /// current one, which is <c>NavOpenTaskPageAction.CanSwitchViewMode</c>: Edit applies to a
+    /// page that is currently read-only, View to one that is currently editable.</item>
+    /// <item><b>No target</b> — View is enabled, Edit is not. A list with no CardPageId has no
+    /// editable card to reach.</item>
+    /// <item><b>Open a card</b> — View always; Edit only when that card allows modification
+    /// (<c>ActionBuilder.IsModifyAllowedInCard</c>). Unknown keeps the permissive answer, the
+    /// rule every TryGetAny* caller uses: refusing on a lookup miss would answer from the
+    /// runner's own inventory rather than from the page.</item>
+    /// </list>
+    ///
+    /// <para>Computed per read rather than at construction, because a switch moves it: AL that
+    /// reads Enabled, invokes, and reads again must see the second answer.</para>
+    ///
+    /// <para>CanInvoke's remaining conditions have no runner equivalent and need none — each
+    /// collapses to its permissive value BY CONSTRUCTION, not by assumption.
+    /// <c>IsMultipleSelectionDisabledAction</c> refuses a multi-row selection and the runner
+    /// drives exactly one row; <c>FindExistingForm</c> refuses when a form for the same page is
+    /// already open and RunnerTestClientSession.OpenFormsCount is 0 by design. So the three
+    /// rules above are the whole gate here, and the eight measured rows agree with them.</para>
+    /// </summary>
+    public bool Enabled => BuiltInPageModeActionRule.Enabled(
+        _kind, _viewMode, _host.StaticEditableNow,
+        _kind == BuiltInPageModeActionKind.OpenCard
+            ? RecordPatches.TryGetAnyPageModifyAllowed(_targetPageId)
+            : null);
 }
