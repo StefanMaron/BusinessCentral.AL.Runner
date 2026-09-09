@@ -1,0 +1,13 @@
+{
+  "id": "b7f41d92-3c65-4a08-9d17-52e6c8a3b410",
+  "name": "Runner Tests Fixture - Dep Install Trigger Session Identity Observer",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#3698: a DEPENDENCY install trigger records the session identity it observed, and whether the session user was a row in User (2000000120) at that moment.",
+  "description": "Dependency install triggers run inside TestExecutor's dep-company baseline window. Before #3698 the session-user seed ran after that window, so a dependency's install code saw an empty User table and a session identity that could still change. This app only OBSERVES - it writes no User row and arranges no collision - so the observation it stores is exactly what a real dependency's OnInstallAppPerCompany would have seen. The consuming bundle's tests read the stored row back.",
+  "dependencies": [],
+  "idRanges": [ { "from": 70800, "to": 70819 } ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}
