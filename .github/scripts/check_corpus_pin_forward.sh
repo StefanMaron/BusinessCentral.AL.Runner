@@ -27,12 +27,43 @@
 #     exactly the older revision. The tests that would have gone red are the
 #     ones being removed.
 #
-# Caught for real on PR #3181, which was green and CLEAN while about to drop
-# corpus #199 and #201. That PR did nothing wrong: it bumped the pin forward
-# from the main that existed when it was written, and main's pin advanced
-# afterwards. Nothing rebased it and nothing told it to. That is why this is a
-# guard rather than a note in a rules file -- it is a merge-order accident, not
-# an authoring mistake, and it gets likelier as more agents run in parallel.
+# WHAT THIS GUARD HAS AND HAS NOT DEMONSTRATED (#3299)
+# ----------------------------------------------------
+# This header used to say the shape was "caught for real on PR #3181, green and
+# CLEAN while about to drop corpus #199 and #201." That is false, and it is
+# corrected here rather than deleted, because a guard justified by a catch that
+# did not happen is worse than one justified by nothing -- the next reader
+# trusts it more, not less. Measured against the live repository:
+#
+#   * #3181's base pin is b0c6248a at BOTH readings of "base": its frozen
+#     event-payload base c0fda77e, and the main it actually merged onto,
+#     9fe2b1d2. Its head pin 7394c15f is strictly FORWARD of b0c6248a, three
+#     corpus commits ahead.
+#   * At #3181's first commit 6cbdfff5 the pin was b0c6248a, identical to base --
+#     the untouched case.
+#   * So this script exits 0 on #3181 at every revision it ever had, on either
+#     reading of base. Running it against those endpoints is a five-second check
+#     and it was never done before the claim was written.
+#   * Corpus #199 (b0c6248a) and #201 (ae64da1b) are both ancestors of b0c6248a,
+#     so they were already pinned at #3181's base and remained pinned at its
+#     head. Nothing was about to be dropped.
+#   * main's pin has only ever moved forward: 6e198a97 -> b0c6248a -> 7394c15f.
+#
+# So: the backward-pin shape is real, it is a merge-order accident rather than
+# an authoring mistake, and it gets likelier as more agents run in parallel --
+# which is why it is a guard rather than a note in a rules file. It has no
+# real-world instance to point at yet. If one occurs, cite it here; do not
+# reintroduce one that did not.
+#
+# A SECOND, SEPARATE LIMIT, which is true and was raised in the same review:
+# BASE_SHA comes from github.event.pull_request.base.sha, which GitHub freezes
+# at the pull request's last event and does NOT advance when the base branch
+# does. So the verdict is point-in-time: it is measured against the base as of
+# the PR's most recent push or synchronise, not against main at the moment of
+# merge. A pin that was forward when the PR was last touched can be behind by
+# the time it merges, and this guard will not re-fire on its own -- only a new
+# event (a push, a rebase, a synchronise) refreshes the base. On #3181 both
+# readings happened to agree; that is not guaranteed in general.
 #
 # THE FOUR VERDICTS, AND WHY THERE ARE FOUR RATHER THAN THREE
 # -----------------------------------------------------------
@@ -86,16 +117,19 @@
 #   HEAD_SHA  - github.event.pull_request.head.sha
 #
 # Optional:
-#   SUBMODULE_PATH - defaults to tests/al-language
+#   SUBMODULE_PATH - defaults to tests/al-language. It must name a submodule the
+#                    endpoint commits' .gitmodules actually declares; one that
+#                    does not is refused with exit 3 rather than passed (#3299).
 #
 # Exit codes
-#   0  the pin is unchanged, or it moved strictly forward
+#   0  the pin is unchanged, or it moved strictly forward -- or the repository
+#      declares no submodule at all, which has nothing to un-pin
 #   1  the pin moved backward, or the two pins have diverged
 #   2  the check could not run: a missing input, or an endpoint that is not a
 #      commit SHA present in this checkout
-#   3  the answer cannot be determined from this checkout -- the corpus history
-#      needed to compare the two pins is not present. NOT a pass and NOT a
-#      backward-pin verdict.
+#   3  the answer cannot be determined -- the corpus history needed to compare
+#      the two pins is not present, or SUBMODULE_PATH names nothing this
+#      repository declares. NOT a pass and NOT a backward-pin verdict.
 
 set -uo pipefail
 
@@ -157,9 +191,62 @@ read_pin() {
 base_pin="$(read_pin "$BASE_SHA")" || base_pin=""
 head_pin="$(read_pin "$HEAD_SHA")" || head_pin=""
 
+# --- Neither endpoint carries the pin: two very different situations ---------
+#
+# #3299. Until this was written, both of them exited 0 with the same sentence,
+# which made the ONE path in this script that can pass without measuring
+# anything also the path a typo lands on. SUBMODULE_PATH's default is a string;
+# nothing tied it to what .gitmodules declares, so renaming the submodule -- or
+# mistyping the default -- would have given every pull request a green tick
+# forever, reporting the same "there is no corpus pin to compare" a genuinely
+# submodule-free repository gets.
+#
+# The two are told apart by asking what the ENDPOINT COMMITS declare, never the
+# working tree: .gitmodules on disk belongs to whatever is checked out, which is
+# refs/pull/N/merge under actions/checkout, and #3261's lesson applies to this
+# read exactly as it does to the pins themselves.
+#
+#   .gitmodules absent at BOTH endpoints -> 0. A repository that genuinely
+#     declares no submodule has nothing to un-pin, and turning that into a hard
+#     error would trade this defect for a different one. That constraint is why
+#     the fix is a discrimination rather than an unconditional assertion.
+#   .gitmodules present, declaring submodules, none of them SUBMODULE_PATH -> 3,
+#     naming what it DOES declare, so a typo is visible in the message rather
+#     than left for the reader to infer from an absence.
+#   .gitmodules present but unreadable -> 3. Not folded into the row above: an
+#     absent file is the legitimate pass and an unreadable one is a broken
+#     measurement, and collapsing them would put the broken case back on the
+#     exit-0 path this section exists to take it off.
+
+# Does commit $1 carry a .gitmodules at all? Asked separately from reading it,
+# because the two answers must not be conflated: "the file is not there" is the
+# submodule-free repository, and every OTHER reason `git config --blob` produces
+# nothing is a broken measurement. Collapsing them would put the broken case back
+# on the exit-0 path this whole section exists to take it off.
+has_gitmodules() {
+  git cat-file -e "$1:.gitmodules" 2>/dev/null
+}
+
+declared_paths() {
+  # Every path .gitmodules declares at commit $1, one per line.
+  git config --blob "$1:.gitmodules" --get-regexp '^submodule\..*\.path$' 2>/dev/null \
+    | awk '{ $1 = ""; sub(/^ /, ""); print }'
+}
+
 if [ -z "$base_pin" ] && [ -z "$head_pin" ]; then
-  echo "Neither $BASE_SHA nor $HEAD_SHA carries a $SUBMODULE_PATH submodule; there is no corpus pin to compare."
-  exit 0
+  if ! has_gitmodules "$BASE_SHA" && ! has_gitmodules "$HEAD_SHA"; then
+    echo "Neither $BASE_SHA nor $HEAD_SHA carries a .gitmodules, so this repository declares no submodule and there is no corpus pin to compare. Nothing is being un-pinned."
+    exit 0
+  fi
+
+  declared="$(printf '%s\n%s\n' "$(declared_paths "$BASE_SHA")" "$(declared_paths "$HEAD_SHA")" \
+    | awk 'NF' | sort -u)"
+
+  if [ -z "$declared" ]; then
+    die_undetermined "SUBMODULE_PATH='$SUBMODULE_PATH' carries no gitlink at either endpoint, and .gitmodules is present but declares no submodule path that this script could read. That is a broken measurement, not a verdict: a guard that passes here would be passing without having checked anything."
+  fi
+
+  die_undetermined "SUBMODULE_PATH='$SUBMODULE_PATH' is not a submodule this repository declares. .gitmodules at these endpoints declares: $(printf '%s' "$declared" | tr '\n' ' '). Neither endpoint carries a gitlink at '$SUBMODULE_PATH', so this guard measured NOTHING -- and a guard that passes when it measured nothing is the green-tick-meaning-nothing-was-read failure it exists to prevent. Fix SUBMODULE_PATH (or this script's default) to name a declared submodule path."
 fi
 
 # One side carrying no submodule is a structural change to the repository, not a
