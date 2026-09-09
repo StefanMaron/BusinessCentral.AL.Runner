@@ -205,4 +205,116 @@ public sealed class TestPageEvaluatorFaultTests
         Assert.False(TestPageTemporalValue.TryResolve(NavType.Date, "@@@", out var resolved));
         Assert.Null(resolved);
     }
+
+    // ══ The two pre-invoke declines (#3560) ══════════════════════════════════════════════
+    //
+    // Below the bind, TryEvaluateThroughBc names the NavNclType member for the control's type
+    // and asks BC for that type's evaluator. Both steps used to answer `return false`, which
+    // sends the caller down the NavText path and shows the AL author BC's own date-format
+    // refusal for a spelling BC was never asked about - a runner type-mapping gap wearing BC's
+    // message. Neither is reachable on a supported build, so both are driven through seams.
+    //
+    // '2026-01-15' is not the runner's own MM/dd/yyyy HH:mm:ss spelling, so it passes step one
+    // and reaches step two - the site under test - and a real BC 28.4 tier ACCEPTS it (#3384's
+    // table). So the throws below pre-empt an evaluation that would otherwise have succeeded.
+
+    public static IEnumerable<object[]> TemporalTypesAndMembers() => new[]
+    {
+        new object[] { NavType.Date, "NavDate" },
+        new object[] { NavType.DateTime, "NavDateTime" },
+        new object[] { NavType.Time, "NavTime" },
+    };
+
+    [Theory]
+    [MemberData(nameof(TemporalTypesAndMembers))]
+    public void TryResolve_WhenNavNclTypeDoesNotDefineTheMember_RaisesAShapeGapNamingIt(
+        NavType type, string member)
+    {
+        using (TestPageTemporalValue.ForceEnumMemberMissing())
+        {
+            var gap = Assert.Throws<BcShapeGapException>(
+                () => TestPageTemporalValue.TryResolve(type, "2026-01-15", out _));
+
+            Assert.Equal("TestPage SetValue on a Date/DateTime/Time control", gap.Surface);
+            Assert.Equal("NavNclType." + member, gap.Member);
+            Assert.Contains("does not define " + member, gap.Detail);
+            Assert.Contains("version mismatch", gap.Detail);
+        }
+    }
+
+    [Theory]
+    [MemberData(nameof(TemporalTypesAndMembers))]
+    public void TryResolve_WhenGetEvaluatorAnswersNull_RaisesAShapeGapNamingTheMember(
+        NavType type, string member)
+    {
+        using (TestPageTemporalValue.ForceNullEvaluator())
+        {
+            var gap = Assert.Throws<BcShapeGapException>(
+                () => TestPageTemporalValue.TryResolve(type, "2026-01-15", out _));
+
+            Assert.Equal("TestPage SetValue on a Date/DateTime/Time control", gap.Surface);
+            Assert.Equal("NavValueEvaluator.GetEvaluator", gap.Member);
+            Assert.Contains("answered null for NavNclType." + member, gap.Detail);
+            Assert.Contains("version mismatch", gap.Detail);
+        }
+    }
+
+    // The two conditions must be distinguishable, or a throw from the wrong site passes both
+    // theories above: the enum-member site never names GetEvaluator, and vice versa.
+    [Fact]
+    public void ThePreInvokeDeclines_NameDifferentConditions()
+    {
+        BcShapeGapException missing, nullEvaluator;
+        using (TestPageTemporalValue.ForceEnumMemberMissing())
+            missing = Assert.Throws<BcShapeGapException>(
+                () => TestPageTemporalValue.TryResolve(NavType.Date, "2026-01-15", out _));
+        using (TestPageTemporalValue.ForceNullEvaluator())
+            nullEvaluator = Assert.Throws<BcShapeGapException>(
+                () => TestPageTemporalValue.TryResolve(NavType.Date, "2026-01-15", out _));
+
+        Assert.DoesNotContain("GetEvaluator", missing.Detail);
+        Assert.DoesNotContain("does not define", nullEvaluator.Detail);
+    }
+
+    // The consequence that motivates the type: an `asserterror SetValue(<temporal>)` around
+    // either site must still fail rather than absorb the runner's own gap.
+    [Fact]
+    public void TryResolve_WhenNavNclTypeDoesNotDefineTheMember_IsNotSwallowedByAssertError()
+    {
+        using (TestPageTemporalValue.ForceEnumMemberMissing())
+        {
+            var gap = Assert.Throws<BcShapeGapException>(() => BcRuntime.NavMethodScope_AssertError(
+                null!, () => TestPageTemporalValue.TryResolve(NavType.Date, "2026-01-15", out _)));
+
+            Assert.Equal("NavNclType.NavDate", gap.Member);
+        }
+    }
+
+    [Fact]
+    public void TryResolve_WhenGetEvaluatorAnswersNull_IsNotAbsorbableAsAnOutOfScopeSignal()
+    {
+        using (TestPageTemporalValue.ForceNullEvaluator())
+        {
+            var thrown = Record.Exception(
+                () => TestPageTemporalValue.TryResolve(NavType.DateTime, "2026-01-15", out _));
+
+            Assert.NotNull(thrown);
+            Assert.IsNotType<RunnerOutOfScopeException>(thrown);
+            Assert.Null(OutOfScopeMessage.FromException(thrown));
+        }
+    }
+
+    // Both seams are seams, not switches: with nothing forced the same call reaches BC's own
+    // evaluator and comes back with the date BC read - which is what makes the six theory arms
+    // above statements about the two refusals rather than about the seams.
+    [Fact]
+    public void TryResolve_WithNeitherSeamForced_StillReadsTheDateThroughBc()
+    {
+        using (TestPageTemporalValue.ForceEnumMemberMissing()) { }
+        using (TestPageTemporalValue.ForceNullEvaluator()) { }
+
+        Assert.True(TestPageTemporalValue.TryResolve(NavType.Date, "2026-01-15", out var resolved));
+        var date = Assert.IsType<NavDate>(resolved);
+        Assert.Equal(new DateTime(2026, 1, 15), date.Value.Date);
+    }
 }

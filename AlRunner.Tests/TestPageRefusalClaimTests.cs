@@ -401,11 +401,15 @@ public sealed class TestPageRefusalClaimTests
         var page = CodeOf("RunnerPageInstance.cs");
 
         Assert.Equal(10, Regex.Matches(mock, @"throw TestPageShapeGap\.").Count);
-        // 4: the SubPageLink FilterType site, the two evaluator-fault arms #3444 added - a
-        // fault inside BC's own NavValueEvaluator, and a signature mismatch against it - and
+        // 6: the SubPageLink FilterType site, the two evaluator-fault arms #3444 added - a
+        // fault inside BC's own NavValueEvaluator, and a signature mismatch against it -
         // #3462's bind refusal, which claimed testpage-temporal-evaluator under
-        // RunnerOutOfScopeException and was therefore swallowable by an AL asserterror.
-        Assert.Equal(4, Regex.Matches(mock, @"throw new AlRunner\.Infrastructure\.BcShapeGapException\(").Count);
+        // RunnerOutOfScopeException and was therefore swallowable by an AL asserterror, and
+        // #3560's two pre-invoke declines below that bind: a NavNclType that does not define
+        // NavDate/NavDateTime/NavTime, and a GetEvaluator that answers null for one that it
+        // does. Both used to `return false`, which showed the AL author BC's own date-format
+        // refusal for a spelling BC was never asked about.
+        Assert.Equal(6, Regex.Matches(mock, @"throw new AlRunner\.Infrastructure\.BcShapeGapException\(").Count);
 
         Assert.Equal(4, Regex.Matches(page, @"throw TestPageShapeGap\.").Count);
         // 2: the OnLookup-trigger read whose three-valued answer came back "could not determine"
