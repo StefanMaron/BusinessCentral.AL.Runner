@@ -26,23 +26,22 @@ still before you write the test.
 ## Why same-file and not same-subsystem
 
 Splitting fixes that touch one file manufactures a rebase treadmill: two PRs editing one loop
-need a forced merge order, three collided on one baseline history file, and every virtual-table
-PR conflicts at the same if-chain in `RecordPatches.cs`.
+need a forced merge order (#3197, #3180), and every virtual-table PR conflicts at the same
+if-chain in `RecordPatches.cs`.
 
-**Same-subsystem was considered and rejected**: "all page issues" spans dozens of files and
-produces an unreviewable PR that conflicts with everything. So was the narrower "fold only if
-the same unmodified change fixes both", which would split three fixes landing in one file
-merely because each needs a slightly different edit.
+**Same file, not same subsystem, and not "the identical edit fixes both".** A subsystem spans
+dozens of files and folds into an unreviewable PR that conflicts with everything; the narrower
+test splits fixes that land in one file merely because each needs a slightly different edit,
+which is where splitting is most wasteful.
 
 ## There is no cap, and adding one needs data
 
 **The right number is a property of how finely the issues were filed, not a constant** — ten
 issues that all land in one file are one PR, not ten. The two limits that are not arbitrary are
-already in the rule and both are self-enforcing: a proving test per closed issue (point 3),
-which nobody writes ten of to pad a PR, and one coherent change (point 4), which a reviewer can
-judge from the diff. The evidence that would justify a cap is reviewers unable to hold arriving
-PRs, or a climbing conflict rate on large ones — and it should then be a number derived from
-that data.
+already in the rule and both are self-enforcing: a proving test per closed issue (point 3) and
+one coherent change (point 4), which a reviewer judges from the diff. The evidence that would
+justify a cap is reviewers unable to hold arriving PRs, or a climbing conflict rate on large
+ones — and it should then be a number derived from that data.
 
 ## This is still one PR — reconciling with `branch-and-pr.md`
 

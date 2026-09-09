@@ -26,8 +26,8 @@ Legitimate, and they stay:
   nothing to count without the platform closure loaded. It has its own fixture so the floor is
   paid once per CI leg rather than 28 times.
 
-**There are no outstanding violations**, and #2364's three discharges each needed one specific
-property the floor happened to supply, not the floor:
+**A class that looks like it needs the floor needs one property of it**, not the floor — the
+three discharged under #2364 needed:
 
 - an install closure whose triggers WRITE ROWS, now `AlRunner.Tests/InstallSeedClosure.cs` —
   without one the runner logs `not persisting: snapshot has 0 DataAccessSource(s)` and the
@@ -35,11 +35,10 @@ property the floor happened to supply, not the floor:
 - real metadata for one table id, replaced by three tables the test declares itself, which let
   it assert two different empty tables are each explained with their own id.
 
-**So the pattern for the next class that looks like it needs the floor:** work out which single
-property of Base Application it is leaning on and supply that. In three of three cases it was
-cheaper to supply than to load. A checked-in fixture counts too — the violation the class list
-missed was `AlRunner.Tests/Fixtures/RecordTriggerXRec/app.json`, the most-spawned fixture in
-the suite.
+So work out which single property of Base Application the class is leaning on and supply that;
+it has been cheaper to supply than to load every time. **A checked-in fixture manifest counts
+too** — `AlRunner.Tests/Fixtures/RecordTriggerXRec/app.json` is the violation a class-only list
+missed (#2364).
 
 ## Do not conclude a failure set from a run that has not finished
 

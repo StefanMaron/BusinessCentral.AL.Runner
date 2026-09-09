@@ -57,3 +57,20 @@ Agents batch correctly when they trip over a sibling in the code:
 
 What none of them did was read the queue first. Open while this was written: #3080 and #3063
 are both Page Metadata; #2381, #2983 and #2363 are all the User system table.
+
+## Why same-file and not same-subsystem (chronology moved from the rule, #3728 review round 1)
+
+- PRs #3197 and #3180 both edit the same loop in
+  `AlRunner/Patches/BcAppSymbolCache.TableExtensions.cs`, so they need a forced merge order.
+- Three separate PRs collided on `tests/expectations/count-baseline/history.md`.
+- A standing finding: every virtual-table PR conflicts at the same if-chain in
+  `RecordPatches.cs`.
+
+"Same subsystem" was considered and rejected: "all page issues" spans dozens of files across
+`MockTestPage.cs`, the `RecordPatches.*` partials, the metadata registries and the corpus. The
+narrower draft — "fold only if the same unmodified change fixes both" — was rejected too: it
+catches only the repeated-call-site case, and would split three fixes landing in one file merely
+because each needs a slightly different edit.
+
+Nobody writes ten proving tests to pad a PR, and an agent that *can* write ten has demonstrated
+the fold was genuine.

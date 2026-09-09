@@ -321,8 +321,9 @@ Two things about the verdicts it produces, because both change what "stop" means
      and while it exists a query run from the repository root reads it instead. Measured: an
      18-day-old root copy answered `No matching nodes found.` — exit 0 — for a symbol that
      exists, while the correct graph returned 11 nodes. A rebuild under `AlRunner/` never
-     touches it, so the two diverge indefinitely; that is the 13-day-stale incident `CLAUDE.md`
-     records. Both repairs are reported rather than folded into a silent PASS.
+     touches it, so the two diverge indefinitely; that is the 13-day-stale incident
+     `docs/incidents/CLAUDE.md.md` records. Both repairs are reported rather than folded into a
+     silent PASS.
 
    **Severity: WARN, with one exception.** A tool that is absent or unusable does not halt a
    cycle — each degrades to a documented fallback (`rg`, `tools/context-pack.py`) that still

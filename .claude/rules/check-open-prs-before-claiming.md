@@ -54,10 +54,10 @@ transport is not.
 ## The claim signals, and what each is worth
 
 This rule owns the three signals, so any other document that needs them points here rather than
-restating them. All three collisions behind it (2026-09-05, one account) were a **read that was
-too narrow, not a write that raced**: the compare-and-swap on claiming — assign, re-read,
-release if someone else's claim appeared — worked as specified. This rule widens the read; it
-does not replace the lock.
+restating them. **It widens the read; it does not replace the lock** — the compare-and-swap on
+claiming (assign, re-read, release if someone else's claim appeared) stands unchanged, because
+every collision behind this rule was a read that was too narrow, not a write that raced (#2780,
+#2755).
 
 ## Sister rules
 
