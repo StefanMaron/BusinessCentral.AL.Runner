@@ -51,7 +51,7 @@ gh issue view <N> --json labels --repo StefanMaron/BusinessCentral.AL.Runner \
 ```
 **More than one** `agent:` label = you lost the race. Drop yours and pick a different issue, then repeat Step 2:
 ```
-gh issue edit <N> --remove-label "agent: <AGENT-ID>" --remove-label "status: in-progress" --add-label "status: ready" --remove-assignee @me --repo StefanMaron/BusinessCentral.AL.Runner
+gh issue edit <N> --remove-label "agent: <AGENT-ID>" --repo StefanMaron/BusinessCentral.AL.Runner
 ```
 
 Read it: `gh issue view <N> --repo StefanMaron/BusinessCentral.AL.Runner`.
@@ -96,7 +96,7 @@ gh pr list --state open --head agent/<AGENT-ID>/issue-<N> --json number,title,is
 
 A branch naming an issue other than yours belongs to another task — stop and report, whatever the prefix says: `agent/<AGENT-ID>/` records who created a branch, and a second agent committing there is a push no check refuses.
 
-The third command has two outcomes. Empty, the draft you opened for this issue, or the PR the invoking session named when it resumed you from a checkpoint — commit. Any other PR — stop, comment on the issue naming that PR number and that it already holds your branch, and hand back with that comment as your report.
+The third command has two outcomes. Empty, the draft you opened for this issue, or the PR the invoking session named when it dispatched you onto it (a checkpoint resume or a CI repair) — commit. Any other PR — stop, comment on the issue naming that PR number and that it already holds your branch, and hand back with that comment as your report.
 
 Never `git add -A` / `git add .` in a tree that might carry another agent's edits — stage only the files you changed, by name.
 
@@ -142,11 +142,12 @@ scratch clone and container `<AGENT-ID>-issue-<N>-<SESSION>`, and ask the scratc
 paths under that same name:
 
 ```bash
-p=$(tools/agent_scratchpad.py path pr-body.md --agent-id <AGENT-ID>-issue-<N>-<SESSION>)
+S=<the scratchpad directory from your prompt>
+p=$(tools/agent_scratchpad.py --scratchpad "$S" --agent-id <AGENT-ID>-issue-<N>-<SESSION> path pr-body.md)
 gh pr edit <pr-N> --body-file "$p" ...     # Step 4, in this same call: $p is gone by the next one
 
-tools/agent_scratchpad.py dir --agent-id <AGENT-ID>-issue-<N>-<SESSION>            # clone corpora in here
-tools/agent_scratchpad.py check <path> --agent-id <AGENT-ID>-issue-<N>-<SESSION>   # exit 1 if shared
+tools/agent_scratchpad.py --scratchpad "$S" --agent-id <AGENT-ID>-issue-<N>-<SESSION> dir            # clone corpora in here
+tools/agent_scratchpad.py --scratchpad "$S" --agent-id <AGENT-ID>-issue-<N>-<SESSION> check <path>   # exit 1 if shared
 ```
 
 Done when every path you write to carries the issue number: the worktree as
@@ -181,9 +182,9 @@ Not scope creep: fixing one of N instances closes the issue while leaving the bu
 
 ### Where the prose goes
 
-Finding and reading code is the largest token cost in this repository (`CLAUDE.md`), and comment prose is close to half of every non-blank line under `AlRunner/`, so every read pays for it.
+Finding and reading code is the largest token cost in this repository (`CLAUDE.md`), and every read pays for the comment prose in the file.
 
-This is not "write fewer comments", and several rules require one: `loud-failures.md` requires the *observably equivalent* justification in a code comment on every new patch under `AlRunner/Patches/`, and `precompiled-dll-respect.md`'s token-shift constraint belongs at the Cecil call site that could violate it. Those stay. What changes is where everything else goes.
+Two comments stay by rule: the *observably equivalent* justification on every new patch under `AlRunner/Patches/` (`loud-failures.md`) and the token-shift constraint at the Cecil call site that could violate it (`precompiled-dll-respect.md`). Everything else goes where the question below sends it.
 
 **The question, per comment block: would this change what the next person TYPES?** If it would — they are about to edit this line and would get it wrong — it stays, as short as still prevents the mistake. If it only changes what they *know*, it belongs somewhere a reader goes deliberately:
 
@@ -216,7 +217,7 @@ General rule: `.claude/rules/local-test-scope.md`. Concretely:
 2. **A FILTERED `AlRunner.Tests` run** over the surface you changed: `dotnet test AlRunner.Tests --filter FullyQualifiedName~<YourTestClass>`. Seconds to a couple of minutes, and where a runtime/compiler regression shows up first.
 3. **The one AL bundle your change plausibly affects**, if there is an obvious one. Not all 32.
 
-**Run `dotnet test AlRunner.Tests` with a filter naming your class.** The whole suite is a quarter to half an hour, nearly all of it in the tests that spawn the runner as a subprocess; the filter skips them.
+The unfiltered suite is for CI; it spends most of its time in tests that spawn the runner as a subprocess, which the filter above skips.
 
 Then push. A pull request runs **three** BC legs — 27.0, 27.5 and 28.4, from `.github/pr-bc-versions.txt` — not the eight in `.github/bc-versions.txt`; those eight run on push to `main`, on `main-verdict-floor.yml`'s 30-minute cadence, and on the release path (#3141, #3200). Every leg runs the corpus, all of `runner-extras`, the xmlport isolation guard and server-mode. The full `AlRunner.Tests` suite runs only on the unit legs — the newest minor of each major, 27.5 and 28.4 — two legs of whichever matrix ran, not the whole matrix (#2674). All of it in parallel with you rather than in front of you.
 

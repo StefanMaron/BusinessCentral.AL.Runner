@@ -73,10 +73,11 @@ Agent({
 ```
 
 **Step D — Wait and re-evaluate.**
-You will be notified when background impl agents finish. When any impl finishes (success or blocked):
+You will be notified when background impl agents finish. When any impl finishes (success, blocked, or a checkpoint hand-back: a draft PR carrying a done / remaining / next-command comment):
 1. Re-read state (Step A).
 2. If new `status: ready` issues exist and a slot freed up, go to Step B.
-3. Otherwise go to Step C to merge whatever the impl just produced.
+3. If it was a checkpoint hand-back, dispatch the same identity onto that PR with the comment's next command, before anything else.
+4. Otherwise go to Step C to merge whatever the impl just produced.
 
 ### Terminal conditions
 
@@ -85,6 +86,7 @@ Stop the loop when **all** of the following hold simultaneously after a fresh st
 1. `status: ready` queue is empty.
 2. No `status: review-ready` PRs are open.
 3. No background impl agents are still running.
+4. No open draft PR carries a checkpoint hand-back comment.
 
 At that point every issue that started this cycle as `status: ready` is now in one of:
 - **Done** — PR merged, issue auto-closed via `Closes #N`.

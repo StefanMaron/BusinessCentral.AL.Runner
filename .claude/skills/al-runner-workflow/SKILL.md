@@ -21,7 +21,7 @@ If you are `impl-1` or `impl-2`:
 4. Branch `agent/<your-id>/issue-<N>`, pushed, with a draft PR carrying `Closes #N`, the label `agent: <your-id>`, assigned to `@me` (`.claude/agents/impl-agent.md`, Step 2).
 5. Implement red → green (`.claude/rules/tdd.md`). The right test depends on what kind of issue this is — see "Issue kinds" below.
 6. Rewrite the body, mark the draft ready, label `status: review-ready`.
-7. Fix CI failures or review comments.
+7. Return. The coordinator reads CI and resumes you, or dispatches a fresh agent onto the PR, when it goes red.
 8. Auto-merge fires when approved + green (`allow_auto_merge=true` is a repo setting, not visible in the checkout). Return to step 1.
 
 **One issue at a time per impl agent.** No second claim while a PR is open.
@@ -89,7 +89,7 @@ The **GitHub assignee field** is the boundary between agent-owned and human-owne
 - Impl agents never self-assign work outside the orchestrator queue.
 - Branch name: `agent/<agent-id>/issue-<N>` — no exceptions.
 - PR body must contain `Closes #N`.
-- Set `status: review-ready` on the PR once CI is green.
+- Set `status: review-ready` on the PR when you mark it ready; the coordinator reads CI.
 - One PR at a time per impl agent.
 - Never edit `CHANGELOG.md`.
 - Never edit a file inside `tests/al-language/`. A pin bump is folded into the fix PR it enables when that fix is new; a catch-up bump, whose fix already merged, is its own PR (`al-language-submodule.md`).
@@ -102,7 +102,7 @@ The **GitHub assignee field** is the boundary between agent-owned and human-owne
 |---|---|
 | `status: ready` | Unclaimed, ready for an impl agent to pick up |
 | `status: in-progress` | Currently being worked on by the labeled `agent: *` |
-| `status: review-ready` | PR is open, CI green, ready for orchestrator review/merge |
+| `status: review-ready` | PR is marked ready; the orchestrator reads CI and reviews |
 | `status: blocked` | Needs human or cross-issue input |
 | `status: needs-input` | Issue body too thin to identify root cause; reporter must elaborate (set by triager — see `no-assumption-fixes`) |
 | `agent: impl-1` / `agent: impl-2` | Identity claim on an issue or PR |
