@@ -11,6 +11,17 @@
 // PartialCompanyInitializationTests injects it — see that file's header. This class starts its
 // OWN server rather than sharing SharedCliServer, because the seam is a startup-time environment
 // variable and every other class sharing that fixture must not get it.
+//
+// Every server here is started with a PRIVATE --cache and with the dependency-company baseline
+// cache switched off. Measured, not precautionary: on the BC 27.5 and 28.4 legs of run
+// 34322324604 this class failed with the summary carrying no companyInitFailures field at all,
+// while the CLI-side class passed on the same legs — and the one difference between them was
+// that the CLI arms each pass a fresh --cache and this one used the leg's shared cache root. A
+// baseline restored for an empty dependency closure (which every no-dependency fixture in the
+// suite shares) skips EnsureCompanyInitialized, so codeunit 2 is never attempted and there is no
+// abort to report. Forcing the MISS makes "the codeunit was attempted" a property of the test
+// rather than of what else ran on the leg first; the drain the class is actually about is
+// unaffected either way.
 using System.Text.Json;
 using Xunit;
 
@@ -56,6 +67,15 @@ public sealed class ServerCompanyInitDrainTests
         return dir;
     }
 
+    /// <summary>A cache root nothing else on this leg has written to — see the file header for
+    /// what a shared one did to the first request's summary.</summary>
+    private static string[] PrivateCacheArgs()
+    {
+        var dir = TestScratch.Dir("al-runner-server-cip-cache");
+        Directory.CreateDirectory(dir);
+        return new[] { "--cache", dir };
+    }
+
     private static string RunTestsReq(string bundleDir)
         => JsonSerializer.Serialize(new
         {
@@ -77,10 +97,13 @@ public sealed class ServerCompanyInitDrainTests
     {
         TestArtifacts.SkipIfMissing();
 
-        await using var server = await CliServer.StartAsync(extraEnv: new Dictionary<string, string>
-        {
-            ["AL_RUNNER_TEST_FAIL_COMPANY_INIT"] = InjectedReason,
-        });
+        await using var server = await CliServer.StartAsync(
+            extraArgs: PrivateCacheArgs(),
+            extraEnv: new Dictionary<string, string>
+            {
+                ["AL_RUNNER_TEST_FAIL_COMPANY_INIT"] = InjectedReason,
+                ["AL_RUNNER_NO_DEP_COMPANY_CACHE"] = "1",
+            });
 
         var first = await server.SendRequestStreamingAsync(RunTestsReq(MakeBundle(0)));
         var firstSummary = JsonSerializer.Deserialize<JsonElement>(first[^1]);
@@ -113,7 +136,9 @@ public sealed class ServerCompanyInitDrainTests
     {
         TestArtifacts.SkipIfMissing();
 
-        await using var server = await CliServer.StartAsync();
+        await using var server = await CliServer.StartAsync(
+            extraArgs: PrivateCacheArgs(),
+            extraEnv: new Dictionary<string, string> { ["AL_RUNNER_NO_DEP_COMPANY_CACHE"] = "1" });
         var lines = await server.SendRequestStreamingAsync(RunTestsReq(MakeBundle(2)));
         var summary = JsonSerializer.Deserialize<JsonElement>(lines[^1]);
 
