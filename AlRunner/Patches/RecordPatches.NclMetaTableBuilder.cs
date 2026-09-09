@@ -1081,9 +1081,13 @@ public static partial class RecordPatches
     /// extension adds. Called once per parsed object, by every reader.
     ///
     /// <para>Three rules, measured against BC's own emitted metadata for Business Foundation
-    /// and System Application on four BC builds (3,848 field observations, zero
-    /// counterexamples) plus the six extension fields on table 774 that first showed the owner
-    /// is the extension and not the extended table. The two exceptions are not cosmetic:
+    /// and System Application on four BC builds. 3,848 of those observations are the apps'
+    /// TABLE-DECLARED fields; a further 40 (10 per build) are fields a <c>tableextension</c>
+    /// adds, including the six on table 774 that first showed the owner is the extension and
+    /// not the extended table. Zero counterexamples in either set. The remaining 115
+    /// extension-added fields per build are `ObsoleteState = Moved`, which BC omits from the
+    /// emitted table entirely, so nothing can be observed about them (#3603). The two
+    /// exceptions are not cosmetic:
     /// eleven fields sit on tables declaring <c>SystemMetadata</c>, so inheriting
     /// unconditionally answers <c>SystemMetadata</c> where BC answers <c>CustomerContent</c> —
     /// trading one wrong answer for another. Derivation and per-build counts:

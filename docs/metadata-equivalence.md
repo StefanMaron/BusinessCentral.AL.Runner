@@ -208,9 +208,21 @@ stays declared in the allowlist until then, with the measurement below recorded 
 re-derives it.
 
 The rules below are measurements, not readings of the AL documentation. Each was checked by
-joining every field of Business Foundation and System Application in `SymbolReference.json`
+joining the fields of Business Foundation and System Application in `SymbolReference.json`
 to the same field in BC's own emitted metadata, on four BC builds — **3,848 field
 observations, zero counterexamples for all three rules**.
+
+<a id="what-the-3848-counts"></a>
+**What those 3,848 are, and what they are not.** They are the **table-declared** fields of the
+150 `MetaTable` objects the two apps emit: 911 + 978 + 978 + 981 across the four builds. They
+are NOT every field the two apps declare. Each build also carries 125 fields added by a
+`tableextension`, and the join reaches only 10 of those per build — 40 observations across the
+four, which is the whole of the difference between 3,848 and the 3,888 a reader who counts
+declared fields arrives at (#3603).
+
+**The rule was separately checked on those 40, and it holds** — zero counterexamples, measured
+the same way. They are not an unmeasured population; they are counted separately because they
+join through a different route, described next.
 
 | | rule |
 |---|---|
@@ -230,8 +242,11 @@ of it.
 BC's emitter states the *effective* classification on each field, not the declared one. The
 rule, and both exceptions, are load-bearing:
 
-1. The field's own `DataClassification`, when it states one — 613 of 978 fields on BC
-   28.1, agreeing with BC on 613 of 613.
+1. The field's own `DataClassification`, when it states one — 613 of the 978 **table-declared**
+   fields on BC 28.1, agreeing with BC on 613 of 613. (978 is the symbol-file population; the
+   988 fields BC emits across the same 150 tables are those 978 plus the 10 extension-added
+   fields BC merges in — see below. Two populations, both correct, counted from opposite
+   sides of the join.)
 2. Otherwise the **owning object's**: the `table` for a field the table declares, the
    **`tableextension`** for a field an extension adds. Not the extended table — System
    Application's extension of `User Details` declares no classification and neither do its
@@ -250,6 +265,45 @@ another rather than fixing anything. Verbatim from System Application's table 91
 table line reads `DataClassification = SystemMetadata`: field 1 `Id` (`Text[250]`, silent) is
 emitted `SystemMetadata`, and field 8 `FieldsJson` (`Blob`, silent) is emitted with no
 `DataClassification` at all.
+
+<a id="the-125-extension-added-fields"></a>
+### The 125 extension-added fields, and why only 10 of them are observable
+
+Measured on BC 28.1.49838.54308 (#3603). The two apps declare six `tableextension` objects
+between them, carrying 125 fields. Every one targets a table in its own app, so this is not a
+cross-app visibility question — the discriminator is `ObsoleteState`:
+
+| extension | target | fields | `ObsoleteState` | merged into the emitted `MetaTable`? |
+|---|---|---:|---|---|
+| `Plan User Details` | `User Details` (774) | 6 | none | **yes** |
+| `NoSeriesLineObsolete` | `No. Series Line` (309) | 4 | `Removed` | **yes** |
+| `NoSeriesObsolete` | `No. Series` (308) | 4 | `Moved` | no |
+| `ObsoleteSourceCodeSetupExt` | `Source Code Setup` (242) | 107 | `Moved` | no |
+| `ObsoleteSourceCodeExt` | `Source Code` (230) | 2 | `Moved` | no |
+| `ObsoleteReturnReasonExt` | `Return Reason` (6635) | 2 | `Moved` | no |
+
+**A `Moved` field is gone from the metadata; a `Removed` field is still in it.** `Moved` means
+the field now lives in another app, so BC's emitter leaves it out of this app's table
+altogether — table 242 emits **1** field against the 107 its extension names. `Removed` means
+the field stays declared and is merely no longer usable, so it is emitted, carrying its
+`ObsoleteState`. That is why 309 emits 18 fields including ids 11 and 10000-10002.
+
+So the 115 unobservable fields are unobservable **because BC emits nothing for them** — there
+is no ground truth to disagree with, on this or any other member. This is a property of what
+Microsoft's own apps happen to declare, not a limit of the harness.
+
+**The rule holds on all 10 that are observable**, expected against emitted, zero
+counterexamples. Six of them are `User Details` 774-779, which is the case that established the
+owner is the `tableextension` and not the extended table: the extension declares no
+classification, the extended table declares `SystemMetadata`, and BC answers `CustomerContent`
+on all six. The other four are `No. Series Line` 11 and 10000-10002, whose extension is also
+silent and which BC likewise answers `CustomerContent`.
+
+**What is therefore still unmeasured, stated plainly:** no field in either app is added by a
+`tableextension` that *declares* a `DataClassification` of its own — all six extensions are
+silent. So rule 2's inheritance is confirmed for a silent extension and **the case of an
+extension declaring a non-default classification has no observation behind it in this
+population**. It is not a counterexample; it is an untested branch.
 
 **BC's six platform-added fields** were wrong on both members and are fixed with them. Their
 values are BC's own, read out of `SystemFieldsHelper` in `Microsoft.Dynamics.Nav.Types`, which
