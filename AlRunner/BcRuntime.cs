@@ -529,6 +529,15 @@ public static partial class BcRuntime
         AlRunner.Patches.RecordPatches.RebuildTablesFromBcMetadataAll();
         AlRunner.PerfTrace.Log($"SetTestAssembly.RebuildTablesFromBcMetadataAll {sw.ElapsedMilliseconds}ms");
 
+        // #3614 — the derivation-route sibling of the call above, and it runs for the same
+        // reason: a tableextension's modify(...) property changes live in the extension's own
+        // delta document, which Emit registers only after the AddSourceDir pass that built the
+        // table. Evicts the affected tables so the next lookup rebuilds them with the deltas
+        // applied; a bundle declaring no modify(...) evicts nothing.
+        sw.Restart();
+        AlRunner.Patches.RecordPatches.ApplyTableExtensionFieldDeltasAll();
+        AlRunner.PerfTrace.Log($"SetTestAssembly.ApplyTableExtensionFieldDeltasAll {sw.ElapsedMilliseconds}ms");
+
         // Field-level OnValidate/OnLookup wiring. NCLMetaField.EventTriggerDataValue
         // must point at the AL-emitted [FieldTriggerHandler] methods on the Record CLR
         // class. The NCLMetaTable was built during AddSourceDir (before AL emit), so
