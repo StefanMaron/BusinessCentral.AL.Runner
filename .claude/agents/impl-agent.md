@@ -143,7 +143,7 @@ paths under that same name:
 ```bash
 S=<the scratchpad directory from your prompt>
 p=$(tools/agent_scratchpad.py --scratchpad "$S" --agent-id <AGENT-ID>-issue-<N>-<SESSION> path pr-body.md)
-gh pr edit <pr-N> --body-file "$p" ...     # Step 4, in this same call: $p is gone by the next one
+python tools/pr-body.py <pr-N> --body-file "$p" --closes <N>   # Step 4, in this same call: $p is gone by the next one
 
 tools/agent_scratchpad.py --scratchpad "$S" --agent-id <AGENT-ID>-issue-<N>-<SESSION> dir            # clone corpora in here
 tools/agent_scratchpad.py --scratchpad "$S" --agent-id <AGENT-ID>-issue-<N>-<SESSION> check <path>   # exit 1 if shared
@@ -276,12 +276,12 @@ Required doc updates:
 ## Step 4 — Rewrite the body and mark the draft ready
 
 ```
-gh pr edit <pr-N> --body-file <the scratchpad path from Step 3> --repo StefanMaron/BusinessCentral.AL.Runner
+python tools/pr-body.py <pr-N> --body-file <the scratchpad path from Step 3> --closes <N> --repo StefanMaron/BusinessCentral.AL.Runner
 gh pr ready <pr-N> --repo StefanMaron/BusinessCentral.AL.Runner
 gh pr edit <pr-N> --add-label "status: review-ready" --repo StefanMaron/BusinessCentral.AL.Runner
 ```
 
-The rewritten body keeps `Closes #<N>` and replaces the draft's placeholder line with the full description: what changed, what the RED → GREEN proved, and the three "fix the shape" answers.
+The rewritten body keeps `Closes #<N>` and replaces the draft's placeholder line with the full description: what changed, what the RED → GREEN proved, and the three "fix the shape" answers. `tools/pr-body.py` refuses a body that drops the closing reference and re-reads what it wrote (`branch-and-pr.md`).
 
 ## Step 5 — Hand the PR back, do NOT wait for CI
 
