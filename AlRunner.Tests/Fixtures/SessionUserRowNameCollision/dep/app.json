@@ -1,0 +1,13 @@
+{
+  "id": "a4e63b51-72d8-4c09-8f1b-5c93de07a2b6",
+  "name": "Runner Tests Fixture - Session User Row Name Collision Seed",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#3268: carries the Install codeunit that writes the same-named stand-in User row the session adopts.",
+  "description": "The write lives in a dependency because #3268 moved EnsureUserSystemTableRowSeeded ahead of a bundle's OWN install triggers. A bundle-local trigger now runs after the seed, so the session user's row already exists when it runs and BC's own uniqueness rule (which the runner reproduces in UserTableTriggerPatches) refuses the duplicate name outright -- the pre-seed state this fixture needs could not be established from there any more. Dependency install triggers still run inside TestExecutor's dep-company baseline window, ahead of the seed, so the collision the fixture measures is unchanged.",
+  "dependencies": [],
+  "idRanges": [{ "from": 70520, "to": 70529 }],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}

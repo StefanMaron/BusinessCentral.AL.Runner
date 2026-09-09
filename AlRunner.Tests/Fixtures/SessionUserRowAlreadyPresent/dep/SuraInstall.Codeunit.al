@@ -1,8 +1,10 @@
 // Puts the session user's OWN row in User (2000000120) before the runner's seed runs.
 //
-// The ordering is the whole point and it is not incidental: TestExecutor runs a bundle's own
-// Install triggers (install-seed-run-own-install-triggers) BEFORE
-// RecordPatches.EnsureUserSystemTableRowSeeded (install-seed-user-row). So by the time the seed
+// The ordering is the whole point and it is not incidental. Since #3268 the seed
+// (install-seed-user-row) runs BEFORE a bundle's own Install triggers
+// (install-seed-run-own-install-triggers) and AFTER the DEPENDENCY install triggers, which run
+// inside TestExecutor's dep-company baseline window -- which is why this codeunit lives in a
+// sibling dependency app rather than in the bundle under test. So by the time the seed
 // executes, the row it wants to write is already there and its ALInsert is refused by the
 // PRIMARY KEY on "User Security ID".
 //

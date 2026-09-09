@@ -1,0 +1,20 @@
+{
+  "id": "9d3b6c14-8a52-4f07-b6de-41c07f9a5e28",
+  "name": "Runner Tests Fixture - Install Trigger Session Identity",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#3268: this bundle's OWN install trigger stores UserSecurityId() in a setup table, and its tests assert that stored id is still the session's at test time.",
+  "description": "AlRunner#3268: the session-user seed used to run AFTER the bundle's install triggers, so install code that keyed a row on UserSecurityId() stored the runner-generated id and the seed then moved the session onto an adopted row. The sibling dependency app supplies the row to adopt (a User row carrying the session user's name), and this bundle's install trigger records the identity it saw. The tests compare that stored value with UserSecurityId() at test time, and separately assert which of the two concrete ids it is, so neither direction can pass vacuously.",
+  "dependencies": [
+    {
+      "id": "5f2c91a7-6b04-4d38-9c71-2ea85b30f6d9",
+      "name": "Runner Tests Fixture - Install Trigger Session Identity Seed",
+      "publisher": "AL Runner",
+      "version": "1.0.0.0"
+    }
+  ],
+  "idRanges": [ { "from": 70780, "to": 70799 } ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}

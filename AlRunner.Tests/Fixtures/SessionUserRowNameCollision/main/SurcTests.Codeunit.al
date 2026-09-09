@@ -1,4 +1,4 @@
-codeunit 70521 "SURC Tests"
+codeunit 70530 "SURC Tests"
 {
     Subtype = Test;
     TestPermissions = Disabled;

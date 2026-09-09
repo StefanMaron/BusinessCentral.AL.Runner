@@ -1,0 +1,13 @@
+{
+  "id": "5f2c91a7-6b04-4d38-9c71-2ea85b30f6d9",
+  "name": "Runner Tests Fixture - Install Trigger Session Identity Seed",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#3268: puts a User row carrying the session user's name into 2000000120 from a DEPENDENCY install trigger, so the runner's session-user seed has something to adopt before the consuming bundle's own install code runs.",
+  "description": "The colliding row has to arrive from a dependency rather than from the bundle under test. Dependency install triggers run inside TestExecutor's dep-company baseline window, ahead of the session-user seed; the bundle's own install triggers run after it. Putting the row here is what lets the main app's install trigger observe the SETTLED session identity, which is the whole subject of AlRunner#3268.",
+  "dependencies": [],
+  "idRanges": [ { "from": 70760, "to": 70779 } ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}
