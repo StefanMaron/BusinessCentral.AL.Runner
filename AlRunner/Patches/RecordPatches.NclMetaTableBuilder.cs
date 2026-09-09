@@ -153,6 +153,14 @@ public static partial class RecordPatches
             var extFields = _parsedExtensionFields.TryGetValue(parsed.TableName.ToLowerInvariant(), out var ef)
                 ? ef : Enumerable.Empty<ParsedField>();
 
+            // #3614 — a tableextension's `modify(<field>)` block changes an EXISTING field's
+            // properties, and BC leaves that change in the extension's own delta document
+            // rather than folding it into this table's. Apply it here, ahead of the route
+            // choice, so the corrected field list is what every consumer below sees.
+            // Reads BC's own <FieldChange> rather than re-deriving the change from AL syntax;
+            // RecordPatches.TableExtensionFieldDeltas.cs has the reasoning and the measurement.
+            parsed = parsed with { Fields = ApplyTableExtensionFieldDeltas(parsed.TableName, parsed.Fields).ToList() };
+
             // #3552 — when BC's emitter handed the runner its own metadata document for this
             // table (#3548), let BC construct the NCLMetaTable from it rather than deriving one
             // below. AVAILABILITY decides the route, and a failure is never re-routed to the
@@ -2197,9 +2205,19 @@ public static partial class RecordPatches
     // (NavOption.Create, GetOptionFromIndex, IsValidOrdinal, ...) behave with
     // BC NCLEnumMetadata semantics — ordinal-keyed, not array-index-keyed.
     private static System.Reflection.FieldInfo? _fNCLMetaFieldFieldOptionMetadata;
+    // IgnoreCase because AL keywords are case-insensitive and this matches the field's RAW
+    // SOURCE SPELLING — ParseFieldSyntax stores `f.Type.ToString()` verbatim, so `enum "X"`
+    // and `ENUM "X"` reach here exactly as written (#3574). Matching only `Enum` made the
+    // failure silent AND narrow: MapNavType uppercases before comparing, so the field still
+    // got the right NavType.Option and every read of the field worked — only the ordinal-keyed
+    // option metadata went missing, surfacing much later as
+    // GetEnumValueNameFromOrdinalValue raising "An object with that ID does not exist".
+    // Every other regex in this repo that matches an AL source keyword already carries
+    // IgnoreCase; this was the only one that did not.
     private static System.Text.RegularExpressions.Regex _rxEnumTypeName = new(
         "^\\s*Enum\\s+(?:\"([^\"]+)\"|([A-Za-z_][\\w]*))\\s*$",
-        System.Text.RegularExpressions.RegexOptions.Compiled);
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase
+        | System.Text.RegularExpressions.RegexOptions.Compiled);
 
     // Re-apply enum field-option metadata for every cached NCLMetaTable. Called
     // from BcRuntime.SetTestAssembly after Emit, by which time AlEnumMetadataRegistry
