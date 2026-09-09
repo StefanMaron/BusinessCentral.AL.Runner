@@ -7,14 +7,14 @@ scratchpads -- the ones that caused #2980 must fire, and the ordinary reads that
 happen on every task must not, because a hook that cries on everything gets
 ignored and then it is not a mechanism at all.
 
-Usage: python3 .claude/hooks/test_shared_scratchpad_guard.py
+Usage: python3 tools/test_shared_scratchpad_guard.py
 """
 import json
 import pathlib
 import subprocess
 import sys
 
-HOOK = pathlib.Path(__file__).resolve().parent / "shared-scratchpad-guard.py"
+HOOK = pathlib.Path(__file__).resolve().parent.parent / ".claude" / "hooks" / "shared-scratchpad-guard.py"
 SP = "/tmp/claude-1000/-home-stefan-Documents-Repos-Comunity-BusinessCentral-AL-Runner/2a9b731a/scratchpad"
 
 CASES = []

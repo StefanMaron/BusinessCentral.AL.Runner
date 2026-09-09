@@ -6,6 +6,10 @@
         "hooks": [
           {
             "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/refuse-stash-and-ci-waits.py\""
+          },
+          {
+            "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/prefer-code-navigation.py\""
           },
           {

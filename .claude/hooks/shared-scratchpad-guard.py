@@ -18,10 +18,10 @@ the obvious case), and a hook that blocks legitimate work gets switched off,
 taking the warning with it. The refusal that CAN block lives in
 `tools/agent_scratchpad.py check`, where a caller opts into it explicitly.
 
-Tested by .claude/hooks/test_shared_scratchpad_guard.py. NOTE that no CI job runs
-.claude/hooks/test_*.py -- `pr-gate.yml`'s tools-tests job globs `tools/test_*.py`
-only -- so the logic this hook depends on lives in tools/agent_scratchpad.py,
-which that glob does cover.
+Tested by tools/test_shared_scratchpad_guard.py. The suite lives there rather than
+beside the hook because `pr-gate.yml`'s tools-tests job globs `tools/test_*.py`
+only, so a test next to the hook gates nothing unless something delegates to it
+(#3707).
 """
 import json
 import os

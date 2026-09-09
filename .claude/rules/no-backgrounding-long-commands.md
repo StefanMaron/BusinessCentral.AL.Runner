@@ -28,6 +28,11 @@ One mechanism — a child process of your turn dies with your turn — in three 
 - **The harness backgrounding it FOR you**, with a message saying you will be notified. That
   promise does not hold for anything started inside your own turn.
 
+A `PreToolUse` hook refuses `run_in_background` on a CI wait —
+`.claude/hooks/refuse-stash-and-ci-waits.py`, which reads `gh run watch`,
+`gh pr checks --watch`, `ci-wait.py` without `--timeout 0`, and a sleep loop polling CI as
+that shape; a backgrounded local run that is not a CI wait is still yours to judge (#3707).
+
 **If you are about to end a turn while local work you launched is still running, that is the
 bug.** Correct shapes, in order of preference: run it in the foreground; push first so the loss
 is survivable; or genuinely abandon it and say so. "Start it, end the turn, and wait" is not on

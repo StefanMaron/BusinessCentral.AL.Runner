@@ -112,7 +112,7 @@ made the easy one to get, and the shared one is made to refuse.
 ## Testing note
 
 `tools/test_agent_scratchpad.py` is picked up by `pr-gate.yml`'s `tools-tests`
-job, which globs `tools/test_*.py`. **No CI job globs `.claude/hooks/test_*.py`**
-— so `test_prefer_code_navigation.py` had never run in CI — and that suite
-therefore delegates to every `.claude/hooks/test_*.py`, which makes them gate by
-the same discovery argument without a workflow change.
+job, which globs `tools/test_*.py`. **No CI job globs `.claude/hooks/test_*.py`**,
+so the hooks' own suites live in `tools/` too — `test_shared_scratchpad_guard.py`
+and `test_prefer_code_navigation.py` — and `test_agent_scratchpad.py` asserts
+that `.claude/hooks/` stays empty of suites, since one placed there gates nothing.

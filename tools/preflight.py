@@ -913,6 +913,123 @@ def collect_worktrees(repo: str, prs: dict, measure: bool = True) -> list[tuple]
     return rows
 
 
+WORKTREE_DIR = re.compile(r'[\\/]\.claude[\\/]worktrees[\\/]')
+
+
+def agent_label(pr: Optional[dict]) -> Optional[str]:
+    for label in (pr or {}).get("labels") or []:
+        name = (label.get("name") if isinstance(label, dict) else str(label)) or ""
+        if name.startswith("agent:"):
+            return name.split(":", 1)[1].strip()
+    return None
+
+
+def judge_branch_ownership(*, cwd: str, branch: Optional[str], pr: Optional[dict],
+                           agent_id: Optional[str],
+                           lookup_status: str = "ok") -> CheckResult:
+    """Whether the branch you are standing on already heads another loop's PR (#3707).
+
+    The `agent:` label on the OPEN pull request is the only signal here that names
+    a loop: the assignee cannot, because every loop pushes under one account
+    (`check-open-prs-before-claiming.md`). Two loops can hold one identity, so the
+    branch is what keeps their commits apart, and a second loop committing on it
+    lands its work on the first one's PR (#3014).
+
+    Three answers, not two (`guards-need-a-third-state.md`): PASS when the branch
+    is measurably yours or unclaimed, FAIL when it measurably is not, and WARN --
+    never PASS -- when the comparison could not be made at all.
+    """
+    name = "branch-ownership"
+    cmd = "git rev-parse --abbrev-ref HEAD + gh pr list --json headRefName,labels"
+    if not WORKTREE_DIR.search(cwd.replace("\\", "/")) and not WORKTREE_DIR.search(cwd):
+        return CheckResult(name=name, status="PASS", command=cmd,
+                           summary="not standing in an agent worktree; nothing to compare")
+    if not branch:
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary="detached HEAD in an agent worktree - no branch, so no pull request "
+                    "to compare against",
+            remedy="Check out the branch this worktree belongs to before working in it.")
+    if lookup_status != "ok":
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary=f"the open pull requests for {branch} could not be read "
+                    f"({lookup_status}), so whether another loop owns this branch is "
+                    f"unmeasured",
+            remedy="Authenticate gh (`gh auth status`) and re-run; an unreadable pull-request "
+                   "list is not evidence that the branch is free.")
+    state = str((pr or {}).get("state") or "").upper()
+    if not pr or state != "OPEN":
+        return CheckResult(name=name, status="PASS", command=cmd,
+                           summary=f"no open pull request heads {branch}")
+    owner = agent_label(pr)
+    if owner is None:
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary=f"PR #{pr.get('number')} heads {branch} but carries no `agent:` label, "
+                    f"so which loop owns it cannot be established",
+            remedy=f"Read PR #{pr.get('number')} and label it `agent: <id>`, or confirm by "
+                   f"hand that the branch is yours, before committing on it.")
+    if not agent_id:
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary=f"PR #{pr.get('number')} heads {branch} and is owned by `agent: {owner}`, "
+                    f"but this run declared no identity to compare it against",
+            remedy="Re-run with --agent-id <your-identity> (or set AL_RUNNER_AGENT_ID); "
+                   "without one, a foreign claim and your own look identical.")
+    if owner == agent_id:
+        return CheckResult(name=name, status="PASS", command=cmd,
+                           summary=f"PR #{pr.get('number')} heads {branch} and is yours "
+                                   f"(`agent: {owner}`)")
+    return CheckResult(
+        name=name, status="FAIL", command=cmd,
+        summary=f"{branch} already heads OPEN PR #{pr.get('number')}, owned by "
+                f"`agent: {owner}` and not by `agent: {agent_id}`",
+        remedy=f"Stop: committing here pushes onto another loop's PR branch, and its Test "
+               f"Matrix then reports on the mixture (#3014). Take your own worktree at "
+               f".claude/worktrees/<your-id>-issue-<N> on branch agent/<your-id>/issue-<N>, "
+               f"and say on PR #{pr.get('number')} that you found its branch checked out "
+               f"elsewhere.")
+
+
+def open_pr_for_branch(slug: Optional[str], branch: str) -> tuple[Optional[dict], str]:
+    """The OPEN pull request whose head is `branch`, asked for by name.
+
+    Deliberately not `pr_map()`: that is `--state all --limit 300` over a
+    repository with thousands of pull requests, so an open PR older than the 300
+    newest is simply absent from it -- and absent reads as "nobody owns this
+    branch", the false PASS this check exists to prevent. `--head` reads the
+    pull-request list rather than the search index, which is why a PR opened
+    seconds earlier is found (#3717).
+    """
+    if not slug:
+        return None, "no repository slug"
+    if not shutil.which("gh"):
+        return None, "gh is not installed"
+    r = run_retry(["gh", "pr", "list", "--repo", slug, "--state", "open",
+                   "--head", branch, "--json", "number,state,labels"], timeout=60)
+    if not r.ok:
+        return None, f"gh pr list failed: {(r.err or r.out).strip()[:160]}"
+    try:
+        prs = json.loads(r.out)
+    except ValueError:
+        return None, "gh pr list returned unparseable JSON"
+    return (prs[0] if prs else None), "ok"
+
+
+def check_branch_ownership(repo: str, agent_id: Optional[str],
+                           cwd: Optional[str] = None, lookup=None) -> CheckResult:
+    here = cwd or os.getcwd()
+    r = run(["git", "-C", here, "rev-parse", "--abbrev-ref", "HEAD"], timeout=30)
+    branch = r.out.strip() if r.ok else ""
+    if branch in ("HEAD", ""):
+        return judge_branch_ownership(cwd=here, branch=None, pr=None, agent_id=agent_id)
+    ask = lookup or (lambda b: open_pr_for_branch(repo_slug(repo), b))
+    pr, status = ask(branch)
+    return judge_branch_ownership(cwd=here, branch=branch, pr=pr, agent_id=agent_id,
+                                  lookup_status=status)
+
+
 def check_worktrees(rows: list[tuple], repo: str, pr_status: str) -> CheckResult:
     agents = [r for r in rows if not r[0].is_main]
     reapable = [r for r in agents if r[4].reapable]
@@ -2720,6 +2837,10 @@ def main(argv: Optional[list[str]] = None) -> int:
                     help="remove worktrees whose PR is MERGED and whose tree is clean")
     ap.add_argument("--dry-run", action="store_true", help="with --reap, only say what it would do")
     ap.add_argument("--identity", default=None, help="agent identity used for the push probe ref")
+    ap.add_argument("--agent-id", default=None,
+                    help="the loop's identity (fbk-3, impl-2, ...), compared against the "
+                         "`agent:` label of any open PR heading this worktree's branch; "
+                         "defaults to $AL_RUNNER_AGENT_ID")
     ap.add_argument("--scratch-root", default=None,
                     help="directory to scan for stale scratch (default: the system temp dir)")
     ap.add_argument("--stale-hours", type=float, default=6.0,
@@ -2776,6 +2897,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     import tempfile
     scratch_root = args.scratch_root or tempfile.gettempdir()
     identity = args.identity or default_identity()
+    agent_id = args.agent_id or os.environ.get("AL_RUNNER_AGENT_ID") or None
     per_worker = (PER_WORKER_BYTES_WITH_TEST_DATA if args.with_test_data
                   else PER_WORKER_BYTES_NO_TEST_DATA)
     per_worker_label = ("with --test-data" if args.with_test_data else "without test data")
@@ -2803,6 +2925,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         check_headroom(scratch_root, repo, mounts, mem, per_worker, per_worker_label),
         check_budget(skip_fallback=args.skip_budget_fallback),
         check_worktrees(rows, repo, pr_status),
+        check_branch_ownership(repo, agent_id),
         check_stale_scratch(scratch_root, rows, args.stale_hours),
         classify_checkout(lags),
         check_push(repo, identity),
