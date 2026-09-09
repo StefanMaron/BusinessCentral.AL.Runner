@@ -236,6 +236,40 @@ public sealed class SystemAppPackageRegistrationFailureTests
         Assert.Equal(typeof(string), candidates[0].ReturnType);
     }
 
+    // ══ 5. THE SEAM ITSELF: driving the core must not touch process-global state ═════════
+    //
+    // The first draft of this file assigned _systemAppTempPath INSIDE the core, one line above
+    // the injected `register` callback, so four of the arms above overwrote the real SystemApp
+    // path with a 7-byte fake that nothing had added to _bcAppPaths. The static is
+    // process-global, so the damage outlived these tests: ClearPerBundleBcAppPaths uses it as
+    // the KEEP predicate, and a stale value makes the next ResetForReload drop the REAL
+    // registration — which surfaced as BcAppPathsResetTests failing with an empty collection
+    // and, further downstream, as two MetadataEquivalenceHarnessTests failures that named
+    // nothing to do with this change.
+    //
+    // This arm is what stops that coming back. It asserts the invariant DIRECTLY rather than
+    // through a victim test in another class, because the victim only fails when the engine is
+    // bootstrapped — so on a box where those tests skip, a reintroduced write would be silent.
+
+    [Fact]
+    public void DrivingTheCoreWithFakes_LeavesTheProcessGlobalSystemAppPathUntouched()
+    {
+        var before = RecordPatches.SystemAppPackagePathForTests;
+
+        // Every shape the arms above drive: the healthy path that extracts and returns, and a
+        // refusal. Neither may write the static — only RegisterSystemAppPackage does that, from
+        // the return value, after the REAL AddBcAppPath has run.
+        var extracted = Register(asm: new FakeAssembly(typeof(SystemAppFakes.Healthy.SystemPackage)));
+        Assert.Throws<BcShapeGapException>(() => Register(asm: null));
+
+        Assert.Equal(before, RecordPatches.SystemAppPackagePathForTests);
+
+        // The discriminator: the healthy arm really did produce a path, so "unchanged" is not
+        // vacuously true because nothing happened. On the broken seam this value IS the static.
+        Assert.NotNull(extracted);
+        Assert.NotEqual(extracted, RecordPatches.SystemAppPackagePathForTests);
+    }
+
     // ══ Plumbing ═════════════════════════════════════════════════════════════════════════
 
     private static string? Register(

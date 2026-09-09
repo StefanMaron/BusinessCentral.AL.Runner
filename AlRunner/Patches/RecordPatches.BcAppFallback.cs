@@ -656,7 +656,15 @@ public static partial class RecordPatches
             catch { /* the refusal below names it; a load failure and an absence are one case here */ }
         }
 
-        RegisterSystemAppPackageCore(asm, AddBcAppPath, EagerParseAllBcAppTables);
+        // The static is written HERE, not in the core, and only after AddBcAppPath has actually
+        // registered the path — so `_systemAppTempPath` names an entry that is genuinely in
+        // `_bcAppPaths`. Assigning it inside the core would let any caller that injects a
+        // different `register` (the tests below) overwrite the real path with one nothing
+        // registered, and the static is process-global, so the damage outlives the caller:
+        // ClearPerBundleBcAppPaths uses it as the KEEP predicate, so a stale value makes the
+        // next ResetForReload drop the real SystemApp registration for the rest of the process.
+        _systemAppTempPath = RegisterSystemAppPackageCore(
+            asm, AddBcAppPath, EagerParseAllBcAppTables);
     }
 
     /// <summary>Surface text for every refusal this step raises — what an AL author loses when
@@ -668,6 +676,13 @@ public static partial class RecordPatches
     /// and the two side effects taken as parameters so each way this step can fail is
     /// injectable without a BC install (SystemAppPackageRegistrationFailureTests). Returns the
     /// path of the extracted package.
+    ///
+    /// <para><b>Writes no process-global state.</b> That is what makes it drivable with fakes:
+    /// the caller assigns <see cref="_systemAppTempPath"/> from the return value, so a test
+    /// injecting its own <paramref name="register"/> cannot leave the static naming a path that
+    /// is not in <see cref="_bcAppPaths"/>. Keep it that way — the static is the KEEP predicate
+    /// in <see cref="ClearPerBundleBcAppPaths"/>, so a wrong value there is not a wrong reading
+    /// but a real unregistration on the next reload.</para>
     ///
     /// <para><b>#3581 — none of the three exits here may resolve toward success.</b> This is the
     /// engine-bootstrap step that puts the platform SystemApp package into
@@ -772,7 +787,6 @@ public static partial class RecordPatches
                 Path.Combine(Path.GetTempPath(), $"al-runner-systemapp-{suffix}.app"),
                 fs => stream.CopyTo(fs));
 
-            _systemAppTempPath = tempPath;
             register(tempPath);
             Console.Error.WriteLine(System.FormattableString.Invariant(
                 $"[RecordPatches] BcAppFallback: registered SystemPackage → {Path.GetFileName(tempPath)} ({new FileInfo(tempPath).Length:N0} bytes)"));
