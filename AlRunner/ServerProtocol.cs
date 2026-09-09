@@ -17,7 +17,7 @@ namespace AlRunner;
 ///             {"type":"summary", exitCode, passed, failed, errors,
 ///             total, cached, cancelled|omitted, changedFiles|omitted,
 ///             compilationErrors|omitted, coverage|omitted, perTestCoverage|omitted,
-///             selection|omitted,
+///             selection|omitted, companyInitFailures|omitted,
 ///             wallSeconds|omitted, protocolVersion:2} line.
 ///             `cancelled` (true) is present only when a concurrent `cancel`
 ///             command actually stopped the run before every test ran; omitted
@@ -34,7 +34,7 @@ namespace AlRunner;
 ///             shape (#1613/#1614), reused verbatim rather than inventing a new one.
 ///   execute : {exitCode, tests:[{name,status,durationMs,message,stackTrace,
 ///              capturedValues|omitted, iterations|omitted}], messages|omitted, compilationErrors|null,
-///              coverage|omitted, selection|omitted} —
+///              coverage|omitted, selection|omitted, companyInitFailures|omitted} —
 ///              single response, not streamed (matches v1: only runTests streams).
 ///              `capturedValues` (#1640) is present per test only when the request
 ///              set `captureValues:true`; each entry is {scopeName, variableName,
@@ -107,6 +107,16 @@ namespace AlRunner;
 ///   error   : {error}
 ///   shutdown: {status}
 /// </summary>
+/// <remarks>
+/// `companyInitFailures` (#3561) is on BOTH `runTests`' summary and `execute`'s response, and
+/// unlike `coverage` it has no request-side opt-in: it is present exactly when a company
+/// initialization codeunit did not run to completion during that request, and absent otherwise
+/// — never an empty array. Each entry is {codeunitId, codeunit, exceptionType, message, count,
+/// accepted|omitted}; `count` is how many app groups reported that same abort, and `accepted`
+/// carries the expectations-manifest reason when the project declares the condition accepted
+/// (docs/partial-company-initialization.md). The accumulator is drained ONCE PER REQUEST, so a
+/// response reports its own request's aborts and never a previous one's.
+/// </remarks>
 public sealed class ServerRequest
 {
     [JsonPropertyName("command")] public string? Command { get; set; }
