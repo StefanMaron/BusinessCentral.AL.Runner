@@ -67,6 +67,8 @@ For each PR:
 
 **Stuck PR:** same CI run ID across loops + no new commits → close with comment, reset linked issue (remove `status: in-progress` + `agent: <X>`, add `status: ready`).
 
+Report expectation-manifest drift (a known-gap entry left behind after its issue closed, a red `main` from manifest drift) to the invoking session, naming the manifest entry; the session dispatches one implementation agent per drift (`orchestrating-a-session`, the merge pass).
+
 ## Step 2 — Close linked issues
 ```
 gh issue close <N> --comment "Closed — implemented in #<PR>" --repo StefanMaron/BusinessCentral.AL.Runner
