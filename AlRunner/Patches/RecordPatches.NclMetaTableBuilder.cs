@@ -577,16 +577,16 @@ public static partial class RecordPatches
                 args[i] = dcVal;
                 continue;
             }
-            // The enum object an `Enum "X"`-typed field names is deliberately NOT passed, even
-            // though ParsedField now carries it. Passing enumTypeId makes BC's own
-            // FieldDataProvider.GetFieldRecordBuffer resolve that id through NCLMetadata, and
-            // for a PRECOMPILED app's enum the runner registers no metadata object for it —
-            // measured on the corpus: every read of the Field virtual table (2000000041) for
-            // Base Application table 1366 then threw NavMetadataNotFoundException("Enum 8889"),
-            // which aborted codeunit 2 Company-Initialize and took the whole corpus app's
-            // 2,900 tests with it. Reading the id is the easy half; making it resolvable is
-            // the work, and it is tracked on #3594 with MetaField.EnumTypeId still declared in
-            // the metadata-equivalence allowlist.
+            // #3594 — the enum object an `Enum "X"`-typed field names. Stating this makes BC's
+            // own FieldDataProvider.GetFieldRecordBuffer resolve the id through NCLMetadata, so
+            // it is only safe once that lookup can answer: BcRuntime's Cecil rewrite of
+            // NCLFieldEnumMetadata.GetEnumMetadataFromMetadataProvider serves it from
+            // AlEnumMetadataRegistry, and EnsureSystemEnumsRegistered adds BC's own platform
+            // enums, which no app declares. Both halves must ship together — stating the id
+            // without them aborted the whole corpus app (0 of 3,112 tests) on the enum of Base
+            // Application table 1366. See docs/field-enum-metadata-resolution.md.
+            if (p.Name == "enumTypeId" && f.EnumTypeId != 0) { args[i] = f.EnumTypeId; continue; }
+            if (p.Name == "enumTypeName" && !string.IsNullOrEmpty(f.EnumTypeName)) { args[i] = f.EnumTypeName; continue; }
             if (p.Name == "fieldClass" && _tFieldClass != null && (f.IsFlowField || f.IsFlowFilter))
             {
                 // #1716 — FlowFilter must reach the metadata as FlowFilter. NCLMetaTable

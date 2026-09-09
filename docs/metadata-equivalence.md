@@ -197,15 +197,16 @@ all stated in `SymbolReference.json`, and the reader read none of them. Together
 classification the Field and Table Metadata virtual tables report, and whether an enum-typed
 field can be resolved back to its enum object at all.
 
-**Two of the three landed.** The enum id did not, and the reason is the useful part: reading it
-was never the problem. Stating `enumTypeId` on the `MetaField` makes BC's own
+**All three landed**, the enum id last and by a different route. Reading it was never the
+problem: stating `enumTypeId` on the `MetaField` makes BC's own
 `FieldDataProvider.GetFieldRecordBuffer` resolve that id through `NCLMetadata`, and the runner
-registers no metadata object for a **precompiled** app's enum — so every read of the Field
-virtual table for Base Application table 1366 threw `NavMetadataNotFoundException("Enum 8889")`,
-which aborted codeunit 2 `Company-Initialize` and reported the corpus app as `EXEC-FAIL` with 0
-of ~2,900 tests run. Registering the metadata is the work, and it is #3594; `MetaField.EnumTypeId`
-stays declared in the allowlist until then, with the measurement below recorded on it so nobody
-re-derives it.
+registered no metadata object for an enum — so every read of the Field virtual table for Base
+Application table 1366 threw `NavMetadataNotFoundException("Enum 8889")`, which aborted codeunit
+2 `Company-Initialize` and reported the corpus app as `EXEC-FAIL` with 0 of 3,112 tests run.
+#3594 made the id resolvable first — a Cecil rewrite of
+`NCLFieldEnumMetadata.GetEnumMetadataFromMetadataProvider` onto `AlEnumMetadataRegistry`, plus
+registration of BC's own 16 platform enums, which no app declares — and only then stated it. See
+[field-enum-metadata-resolution.md](field-enum-metadata-resolution.md).
 
 The rules below are measurements, not readings of the AL documentation. Each was checked by
 joining the fields of Business Foundation and System Application in `SymbolReference.json`
@@ -228,7 +229,7 @@ join through a different route, described next.
 |---|---|
 | `Editable` | stated only where it is `0`; silence means true. So only the false is carried, and `MetaField`'s own null default decides the rest. **Landed.** |
 | field `DataClassification` | see the next section — it is the one with exceptions. **Landed.** |
-| `EnumTypeId` / `EnumTypeName` | `TypeDefinition.Subtype.Id` and `.Name`, when `TypeDefinition.Name == "Enum"`. Presence of the subtype and presence of BC's emitted `EnumTypeId` agree on every observation. **Read, not stated — #3594.** |
+| `EnumTypeId` / `EnumTypeName` | `TypeDefinition.Subtype.Id` and `.Name`, when `TypeDefinition.Name == "Enum"`. Presence of the subtype and presence of BC's emitted `EnumTypeId` agree on every observation. **Landed (#3594)** — stating it required making the id resolvable first. |
 
 **`EnumTypeId`/`EnumTypeName` are not read from AL source either**, independently of #3594. The
 enum's OBJECT ID is not in the type text, and the name alone would produce a pair BC never emits
@@ -320,7 +321,7 @@ builds them by parsing boilerplate XML: `Editable="0"` on all six, and
 | members differing | 74 | 72 |
 | `MetaField.Editable` | 987 | **0** |
 | `MetaField.DataClassification` | 1,564 | **0** |
-| `MetaField.EnumTypeId` | 77 | 77 (#3594) |
+| `MetaField.EnumTypeId` | 77 | 77 — still open at the time of this measurement; closed later by #3594 |
 | `MetaField.EnumTypeName` | 1,888 | 1,888 (#3568) |
 
 No other member moved in either direction, and no new member appeared.

@@ -225,16 +225,19 @@ public sealed class MetadataEquivalenceHarnessTests
             AssertConstantAnswer(report, Declared("MetaField.CaptionML." + MetadataObjectDiff.PresenceMember),
                 "MetaField.CaptionML", bc: "present", runner: MetadataObjectDiff.Null);
 
-            // Still wrong for a reason that is not a reading defect: the id is known and
-            // stating it needs a metadata object BC can resolve (#3594).
-            AssertConstantAnswer(report, Declared("MetaField.EnumTypeId"), "MetaField.EnumTypeId",
-                bc: null, runner: "0");
-
             // Fixed by #3545, and asserted over EVERY field rather than only the declared
             // ones: the same change corrected BC's six platform-added fields, whose Editable
             // and DataClassification come from SystemFieldsHelper's boilerplate.
             AssertReaderAgrees(report, "MetaField.Editable");
             AssertReaderAgrees(report, "MetaField.DataClassification");
+
+            // Fixed by #3594. Reading the id was never the hard half — stating it was, because
+            // BC then resolves it through NCLMetadata and the runner registered no Enum object
+            // under it. Registering one (a Cecil rewrite of
+            // NCLFieldEnumMetadata.GetEnumMetadataFromMetadataProvider onto
+            // AlEnumMetadataRegistry, plus BC's own 16 platform enums) is what let the value be
+            // stated at all; before it, stating the id aborted the whole corpus app.
+            AssertReaderAgrees(report, "MetaField.EnumTypeId");
         }
     }
 
