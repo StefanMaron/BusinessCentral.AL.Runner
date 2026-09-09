@@ -108,3 +108,5 @@ for exactly that reason.
 - `ask-the-corpus-before-claiming-bc-behavior.md` — a corpus test green on a real service
   tier is evidence only if it *ran*
 - `no-assumption-fixes.md` — a zero you cannot attribute is not a diagnosis
+- `guards-need-a-third-state.md` — the same class in the guards this repository writes
+  itself: a check that cannot measure must not report its success state

@@ -128,3 +128,5 @@ so the pattern is established rather than proposed.
 - `.claude/rules/no-assumption-fixes.md` — never fix without understanding the AL pattern.
 - `.claude/rules/file-issues-for-gaps.md` — gaps go to issues + `tests/expectations/`, never silent workarounds.
 - `.claude/rules/tdd.md` — every fix needs a RED → GREEN.
+- `.claude/rules/guards-need-a-third-state.md` — the build-time companion: a guard that
+  could not measure must say so, never return its success code.
