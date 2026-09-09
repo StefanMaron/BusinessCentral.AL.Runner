@@ -209,8 +209,9 @@ count has grown by roughly 20 or the queue has visibly drifted. Sonnet is a fine
 The queue grows for a reason worth naming: **issues get fixed by a PR that cites a different
 number, so nothing auto-closes them.** Ask triage for three things — already-fixed issues
 with the commit that fixed each, duplicate clusters with a canonical, and status labels for
-the untriaged. Have it **apply labels directly** (mechanical) but **close nothing and comment
-nowhere** — bring the closure list back for approval.
+the untriaged. Have it **apply labels directly** (mechanical) and **close only retry duplicates** (identical
+title, minutes apart, `.claude/agents/triager.md` § D); every other closure comes back as a
+list for approval, with the comment it would carry.
 
 ## The merge bar
 

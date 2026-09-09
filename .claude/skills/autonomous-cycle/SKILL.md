@@ -505,7 +505,7 @@ a merge can turn `main` red, which outranks everything you were about to do.
    run a Microsoft BaseApp bucket in a known-good configuration
      -> cluster the failures
        -> re-run the top cluster against a CLEAN cache to confirm it is real
-         -> only then file an issue, with the measured count
+         -> only then file an issue, with the measured count (`file-issues-for-gaps.md` § File once)
    ```
 
    **The clean-cache confirmation is not optional.** It is the difference between the loop
