@@ -63,10 +63,23 @@ deleting** rather than relying on the delete failing.
 
 ### Design notes
 
-- **The manifest lists names, not sizes.** The failure is a *missing* file. `File.Exists` on a
-  dangling symlink is false, so a name list also catches the #2166 shape (a symlink whose
-  target the original install lost), and a size read on a symlink means different things on
-  different platforms.
+- **The manifest lists names, not sizes.** The failure is a *missing* file, and a size read on a
+  symlink means different things on different platforms.
+- **Presence is not `File.Exists`.** A name list also catches the #2166 shape — a symlink whose
+  target the original install lost — but only if the check resolves the link. Measured on Linux
+  (.NET 8, WSL) against a dangling symlink:
+
+  | | intact | dangling |
+  |---|---|---|
+  | `File.Exists` / `FileInfo.Exists` | true | **true** |
+  | listed by `Directory.EnumerateFiles` | yes | yes |
+  | `ResolveLinkTarget(returnFinalTarget: true)?.Exists` | true | **false** |
+
+  On Windows `File.Exists` answers false for the same shape, so an existence check alone passes
+  there and lets the gap through on exactly the legs that matter. `EntryResolves` asks the third
+  row. This was caught by CI: PR #3596's first head was red on both unit legs with
+  `Assert.False() Failure, Actual: True`, on a Windows box where the test had skipped itself
+  because symlink creation is refused.
 - **Verification cost** is one `File.Exists` per entry, a few hundred stats, at startup and in
   the publish loop.
 - **The heal copies every manifest entry that is missing**, never overwriting one that exists.

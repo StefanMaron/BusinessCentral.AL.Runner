@@ -123,9 +123,12 @@ public sealed class NclShadowInUseAndManifestTests
         finally { Directory.Delete(root, recursive: true); }
     }
 
-    /// <summary>A dangling symlink is a missing file (#2166's shape) — File.Exists says so,
-    /// and the manifest turns that into a refusal instead of a load failure hours later.</summary>
-    [Fact]
+    /// <summary>A dangling symlink is a missing file (#2166's shape), and the manifest must turn
+    /// it into a refusal instead of a load failure hours later. It is NOT enough to ask whether
+    /// the entry exists: measured on Linux (.NET 8), a dangling symlink answers File.Exists true
+    /// — the check has to resolve the link target. Skips, loudly, where symlink creation is
+    /// refused (Windows without Developer Mode), rather than passing having asserted nothing.</summary>
+    [SkippableFact]
     public void IsShadowDirComplete_ManifestEntryIsADanglingSymlink_Refuses()
     {
         var root = NewRoot("manifest-dangling");
@@ -139,7 +142,9 @@ public sealed class NclShadowInUseAndManifestTests
             try { File.CreateSymbolicLink(Path.Combine(shadow, "Linked.dll"), target); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or PlatformNotSupportedException)
             {
-                return; // symlinks refused on this box (the very condition #3559 was measured under)
+                throw new SkipException(
+                    $"cannot create a file symlink here ({ex.GetType().Name}: {ex.Message}) — this " +
+                    "box refuses symlinks, so the dangling-entry claim cannot be measured on it");
             }
             NclShadowRuntime.WriteManifest(shadow);
             Assert.True(NclShadowRuntime.IsShadowDirComplete(shadow, OrigFull));

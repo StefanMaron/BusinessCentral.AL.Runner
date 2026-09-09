@@ -374,10 +374,30 @@ public static class NclShadowRuntime
         {
             if (rel.Length == 0) continue;
             var path = Path.Combine(dir, rel.Replace('/', Path.DirectorySeparatorChar).TrimEnd(Path.DirectorySeparatorChar));
-            var present = rel.EndsWith("/", StringComparison.Ordinal) ? Directory.Exists(path) : File.Exists(path);
-            if (!present) missing.Add(rel);
+            if (!EntryResolves(path, isDirectory: rel.EndsWith("/", StringComparison.Ordinal))) missing.Add(rel);
         }
         return missing;
+    }
+
+    /// <summary>
+    /// True when a manifest entry is really readable: present, and — when it is a symlink — its
+    /// target still exists. Measured on Linux (.NET 8), a DANGLING symlink answers
+    /// <c>File.Exists</c> true, <c>FileInfo.Exists</c> true, and is listed by
+    /// <c>Directory.EnumerateFiles</c>; only <c>ResolveLinkTarget(returnFinalTarget: true)</c>
+    /// reports it. On Windows <c>File.Exists</c> answers false for the same shape, so an
+    /// existence check alone passes there and lets the gap through on the legs that matter.
+    /// </summary>
+    internal static bool EntryResolves(string path, bool isDirectory)
+    {
+        try
+        {
+            FileSystemInfo info = isDirectory ? new DirectoryInfo(path) : new FileInfo(path);
+            if (!info.Exists) return false;
+            if (info.LinkTarget == null) return true;
+            return info.ResolveLinkTarget(returnFinalTarget: true)?.Exists == true;
+        }
+        catch (IOException) { return false; }              // cyclic or too many links
+        catch (UnauthorizedAccessException) { return false; }
     }
 
     /// <summary>
