@@ -12,8 +12,9 @@ read — one pass, one answer, about a second:
 tools/ci-wait.py 2379 --timeout 0     # reads the verdict now; does not block
 ```
 
-`--timeout 0` means a single pass (`--timeout 1` still means "wait up to a second"; #3351).
-Never hand-roll `gh run view` plus `sleep` — one call replaces the loop.
+**`--timeout 0` means a single pass** and says so in its own `--help`; a negative value is
+refused by `argparse` rather than behaving like zero, and `--timeout 1` still means "wait up to
+a second" (#3351). Never hand-roll `gh run view` plus `sleep` — one call replaces the loop.
 
 **Who reads it, and when.** An implementation agent opens its PR and hands back; it never
 waits and never merges (`.claude/agents/impl-agent.md`). The coordinator sweeps open PRs once
@@ -22,7 +23,8 @@ per cycle and reads each verdict then, and nothing is lost by reading late:
 
 **Trap: an answer that could not have come out any other way is not evidence.** Under the
 pre-#3351 zero-timeout path a green PR, a red PR and a PR with no checks all printed `STILL
-RUNNING`. Check a new invocation against a PR whose state you already know.
+RUNNING`, and its only tell was the empty parentheses of `STILL RUNNING after 0s ()`, where the
+progress detail belongs. Check a new invocation against a PR whose state you already know.
 
 | exit | meaning |
 |---|---|
@@ -88,9 +90,10 @@ Two things the guard cannot do:
   now exits 3 rather than judging the PR with the safety check skipped, and without
   `agent_stdio.py` the copy prints through the console codec, so on a cp1252 box one
   non-cp1252 character in a failing-log tail raises `UnicodeEncodeError` and exits **1** — this
-  tool's "a required check failed" code. The two loud `unknown` freshness notes a `/tmp`
-  directory produces are fine *there only*, because you extracted the files from `origin/main`
-  yourself; elsewhere an `unknown` that fails open is the defect #3296 fixed.
+  tool's "a required check failed" code — a two-file copy says so in a `note:` line on stderr.
+  The two loud `unknown` freshness notes a `/tmp` directory produces are fine *there only*,
+  because you extracted the files from `origin/main` yourself; elsewhere an `unknown` that fails
+  open is the defect #3296 fixed.
 - **It cannot turn a network failure into a verdict.** `refs/remotes/origin/main` is shared by
   every worktree, so the check costs no network, and one `git ls-remote` confirms that shared
   ref against the remote. An unreachable remote is a loud note and the local check stands,
@@ -158,7 +161,10 @@ The rest come from **`.github/workflows/pr-gate.yml`**, one context per job — 
 gate, but not all: the ones listed as `PENDING_REQUIRED_CONTEXTS` in
 `check_required_contexts.py` are deliberately out of the ruleset, because promoting one early
 makes `ci-wait.py` answer exit 3 for everybody (#3002). Everything in `pr-check.yml` is
-advisory and cannot block a merge (#3165). So a red tick is not by itself proof the merge is
+advisory and cannot block a merge (#3165). **A check that talks to a third-party API stays
+advisory on purpose** — `Required-context list must match the live branch ruleset` reaches
+`api.github.com`, and a required check that can go red on an outage blocks every merge in the
+repository for something no author can fix. So a red tick is not by itself proof the merge is
 blocked — ask the ruleset:
 
 ```bash
@@ -266,8 +272,7 @@ save its log first, or get the second run by a route in section 5.
 ## 4. Diagnose from the log, not from a theory
 
 Wait for the run to complete before reading it — a partial log reads as an unrelated failure —
-then find the actual failing assertion. A theory formed before the log arrives has been wrong
-every time it was tried here.
+then find the actual failing assertion, never a theory formed before the log arrived.
 
 ## 5. "Pre-existing unrelated flake" needs evidence
 
