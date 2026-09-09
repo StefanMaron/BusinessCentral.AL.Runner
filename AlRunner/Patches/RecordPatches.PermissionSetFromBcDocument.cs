@@ -1,89 +1,41 @@
 // RecordPatches.PermissionSetFromBcDocument — a source-compiled permission set's declaration
-// read from BC's OWN emitted metadata document instead of re-derived from AL source text
-// (issue #3609, the last conversion of the chain #3562 tracks).
+// read from BC's OWN emitted <PermissionSet> metadata document instead of re-derived by regex
+// over AL source text (#3609, last conversion of the chain #3562 tracks).
 //
-// THE SEAM
-//   BC's Compilation.Emit hands CaptureOutputter a <PermissionSet> document for every
-//   `permissionset` object it emits, and AlObjectMetadataRegistry (#3548) keeps it keyed
-//   (kind, id). Measured on BC 28.1, a two-set probe:
+// Derivation, the probe output, the mask table and the per-symbol survival list are in
+// docs/permission-set-from-bc-document.md. Four claims, each with what settled it:
 //
-//     <PermissionSet ID="70702" Name="PP Derived" Access="Internal" Assignable="1"
-//                    CaptionML="ENU=PP derived caption" IncludedPermissionSets="70701"
-//                    ExcludedPermissionSets="70704">
-//       <Permission Type="0" ID="70700" Value="449" />
-//       <Permission Type="5" ID="70703" Value="16" />
-//     </PermissionSet>
+// CLAIM — observably equivalent, and strictly better on one column. BC's document states the
+//   same properties the regex derived, with object references and masks ALREADY RESOLVED
+//   (`<Permission Type="0" ID="70700" Value="15" />`, `IncludedPermissionSets="70701"`). The
+//   mask encoding is BC's own and agrees with the derivation's hand-rolled table exactly —
+//   RIMD=15, Rimd=449, X=16, measured on BC 28.1. So this is the same answer without the
+//   transcription. See docs/permission-set-from-bc-document.md#mask-encoding.
 //
-//   That states every column RecordPatches.AlPermissionSetParser derived by regex, and it
-//   states two of them RESOLVED that the parser could only state as names — see the two
-//   claims below. docs/permission-set-from-bc-document.md has the probe and the measurements.
+// CLAIM — it removes a silent wrong answer, which is why it is preferred unconditionally when
+//   available rather than as a tidiness matter. ResolveSourcePermissionEntries resolves an
+//   object NAME against ParsedObjectDecls, which carries no tables, so every `tabledata` grant
+//   in a source-compiled permission set was dropped by a `continue` sitting ABOVE its own
+//   diagnostic — invisible at every verbosity. Measured 17419 → 17421 declared permissions on a
+//   probe. See docs/permission-set-from-bc-document.md#tabledata.
 //
-// CLAIM: object references arrive as IDS, which removes a silent wrong answer.
-//   A source-declared `Permissions = tabledata "PP Thing" = RIMD` names its object; AL has no
-//   id form. ResolveSourcePermissionEntries resolved that name against ParsedObjectDecls,
-//   which does not carry TABLES — so `AlKeywordForPermissionObject` returned null for
-//   ordinals 0 (tabledata) and 1 (table) and the entry was dropped by `if (kind == null)
-//   continue;`, BEFORE the diagnostic below it. Every tabledata grant in a source-compiled
-//   permission set therefore vanished at every verbosity, including AL_RUNNER_DIAG_PERMMETA=1.
-//   BC's document states `Type="0" ID="70700"` outright, so the resolution step — and its
-//   blind spot — is not needed on this route.
+// CLAIM — ExcludedPermissionSets IS carried here, contrary to what #3609 expected. The issue's
+//   0-of-258 count over Base Application reproduces exactly, but it measures Base Application's
+//   AL rather than BC's emitter: a probe declaring the property gets it back on the document.
+//   See docs/permission-set-from-bc-document.md#excluded-permission-sets.
 //
-// CLAIM: masks arrive computed, and BC's encoding is the one the parser reimplemented.
-//   Measured: `RIMD` → Value="15", `Rimd` → Value="449", `X` → Value="16", matching
-//   MaskFromAlLetters' R=1 I=2 M=4 D=8 X=16 / r=32 i=64 m=128 d=256 x=512 exactly. So this
-//   route is not a different answer, it is the same answer without the transcription.
+// TRAP — nothing in the derivation became dead code, so do not delete it as unreachable. The
+//   registry is keyed by id (the parser is the inventory), BC's document does not state
+//   AppId/AppName, and Emit runs only on a compile-cache MISS, leaving the derivation the live
+//   fallback on a warm run. See docs/permission-set-from-bc-document.md#what-survives.
 //
-// CLAIM: IncludedPermissionSets/ExcludedPermissionSets arrive as ids, not names.
-//   BuildIncludeList resolves names against this run's inventory and DROPS what it cannot
-//   find. BC states the resolved object id, so a set included by a source-compiled
-//   declaration cannot be lost to a name lookup on this route.
+// A parse failure is never re-routed to the derivation — a weaker answer substituted on error
+// is wrong metadata under a green build (.claude/rules/loud-failures.md). Every drop inside
+// this file is reported on AL_RUNNER_DIAG_PERMMETA, because a silently dropped grant is the
+// exact defect #3609 was about.
 //
-// EXCLUDEDPERMISSIONSETS — WHAT THE 0-OF-258 MEASUREMENT DOES AND DOES NOT SAY
-//   Issue #3609 records that ExcludedPermissionSets occurs 0 times across Base Application's
-//   258 permission sets, and expected conversion to leave that column unfixed. Re-measured
-//   here, the count is right and the inference from it is not: 258 permissionset sources,
-//   0 declaring ExcludedPermissionSets, 46 declaring IncludedPermissionSets. The zero is a
-//   property of Base Application's own AL, not of BC's emitter — a probe declaring the
-//   property gets `ExcludedPermissionSets="70704"` on the document alongside
-//   IncludedPermissionSets. So this route DOES carry it, and the populator's hardcoded null
-//   is retired for source-compiled sets rather than kept. It stays for the precompiled route,
-//   where SymbolReference.json is what the runner reads and the column is not extracted.
-//
-// WHAT SURVIVES CONVERSION — nothing here becomes dead code
-//   Issue #3609 expected RecordPatches.AlPermissionSetParser.cs (176 lines) and part of
-//   PermissionMetadataPopulator.cs to retire. Measured, neither can, and the reason is
-//   structural rather than incidental:
-//
-//     - The registry is keyed BY ID, so something has to say which permission-set ids this
-//       run declares before a document can be looked up. The parser is that inventory.
-//     - BC's document does not state the OWNING APP. AppId/AppName come from the app.json
-//       that owns the source file (ResolveOwningApp), and both the "Metadata Permission Set"
-//       App ID column and AggregatePermissionSetVirtualTable.BuildKnownAppNameIndex read them.
-//     - Emit runs only on a compile-cache MISS, so the derivation is the live fallback on
-//       every warm run whose replay supplied no document — not a legacy path.
-//
-//   What conversion removes is the derivation's ROLE as the answer, not its code: the
-//   name→id resolution, the hand-rolled mask table and the include-name lookup stop deciding
-//   what a source-compiled permission set means whenever BC's document is available.
-//   docs/permission-set-from-bc-document.md § "what survives" has the per-symbol detail.
-//
-// AVAILABILITY DECIDES THE ROUTE, AND A FAILURE IS NEVER RE-ROUTED
-//   Taken only when a document is registered for (PermissionSet, id). A permission set from a
-//   precompiled dependency .app has none — it is read from SymbolReference.json — and keeps
-//   that route unchanged. Nothing here catches a parse failure and falls back to the regex
-//   derivation: a weaker answer substituted on error is wrong metadata under a green build
-//   (.claude/rules/loud-failures.md).
-//
-// CACHE-HIT SAFETY
-//   Emit runs only on a compile-cache MISS. The registry is replayed on a HIT by the three
-//   mechanisms ObjectMetadataRegistry.cs documents (enum-registry sidecar, dependency
-//   .object-metadata.json, --watch shadow snapshot), and HasBcPermissionSetDocument answers
-//   false when none of them supplied one — so a warm run with no replayed document keeps the
-//   AL-source derivation rather than silently losing every source-declared permission set.
-//
-// PRECOMPILED-DLL RESPECT: this file reads an XML string the compiler already produced and
-// builds the runner's own PermissionSetSymbol record from it. No BC type is constructed or
-// rewritten here.
+// PRECOMPILED-DLL RESPECT: reads an XML string the compiler already produced and builds the
+// runner's own PermissionSetSymbol record from it. No BC type is constructed or rewritten.
 
 using System;
 using System.Collections.Generic;
@@ -205,13 +157,28 @@ public static partial class RecordPatches
         var rows = new List<BcAppSymbolCache.PermissionSymbol>();
         foreach (var p in container.Elements(ns + "Permission"))
         {
-            // A row missing any of the three is not a row that can mean anything; skipping it
-            // is the same conservative choice the name-resolving route made, but it cannot
-            // happen for a document the compiler produced.
-            if (!TryParseInt((string?)p.Attribute("Type"), out var type)) continue;
-            if (!TryParseInt((string?)p.Attribute("ID"), out var id)) continue;
-            if (!TryParseInt((string?)p.Attribute("Value"), out var value)) continue;
-            rows.Add(new BcAppSymbolCache.PermissionSymbol(type, id, value));
+            // A row missing any of the three cannot mean anything, so it is dropped rather
+            // than guessed at — but it is dropped WITH A DIAGNOSTIC, on the same
+            // AL_RUNNER_DIAG_PERMMETA channel the id route below uses. #3609 was itself a
+            // grant dropped by a `continue` that no verbosity could see, and "this cannot
+            // happen for a document the compiler produced" is exactly the reasoning that made
+            // the original one invisible. If BC's emitter ever changes shape here, the drop
+            // has to be greppable rather than silent.
+            var type = (string?)p.Attribute("Type");
+            var idText = (string?)p.Attribute("ID");
+            var valueText = (string?)p.Attribute("Value");
+            if (!TryParseInt(type, out var typeOrdinal)
+                || !TryParseInt(idText, out var id)
+                || !TryParseInt(valueText, out var value))
+            {
+                if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_PERMMETA") == "1")
+                    Console.Error.WriteLine(
+                        "[perm-metadata] BC's permission-set document carries a <Permission> row "
+                        + $"this code cannot read (Type='{type}' ID='{idText}' Value='{valueText}') "
+                        + "— dropped rather than guessed");
+                continue;
+            }
+            rows.Add(new BcAppSymbolCache.PermissionSymbol(typeOrdinal, id, value));
         }
         return rows;
     }
@@ -227,10 +194,21 @@ public static partial class RecordPatches
         var raw = (string?)root.Attribute(attribute);
         if (string.IsNullOrWhiteSpace(raw)) return null;
 
+        // Same rule as ReadPermissions above: an unparseable entry is dropped, and the drop is
+        // observable on AL_RUNNER_DIAG_PERMMETA rather than silent. A lost include edge makes
+        // BC compose a DIFFERENT set of grants, which is precisely the class of wrong answer
+        // nothing downstream can detect.
         var ids = new List<int>();
         foreach (var part in raw.Split(','))
-            if (TryParseInt(part.Trim(), out var id))
-                ids.Add(id);
+        {
+            var text = part.Trim();
+            if (text.Length == 0) continue;          // trailing separator, not a lost edge
+            if (TryParseInt(text, out var id)) { ids.Add(id); continue; }
+            if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_PERMMETA") == "1")
+                Console.Error.WriteLine(
+                    $"[perm-metadata] BC's permission-set document states {attribute}='{raw}', whose "
+                    + $"entry '{text}' is not an object id this code can read — dropped rather than guessed");
+        }
         return ids.Count == 0 ? null : ids;
     }
 

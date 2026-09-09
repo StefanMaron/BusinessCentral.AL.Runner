@@ -24,6 +24,7 @@
 //      becoming an empty row — the compile-cache-HIT direction.
 
 using System;
+using System.IO;
 using AlRunner;
 using AlRunner.Patches;
 using Xunit;
@@ -254,5 +255,119 @@ public class PermissionSetFromBcDocumentWiringTests : IDisposable
         Assert.Equal(0, grant.ObjectType);          // tabledata
         Assert.Equal(TableId, grant.ObjectId);      // the id AL source never states
         Assert.Equal(15, grant.Value);              // RIMD
+    }
+}
+
+/// <summary>
+/// #3609's own lesson applied to itself: every drop inside the document reader must be
+/// OBSERVABLE. The defect this change fixed was a grant discarded by a <c>continue</c> placed
+/// above its own diagnostic, so it vanished at every verbosity — a reader that silently skips
+/// a malformed row would reintroduce exactly that, one layer up.
+///
+/// <para>These tests assert the diagnostic text on stderr under
+/// <c>AL_RUNNER_DIAG_PERMMETA=1</c>, not merely that the row was dropped. Dropping is already
+/// covered by the value assertions elsewhere in this file; what is pinned here is that the loss
+/// leaves a trace someone can grep for.</para>
+/// </summary>
+[Collection("object-metadata-registry")]
+public class PermissionSetFromBcDocumentDiagnosticTests : IDisposable
+{
+    private readonly string? _priorDiag;
+
+    public PermissionSetFromBcDocumentDiagnosticTests()
+    {
+        AlObjectMetadataRegistry.Clear();
+        _priorDiag = Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_PERMMETA");
+        Environment.SetEnvironmentVariable("AL_RUNNER_DIAG_PERMMETA", "1");
+    }
+
+    public void Dispose()
+    {
+        Environment.SetEnvironmentVariable("AL_RUNNER_DIAG_PERMMETA", _priorDiag);
+        AlObjectMetadataRegistry.Clear();
+    }
+
+    private const int MalformedPermission = 77452700;
+    private const int MalformedIncludeList = 77452701;
+
+    private static string CaptureStderr(Action body)
+    {
+        var prior = Console.Error;
+        var sw = new StringWriter();
+        Console.SetError(sw);
+        try { body(); } finally { Console.SetError(prior); }
+        return sw.ToString();
+    }
+
+    [Fact]
+    public void AnUnreadablePermissionRowIsDropped_AndSaysSo()
+    {
+        AlObjectMetadataRegistry.Register(
+            RecordPatches.BcPermissionSetMetadataKind, MalformedPermission, "PSD BadRow",
+            $"""
+             <PermissionSet ID="{MalformedPermission}" Name="PSD BadRow" Assignable="1"
+                            xmlns="urn:schemas-microsoft-com:dynamics:NAV:MetaObjects">
+               <Permissions>
+                 <Permission Type="0" ID="70700" Value="15" />
+                 <Permission Type="0" ID="not-an-id" Value="15" />
+               </Permissions>
+             </PermissionSet>
+             """);
+
+        BcAppSymbolCache.PermissionSetSymbol? set = null;
+        var stderr = CaptureStderr(
+            () => set = RecordPatches.TryReadPermissionSetFromBcDocument(MalformedPermission, "PSD BadRow"));
+
+        // The good row survives; only the unreadable one is dropped.
+        var kept = Assert.Single(set!.Permissions!);
+        Assert.Equal(70700, kept.ObjectId);
+
+        // And the loss is greppable, carrying the offending value so it can be acted on.
+        Assert.Contains("[perm-metadata]", stderr, StringComparison.Ordinal);
+        Assert.Contains("not-an-id", stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnUnreadableIncludeEdgeIsDropped_AndSaysSo()
+    {
+        AlObjectMetadataRegistry.Register(
+            RecordPatches.BcPermissionSetMetadataKind, MalformedIncludeList, "PSD BadEdge",
+            $"""
+             <PermissionSet ID="{MalformedIncludeList}" Name="PSD BadEdge" Assignable="1"
+                            IncludedPermissionSets="70701,SUPER"
+                            xmlns="urn:schemas-microsoft-com:dynamics:NAV:MetaObjects" />
+             """);
+
+        BcAppSymbolCache.PermissionSetSymbol? set = null;
+        var stderr = CaptureStderr(
+            () => set = RecordPatches.TryReadPermissionSetFromBcDocument(MalformedIncludeList, "PSD BadEdge"));
+
+        Assert.Equal(new[] { 70701 }, set!.IncludedPermissionSetIds);
+        Assert.Contains("IncludedPermissionSets", stderr, StringComparison.Ordinal);
+        Assert.Contains("SUPER", stderr, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A trailing separator is a formatting artifact, not a lost edge — it must NOT produce a
+    /// diagnostic, or the channel fills with noise and a real loss stops standing out.
+    /// </summary>
+    [Fact]
+    public void ATrailingSeparatorIsNotReportedAsALoss()
+    {
+        const int id = MalformedIncludeList + 10;
+        AlObjectMetadataRegistry.Register(
+            RecordPatches.BcPermissionSetMetadataKind, id, "PSD Trailing",
+            $"""
+             <PermissionSet ID="{id}" Name="PSD Trailing" Assignable="1"
+                            IncludedPermissionSets="70701,"
+                            xmlns="urn:schemas-microsoft-com:dynamics:NAV:MetaObjects" />
+             """);
+
+        BcAppSymbolCache.PermissionSetSymbol? set = null;
+        var stderr = CaptureStderr(
+            () => set = RecordPatches.TryReadPermissionSetFromBcDocument(id, "PSD Trailing"));
+
+        Assert.Equal(new[] { 70701 }, set!.IncludedPermissionSetIds);
+        Assert.DoesNotContain("[perm-metadata]", stderr, StringComparison.Ordinal);
     }
 }
