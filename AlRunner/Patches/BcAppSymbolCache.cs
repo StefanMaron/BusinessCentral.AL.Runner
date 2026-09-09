@@ -2353,7 +2353,8 @@ internal static partial class BcAppSymbolCache
 
     /// <summary>
     /// The field's declared <c>Editable</c>, or null when the symbol file states none — which
-    /// AL reads as true (#3545). Measured over 3,848 field observations on four BC builds:
+    /// AL reads as true (#3545). Measured over 3,848 table-declared field observations on
+    /// four BC builds (plus 40 extension-added ones; #3603 has the populations):
     /// the symbol file states <c>Editable</c> only where it is <c>0</c>, and BC's own emitter
     /// answers <c>1</c> or nothing everywhere it is silent, with zero disagreements. So the
     /// only value worth carrying is the false, and null is passed on unchanged so
@@ -2371,8 +2372,9 @@ internal static partial class BcAppSymbolCache
     /// The enum object a field's <c>TypeDefinition</c> names — <c>(id, name)</c> when
     /// <c>TypeDefinition.Name == "Enum"</c>, <c>(0, null)</c> otherwise. Measured: the
     /// presence of <c>Subtype.Id</c> and the presence of BC's own emitted
-    /// <c>EnumTypeId</c> agree on 3,848 of 3,848 field observations, and the values agree
-    /// wherever both are present (#3545).
+    /// <c>EnumTypeId</c> agree on 3,848 of 3,848 table-declared field observations, and the
+    /// values agree wherever both are present (#3545). #3603 has what that population is and
+    /// what it excludes.
     /// </summary>
     private static (int Id, string? Name) SymbolEnumType(JsonElement typeDefinition)
     {
