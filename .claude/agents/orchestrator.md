@@ -69,16 +69,23 @@ For each PR:
 
 Report expectation-manifest drift (a known-gap entry left behind after its issue closed, a red `main` from manifest drift) to the invoking session, naming the manifest entry; the session dispatches one implementation agent per drift (`orchestrating-a-session`, the merge pass).
 
-## Step 2 — Close linked issues and clear their labels
-Merging closes what `closingIssuesReferences` names; the labels stay behind, so clear them here. After every merge or close, list the issues the PR names with `gh pr view <PR> --json state,mergedAt,closingIssuesReferences,body,headRefName --repo StefanMaron/BusinessCentral.AL.Runner`: the `closingIssuesReferences` numbers, every `Part of #N` line in the body (your own read of the body, not a GitHub parse), and the `issue-<N>` in the branch name. Your brief, or your own dispatch record when you are the coordinator running this pass, lists each identity dispatched this cycle with the state of its latest dispatch, running or returned; without that list, remove no `agent:` label. Build the map of what other open PRs name once per pass: `gh pr list --state open --limit 500 --json number,headRefName,body,closingIssuesReferences` (500 rows means the map is cut: report and stop), reading the same three reference forms from each. For each issue, read its state and labels (`gh issue view <N> --json state,labels`), pick the one branch below, and only then edit labels. **Preservation comes first:** an open issue that another open PR names, or whose `agent:` label names a loop your brief lists as running, keeps every label; an `agent:` label outside your brief's list stays and goes into the pass summary.
+## Step 2 — Close linked issues; the label edits two workflows already made
 
-- **Issue closed** (the PR merged or closed) — remove its `status:` label (whatever the value) and the listed `agent:` label.
-- **PR merged, issue in `closingIssuesReferences` but still open** — `gh issue close <N> --comment "Closed — implemented in #<PR>"`, then as the closed branch.
-- **PR merged, `Part of #N`, N open, no other open PR, its loop returned** — comment on N naming what this PR landed and what remains; then remove its `status:` and the listed `agent:` label and add `status: ready`.
-- **PR merged, named by the branch only, still open** — comment on it naming the PR; labels unchanged.
-- **PR closed unmerged** — an issue it named that is open, no other open PR, its loop returned: remove that `agent:` label, replace `status: in-progress` by `status: ready`, comment naming the closed PR.
+`.github/workflows/issue-label-hygiene.yml` (#3678) does the mechanical half on every merge, whether or not anyone runs this pass, so do not repeat it:
 
-Done when `gh issue view <N> --json state,labels` shows, for every issue the PR named: no `status:` label on a closed issue; `status: ready` and no listed `agent:` label on an open issue this step released; labels unchanged on every preserved issue.
+- **On issue close, from any source** — every `status:` and `agent:` label the issue carries is removed. Idempotent, and it never fires on reopen.
+- **On a merged same-repository PR** — each `Part of #N` line in the body (standalone line, `#N` in this repo; `.github/scripts/part_of_references.sh` is the shared reader, and `pr-gate.yml` accepts exactly the same shape) releases N when N is open **and every `agent:` label on N is one this PR also carries**: its `status:` and `agent:` labels come off and `status: ready` goes on. An `agent:` label on N that the PR does not carry means a second loop is on it, so the workflow leaves N untouched — that one lands here.
+
+What is left for you, after every merge or close. Read what the PR names — `gh pr view <PR> --json state,mergedAt,closingIssuesReferences,body,headRefName --repo StefanMaron/BusinessCentral.AL.Runner` — as `closingIssuesReferences`, your own read of each `Part of #N` line, and the `issue-<N>` in the branch name; then `gh issue view <N> --json state,labels` per issue and pick one branch:
+
+- **PR merged, issue in `closingIssuesReferences` but still open** — `gh issue close <N> --comment "Closed — implemented in #<PR>"`. The close workflow clears its labels.
+- **PR merged, `Part of #N`, N open** — comment on N naming what this PR landed and what remains; the workflow cannot write that truthfully. If N still carries `status: in-progress` or an `agent:` label afterwards, a foreign `agent:` label held the workflow back: leave both alone and put N in the pass summary, unless your brief lists that loop as returned, in which case release it by hand (remove `status:` and that `agent:` label, add `status: ready`).
+- **PR merged, named by the branch only, still open** — comment naming the PR; labels unchanged. Since #3678 the gate refuses this shape on a new PR, so it means a branch that predates the gate or one outside `agent/<id>/issue-<N>`.
+- **PR closed unmerged** — for an issue it named that is open, with no other open PR and its loop listed as returned in your brief: remove that `agent:` label, replace `status: in-progress` with `status: ready`, comment naming the closed PR. Nothing automates this; a closed-unmerged PR fires neither workflow.
+
+Your brief, or your own dispatch record as coordinator, lists each identity dispatched this cycle and whether it returned; **without that list, remove no `agent:` label by hand.** Preservation still comes first: an open issue named by another open PR (`gh pr list --state open --limit 500 --json number,headRefName,body,closingIssuesReferences` once per pass; 500 rows means the map is cut — report and stop), or worked by a loop your brief lists as running, keeps every label.
+
+Done when `gh issue view <N> --json state,labels` shows, for every issue the PR named: no `status:` label on a closed issue; `status: ready` on an open issue this pass or the workflow released; labels unchanged on every preserved issue.
 
 ## Step 3 — Unblock issues
 ```
