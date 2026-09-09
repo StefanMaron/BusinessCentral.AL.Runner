@@ -9,8 +9,8 @@ name: Main verdict floor
 #
 # `BC test matrix passed` still gates every pull request targeting `main`, and that is
 # untouched. (#3141 renamed that context from `All BC versions passed` and narrowed the
-# pull-request matrix to three legs; this workflow runs on a `schedule`, so it is unaffected
-# by that narrowing and still delegates at full width — which is now load-bearing, because it
+# pull-request matrix to three legs; this workflow runs on `schedule` and on a push to `main`,
+# neither of which narrows, so it still delegates at full width — which is now load-bearing, because it
 # is the only cadence on which 27.3, 28.0, 28.1, 28.2 and 28.3 run at all.) This is not a hole a red PR can merge through. What the cancellation destroys is
 # the POST-MERGE signal: when a merge breaks `main`, or when two individually-green PRs
 # conflict semantically after landing (#2924, and #2991 for the concrete instance), the run
@@ -79,18 +79,18 @@ name: Main verdict floor
 #
 # THE COST OF THIS WORKFLOW, AGAINST THE ALTERNATIVE
 #
-# Time-weighted mean concurrent jobs attributable to `main`, over the same 18.5 h window:
+# Cheaper than never cancelling `main` on both the average and the tail — roughly 1.7x on the
+# mean and 6x on the peak, over the same 18.5 h window. The figures that were here are NOT
+# reproduced, because they were derived for the schedule-only workflow and #3679 added the
+# push path; re-deriving them in place is how a stale table survives a design change. The
+# schedule-only numbers are in #3003, and what the push path adds — a duplicate matrix when a
+# scheduled run lands inside a push-triggered one, plus one idle runner per merge burst — is
+# priced in #3679's pull request.
 #
-#   today (cancelling)    3.14 jobs
-#   never cancel `main`   6.72 jobs   (+3.57)   PEAK 72
-#   this floor            +2.09 jobs            PEAK 12  (bounded by design)
-#
-# So the floor is not merely comparable on the average — it is about 1.7x cheaper than never
-# cancelling, as well as 6x smaller on the tail. (An earlier draft of this comment put those
-# two within noise of each other; that came from treating today's baseline as 71%-loaded when
-# it is 37%-loaded, and correcting it favours this design.) The floor's peak is bounded by
-# construction: one run at a time, and a cadence longer than the longest observed run, so a
-# floor run can never be overtaken by its own successor.
+# One floor matrix at a time is still structural: `floor-matrix` carries that concurrency
+# group with cancellation off (#3679 moved it there from the workflow level), and the cadence
+# exceeds the longest observed run, so a scheduled floor run cannot be overtaken by its own
+# successor.
 #
 # It does not give every merged commit its own verdict, and that is deliberate — during a
 # burst, verdicts on five superseded trees are the waste the 2026-09-03 measurement correctly
@@ -103,7 +103,7 @@ name: Main verdict floor
 #
 # NOTE ON publish.yml: the release pushes to `main` as a fast-forward and any merge during its
 # ~40-minute run kills it. This workflow changes nothing about that. It adds no merge, holds
-# no lock on `main`, has its own concurrency group, and never writes to the repository — its
+# no lock on `main`, keeps its matrix in its own concurrency group, and never writes to the repository — its
 # only effect on a release is the shared runner pool, at a bounded 12 jobs.
 
 on:
@@ -115,6 +115,14 @@ on:
     # AlRunner.Tests/MainVerdictFloorWorkflowTests.cs holds the relationship, not the number.
     - cron: '*/30 * * * *'
   workflow_dispatch:
+  # #3679. A merge is when a verdict is most wanted and least likely: the push-triggered
+  # matrix is cancelled by the next merge 83% of the time (#3003), so on the schedule alone a
+  # red merge can go a full cadence unreported, and a pull request branched in that window
+  # inherits a failure it did not cause. What made this trigger unaffordable before is one
+  # eight-leg matrix per merge at ~130 merges a day; the `wait` job below is what removes
+  # that, so the trigger and the debounce are one design and not two.
+  push:
+    branches: [main]
 
 # Read-only. `actions: read` is what lets the guard below ask whether this commit already has
 # a verdict; nothing here needs write access to anything.
@@ -122,18 +130,49 @@ permissions:
   contents: read
   actions: read
 
-# One floor run at a time, and never cancelled. A cancelled floor run would reproduce the
-# exact bug this workflow exists to fix. Cancellation is safe to switch off HERE, unlike on
-# the push path, because arrivals are one per cadence rather than one per merge: rho =
-# 22.8/30 = 0.76 < 1, so the queue is stable and at most one run deep.
-concurrency:
-  group: main-verdict-floor
-  cancel-in-progress: false
+# NO workflow-level `concurrency:` — deliberately, since #3679. One floor MATRIX at a time is
+# still the rule, and `floor-matrix` below declares exactly that group with cancellation off.
+# Holding the whole RUN would queue a merge's run behind a matrix already in flight, and a
+# queued run executes no jobs: its `wait` could never start, never cancel the previous wait,
+# and the debounce would serialise instead of debouncing.
+#
+# What that trades away, stated rather than discovered later: a pending job is cancelled when
+# a newer job joins its group, so a floor matrix waiting behind another can be dropped by a
+# third. That costs a verdict on a superseded tree, which is the one this workflow already
+# declines to buy, and the schedule re-asks within a cadence. `floor-verdict` skips on that
+# result, so the run concludes `cancelled` rather than `failure`: a dropped matrix is not a
+# red `main`.
 
 jobs:
+  wait:
+    name: Wait out the merge burst
+    # #3679. THE ONLY CANCELLABLE THING IN THIS FILE, and it holds no matrix: a newer merge
+    # cancels this wait, so a burst of merges produces one floor run AFTER the burst rather
+    # than one per merge. The matrix keeps its own non-cancelling group, so a floor run that
+    # has started is never cancelled by a merge — cancelling that is the #3003 bug itself.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: main-verdict-floor-debounce
+      cancel-in-progress: true
+    steps:
+      - name: Debounce the merge burst
+        # 600 s sits between the two numbers that bound it (#3003's sample): longer than the
+        # 359 s median merge interval, so a burst collapses; shorter than the 30-minute
+        # cadence, so this path adds a verdict the schedule would not have produced for
+        # another half hour. MainVerdictFloorWorkflowTests holds both relationships.
+        run: sleep 600
+
   verdict-needed:
     name: Does main HEAD still lack a verdict?
     runs-on: ubuntu-latest
+    # `always()` because `wait` is SKIPPED on the schedule and dispatch paths, where a skipped
+    # dependency would otherwise skip this too. The result check is the load-bearing half: a
+    # wait that a newer merge CANCELLED must not go on to run a matrix, or the debounce is
+    # decoration and every merge in a burst still costs one (#3679).
+    needs: wait
+    if: always() && (github.event_name != 'push' || needs.wait.result == 'success')
     outputs:
       needed: ${{ steps.check.outputs.needed }}
     steps:
@@ -161,6 +200,12 @@ jobs:
                    | select(.conclusion == "success" or .conclusion == "failure")]
                   | length')
 
+          # CONCLUSIVE only, never in-flight. A run that skipped the matrix still concludes
+          # `success`, so the skip is honest ONLY while a conclusive run co-exists on this
+          # SHA — deferring to an in-flight one would conclude `success` for a commit nothing
+          # had measured, and this very check, plus tools/ci-wait.py, would read that as a
+          # verdict (#3679). Not deferring costs a duplicate matrix when a scheduled run lands
+          # inside a push-triggered one; the pull request prices it.
           if [ "$conclusive" -gt 0 ]; then
             echo "needed=false" >> "$GITHUB_OUTPUT"
             echo "$SHA already has $conclusive conclusive matrix run(s) — nothing to do."
@@ -185,8 +230,23 @@ jobs:
     #
     # `ref` is pinned to the SHA the guard above decided about, so the verdict this run
     # records is unambiguously about that commit even if `main` moved while it was queued.
+    #
+    # The concurrency group moved here from the workflow level at #3679 (see the note above
+    # `jobs:`). What it guarantees is unchanged: one floor matrix at a time, never cancelled,
+    # because a cancelled floor matrix reproduces the exact bug this workflow exists to fix.
+    #
+    # `always()` is not decoration here. A missing status function means an implicit
+    # `success()`, which GitHub evaluates over the whole ANCESTOR CHAIN rather than over the
+    # listed `needs` — so the `wait` job, skipped on every schedule and dispatch run, made
+    # this job skip too, and `floor-verdict` then reported `failure` having run nothing
+    # (actions/runner#2205; the guard is AlRunner.Tests/MainVerdictFloorWorkflowTests.cs's
+    # Floor_EveryJobDownstreamOfTheSkippableWait_CarriesAnExplicitStatusFunction).
     needs: verdict-needed
-    if: needs.verdict-needed.outputs.needed == 'true'
+    if: always() && needs.verdict-needed.result == 'success'
+        && needs.verdict-needed.outputs.needed == 'true'
+    concurrency:
+      group: main-verdict-floor
+      cancel-in-progress: false
     uses: ./.github/workflows/bc-tests.yml
     with:
       ref: ${{ github.sha }}
@@ -202,7 +262,16 @@ jobs:
     # of this workflow.
     name: main verdict (post-merge)
     needs: [verdict-needed, floor-matrix]
-    if: always()
+    # `always()` so a red matrix still reports, but only when there is something to report
+    # about. Two cases must NOT reach it, and both are about this run's own conclusion
+    # rather than about tidiness (#3679): a run whose `wait` a newer merge cancelled has
+    # nothing to say, and reporting success there would conclude `success` for a commit
+    # nothing measured; and a matrix DROPPED while pending — the trade-off named above
+    # `jobs:` — would exit 1 here, concluding `failure`, i.e. a measured RED on a commit
+    # that never ran. `verdict-needed` above and tools/ci-wait.py read both conclusions as
+    # verdicts; skipping leaves the run `cancelled`, which neither counts.
+    if: always() && needs.verdict-needed.result == 'success'
+        && needs.floor-matrix.result != 'cancelled'
     runs-on: ubuntu-latest
     steps:
       - name: Report

@@ -1599,6 +1599,274 @@ check("#3589: the excerpt keeps the emoji as UTF-8", ROBOT_UTF8 in _child.stdout
 check("#3589: the excerpt keeps the em dash as UTF-8, not as cp1252 0x97",
       DASH_UTF8 in _child.stdout and DASH_CP1252 not in _child.stdout, _detail)
 
+# --------------------------------------------------------------------------
+# #3679 -- the floor verdict for `main`, printed beside the PR verdict.
+#
+# A PR branched during a red window inherits a failure it did not cause, and
+# nothing in this tool said so. Three claims are proved here, and the last two
+# are what the first round of review found missing:
+#
+#   * the line reports a verdict about `main`, never changes the PR's exit code,
+#     and turns a failed read into "unavailable" rather than a verdict;
+#   * it is ordered by `created_at` -- COMMIT order. `updated_at` is when a run
+#     FINISHED, so a matrix that queued behind another can conclude after a
+#     later commit's and make the line report the older commit as `main`;
+#   * the decision is taken over a COMPLETE per-commit read. A red on the
+#     deciding SHA can sit behind twenty later floor skips, so a branch-listing
+#     page is a window, not the set.
+# --------------------------------------------------------------------------
+import datetime as _dt
+
+# updated_at/created_at are UTC and so is this clock, or the age would be
+# measured against the local zone and the test would pass or fail by geography.
+_NOW = _dt.datetime(2026, 9, 9, 12, 0, 0, tzinfo=_dt.timezone.utc).timestamp()
+
+
+def _fr(path, conclusion, sha, updated, created=None):
+    return {"path": f".github/workflows/{path}", "conclusion": conclusion,
+            "head_sha": sha, "updated_at": updated,
+            "created_at": created or updated}
+
+
+def _line(runs, reason="", per_sha=None):
+    """floor_verdict over `runs`, with the per-commit read faked from the same list.
+
+    Passing the same list back is what the old single-list behaviour was; the
+    tests that care about the difference pass `per_sha` explicitly.
+    """
+    def _fetch(sha):
+        if per_sha is not None:
+            return per_sha
+        return [r for r in (runs or []) if r.get("head_sha") == sha], ""
+    return cw.floor_verdict(runs, reason, _NOW, sha_fetch=_fetch)
+
+
+_green = _line([_fr("main-verdict-floor.yml", "success", "1a2b3c4d5e6f", "2026-09-09T11:48:00Z")])
+check("#3679: a successful floor run on main reads GREEN with the sha and workflow",
+      _green.startswith("main floor: GREEN on 1a2b3c4d")
+      and "main-verdict-floor.yml" in _green, _green)
+check("#3679: ...and carries an age, so a stale floor is visible as stale",
+      "12m" in _green, _green)
+
+_red = _line([_fr("test-matrix.yml", "failure", "aaaaaaaabbbb", "2026-09-09T11:00:00Z")])
+check("#3679: a failed matrix run on main reads RED",
+      _red.startswith("main floor: RED on aaaaaaaa"), _red)
+check("#3679: ...and its age is reported in hours", "1h" in _red, _red)
+
+# The newest conclusive run decides, not the first in the list.
+_newer = _line([_fr("test-matrix.yml", "failure", "old00000", "2026-09-09T09:00:00Z"),
+                _fr("main-verdict-floor.yml", "success", "new00000", "2026-09-09T11:55:00Z")])
+check("#3679: the NEWEST conclusive run decides the verdict",
+      _newer.startswith("main floor: GREEN on new00000"), _newer)
+
+# ...and "newest" is COMMIT order, not completion order. A floor matrix that
+# queued in the shared group finishes late, so a run for the OLDER commit can
+# have the LATER updated_at. Ordering by that would report the older commit --
+# green, in this fixture -- as the state of a `main` whose HEAD is red.
+_inverted = _line([
+    # older commit, but it finished last
+    _fr("main-verdict-floor.yml", "success", "older000", updated="2026-09-09T11:58:00Z",
+        created="2026-09-09T11:00:00Z"),
+    # newer commit, finished first
+    _fr("test-matrix.yml", "failure", "newer000", updated="2026-09-09T11:30:00Z",
+        created="2026-09-09T11:20:00Z"),
+])
+check("#3679: ordering is by created_at (commit order), not by completion time",
+      _inverted.startswith("main floor: RED on newer000"), _inverted)
+
+# A floor run concludes `success` when it SKIPS -- the commit already had a
+# verdict, and that verdict can be a FAILURE. Red wins on the same commit, or
+# the line would report green for a commit measured red.
+_skip = _line([_fr("test-matrix.yml", "failure", "deadbeef1234", "2026-09-09T11:30:00Z"),
+               _fr("main-verdict-floor.yml", "success", "deadbeef1234", "2026-09-09T11:40:00Z")])
+check("#3679: a floor run that SKIPPED a red commit does not turn it green",
+      _skip.startswith("main floor: RED on deadbeef"), _skip)
+
+# ...and that red only has to exist ON THE COMMIT, not on the page that was
+# read to find the commit. Twenty floor skips on a static `main` push the
+# failure off a 20-run window; the per-commit read is what finds it.
+_page = [_fr("main-verdict-floor.yml", "success", "cafe0000",
+             f"2026-09-09T11:{m:02d}:00Z") for m in range(30, 50)]
+_beyond = _line(_page, per_sha=(_page + [
+    _fr("test-matrix.yml", "failure", "cafe0000", "2026-09-09T09:00:00Z")], ""))
+check("#3679: a RED beyond the branch-listing page is still found, per commit",
+      _beyond.startswith("main floor: RED on cafe0000"), _beyond)
+
+# Cancelled and in-progress runs are not verdicts, in either direction.
+_none = _line([_fr("test-matrix.yml", "cancelled", "ccccccc0", "2026-09-09T11:59:00Z"),
+               _fr("main-verdict-floor.yml", None, "ccccccc0", "2026-09-09T11:59:30Z")])
+check("#3679: cancelled/unfinished runs yield no verdict, never a green one",
+      _none == "main floor: no conclusive run found", _none)
+
+# An unrelated workflow that happens to run on main is not a matrix verdict.
+_other = _line([_fr("sync-changelog-unreleased.yml", "success", "eeeeeeee", "2026-09-09T11:59:00Z")])
+check("#3679: a non-matrix workflow on main is not read as a floor verdict",
+      _other == "main floor: no conclusive run found", _other)
+
+# The third state: a read that did not happen is never a verdict.
+_unavail = _line(None, "gh api failed for main-verdict-floor.yml")
+check("#3679: an unreadable run list is 'unavailable', not GREEN and not RED",
+      _unavail.startswith("main floor: unavailable")
+      and "GREEN" not in _unavail and "RED" not in _unavail, _unavail)
+check("#3679: ...and names the reason it could not tell",
+      "main-verdict-floor.yml" in _unavail, _unavail)
+
+# ...and so is a per-commit read that failed, even though the branch listing
+# answered. Half an answer about one commit is not a verdict about it.
+_half = _line([_fr("main-verdict-floor.yml", "success", "12345678", "2026-09-09T11:50:00Z")],
+              per_sha=(None, "the per-commit run list for 12345678 could not be read"))
+check("#3679: a failed per-commit read is unavailable, not the branch listing's guess",
+      _half.startswith("main floor: unavailable") and "12345678" in _half, _half)
+
+# The fetch half: both workflows are asked, on main, and one failure refuses.
+_calls = []
+
+
+def _floor_gh(ok=(0, "[]"), fail_on=None):
+    def _gh(args, attempts=4):
+        _calls.append(list(args))
+        if fail_on and fail_on in args[1]:
+            return 1, "dial tcp: lookup api.github.com: no such host"
+        return ok
+    return _gh
+
+
+_old_gh = cw.gh
+try:
+    _calls.clear()
+    cw.gh = _floor_gh(ok=(0, '[{"path": ".github/workflows/main-verdict-floor.yml",'
+                             ' "conclusion": "success", "head_sha": "abcdef1234",'
+                             ' "created_at": "2026-09-09T11:40:00Z",'
+                             ' "updated_at": "2026-09-09T11:59:00Z"}]'))
+    _runs, _why = cw.fetch_floor_runs()
+    check("#3679: the fetch asks for BOTH producers of a main verdict",
+          any("main-verdict-floor.yml" in a[1] for a in _calls)
+          and any("test-matrix.yml" in a[1] for a in _calls), repr(_calls))
+    check("#3679: ...scoped to the main branch",
+          all("branch=main" in a[1] for a in _calls if a[0] == "api"), repr(_calls))
+    check("#3679: ...asking for created_at, the key the ordering needs",
+          all("created_at" in a[3] for a in _calls if a[0] == "api"), repr(_calls))
+    check("#3679: ...and returns what it read", _runs is not None and len(_runs) == 2, repr(_runs))
+
+    _calls.clear()
+    cw.gh = _floor_gh(fail_on="test-matrix.yml")
+    _runs, _why = cw.fetch_floor_runs()
+    check("#3679: one failed read refuses rather than answering from half the data",
+          _runs is None and "test-matrix.yml" in _why, f"{_runs!r} {_why!r}")
+    check("#3679: ...and that refusal prints as unavailable",
+          cw.floor_verdict(_runs, _why).startswith("main floor: unavailable"),
+          cw.floor_verdict(_runs, _why))
+
+    # The per-commit read: one commit, a full page, and a page that FILLED is a
+    # partial read rather than a complete answer.
+    _calls.clear()
+    cw.gh = _floor_gh(ok=(0, "[]"))
+    _got, _why = cw.fetch_runs_for_sha("abc123")
+    check("#3679: the per-commit read asks by head_sha, not by branch",
+          any("head_sha=abc123" in a[1] and "branch=" not in a[1] for a in _calls), repr(_calls))
+    check("#3679: ...over a full page", any("per_page=100" in a[1] for a in _calls), repr(_calls))
+    check("#3679: ...and an empty answer is an answer, not a refusal",
+          _got == [] and not _why, f"{_got!r} {_why!r}")
+
+    _calls.clear()
+    _full = "[" + ",".join(['{"path":".github/workflows/test-matrix.yml","conclusion":"success",'
+                            '"head_sha":"abc123","created_at":"2026-09-09T11:00:00Z",'
+                            '"updated_at":"2026-09-09T11:00:00Z"}'] * 100) + "]"
+    cw.gh = _floor_gh(ok=(0, _full))
+    _got, _why = cw.fetch_runs_for_sha("abc123")
+    check("#3679: a per-commit page that FILLED is a partial read, not a verdict",
+          _got is None and _why, f"{_got!r} {_why!r}")
+
+    # print_floor_verdict() must never raise and never return an exit code.
+    _calls.clear()
+    cw.gh = _floor_gh(ok=(1, "boom"))
+    _buf = io.StringIO()
+    _stdout = sys.stdout
+    sys.stdout = _buf
+    try:
+        _ret = cw.print_floor_verdict()
+    finally:
+        sys.stdout = _stdout
+    check("#3679: printing the floor line returns nothing (it cannot change an exit code)",
+          _ret is None, repr(_ret))
+    check("#3679: ...and a broken gh prints unavailable, on one line",
+          _buf.getvalue().startswith("main floor: unavailable")
+          and len(_buf.getvalue().rstrip().splitlines()) == 1, repr(_buf.getvalue()))
+finally:
+    cw.gh = _old_gh
+
+
+# --------------------------------------------------------------------------
+# ...and main() must actually print it, on every path that reached GitHub, with
+# the exit code unchanged. This used to be a substring COUNT over the source --
+# which counted the `def` line, so it tolerated four call sites out of five and
+# would have passed with a whole verdict path silently unannotated.
+# --------------------------------------------------------------------------
+class _FreshStub:
+    """Stands in for tools/agent_self_freshness.py: this copy is not stale.
+
+    `__file__` is part of the interface main() uses -- it assesses the guard
+    module's own file as well as ci-wait.py's (#3296) -- so the stub carries one.
+    """
+    notes: list = []
+    refuse = False
+    state = "fresh"
+    __file__ = os.path.join(HERE, "agent_self_freshness.py")
+
+    @staticmethod
+    def assess(path, remote_check=False):
+        return _FreshStub
+
+
+def _drive_main(code, extra_argv=()):
+    """Run main() with everything below classify() faked. Returns (rc, stdout)."""
+    saved = {name: getattr(cw, name) for name in
+             ("_freshness", "head_sha", "resolve_required_contexts", "workflow_runs_for",
+              "required_checks", "classify", "fetch_floor_runs", "fetch_runs_for_sha")}
+    argv = sys.argv
+    buf = io.StringIO()
+    out = sys.stdout
+    try:
+        cw._freshness = _FreshStub
+        cw.head_sha = lambda pr: "0123456789abcdef0123456789abcdef01234567"
+        cw.resolve_required_contexts = lambda *a, **k: (cw.RULESET_CONTEXTS, "ok", [])
+        cw.workflow_runs_for = lambda sha: [{"id": 1, "name": "Test Matrix",
+                                             "status": "completed", "conclusion": "success"}]
+        cw.required_checks = lambda sha: []
+        # The headline carries " -- " because main()'s exit-4 branch splits on it;
+        # a fixture that omits it makes that path raise instead of reporting.
+        cw.classify = lambda *a, **k: cw.Verdict(
+            code, ["state -- one required check reported"], None,
+            "nothing has reported yet")
+        cw.fetch_floor_runs = lambda branch="main": (
+            [_fr("main-verdict-floor.yml", "failure", "8b6885f4aaaa", "2026-09-09T11:00:00Z")], "")
+        cw.fetch_runs_for_sha = lambda sha: (
+            [_fr("main-verdict-floor.yml", "failure", "8b6885f4aaaa", "2026-09-09T11:00:00Z")], "")
+        sys.argv = ["ci-wait.py", "3740", "--timeout", "0", "--no-log", *extra_argv]
+        sys.stdout = buf
+        rc = cw.main()
+    finally:
+        sys.stdout = out
+        sys.argv = argv
+        for name, value in saved.items():
+            setattr(cw, name, value)
+    return rc, buf.getvalue()
+
+
+for _code, _want_rc, _headline in ((0, 0, "GREEN"), (1, 1, "FAILED"),
+                                   (3, 3, "UNDETERMINED"), (4, 4, "BLOCKED"),
+                                   (None, 2, "NOT YET REPORTED")):
+    _rc, _text = _drive_main(_code)
+    _floor = [l for l in _text.splitlines() if l.startswith("main floor:")]
+    check(f"#3679: main() exit {_want_rc} ({_headline}) prints the floor line exactly once",
+          len(_floor) == 1, f"rc={_rc} lines={_floor!r}")
+    check(f"#3679: ...and the floor line does not change exit {_want_rc}",
+          _rc == _want_rc, f"rc={_rc} out={_text[-300:]!r}")
+    check(f"#3679: ...and it reports main's own state, not the PR's",
+          _floor and _floor[0].startswith("main floor: RED on 8b6885f4"), repr(_floor))
+    check(f"#3679: ...beside the PR verdict, not instead of it",
+          _headline in _text, _text[-300:])
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")

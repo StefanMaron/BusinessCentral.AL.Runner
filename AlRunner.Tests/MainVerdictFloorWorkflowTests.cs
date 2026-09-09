@@ -80,6 +80,12 @@ public sealed class MainVerdictFloorWorkflowTests
     /// </summary>
     private const int LongestObservedRunMinutes = 27;
 
+    /// <summary>
+    /// Median interval between merges to `main` in the same sample, in minutes. The #3679
+    /// debounce must exceed it, or a burst still produces one floor run per merge.
+    /// </summary>
+    private const int MedianMergeIntervalMinutes = 6;
+
     private static string Read(string name)
     {
         var path = Path.Combine(WorkflowDir, name);
@@ -91,12 +97,140 @@ public sealed class MainVerdictFloorWorkflowTests
         string.Join('\n', text.Split('\n').Where(l => !l.TrimStart().StartsWith('#')));
 
     [Fact]
-    public void Floor_RunsOnlyOnAScheduleAndOnDemand()
+    public void Floor_RunsOnASchedule_OnDemand_AndAfterAMergeToMain()
     {
-        // The cost guard. A `push` trigger here would run a SECOND eight-leg matrix on every
-        // merge — 130 extra runs a day — and a `pull_request` trigger would put a
-        // non-gating reporter on the same events the real gate uses.
-        Assert.Equal(new[] { "schedule", "workflow_dispatch" }, WorkflowTriggers.TriggersOf(Read(Floor)));
+        // #3679 added the `push`. What made a push trigger unaffordable before was one
+        // eight-leg matrix per merge; the debounce below is what removes that, so the two
+        // must be asserted together — a push trigger with no wait job is the cost guard this
+        // test used to be, defeated. A `pull_request` trigger stays forbidden outright: it
+        // would put a non-gating reporter on the same events the real gate uses.
+        var triggers = WorkflowTriggers.TriggersOf(Read(Floor));
+
+        Assert.Equal(new[] { "schedule", "workflow_dispatch", "push" }, triggers);
+        Assert.Matches(new Regex(@"push:\s*\n\s*branches:\s*\[\s*main\s*\]"), CodeOnly(Read(Floor)));
+    }
+
+    [Fact]
+    public void Floor_DebouncesAMergeBurst_IntoOneRunAfterIt()
+    {
+        // #3679: a merge is when a verdict is most wanted and least likely — the
+        // push-triggered matrix is cancelled by the next merge 83% of the time — but one
+        // floor matrix per merge is unaffordable at ~130 merges a day. The wait job is the
+        // whole design: a newer merge cancels it, so a burst collapses to one run after it.
+        var code = CodeOnly(Read(Floor));
+        var jobs = WorkflowParity.SplitJobs(code);
+
+        var wait = jobs.Single(j => Regex.IsMatch(j.Value, @"sleep\s+\d+"));
+        Assert.Contains("github.event_name == 'push'", wait.Value, StringComparison.Ordinal);
+        Assert.Matches(new Regex(@"cancel-in-progress:\s*true"), wait.Value);
+
+        var seconds = int.Parse(Regex.Match(wait.Value, @"sleep\s+(\d+)").Groups[1].Value);
+        Assert.True(seconds > MedianMergeIntervalMinutes * 60,
+            $"the debounce is {seconds}s, at or under the {MedianMergeIntervalMinutes}-minute "
+            + "median merge interval — a burst would still produce one floor run per merge.");
+
+        var cadence = int.Parse(Regex.Match(code, @"cron:\s*'\*/(\d+) \* \* \* \*'").Groups[1].Value);
+        Assert.True(seconds < cadence * 60,
+            $"the debounce is {seconds}s against a {cadence}-minute cadence — a wait at least "
+            + "as long as the cadence buys nothing the schedule would not already have done.");
+
+        // A wait that was CANCELLED must not reach the matrix, or the debounce is decoration
+        // and every merge in the burst still runs one.
+        var needed = jobs["verdict-needed"];
+        Assert.Contains(wait.Key, WorkflowParity.NeedsOf(needed));
+        Assert.Matches(new Regex($@"needs\.{wait.Key}\.result\s*==\s*'success'"), needed);
+    }
+
+    /// <summary>
+    /// A job's <c>if:</c> expression, including the folded continuation lines a long condition
+    /// is written across. Empty when the job declares none — which is the condition this file
+    /// checks for, so it must be distinguishable from a condition that exists.
+    /// </summary>
+    private static string IfExpressionOf(string jobBody)
+    {
+        var lines = jobBody.Replace("\r\n", "\n").Split('\n');
+        var i = Array.FindIndex(lines, l => l.TrimStart().StartsWith("if:", StringComparison.Ordinal));
+        if (i < 0) return "";
+
+        var expr = new System.Text.StringBuilder(lines[i].Trim());
+        for (i++; i < lines.Length; i++)
+        {
+            // A continuation is indented deeper than a job key (four spaces) and is not itself
+            // a key. `&& …` on its own line is the shape a folded condition takes here.
+            var line = lines[i];
+            if (line.Trim().Length == 0) break;
+            if (!line.StartsWith("     ", StringComparison.Ordinal)) break;
+            if (Regex.IsMatch(line, @"^    [A-Za-z_-]+:")) break;
+            expr.Append(' ').Append(line.Trim());
+        }
+        return expr.ToString();
+    }
+
+    [Fact]
+    public void Floor_EveryJobDownstreamOfTheSkippableWait_CarriesAnExplicitStatusFunction()
+    {
+        // GitHub evaluates a missing status function as `success()` over the WHOLE ancestor
+        // chain, not over the listed `needs`, and a SKIPPED ancestor makes it false
+        // (actions/runner#2205, still open, whose reproducer is this exact graph). `wait` is
+        // skipped on every `schedule` and `workflow_dispatch` run, so a downstream job with a
+        // bare `if:` is skipped on precisely the paths that were the whole workflow before
+        // #3679 — and `floor-verdict` then reports `failure` having run nothing, which
+        // `verdict-needed` counts as a verdict and tools/ci-wait.py prints as a red `main`.
+        //
+        // The guard is the SHAPE, not the instance: every job transitively downstream of
+        // `wait` must say what statuses it wants, because `wait` is conditional.
+        var jobs = WorkflowParity.SplitJobs(CodeOnly(Read(Floor)));
+
+        var downstream = new HashSet<string>(StringComparer.Ordinal);
+        for (var grew = true; grew;)
+        {
+            grew = false;
+            foreach (var (id, body) in jobs)
+            {
+                if (id == "wait" || downstream.Contains(id)) continue;
+                if (WorkflowParity.NeedsOf(body).Any(n => n == "wait" || downstream.Contains(n)))
+                    grew |= downstream.Add(id);
+            }
+        }
+
+        Assert.NotEmpty(downstream);
+        foreach (var id in downstream)
+        {
+            var expr = IfExpressionOf(jobs[id]);
+            Assert.True(
+                Regex.IsMatch(expr, @"\b(always|success|failure|cancelled)\s*\(\s*\)"),
+                $"job `{id}` is downstream of the conditionally-skipped `wait` but its `if:` "
+                + $"carries no status function — GitHub's implicit success() is false when ANY "
+                + $"ancestor was skipped, so this job never runs on a schedule or a dispatch "
+                + $"(actions/runner#2205). Its condition is: \"{expr}\"");
+        }
+    }
+
+    [Fact]
+    public void Floor_ReportsOnlyOnRunsThatMeasuredSomething()
+    {
+        // Both halves are about this RUN'S CONCLUSION, which is what `verdict-needed` above
+        // and tools/ci-wait.py read as a verdict — so a `floor-verdict` that reports on a run
+        // which measured nothing writes a verdict for a commit nobody ran (#3679):
+        //
+        //   * `wait` cancelled by a newer merge  -> reporting success concludes `success`
+        //   * `floor-matrix` DROPPED while pending -> exit 1 concludes `failure`, a RED on a
+        //     commit that never ran (the trade-off of moving the group down to that job)
+        //
+        // Skipping in both cases leaves the run `cancelled`, which neither consumer counts.
+        var jobs = WorkflowParity.SplitJobs(CodeOnly(Read(Floor)));
+        var verdict = jobs["floor-verdict"];
+
+        Assert.Matches(new Regex(@"needs\.verdict-needed\.result\s*==\s*'success'"), verdict);
+        Assert.Matches(new Regex(@"needs\.floor-matrix\.result\s*!=\s*'cancelled'"), verdict);
+
+        // And the guard job may only skip the matrix on a CONCLUSIVE run for this commit. An
+        // in-flight one is not a verdict: deferring to it would conclude `success` here while
+        // nothing had measured the commit, and if that run is then dropped, nothing ever does.
+        var needed = jobs["verdict-needed"];
+        Assert.Contains("conclusion", needed, StringComparison.Ordinal);
+        Assert.DoesNotContain("in_progress", needed, StringComparison.Ordinal);
+        Assert.DoesNotMatch(new Regex(@"\.status\s*!=\s*""completed"""), needed);
     }
 
     [Fact]
@@ -117,15 +251,39 @@ public sealed class MainVerdictFloorWorkflowTests
     }
 
     [Fact]
-    public void Floor_NeverCancelsItself_AndDoesNotShareTheGatingGroup()
+    public void Floor_NeverCancelsItsMatrix_AndDoesNotShareTheGatingGroup()
     {
-        // A cancelled floor run reproduces the bug it exists to fix. Sharing the gating
-        // workflow's group would be worse still: a merge would cancel the floor, so the
+        // A cancelled floor MATRIX reproduces the bug this workflow exists to fix. Sharing the
+        // gating workflow's group would be worse still: a merge would cancel the floor, so the
         // floor could never outlive the merge rate that defeats the push-triggered run.
+        //
+        // Since #3679 the file also contains a cancellable job, so "somewhere in this file
+        // there is a `cancel-in-progress: false`" is no longer a guard — a file with both
+        // spellings passes it while the matrix is the cancellable one. Attribute each
+        // concurrency block to its job instead.
         var code = CodeOnly(Read(Floor));
+        var jobs = WorkflowParity.SplitJobs(code);
 
-        Assert.Matches(new Regex(@"cancel-in-progress:\s*false"), code);
+        // Nothing may hold the whole RUN. A workflow-level group with cancellation off would
+        // queue a merge's run behind a floor matrix already in flight, and a QUEUED run runs
+        // no jobs — so its wait could not start, could not cancel the previous wait, and the
+        // debounce would serialise instead of debouncing.
+        Assert.DoesNotMatch(new Regex(@"^concurrency:", RegexOptions.Multiline), code);
+
+        var matrix = jobs.Single(j => j.Value.Contains(WorkflowParity.DelegationMarker, StringComparison.Ordinal));
+        Assert.Matches(
+            new Regex(@"group:\s*main-verdict-floor\s*\n\s*cancel-in-progress:\s*false"),
+            matrix.Value);
         Assert.DoesNotMatch(new Regex(@"group:.*github\.ref"), code);
+
+        // Exactly one cancellable job, and it is the wait rather than the work.
+        var cancellable = jobs
+            .Where(j => Regex.IsMatch(j.Value, @"cancel-in-progress:\s*true"))
+            .Select(j => j.Key)
+            .ToArray();
+        Assert.Single(cancellable);
+        Assert.DoesNotContain(WorkflowParity.DelegationMarker, jobs[cancellable[0]],
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -170,7 +328,11 @@ public sealed class MainVerdictFloorWorkflowTests
         // and the expensive job must actually be gated on it, or the guard is decoration
         var matrix = jobs.Single(j => j.Value.Contains(WorkflowParity.DelegationMarker, StringComparison.Ordinal));
         Assert.Contains("needs: verdict-needed", matrix.Value, StringComparison.Ordinal);
-        Assert.Matches(new Regex(@"if:\s*needs\.verdict-needed\.outputs\.\w+\s*==\s*'true'"), matrix.Value);
+        // Matched over the folded expression rather than from `if:` onward: since #3679 the
+        // condition also carries the explicit status function the test above requires, so
+        // anchoring on `if:` would force the two guards to be written in one order.
+        Assert.Matches(new Regex(@"needs\.verdict-needed\.outputs\.\w+\s*==\s*'true'"),
+            IfExpressionOf(matrix.Value));
     }
 
     [Fact]
@@ -195,19 +357,17 @@ public sealed class MainVerdictFloorWorkflowTests
     }
 
     [Fact]
-    public void OnlyTheGatingMatrixAndTheFloor_RunTheEightLegMatrixOnPushesToMain()
+    public void OnlyTheseFourWorkflows_CallTheEightLegMatrixAtAll()
     {
-        // The census behind "the same shape does not repeat elsewhere". Two workflows trigger
-        // on a push to `main`: this repo's gating matrix, and sync-changelog-unreleased.yml.
-        // The changelog sync shares the pattern — one concurrency group, cancellation on —
-        // but not the pathology: it takes a median of 11 s against a 359 s median merge
-        // interval (rho = 0.03), so 56 of its last 60 runs completed. Cancellation starves a
-        // workflow only when its wall time approaches the merge interval, which is a property
-        // of the run, not of the concurrency block.
+        // A census of CALLERS of the shared matrix — which is all this assertion has ever
+        // measured. It fails when a fifth workflow starts calling it, so the cost of doing so
+        // is priced by whoever adds it rather than discovered afterwards (#3003).
         //
-        // This guard fails if a third push-to-main workflow starts calling the eight-leg
-        // matrix, because that would double `main`'s post-merge cost without anyone pricing
-        // it — the thing #3003 is about.
+        // Two sentences that used to sit here claimed this guard would catch a third
+        // push-to-`main` caller. It never could: it reads `uses:`, not triggers, and #3679
+        // made the floor the second push-to-`main` caller with this test passing unchanged.
+        // Deleted rather than rewritten — a census of callers is a useful thing to hold, and
+        // a census of triggers would be a different test.
         var callers = Directory.GetFiles(WorkflowDir, "*.yml")
             .Where(f => CodeOnly(File.ReadAllText(f))
                 .Contains(WorkflowParity.DelegationMarker, StringComparison.Ordinal))
