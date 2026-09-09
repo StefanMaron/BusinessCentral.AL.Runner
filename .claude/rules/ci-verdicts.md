@@ -141,10 +141,11 @@ about a semantic break because `main` moved underneath you.
 
 ## 2. A verdict is about one commit, not one PR
 
-`gh pr checks` reports the newest *completed* run, which can predate your last push. Confirm the
-check's commit SHA matches local `HEAD` — a mismatch means "not yet reported", never "green" —
-and report a PR with checks still running as exactly that, which is a fine place to leave one
-(section 0).
+**Verify every verdict against the PR's current head SHA**: confirm the check's commit matches
+local `HEAD`, because a row can belong to an older push or to a superseded run, and a mismatch
+means "not yet reported", never "green". Which run produced a row is the trap section 0 covers —
+`gh pr checks` does not say. Report a PR with checks still running as exactly that, which is a
+fine place to leave one (section 0).
 
 **Which contexts gate.** Two come from the big workflows: **`BC test matrix passed`**
 (`.github/workflows/test-matrix.yml`) and **`Tests updated`**
@@ -240,11 +241,13 @@ gh api repos/<owner>/<repo>/actions/runs/<run-id>/jobs \
 gh api repos/<owner>/<repo>/actions/jobs/<job-id>/logs --allow-escape-sequences
 ```
 
-`--allow-escape-sequences` is not optional on the API form: without it `gh` writes nothing to
-stdout and puts `the response contains terminal escape sequences` on stderr, so a `$(...)`
-capture sees an empty log and no error.
-`tools/ci-wait.py` tries both on exit 1 and, when both come back empty, says both were refused
-rather than that the job has no log (#3309).
+**`--allow-escape-sequences` is not optional on the API form**, and its refusal wears two faces:
+unredirected it exits 1 with `the response contains terminal escape sequences` on stderr, while
+redirected (`> leg.log`) it prints that message to the console, writes **zero bytes** to the file
+and **exits 0** — so a `$(...)` capture or a saved log reads as "no matches" with no error at all.
+Treat an empty body as *unavailable*, never as a zero. `tools/ci-wait.py` tries both fetch forms
+on exit 1 and, when both come back empty, says both were refused rather than that the job has no
+log (#3309).
 
 ### "Cancelled" does not mean "no log to lose"
 
