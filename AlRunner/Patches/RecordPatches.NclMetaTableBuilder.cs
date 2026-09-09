@@ -541,10 +541,31 @@ public static partial class RecordPatches
             if (p.Name == "editable" && f.Editable == false) { args[i] = (bool?)false; continue; }
             // #3545 — DataClassification. ParsedField already carries the EFFECTIVE value
             // (ApplyOwnerDataClassification), so nothing is resolved here.
+            //
+            // #3602 — a value that fails the parse is REFUSED, not skipped. Skipping left the
+            // argument at MetaField's own default, CustomerContent, so an unmappable value
+            // became a real classification a reader cannot tell from a declared one — the
+            // silent fallback loud-failures.md forbids. Absent is still absent: a field that
+            // declares nothing falls through and BC's default stands, which is what most
+            // fields do.
+            //
+            // Latent today: every value here comes from BC's own symbol file, so the parse
+            // does not fail in any measured population (the metadata-equivalence harness is
+            // unchanged by this refusal). The trap it closes is a BC version adding an
+            // ALDataClassification member, or a caller arriving with a value from anywhere
+            // other than a symbol file.
             if (p.Name == "dataClassification" && _tALDataClassification != null
-                && !string.IsNullOrWhiteSpace(f.DataClassificationName)
-                && Enum.TryParse(_tALDataClassification, f.DataClassificationName, ignoreCase: true, out var dcVal))
+                && !string.IsNullOrWhiteSpace(f.DataClassificationName))
             {
+                if (!Enum.TryParse(_tALDataClassification, f.DataClassificationName, ignoreCase: true, out var dcVal))
+                    throw new InvalidOperationException(
+                        $"[RecordPatches] #3602: field '{f.FieldName}' (id {f.FieldId}) in "
+                        + $"'{parentTable?.TableName ?? "<no parent table>"}' declares "
+                        + $"DataClassification '{f.DataClassificationName}', which is not a member of "
+                        + $"{_tALDataClassification.Name} ({string.Join(", ", Enum.GetNames(_tALDataClassification))}). "
+                        + "Refusing rather than leaving the ctor default (CustomerContent) standing, "
+                        + "which would report an invented classification as a real one. If a caller "
+                        + "genuinely needs tolerance here, it passes an explicit default and says why.");
                 args[i] = dcVal;
                 continue;
             }
