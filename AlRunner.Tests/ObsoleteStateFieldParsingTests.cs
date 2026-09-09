@@ -36,7 +36,7 @@ public class ObsoleteStateFieldParsingTests
     {
         var parse = RecordPatchesType.GetMethod("TryParseTableFile",
             BindingFlags.NonPublic | BindingFlags.Static)!;
-        parse.Invoke(null, new object[] { source });
+        parse.InvokeStatic(source);
         Assert.True(ParsedTables.Contains(TableId), $"table {TableId} was not parsed at all");
         var table = ParsedTables[TableId]!;
         foreach (var f in (System.Collections.IEnumerable)table.GetType()
@@ -178,7 +178,7 @@ public class ObsoleteStateFieldParsingTests
         {
             var parse = RecordPatchesType.GetMethod("TryParseTableFile",
                 BindingFlags.NonPublic | BindingFlags.Static)!;
-            parse.Invoke(null, new object[] { source });
+            parse.InvokeStatic(source);
 
             var live = ParseTableAndGetField(source, fieldId: 2);
             var gone = ParseTableAndGetField(source, fieldId: 3);

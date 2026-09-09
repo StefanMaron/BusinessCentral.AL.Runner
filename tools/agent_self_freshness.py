@@ -172,7 +172,10 @@ def make_runner(fn):
 
 def _default_runner(args: list[str], timeout: int | None = None):
     try:
-        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        # UTF-8, never the locale codec (#3434): a commit subject or a path with a
+        # non-ASCII character would otherwise decode wrong, or raise, on Windows.
+        p = subprocess.run(args, capture_output=True, text=True, timeout=timeout,
+                           encoding="utf-8", errors="replace")
     except (OSError, subprocess.TimeoutExpired) as exc:
         return 128, "", str(exc)
     return p.returncode, p.stdout or "", p.stderr or ""

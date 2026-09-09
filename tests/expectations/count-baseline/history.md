@@ -16,6 +16,31 @@ Newest last, within each section.
 
 ## al-language
 
+### 3107 -> 3112 (pin 23a9e869 -> c9d5f656, PR #3588)
+
+A catch-up bump: the runner fix this corpus commit needs had already merged here. `c9d5f656`
+is a direct child of the old pin, so exactly one corpus commit rides along --
+StefanMaron/BusinessCentral.AL.Language.Tests#291, which asks what the *extension* object kinds
+answer for "Object Subtype" in AllObjWithCaption. Its runner half is #3563, merged as
+`7eca2623` before this bump.
+
+Five new `[Test]` attributes, none removed: 3107 + 5 = 3112 for al-language, and
+3112 + 29 (onprem) + 0 (internals-fixture) = 3141 total. Measured at the bumped pin: 3141 pass,
+0 fail, exit 0 once the baseline is updated.
+
+No new expectation entries were needed, and that is worth one line because it nearly went the
+other way: `known-gaps-allobj-subtype.json` used to cover this exact surface against #2326.
+PR #3391 implemented it and deleted the file, so the five new tests pass outright instead of
+arriving as known gaps.
+
+**The pin stops here deliberately, short of corpus master.** The next commit, corpus #293, brings
+`WriteTxBoundary_Test12_AnXmlPortImportMayWriteUnderNone`, which the runner fails until #3580
+lands -- #3580 is open and labeled `runner-gap`, and no open PR closes it. Corpus history is
+linear, so everything after #293 is blocked behind it transitively, including the otherwise
+harmless #292. This is the "blocked by an intervening commit" case in
+`.claude/rules/al-language-submodule.md`: pin the newest commit whose predecessors are all
+satisfied, and name the issue holding the remainder.
+
 ### 2554 -> 2599 (pin aa49fb4f -> ab6fbefa, PR #2941)
 
 The pin advanced to consume StefanMaron/BusinessCentral.AL.Language.Tests#174, the upstream

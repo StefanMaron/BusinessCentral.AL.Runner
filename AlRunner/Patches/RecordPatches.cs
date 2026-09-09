@@ -33,6 +33,10 @@ public static partial class RecordPatches
     // Microsoft.Dynamics.Nav.Types.Metadata.ObsoleteState — MetaField's obsoleteState ctor
     // param type (#1780). Bound in Register() alongside the other MetaField-adjacent types.
     private static Type? _tObsoleteState;
+    // Microsoft.Dynamics.Nav.Types.Metadata.ALDataClassification — MetaField's
+    // dataClassification ctor param type (#3545). Member 0 is CustomerContent, which is what
+    // MetaField answers when nothing is passed.
+    private static Type? _tALDataClassification;
     private static Type? _tMetaCalcFormula;
     private static Type? _tMetaFilter;
     private static Type? _tMetaCondition;
@@ -150,27 +154,40 @@ public static partial class RecordPatches
     internal static readonly Dictionary<string, List<int>> _extensionIdsByBaseTable = new();
 
     /// <summary>
-    /// Merge <paramref name="fields"/> into <c>_parsedExtensionFields[baseTableName]</c>,
-    /// record <paramref name="extensionId"/> in <c>_extensionIdsByBaseTable</c>, and evict
-    /// any already-built NCLMetaTable for the base table so the next lookup rebuilds it with
-    /// these fields merged in.
+    /// #3600 — one entry per tableextension merged onto a base table: its declaring app id
+    /// (null for a precompiled <c>.app</c>'s extension or an unresolvable <c>app.json</c> —
+    /// reads as "does not match", the conservative direction) and whether it declares
+    /// <c>modify(...)</c>. Feeds
+    /// <see cref="RecordPatches.NclMetaTableFromBcDocument.ShouldBuildTableFromBcDocument"/>;
+    /// see docs/object-metadata-from-bc.md#scope for what each case means. Written only from
+    /// inside <see cref="MergeExtensionFields"/>, never at a call site.
+    /// </summary>
+    internal static readonly Dictionary<string, List<(Guid? OwningAppId, bool HasModify)>>
+        _extensionSourceInfo = new();
+
+    /// <summary>
+    /// Merge <paramref name="fields"/>/<paramref name="keys"/> into
+    /// <c>_parsedExtensionFields</c>/<c>_parsedExtensionKeys</c>, record
+    /// <paramref name="extensionId"/> in <c>_extensionIdsByBaseTable</c> and this extension's
+    /// app/modify signal in <see cref="_extensionSourceInfo"/> (#3600), and evict any
+    /// already-built NCLMetaTable for the base table so the next lookup rebuilds it.
     ///
-    /// This is the single writer both tableextension-field sources funnel through — the
-    /// AL-source parser (<c>TryParseTableExtensionFile</c> in
-    /// RecordPatches.AlSourceParser.cs) and the precompiled-.app symbol merge
-    /// (<c>EnsureBcSymbolExtensionIndex</c> in RecordPatches.BcAppFallback.cs) — so the
-    /// eviction happens exactly once, in one place, and any future third writer inherits it
-    /// automatically instead of needing to remember to call it. See #2126: before this,
-    /// only the AL-source path evicted, so a base table whose NCLMetaTable had already been
-    /// materialized (e.g. referenced by AL source parsed earlier in the dependency graph)
-    /// before EnsureBcSymbolExtensionIndex ran stayed frozen forever without the precompiled
-    /// extension's fields.
+    /// The single writer both tableextension-field sources — the AL-source parser
+    /// (<c>TryParseTableExtensionFile</c>) and the precompiled-.app symbol merge
+    /// (<c>EnsureBcSymbolExtensionIndex</c>) — funnel through, so a future third writer
+    /// inherits the eviction (#2126) and the source recording (#3600) automatically instead
+    /// of needing to remember either. <paramref name="owningAppId"/>/<paramref name="hasModify"/>
+    /// are recorded HERE rather than through a second call a writer could forget.
     /// </summary>
     private static void MergeExtensionFields(string baseTableName, int extensionId, IEnumerable<ParsedField> fields,
-        IEnumerable<ParsedExtensionKey>? keys = null)
+        IEnumerable<ParsedExtensionKey>? keys = null, Guid? owningAppId = null, bool hasModify = false)
     {
         if (string.IsNullOrEmpty(baseTableName)) return;
         var key = baseTableName.ToLowerInvariant();
+
+        if (!_extensionSourceInfo.TryGetValue(key, out var sourceInfo))
+            _extensionSourceInfo[key] = sourceInfo = new();
+        sourceInfo.Add((owningAppId, hasModify));
 
         // De-dup by field id: the same extension can legitimately be scanned/merged more than
         // once (a dependency app's source dir registered both by its own suite AND by
@@ -263,6 +280,16 @@ public static partial class RecordPatches
     public static void ResetForReload()
     {
         _metaTableCache.Clear();
+        // #3552 — the ledger names LIVE NCLMetaTable instances as already carrying BC's
+        // document, so it is meaningless the moment the line above drops them, and leaving it
+        // populated would make the next cycle's tables keep the derivation in silence.
+        ClearBcDocumentBackedTables();
+        // #3607, the same statement for reports: the memo holds properties parsed out of the
+        // PREVIOUS bundle's metadata documents, and a --watch cycle that edits a report's
+        // ProcessingOnly would otherwise keep answering the old value with nothing to show
+        // for it. Report ids repeat across reloads, so a stale entry is a wrong answer rather
+        // than a miss.
+        ClearBcReportDocuments();
         // #3121: every table is rebuilt from scratch below, so carrying the previous bundle's
         // pending CalcFormula rebuilds forward only buys a wasted repopulate pass on the next
         // .app registration.
@@ -293,6 +320,9 @@ public static partial class RecordPatches
         // bundle's extension keys to the next bundle's tables.
         _parsedExtensionKeys.Clear();
         _extensionIdsByBaseTable.Clear();
+        // #3600 — cleared alongside the two above for the same reason: a stale entry here
+        // would attribute the PREVIOUS bundle's app boundaries to the next one's tables.
+        _extensionSourceInfo.Clear();
         // #2478: must invalidate _bcSymbolTableIndex too, not just _bcSymbolExtensionIndexBuilt —
         // EnsureBcSymbolExtensionIndex's only call site is inside EnsureBcSymbolTableIndex, gated
         // by `_bcSymbolTableIndex != null`. Leaving that index populated made the flag reset above
@@ -471,8 +501,13 @@ public static partial class RecordPatches
     /// </summary>
     private static void ParseSourceFileIntoAllExtractors(string text, string? filePath = null)
     {
-        TryParseTableFile(text);
-        TryParseTableExtensionFile(text);
+        // Table and tableextension need the file PATH too, same reason as the profile/
+        // permission-set calls below: #3600's table-metadata-source guard has to tell a
+        // same-app tableextension (BC folds its fields/keys into the base table's own
+        // document) from a cross-app one (it cannot), and "same app" is only knowable from
+        // the app.json that owns each file.
+        TryParseTableFile(text, filePath);
+        TryParseTableExtensionFile(text, filePath);
         TryParsePageFile(text);
         TryParseReportFile(text);
         TryParseQueryFile(text);
@@ -595,6 +630,7 @@ public static partial class RecordPatches
         _tNavType   = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.NavType")!;
         _tFieldClass = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.FieldClass")!;
         _tObsoleteState = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.ObsoleteState")!;
+        _tALDataClassification = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.ALDataClassification")!;
         _tMetaCalcFormula = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaCalcFormula")!;
         _tMetaFilter  = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaFilter")!;
         _tMetaCondition = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaCondition")!;

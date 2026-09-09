@@ -49,25 +49,24 @@
 //   disagree about which pages exist.
 //
 // COLUMNS NOT IMPLEMENTED
-//   Twenty of the table's 32 columns are answered here. Eleven come off PageMetaRow
+//   Thirty-one of the table's 32 columns are answered here. Eleven come off PageMetaRow
 //   (Id/Name/Caption/SourceTable/PageType/Editable/InsertAllowed/ModifyAllowed/
 //   DeleteAllowed/SourceTableTemporary/CardPageID); the nine <SourceObject> ones
 //   (SourceTableView/DelayedInsert/ShowFilter/MultipleNewLines/SaveValues/AutoSplitKey/
 //   DataCaptionFields/LinksAllowed/PopulateAllFields) were added by #3063 and are read from
 //   BC's OWN parsed page metadata — see RecordPatches.PageMetadataSourceObject.cs, which is
-//   also where the refusal policy for them lives.
+//   also where the refusal policy for them lives. Eleven more — DataCaptionExpr.,
+//   RefreshOnActivate, APIPublisher, APIGroup, APIVersion, EntitySetName, EntityName,
+//   ChangeTrackingAllowed, InherentPermissions, InherentEntitlements and "AL Namespace" —
+//   were added by #3601 and are read from that SAME parsed page metadata, one element up:
+//   BC's own <Properties> (ten of them) and the page definition itself (ALNamespace). See
+//   RecordPatches.PageMetadataProperties.cs.
 //
-//   The remaining twelve still get BC's own NavValue.GetDefaultNavValue for the column's
-//   type — the same "declares none of them" default a real row carries for a page that
-//   states nothing about them. They are DataCaptionExpr., RefreshOnActivate, APIPublisher,
-//   APIGroup, APIVersion, EntitySetName, EntityName, ChangeTrackingAllowed, AppID,
-//   InherentPermissions, InherentEntitlements and Namespace. Unlike the nine above, none of
-//   these has a value sitting parsed and unused in the process today: the API* / Entity* /
-//   DataCaptionExpr. / RefreshOnActivate / ChangeTrackingAllowed group is <Properties>-level
-//   rather than <SourceObject>-level and is not carried on either row source, and the last
-//   four are computed by BC from an app-identity and permission-mask surface the runner does
-//   not populate at all. Each is therefore a separate piece of work, not a fall-through this
-//   file could close by widening its switch.
+//   Only AppID (29) is still answered by NavValue.GetDefaultNavValue, and it stays that way
+//   deliberately: BC computes it from an app-identity surface — MetadataDataProvider.GetAppId
+//   reading the page's owning NCLMetaForm/app-group identity — that has nothing to do with
+//   either <Properties> or <SourceObject> and that the runner does not populate. It is a
+//   separate piece of work, not a fall-through either of the two files above could close.
 //
 // PRECOMPILED-DLL RESPECT
 //   Runtime-engine types only (VirtualDataProvider, NCLMetaTable, NavValue,
@@ -159,15 +158,24 @@ public static partial class RecordPatches
             PageSourceObjectInfo? sourceObject = null;
             PageSourceObjectInfo SourceObjectFor(PageMetaRow r) => sourceObject ??= GetPageSourceObject(r.Id);
 
+            // Same shape, one element up (#3601): a second lazy slot for the eleven
+            // <Properties>-derived columns, shared the same way and independent of the one
+            // above — BC's own GetFrozenPageDefinitionWithExtensionWithoutMergedMultiLanguage
+            // memoizes on the NCLMetaForm instance itself (verified by decompile), so the two
+            // slots each triggering it costs nothing beyond the first call either one makes.
+            PagePropertiesInfo? properties = null;
+            PagePropertiesInfo PropertiesFor(PageMetaRow r) => properties ??= GetPageProperties(r.Id);
+
             InsertVirtualRow(provider, metaTable,
                 new object[] { PageMetadataVirtualTableId, row.Id, 0, 0 },
-                field => BuildPageMetadataValue(field, row, pageTypeOrdinals, SourceObjectFor));
+                field => BuildPageMetadataValue(field, row, pageTypeOrdinals, SourceObjectFor, PropertiesFor));
         }
     }
 
     private static object? BuildPageMetadataValue(
         NCLMetaField field, PageMetaRow row, Dictionary<string, int> pageTypeOrdinals,
-        Func<PageMetaRow, PageSourceObjectInfo> SourceObjectFor)
+        Func<PageMetaRow, PageSourceObjectInfo> SourceObjectFor,
+        Func<PageMetaRow, PagePropertiesInfo> PropertiesFor)
     {
         object? Text(string s) => _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, s ?? string.Empty });
 
@@ -229,6 +237,35 @@ public static partial class RecordPatches
                 return NavBoolean(SourceObjectFor(row).LinksAllowed);
             case "populateallfields":
                 return NavBoolean(SourceObjectFor(row).PopulateAllFields);
+
+            // The eleven <Properties>-derived Page Metadata columns (#3601). Read from BC's
+            // own parsed page metadata one element up from the nine above — the same
+            // MetaPageProperties BC's real PageDataProvider reads them off — so a
+            // source-compiled page and a page from a dependency .app cannot answer
+            // differently. See RecordPatches.PageMetadataProperties.cs, which also states
+            // which one (AppID) is deliberately NOT here and why.
+            case "refreshonactivate":
+                return NavBoolean(PropertiesFor(row).RefreshOnActivate);
+            case "alnamespace":
+                return Text(PropertiesFor(row).ALNamespace);
+            case "inherentpermissions":
+                return Text(PropertiesFor(row).InherentPermissions);
+            case "inherententitlements":
+                return Text(PropertiesFor(row).InherentEntitlements);
+            case "apiversion":
+                return Text(PropertiesFor(row).APIVersion);
+            case "datacaptionexpr.":
+                return Text(PropertiesFor(row).DataCaptionExpr);
+            case "entityname":
+                return Text(PropertiesFor(row).EntityName);
+            case "entitysetname":
+                return Text(PropertiesFor(row).EntitySetName);
+            case "apipublisher":
+                return Text(PropertiesFor(row).APIPublisher);
+            case "apigroup":
+                return Text(PropertiesFor(row).APIGroup);
+            case "changetrackingallowed":
+                return NavBoolean(PropertiesFor(row).ChangeTrackingAllowed);
 
             default:
                 return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });

@@ -1,0 +1,23 @@
+{
+  "id": "a3000000-0000-4000-8000-000000000049",
+  "name": "Runner Tests Fixture - Table Metadata From BC Document",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#3552: a compiled table's NCLMetaTable must come from BC's own emitted metadata document, so the per-field values only that document carries survive to the runtime metadata.",
+  "description": "Used by AlRunner.Tests' TableMetadataFromBcDocumentTests. One table whose fields declare non-default Editable and DataClassification and one enum-typed field, so each assertion names a concrete value rather than a count. Deliberately declares no 'application' dependency (see .claude/rules/no-base-app-in-csharp-tests.md).",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 70680,
+      "to": 70699
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

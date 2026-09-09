@@ -452,7 +452,9 @@ class FakeGh:
         if args[:2] == ["pr", "edit"]:
             self.edits += 1
             path = args[args.index("--body-file") + 1]
-            with open(path) as f:
+            # UTF-8, because the real `gh` reads a --body-file as UTF-8; reading it
+            # with the locale codec would make this fake agree with a broken write.
+            with open(path, encoding="utf-8") as f:
                 text = f.read()
             if self.edit_lands:
                 self.body = pb.norm(text)
@@ -539,7 +541,9 @@ check("a write that reported failure but landed exits 0", rc == pb.EXIT_OK, f"rc
 # write goes through, which is the class of silent no-op this tool exists to
 # stop.
 _fd, _bodyfile = tempfile.mkstemp(prefix="pr-body-test-", suffix=".md")
-with os.fdopen(_fd, "w") as _f:
+# UTF-8, matching what the tool now reads and what any file an agent hands it
+# actually is; the payload below carries a non-ASCII character.
+with os.fdopen(_fd, "w", encoding="utf-8") as _f:
     _f.write(GOOD_BODY.replace("corpus 2500/2500", "corpus 2501/2501"))
 try:
     f = FakeGh()
@@ -627,6 +631,148 @@ else:
                       f"declared target(s): {' '.join(str(n) for n in declared)}" in p.stdout
                       or all(str(n) in p.stdout for n in declared),
                       p.stdout.strip()[:160])
+
+# --------------------------------------------------------------------------
+print("\ntext is UTF-8, never the locale codec (#3434)")
+# --------------------------------------------------------------------------
+# GitHub bodies are UTF-8 by definition. Every decode and encode in pr-body.py
+# must say so: on Windows the locale codec is cp1252, so an em dash read back
+# from `gh` becomes three mojibake characters and an anchor copied verbatim out
+# of the body matches 0 times, while the write path re-encodes it to a byte
+# `gh --body-file` cannot read as UTF-8. The verify-by-re-reading guard cannot
+# see that, because both sides decode wrong identically.
+#
+# The kwargs checks below are the ones that hold on any machine; the behavioural
+# checks under them only distinguish fixed from broken where the ambient codec
+# is not already UTF-8, which is why the child-interpreter run at the end forces
+# one that is not.
+
+EM = "an em dash — here"
+
+class _Args:
+    """The three attributes build_new_body reads off argparse's namespace."""
+
+    def __init__(self, body_file=None, append=None, append_file=None):
+        self.body_file, self.append, self.append_file = body_file, append, append_file
+
+
+
+
+def record_kwargs(store, real):
+    def spy(*a, **kw):
+        store.append(kw)
+        return real(*a, **kw)
+    return spy
+
+
+calls: list[dict] = []
+
+
+class _Done:
+    """What gh() reads off subprocess.run; no `gh` binary need exist."""
+
+    returncode, stdout, stderr = 0, "{}", ""
+
+
+def _spy(*a, **kw):
+    calls.append(kw)
+    return _Done()
+
+
+_real_run, pb.subprocess.run = pb.subprocess.run, _spy
+try:
+    pb.gh(["--version"], attempts=1, sleep=lambda s: None)
+finally:
+    pb.subprocess.run = _real_run
+check("gh() decodes stdout as UTF-8",
+      bool(calls) and calls[0].get("encoding") == "utf-8", str(calls[:1]))
+check("gh() decodes strictly, so a bad byte is loud",
+      bool(calls) and calls[0].get("errors") == "strict", str(calls[:1]))
+
+fd_calls: list[dict] = []
+_real_fdopen, pb.os.fdopen = pb.os.fdopen, record_kwargs(fd_calls, pb.os.fdopen)
+try:
+    tmp = pb.write_body_tempfile(EM)
+finally:
+    pb.os.fdopen = _real_fdopen
+try:
+    written = open(tmp, "rb").read()
+finally:
+    os.unlink(tmp)
+check("write_body_tempfile encodes as UTF-8",
+      bool(fd_calls) and fd_calls[0].get("encoding") == "utf-8", str(fd_calls[:1]))
+check("write_body_tempfile writes UTF-8 bytes",
+      b"\xe2\x80\x94" in written and b"\x97" not in written, ascii(written))
+
+open_calls: list[dict] = []
+_real_open, pb.open = open, record_kwargs(open_calls, open)
+bf = os.path.join(tempfile.mkdtemp(), "body.md")
+with open(bf, "wb") as f:
+    f.write((EM + "\n").encode("utf-8"))
+try:
+    body, _ = pb.build_new_body("", _Args(body_file=bf), [])
+    open_calls_body = list(open_calls)
+    open_calls.clear()
+    appended, _ = pb.build_new_body("orig", _Args(append_file=bf), [])
+finally:
+    del pb.open
+check("--body-file is read as UTF-8",
+      bool(open_calls_body) and open_calls_body[0].get("encoding") == "utf-8",
+      str(open_calls_body[:1]))
+check("--append-file is read as UTF-8",
+      bool(open_calls) and open_calls[0].get("encoding") == "utf-8", str(open_calls[:1]))
+check("--body-file keeps the em dash", "—" in body, ascii(body))
+check("--append-file keeps the em dash", "—" in appended, ascii(appended))
+
+# The behavioural half, under a codec that is not UTF-8. A child interpreter is
+# the only portable lever: PYTHONIOENCODING reaches only sys.std*, and from
+# 3.11 the TextIOWrapper default is resolved in C, out of reach of a monkeypatch.
+CHILD = r'''
+import importlib.util, json, locale, os, subprocess, sys, tempfile
+enc = locale.getpreferredencoding(False)
+if enc.lower().replace("-", "") in ("utf8", "cp65001"):
+    print(json.dumps({"skipped": enc})); raise SystemExit(0)
+spec = importlib.util.spec_from_file_location("pr_body", sys.argv[1])
+pb = importlib.util.module_from_spec(spec); spec.loader.exec_module(pb)
+payload = json.dumps({"body": "an em dash \u2014 here"}, ensure_ascii=False).encode("utf-8")
+real = subprocess.run
+pb.subprocess.run = lambda args, **kw: real(
+    [sys.executable, "-c", "import sys;sys.stdout.buffer.write(%r)" % payload], **kw)
+out = {"encoding": enc}
+try:
+    out["read"] = pb.parse_body_json(*pb.gh(["pr", "view", "1", "--json", "body"]))
+except Exception as e:
+    out["read"] = "raised: %s" % type(e).__name__
+try:
+    p = pb.write_body_tempfile("an em dash \u2014 here")
+    out["written"] = open(p, "rb").read().decode("utf-8", "replace"); os.unlink(p)
+except Exception as e:
+    out["written"] = "raised: %s" % type(e).__name__
+sys.stdout.buffer.write(json.dumps(out).encode("utf-8"))
+'''
+# argv is decoded with the filesystem encoding, which under LC_ALL=C on Linux is
+# ASCII: a literal em dash here would reach the child as surrogates and raise
+# before it could report anything. The escape survives as source text instead.
+assert CHILD.isascii(), "CHILD must survive an ASCII argv"
+env = dict(os.environ, PYTHONUTF8="0", PYTHONCOERCECLOCALE="0", LC_ALL="C", LANG="C")
+env.pop("PYTHONIOENCODING", None)
+child = subprocess.run([sys.executable, "-c", CHILD, os.path.join(HERE, "pr-body.py")],
+                       capture_output=True, env=env)
+try:
+    verdict = json.loads(child.stdout.decode("utf-8"))
+except Exception:
+    verdict = None
+if verdict is None:
+    check("non-UTF-8 locale: child ran", False,
+          ascii(child.stdout[-300:]) + ascii(child.stderr[-300:]))
+elif "skipped" in verdict:
+    print("  SKIP non-UTF-8 locale: this box gives %s even under LC_ALL=C "
+          "(NOT a pass -- the kwargs checks above are what gate here)" % verdict["skipped"])
+else:
+    check("non-UTF-8 locale (%s): gh output keeps the em dash" % verdict["encoding"],
+          verdict["read"] == EM, ascii(verdict["read"]))
+    check("non-UTF-8 locale (%s): the body file keeps the em dash" % verdict["encoding"],
+          verdict["written"].strip() == EM, ascii(verdict["written"]))
 
 print()
 if FAILURES:

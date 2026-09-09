@@ -1,0 +1,69 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Generates the GROUND TRUTH the metadata-equivalence harness measures against:
+       BC's own ObjectMetadataEmitter output for a Microsoft app, produced by compiling
+       that app's shipped AL source with BC's own compiler. Issue #3533.
+
+       Deliberately NOT in AlRunner.slnx. It is a per-BC-version provisioning tool, not
+       part of the runner, and adding it to the solution would put a compile of a
+       Microsoft app on every `dotnet build`. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>metadata-ground-truth</AssemblyName>
+    <RootNamespace>AlRunner.Tools.MetadataGroundTruth</RootNamespace>
+    <NoWarn>$(NoWarn);CS0618;MSB3277</NoWarn>
+  </PropertyGroup>
+
+  <!-- Same ServiceTierPath resolution AlRunner.csproj uses, so a dev's already-downloaded
+       artifacts serve this tool too. -->
+  <PropertyGroup Condition="'$(ServiceTierPath)' == ''">
+    <ServiceTierPath>$(_ArtifactsRoot)$(_BCVersion)</ServiceTierPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Json" Version="10.0.0" />
+    <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="10.0.0" />
+
+    <!-- Referenced for its FILE, never linked (ExcludeAssets=all). See the DotNetShims target
+         below for why the netstandard2.0 build specifically. -->
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3"
+                      GeneratePathProperty="true" ExcludeAssets="all" />
+  </ItemGroup>
+
+  <!-- .NET assemblies BC's AL binder must see BEFORE the service tier's own copies.
+       Program.cs puts this directory at the head of the probing paths automatically.
+
+       Today that is one file, and it earns its place. System Application's
+       SamplingPerfProfilerImpl calls JsonSerializer.Deserialize(TextReader, Type). The service
+       tier ships the net6.0 build of Newtonsoft.Json, whose TextReader parameter is typed
+       against System.Runtime 6.0.0.0; no .NET 6 reference assemblies exist on a net8 or net10
+       box, so that parameter type never resolves and the call raises AL0133. BC's emitter then
+       produces ZERO objects for the WHOLE app rather than skipping the one codeunit — the same
+       shape as the Base Application blocker in #3549 — so a single unresolvable .NET reference
+       costs the entire ground truth. The netstandard2.0 build of the SAME Newtonsoft version
+       binds against netstandard, which does resolve.
+
+       Deliberately a package reference rather than a path into ~/.nuget: a CI leg has no reason
+       to have that package cached, and probing for one would make the generator's success
+       depend on what happened to be on the machine. -->
+  <Target Name="CopyDotNetShims" AfterTargets="Build">
+    <Copy SourceFiles="$(PkgNewtonsoft_Json)/lib/netstandard2.0/Newtonsoft.Json.dll"
+          DestinationFolder="$(OutDir)dotnet-shims" SkipUnchangedFiles="true" />
+  </Target>
+
+  <ItemGroup>
+    <Reference Include="Microsoft.Dynamics.Nav.CodeAnalysis">
+      <HintPath>$(ServiceTierPath)/Microsoft.Dynamics.Nav.CodeAnalysis.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.Dynamics.Nav.Types">
+      <HintPath>$(ServiceTierPath)/Microsoft.Dynamics.Nav.Types.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

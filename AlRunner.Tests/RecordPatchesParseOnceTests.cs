@@ -74,7 +74,7 @@ public sealed class RecordPatchesParseOnceTests : IDisposable
     private static void InvokeTryParse(string methodName, string text)
     {
         var method = RecordPatchesType.GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Static)!;
-        method.Invoke(null, new object[] { text });
+        method.InvokeStatic(text);
     }
 
     private static Dictionary<int, ParsedTable> ParsedTables =>

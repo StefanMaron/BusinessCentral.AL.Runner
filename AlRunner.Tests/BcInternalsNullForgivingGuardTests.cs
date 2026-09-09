@@ -36,8 +36,11 @@
 //                      .NET surface does not move under a BC update. 7.
 //     FrameworkTuple   `Item1` / `Item2` on a ValueTuple or Tuple<,>. The tuple is BC's, the
 //                      MEMBER is the framework's, so a BC update cannot move it. 8.
-//     Listed           ten sites the three rules above cannot classify structurally, each with
-//                      its own reason below. 10.
+//     Listed           thirteen sites the three rules above cannot classify structurally, each
+//                      with its own reason below. 13. 10 → 13 in the #3533 metadata-equivalence
+//                      PR: the differ walks an arbitrary object graph reflectively, so it reads
+//                      KeyValuePair<,>'s Key and Value off a local. Two entries cover three
+//                      sites — two ask for "Value" — and neither is a BC-layout read.
 //
 //   So the assertion is two-directional. An unclassified site fails ("account for it or
 //   convert it"), and a change in any category's count fails too — removing a site is as loud
@@ -94,6 +97,26 @@ public sealed class BcInternalsNullForgivingGuardTests
         { ("AlRunner/Patches/RecordPatches.cs", "stackType", "\"Push\""),
           "Stack<T>.Push — BCL" },
 
+        // KeyValuePair<,> in the metadata differ. The receiver is a local, so `typeof(...)`
+        // cannot be read off the text, but neither member belongs to a BC type whose layout
+        // Microsoft can move:
+        //
+        //   Key / Value — guarded on the immediately preceding line by
+        //     `t.GetGenericTypeDefinition() == typeof(KeyValuePair<,>)`, so the declaring type is
+        //     proven BCL before the lookup runs.
+        //
+        // Converting these to BcShape would be wrong in the other direction: a
+        // BcShapeGapException claims BC's layout moved, which none of these could ever show.
+        // Independently, #3051's inversion needs an AL-entered path — the NRE is swallowed by
+        // NavMethodScope_AssertError's catch and `asserterror` then passes — and nothing calls
+        // MetadataObjectDiff from AL; its only caller is MetadataEquivalenceHarness in the test
+        // assembly. That is a second reason, not the primary one, because callers can change and
+        // the four members still cannot.
+        { ("AlRunner/Metadata/MetadataObjectDiff.cs", "t", "\"Key\""),
+          "KeyValuePair<,>.Key — BCL, and the generic type definition is checked on the line above" },
+        { ("AlRunner/Metadata/MetadataObjectDiff.cs", "t", "\"Value\""),
+          "KeyValuePair<,>.Value — BCL, checked the same way; two sites share this key" },
+
         // The runner's own artifacts, not BC's.
         { ("AlRunner/Program.cs", "target", "\"OnRun\""),
           "OnRun on a codeunit THIS runner emitted — absence is an emit defect, not BC's layout" },
@@ -106,7 +129,7 @@ public sealed class BcInternalsNullForgivingGuardTests
         [Cat.RunnerOwnMember] = 38,
         [Cat.Bcl] = 7,
         [Cat.FrameworkTuple] = 8,
-        [Cat.Listed] = 10,
+        [Cat.Listed] = 13,
     };
 
     /// <summary>Receivers of the form <c>typeof(X…)</c> that name a type in this repository.</summary>

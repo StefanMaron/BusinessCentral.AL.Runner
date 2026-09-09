@@ -49,7 +49,7 @@ public class PageExtensionParserTests
 
     private static void Parse(string method, string source) =>
         RP.GetMethod(method, BindingFlags.NonPublic | BindingFlags.Static)!
-          .Invoke(null, new object[] { source });
+          .InvokeStatic(source);
 
     private static System.Collections.IDictionary Dict(string field) =>
         (System.Collections.IDictionary)RP

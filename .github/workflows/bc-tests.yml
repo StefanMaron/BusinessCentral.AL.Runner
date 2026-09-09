@@ -462,6 +462,26 @@ jobs:
           </RunSettings>
           EOF
 
+      - name: Generate BC metadata ground truth (metadata-equivalence harness)
+        if: ${{ matrix.target.unit-tests }}
+        run: |
+          # Issue #3533. MetadataEquivalenceHarnessTests compares BC's OWN metadata-emitter
+          # output against the runner's SymbolReference derivation, member for member. The
+          # emitter output is the ground truth and it has to be produced by compiling a
+          # Microsoft app with BC's own compiler — Business Foundation ~3s, System Application
+          # ~14s on this leg's already-provisioned artifacts.
+          #
+          # It is regenerated here rather than checked into the repository. Two reasons, and
+          # both matter: it is Microsoft's compiler output over Microsoft's source, which is not
+          # ours to redistribute; and it belongs to one exact BC build, so a checked-in copy
+          # would either churn on every Microsoft release or go stale silently — which is the
+          # failure mode this whole harness exists to remove.
+          #
+          # NOT continue-on-error. If this step fails, the harness must report the app as
+          # uncovered and fail, not compare less of it quietly.
+          tools/gen-metadata-ground-truth.sh \
+            --artifacts "$HOME/.local/share/al-runner/artifacts/${{ matrix.target.bc-version }}"
+
       # Issue #1825: AL_RUNNER_PHASE_LOG makes each runner subprocess append one JSONL
       # record per app group / bundle / process to a shared file. The 76 spawns' stdout
       # is captured into strings and discarded by the tests (and several assert on it
