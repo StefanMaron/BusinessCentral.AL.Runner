@@ -67,48 +67,70 @@ FAIL Record_CodeunitMetadata_Get_TestRunnerCodeunits_ReportEachDeclaredTestIsola
 
 ### Why, in Ncl.dll
 
-Not a mystery, and not the XML parser. `CodeUnitDataProvider.GetValuesWithinRangeForKeyField`
-fills slot 9 from the `NCLMetaCodeunit`, never from the document:
+It **is** the XML parser, and the name mismatch is the whole mechanism.
+
+`CodeUnitDataProvider.GetValuesWithinRangeForKeyField` fills slot 9 from the `NCLMetaCodeunit`:
 
 ```csharp
 buffer[9] = codeUnitDataProvider.GetOptionValue(10, (int)metaCodeunitById.RequiredTestIsolation);
 ```
 
-And `NCLMetaCodeunit.RequiredTestIsolation` is a property nothing ever assigns:
+`NCLMetaCodeunit.RequiredTestIsolation` **is** assigned — by `NCLMetaCodeunit.LoadMetadata()`,
+which copies it straight off the parsed document object:
 
 ```csharp
-public TestCodeunitRequiredTestIsolation RequiredTestIsolation { get; private set; }
+protected override void LoadMetadata()
+{
+    base.LoadMetadata();
+    MetaCodeunit metaCodeunit = base.ObjectLoader.XmlMetadataLoader.GetMetaCodeunit(...);
+    ...
+    RequiredTestIsolation = metaCodeunit.RequiredTestIsolation;
+}
 ```
 
-- The `<RequiredTestIsolation>k__BackingField` has **zero writes** anywhere in `Ncl.dll`
-  (`find_usages` returns an empty set on 28.1).
-- The private constructor sets `subscriberReflectionWrapper` and `base.ALNamespace`, nothing else.
-- `LoadOptionsFromAttributeOrInstance`, which *does* read `NavCodeunitOptionsAttribute`,
-  assigns only `tableId` and `subtype`.
+So the value comes from `Types.dll`'s `MetaCodeunit(XmlNode)`, which defaults the field and then
+matches attributes by name and length:
 
-`private set` with no writer means the property is permanently at its default, `0`, which this
-column names `None`. Verified identical on `bc270` and `bc281`, so it is not a version quirk.
+```csharp
+case 21:                                  // name.Length
+    if (name == "RequiredTestIsolation")
+        RequiredTestIsolation = (TestCodeunitRequiredTestIsolation)Enum.Parse(...);
+```
+
+**The AL compiler emits the attribute as `TestIsolation`** — 13 characters — so the length-21
+branch never fires and the field keeps its constructor default `0` = `None`. Measured across the
+cached emitted documents: **2,167 occurrences of `TestIsolation="…"` and 0 of
+`RequiredTestIsolation`.** That matches the corpus failure exactly: `Expected:<1>` (Disabled)
+`Actual:<None>`.
 
 **BC's default is therefore the faithful answer**, and `NavValue.GetDefaultNavValue` already
-gives it. This is not a known gap: there is nothing to implement, because the tier value is
-not derived from anything the runner could read better.
+gives it. This is not a known gap: there is nothing to implement.
+
+**What to re-check if this ever changes**: whether BC's parser label and the compiler's emitted
+attribute name still disagree. That is the governing fact — not whether anything assigns the
+property, which is a stably-false-looking irrelevance.
 
 ### What was tried, and why it is recorded here
 
 The first implementation of #3606 converted this column from the document's `TestIsolation`
-attribute, on the reasoning that BC's own XML parser matches `RequiredTestIsolation` — a name
-the compiler never writes — so the document path must not be the tier's path, and the
-compiler's name must be the one that tracks what a tier reports.
+attribute, and a service tier refuted it on all eight cloud legs. The conversion, its
+runner-side tests and the two corpus assertions were removed rather than adjusted.
 
-The first half is true and the conclusion does not follow. The tier's row does travel
-`NCLMetaCodeunit` rather than the XML parser, but that path does not carry the value either.
-Both routes leave the property at `None`; the tier's behaviour happens to match what the XML
-parser's name mismatch would produce, for a different reason.
+An earlier revision of this page then blamed the wrong mechanism. It claimed the property was
+"never assigned" and that its backing field had "zero writes anywhere in `Ncl.dll`", citing an
+empty `find_usages`. **Both statements are false.** `find_usages` on a
+`<Property>k__BackingField` does not see writes routed through the compiler-generated setter, so
+the empty result was a tool artifact rather than a finding — a false negative of the same family
+`CLAUDE.md` documents for `grep -E` and `rg`. A Mono.Cecil scan over every method body found the
+write immediately, present on 27.0, 28.1 and 28.4.
 
-That is the whole lesson: reading BC's parser established which path is *not* used, and was
-taken as evidence for what the used path answers. Only the service tier settled it. The
-conversion, its runner-side tests and the two corpus assertions were removed rather than
-adjusted.
+Two lessons, cheap to state and expensive to relearn:
+
+- **An empty result from one tool is not evidence.** Confirm it with a differently-shaped query
+  before building an argument on it — the rule this repository already applies to search.
+- **Establishing which path is *unused* says nothing about what the used path answers.** The
+  earlier reasoning correctly found the parser's name mismatch, then discarded it on the strength
+  of the false zero. It was the answer all along.
 
 <a id="what-the-compiler-emits"></a>
 
