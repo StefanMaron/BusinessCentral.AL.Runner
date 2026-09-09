@@ -3,10 +3,15 @@
   "name": "Runner Tests Fixture - Session User Row Name Collision Seed",
   "publisher": "AL Runner",
   "version": "1.0.0.0",
-  "brief": "#3268: carries the Install codeunit that writes the same-named stand-in User row the session adopts.",
-  "description": "The write lives in a dependency because #3268 moved EnsureUserSystemTableRowSeeded ahead of a bundle's OWN install triggers. A bundle-local trigger now runs after the seed, so the session user's row already exists when it runs and BC's own uniqueness rule (which the runner reproduces in UserTableTriggerPatches) refuses the duplicate name outright -- the pre-seed state this fixture needs could not be established from there any more. Dependency install triggers still run inside TestExecutor's dep-company baseline window, ahead of the seed, so the collision the fixture measures is unchanged.",
+  "brief": "#2983/#3698: carries the Install codeunit that replaces the session user's User row with a different user under the same name, before the runner's identity decision is made.",
+  "description": "The write lives in a dependency because the runner's session-user seed runs ahead of a bundle's OWN install triggers (#3268). Since #3698 the seed's ROW is written inside TestExecutor's dep-company baseline window, ahead of the DEPENDENCY install triggers too, so this app DELETES the seeded row and inserts the stand-in in its place - a bare insert would be refused over the duplicate user name, exactly as it would be on a service tier. That is the state a restored backup produces, and it is what the identity decision after the window adopts.",
   "dependencies": [],
-  "idRanges": [{ "from": 70520, "to": 70529 }],
+  "idRanges": [
+    {
+      "from": 70520,
+      "to": 70529
+    }
+  ],
   "platform": "27.0.0.0",
   "runtime": "15.0",
   "target": "OnPrem"

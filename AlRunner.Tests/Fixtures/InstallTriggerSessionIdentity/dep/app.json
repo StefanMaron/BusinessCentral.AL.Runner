@@ -3,10 +3,15 @@
   "name": "Runner Tests Fixture - Install Trigger Session Identity Seed",
   "publisher": "AL Runner",
   "version": "1.0.0.0",
-  "brief": "#3268: puts a User row carrying the session user's name into 2000000120 from a DEPENDENCY install trigger, so the runner's session-user seed has something to adopt before the consuming bundle's own install code runs.",
-  "description": "The colliding row has to arrive from a dependency rather than from the bundle under test. Dependency install triggers run inside TestExecutor's dep-company baseline window, ahead of the session-user seed; the bundle's own install triggers run after it. Putting the row here is what lets the main app's install trigger observe the SETTLED session identity, which is the whole subject of AlRunner#3268.",
+  "brief": "#3268/#3698: carries the Install codeunit that replaces the session user's User row with a stand-in under the same name, before the runner's identity decision is made.",
+  "description": "The row lives in a dependency because the runner's session-user identity decision runs ahead of a bundle's OWN install triggers (#3268), so a bundle-local trigger could no longer establish the pre-decision state this fixture needs. Since #3698 the seed's ROW is written inside TestExecutor's dep-company baseline window, ahead of the dependency install triggers, so this app deletes that row before inserting its stand-in: a bare insert would be refused over the duplicate user name. The collision the fixture measures is unchanged.",
   "dependencies": [],
-  "idRanges": [ { "from": 70760, "to": 70779 } ],
+  "idRanges": [
+    {
+      "from": 70760,
+      "to": 70779
+    }
+  ],
   "platform": "27.0.0.0",
   "runtime": "15.0",
   "target": "OnPrem"

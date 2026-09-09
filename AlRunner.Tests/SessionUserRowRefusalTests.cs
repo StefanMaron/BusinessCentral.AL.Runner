@@ -263,9 +263,10 @@ public sealed class SessionUserRowRefusalTests
     ///
     /// <para>The two fixtures can share a process at all because their object id ranges do not
     /// overlap — 70520-70539 against 70500-70519 — and each declares only its own sibling seed
-    /// app, which #3268 made the place a fixture's pre-seed User write has to live: the
-    /// session-user seed now runs ahead of a bundle's OWN install triggers and after the
-    /// dependency ones.</para>
+    /// app, which is where a fixture's User write has to live: the identity decision runs ahead
+    /// of a bundle's OWN install triggers (#3268) and after the dependency ones, and since #3698
+    /// the seeded ROW is in place before those dependency triggers run, so each seed app
+    /// replaces or modifies that row rather than inserting beside it.</para>
     ///
     /// <para>--watch and --server are the two other multi-bundle modes and reduce to the same
     /// per-bundle reset; this asserts the mechanism through the cheapest of the three. Note that
