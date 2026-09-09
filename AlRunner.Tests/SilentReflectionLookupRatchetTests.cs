@@ -96,7 +96,13 @@ public sealed class SilentReflectionLookupRatchetTests
     /// ratchet movement is the guard working as specified, not a defect in it — the 2 sites in
     /// QueryJoin and 3 in QueryProjection are counted here on purpose.</para>
     /// </summary>
-    private const int Baseline = 125;
+    // 125 -> 120: the five GetMetaFieldEditable lookups in
+    // RecordPatches.PageControlFieldFromBcDocument.cs, converted by #3685 (issue #3669) — the
+    // sites this ratchet caught on first contact and recorded rather than converted. The figure
+    // is the guard's own answer on the merge tree, not a subtraction: a conversion of this shape
+    // may legitimately move the count by less than the number of sites converted (test 15), so
+    // the number comes from running it.
+    private const int Baseline = 120;
 
     // ── The assertions ──────────────────────────────────────────────────────────────────
 
@@ -283,20 +289,24 @@ public sealed class SilentReflectionLookupRatchetTests
         ("AlRunner/Patches/RecordPatches.ObjectMetadataSystemTable.cs", "tNavEnvironment", "GetProperty", "\"Instance\"", 1),
         // RecordPatches.PageTriggerMetadata.cs — 1
         ("AlRunner/Patches/RecordPatches.PageTriggerMetadata.cs", "objId.GetType()", "GetProperty", "\"ObjectType\"", 1),
-        // RecordPatches.PageControlFieldFromBcDocument.cs — 5
+        // RecordPatches.PageControlFieldFromBcDocument.cs — 0, converted by #3685 (issue #3669)
         //
-        // #3659, merged the same day this ratchet landed, and the reason the guard exists.
-        // GetMetaFieldEditable walks five reflection hops to BC's original Types.Metadata.
-        // MetaField and answers `true` — EDITABLE — on every one of them failing. That is not a
-        // neutral default: it is a plausible invented answer a caller cannot tell from BC
-        // genuinely saying editable. Recorded, not converted: the defaulting rule is the
-        // method's stated design and changing it is that method's own decision, not this
-        // ratchet's. See docs/silent-reflection-lookup-ratchet.md#the-first-thing-it-caught.
-        new("AlRunner/Patches/RecordPatches.PageControlFieldFromBcDocument.cs", "meta.GetType()", "GetField", "\"metadataAppGroupMetaTable\"", 1),
-        new("AlRunner/Patches/RecordPatches.PageControlFieldFromBcDocument.cs", "metaTable?.GetType()", "GetProperty", "\"Fields\"", 1),
-        new("AlRunner/Patches/RecordPatches.PageControlFieldFromBcDocument.cs", "original?.GetType()", "GetProperty", "\"Item\"", 1),
-        new("AlRunner/Patches/RecordPatches.PageControlFieldFromBcDocument.cs", "t", "GetProperty", "\"Editable\"", 1),
-        new("AlRunner/Patches/RecordPatches.PageControlFieldFromBcDocument.cs", "t", "GetProperty", "\"Id\"", 1),
+        // This is the entry the ratchet was built to produce and the one it has now discharged,
+        // so the shape of the exchange is worth keeping. #3659 merged the same day this guard
+        // landed; GetMetaFieldEditable walked five reflection hops to BC's original
+        // Types.Metadata.MetaField and answered `true` — EDITABLE — on every one of them
+        // failing, a plausible invented answer a caller cannot tell from BC genuinely saying
+        // editable. The guard RECORDED all five rather than converting them, deliberately:
+        // overruling a method's stated defaulting rule is that method's decision, not this
+        // ratchet's.
+        //
+        // #3669 made that decision per read, and the split is not five-for-five. Five lookups
+        // now refuse through BcShape; THREE exits in the same method stay silent and are not
+        // ratchet sites, because a null there is BC's own answer rather than a failed read —
+        // BC's NCLMetaTable.GetMetaTableOriginal() is literally `metadataAppGroupMetaTable?.Item`.
+        // docs/page-control-field-from-bc-document.md#a-failed-lookup-refuses has the
+        // exit-by-exit table and the measured member types that decide it.
+        //
         // RecordPatches.QueryJoin.cs — 2
         ("AlRunner/Patches/RecordPatches.QueryJoin.cs", "t", "GetField", "member", 1),
         ("AlRunner/Patches/RecordPatches.QueryJoin.cs", "t", "GetProperty", "member", 1),
