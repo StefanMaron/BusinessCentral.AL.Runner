@@ -814,6 +814,9 @@ internal class LiveNavTestPage : MockITestPage
                 _page.DiscardPendingNewRow();
             else
                 _page.FlushRow();
+
+            // On BC this invoke IS the close attempt -- see AttemptHandlerDrivenClose.
+            _page.AttemptHandlerDrivenClose(_result);
         }
 
         public bool Visible => true;
@@ -1876,6 +1879,78 @@ internal class LiveNavTestPage : MockITestPage
         _page?.ForceCloseForm();
     }
     public override void Dispose() { FlushParts(); FlushRow(); }
+
+    /// <summary>
+    /// The close attempt a built-in OK/LookupOK invoked from a <c>[ModalPageHandler]</c> /
+    /// <c>[PageHandler]</c> makes, which the runner did not make at all before #3593.
+    ///
+    /// <para>On BC the handler's <c>OK().Invoke()</c> is a CLIENT action: pressing OK drives the
+    /// logical form's close, so <c>OnQueryClosePage</c> is raised right there, before the round
+    /// trip that opened the page gets control back. The runner's <c>Invoke()</c> only recorded a
+    /// result, so the ONLY close attempt on this route was the one
+    /// <see cref="AlRunner.Patches.RunnerModalDispatch.FormRunModal"/> makes afterwards.</para>
+    ///
+    /// <para>The observable consequence, and the reason this is a defect rather than an internal
+    /// detail: a close BC REFUSES is attempted twice, so an <c>OnQueryClosePage</c> that raises
+    /// an AL error consumed by a <c>[MessageHandler]</c> delivers that message TWICE on the
+    /// RunModal route. Measured on a real service tier by corpus codeunit 60602 "QCM Query Close
+    /// Msg Tests" (StefanMaron/BusinessCentral.AL.Language.Tests#272, merged bd168356), green on
+    /// all eight cloud legs and confirmed by the Windows nightly reference tier, whose modal arms
+    /// assert a delivery count of 2 while its TestPage arm asserts 1.</para>
+    ///
+    /// <para>ONE mechanism produces both counts, which is why this is not a counter. A successful
+    /// attempt here CLOSES the form, so <c>FormRunModal</c>'s own <c>IsFormOpen</c> gate skips its
+    /// attempt and the trigger is raised exactly once -- the result corpus codeunit 60276 "MQC
+    /// Tests" measured for an allowed close, and the one the runner already matched. A REFUSED
+    /// attempt leaves the form open, so that gate lets the second attempt through and the message
+    /// is delivered twice. Delivering twice unconditionally would break the allowed-close case.</para>
+    ///
+    /// <para>Restricted to a page the TEST DID NOT OPEN (<c>!_opened</c>, written only by
+    /// <see cref="MarkOpened"/>). A page the test opened itself is the test's to close: BC's
+    /// client does not press its OK button, and <c>Card.OpenNew(); Card.OK().Invoke();</c>
+    /// followed by further calls on the same variable is ordinary AL that must keep working.
+    /// That route's close attempt is <see cref="Close"/>, which is unchanged.</para>
+    ///
+    /// <para>A refusal is SWALLOWED here rather than raised, and that is the faithful answer, not
+    /// a convenience: BC's own close handler returns "close refused" to the client without
+    /// raising anything the handler can see (the message has already been shown), and the handler
+    /// carries on to its own end. What the caller of <c>RunModal()</c> observes is then decided by
+    /// <c>FormRunModal</c>'s second attempt, which reaches the same refusal and drops the
+    /// handler's result -- so <c>Action::None</c> still comes out of the refused path, unchanged.
+    /// The one thing that must NOT be swallowed is a refusal whose message had nowhere to go:
+    /// with no <c>[MessageHandler]</c> declared, BC's own "Unhandled UI: Message …" comes out of
+    /// <see cref="AlRunner.Patches.RunnerFormCloseHandler"/> rather than being returned, and that
+    /// is a real test failure which propagates.</para>
+    /// </summary>
+    private void AttemptHandlerDrivenClose(FormResult result)
+    {
+        // The test opened this page itself, so closing it is the test's call, not the client's.
+        if (_opened) return;
+
+        // Nothing to raise a trigger on, or AL already closed the page from under the handler
+        // (CurrPage.Close() from an OnAction) -- in which case the close has happened and its
+        // triggers have run exactly once already (issue #3091).
+        if (_page == null || _tornDown || RunnerPageInstance.WasClosedFromAl(_page.Form)) return;
+
+        // Only the CONFIRMING built-ins close the page on BC. A Cancel that reached here would
+        // be a second question -- what a cancelled modal's close attempt does -- which no tier
+        // has been asked, so it keeps the behaviour it had.
+        if (result is not (FormResult.OK or FormResult.LookupOK)) return;
+
+        // Both refusals leave the form OPEN and raise nothing here, which is what makes
+        // FormRunModal's own attempt run -- and that second attempt is where the second message
+        // delivery, and the Action::None, come from. They are one branch on purpose: unlike
+        // Close(), which must tell them apart because a veto there is a scope boundary
+        // (testpage-close-veto), this route's observable outcome is produced downstream either
+        // way, and it is the outcome the route already had before #3593.
+        if (!_page.RaiseOnClosePage(result, out _)) return;
+
+        // The close succeeded, so BC's own form state has to agree -- otherwise IsOpen stays
+        // true and FormRunModal runs the whole sequence a second time, which is exactly the
+        // double-raise issue #3091 fixed. ForceClose raises nothing: the triggers have just run.
+        _opened = false;
+        _page.ForceCloseForm();
+    }
 
     private void FlushParts()
     {
