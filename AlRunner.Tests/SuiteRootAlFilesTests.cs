@@ -175,6 +175,22 @@ public sealed class SuiteRootAlFilesTests : IDisposable
         Assert.Equal(new[] { Path.Combine(_root, "src") }, paths);
     }
 
+    /// <summary>
+    /// The shape every real bundle has: a <c>.alpackages/</c> of symbol .app files beside
+    /// <c>src/</c>. A sibling folder with no <c>.al</c> in it is not a reason to widen.
+    /// </summary>
+    [Fact]
+    public void SiblingDirWithoutAl_DoesNotWidenThePaths()
+    {
+        Touch(Path.Combine(_root, "app.json"), "{}");
+        Touch(Path.Combine(_root, ".alpackages", "Microsoft_Application_28.0.0.0.app"), "not al");
+        Touch(Path.Combine(_root, "src", "A.al"));
+
+        var paths = ProgramSupport.CollectSuitePaths(_root);
+
+        Assert.Equal(new[] { Path.Combine(_root, "src") }, paths);
+    }
+
     // ── end to end, spawning the runner ──────────────────────────────────────────────────
 
     private static void WriteManifest(string dir, string appId, int idFrom, string name)

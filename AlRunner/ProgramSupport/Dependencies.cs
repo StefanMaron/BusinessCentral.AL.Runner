@@ -358,11 +358,17 @@ internal static partial class ProgramSupport
         // the conventional folders returns exactly what it always did, so its ComputeAlCacheKey
         // input does not move. The register-source-dirs loops in Program.cs ask
         // SuiteHasAlOutsideConventionalDirs for the same decision — keep the two in step.
-        var alFiles = AlRunner.Infrastructure.SafeDirectoryScan.Files(suite, "*.al");
-        if (all.Count == 0 || HasAlOutside(alFiles, all))
+        if (all.Count == 0)
+        {
+            // Flat bundle: neither src/ nor app*/ nor test/ — the suite root is the one folder,
+            // provided it holds any .al at all.
+            if (AlRunner.Infrastructure.SafeDirectoryScan.Files(suite, "*.al").Count > 0)
+                all.Add(suite);
+        }
+        else if (HasAlOutside(suite, all))
         {
             all.Clear();
-            if (alFiles.Count > 0) all.Add(suite);
+            all.Add(suite);
         }
         if (bucketRoot != null)
         {
@@ -390,26 +396,27 @@ internal static partial class ProgramSupport
     }
 
     /// <summary>
-    /// True when at least one of <paramref name="alFiles"/> (every <c>.al</c> under the suite)
-    /// is not under any of <paramref name="dirs"/>. Only <c>.al</c> files are ever passed in —
-    /// an app.json, a README or a <c>.alpackages/</c> beside <c>src/</c> must not widen the compile.
+    /// True when some <c>.al</c> file under <paramref name="suite"/> is not under any of the
+    /// conventional <paramref name="dirs"/>. Only <c>.al</c> files count — an app.json, a README
+    /// or a <c>.alpackages/</c> beside <c>src/</c> must not widen the compile.
+    /// <para>
+    /// Deliberately never walks the conventional folders themselves: a <c>.al</c> outside them is
+    /// either directly at the root or somewhere under a top-level folder that is not one of them,
+    /// so the check is one top-level listing plus a walk of the non-conventional siblings only.
+    /// For the common src/-only suite that is a listing of the root and nothing more; the old
+    /// "scan the whole suite and subtract" shape re-walked src/ on every call (PR #3739 review).
+    /// </para>
     /// </summary>
-    private static bool HasAlOutside(IReadOnlyList<string> alFiles, IReadOnlyList<string> dirs)
+    private static bool HasAlOutside(string suite, IReadOnlyList<string> dirs)
     {
-        foreach (var file in alFiles)
+        if (AlRunner.Infrastructure.SafeDirectoryScan.Files(suite, "*.al", SearchOption.TopDirectoryOnly).Count > 0)
+            return true;
+        foreach (var top in AlRunner.Infrastructure.SafeDirectoryScan.Directories(suite, "*", SearchOption.TopDirectoryOnly))
         {
-            var covered = false;
-            foreach (var d in dirs)
-            {
-                var rel = Path.GetRelativePath(d, file);
-                if (rel != ".." && !rel.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal)
-                    && !Path.IsPathRooted(rel))
-                {
-                    covered = true;
-                    break;
-                }
-            }
-            if (!covered) return true;
+            // Path.GetRelativePath compares the way the platform does (case-insensitive on
+            // Windows), which is how Directory.Exists/EnumerateDirectories matched `dirs`.
+            if (dirs.Any(d => Path.GetRelativePath(d, top) == ".")) continue;
+            if (AlRunner.Infrastructure.SafeDirectoryScan.Files(top, "*.al").Count > 0) return true;
         }
         return false;
     }
@@ -424,8 +431,7 @@ internal static partial class ProgramSupport
     internal static bool SuiteHasAlOutsideConventionalDirs(string suite)
     {
         var dirs = ConventionalSourceDirs(suite);
-        return dirs.Count > 0
-            && HasAlOutside(AlRunner.Infrastructure.SafeDirectoryScan.Files(suite, "*.al"), dirs);
+        return dirs.Count > 0 && HasAlOutside(suite, dirs);
     }
 
     // Deterministic cache key for the bundled-mode emit:
