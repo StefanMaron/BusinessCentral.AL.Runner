@@ -90,8 +90,8 @@ The queue grows by arithmetic, not by anyone choosing badly. The balancing ratio
 agents whenever a slot frees will fall behind indefinitely without ever making an obvious
 mistake.
 
-**Count an open unreviewed PR against the concurrency budget, exactly like an unfinished
-implementation.** A coordinator running 6 implementation agents with 6 unreviewed PRs is
+**Count an open unreviewed ready PR against the concurrency budget, exactly like an unfinished
+implementation** (a draft is the claim of an implementation already counted). A coordinator running 6 implementation agents with 6 unreviewed PRs is
 running at 12, not 6, and should stop starting new work. This is the accounting that makes
 priority 3 below fire on its own instead of needing to be remembered — the priority order
 already puts "a PR is waiting on review" *above* "an issue is ready to work", and it still got

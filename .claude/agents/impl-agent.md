@@ -124,11 +124,9 @@ returns that pull request. Ask for the head branch with `--head`, which reads th
 
 ### Namespace every path you write to
 
-The scratchpad directory in your prompt is shared — every agent of this session gets the same
-one — and a path built from your identity alone is shared again whenever two loops hold that
-identity. Either collision publishes a wrong answer in the shape of a result — a PR body
-carrying another agent's `Closes #N`, a corpus run that omitted the tests it was measuring
-(`docs/agent-scratchpad.md`).
+The scratchpad directory in your prompt is shared by every agent of this session, and a path
+built from your identity alone is shared by every loop holding that identity. A shared path
+turns another agent's file into your result (`docs/agent-scratchpad.md`).
 
 Generate a session token once, before anything else, and put it in the first line of your
 report:

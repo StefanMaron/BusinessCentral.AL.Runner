@@ -119,7 +119,8 @@ Implementation agents take 35-85 minutes and produce one PR each, so six of them
 **5-6 PRs/hour**. One reviewer cannot keep up with six implementation agents. Budget roughly
 **one reviewer per four implementation agents**.
 
-**Treat an open unreviewed PR as unfinished work that counts against your concurrency budget.**
+**Treat an open unreviewed ready PR as unfinished work that counts against your concurrency
+budget** (a draft is the claim of an implementation you already count).
 Six implementation agents plus six unreviewed PRs is twelve, not six. Without that accounting
 you will keep starting implementation agents whenever a slot frees, because starting one feels
 like progress and starting a reviewer feels like overhead - and the queue grows every hour.

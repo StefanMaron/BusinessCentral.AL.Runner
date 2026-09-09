@@ -18,9 +18,9 @@ If you are `impl-1` or `impl-2`:
 1. Check for issues labeled `agent: <your-id>` AND `status: in-progress` — that is your active issue if one exists.
 2. If no active issue, find the next unclaimed issue: `status: ready` with no `agent:` label and no human assignee. Claim it: add `agent: <your-id>`, `status: in-progress`, assignee `@me`. Remove `status: ready`.
 3. **Verify you understand the AL pattern.** If the issue body lacks a runnable AL reproducer or a specific failing assertion, do not guess. Add `status: needs-input`, ask the reporter, stop (`.claude/rules/no-assumption-fixes.md`).
-4. Branch: `agent/<your-id>/issue-<N>`.
+4. Branch `agent/<your-id>/issue-<N>`, pushed, with a draft PR carrying `Closes #N` and the label `agent: <your-id>` (`.claude/agents/impl-agent.md`, Step 2).
 5. Implement red → green (`.claude/rules/tdd.md`). The right test depends on what kind of issue this is — see "Issue kinds" below.
-6. Open PR with `Closes #N` in the body. Label PR `agent: <your-id>` + `status: review-ready`. Assign to `@me`.
+6. Rewrite the body, mark the draft ready, label `status: review-ready`.
 7. Fix CI failures or review comments.
 8. Auto-merge fires when approved + green (`allow_auto_merge=true` is a repo setting, not visible in the checkout). Return to step 1.
 
