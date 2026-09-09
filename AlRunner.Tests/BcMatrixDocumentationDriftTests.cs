@@ -102,6 +102,10 @@ public sealed class BcMatrixDocumentationDriftTests
         ("docs/virtual-tables-allobj.md", "27.0 27.3 27.5 28.2 28.3",
             "the corpus legs that had reported when the upstream Install-subtype assertion was "
             + "adjudicated — a historical observation of which legs answered, not the matrix"),
+        ("docs/codeunit-metadata-from-bc.md", "27.0 28.1 28.4",
+            "the three BC assemblies a Mono.Cecil scan was actually run against when it found "
+            + "the RequiredTestIsolation write — a historical measurement naming which DLLs were "
+            + "opened, not a claim about which versions the matrix covers"),
     };
 
     // ---- version lists written out in prose --------------------------------------------
