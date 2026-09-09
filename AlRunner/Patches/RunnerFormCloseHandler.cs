@@ -73,10 +73,12 @@
 //   passes on the same leg of the same run. What unwinds it there is the framework tearing down
 //   a PROPAGATED error; a consumed message propagates nothing, so nothing unwinds.
 //
-//   NOT reproduced, and tracked in #3593: BC delivers this message TWICE on the RunModal route,
-//   because its round trip attempts the close twice (the handler's OK().Invoke() is itself a
-//   close attempt on BC and is not one here). The runner delivers once on both routes, which
-//   matches BC on the TestPage route only.
+//   BC delivers this message TWICE on the RunModal route and once on the TestPage route,
+//   because the modal round trip attempts the close twice: the handler's OK().Invoke() is itself
+//   a close attempt (LiveNavTestPage.AttemptHandlerDrivenClose), and FormRunModal attempts it
+//   again on a form the refusal left open. Both counts are reproduced since #3593. The asymmetry
+//   is load-bearing -- an ALLOWED close still raises the trigger exactly once, because the first
+//   attempt succeeds and closes the form.
 using System.Reflection;
 
 namespace AlRunner.Patches;

@@ -2143,3 +2143,24 @@ answers `1,3,2`. Before this PR all three read empty.
 Measured 116P/0F/0E on the whole bundle, not computed from the diff.
 
 Written by an agent (Claude, `stma-auto-2`).
+
+## runner-extras `testpage-close-message-consumed` 5 -> 8 (#3593)
+
+Three new AL tests in codeunit 65863 "Tcm Close Message Tests", pinning the number of close
+attempts each route makes rather than only what a close reports.
+
+`RunModalWhenQueryCloseAllows_RaisesTheTriggerExactlyOnce` and
+`TestPageCloseWhenQueryCloseAllows_RaisesTheTriggerExactlyOnce` drive a new page 65864
+"Tcm Allow Card" whose `OnQueryClosePage` allows the close and counts its own raises; both assert
+exactly one. `TestPageOwnOkInvoke_DoesNotCloseThePageTheTestOpened` asserts that a page the TEST
+opened is not closed by its own `OK().Invoke()` — the trigger is not raised at all, and the page is
+still drivable afterwards.
+
+All three are the negative side of the delivery-count assertion this PR adds to the existing
+`RunModalAfterQueryCloseError_MessageConsumed_ReturnsToTheCaller` arm: a fix that attempted the
+close twice unconditionally, or that closed a test-opened page, turns that arm green and one of
+these red. Each was measured red under its own sabotage.
+
+Measured 8P/0F/0E on the whole bundle, not computed from the diff.
+
+Written by an agent (Claude, `stma-auto-2`).

@@ -1520,11 +1520,20 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   reads back `Action::None`, and `TestPage.Close()` returns with the page still open and
   drivable.
 
-  **Still not reproduced on this surface, and tracked separately:** BC delivers the close-time
-  message **twice** on the `RunModal` route and once on the `TestPage.Close()` route, because
-  its round trip attempts the close twice. The runner attempts it once on both, so a
-  `[MessageHandler]` that counts deliveries sees one where BC would show two
-  ([#3593](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3593)).
+  The **delivery count** differs by route and is reproduced since
+  ([#3593](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3593)). BC delivers
+  the close-time message **twice** on the `RunModal` route and **once** on `TestPage.Close()`,
+  because the modal round trip attempts the close twice: on BC the handler's `OK().Invoke()` is
+  itself a close attempt, and the round trip attempts it again on a form the refusal left open.
+  The runner made only the second of those attempts, so a `[MessageHandler]` counting deliveries
+  saw one where BC shows two. `LiveNavTestPage.AttemptHandlerDrivenClose` now makes the first.
+
+  Only a *refused* close is delivered twice, and that asymmetry is what the fix has to preserve:
+  an allowed close still raises `OnQueryClosePage` exactly **once**, because the first attempt
+  succeeds and closes the form, so the round trip's own attempt finds nothing to do — the result
+  corpus codeunit 60276 "MQC Tests" measured on a real tier. A page the *test* opened is
+  unaffected in either direction: BC's client never presses its OK button, so
+  `Card.OpenNew(); …; Card.OK().Invoke();` remains a row commit and not a close.
 
 <a id="virtual-table-shape-gaps"></a>
 
