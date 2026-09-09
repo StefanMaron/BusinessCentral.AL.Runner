@@ -1081,19 +1081,6 @@ internal sealed partial class RunnerPageInstance
     }
 
     /// <summary>
-    /// Resolve one identifier inside a control-property expression.
-    ///
-    /// Registered source expressions only. A page global is registered in the page's
-    /// source-expression table under the emitted name the metadata carries, and that is the one
-    /// source this resolves against.
-    ///
-    /// A source-table FIELD reference is deliberately NOT resolved here: this overload serves the
-    /// AT-OPEN path only, where real BC reads such an expression as if the field held its type
-    /// default, whatever row the page is on (corpus codeunit 60755, green on 8 legs — issue
-    /// #2596). <see cref="ResolveExpressionIdentifierLive"/> is the one that reads the record, and
-    /// the split between the two is what keeps both answers faithful.
-    /// </summary>
-    /// <summary>
     /// The same resolution as <see cref="ResolveExpressionIdentifier"/>, but answering from the
     /// open-time snapshot. Used only for a control's own Visible — the one property real BC
     /// does not re-evaluate after the page is open.
@@ -1130,9 +1117,13 @@ internal sealed partial class RunnerPageInstance
     /// field's type default on every row (corpus codeunit 60755) — which is why that one property
     /// goes through <see cref="ResolveExpressionIdentifierAtOpen"/> and never reaches here.</para>
     ///
-    /// <para>Before this, every such expression raised RunnerOutOfScopeException. That was
-    /// unreachable from Invoke() until #3693 made Invoke() consult Enabled, at which point it
-    /// turned every action with a Rec-bound Enabled un-invokable — issue #3730.</para>
+    /// <para>Before this, every such expression raised RunnerOutOfScopeException, which #3693
+    /// turned into an un-invokable action — issue #3730.</para>
+    ///
+    /// <para>Ordering: a registered source expression is tried before a source-table field, so a
+    /// page global sharing a field's name shadows the field. AL tells them apart by the
+    /// <c>Rec.</c> prefix, which the metadata drops; whether BC resolves the same way here is
+    /// UNMEASURED.</para>
     /// </summary>
     private bool ResolveExpressionIdentifierLive(string name, bool quoted, out object? value)
     {
@@ -1148,9 +1139,10 @@ internal sealed partial class RunnerPageInstance
     /// PageControlExpression needs, because the compiler writes an option comparison into the
     /// metadata with the member already lowered to a number (<c>Kind = 1</c>).</para>
     ///
-    /// <para>False for a name the source table does not carry, and false for a value shape the
-    /// expression evaluator cannot compare, so the caller raises its refusal naming the
-    /// expression rather than inventing an answer (.claude/rules/loud-failures.md).</para>
+    /// <para>False for a name the source table does not carry, false for a FlowField or
+    /// FlowFilter, and false for a value shape the expression evaluator cannot compare, so the
+    /// caller raises its refusal naming the expression rather than inventing an answer
+    /// (.claude/rules/loud-failures.md).</para>
     /// </summary>
     private bool TryResolveSourceTableField(string name, out object? value)
     {
@@ -1160,6 +1152,15 @@ internal sealed partial class RunnerPageInstance
         foreach (var field in RecordPatches.GetAllFields(_record.MetaTable) ?? Enumerable.Empty<NCLMetaField>())
         {
             if (!string.Equals(field.FieldName, name, StringComparison.OrdinalIgnoreCase)) continue;
+
+            // GetAllFields is BC's NCLMetaTable.AllFields, FlowFields and FlowFilters included.
+            // An UNCALCULATED FlowField's ClientObject is its type default, which narrows
+            // cleanly below — so without this the runner would answer Enabled = false on a row
+            // whose CalcFormula holds. What BC answers for a FlowField-bound live property is
+            // unmeasured (no corpus arm covers it), so refuse rather than calculate: see
+            // AlRunner.Tests/LivePropertyExpressionTests.cs's FlowField arm.
+            if (field.FieldClass != Microsoft.Dynamics.Nav.Types.Metadata.FieldClass.Normal)
+                return false;
 
             return TryComparableFieldValue(_record.GetFieldValue(field.FieldNo)?.ClientObject, out value);
         }
