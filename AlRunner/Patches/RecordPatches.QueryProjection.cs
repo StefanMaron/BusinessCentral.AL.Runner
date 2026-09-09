@@ -569,7 +569,7 @@ public static partial class RecordPatches
         // NclMetaQueryBuilder.BuildMetaQueryDesign from the AL `ColumnFilter` property) — same
         // WHERE/HAVING routing as a runtime filter on that column, applied only when no runtime
         // filter already targets it (a runtime filter REPLACES the static one, never combines).
-        var staticColumnFilters = GetStaticColumnFilters(metaAppObj!);
+        var staticColumnFilters = GetStaticColumnFilters(metaAppObj!, _tNCLMetaQuery!);
         foreach (var (col, expr) in staticColumnFilters)
         {
             if (runtimeFilteredColumnIds.Contains(col.Id)) continue;
@@ -628,7 +628,6 @@ public static partial class RecordPatches
     }
 
     private static Type? _tNCLMetaQueryColumn;
-    private static PropertyInfo? _pNCLMetaQueryColumnFilters; // #2418
 
     /// <summary>
     /// The <c>(INavFieldMetadata, FilterExpression)</c> tuples of a SINGLE-dataitem query's
@@ -732,15 +731,44 @@ public static partial class RecordPatches
     /// populates (#2418). The property is <c>internal</c> to Ncl.dll, hence reflection.
     /// Never null on a real <c>NCLMetaQuery</c> — an empty collection when the query declares
     /// no <c>ColumnFilter</c> at all.
+    ///
+    /// <para>#3660 — EVERY exit before the tuple walk is a FAILED READ, so all of them refuse.
+    /// That invariant above is what makes this unambiguous: BC answers an empty collection,
+    /// never a null, so neither a failed lookup nor a null nor a non-enumerable value is an
+    /// answer this method could be reporting. Both call sites — TranslateQueryFilters and
+    /// ApplyJoinRuntimeFilters — are foreaches that add whatever is yielded, so the old shared
+    /// <c>yield break</c> would have dropped the filter and returned MORE ROWS with nothing
+    /// said. The three modes are worded apart so a reader is not sent chasing a rename that
+    /// did not happen; see docs/query-static-column-filter.md#every-exit-here-is-a-failed-read.</para>
+    ///
+    /// <para>The query type is a parameter rather than a read of <c>_tNCLMetaQuery</c> so the
+    /// refusals can be driven with fakes standing in for a moved member —
+    /// <c>AlRunner.Tests/QueryStaticColumnFilterShapeGapTests</c>. Production passes exactly
+    /// the static the old body read. The <c>PropertyInfo</c> cache went with it: a static
+    /// memoising a lookup against a type that is now a parameter would answer one caller's
+    /// type from another's, which is the same defect #3657 removed one method away.</para>
     /// </summary>
-    private static IEnumerable<(NCLMetaQueryColumn Column, object Expr)> GetStaticColumnFilters(object metaAppObj)
+    private static IEnumerable<(NCLMetaQueryColumn Column, object Expr)> GetStaticColumnFilters(
+        object metaAppObj, Type tQuery)
     {
-        _pNCLMetaQueryColumnFilters ??= _tNCLMetaQuery!.GetProperty("ColumnFilters",
-            BindingFlags.NonPublic | BindingFlags.Instance);
-        var raw = _pNCLMetaQueryColumnFilters?.GetValue(metaAppObj) as System.Collections.IEnumerable;
-        if (raw == null) yield break;
+        const string surface = "AL query execution (projection and filter push-down)";
+        var value = BcShape.Property(
+            tQuery, "ColumnFilters", BindingFlags.NonPublic | BindingFlags.Instance, surface)
+            .GetValue(metaAppObj);
+        if (value == null)
+            throw new BcShapeGapException(
+                surface, $"{tQuery.Name}.ColumnFilters",
+                "read as null — BC leaves an EMPTY collection here for a query declaring no "
+                + "ColumnFilter, so the runner cannot tell a legitimately filter-free query "
+                + "from a member that moved");
+        var raw = BcShape.RequiredEnumerable(
+            value, $"{tQuery.Name}.ColumnFilters", surface,
+            "the runner walks it to apply the query's static ColumnFilter conditions");
         foreach (var tuple in raw)
         {
+            // Item1/Item2 are the FRAMEWORK's members on BC's Tuple, not BC's own, so a null
+            // here is not a BC-layout question — and a tuple whose Item1 is not a query column
+            // is skipped silently, exactly as before.
             var col = tuple!.GetType().GetProperty("Item1")!.GetValue(tuple);
             var expr = tuple.GetType().GetProperty("Item2")!.GetValue(tuple);
             if (col is NCLMetaQueryColumn c && expr != null)
@@ -1115,7 +1143,7 @@ public static partial class RecordPatches
         // (this method runs post-projection/post-aggregation, so an aggregated column's static
         // ColumnFilter is naturally a HAVING-equivalent check here — no separate having-filter
         // list needed, unlike TranslateQueryFilters' pre-aggregation WHERE path).
-        var staticColumnFilters = GetStaticColumnFilters(nclMetaQuery);
+        var staticColumnFilters = GetStaticColumnFilters(nclMetaQuery, _tNCLMetaQuery!);
         foreach (var (col, expr) in staticColumnFilters)
         {
             if (runtimeFilteredColumnIds.Contains(col.Id)) continue;
