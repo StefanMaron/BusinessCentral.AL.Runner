@@ -79,19 +79,18 @@ name: Main verdict floor
 #
 # THE COST OF THIS WORKFLOW, AGAINST THE ALTERNATIVE
 #
-# Time-weighted mean concurrent jobs attributable to `main`, over the same 18.5 h window:
+# Cheaper than never cancelling `main` on both the average and the tail — roughly 1.7x on the
+# mean and 6x on the peak, over the same 18.5 h window. The figures that were here are NOT
+# reproduced, because they were derived for the schedule-only workflow and #3679 added the
+# push path; re-deriving them in place is how a stale table survives a design change. The
+# schedule-only numbers are in #3003, and what the push path adds — a duplicate matrix when a
+# scheduled run lands inside a push-triggered one, plus one idle runner per merge burst — is
+# priced in #3679's pull request.
 #
-#   today (cancelling)    3.14 jobs
-#   never cancel `main`   6.72 jobs   (+3.57)   PEAK 72
-#   this floor            +2.09 jobs            PEAK 12  (bounded by design)
-#
-# So the floor is not merely comparable on the average — it is about 1.7x cheaper than never
-# cancelling, as well as 6x smaller on the tail. (An earlier draft of this comment put those
-# two within noise of each other; that came from treating today's baseline as 71%-loaded when
-# it is 37%-loaded, and correcting it favours this design.) The floor's peak is bounded by
-# construction: `floor-matrix`'s own group runs one floor matrix at a time (#3679 moved that
-# group from the workflow level to that job), and the cadence exceeds the longest observed
-# run, so a scheduled floor run can never be overtaken by its own successor.
+# One floor matrix at a time is still structural: `floor-matrix` carries that concurrency
+# group with cancellation off (#3679 moved it there from the workflow level), and the cadence
+# exceeds the longest observed run, so a scheduled floor run cannot be overtaken by its own
+# successor.
 #
 # It does not give every merged commit its own verdict, and that is deliberate — during a
 # burst, verdicts on five superseded trees are the waste the 2026-09-03 measurement correctly
@@ -235,8 +234,16 @@ jobs:
     # The concurrency group moved here from the workflow level at #3679 (see the note above
     # `jobs:`). What it guarantees is unchanged: one floor matrix at a time, never cancelled,
     # because a cancelled floor matrix reproduces the exact bug this workflow exists to fix.
+    #
+    # `always()` is not decoration here. A missing status function means an implicit
+    # `success()`, which GitHub evaluates over the whole ANCESTOR CHAIN rather than over the
+    # listed `needs` — so the `wait` job, skipped on every schedule and dispatch run, made
+    # this job skip too, and `floor-verdict` then reported `failure` having run nothing
+    # (actions/runner#2205; the guard is AlRunner.Tests/MainVerdictFloorWorkflowTests.cs's
+    # Floor_EveryJobDownstreamOfTheSkippableWait_CarriesAnExplicitStatusFunction).
     needs: verdict-needed
-    if: needs.verdict-needed.outputs.needed == 'true'
+    if: always() && needs.verdict-needed.result == 'success'
+        && needs.verdict-needed.outputs.needed == 'true'
     concurrency:
       group: main-verdict-floor
       cancel-in-progress: false

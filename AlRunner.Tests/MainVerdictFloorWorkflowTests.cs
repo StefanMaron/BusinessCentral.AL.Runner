@@ -141,6 +141,71 @@ public sealed class MainVerdictFloorWorkflowTests
         Assert.Matches(new Regex($@"needs\.{wait.Key}\.result\s*==\s*'success'"), needed);
     }
 
+    /// <summary>
+    /// A job's <c>if:</c> expression, including the folded continuation lines a long condition
+    /// is written across. Empty when the job declares none — which is the condition this file
+    /// checks for, so it must be distinguishable from a condition that exists.
+    /// </summary>
+    private static string IfExpressionOf(string jobBody)
+    {
+        var lines = jobBody.Replace("\r\n", "\n").Split('\n');
+        var i = Array.FindIndex(lines, l => l.TrimStart().StartsWith("if:", StringComparison.Ordinal));
+        if (i < 0) return "";
+
+        var expr = new System.Text.StringBuilder(lines[i].Trim());
+        for (i++; i < lines.Length; i++)
+        {
+            // A continuation is indented deeper than a job key (four spaces) and is not itself
+            // a key. `&& …` on its own line is the shape a folded condition takes here.
+            var line = lines[i];
+            if (line.Trim().Length == 0) break;
+            if (!line.StartsWith("     ", StringComparison.Ordinal)) break;
+            if (Regex.IsMatch(line, @"^    [A-Za-z_-]+:")) break;
+            expr.Append(' ').Append(line.Trim());
+        }
+        return expr.ToString();
+    }
+
+    [Fact]
+    public void Floor_EveryJobDownstreamOfTheSkippableWait_CarriesAnExplicitStatusFunction()
+    {
+        // GitHub evaluates a missing status function as `success()` over the WHOLE ancestor
+        // chain, not over the listed `needs`, and a SKIPPED ancestor makes it false
+        // (actions/runner#2205, still open, whose reproducer is this exact graph). `wait` is
+        // skipped on every `schedule` and `workflow_dispatch` run, so a downstream job with a
+        // bare `if:` is skipped on precisely the paths that were the whole workflow before
+        // #3679 — and `floor-verdict` then reports `failure` having run nothing, which
+        // `verdict-needed` counts as a verdict and tools/ci-wait.py prints as a red `main`.
+        //
+        // The guard is the SHAPE, not the instance: every job transitively downstream of
+        // `wait` must say what statuses it wants, because `wait` is conditional.
+        var jobs = WorkflowParity.SplitJobs(CodeOnly(Read(Floor)));
+
+        var downstream = new HashSet<string>(StringComparer.Ordinal);
+        for (var grew = true; grew;)
+        {
+            grew = false;
+            foreach (var (id, body) in jobs)
+            {
+                if (id == "wait" || downstream.Contains(id)) continue;
+                if (WorkflowParity.NeedsOf(body).Any(n => n == "wait" || downstream.Contains(n)))
+                    grew |= downstream.Add(id);
+            }
+        }
+
+        Assert.NotEmpty(downstream);
+        foreach (var id in downstream)
+        {
+            var expr = IfExpressionOf(jobs[id]);
+            Assert.True(
+                Regex.IsMatch(expr, @"\b(always|success|failure|cancelled)\s*\(\s*\)"),
+                $"job `{id}` is downstream of the conditionally-skipped `wait` but its `if:` "
+                + $"carries no status function — GitHub's implicit success() is false when ANY "
+                + $"ancestor was skipped, so this job never runs on a schedule or a dispatch "
+                + $"(actions/runner#2205). Its condition is: \"{expr}\"");
+        }
+    }
+
     [Fact]
     public void Floor_ReportsOnlyOnRunsThatMeasuredSomething()
     {
@@ -263,7 +328,11 @@ public sealed class MainVerdictFloorWorkflowTests
         // and the expensive job must actually be gated on it, or the guard is decoration
         var matrix = jobs.Single(j => j.Value.Contains(WorkflowParity.DelegationMarker, StringComparison.Ordinal));
         Assert.Contains("needs: verdict-needed", matrix.Value, StringComparison.Ordinal);
-        Assert.Matches(new Regex(@"if:\s*needs\.verdict-needed\.outputs\.\w+\s*==\s*'true'"), matrix.Value);
+        // Matched over the folded expression rather than from `if:` onward: since #3679 the
+        // condition also carries the explicit status function the test above requires, so
+        // anchoring on `if:` would force the two guards to be written in one order.
+        Assert.Matches(new Regex(@"needs\.verdict-needed\.outputs\.\w+\s*==\s*'true'"),
+            IfExpressionOf(matrix.Value));
     }
 
     [Fact]
@@ -288,19 +357,17 @@ public sealed class MainVerdictFloorWorkflowTests
     }
 
     [Fact]
-    public void OnlyTheGatingMatrixAndTheFloor_RunTheEightLegMatrixOnPushesToMain()
+    public void OnlyTheseFourWorkflows_CallTheEightLegMatrixAtAll()
     {
-        // The census behind "the same shape does not repeat elsewhere". Two workflows trigger
-        // on a push to `main`: this repo's gating matrix, and sync-changelog-unreleased.yml.
-        // The changelog sync shares the pattern — one concurrency group, cancellation on —
-        // but not the pathology: it takes a median of 11 s against a 359 s median merge
-        // interval (rho = 0.03), so 56 of its last 60 runs completed. Cancellation starves a
-        // workflow only when its wall time approaches the merge interval, which is a property
-        // of the run, not of the concurrency block.
+        // A census of CALLERS of the shared matrix — which is all this assertion has ever
+        // measured. It fails when a fifth workflow starts calling it, so the cost of doing so
+        // is priced by whoever adds it rather than discovered afterwards (#3003).
         //
-        // This guard fails if a third push-to-main workflow starts calling the eight-leg
-        // matrix, because that would double `main`'s post-merge cost without anyone pricing
-        // it — the thing #3003 is about.
+        // Two sentences that used to sit here claimed this guard would catch a third
+        // push-to-`main` caller. It never could: it reads `uses:`, not triggers, and #3679
+        // made the floor the second push-to-`main` caller with this test passing unchanged.
+        // Deleted rather than rewritten — a census of callers is a useful thing to hold, and
+        // a census of triggers would be a different test.
         var callers = Directory.GetFiles(WorkflowDir, "*.yml")
             .Where(f => CodeOnly(File.ReadAllText(f))
                 .Contains(WorkflowParity.DelegationMarker, StringComparison.Ordinal))

@@ -327,12 +327,17 @@ def _age_of(updated_at: str | None, now: float) -> str:
 
 
 def fetch_floor_runs(branch: str = "main"):
-    """(runs, reason): completed runs of both producers of a `main` verdict.
+    """(runs, reason): recent completed runs of both producers of a `main` verdict.
+
+    This read finds WHICH COMMIT to report on; `fetch_runs_for_sha` below then
+    decides what that commit's verdict is. Splitting them is the point: a page
+    of recent runs is a window, and a window cannot answer "is there a failure
+    on this commit" -- twenty later floor skips on a static `main` push the
+    failure off it, and the line would print GREEN for a commit measured red.
 
     Asked per workflow rather than as one `?branch=main` sweep: `main` carries
     enough unrelated traffic that a 100-run page can hold no matrix run at all,
-    and an empty page would then read as "no conclusive run found" -- a wrong
-    answer wearing the shape of a right one.
+    and an empty page would then read as "no conclusive run found".
 
     One failed read refuses the whole answer. Judging `main` from whichever half
     responded is the #3002 shape: a partial read and a genuinely empty one are
@@ -344,7 +349,8 @@ def fetch_floor_runs(branch: str = "main"):
         rc, body = gh(["api",
                        f"repos/{REPO}/actions/workflows/{wf}/runs"
                        f"?branch={branch}&status=completed&per_page=20",
-                       "--jq", "[.workflow_runs[] | {path, conclusion, head_sha, updated_at}]"])
+                       "--jq", "[.workflow_runs[] "
+                               "| {path, conclusion, head_sha, created_at, updated_at}]"])
         if rc != 0:
             return None, f"could not read {wf} runs on {branch}"
         try:
@@ -357,11 +363,58 @@ def fetch_floor_runs(branch: str = "main"):
     return out, ""
 
 
+def fetch_runs_for_sha(sha: str):
+    """(runs, reason): EVERY workflow run GitHub has for one commit.
+
+    Complete rather than recent, which is what lets a failure outrank a later
+    skip on the same commit. A page that FILLED is a partial read and is
+    refused: 100 runs on one commit means the tail is invisible, and an
+    invisible tail is where the failure would be (guards-need-a-third-state).
+    """
+    rc, body = gh(["api",
+                   f"repos/{REPO}/actions/runs?head_sha={sha}&per_page=100",
+                   "--jq", "[.workflow_runs[] "
+                           "| {path, conclusion, head_sha, created_at, updated_at}]"])
+    if rc != 0:
+        return None, f"could not read the run list for {sha[:8]}"
+    try:
+        got = json.loads(body)
+    except Exception:
+        return None, f"unreadable run list for {sha[:8]}"
+    if not isinstance(got, list):
+        return None, f"unexpected run list shape for {sha[:8]}"
+    if len(got) >= 100:
+        return None, f"the run list for {sha[:8]} filled its page — a partial read"
+    return got, ""
+
+
+def _conclusive(runs: list[dict]) -> list[dict]:
+    return [r for r in runs
+            if _workflow_file(r) in FLOOR_WORKFLOWS
+            and r.get("conclusion") in ("success", "failure")]
+
+
+def _commit_order(run: dict) -> str:
+    """The key that tracks COMMIT order, not completion order.
+
+    `created_at` is the merge for a push run and the tick whose `github.sha` was
+    HEAD for a scheduled one, so it orders runs the way commits are ordered.
+    `updated_at` is when a run FINISHED: a floor matrix that queued in the
+    shared `main-verdict-floor` group finishes late, so ordering by it can pick
+    an older commit's verdict and print it as the state of `main`.
+    """
+    return run.get("created_at") or run.get("updated_at") or ""
+
+
 def floor_verdict(runs: list[dict] | None, reason: str = "",
-                  now: float | None = None) -> str:
+                  now: float | None = None, sha_fetch=None) -> str:
     """One line: the newest conclusive matrix verdict for `main`.
 
-    RED wins over GREEN on the SAME commit, because a floor run concludes
+    Two steps, because they answer different questions: `runs` (a recent window)
+    says WHICH commit was measured last, and `sha_fetch` reads that commit
+    completely to say what its verdict is.
+
+    RED wins over GREEN on the same commit, because a floor run concludes
     `success` when it SKIPS -- its `verdict-needed` guard counts a `failure` as
     a verdict too, so a floor success can sit on top of a red commit and mean
     only "somebody already measured this one".
@@ -370,16 +423,22 @@ def floor_verdict(runs: list[dict] | None, reason: str = "",
     if runs is None:
         why = reason or "could not read main's recent workflow runs"
         return f"main floor: unavailable ({why})"
-    conclusive = [r for r in runs
-                  if _workflow_file(r) in FLOOR_WORKFLOWS
-                  and r.get("conclusion") in ("success", "failure")]
+    conclusive = _conclusive(runs)
     if not conclusive:
         return "main floor: no conclusive run found"
-    newest = max(conclusive, key=lambda r: r.get("updated_at") or "")
-    sha = newest.get("head_sha") or ""
-    same = [r for r in conclusive if (r.get("head_sha") or "") == sha]
+
+    sha = max(conclusive, key=_commit_order).get("head_sha") or ""
+    fetch = sha_fetch or fetch_runs_for_sha
+    same, why = fetch(sha)
+    if same is None:
+        return f"main floor: unavailable ({why or 'the per-commit read failed'})"
+    same = [r for r in _conclusive(same) if (r.get("head_sha") or "") == sha]
+    if not same:
+        return (f"main floor: unavailable (the per-commit read found no conclusive "
+                f"run for {sha[:8] or '<unknown sha>'})")
+
     red = [r for r in same if r.get("conclusion") == "failure"]
-    decider = max(red, key=lambda r: r.get("updated_at") or "") if red else newest
+    decider = max(red or same, key=_commit_order)
     state = "RED" if red else "GREEN"
     return (f"main floor: {state} on {sha[:8] or '<unknown sha>'} "
             f"({_workflow_file(decider)}, {_age_of(decider.get('updated_at'), now)})")
