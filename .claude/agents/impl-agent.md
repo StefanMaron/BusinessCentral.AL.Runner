@@ -35,7 +35,7 @@ If blocked: add `status: blocked` + a comment explaining the blocker, then go to
 
 ## Step 2 — Pick up a new issue
 ```
-gh issue list --label "status: ready" --state open --limit 500 --json number,title,labels,url,assignees,createdAt --repo StefanMaron/BusinessCentral.AL.Runner
+gh issue list --label "status: ready" --state open --limit 500 --search "sort:created-asc" --json number,title,labels,url,assignees,createdAt --repo StefanMaron/BusinessCentral.AL.Runner
 ```
 
 **Skip any issue assigned to a user other than the bot's own account (`@me`)** — this is a public repo and a non-@me assignee means a human is already handling it. Eligible: no assignee, or exactly `@me`.

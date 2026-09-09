@@ -430,7 +430,7 @@ Otherwise the next agent starts from the wrong premise — which has happened he
 Read its age once per cycle:
 
 ```bash
-gh issue list --repo StefanMaron/BusinessCentral.AL.Runner --label "status: ready" --state open --limit 500 --json number,createdAt
+gh issue list --repo StefanMaron/BusinessCentral.AL.Runner --label "status: ready" --state open --limit 500 --search "sort:created-asc" --json number,createdAt
 ```
 
 Every cycle summary carries three numbers from it: how many issues are ready, how many were
