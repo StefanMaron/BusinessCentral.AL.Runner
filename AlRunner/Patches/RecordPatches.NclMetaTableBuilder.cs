@@ -138,12 +138,12 @@ public static partial class RecordPatches
 
         try
         {
-            // Build MetaField[] — include a synthetic timestamp field (id=0, BigInteger)
-            // and the BC system fields: SystemId (2000000000), SystemCreatedAt (2000000001),
-            // SystemCreatedBy (2000000002), SystemModifiedAt (2000000003), SystemModifiedBy
-            // (2000000004). These are required for system-field access via FieldRef and RecordRef.
-            var timestampParsed       = new ParsedField(0,          "timestamp",         "BigInteger", 0);
-            // Merge any tableextension fields for this base table.
+            // #3600 — read once, ahead of the route choice below, and fed to
+            // ApplyRunnerFieldWiring on BOTH routes: a same-app add-only extension's fields
+            // are already inside BC's document, so bc-document needs nothing spliced into the
+            // field ARRAY, but the enum-type-name / AutoIncrement side info those fields carry
+            // lives only in this parse-time ParsedField list, not on the built NCLMetaTable.
+            //
             // De-duplicate by field id: precompiled .app SymbolReference.json sometimes lists
             // extension fields both in the base table's Tables[].Fields entry AND in
             // TableExtensions[].Fields (e.g. BC BaseApp table 242 "Source Code Setup" already
@@ -152,6 +152,32 @@ public static partial class RecordPatches
             // Only append ext fields whose id is NOT already present in the base table's own list.
             var extFields = _parsedExtensionFields.TryGetValue(parsed.TableName.ToLowerInvariant(), out var ef)
                 ? ef : Enumerable.Empty<ParsedField>();
+
+            // #3552 — when BC's emitter handed the runner its own metadata document for this
+            // table (#3548), let BC construct the NCLMetaTable from it rather than deriving one
+            // below. AVAILABILITY decides the route, and a failure is never re-routed to the
+            // derivation: a weaker answer substituted on error is what
+            // .claude/rules/loud-failures.md exists to prevent. It is not LOUD here, though —
+            // this site is inside the catch below, which swallows any throw into `return null`
+            // for both routes alike (pre-existing, #3590). What each step supplies, and which
+            // tables are deliberately left on the derivation:
+            // docs/object-metadata-from-bc.md#the-seam.
+            if (ShouldBuildTableFromBcDocument(tableId, parsed))
+            {
+                var fromBc = BuildNCLMetaTableFromBcDocument(tableId, ResolveNavAppBaseGroup());
+                ApplyRunnerFieldWiring(fromBc, parsed, extFields, parsed.Fields.Concat(extFields));
+                TraceTableMetadataSource(tableId, "bc-document", fromBc);
+                return fromBc;
+            }
+
+            // Build MetaField[] — include a synthetic timestamp field (id=0, BigInteger)
+            // and the BC system fields: SystemId (2000000000), SystemCreatedAt (2000000001),
+            // SystemCreatedBy (2000000002), SystemModifiedAt (2000000003), SystemModifiedBy
+            // (2000000004). These are required for system-field access via FieldRef and RecordRef.
+            // Editable / DataClassification per BC's own boilerplate — see
+            // SystemParsedFields' doc comment for the citation (#3545).
+            var timestampParsed       = new ParsedField(0,          "timestamp",         "BigInteger", 0,
+                Editable: false, DataClassificationName: "SystemMetadata");
             var baseFieldIds = new HashSet<int>(parsed.Fields.Select(f => f.FieldId));
             var extFieldsNew = extFields.Where(f => !baseFieldIds.Contains(f.FieldId));
             var allParsed = new[] { timestampParsed }.Concat(parsed.Fields)
@@ -223,14 +249,7 @@ public static partial class RecordPatches
                 parsed.TableTypeName);
             if (defaultMetaTable == null) return null;
 
-            // NavAppGroup.BaseGroup
-            var nclAsm = AppDomain.CurrentDomain.GetAssemblies()
-                .First(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
-            var tAppGroup = nclAsm.GetType("Microsoft.Dynamics.Nav.Runtime.Apps.NavAppGroup")!;
-            var baseGroup = tAppGroup.GetProperty("BaseGroup",
-                BindingFlags.Public | BindingFlags.Static)?.GetValue(null)
-                ?? tAppGroup.GetField("BaseGroup",
-                    BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            var baseGroup = ResolveNavAppBaseGroup();
 
             var built = (NCLMetaTable?)_mCreateFromMetaTable.Invoke(null,
                 new object?[] { defaultMetaTable, baseGroup });
@@ -260,21 +279,6 @@ public static partial class RecordPatches
                 if (_fNCLMetaAppObjMetadataLoaded != null)
                     AlRunner.Infrastructure.FieldPoke.SetInstance(_fNCLMetaAppObjMetadataLoaded, built, true);
 
-                // W-8b A-prime: poke a real NavTableTriggerEventHandler into the
-                // tableTriggerEventHandler field. NCLMetaTable.TableTriggerEventHandler /
-                // TriggerEventHandler are simple field-getter properties — even when their
-                // call sites are R2R-inlined into NavRecord.InsertAsync, the inlined code
-                // reads our field. EventSubscriberPatches.InjectAll later attaches per-event
-                // NavEventSubscription objects to its NavEventScope.registeredSubscriptions.
-                var triggerHandler = AlRunner.Patches.EventSubscriberPatches
-                    .CreateTableTriggerEventHandler();
-                if (triggerHandler != null)
-                {
-                    var f = built.GetType().GetField("tableTriggerEventHandler",
-                        BindingFlags.NonPublic | BindingFlags.Instance);
-                    if (f != null)
-                        AlRunner.Infrastructure.FieldPoke.SetInstance(f, built, triggerHandler);
-                }
                 // NOTE: table-level trigger-subscriber injection (EventSubscriberPatches
                 // .InjectTriggerSubsForTable) is deliberately NOT called here. This method runs
                 // INSIDE _metaTableCache.GetOrAdd(tableId, BuildNCLMetaTable) — the cache entry for
@@ -292,28 +296,9 @@ public static partial class RecordPatches
                 // AppDomain yet at NCLMetaTable build time (build runs during
                 // AddSourceDir, before AL emit). See WireFieldTriggerHandlersAll().
 
-                // For AL `Enum "X"`-typed fields the upstream BC factory builds
-                // either a plain NCLOptionMetadataWithCaptions (when EnumTypeId==0)
-                // or an NCLFieldEnumMetadata that chains to NavGlobal.MetadataProvider
-                // (NREs on skeleton). Both paths produce wrong results for
-                // `FieldRef.GetEnumValueCaption/NameFromOrdinalValue(ordinal)` on
-                // sparse AL enums (e.g. value(0), value(5), value(10)) because the
-                // base GetCaptionFromIndex/GetOptionFromIndex treats the AL ordinal
-                // as a 0..Count-1 array index. We swap in AlEnumOptionMetadata which
-                // mirrors NCLEnumMetadata semantics (search indexes[] for matching
-                // ordinal) using data captured by BcCompiler at AL emit time.
-                FixupEnumFieldOptionMetadata(built, parsed, extFields);
-
-                // Register any AutoIncrement fields so NavRecord_ALInsertAsync3 assigns
-                // counters. `allParsed` rather than `parsed.Fields`: a tableextension may
-                // declare the AutoIncrement field, and since #1711 that property survives the
-                // parse. Registering only base-table fields would be the silent half-fix —
-                // the NCLMetaField would say autoIncrement=true while no counter ever
-                // advanced, so every Insert left the field at 0 and the second row collided.
-                foreach (var f in allParsed)
-                    if (f.IsAutoIncrement)
-                        AlRunner.BcRuntime.RegisterAutoIncrementField(tableId, f.FieldId);
+                ApplyRunnerFieldWiring(built, parsed, extFields, allParsed);
             }
+            TraceTableMetadataSource(tableId, "derived", built);
             return built;
         }
         catch (Exception ex)
@@ -549,6 +534,30 @@ public static partial class RecordPatches
                 if (ml != null) { args[i] = ml; continue; }
             }
             if (p.Name == "enabled") { args[i] = (bool?)true; continue; }
+            // #3545 — Editable. AL's default is true and MetaField's own null default already
+            // resolves to it, so only the declared false is passed; a true here would assert a
+            // value the reader may never have seen. Proved by deleting the MetaField.Editable
+            // entry from tests/expectations/metadata-equivalence/allowlist.json.
+            if (p.Name == "editable" && f.Editable == false) { args[i] = (bool?)false; continue; }
+            // #3545 — DataClassification. ParsedField already carries the EFFECTIVE value
+            // (ApplyOwnerDataClassification), so nothing is resolved here.
+            if (p.Name == "dataClassification" && _tALDataClassification != null
+                && !string.IsNullOrWhiteSpace(f.DataClassificationName)
+                && Enum.TryParse(_tALDataClassification, f.DataClassificationName, ignoreCase: true, out var dcVal))
+            {
+                args[i] = dcVal;
+                continue;
+            }
+            // The enum object an `Enum "X"`-typed field names is deliberately NOT passed, even
+            // though ParsedField now carries it. Passing enumTypeId makes BC's own
+            // FieldDataProvider.GetFieldRecordBuffer resolve that id through NCLMetadata, and
+            // for a PRECOMPILED app's enum the runner registers no metadata object for it —
+            // measured on the corpus: every read of the Field virtual table (2000000041) for
+            // Base Application table 1366 then threw NavMetadataNotFoundException("Enum 8889"),
+            // which aborted codeunit 2 Company-Initialize and took the whole corpus app's
+            // 2,900 tests with it. Reading the id is the easy half; making it resolvable is
+            // the work, and it is tracked on #3594 with MetaField.EnumTypeId still declared in
+            // the metadata-equivalence allowlist.
             if (p.Name == "fieldClass" && _tFieldClass != null && (f.IsFlowField || f.IsFlowFilter))
             {
                 // #1716 — FlowFilter must reach the metadata as FlowFilter. NCLMetaTable
@@ -1037,6 +1046,39 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// Rewrite each field's <see cref="ParsedField.DataClassificationName"/> from the value it
+    /// DECLARES to the value BC's metadata emitter states for it, given the declaration of the
+    /// object that owns it — the <c>table</c>, or the <c>tableextension</c> for a field an
+    /// extension adds. Called once per parsed object, by every reader.
+    ///
+    /// <para>Three rules, measured against BC's own emitted metadata for Business Foundation
+    /// and System Application on four BC builds (3,848 field observations, zero
+    /// counterexamples) plus the six extension fields on table 774 that first showed the owner
+    /// is the extension and not the extended table. The two exceptions are not cosmetic:
+    /// eleven fields sit on tables declaring <c>SystemMetadata</c>, so inheriting
+    /// unconditionally answers <c>SystemMetadata</c> where BC answers <c>CustomerContent</c> —
+    /// trading one wrong answer for another. Derivation and per-build counts:
+    /// docs/metadata-equivalence.md#field-dataclassification-inherits-its-owner.</para>
+    /// </summary>
+    internal static void ApplyOwnerDataClassification(List<ParsedField> fields, string? ownerDeclared)
+    {
+        var owner = string.IsNullOrWhiteSpace(ownerDeclared) ? null : ownerDeclared!.Trim();
+        for (int i = 0; i < fields.Count; i++)
+        {
+            var f = fields[i];
+            if (!string.IsNullOrWhiteSpace(f.DataClassificationName)) continue;
+            if (owner == null) continue;
+            // A FlowField/FlowFilter is not stored, and BC classifies nothing it does not
+            // store. Blob is the one stored type it also leaves unclassified when the field
+            // itself is silent.
+            if (f.IsFlowField || f.IsFlowFilter) continue;
+            if ((f.TypeName ?? string.Empty).TrimStart().StartsWith("Blob", StringComparison.OrdinalIgnoreCase))
+                continue;
+            fields[i] = f with { DataClassificationName = owner };
+        }
+    }
+
+    /// <summary>
     /// The BC system fields every table carries, in the id order BC itself uses. They are
     /// appended to every metatable the runner builds but are NOT part of
     /// <c>ParsedTable.Fields</c>, because no AL source declares them — the platform does.
@@ -1056,14 +1098,27 @@ public static partial class RecordPatches
     /// array twice and corrupt the field layout R2R-precompiled BC code holds offsets for.
     /// It is resolvable but not appended, which is why the two sets are now read through
     /// separate members rather than through this one.</para>
+    ///
+    /// <para><c>Editable</c> and <c>DataClassification</c> are BC's own, not this runner's
+    /// choice: <c>SystemFieldsHelper</c> in <c>Microsoft.Dynamics.Nav.Types</c> builds these
+    /// six fields by parsing boilerplate XML that states <c>Editable="0"</c> for all six, and
+    /// <c>DataClassification="EndUserPseudonymousIdentifiers"</c> for <c>$systemId</c>,
+    /// <c>SystemCreatedBy</c> and <c>SystemModifiedBy</c> against <c>"SystemMetadata"</c> for
+    /// <c>timestamp</c>, <c>SystemCreatedAt</c> and <c>SystemModifiedAt</c>. The metadata
+    /// equivalence harness measured the same split independently on 150 tables (#3545).</para>
     /// </summary>
     private static readonly ParsedField[] SystemParsedFields = new[]
     {
-        new ParsedField(2000000000, "SystemId",         "Guid",     0),
-        new ParsedField(2000000001, "SystemCreatedAt",  "DateTime", 0),
-        new ParsedField(2000000002, "SystemCreatedBy",  "Guid",     0),
-        new ParsedField(2000000003, "SystemModifiedAt", "DateTime", 0),
-        new ParsedField(2000000004, "SystemModifiedBy", "Guid",     0),
+        new ParsedField(2000000000, "SystemId",         "Guid",     0,
+            Editable: false, DataClassificationName: "EndUserPseudonymousIdentifiers"),
+        new ParsedField(2000000001, "SystemCreatedAt",  "DateTime", 0,
+            Editable: false, DataClassificationName: "SystemMetadata"),
+        new ParsedField(2000000002, "SystemCreatedBy",  "Guid",     0,
+            Editable: false, DataClassificationName: "EndUserPseudonymousIdentifiers"),
+        new ParsedField(2000000003, "SystemModifiedAt", "DateTime", 0,
+            Editable: false, DataClassificationName: "SystemMetadata"),
+        new ParsedField(2000000004, "SystemModifiedBy", "Guid",     0,
+            Editable: false, DataClassificationName: "EndUserPseudonymousIdentifiers"),
     };
 
     /// <summary>
@@ -1107,7 +1162,8 @@ public static partial class RecordPatches
     /// set already contains.</para>
     /// </summary>
     private static readonly ParsedField SystemRowVersionParsedField =
-        new ParsedField(0, "SystemRowVersion", "BigInteger", 0);
+        new ParsedField(0, "SystemRowVersion", "BigInteger", 0,
+            Editable: false, DataClassificationName: "SystemMetadata");
 
     /// <summary>
     /// Resolve a field NAME that a CalcFormula or a TableRelation states, on

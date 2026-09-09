@@ -1,0 +1,23 @@
+{
+  "id": "a3000000-0000-4000-8000-000000000050",
+  "name": "Runner Tests Fixture - Query Metadata From BC Document",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#3608: a compiled query's MetaQuery design must come from BC's own emitted metadata document, so the values the runner used to hardcode answer what the query actually declares.",
+  "description": "Used by AlRunner.Tests' QueryMetadataFromBcDocumentTests. One query declares a value DIFFERING from each hardcode the runner used to supply (ReadState ReadShared not ReadUncommitted, QueryType API not Normal, TopNumberOfRows 5 not 0, QueryCategory Lists not empty) plus a Sum column whose ColumnType only the document states; a second declares none of them, so no single constant satisfies both. Deliberately declares no 'application' dependency (see .claude/rules/no-base-app-in-csharp-tests.md).",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 70720,
+      "to": 70739
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

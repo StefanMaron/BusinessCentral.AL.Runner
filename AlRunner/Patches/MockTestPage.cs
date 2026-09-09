@@ -1839,18 +1839,34 @@ internal class LiveNavTestPage : MockITestPage
         // instead of closing -- measured on real BC, Close() does NOT silently no-op here.
         if (_tornDown) throw MakeTestPageNotOpenException();
 
-        // OnQueryClosePage's veto is the one part of the close sequence the runner cannot
-        // model: BC would leave the page open and hand control back to the user, which has no
-        // meaning in a test that has already asked for the close. Refusing by name beats both
-        // alternatives — closing anyway hides that the page objected, and hanging is worse.
-        if (_page != null && !_page.RaiseOnClosePage(_formResult))
+        // Two ways BC refuses a close, and they are not the same question — see
+        // RunnerPageInstance.CloseRefusal.
+        if (_page != null && !_page.RaiseOnClosePage(_formResult, out var refusal))
+        {
+            // An AL error the trigger raised, consumed by a declared [MessageHandler]. MEASURED
+            // on a real service tier (corpus codeunit 60602 "QCM Query Close Msg Tests",
+            // StefanMaron/BusinessCentral.AL.Language.Tests#272, green on all eight cloud legs
+            // and on the Windows nightly): Close() returns normally, the message reaches the
+            // handler exactly once on this route, and the page is left OPEN.
+            //
+            // Returning here is the whole of that: the tear-down below is skipped, so _opened
+            // stays true, no row is flushed by the close, and BC's own form state is untouched
+            // — the test's TestPage variable keeps working, which is what a real tier leaves it
+            // holding. It is deliberately NOT a refusal any more; raising one here would be the
+            // runner erroring on a path BC completes without an error (issue #3179).
+            if (refusal == RunnerPageInstance.CloseRefusal.ErrorShownAsMessage) return;
+
+            // A plain veto (the trigger returned false) on the EXPLICIT TestPage.Close() path.
+            // Still a refusal, and still a permanent scope boundary (#2999 lists it among the
+            // fourteen): BC leaves the page open awaiting a user, and unlike the arm above no
+            // service tier has been asked what a test observes afterwards. A [TryFunction]
+            // reading false is BC's outcome.
             throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
-                // No " — " in the api — see RequireRecord. The CLAIM is unchanged and stays a
-                // permanent scope boundary (#2999 lists it among the fourteen): BC leaves the
-                // page open awaiting a user, so a [TryFunction] reading false is BC's outcome.
+                // No " — " in the api — see RequireRecord.
                 $"TestPage page {_pageId} (OnQueryClosePage)",
                 "testpage-close-veto — the page's OnQueryClosePage returned false, which in BC "
                 + "leaves the page open awaiting the user. See docs/scope.md");
+        }
         FlushParts(); FlushRow(); _opened = false;
 
         // The triggers above are this page's close, so BC's own form state has to agree that

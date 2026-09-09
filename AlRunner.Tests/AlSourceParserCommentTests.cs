@@ -47,7 +47,7 @@ public class AlSourceParserCommentTests
 
         try
         {
-            parse.Invoke(null, new object[] { source });
+            parse.InvokeStatic(source);
             Assert.True(tables.Contains(TableId), $"table {TableId} was not parsed at all");
             var table = tables[TableId]!;
             var fields = (System.Collections.IEnumerable)table.GetType()
@@ -147,7 +147,7 @@ public class AlSourceParserCommentTests
             .GetValue(null)!;
         try
         {
-            parse.Invoke(null, new object[] { source });
+            parse.InvokeStatic(source);
             var table = tables[TableId]!;
             var ids = ((System.Collections.IEnumerable)table.GetType()
                     .GetProperty("Fields")!.GetValue(table)!)

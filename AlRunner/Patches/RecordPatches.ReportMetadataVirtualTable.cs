@@ -364,7 +364,10 @@ public static partial class RecordPatches
                     + $"dataset: {string.Join("; ", unresolved.Take(10))}"
                     + (unresolved.Count > 10 ? $" (+{unresolved.Count - 10} more)" : string.Empty));
 
-            _reportRows = rows.Values.ToList();
+            // BC's own emitted document overrides the AL-derived properties wherever it
+            // states them — see RecordPatches.ReportRowFromBcDocument.cs for which columns
+            // and why the two disagree. A report with no document keeps the row above.
+            _reportRows = rows.Values.Select(ApplyBcReportDocument).ToList();
             _reportRowsBuiltFrom = generation;
             // Env-gated so a normal run stays quiet. The stream is arbitrary, not load-bearing:
             // Log's filter wraps stdout and stderr alike, and this tag is hyphenated so it

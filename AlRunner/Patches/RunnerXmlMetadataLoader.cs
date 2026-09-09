@@ -30,11 +30,11 @@
 // the registry has no entry for (never compiled, or a non-report type) throw
 // loudly — never a silent empty/default document (loud-failures rule).
 //
-// Scope: this loader currently only serves ObjectType.Report — the runner's
-// AlReportMetadataRegistry is report-scoped. Page/query/xmlport source
-// metadata is a separate (currently unaddressed) gap; touching those members
-// throws RunnerOutOfScopeException rather than silently returning something
-// wrong.
+// Scope (#3599): report, page and xmlport keep their own per-kind registries above;
+// table (#3552) and every other kind AlObjectMetadataRegistry holds (#3548) are served
+// by the general fallback at the bottom of GetMetaObjectXmlMetadata. A kind neither
+// registry has an entry for still throws RunnerOutOfScopeException rather than
+// silently returning something wrong.
 //
 // Implemented directly (no runtime DispatchProxy — tried first, but produced
 // unexplained null returns from CreateEmptyNCLMetaReport's factory Invoke
@@ -49,10 +49,35 @@ using Microsoft.Dynamics.Nav.Types;
 namespace AlRunner.Patches;
 
 /// <summary>
-/// Real INCLObjectXmlMetadataLoader backed by AlReportMetadataRegistry.
+/// Real INCLObjectXmlMetadataLoader backed by BC's own emit-captured metadata:
+/// AlReportMetadataRegistry / AlPageMetadataRegistry / AlXmlPortMetadataRegistry per kind,
+/// AlObjectMetadataRegistry (#3548) for table and everything else it holds (#3599).
 /// </summary>
 public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
 {
+    // BC's runtime ObjectType (Microsoft.Dynamics.Nav.Types.ObjectType) and the AL compiler's
+    // SymbolKind (Microsoft.Dynamics.Nav.CodeAnalysis.SymbolKind — the string
+    // AlObjectMetadataRegistry is keyed by, via BcCompiler.CaptureOutputter.AddApplicationObject's
+    // `symbol.Kind.ToString()`) are two different enums. Measured by decompiling both
+    // (Microsoft.Dynamics.Nav.Types.dll / Microsoft.Dynamics.Nav.CodeAnalysis.dll, BC 28.1):
+    // every kind AlObjectMetadataRegistry captures (docs/object-metadata-capture.md) names
+    // identically in ObjectType, with exactly one spelling divergence — ObjectType.CodeUnit vs
+    // SymbolKind.Codeunit. Report/Page/Table/XmlPort are excluded here because the branches
+    // above already serve them from their own registries.
+    private static readonly System.Collections.Generic.IReadOnlyDictionary<ObjectType, string>
+        RegistryKindByObjectType = new System.Collections.Generic.Dictionary<ObjectType, string>
+        {
+            [ObjectType.CodeUnit] = "Codeunit",
+            [ObjectType.Query] = "Query",
+            [ObjectType.Enum] = "Enum",
+            [ObjectType.EnumExtension] = "EnumExtension",
+            [ObjectType.PermissionSet] = "PermissionSet",
+            [ObjectType.PermissionSetExtension] = "PermissionSetExtension",
+            [ObjectType.TableExtension] = "TableExtension",
+            [ObjectType.PageExtension] = "PageExtension",
+            [ObjectType.ReportExtension] = "ReportExtension",
+        };
+
     public NCLObjectXmlMetadata GetMetaObjectXmlMetadata(ApplicationObjectId objectId, NavAppGroup appGroup)
     {
         // MetadataHash is a cache-invalidation key only (the real
@@ -88,6 +113,16 @@ public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
             && AlXmlPortMetadataRegistry.TryGet(objectId.ObjectNumber, out var xmlPortXml))
             return Wrap(xmlPortXml, $"runner-xmlport-{objectId.ObjectNumber}");
 
+        // Tables: BC's own emitted metadata document, kept per (kind, id) by #3548. This is
+        // the entry point for NCLMetaTable.LoadMetadata() — MetaObjectCache.GetMetaTable
+        // hands what we return here to MetaTable.CreateMetaTableFromXml, so BC constructs
+        // the table's fields, keys, relations and captions from its own bytes instead of
+        // the runner deriving them (#3552).
+        if (objectId.ObjectType == ObjectType.Table
+            && AlObjectMetadataRegistry.TryGet(
+                RecordPatches.BcTableMetadataKind, objectId.ObjectNumber, out var tableXml))
+            return Wrap(tableXml, $"runner-table-{objectId.ObjectNumber}");
+
         // Reports living in a PRECOMPILED dependency .app: never source-compiled, so the
         // emit registry above will never hold them. Their shape is still fully stated by
         // the .app itself (SymbolReference.json + the embedded AL source), so reconstruct
@@ -97,11 +132,20 @@ public sealed class RunnerXmlMetadataLoader : INCLObjectXmlMetadataLoader
             && RecordPatches.TryBuildDependencyReportMetadata(objectId.ObjectNumber) is { } depXml)
             return Wrap(depXml, $"runner-dep-report-{objectId.ObjectNumber}");
 
+        // Every other kind AlObjectMetadataRegistry holds (#3548, #3599): codeunit, query,
+        // enum(extension), permission set(extension), table extension, page extension, report
+        // extension. Same registry #3552 reads for tables, same shape — BC's own emitted
+        // document, keyed by (kind, id), served back to BC's own MetaObjectCache /
+        // NCLObjectMetadataLoaderExtensions so it builds the real MetaCodeunit / MetaQuery /
+        // MetaEnum / … instead of a runner-derived approximation.
+        if (RegistryKindByObjectType.TryGetValue(objectId.ObjectType, out var kind)
+            && AlObjectMetadataRegistry.TryGet(kind, objectId.ObjectNumber, out var kindXml))
+            return Wrap(kindXml, $"runner-{kind.ToLowerInvariant()}-{objectId.ObjectNumber}");
+
         throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             $"INCLObjectXmlMetadataLoader.GetMetaObjectXmlMetadata({objectId.ObjectType} {objectId.ObjectNumber})",
             "not-yet-implemented — no metadata XML for this object: it was not source-compiled " +
-            "by the runner, and no loaded dependency .app declares it " +
-            "(only reports, pages and xmlports are served)");
+            "by the runner, and no loaded dependency .app declares it");
     }
 
     private static NCLObjectXmlMetadata Wrap(string xml, string metadataHash)
@@ -139,12 +183,12 @@ public sealed class RunnerMetaApplicationObjectLoader : INCLMetaApplicationObjec
     public INCLCodeLoader CodeLoader =>
         throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             "INCLMetaApplicationObjectLoader.CodeLoader",
-            "not-yet-implemented — runner metadata loader only serves report metadata XML");
+            "not-yet-implemented — runner metadata loader only implements XmlMetadataLoader");
 
     public NCLMetadata MetadataCache =>
         throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             "INCLMetaApplicationObjectLoader.MetadataCache",
-            "not-yet-implemented — runner metadata loader only serves report metadata XML");
+            "not-yet-implemented — runner metadata loader only implements XmlMetadataLoader");
 
     // BC's OWN MetaObjectCache, constructed over our XML loader. NCLMetaForm's page path
     // does NOT go through XmlMetadataLoader the way the report path does — it calls
@@ -186,7 +230,7 @@ public sealed class RunnerMetaApplicationObjectLoader : INCLMetaApplicationObjec
     public INavAppClrTypeRetriever AppClrTypeRetriever =>
         throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             "INCLMetaApplicationObjectLoader.AppClrTypeRetriever",
-            "not-yet-implemented — runner metadata loader only serves report metadata XML");
+            "not-yet-implemented — runner metadata loader only implements XmlMetadataLoader");
 
     // Single shared instance. The XML loader half is stateless (every call re-resolves
     // against the registries, which are the source of truth); the MetaObjectCache half is

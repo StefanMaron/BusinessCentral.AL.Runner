@@ -58,20 +58,19 @@ public class RunnerFormCloseHandlerTests
     }
 
     // Positive: the general case. An AL error is handed to BC's own message channel, verbatim
-    // — not reworded, not prefixed by the runner.
+    // — not reworded, not prefixed by the runner — and the close is then REFUSED, which is
+    // BC's own `return false`. Measured on a real service tier: corpus codeunit 60602
+    // "QCM Query Close Msg Tests", green on all eight cloud legs and on the Windows nightly.
     [Fact]
-    public void AlError_IsHandedToTheMessageChannelVerbatim()
+    public void AlError_IsHandedToTheMessageChannelVerbatim_AndTheCloseIsRefused()
     {
         var probe = new FakeTestExecution(handled: true);
 
-        // A [MessageHandler] consumed it, so BC's own `return false` is reached and the page
-        // stays open — a shape the runner refuses loudly rather than modelling.
-        var oos = Assert.Throws<RunnerOutOfScopeException>(() =>
-            RunnerFormCloseHandler.RefuseCloseAfter(
-                new NavNCLDialogException("close refused by OnQueryClosePage"), probe));
+        var mayClose = RunnerFormCloseHandler.RefuseCloseAfter(
+            new NavNCLDialogException("close refused by OnQueryClosePage"), probe);
 
         Assert.Equal("close refused by OnQueryClosePage", probe.Seen);
-        Assert.Contains("testpage-close-refused-after-message", oos.Message, StringComparison.Ordinal);
+        Assert.False(mayClose);
     }
 
     // Negative: no message channel means the text has nowhere to go. Losing it would be a
@@ -133,50 +132,53 @@ public class RunnerFormCloseHandlerTests
         Assert.Same(original, thrown);
         Assert.Null(probe.Seen);
     }
-    // ── The refusal's CLASSIFICATION, not its text (#3179) ───────────────────────────────
+    // ── What a [MessageHandler]-consumed close error leaves behind (#3179) ──────────────
     //
-    // RunnerOutOfScopeException carries two kinds of refusal, and which kind decides whether an
-    // AL [TryFunction] may swallow it (ApplicationObjectBasePatches.IsPermanentOutOfScope):
+    // MEASURED, not reasoned: corpus codeunit 60602 "QCM Query Close Msg Tests"
+    // (StefanMaron/BusinessCentral.AL.Language.Tests#272, merged bd168356), green on all eight
+    // cloud legs and confirmed by the Windows nightly reference tier. Three facts, two of which
+    // contradicted what the test author predicted:
     //
-    //   permanent ("SMTP does not exist here")  -> TryInvoke returns false, matching a real BC
-    //                                              environment that also lacks the surface
-    //   "not-yet-implemented" (an in-scope gap) -> tears through, so a gap can never read green
+    //   1. the caller REGAINS CONTROL -- the close-time error does not propagate;
+    //   2. RunModal() reports Action::None, not the OK the [ModalPageHandler] chose, because a
+    //      refused close completed no action (the same codeunit's negative control, where the
+    //      close SUCCEEDS, does report OK -- so None is the refusal, not a lost action);
+    //   3. the page's uncommitted write SURVIVES. Codeunit 60677 asserts the opposite and also
+    //      passes: it measures behind asserterror, where what rolls the write back is the
+    //      framework unwinding a PROPAGATED error. A consumed message propagates nothing.
     //
-    // The test is a STRING PREFIX on the reason, so a gap whose reason merely says
-    // not-implemented in prose is classified permanent and silently swallowed. That is the
-    // defect issue #2966 was filed and closed for; this surface is a later instance of it,
-    // introduced with the close handler itself in #3057 and therefore not covered by that sweep.
-    //
-    // A page whose close BC refuses IS in scope -- #3179 is open and tracks building it -- so
-    // the refusal must tear through a [TryFunction], not become `false`.
+    // Fact 1 is what made the previous RunnerOutOfScopeException refusal wrong rather than
+    // merely conservative: the runner was raising an error on a path real BC completes without
+    // one. This pair pins that it no longer does.
 
     [Fact]
-    public void CloseRefusedAfterMessage_IsClassifiedAsAnInScopeGap_NotAPermanentRefusal()
+    public void CloseRefusedAfterMessage_ReturnsFalse_AndDoesNotRaise()
     {
         var probe = new FakeTestExecution(handled: true);
 
-        var oos = Assert.Throws<RunnerOutOfScopeException>(() =>
-            RunnerFormCloseHandler.RefuseCloseAfter(new NavNCLDialogException("boom"), probe));
+        // No Assert.Throws: the whole claim is that control comes back.
+        var mayClose = RunnerFormCloseHandler.RefuseCloseAfter(
+            new NavNCLDialogException("boom"), probe);
 
-        // The prefix IS the classification. Asserting the surface name too, so a rewording that
-        // kept the prefix but lost the surface still fails here.
-        Assert.StartsWith("not-yet-implemented", oos.Reason, StringComparison.Ordinal);
-        Assert.Contains("testpage-close-refused-after-message", oos.Reason, StringComparison.Ordinal);
+        Assert.False(mayClose);
+        Assert.Equal("boom", probe.Seen);
     }
 
-    // The property the classification exists to produce, asserted through the real decision
-    // point rather than by re-reading the string: a [TryFunction] must NOT swallow this refusal.
+    // A [TryFunction] must see the refusal the same way it sees any completed call: as a
+    // SUCCESS, because nothing was raised. The previous behaviour tore an out-of-scope signal
+    // through here, which is what a TryFunction cannot swallow -- so this is the negative of
+    // the test it replaces, and it fails against the old code with the refusal escaping.
     [Fact]
-    public void CloseRefusedAfterMessage_TearsThroughATryFunction()
+    public void CloseRefusedAfterMessage_LeavesATryFunctionReportingSuccess()
     {
         var probe = new FakeTestExecution(handled: true);
 
-        var oos = Assert.Throws<RunnerOutOfScopeException>(() =>
-            BcRuntime.NavApplicationObjectBase_TryInvoke(
-                null,
-                () => RunnerFormCloseHandler.RefuseCloseAfter(new NavNCLDialogException("boom"), probe)));
+        var ok = BcRuntime.NavApplicationObjectBase_TryInvoke(
+            null,
+            () => RunnerFormCloseHandler.RefuseCloseAfter(new NavNCLDialogException("boom"), probe));
 
-        Assert.Contains("testpage-close-refused-after-message", oos.Reason, StringComparison.Ordinal);
+        Assert.True(ok);
+        Assert.Equal("boom", probe.Seen);
     }
 
     // Negative control for the pair above, and the reason they are two tests rather than one:

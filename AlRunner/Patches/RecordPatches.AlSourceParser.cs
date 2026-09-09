@@ -484,10 +484,23 @@ public static partial class RecordPatches
         var minValue = PropValue(props, "MinValue")?.ToString()?.Trim();
         var maxValue = PropValue(props, "MaxValue")?.ToString()?.Trim();
 
+        // #3545 — Editable and DataClassification, read here as well as on the symbol path so
+        // the two paths answer the same MetaField for the same declaration. Only the explicit
+        // `Editable = false` is carried: AL's default is true and MetaField's own null default
+        // already resolves to it, so asserting a true here would claim a reading never made.
+        // EnumTypeId/EnumTypeName are deliberately NOT set from AL source — the enum's OBJECT
+        // ID is not in the type text, and half of that pair is worse than none of it; see
+        // docs/metadata-equivalence.md#three-symbol-properties-the-reader-dropped.
+        bool? editable = PropIs(props, "Editable", "false") ? false : null;
+        var fieldDataClassification = PropValue(props, "DataClassification")?.ToString()?.Trim();
+
         return new ParsedField(fid, fname, ftype, length, isFlowField, calcFormula,
             optionMembers, initValueText, isAutoIncrement, caption,
             relationArms, relationValidate, isFlowFilter, obsoleteState, obsoleteReason,
-            minValue, maxValue);
+            minValue, maxValue,
+            Editable: editable,
+            DataClassificationName: string.IsNullOrWhiteSpace(fieldDataClassification)
+                ? null : fieldDataClassification);
     }
 
     /// <summary>
@@ -775,7 +788,7 @@ public static partial class RecordPatches
         return parts.Count > 0 ? parts[^1] : Unquote(fallbackText?.Trim() ?? "");
     }
 
-    private static void TryParseTableFile(string text)
+    private static void TryParseTableFile(string text, string? filePath = null)
     {
         foreach (var obj in ParseAlObjects(text))
         {
@@ -852,15 +865,19 @@ public static partial class RecordPatches
             // this value is not; neither would have caught it. DataClassification above is an
             // identifier, not a literal, so it needs none of this.
             var externalName = AlStringLiteralText(PropValue(table.PropertyList, "ExternalName"));
+            // #3545 — a field that declares no DataClassification takes the TABLE's, exactly
+            // as the symbol-read path resolves it.
+            ApplyOwnerDataClassification(fields, dataClassification);
             _parsedTables[tableId] = new ParsedTable(tableId, tableName, fields, pkFieldIds,
                 secondaryKeys, isTableTypeTemporary, dataPerCompany, lookupPage, drillDownPage,
                 TableTypeName: string.IsNullOrWhiteSpace(tableTypeName) ? null : tableTypeName.Trim(),
                 DataClassificationName: string.IsNullOrWhiteSpace(dataClassification) ? null : dataClassification,
-                ExternalName: string.IsNullOrWhiteSpace(externalName) ? null : externalName);
+                ExternalName: string.IsNullOrWhiteSpace(externalName) ? null : externalName,
+                OwningAppId: filePath != null ? ResolveOwningApp(filePath)?.AppId : null);
         }
     }
 
-    private static void TryParseTableExtensionFile(string text)
+    private static void TryParseTableExtensionFile(string text, string? filePath = null)
     {
         foreach (var obj in ParseAlObjects(text))
         {
@@ -873,12 +890,23 @@ public static partial class RecordPatches
             // ParseFieldSyntax for what they used to lose (#1711).
             var fields = new List<ParsedField>();
             // OfType<FieldSyntax>: a tableextension's field list also holds `modify(...)`
-            // entries, which declare no new field. The regex only ever matched
-            // `field(N; Name; Type)` either, so this keeps the same set.
+            // entries (NavSyntax.FieldModificationSyntax), which declare no new field. The
+            // regex only ever matched `field(N; Name; Type)` either, so this keeps the same
+            // set. #3600 reads that same list a second time below for the OPPOSITE purpose —
+            // not to skip modify(...), but to know one is there.
             if (ext.Fields != null)
                 foreach (var f in ext.Fields.Fields.OfType<NavSyntax.FieldSyntax>())
                     if (ParseFieldSyntax(f) is { } pf)
                         fields.Add(pf);
+
+            // #3600 — a modify(...) block changes an existing field's properties only in the
+            // extension's OWN delta document (BC's <FieldChange>), never in the base table's
+            // document; see MergeExtensionFields / ShouldBuildTableFromBcDocument. True even
+            // for a mixed extension that ALSO adds fields, because the field list above cannot
+            // tell "no modify" from "modify, but this extractor discards it" — it has to be
+            // asked directly.
+            var hasModify = ext.Fields != null
+                && ext.Fields.Fields.OfType<NavSyntax.FieldModificationSyntax>().Any();
 
             // #3216 — the keys a tableextension declares. Every one is a SECONDARY key on the
             // extended table: a tableextension cannot restate the primary key, so unlike
@@ -903,17 +931,25 @@ public static partial class RecordPatches
                 }
             }
 
+            // #3545 — the owner of an extension field is the TABLEEXTENSION, not the table it
+            // extends; see ApplyOwnerDataClassification for the measurement that settled it.
+            ApplyOwnerDataClassification(fields,
+                PropValue(ext.PropertyList, "DataClassification")?.ToString()?.Trim());
+
             Console.Error.WriteLine($"[TableExt] parsed extension {extId} '{extName}' extends '{baseName}' with {fields.Count} fields, {extKeys.Count} keys");
 
             // Merge into _parsedExtensionFields, record the extension id (so its emitted
             // TableExtension{extId} CLR type can be instantiated and registered on each
             // record of the base table — record-level triggers + field-validate dispatch),
-            // and evict any already-built NCLMetaTable for the base table so a rebuild picks
-            // up these fields. All three steps — including the eviction, whose necessity is
-            // explained on MergeExtensionFields itself (#2126) — happen atomically in the
-            // shared helper so a second writer (RecordPatches.BcAppFallback.cs's
-            // EnsureBcSymbolExtensionIndex) can't repeat this file's own former omission of it.
-            MergeExtensionFields(baseName, extId, fields, extKeys);
+            // record this extension's declaring app (from this file's own app.json, walked up
+            // from filePath) and whether it declares modify(...) (#3600), and evict any
+            // already-built NCLMetaTable for the base table so a rebuild picks up these
+            // fields. All these steps happen atomically in the shared helper so a second
+            // writer (RecordPatches.BcAppFallback.cs's EnsureBcSymbolExtensionIndex) can't
+            // repeat this file's own former omission of the eviction (#2126).
+            MergeExtensionFields(baseName, extId, fields, extKeys,
+                owningAppId: filePath != null ? ResolveOwningApp(filePath)?.AppId : null,
+                hasModify: hasModify);
         }
     }
 
@@ -1503,7 +1539,24 @@ internal record ParsedRelationArm(string TableName, string? FieldName, List<Pars
 /// undeclared. Passed through to MetaField.minValue (a string) unparsed — NCL's own field
 /// validation on TestPage SetValue is what evaluates and formats it (#2495).</param>
 /// <param name="MaxValue">Same shape as <see cref="MinValue"/>, for MaxValue.</param>
-internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false, string ObsoleteState = "No", string? ObsoleteReason = null, string? MinValue = null, string? MaxValue = null);
+/// <param name="Editable">The declared <c>Editable</c>, or null when the field declares none —
+/// which AL reads as true (#3545). Null and true are therefore the same answer; what the null
+/// preserves is "nothing was declared", so the builder passes MetaField's own null default
+/// through rather than asserting a value it did not read.</param>
+/// <param name="DataClassificationName">The <c>DataClassification</c> BC's own emitter states
+/// for the field: the field's own when it declares one, otherwise its OWNER's — the table, or
+/// the tableextension for a field an extension adds. Every reader resolves this through
+/// <c>RecordPatches.ApplyOwnerDataClassification</c> as soon as the owner's declaration is in
+/// hand, so consumers never re-derive it; that method carries the rule and its two exceptions.
+/// See docs/metadata-equivalence.md#field-dataclassification-inherits-its-owner (#3545).</param>
+/// <param name="EnumTypeId">The object id of the enum an <c>Enum "X"</c>-typed field names, or
+/// 0 when the field is not enum-typed. Read from the symbol file and NOT yet passed to
+/// <c>MetaField.enumTypeId</c> — BC then resolves the id through NCLMetadata and the runner
+/// registers no metadata object for a precompiled app's enum (#3594). Carried here so the
+/// reading is in place when it is.</param>
+/// <param name="EnumTypeName">The enum's name, paired with <see cref="EnumTypeId"/>; null when
+/// the field is not enum-typed.</param>
+internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false, string ObsoleteState = "No", string? ObsoleteReason = null, string? MinValue = null, string? MaxValue = null, bool? Editable = null, string? DataClassificationName = null, int EnumTypeId = 0, string? EnumTypeName = null);
 internal record ParsedKey(string Name, List<int> FieldIds);
 
 /// <summary>A key declared by a <c>tableextension</c> on the table it extends (#3216).
@@ -1559,9 +1612,16 @@ internal record ParsedColumnFilter(string FieldName, ParsedColumnFilterKind Kind
 /// Application 28.1's 1523 tables state one, e.g. "CDS BC Table Relation" ->
 /// <c>dyn365bc_syntheticrelation</c>). Null when the table declares none, which is the blank
 /// the Table Metadata column must then report (#2938).</param>
+/// <param name="OwningAppId">The <c>id</c> of the <c>app.json</c> that owns the file this table
+/// was declared in, or null when the file's path was not supplied (a precompiled-.app
+/// source-text reparse, or a --tdd in-memory regeneration — see the callers of
+/// <c>TryParseTableFile</c>) or no app.json was found above it. #3600's table-metadata-source
+/// guard uses this to tell a same-app tableextension from a cross-app one; see
+/// <see cref="RecordPatches._extensionSourceInfo"/>.</param>
 internal record ParsedTable(int TableId, string TableName,
     List<ParsedField> Fields, List<int> PkFieldIds, List<ParsedKey>? SecondaryKeys = null,
     bool IsTableTypeTemporary = false, bool DataPerCompany = true,
     string? LookupPageName = null, string? DrillDownPageName = null,
     string? TableTypeName = null,
-    string? DataClassificationName = null, string? ExternalName = null);
+    string? DataClassificationName = null, string? ExternalName = null,
+    Guid? OwningAppId = null);

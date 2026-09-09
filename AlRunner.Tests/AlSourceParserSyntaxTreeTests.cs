@@ -44,7 +44,7 @@ public class AlSourceParserSyntaxTreeTests
     {
         var parse = RecordPatchesType.GetMethod("TryParseTableFile",
             BindingFlags.NonPublic | BindingFlags.Static)!;
-        parse.Invoke(null, new object[] { source });
+        parse.InvokeStatic(source);
         Assert.True(ParsedTables.Contains(TableId), $"table {TableId} was not parsed at all");
         var table = ParsedTables[TableId]!;
         foreach (var f in (System.Collections.IEnumerable)table.GetType()
@@ -177,7 +177,7 @@ public class AlSourceParserSyntaxTreeTests
         {
             var parse = RecordPatchesType.GetMethod("TryParseTableFile",
                 BindingFlags.NonPublic | BindingFlags.Static)!;
-            parse.Invoke(null, new object[] { source });
+            parse.InvokeStatic(source);
 
             var table = ParsedTables[TableId]!;
             var ids = ((System.Collections.IEnumerable)table.GetType()
@@ -291,9 +291,9 @@ public class AlSourceParserSyntaxTreeTests
         var parse = RecordPatchesType.GetMethod("TryParseTableFile",
             BindingFlags.NonPublic | BindingFlags.Static)!;
 
-        parse.Invoke(null, new object[] { "this is not AL at all { { {" });
-        parse.Invoke(null, new object[] { "" });
-        parse.Invoke(null, new object[] { "page 50100 P { layout { area(content) { } } }" });
+        parse.InvokeStatic("this is not AL at all { { {");
+        parse.InvokeStatic("");
+        parse.InvokeStatic("page 50100 P { layout { area(content) { } } }");
 
         Assert.False(ParsedTables.Contains(TableId));
     }
