@@ -83,35 +83,45 @@ public sealed class FloorOnlyBundleEnumFieldTests
     }
 
     /// <summary>
-    /// The opposite direction, on the SAME mechanism: where the enum IS resolvable the id must
-    /// still be stated, so the guard cannot be satisfied by withholding it everywhere.
-    /// <see cref="BcRuntime.CanResolveEnumMetadata"/> is the one decision both directions go
-    /// through, so asserting it answers differently for a registered and an unregistered id
-    /// pins that it is a real lookup rather than a constant.
+    /// The reader half, in both directions. #3594's first attempt withheld an id the registry
+    /// did not know, which masked the real defect: <c>TryParseEnumSymbol</c> dropped every enum
+    /// declaring no <c>Values</c> array, so an enum an app genuinely ships was simply missing.
+    /// Measured on System Application 28.1 — 3 of its 141 enums are written that way, and
+    /// 8889 "Email Connector" is one of them.
+    ///
+    /// <para>Both directions matter and are asserted here: a valueless enum must survive the
+    /// parse WITH its id and name, and an enum WITH values must still carry them. A reader that
+    /// returned an empty symbol for everything would satisfy the first alone.</para>
     /// </summary>
     [Fact]
-    public void CanResolveEnumMetadata_AnswersFalseForUnknown_AndTrueForRegistered()
+    public void EnumDeclaringNoValues_SurvivesTheSymbolParse_AndOneWithValuesKeepsThem()
     {
-        const int unknown = 987654;
-        AlRunner.AlEnumMetadataRegistry.Clear();
-        try
-        {
-            Assert.False(AlRunner.BcRuntime.CanResolveEnumMetadata(unknown),
-                "an id no app declares must not be reported resolvable — stating it is what aborts the bundle.");
+        // A valueless extensible enum, exactly the shape BC ships for 8889.
+        var valueless = System.Text.Json.JsonDocument.Parse("""
+            { "Id": 8889, "Name": "Email Connector",
+              "Properties": [ { "Name": "Extensible", "Value": "1" } ] }
+            """).RootElement;
 
-            AlRunner.AlEnumMetadataRegistry.Register(unknown, "Late Registered",
-                options: new[] { "A", "B" }, indexes: new[] { 0, 1 });
+        var parsedValueless = AlRunner.Patches.BcAppSymbolCache.ParseEnumSymbolForTest(valueless);
 
-            Assert.True(AlRunner.BcRuntime.CanResolveEnumMetadata(unknown),
-                "once the declaring app's symbols are registered the id is resolvable and must be stated.");
+        Assert.NotNull(parsedValueless);
+        Assert.Equal(8889, parsedValueless!.Id);
+        Assert.Equal("Email Connector", parsedValueless.Name);
+        Assert.Empty(parsedValueless.Options);
+        Assert.Empty(parsedValueless.Indexes);
 
-            // Zero is "this field names no enum" and is never resolvable, whatever is registered.
-            Assert.False(AlRunner.BcRuntime.CanResolveEnumMetadata(0),
-                "field.EnumTypeId == 0 means the field is not enum-typed.");
-        }
-        finally
-        {
-            AlRunner.AlEnumMetadataRegistry.Clear();
-        }
+        // ...and the ordinary shape is unaffected, so "accept valueless" did not become
+        // "return an empty symbol for everything".
+        var withValues = System.Text.Json.JsonDocument.Parse("""
+            { "Id": 8888, "Name": "Email Status", "Values": [
+                { "Name": "Draft", "Ordinal": 0 },
+                { "Name": "Queued", "Ordinal": 5 } ] }
+            """).RootElement;
+
+        var parsedWithValues = AlRunner.Patches.BcAppSymbolCache.ParseEnumSymbolForTest(withValues);
+
+        Assert.NotNull(parsedWithValues);
+        Assert.Equal(new[] { "Draft", "Queued" }, parsedWithValues!.Options);
+        Assert.Equal(new[] { 0, 5 }, parsedWithValues.Indexes);
     }
 }

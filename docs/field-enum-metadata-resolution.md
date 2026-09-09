@@ -104,31 +104,30 @@ entry an app already registered, and never throws: a BC build that does not expo
 inventory leaves the registry untouched, and a field typed by a system enum then fails the same
 loud way it did before. That is a missing optimisation, not a silent wrong answer.
 
-**3. Withhold the id where it cannot be backed.**
-The two steps above cover every enum some app *declares*. They do not cover a bundle that never
-loaded the declaring app's symbols at all, and that turned out to be a whole manifest shape
-rather than an edge case.
+**3. Stop dropping an enum that declares no values.**
+The two steps above cover every enum the registry holds. They do not cover an enum the registry
+never learned, and one whole *class* of enum was being silently discarded at the symbol reader.
 
-A bundle whose `app.json` carries an `application` **floor** with `dependencies: []` resolves
-the stripped platform packages, which carry **no enum symbols whatsoever** — measured on
-`AlRunner.Tests/Fixtures/BcFloorSkip/healthy-suite`: 721 enums registered, Base Application's
-8889 among the absent, against **zero** such misses on the corpus, which names Base Application
-as an explicit dependency and so registers its enums through `RecordPatches.AddBcAppPath`. Four
-fixtures in this repository have that shape (`BcFloorSkip/healthy-suite`,
-`BcFloorSkip/future-suite`, `CrossMajorNote`, `SubscriberScanAudit`).
+`BcAppSymbolCache.TryParseEnumSymbol` began `if (!enumType.TryGetProperty("Values", …)) return
+null;` — so an enum with **no `Values` array at all** was dropped as unreadable. Extensible enums
+whose members all arrive from enumextensions are written exactly that way. Measured on System
+Application 28.1.49838.54308: **3 of its 141 enums** carry no `Values`, and **8889 "Email
+Connector" is one of them** — the very enum this issue is named after, declared by an app that
+genuinely ships it, and absent from the registry all along.
 
-Stating an id that cannot be resolved reproduced the **same 0-of-N abort** on those bundles that
-this whole change exists to remove elsewhere. So `BuildMetaField` asks
-`BcRuntime.CanResolveEnumMetadata(id)` first, and states `enumTypeId`/`enumTypeName` — together
-or not at all — only when the answer is yes.
+That gap was latent for as long as nothing resolved an enum **by id**: the ordinal and caption
+consumers only ever ask about enums they already hold. Stating `EnumTypeId` is what made the
+runner ask, and BC's own metadata names 8889 on five System Application tables.
 
-**Withholding is the faithful answer here, not a silent fake.** With no enum id BC's own factory
-builds the plain `NCLOptionMetadataWithCaptions` from the field's inline option string, which is
-exactly what such a bundle saw before this change and what it still sees. The value is stated
-wherever it can be backed and withheld where it cannot, rather than asserted everywhere and
-failing where it is unbacked. A bundle that *can* resolve the enum is unaffected, which is what
-keeps the guard from being satisfiable by withholding the id everywhere —
-`FloorOnlyBundleEnumFieldTests` asserts both directions.
+An empty option list is the faithful answer here — the enum exists and has no members of its
+own — so the parse now accepts it and keeps the id and name.
+
+**Why there is no "withhold the id" guard.** An intermediate version of this change withheld the
+id whenever the registry did not know it. That read as prudent and was wrong twice over: it
+**masked** this reader gap rather than exposing it, and it made the runner answer `0` where BC
+answers a real id, which `MetadataEquivalenceHarnessTests` correctly reported as a **reader
+regression on 17 fields**. Fixing the reader removed the need for the guard entirely, and the
+floor-only bundles that motivated it pass without it — measured, with the guard deleted.
 
 ## Result
 
@@ -144,8 +143,12 @@ and on `AlRunner.Tests/Fixtures/BcFloorSkip/healthy-suite`, the floor-only shape
 
 | | tests | pass | exec-fail |
 |---|---|---|---|
-| without the resolvability guard | **0** | **0** | **1** |
-| with it | 1 | 1 | 0 |
+| with enum 8889 dropped at the reader | **0** | **0** | **1** |
+| with the parse fixed | 1 | 1 | 0 |
+
+and the metadata-equivalence harness, run with the engine bootstrapped and a matching
+ground-truth bundle: **7 passed, 0 failed, 0 skipped** — the skip count read directly, because
+the summary line prints `Passed!` either way.
 
 and `MetaField.EnumTypeId` moves from a declared difference to an agreeing one, so its entry is
 deleted from `tests/expectations/metadata-equivalence/allowlist.json` and
@@ -164,11 +167,14 @@ distinguishes them:
 |---|---|
 | the Cecil rewrite | corpus aborts on enum **8889**, table 1366 |
 | `EnsureSystemEnumsRegistered` | corpus aborts on enum **2000000002**, table 2000000132 |
-| the resolvability guard | every **floor-only** bundle aborts on enum 8889 — while the corpus stays green |
+| the valueless-enum parse | `FloorOnlyBundleEnumFieldTests` fails; every floor-only bundle aborts on enum 8889 |
 
-That last row is the one worth remembering: the corpus is not a sufficient test bed for this
-change, because the manifest shape that breaks is one the corpus does not have. CI caught it;
-the corpus run could not.
+**No one test bed covers all three**, which is the durable lesson. The corpus stays green through
+the third — it names Base Application explicitly and its bundles resolve real symbols — so a
+change verified only against the corpus reads as safe when it is not. The floor-only fixtures and
+the metadata-equivalence harness are what discriminate, and the harness has to be made to RUN
+(`tools/engine-test-bootstrap.sh` after every build, `--settings engine.runsettings`, and a
+ground-truth bundle matching the build under test) or it skips while printing `Passed!`.
 
 **`enumId` must be read as a field, never through the `Id` property.**
 `NCLFieldEnumBaseMetadata.Id` is `GetAppGroupAwareEnumMetadata().Id`, which calls the very

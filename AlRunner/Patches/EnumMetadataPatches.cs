@@ -858,35 +858,6 @@ public static partial class BcRuntime
     private static FieldInfo? _fFieldEnumMetadataEnumId;
 
     /// <summary>
-    /// Whether an enum object with this id can be resolved to real values in THIS bundle — i.e.
-    /// whether <see cref="NCLFieldEnumMetadata_GetEnumMetadataFromRegistry"/> would answer
-    /// rather than raise.
-    ///
-    /// <para>The MetaField builder asks before stating a field's <c>enumTypeId</c>, because
-    /// stating it is what makes BC resolve it (#3594). A bundle that never loaded the symbols
-    /// of the app declaring the enum has nothing to resolve: the corpus names Base Application
-    /// as an explicit dependency and so registers its 721 enums, while a bundle declaring only
-    /// an <c>application</c> FLOOR with <c>dependencies: []</c> resolves the stripped platform
-    /// packages, which carry no enum symbols at all. Stating an id that cannot be resolved
-    /// turned the whole bundle into a 0-of-N abort — the exact failure #3594 exists to remove,
-    /// reproduced on a different manifest shape
-    /// (<c>AlRunner.Tests/Fixtures/BcFloorSkip/healthy-suite</c>).</para>
-    ///
-    /// <para>Not stating the id is the FAITHFUL answer for such a bundle, not a silent fake:
-    /// with no enum id the upstream BC factory builds the plain
-    /// <c>NCLOptionMetadataWithCaptions</c> from the field's own inline option string, which is
-    /// exactly what the runner answered before #3594 and what every such bundle has always
-    /// seen. The value is stated wherever it can be backed and withheld where it cannot, rather
-    /// than asserted everywhere and failing where it is unbacked.</para>
-    /// </summary>
-    public static bool CanResolveEnumMetadata(int enumId)
-    {
-        if (enumId == 0) return false;
-        EnsureSystemEnumsRegistered();
-        return AlEnumMetadataRegistry.TryGet(enumId, out _);
-    }
-
-    /// <summary>
     /// Replacement for <c>NCLFieldEnumMetadata.GetEnumMetadataFromMetadataProvider()</c> — the
     /// single point through which every accessor of an <c>Enum</c>-typed FIELD's option
     /// metadata resolves. <c>OptionString</c>, <c>Options</c>, <c>OrdinalValues</c>,

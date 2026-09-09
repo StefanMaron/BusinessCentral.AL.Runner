@@ -217,7 +217,15 @@ internal static partial class BcAppSymbolCache
     // an earlier build of this same change (declared-only, same shape) was replayed warm and
     // put 154 of System Application's fields back on CustomerContent while the harness said
     // the reader had been fixed. A wrong answer from cache, wearing a green build.
-    private const int CacheVersion = 35;
+    //
+    // v36: TryParseEnumSymbol stopped dropping an enum that declares no `Values` array (#3594).
+    // Same trap as v35's second half, and it bit the same way: the record SHAPE is unchanged —
+    // an EnumSymbol with an empty option list is shaped exactly like one with a full list — so
+    // PayloadShape cannot see that three enums per System Application payload went from absent
+    // to present. Measured warm on 28.1.49838.54308 before the bump: the harness still reported
+    // 15 MetaField.EnumTypeId differences naming enum 8889, from a payload written by the
+    // previous parse.
+    private const int CacheVersion = 36;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -2256,20 +2264,42 @@ internal static partial class BcAppSymbolCache
             ExternalName: string.IsNullOrWhiteSpace(externalName) ? null : externalName.Trim());
     }
 
+    /// <summary>
+    /// <see cref="TryParseEnumSymbol"/> for AlRunner.Tests. A seam rather than widening the
+    /// parser's own accessibility: the one property worth pinning directly is that an enum
+    /// declaring no <c>Values</c> survives (#3594), and reaching it through a real .app would
+    /// make the test depend on which BC build is provisioned.
+    /// </summary>
+    internal static EnumSymbol? ParseEnumSymbolForTest(JsonElement enumType)
+        => TryParseEnumSymbol(enumType);
+
     private static EnumSymbol? TryParseEnumSymbol(JsonElement enumType)
     {
         if (!enumType.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var id))
             return null;
         var name = enumType.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() ?? string.Empty : string.Empty;
-        if (!enumType.TryGetProperty("Values", out var values) || values.ValueKind != JsonValueKind.Array)
-            return null;
+        // #3594 — an enum with NO `Values` array is a real enum that declares no values, not an
+        // unreadable symbol. Extensible enums whose members all come from enumextensions are
+        // written exactly this way: measured on System Application 28.1, 3 of its 141 enums
+        // carry no `Values` at all, and enum 8889 "Email Connector" is one of them.
+        //
+        // Returning null here dropped those three from the registry entirely. That was latent
+        // for as long as nothing resolved an enum BY ID — the ordinal/caption consumers only
+        // ever ask about enums they already hold — and became observable the moment MetaField
+        // began stating EnumTypeId, because BC's own metadata names 8889 on five System
+        // Application tables and the runner then had no object under it. An empty value list is
+        // the faithful answer: the enum exists, and it has no members of its own.
+        var hasValues = enumType.TryGetProperty("Values", out var values)
+                        && values.ValueKind == JsonValueKind.Array;
 
         var options = new List<string>();
         var indexes = new List<int>();
         var implementations = new List<List<int>>();
         var captions = new List<string?>();
         var nextOrdinal = 0;
-        foreach (var value in values.EnumerateArray())
+        foreach (var value in hasValues
+                     ? values.EnumerateArray().Cast<JsonElement>()
+                     : Enumerable.Empty<JsonElement>())
         {
             var optionName = value.TryGetProperty("Name", out var optionNameProp)
                 ? optionNameProp.GetString() ?? string.Empty
