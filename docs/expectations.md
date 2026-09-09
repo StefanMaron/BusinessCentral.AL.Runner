@@ -98,6 +98,7 @@ tests/expectations/
   known-gaps-<area>.json  ← in-scope but not yet implemented (transient, links to GH issues)
   divergence-<area>.json  ← runner intentionally answers differently from BC (permanent)
   disabled-<area>.json    ← won't compile or won't run; pure skip
+  accept-<area>.json      ← run-level conditions this project accepts (#3561)
 ```
 
 One file per area. Sharding matches Microsoft's
@@ -118,6 +119,7 @@ rather than replace it.
     // Required runner extension
     "Mode": "expect-oos",                          // expect-oos | expect-fail-known-gap
                                                    //   | expect-divergence | skip
+                                                   //   | accept-partial-company-init
 
     // Conditional
     "Reason": "report-rendering",                  // required when Mode = expect-oos
@@ -155,6 +157,42 @@ when only some tests in a codeunit are affected.
 | `expect-fail-known-gap` | fail (any exception or assertion mismatch) | `pass-known-gap` | Surface is in scope but not yet implemented; `Issue` tracks the work |
 | `expect-divergence` | fail, without raising an out-of-scope signal | `pass-divergence` | Runner *intentionally* answers differently from real BC, permanently; `Doc` cites the decision |
 | `skip` | n/a — runner does not invoke the test | `skipped` | Test cannot compile against the current AL output, or otherwise must not run |
+| `accept-partial-company-init` | n/a — not a test expectation | n/a | This project knowingly runs against a company whose initialization codeunit aborts; see below |
+
+### `accept-partial-company-init`: a run-level condition, not a test (#3561)
+
+Every other mode classifies a TEST. This one classifies the RUN: it declares that this project
+knowingly accepts a company initialization that did not complete, so the abort stops escalating
+the exit code from 0 to 2 (`docs/partial-company-initialization.md`).
+
+```jsonc
+[
+  {
+    "codeunitId":   2,
+    "CodeunitName": "Company-Initialize",
+    "Method":       "*",                     // must be "*" — the entry names a codeunit, not a test
+    "Mode":         "accept-partial-company-init",
+    "Reason":       "this project ships without the dependency codeunit 2 needs; tracked in <issue>"
+  }
+]
+```
+
+- **`Reason` is mandatory free text**, and a bare placeholder (`n/a`, `none`, `TBD`, `-`, …) is
+  refused at load time — the same fixed token list `.github/scripts/check_corpus_linkage.sh`
+  refuses for a `Corpus-NA:` reason. It is printed in the summary next to the abort, so it is
+  what a reader of the run sees.
+- **`Issue` is forbidden** and `Method` must be `"*"`; both are refused before a test runs.
+- **Nothing is silenced.** The abort still appears in the printed summary (marked
+  `[accepted: <reason>]`), in `--out`, in `--output-json` (`companyInitFailures[].accepted`) and
+  in the JUnit comment. Only the escalation is suppressed, and only for the codeunit the entry
+  names — exit codes 1, 3, 4 and 5 are untouched, and an abort of a codeunit no entry names
+  still exits 2.
+- **Drift is loud**, mirroring `expect-oos`: if the named codeunit RAN TO COMPLETION in this
+  run, the entry is an exit-code suppression with nothing behind it, and the run says
+  "remove the entry" and does not exit 0. An entry whose codeunit this run never attempted is
+  inert rather than wrong — the manifest directory is auto-probed and shared by every
+  invocation in a project, which is the same reason `--expectations-require-match` is opt-in.
+  These entries are excluded from that audit for the same reason: they name no test.
 
 ### Which throw shapes `expect-oos` recognises
 

@@ -688,6 +688,11 @@ internal static partial class ProgramSupport
         w.WriteLine("                          invoked. Manifest drift is loud: an entry whose test now");
         w.WriteLine("                          passes, or an out-of-scope throw with no entry, fails");
         w.WriteLine("                          the run with a diagnostic naming the entry to fix.");
+        w.WriteLine("                          accept-partial-company-init is the one run-level mode: it");
+        w.WriteLine("                          names an initialization codeunit whose abort this project");
+        w.WriteLine("                          accepts, with a mandatory Reason, and suppresses ONLY the");
+        w.WriteLine("                          company-init exit 0->2 escalation (never 1/3/4/5, unlike");
+        w.WriteLine("                          --no-strict-exit). The abort is still reported everywhere.");
         w.WriteLine("  --expectations-require-match");
         w.WriteLine("                          Assert that this RUN discovers a test for EVERY entry in");
         w.WriteLine("                          the active manifest, and fail (exit 5) on any that");
