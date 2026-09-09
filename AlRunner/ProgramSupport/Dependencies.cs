@@ -348,23 +348,138 @@ internal static partial class ProgramSupport
 
     internal static List<string> CollectSuitePaths(string suite, string? bucketRoot = null)
     {
-        var all = new List<string>();
+        var all = ConventionalSourceDirs(suite);
+        var shared = SharedDirOf(bucketRoot);
+        // #3611/#3714: src/, app*/ and test/ are a convention inherited from the legacy bucket
+        // trees, not a contract — alc compiles every .al under the project root, whatever the
+        // folder is called. A suite with any .al file OUTSIDE those folders is compiled from its
+        // root, exactly like a flat bundle, so a root-level codeunit or a sibling folder such as
+        // ControlAddin/ can no longer vanish from the compile (silently, when the dropped file
+        // was the test codeunit: "Tests: 0 total", exit 0). A suite that keeps everything under
+        // the conventional folders returns exactly the list it always did. The register-source-
+        // dirs loops in Program.cs ask the same predicate, so compile and table parsers widen
+        // together. Trap: a suite's sub-directories are part of that suite by design, nested
+        // app.json or not (Suites.cs, EnumerateSuitesBelow) — widening therefore absorbs a
+        // nested app the way a flat suite always has; it is not a reason to refuse.
+        if (all.Count == 0)
+        {
+            // Flat bundle: neither src/ nor app*/ nor test/ — the suite root is the one folder,
+            // provided it holds any .al at all.
+            if (AlRunner.Infrastructure.SafeDirectoryScan.Files(suite, "*.al").Count > 0)
+                all.Add(suite);
+        }
+        else if (SuiteHasAlOutsideConventionalDirs(suite, bucketRoot, all))
+        {
+            all.Clear();
+            all.Add(suite);
+        }
+        if (shared != null) all.Add(shared);
+        return all;
+    }
+
+    /// <summary><c>&lt;bucketRoot&gt;/_shared</c> when a bucket root is given and the folder exists.</summary>
+    private static string? SharedDirOf(string? bucketRoot)
+    {
+        if (bucketRoot == null) return null;
+        var shared = Path.Combine(bucketRoot, "_shared");
+        return Directory.Exists(shared) ? shared : null;
+    }
+
+    /// <summary>
+    /// The folders the legacy bucket layout put AL in — <c>src/</c>, every <c>app*/</c>, and
+    /// <c>test/</c> — in the order <see cref="CollectSuitePaths"/> has always returned them.
+    /// Empty for a flat suite.
+    /// </summary>
+    private static List<string> ConventionalSourceDirs(string suite)
+    {
+        var dirs = new List<string>();
         var s = Path.Combine(suite, "src");
         var t = Path.Combine(suite, "test");
-        if (Directory.Exists(s)) all.Add(s);
+        if (Directory.Exists(s)) dirs.Add(s);
         foreach (var app in Directory.EnumerateDirectories(suite, "app*"))
-            all.Add(app);
-        if (Directory.Exists(t)) all.Add(t);
-        // Flat bundle: if neither src/ nor test/ exist, include the suite root so
-        // the emitter can recurse into it and find all .al files.
-        if (all.Count == 0 && AlRunner.Infrastructure.SafeDirectoryScan.Files(suite, "*.al").Any())
-            all.Add(suite);
-        if (bucketRoot != null)
+            dirs.Add(app);
+        if (Directory.Exists(t)) dirs.Add(t);
+        return dirs;
+    }
+
+    /// <summary>
+    /// True when some <c>.al</c> file under <paramref name="suite"/> is not under any of
+    /// <paramref name="covered"/> (the conventional folders, plus the bucket's <c>_shared</c>
+    /// when that sits inside the suite). Only <c>.al</c> files count — an app.json, a README or
+    /// a <c>.alpackages/</c> beside <c>src/</c> must not widen the compile.
+    /// <para>
+    /// Never walks the covered folders themselves: a <c>.al</c> outside them is either directly
+    /// at the root or under a top-level folder that is not one of them. So the cost is two
+    /// top-level listings of the root (files, then directories) plus a walk of each
+    /// non-covered, non-hidden sibling — for the common src/-only suite, no walk at all. The
+    /// earlier shape scanned the whole suite and subtracted, re-walking src/ on every call
+    /// (PR #3739 review).
+    /// </para>
+    /// <para>
+    /// Dot-directories (<c>.git</c>, <c>.alpackages</c>, <c>.vscode</c>) are skipped: none is an
+    /// AL source root, and <c>.git</c> can hold tens of thousands of files. A sibling the walk
+    /// could not read is a "could not tell", never a "no": the suite widens to its root, and the
+    /// directory is named once on stdout (the #2206 pattern), because the emitter's own root scan
+    /// will skip it just the same and anything under it is not compiled.
+    /// </para>
+    /// </summary>
+    private static bool HasAlOutside(string suite, IReadOnlyList<string> covered)
+    {
+        if (AlRunner.Infrastructure.SafeDirectoryScan.Files(suite, "*.al", SearchOption.TopDirectoryOnly).Count > 0)
+            return true;
+        foreach (var top in AlRunner.Infrastructure.SafeDirectoryScan.Directories(suite, "*", SearchOption.TopDirectoryOnly))
         {
-            var shared = Path.Combine(bucketRoot, "_shared");
-            if (Directory.Exists(shared)) all.Add(shared);
+            if (Path.GetFileName(top).StartsWith('.')) continue;
+            // Path.GetRelativePath compares the way the platform does (case-insensitive on
+            // Windows), which is how Directory.Exists/EnumerateDirectories matched `covered`.
+            if (covered.Any(d => Path.GetRelativePath(d, top) == ".")) continue;
+            var hits = AlRunner.Infrastructure.SafeDirectoryScan.Files(top, "*.al", out var unreadable);
+            if (hits.Count > 0) return true;
+            if (unreadable.Count > 0)
+            {
+                WarnUnreadableOnce(suite, unreadable);
+                return true;
+            }
         }
-        return all;
+        return false;
+    }
+
+    private static readonly HashSet<string> _warnedUnreadable = new(StringComparer.Ordinal);
+
+    private static void WarnUnreadableOnce(string suite, IReadOnlyList<string> unreadable)
+    {
+        lock (_warnedUnreadable)
+        {
+            foreach (var dir in unreadable)
+            {
+                if (!_warnedUnreadable.Add(dir)) continue;
+                Console.WriteLine(
+                    $"[warn] {suite}: cannot read {dir}. The suite is compiled from its root, but any "
+                    + ".al file under that directory is NOT compiled (issue #2206 pattern; fix the permissions).");
+            }
+        }
+    }
+
+    /// <summary>
+    /// #3611/#3714: does this suite carry <c>.al</c> files outside <c>src/</c>, <c>app*/</c> and
+    /// <c>test/</c> (and outside the bucket's <c>_shared</c>, which <see cref="CollectSuitePaths"/>
+    /// appends anyway)? When it does, <see cref="CollectSuitePaths"/> compiles it from its root,
+    /// and the RecordPatches source-dir registration in Program.cs must register the root too — a
+    /// table at the root that compiled but was never parsed into the in-memory provider is the
+    /// same defect one layer down. False for a flat suite: there is nothing to widen.
+    /// </summary>
+    /// <param name="conventional">
+    /// The result of <see cref="ConventionalSourceDirs"/> when the caller already has it; computed
+    /// here otherwise.
+    /// </param>
+    internal static bool SuiteHasAlOutsideConventionalDirs(
+        string suite, string? bucketRoot = null, IReadOnlyList<string>? conventional = null)
+    {
+        var dirs = conventional ?? ConventionalSourceDirs(suite);
+        if (dirs.Count == 0) return false;
+        var shared = SharedDirOf(bucketRoot);
+        var covered = shared == null ? dirs : dirs.Append(shared).ToList();
+        return HasAlOutside(suite, covered);
     }
 
     // Deterministic cache key for the bundled-mode emit:
