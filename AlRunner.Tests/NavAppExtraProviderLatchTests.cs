@@ -34,6 +34,10 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+// Joins the serial collection: two tests here mutate RecordPatches statics — the reflection
+// ready-flag and its three resolved members, restored in a finally — and a parallel class must
+// not observe them nulled.
+[Collection(RecordPatchesSerialCollection.Name)]
 public sealed class NavAppExtraProviderLatchTests
 {
     private static readonly string RepoRoot = Path.GetFullPath(
@@ -291,5 +295,87 @@ public sealed class NavAppExtraProviderLatchTests
             "ConditionalWeakTable.Add throws ArgumentException when two concurrent handouts "
             + "race past the TryGetValue in front of it; use AddOrUpdate. Offenders: "
             + string.Join(", ", offenders.Distinct()));
+    }
+
+    [Fact]
+    public void ARefusedStore_ReplaysTheSameRefusalOnEveryLaterHandout()
+    {
+        // The rows BC inserted before it threw stay in the store and nothing can take them
+        // out, so a later handout must not be allowed to fall back and put the runner's own
+        // rows alongside them — both insert paths swallow NavRecordAlreadyExistsException, so
+        // that mixing would be silent.
+        var store = new object();
+        var outcomeType = typeof(RecordPatches).GetNestedType(
+            "NavAppExtraProviderOutcome", BindingFlags.NonPublic | BindingFlags.Public)!;
+        var outcome = Activator.CreateInstance(
+            outcomeType,
+            BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public,
+            binder: null,
+            args: new object?[] { 3, new InvalidOperationException("retriever vanished"), "enumerating its rows" },
+            culture: null)!;
+
+        Assert.Null(Record.Exception(() => Invoke("ThrowIfNavAppExtraBcProviderRefused", store)));
+
+        Invoke("MarkNavAppExtraBcProviderRefused", store, outcome);
+
+        var again = Assert.Throws<AlRunner.Infrastructure.RunnerOutOfScopeException>(
+            () => Invoke("ThrowIfNavAppExtraBcProviderRefused", store));
+        Assert.Equal("NAV App Extra (virtual table 2000000157)", again.Api);
+        Assert.Contains("stopped after 3 row", again.Reason, StringComparison.Ordinal);
+        Assert.Contains("retriever vanished", again.Reason, StringComparison.Ordinal);
+
+        // A store marked ANSWERED is not a refused one, so the ordinary latch still lets the
+        // handout through rather than throwing at everything.
+        var answered = new object();
+        Invoke("MarkNavAppExtraBcProviderAnswered", answered);
+        Assert.Null(Record.Exception(() => Invoke("ThrowIfNavAppExtraBcProviderRefused", answered)));
+    }
+
+    [Fact]
+    public void TheFallBackWarning_IsTaggedWarn_AndNamesTheStageAndTheFault()
+    {
+        var text = (string)Invoke(
+            "NavAppExtraProviderFaultWarning", "calling GetAllItems",
+            new NotSupportedException("no metadata retriever"));
+
+        // `[warn]`, not a component tag: Log's default filter is what decides whether this is
+        // seen at all (#2461, #3068).
+        Assert.StartsWith("[warn] ", text, StringComparison.Ordinal);
+        Assert.Contains("NavAppExtraDataProvider", text, StringComparison.Ordinal);
+        Assert.Contains("calling GetAllItems", text, StringComparison.Ordinal);
+        Assert.Contains("NotSupportedException", text, StringComparison.Ordinal);
+        Assert.Contains("no metadata retriever", text, StringComparison.Ordinal);
+        Assert.Contains("3315", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void TheFallBackWarning_IsWrittenOncePerProcessPerFault_NotPerHandout()
+    {
+        // This runs on EVERY data-access handout for 2000000157. A warning repeated per
+        // handout is a warning nobody reads.
+        var stage = "a stage no other test uses " + Guid.NewGuid();
+        var fault = new InvalidTimeZoneException("probe");
+
+        var saved = Console.Error;
+        var captured = new System.IO.StringWriter();
+        try
+        {
+            Console.SetError(captured);
+            Invoke("WarnOnceNavAppExtraProviderFault", stage, fault);
+            Invoke("WarnOnceNavAppExtraProviderFault", stage, fault);
+            Invoke("WarnOnceNavAppExtraProviderFault", stage, new InvalidTimeZoneException("again"));
+        }
+        finally
+        {
+            Console.SetError(saved);
+        }
+
+        var lines = captured.ToString()
+            .Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+            .Where(l => l.Contains(stage, StringComparison.Ordinal))
+            .ToList();
+
+        Assert.Single(lines);
+        Assert.Contains("InvalidTimeZoneException", lines[0], StringComparison.Ordinal);
     }
 }

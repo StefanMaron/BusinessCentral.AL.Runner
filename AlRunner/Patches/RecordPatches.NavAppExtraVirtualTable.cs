@@ -110,6 +110,7 @@
 
 using System.Collections.Concurrent;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using AlRunner.Infrastructure;
@@ -209,6 +210,14 @@ public static partial class RecordPatches
         var seeded = _naeSeededByStore.GetValue(store, static _ => new ConcurrentDictionary<Guid, byte>());
         var inserted = 0;
 
+        // A store whose FIRST handout refused stays refused. The rows BC managed to insert
+        // before it threw are still in the store and nothing can take them out, so a later
+        // handout falling back would put the runner's rows alongside a partial BC row set --
+        // the mixing this refuses, arrived at one handout later and silently, because both
+        // insert paths swallow NavRecordAlreadyExistsException. Same device as
+        // RunObjectMetadataPopulateOnce: the original refusal is replayed with its own stack.
+        ThrowIfNavAppExtraBcProviderRefused(store);
+
         if (!_naeBcProviderAnswered.TryGetValue(store, out _))
         {
             var outcome = TryPopulateNavAppExtraFromBcProvider(store, session);
@@ -221,6 +230,12 @@ public static partial class RecordPatches
                     break;
 
                 case NavAppExtraBcAnswer.Refuse:
+                    // Recorded first, thrown second, and deliberately in that order: the throw
+                    // keeps the literal factory-call spelling that
+                    // VirtualTableRefusalClaimTests counts, so this refusal cannot be deleted
+                    // later without that ratchet noticing. (That count scans raw file text, so
+                    // do not write the spelling into a comment either — it counts there too.)
+                    MarkNavAppExtraBcProviderRefused(store, outcome);
                     throw NavAppExtraShapeGap(
                         NavAppExtraPartialAnswerDetail(outcome.Inserted, outcome.Fault!));
 
@@ -416,6 +431,25 @@ public static partial class RecordPatches
     /// </summary>
     internal static void MarkNavAppExtraBcProviderAnswered(object store)
         => _naeBcProviderAnswered.AddOrUpdate(store, new object());
+
+    /// <summary>
+    /// Record the refusal so every later handout for this store replays it rather than falling
+    /// back onto a store that already holds BC's partial rows.
+    /// </summary>
+    internal static void MarkNavAppExtraBcProviderRefused(object store, in NavAppExtraProviderOutcome outcome)
+        => _naeBcProviderAnswered.AddOrUpdate(store, ExceptionDispatchInfo.Capture(
+            NavAppExtraShapeGap(NavAppExtraPartialAnswerDetail(outcome.Inserted, outcome.Fault!))));
+
+    /// <summary>
+    /// Replay a recorded refusal. <c>ExceptionDispatchInfo.Throw</c> rather than <c>throw</c>,
+    /// so the message still points at the handout that actually found the partial answer.
+    /// </summary>
+    internal static void ThrowIfNavAppExtraBcProviderRefused(object store)
+    {
+        if (_naeBcProviderAnswered.TryGetValue(store, out var prior)
+            && prior is ExceptionDispatchInfo refused)
+            refused.Throw();
+    }
 
     /// <summary>
     /// Build one row per app the runner loaded, from the same <c>BcRuntime.RegisteredModules()</c>
