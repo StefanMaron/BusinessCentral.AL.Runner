@@ -2178,6 +2178,29 @@ public static partial class RecordPatches
                 return permSetSysDa;
             }
 
+            // ── Permission system virtual table (2000000005) ────────────────────────────
+            // Virtual on the service tier too: PermissionDataProvider computes one row per
+            // permission a permission set grants, from the same metadata inventory the two
+            // tables above read. An empty store made every `Permission.Get(role, type, id)`
+            // answer "does not exist" and every filtered walk come back empty, while the
+            // set's HEADER listed correctly one table over — so a set's grants were
+            // unreadable with nothing reporting a gap (#3695).
+            // See RecordPatches.PermissionSystemTable.cs.
+            if (IsPermissionSystemTable(table))
+            {
+                if (!perTable.TryGetValue(tableId, out var permDa))
+                {
+                    var createdPerm = _mCreateTempDataAccess!.Invoke(self, new object[] { table })!;
+                    permDa = perTable.GetOrAdd(tableId, createdPerm);
+                }
+                var permSession = _fDasSession?.GetValue(self)
+                    ?? throw PermissionSystemTableShapeGap(
+                        "DataAccessSource has no skeleton session, so BC's own "
+                        + "PermissionDataProvider cannot be constructed");
+                PopulatePermissionSystemTable(permDa, table, permSession);
+                return permDa;
+            }
+
             // ── Aggregate Permission Set system virtual table (2000000167) ──────────────
             // Virtual on the service tier too: its rows are the UNION of System-scope
             // (Metadata Permission Set, 2000000250 — just above) and Tenant-scope (Tenant
