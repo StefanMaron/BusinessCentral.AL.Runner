@@ -94,3 +94,24 @@ whole bump, with `git merge-file`, and fails if they conflict. It also fails on 
 enough to be a conflict magnet, and checks that the `groups` keys are exactly the app-group
 directories on disk — so a new suite whose baseline entry was forgotten fails in seconds
 locally instead of on eight CI legs.
+
+That holds the *shape* of a `history.md` section if one is written. It cannot see an omission,
+and for a long time nothing could: PR #3588 bumped the pin, passed all 13 required checks
+green, and wrote no entry at all — caught by a reviewer, not by CI (#3591).
+
+`.github/scripts/check_count_baseline_history.sh`, run by `pr-gate.yml`, closes that. It fires
+when a PR moves the `tests/al-language` gitlink and does not touch `history.md`. The trigger is
+the **pin**, not this file: adding or removing a `runner-extras` group line needs no entry —
+the group name and its count say what changed — and of the last 12 commits touching
+`test-count-baseline.json` when the guard was written, the 2 that carried no `history.md`
+change were both exactly that, and neither was a violation. Of the 31 commits that moved the
+pin since `history.md` existed, all 31 carried an entry.
+
+If a bump genuinely has nothing to record, say so on its own line in the PR body — the reason
+is mandatory, and a placeholder is refused:
+
+```
+Count-Baseline-History-NA: <why this bump has nothing to record>
+```
+
+It checks only that an entry *exists*. Whether it is a good one is a reviewer's call.

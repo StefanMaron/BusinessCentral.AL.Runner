@@ -274,6 +274,68 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash .github/scripts/check_corpus_pin_forward.sh
 
+  require-count-baseline-history:
+    name: A corpus pin bump must record why in history.md
+    runs-on: ubuntu-latest
+    # #3591. tests/expectations/count-baseline/README.md has required an entry
+    # in history.md on every pin bump since the file existed, and nothing
+    # enforced it. CountBaselineMergeShapeTests validates a section's SHAPE if
+    # one is written, so an omission is invisible to it; nothing in .github/ or
+    # tools/ read the file at all. PR #3588 bumped the pin, passed all 13
+    # required checks green, and had no entry -- caught by a reviewer.
+    #
+    # The entry is not decoration. For a bump that deliberately stops short of
+    # corpus master, the reasoning for WHERE IT STOPPED is what the next agent
+    # needs, and history.md is where they look. On #3588 that reasoning lived
+    # only in the PR body, which is not reachable from a checkout.
+    #
+    # This is the same shape as require-corpus-linkage above -- a presence
+    # check over the PR's changed paths, with a mandatory-reason opt-out -- and
+    # it is offline for the same reason: it gates, so by the rule of thumb at
+    # the top of this file it must not be able to fail for an environmental
+    # reason. The changed-file list comes from the local checkout via git, not
+    # from api.github.com.
+    #
+    # Scoping, and why it is the PIN and not the count: see the header of
+    # check_count_baseline_history.sh. Short version, measured on main at
+    # e03dbfc1 -- of the last 12 commits touching test-count-baseline.json, 10
+    # carried a history change and 2 did not, and both of those two added a
+    # runner-extras group line without moving the pin, so neither was a
+    # violation. Of the 31 commits moving the pin since history.md was created,
+    # 31 carried an entry. Replayed against all 31, this guard fires on none of
+    # them, and against #3588's real pre-fix diff it fires.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Same reason as require-corpus-linkage: both endpoints of the diff
+          # must be present as objects, and the PR head is only reachable with
+          # the full history fetched.
+          fetch-depth: 0
+
+      - name: Collect the PR's changed files
+        id: changed
+        # BASE...HEAD from the event payload, never the checked-out HEAD -- the
+        # #3261 collapse the require-corpus-linkage comment above explains in
+        # full. Sharing pr_changed_files.sh keeps both endpoints under
+        # test_pr_changed_files.sh rather than repeating the shape inline.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          files=$(bash .github/scripts/pr_changed_files.sh)
+          {
+            echo "files<<CHANGED_FILES_EOF"
+            printf '%s\n' "$files"
+            echo "CHANGED_FILES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check a pin bump records its reasoning in history.md
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+        run: bash .github/scripts/check_count_baseline_history.sh
+
   verify-trigger-list:
     name: pull_request trigger lists must keep their load-bearing event types
     runs-on: ubuntu-latest
