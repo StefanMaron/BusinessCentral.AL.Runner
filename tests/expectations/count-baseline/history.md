@@ -2168,6 +2168,52 @@ that is still open: corpus #273 -> AlRunner#2943 (codeunit 60559) and corpus #27
 
 Written by the fbk-2 agent.
 
+## No bump: the pin stays at `3ad4c340`, re-measured 2026-09-09
+
+Not a bump -- a recorded negative result, so the next agent does not re-run the corpus to
+learn the same thing. Of the two blockers named directly above, **one cleared and one did
+not**, and the one that did not is the one whose position decides everything.
+
+`AlRunner#3593` is now CLOSED, and codeunit 60602 passes here. `AlRunner#2943` is still OPEN,
+and its corpus test -- codeunit 60559 `"TPAROK Tests"`, from corpus #273, commit `123d6dd` --
+is the **first** of the 21 commits between `3ad4c340` and corpus tip `0163b377`. A pin cannot
+skip a predecessor, so a single unfixed gap at position 1 gates the entire range. The "pin the
+newest commit whose predecessors are all satisfied" remedy yields the empty set here; the
+newest such commit is the pin we already have.
+
+Three full-corpus runs (not filtered -- a filtered run cannot see an app-level `EXEC-FAIL`),
+runner `origin/main` at `b5705ee1`, BC 28.4:
+
+| corpus commit | position | tests | pass | fail | exit |
+|---|---|---|---|---|---|
+| `3ad4c340` (current pin) | -- | 3123 | 3123 | 0 | 0 |
+| `123d6dd` (first candidate) | 1 of 21 | 3131 | 3125 | 6 | 1 |
+| `0163b377` (corpus tip) | 21 of 21 | 3242 | 3234 | 8 | 1 |
+
+The current pin's run included `--count-baseline`, and 3123 matches the checked-in baseline
+exactly, so `test-count-baseline.json` is untouched and correct as it stands.
+
+The two failing codeunits at tip, and nothing else:
+
+- **codeunit 60559**, 6 failures, all `AlRunner#2943` -- a TestPage action whose `RunObject`
+  names a report, codeunit, xmlport or query. Raised from
+  `RunnerPageInstance.TryRunActionRunObject`. Note for the implementer that these are not
+  uniformly "make it work": two expect the object to actually run, four expect BC's own
+  refusal text (`The method RunReport is not supported for TestPages.`) rather than the
+  runner's out-of-scope signal.
+- **codeunit 60604**, 2 failures, a gap that was previously untracked and is now
+  **AlRunner#3695** -- a permission set's declared `tabledata` grants are not readable back
+  from the `Permission` table (2000000005). It sits at commit `d34d1c0`, position 11.
+  Distinct from #2886, which is about demo data populating that same table by a different
+  path. Its third test currently passes only vacuously (an empty table trivially satisfies
+  "no `Object Type::Table` rows"), so read it as 0/3 covered, not 1/3.
+
+Both must land before the pin can reach `0163b377`. The 21 commits are all `test(...)`
+additions -- no corpus infrastructure change rides along -- worth +119 tests by static
+`[Test]` count, which the tip run corroborates as 3242 discovered against 3123 today.
+
+Written by an agent (Claude, `stma-auto-2`).
+
 ## runner-extras `testpage-close-message-consumed` 5 -> 8 (#3593)
 
 Three new AL tests in codeunit 65863 "Tcm Close Message Tests", pinning the number of close
