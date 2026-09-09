@@ -1,9 +1,12 @@
 // Puts a DIFFERENT user, carrying the session user's NAME, into User (2000000120) before the
 // runner's seed runs.
 //
-// TestExecutor runs a bundle's own Install triggers before
-// RecordPatches.EnsureUserSystemTableRowSeeded, so this row is in place when the seed executes.
-// This is the shape a --test-data backup containing its own TESTUSER produces.
+// TestExecutor runs the DEPENDENCY install triggers -- inside the dep-company baseline window --
+// before RecordPatches.EnsureUserSystemTableRowSeeded, so this row is in place when the seed
+// executes. It has to be a dependency: since #3268 the seed runs ahead of a bundle's own install
+// triggers, and from there BC's uniqueness rule would refuse this insert outright because the
+// session user's row already exists. This is the shape a --test-data backup containing its own
+// TESTUSER produces.
 //
 // WHAT REFUSES A DUPLICATE USER NAME, AND WHERE
 //   On a real tier it is BC's system-table TRIGGER, not an index. Ncl's

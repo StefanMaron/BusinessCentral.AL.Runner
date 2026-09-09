@@ -1,0 +1,13 @@
+{
+  "id": "1c8a5d47-9f30-4b62-a1e5-6d0b74c39f82",
+  "name": "Runner Tests Fixture - Session User Row Already Present Seed",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#3268: carries the Install codeunit that puts the session user's own User row in place BEFORE the runner's session-user seed runs.",
+  "description": "The write lives in a dependency because #3268 moved EnsureUserSystemTableRowSeeded ahead of a bundle's OWN install triggers: a bundle-local trigger now runs after the seed and could no longer establish the pre-seed state this control needs. Dependency install triggers still run inside TestExecutor's dep-company baseline window, which is before the seed, so the ordering the fixture is about is unchanged.",
+  "dependencies": [],
+  "idRanges": [{ "from": 70500, "to": 70509 }],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}

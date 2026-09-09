@@ -255,8 +255,12 @@ public static partial class RecordPatches
 
     /// <summary>
     /// Insert the runner's own session user into the User system table (2000000120), once per
-    /// bundle. Call AFTER install triggers and BEFORE <c>CaptureInstallBaseline()</c>, so the
-    /// row is part of the restored baseline.
+    /// bundle. Call after the dependency install triggers (their rows are what an adoption has
+    /// to see), BEFORE the bundle's OWN install triggers — install code that stores
+    /// <c>UserSecurityId()</c> must see the identity the tests will see, #3268 — and BEFORE
+    /// <c>CaptureInstallBaseline()</c>, so the row is part of the restored baseline.
+    /// Why it cannot move inside the dep-company cached window instead:
+    /// docs/session-user-seed-ordering.md.
     /// </summary>
     /// <returns>
     /// Which of the outcomes in <see cref="UserRowSeedOutcome"/> this call reached. The

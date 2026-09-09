@@ -16,7 +16,8 @@
 // THE RED THESE TESTS ENCODE
 //   On the already-present path the OLD code ran its success trace and logged
 //   "UserSystemTable: seeded User row 'TESTUSER'" — a false claim, because the insert had been
-//   refused by the primary key and the row present was the one the Install trigger wrote. The
+//   refused by the primary key and the row present was the one the dependency's Install trigger
+//   wrote. The
 //   NEW code logs "was already present". That is the discriminator
 //   SeedOnAnAlreadyPresentRow_SaysAlreadyPresent_NotSeeded asserts, and it fails against the
 //   pre-fix runner.
@@ -136,7 +137,7 @@ public sealed class SessionUserRowRefusalTests
         var cacheDir = TempCache("already");
         try
         {
-            var (exit, stdout, stderr) = Run("SessionUserRowAlreadyPresent", cacheDir);
+            var (exit, stdout, stderr) = Run("SessionUserRowAlreadyPresent/main", cacheDir);
 
             Assert.True(exit == 0,
                 $"expected a clean run. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
@@ -159,11 +160,11 @@ public sealed class SessionUserRowRefusalTests
             Assert.DoesNotContain("ADOPTED the security id", stderr);
 
             Assert.Contains(
-                "PASS  Codeunit70501.SuraUserSecurityIdIsTheRunnerGeneratedOneWhenNothingIsAdopted",
+                "PASS  Codeunit70510.SuraUserSecurityIdIsTheRunnerGeneratedOneWhenNothingIsAdopted",
                 stdout);
-            Assert.Contains("PASS  Codeunit70501.SuraSeedLeftTheAlreadyPresentRowExactlyAsItWas", stdout);
-            Assert.Contains("PASS  Codeunit70501.SuraSeedAddedNoSecondRowForTheSessionUser", stdout);
-            Assert.Contains("PASS  Codeunit70501.SuraAUserSecurityIdBelongingToNobodyIsStillNotFound", stdout);
+            Assert.Contains("PASS  Codeunit70510.SuraSeedLeftTheAlreadyPresentRowExactlyAsItWas", stdout);
+            Assert.Contains("PASS  Codeunit70510.SuraSeedAddedNoSecondRowForTheSessionUser", stdout);
+            Assert.Contains("PASS  Codeunit70510.SuraAUserSecurityIdBelongingToNobodyIsStillNotFound", stdout);
             Assert.DoesNotContain("FAIL", stdout);
         }
         finally
@@ -178,7 +179,7 @@ public sealed class SessionUserRowRefusalTests
         var cacheDir = TempCache("collision");
         try
         {
-            var (exit, stdout, stderr) = Run("SessionUserRowNameCollision", cacheDir);
+            var (exit, stdout, stderr) = Run("SessionUserRowNameCollision/main", cacheDir);
 
             Assert.True(exit == 0,
                 $"expected a clean run. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
@@ -211,15 +212,15 @@ public sealed class SessionUserRowRefusalTests
             // it behind a tag without failing here.
             Assert.Contains("[warn] UserSystemTable: the session user", stderr);
 
-            Assert.Contains("PASS  Codeunit70521.SurcTheSameNamedForeignUserIsInTheTable", stdout);
+            Assert.Contains("PASS  Codeunit70530.SurcTheSameNamedForeignUserIsInTheTable", stdout);
             Assert.Contains(
-                "PASS  Codeunit70521.SurcTheSessionAdoptedTheExistingRowsSecurityId", stdout);
+                "PASS  Codeunit70530.SurcTheSessionAdoptedTheExistingRowsSecurityId", stdout);
             Assert.Contains(
-                "PASS  Codeunit70521.SurcTheSessionUserResolvesToTheRowTheDataProvided", stdout);
+                "PASS  Codeunit70530.SurcTheSessionUserResolvesToTheRowTheDataProvided", stdout);
             Assert.Contains(
-                "PASS  Codeunit70521.SurcAdoptionAddedNoSecondRowAndLeftUserIdAlone", stdout);
+                "PASS  Codeunit70530.SurcAdoptionAddedNoSecondRowAndLeftUserIdAlone", stdout);
             Assert.Contains(
-                "PASS  Codeunit70521.SurcTheAdoptedUserHasItsUserPropertyRow", stdout);
+                "PASS  Codeunit70530.SurcTheAdoptedUserHasItsUserPropertyRow", stdout);
             Assert.DoesNotContain("FAIL", stdout);
         }
         finally
@@ -248,7 +249,10 @@ public sealed class SessionUserRowRefusalTests
     /// against the restore removed, it does.</para>
     ///
     /// <para>The two fixtures can share a process at all because their object id ranges do not
-    /// overlap — 70520-70539 against 70500-70519 — and neither declares a dependency.</para>
+    /// overlap — 70520-70539 against 70500-70519 — and each declares only its own sibling seed
+    /// app, which #3268 made the place a fixture's pre-seed User write has to live: the
+    /// session-user seed now runs ahead of a bundle's OWN install triggers and after the
+    /// dependency ones.</para>
     ///
     /// <para>--watch and --server are the two other multi-bundle modes and reduce to the same
     /// per-bundle reset; this asserts the mechanism through the cheapest of the three. Note that
@@ -265,7 +269,7 @@ public sealed class SessionUserRowRefusalTests
         try
         {
             var (exit, stdout, stderr) = RunBundles(
-                cacheDir, "SessionUserRowNameCollision", "SessionUserRowAlreadyPresent");
+                cacheDir, "SessionUserRowNameCollision/main", "SessionUserRowAlreadyPresent/main");
 
             Assert.True(exit == 0,
                 $"expected a clean run over both bundles. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
@@ -275,7 +279,7 @@ public sealed class SessionUserRowRefusalTests
             Assert.Contains("ADOPTED the security id", stderr);
             Assert.Contains("A17E9C42-5B08-4D6F-9E31-0C7A2F84B155", stderr);
             Assert.Contains(
-                "PASS  Codeunit70521.SurcTheSessionAdoptedTheExistingRowsSecurityId", stdout);
+                "PASS  Codeunit70530.SurcTheSessionAdoptedTheExistingRowsSecurityId", stdout);
 
             // THE RESTORE RAN, between the two bundles. This is the line the four-line block in
             // ResetUserSystemTableForNewBundle emits, and nothing else in the suite reaches it.
@@ -286,10 +290,10 @@ public sealed class SessionUserRowRefusalTests
             // THE CONSEQUENCE, asserted as a concrete id by the AL itself: bundle B's session is
             // the runner-generated {C0A1BDFA-…} again, not bundle A's {A17E9C42-…}.
             Assert.Contains(
-                "PASS  Codeunit70501.SuraUserSecurityIdIsTheRunnerGeneratedOneWhenNothingIsAdopted",
+                "PASS  Codeunit70510.SuraUserSecurityIdIsTheRunnerGeneratedOneWhenNothingIsAdopted",
                 stdout);
-            Assert.Contains("PASS  Codeunit70501.SuraSeedLeftTheAlreadyPresentRowExactlyAsItWas", stdout);
-            Assert.Contains("PASS  Codeunit70501.SuraSeedAddedNoSecondRowForTheSessionUser", stdout);
+            Assert.Contains("PASS  Codeunit70510.SuraSeedLeftTheAlreadyPresentRowExactlyAsItWas", stdout);
+            Assert.Contains("PASS  Codeunit70510.SuraSeedAddedNoSecondRowForTheSessionUser", stdout);
 
             // EXACTLY ONE adoption in the process. Bundle B has nothing to adopt — its Install
             // trigger writes the session user's own security id — so a second adoption line here

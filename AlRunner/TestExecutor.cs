@@ -626,6 +626,23 @@ public sealed class TestExecutor
                 }
             }
         }
+        // #2296 — the session user's own row in the User system table, and with it the #2983
+        // adoption decision. BEFORE this bundle's own install triggers below (#3268): install
+        // code that stores UserSecurityId() must see the identity the tests will see, and on a
+        // real tier the session user is a row in the database long before any extension is
+        // installed. Seeded after the dep-company block above, never inside it, because
+        // adoption is a poke at the skeleton session rather than a row: a cached snapshot
+        // restores the row on a HIT but cannot re-make the decision, so the decision has to be
+        // re-made per app group outside the cached window. See
+        // docs/session-user-seed-ordering.md.
+        //
+        // Still before CaptureInstallBaseline below, the constraint it has always had: the
+        // per-codeunit restore puts the store back to that baseline, so a row added after it
+        // would survive only until the first codeunit boundary. Without this row every
+        // TableRelation pointing at User."User Security ID" refuses the id UserSecurityId()
+        // itself returns.
+        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-user-row"))
+            AlRunner.Patches.RecordPatches.EnsureUserSystemTableRowSeeded();
         // Genuinely per-app-group — the bundle's own Install codeunits (if any) are never
         // shared across app groups, so this always runs fresh, cache or no cache.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-run-own-install-triggers"))
@@ -639,7 +656,9 @@ public sealed class TestExecutor
         // dependency rows above: this one is per-app-group, and the dependency snapshot is
         // shared across every app group with the same dependency closure.
         //
-        // BEFORE the User row below, and DEFENSIVELY so — not because anything requires it.
+        // AFTER the User row since #3268 moved that seed ahead of this bundle's install
+        // triggers. It used to run before it, DEFENSIVELY — not because anything required it,
+        // and the measurement below is what says the inversion is safe.
         //
         // This seed and the Company one above build their row from runner state and hand it
         // straight to the in-memory provider's Insert: no AL runs, and neither reads User. The
@@ -660,19 +679,13 @@ public sealed class TestExecutor
         // codeunit, or Company-Initialize.OnBeforeOnRun — none of them reachable from a User
         // insert.
         //
-        // So the ordering costs nothing and forecloses a class of surprise; it is not a
-        // dependency. What genuinely constrains all three seeds is being here at all: before
+        // So the ordering cost nothing in either direction and is not a dependency — which is
+        // why #3268 could invert it. What genuinely constrains all three seeds is being here
+        // at all: before
         // CaptureInstallBaseline, because the per-codeunit restore puts the store back to that
         // baseline and a row added after it survives only until the first codeunit boundary.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-published-application-row"))
             AlRunner.Patches.RecordPatches.EnsurePublishedApplicationBundleRowSeeded();
-        // #2296 — the session user's own row in the User system table. Same ordering constraint
-        // as the Company row above and for the same reason: the per-codeunit restore puts the
-        // store back to the baseline captured below, so a row added after it would survive only
-        // until the first codeunit boundary. Without it every TableRelation pointing at
-        // User."User Security ID" refuses the id UserSecurityId() itself returns.
-        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-user-row"))
-            AlRunner.Patches.RecordPatches.EnsureUserSystemTableRowSeeded();
         // #3176: the Access Control row that BACKS that user's SUPER status. Ordered after the
         // User row (its "User Security ID" relates to User's) and before the baseline capture,
         // for the same reason the User row is: a row added after the capture survives only until
