@@ -405,6 +405,45 @@ public sealed class DependencyLoader
     private static readonly IReadOnlyList<Assembly> EmptyAssemblies = Array.Empty<Assembly>();
 
     /// <summary>
+    /// Environment switch for #3549's dependency metadata production. OFF by default while the
+    /// chain is proven on one dependency at a time, per the issue's own "one dependency proving
+    /// the whole chain is a sufficient verdict".
+    ///
+    /// <para>Default-off is the honest state rather than caution for its own sake: turning this
+    /// on makes every source-shipping dependency compile once, which is a real provisioning
+    /// cost (Business Foundation 3.0s, System Application 14.5s on BC 28.1) and changes the
+    /// metadata a great many tables answer from. Both belong behind a switch until each app has
+    /// been measured, and `docs/dependency-metadata-from-bc.md` records what has been.</para>
+    ///
+    /// <para>A value other than "1" or "0" is a mistake worth naming rather than silently
+    /// reading as off — an unrecognised value is the shape that makes an opt-in look enabled to
+    /// its author while doing nothing.</para>
+    /// </summary>
+    internal static bool DependencyMetadataEnabled()
+    {
+        var v = Environment.GetEnvironmentVariable("AL_RUNNER_DEP_METADATA_FROM_BC");
+        if (string.IsNullOrEmpty(v) || v == "0") return false;
+        if (v == "1") return true;
+        Console.Error.WriteLine(
+            $"[dep-metadata] AL_RUNNER_DEP_METADATA_FROM_BC='{v}' is not '1' or '0'; " +
+            "treating as OFF. Set it to 1 to enable BC-emitted dependency metadata (#3549).");
+        return false;
+    }
+
+    /// <summary>
+    /// Produce or replay BC's metadata documents for one dependency (#3549). See
+    /// <see cref="DependencyMetadataProducer"/> for the availability-vs-failure split; the
+    /// throw is deliberately NOT caught here, because a dependency whose source is present and
+    /// whose emit failed is a broken build, and continuing would answer its tables from the
+    /// weaker derivation under a green run (`.claude/rules/loud-failures.md`).
+    /// </summary>
+    private void EnsureDependencyMetadata(AppManifest m, string appPath)
+    {
+        if (!DependencyMetadataEnabled()) return;
+        DependencyMetadataProducer.Ensure(m, appPath, _compiler);
+    }
+
+    /// <summary>
     /// Load one dependency app. <c>Assemblies</c> is EVERY assembly the app was loaded as and
     /// is non-empty only for the multi-chunk R2R tier; every other tier produces one assembly
     /// and returns it empty, which the caller reads as "just <c>Asm</c>" (#3054).
@@ -412,6 +451,20 @@ public sealed class DependencyLoader
     private (Assembly? Asm, string? Tier3CacheKey, IReadOnlyList<Assembly> Assemblies) LoadOne(
         AppManifest m, string appPath, string bucketRoot)
     {
+        // #3549 — BC's own metadata documents for this dependency, BEFORE the tier choice
+        // below. Tiers 1 and 2 return compiled code without ever running BC's emitter, and the
+        // emitter is what produces the metadata document AlObjectMetadataRegistry captures
+        // (#3548) — so on those tiers every table of this app would otherwise be described by
+        // the runner's SymbolReference hand-derivation and never by BC's own answer. Tier 3
+        // compiles anyway and registers the documents itself, which is why this is a no-op
+        // there (the sidecar is written once and hit thereafter).
+        //
+        // Deliberately ahead of the tiers rather than inside one: the document is about the
+        // app's METADATA, and which tier supplies its CODE does not change what its tables
+        // look like. DependencyMetadataProducer's header has the availability-vs-failure
+        // split this depends on.
+        EnsureDependencyMetadata(m, appPath);
+
         // Tier 1: precompiled DLL.
         var precompiled = FindPrecompiledSidecar(m, bucketRoot);
         if (precompiled != null)
