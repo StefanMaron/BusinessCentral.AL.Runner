@@ -208,8 +208,10 @@ public static partial class RecordPatches
     /// <summary>Record which DataAccessSource owns the tables for this join query.</summary>
     private static void StashJoinSource(object queryDefinition, object dataAccessSource)
     {
-        _joinSourceByQueryDef.Remove(queryDefinition);
-        _joinSourceByQueryDef.Add(queryDefinition, dataAccessSource);
+        // AddOrUpdate, not Remove-then-Add: the same replace, without the window between the
+        // two calls in which a concurrent reader sees no entry and a concurrent writer makes
+        // the Add throw ArgumentException (#3315).
+        _joinSourceByQueryDef.AddOrUpdate(queryDefinition, dataAccessSource);
     }
 
     /// <summary>

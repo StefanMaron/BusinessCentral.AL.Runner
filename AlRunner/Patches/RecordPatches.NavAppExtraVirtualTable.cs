@@ -111,6 +111,7 @@
 using System.Collections.Concurrent;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using AlRunner.Infrastructure;
 using Microsoft.Dynamics.Nav.Runtime;
 
@@ -157,7 +158,21 @@ public static partial class RecordPatches
     // metadata, which the runner does not add to mid-run.
     private static readonly ConditionalWeakTable<object, object> _naeBcProviderAnswered = new();
 
-    private static bool _naeReflectionReady;
+    /// <summary>
+    /// Test seam: invoked once, midway through <see cref="TryEnsureNavAppExtraReflection"/>,
+    /// between reading the ready flag and resolving the ctor and method. Nothing in the
+    /// product sets it. It exists because "the ready flag is published before the members it
+    /// promises" is not observable from outside — a second caller arriving in that window
+    /// sees "ready", reads nulls and silently skips BC's own provider — and no AL statement,
+    /// BC build or thread schedule can be relied on to open that window on demand (#3187 is
+    /// the same latch-before-work shape one file over).
+    /// </summary>
+    internal static readonly AsyncLocal<Action?> NavAppExtraReflectionProbe = new();
+
+    // volatile: the flag is a promise about the three fields below it, so it is written LAST
+    // and with release semantics. It used to be written FIRST, which let a second caller read
+    // "ready", find nulls, and silently skip BC's own provider (#3315 — the #3187 shape).
+    private static volatile bool _naeReflectionReady;
     private static Type? _naeProviderType;          // Microsoft.Dynamics.Nav.Runtime.NavAppExtraDataProvider
     private static ConstructorInfo? _naeProviderCtor;   // .ctor(NavSession)
     private static MethodInfo? _naeGetAllItems;     // protected IEnumerable<ReadOnlyRecordBuffer> GetAllItems(out bool)
@@ -198,8 +213,26 @@ public static partial class RecordPatches
         {
             var outcome = TryPopulateNavAppExtraFromBcProvider(store, session);
             inserted = outcome.Inserted;
-            if (DecideNavAppExtraBcAnswer(outcome) == NavAppExtraBcAnswer.Latch)
-                MarkNavAppExtraBcProviderAnswered(store);
+
+            switch (DecideNavAppExtraBcAnswer(outcome))
+            {
+                case NavAppExtraBcAnswer.Latch:
+                    MarkNavAppExtraBcProviderAnswered(store);
+                    break;
+
+                case NavAppExtraBcAnswer.Refuse:
+                    throw NavAppExtraShapeGap(
+                        NavAppExtraPartialAnswerDetail(outcome.Inserted, outcome.Fault!));
+
+                default:
+                    // Nothing of BC's reached the table, so the fallback below answers all of
+                    // it. Say so when a throw is why, ONCE per process per (stage, exception
+                    // type): this runs on every handout, and a warning repeated per handout is
+                    // a warning nobody reads.
+                    if (outcome.Fault != null)
+                        WarnOnceNavAppExtraProviderFault(outcome.Stage ?? "using BC's own provider", outcome.Fault);
+                    break;
+            }
         }
 
         // 2. The runner's own app list, topped up on every handout. Reached when BC's
@@ -237,12 +270,14 @@ public static partial class RecordPatches
         {
             provider = _naeProviderCtor!.Invoke(new object?[] { session });
         }
-        catch
+        catch (Exception ex)
         {
             // The provider reads the session's tenant and app group in its base constructor.
             // On the skeleton session that can throw; it is not a shape gap, it is the case
-            // the loaded-module fallback exists for.
-            return NavAppExtraProviderOutcome.NoRows;
+            // the loaded-module fallback exists for. Carried out rather than discarded so the
+            // caller can say so once — this was a bare `catch { return 0; }` and nothing was
+            // written anywhere (#3315).
+            return NavAppExtraProviderOutcome.Faulted("constructing it on the skeleton session", ex);
         }
 
         object? rows;
@@ -250,9 +285,9 @@ public static partial class RecordPatches
         {
             rows = _naeGetAllItems!.Invoke(provider, new object?[] { false });
         }
-        catch
+        catch (Exception ex)
         {
-            return NavAppExtraProviderOutcome.NoRows;
+            return NavAppExtraProviderOutcome.Faulted("calling GetAllItems", ex);
         }
 
         if (rows is not System.Collections.IEnumerable enumerable) return NavAppExtraProviderOutcome.NoRows;
@@ -268,18 +303,25 @@ public static partial class RecordPatches
     /// </summary>
     internal readonly struct NavAppExtraProviderOutcome
     {
-        internal NavAppExtraProviderOutcome(int inserted, Exception? fault)
+        internal NavAppExtraProviderOutcome(int inserted, Exception? fault, string? stage = null)
         {
             Inserted = inserted;
             Fault = fault;
+            Stage = stage;
         }
 
         internal int Inserted { get; }
 
-        /// <summary>Non-null when the row enumeration ended in a throw.</summary>
+        /// <summary>Non-null when the provider call or the row enumeration ended in a throw.</summary>
         internal Exception? Fault { get; }
 
+        /// <summary>Which step threw, for the warning text. Null when nothing threw.</summary>
+        internal string? Stage { get; }
+
         internal static NavAppExtraProviderOutcome NoRows => new(0, null);
+
+        internal static NavAppExtraProviderOutcome Faulted(string stage, Exception fault)
+            => new(0, UnwrapNavAppExtraFault(fault), stage);
     }
 
     /// <summary>What the caller does with a BC-provider outcome.</summary>
@@ -316,7 +358,8 @@ public static partial class RecordPatches
         }
         catch (Exception ex)
         {
-            return new NavAppExtraProviderOutcome(inserted, UnwrapNavAppExtraFault(ex));
+            return new NavAppExtraProviderOutcome(
+                inserted, UnwrapNavAppExtraFault(ex), "enumerating its rows");
         }
 
         return new NavAppExtraProviderOutcome(inserted, null);
@@ -326,15 +369,53 @@ public static partial class RecordPatches
         => ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
 
     /// <summary>
-    /// Classify a BC-provider outcome. Behaviour-preserving extraction of the call site's
-    /// former `if (inserted > 0) latch`.
+    /// Classify a BC-provider outcome. Only a COMPLETE non-empty answer latches: latching a
+    /// partial one skips the fallback for every app BC never reached, and both FlowFields then
+    /// read false for those apps with nothing logged and an unchanged exit code — the wrong
+    /// answer #3072 and #3308 exist to remove, reintroduced on a silent path (#3315).
     /// </summary>
     internal static NavAppExtraBcAnswer DecideNavAppExtraBcAnswer(in NavAppExtraProviderOutcome outcome)
-        => outcome.Inserted > 0 ? NavAppExtraBcAnswer.Latch : NavAppExtraBcAnswer.FallBack;
+        => outcome.Fault == null
+            ? (outcome.Inserted > 0 ? NavAppExtraBcAnswer.Latch : NavAppExtraBcAnswer.FallBack)
+            : (outcome.Inserted > 0 ? NavAppExtraBcAnswer.Refuse : NavAppExtraBcAnswer.FallBack);
 
-    /// <summary>Record that BC's own provider has answered for this store.</summary>
+    /// <summary>
+    /// Why a partial BC answer is refused rather than topped up. The alternative is a table
+    /// that looks populated and is missing rows — see .claude/rules/loud-failures.md.
+    /// </summary>
+    internal static string NavAppExtraPartialAnswerDetail(int inserted, Exception fault)
+        => $"BC's own NavAppExtraDataProvider.GetAllItems stopped after {inserted} row(s) with "
+        + $"{fault.GetType().Name}: {fault.Message}. Those rows are in the table already and "
+        + "cannot be topped up — this file does not read the runtime package id out of BC's "
+        + "own pre-built buffers, so adding the runner's rows for the apps BC never reached "
+        + "would collide on the primary key for the apps it did. Latching a partial answer "
+        + "instead would leave every app BC never reached reading false for Published "
+        + "Application's Tenant Visible and PerTenant Or Installed, silently. "
+        + "See AlRunner#3315";
+
+    /// <summary>The fell-back-with-a-fault warning text. Built here so a test can pin it.</summary>
+    internal static string NavAppExtraProviderFaultWarning(string stage, Exception fault)
+        => "[warn] NAV App Extra (virtual table 2000000157): BC's own NavAppExtraDataProvider "
+        + $"failed while {stage} ({fault.GetType().Name}: {fault.Message}), so none of its rows "
+        + "reached the table. The runner's loaded-module list answers the whole table instead, "
+        + "which is the path every measured BC build already takes. See AlRunner#3315.";
+
+    private static readonly ConcurrentDictionary<string, byte> _naeWarnedFaults = new();
+
+    private static void WarnOnceNavAppExtraProviderFault(string stage, Exception fault)
+    {
+        if (!_naeWarnedFaults.TryAdd(stage + "|" + fault.GetType().FullName, 0)) return;
+        Console.Error.WriteLine(NavAppExtraProviderFaultWarning(stage, fault));
+    }
+
+    /// <summary>
+    /// Record that BC's own provider has answered for this store. <c>AddOrUpdate</c>, not
+    /// <c>Add</c>: the <c>TryGetValue</c> in front of the call site is not a lock, and
+    /// <c>ConditionalWeakTable.Add</c> throws <c>ArgumentException</c> on a duplicate key, so
+    /// two concurrent handouts for one store used to surface an unexplained failure (#3315).
+    /// </summary>
     internal static void MarkNavAppExtraBcProviderAnswered(object store)
-        => _naeBcProviderAnswered.Add(store, new object());
+        => _naeBcProviderAnswered.AddOrUpdate(store, new object());
 
     /// <summary>
     /// Build one row per app the runner loaded, from the same <c>BcRuntime.RegisteredModules()</c>
@@ -361,12 +442,36 @@ public static partial class RecordPatches
 
             var packageId = AppPackageIdentity.PackageIdFor(m.AppId);
             InsertVirtualRow(store, metaTable,
-                new object[] { NavAppExtraVirtualTableId, seeded.Count, 0, 0 },
+                NavAppExtraSystemIdArgs(runtimePackageId),
                 field => BuildNavAppExtraValue(field, runtimePackageId, packageId));
             inserted++;
         }
 
         return inserted;
+    }
+
+    /// <summary>
+    /// The virtual-record identity of one NAV App Extra row: what BC's own
+    /// <c>GetSystemPopulatedVirtualRecordValues</c> derives the row's SystemId from. Folded out
+    /// of the app's OWN runtime package id, so one app keeps one identity however many handouts
+    /// it takes and in whatever order its row is inserted. The ledger's COUNT used to stand in
+    /// that slot, which is a property of insertion order and nondeterministic under concurrent
+    /// handouts (#3315). Same shape as the two permission-set populators' hashed role key.
+    /// </summary>
+    internal static object[] NavAppExtraSystemIdArgs(Guid runtimePackageId)
+    {
+        var b = runtimePackageId.ToByteArray();
+        var i0 = BitConverter.ToInt32(b, 0);
+        var i1 = BitConverter.ToInt32(b, 4);
+        var i2 = BitConverter.ToInt32(b, 8);
+        var i3 = BitConverter.ToInt32(b, 12);
+        return new object[]
+        {
+            NavAppExtraVirtualTableId,
+            (i0 ^ i3) & 0x7fffffff,
+            i1 & 0x7fffffff,
+            i2 & 0x7fffffff,
+        };
     }
 
     /// <summary>
@@ -410,11 +515,12 @@ public static partial class RecordPatches
     private static bool TryEnsureNavAppExtraReflection()
     {
         if (_naeReflectionReady) return _naeProviderCtor != null && _naeGetAllItems != null;
-        _naeReflectionReady = true;
 
         var navNcl = AppDomain.CurrentDomain.GetAssemblies()
             .FirstOrDefault(a => a.GetName().Name == "Microsoft.Dynamics.Nav.Ncl");
         _naeProviderType = navNcl?.GetType("Microsoft.Dynamics.Nav.Runtime.NavAppExtraDataProvider");
+
+        NavAppExtraReflectionProbe.Value?.Invoke();
 
         _naeProviderCtor = _naeProviderType?.GetConstructors(
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
@@ -442,6 +548,11 @@ public static partial class RecordPatches
             "it is the row set BC's own provider computes for this table, so the runner "
             + "cannot pick an overload on the table's behalf",
             new[] { typeof(bool).MakeByRefType() });
+
+        // LAST. Everything the flag promises is resolved above it, so a caller arriving
+        // concurrently either repeats the resolution — idempotent, every step is a lookup — or
+        // reads a flag whose promise already holds.
+        _naeReflectionReady = true;
 
         return _naeProviderCtor != null && _naeGetAllItems != null;
     }

@@ -47,9 +47,9 @@ public static class RunnerFormInit
     public static void MarkRealInit(object form)
     {
         if (form == null) return;
-        _realInitForms.TryGetValue(form, out _);
-        _realInitForms.Remove(form);
-        _realInitForms.Add(form, Marker);
+        // AddOrUpdate: one atomic write, where Remove-then-Add left a window in which the Add
+        // could throw ArgumentException against a concurrent marker (#3315).
+        _realInitForms.AddOrUpdate(form, Marker);
     }
 
     /// <summary>
@@ -161,8 +161,7 @@ public static class RunnerFormInit
     public static void MarkSourceExpressionsWanted(object form)
     {
         if (form == null) return;
-        _sourceExpressionForms.Remove(form);
-        _sourceExpressionForms.Add(form, Marker);
+        _sourceExpressionForms.AddOrUpdate(form, Marker);
     }
 
     /// <summary>Whether <see cref="MarkSourceExpressionsWanted"/> was called for this form.
