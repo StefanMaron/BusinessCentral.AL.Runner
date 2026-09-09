@@ -190,32 +190,8 @@ public class QueryMetadataFromBcDocumentTests
         AssertBothQueriesCameFromBcDocument(warm, "warm run (AL-output cache HIT)");
     }
 
-    /// <summary>
-    /// The route is chosen on AVAILABILITY, so a query with no document keeps the derivation
-    /// rather than failing. Nothing in this fixture can produce that state — every query here
-    /// is compiled — so the claim is made against the predicate itself, which is what both
-    /// call sites consult.
-    /// </summary>
-    [Fact]
-    public void QueryWithNoRegisteredDocument_KeepsTheDerivation()
-    {
-        AlObjectMetadataRegistry.Clear();
-        try
-        {
-            Assert.False(AlRunner.Patches.RecordPatches.HasBcQueryMetadataDocument(DivergentQueryId));
-
-            AlObjectMetadataRegistry.Register(
-                AlRunner.Patches.RecordPatches.BcQueryMetadataKind, DivergentQueryId,
-                "QMD Divergent", "<Query><ID>70720</ID></Query>");
-            Assert.True(AlRunner.Patches.RecordPatches.HasBcQueryMetadataDocument(DivergentQueryId));
-
-            // Keyed by (kind, id), not by id alone: a TABLE numbered 70720 is a different
-            // object and must not satisfy the query's predicate.
-            Assert.False(AlRunner.Patches.RecordPatches.HasBcQueryMetadataDocument(PlainQueryId));
-        }
-        finally
-        {
-            AlObjectMetadataRegistry.Clear();
-        }
-    }
+    // The predicate half of #3608 lives in QueryMetadataDocumentPredicateTests.cs: it drives
+    // AlObjectMetadataRegistry IN-PROCESS, so it has to sit in a serial collection, and this
+    // class must not — its [SkippableFact] spawns the runner and would then serialize with
+    // every other registry test for no benefit (#3613).
 }
