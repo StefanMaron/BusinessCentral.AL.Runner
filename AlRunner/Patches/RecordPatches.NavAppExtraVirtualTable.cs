@@ -196,8 +196,10 @@ public static partial class RecordPatches
 
         if (!_naeBcProviderAnswered.TryGetValue(store, out _))
         {
-            inserted = TryPopulateNavAppExtraFromBcProvider(store, session);
-            if (inserted > 0) _naeBcProviderAnswered.Add(store, new object());
+            var outcome = TryPopulateNavAppExtraFromBcProvider(store, session);
+            inserted = outcome.Inserted;
+            if (DecideNavAppExtraBcAnswer(outcome) == NavAppExtraBcAnswer.Latch)
+                MarkNavAppExtraBcProviderAnswered(store);
         }
 
         // 2. The runner's own app list, topped up on every handout. Reached when BC's
@@ -226,9 +228,9 @@ public static partial class RecordPatches
     /// retriever is empty, or it threw), which is the expected case in the runner and is
     /// handled by the caller rather than raised here.
     /// </summary>
-    private static int TryPopulateNavAppExtraFromBcProvider(object store, object session)
+    private static NavAppExtraProviderOutcome TryPopulateNavAppExtraFromBcProvider(object store, object session)
     {
-        if (!TryEnsureNavAppExtraReflection()) return 0;
+        if (!TryEnsureNavAppExtraReflection()) return NavAppExtraProviderOutcome.NoRows;
 
         object provider;
         try
@@ -240,7 +242,7 @@ public static partial class RecordPatches
             // The provider reads the session's tenant and app group in its base constructor.
             // On the skeleton session that can throw; it is not a shape gap, it is the case
             // the loaded-module fallback exists for.
-            return 0;
+            return NavAppExtraProviderOutcome.NoRows;
         }
 
         object? rows;
@@ -250,32 +252,89 @@ public static partial class RecordPatches
         }
         catch
         {
-            return 0;
+            return NavAppExtraProviderOutcome.NoRows;
         }
 
-        if (rows is not System.Collections.IEnumerable enumerable) return 0;
+        if (rows is not System.Collections.IEnumerable enumerable) return NavAppExtraProviderOutcome.NoRows;
 
+        return ConsumeNavAppExtraProviderRows(enumerable, buffer => InsertPreBuiltVirtualRow(store, buffer));
+    }
+
+    /// <summary>
+    /// What BC's own provider produced on one handout: how many rows were inserted, and the
+    /// exception that ended the enumeration if one did. Enumeration is lazy in BC's provider,
+    /// so a throw arrives mid-loop rather than out of the <c>GetAllItems</c> call, which is why
+    /// "how many arrived" and "did it finish" are two facts rather than one count.
+    /// </summary>
+    internal readonly struct NavAppExtraProviderOutcome
+    {
+        internal NavAppExtraProviderOutcome(int inserted, Exception? fault)
+        {
+            Inserted = inserted;
+            Fault = fault;
+        }
+
+        internal int Inserted { get; }
+
+        /// <summary>Non-null when the row enumeration ended in a throw.</summary>
+        internal Exception? Fault { get; }
+
+        internal static NavAppExtraProviderOutcome NoRows => new(0, null);
+    }
+
+    /// <summary>What the caller does with a BC-provider outcome.</summary>
+    internal enum NavAppExtraBcAnswer
+    {
+        /// <summary>A complete BC answer: latch the store, skip the loaded-module fallback.</summary>
+        Latch,
+
+        /// <summary>BC's provider produced nothing usable; the loaded-module list answers.</summary>
+        FallBack,
+
+        /// <summary>A PARTIAL BC answer. Refuse — see DecideNavAppExtraBcAnswer.</summary>
+        Refuse,
+    }
+
+    /// <summary>
+    /// Drain BC's own row enumerable into the store, recording a mid-enumeration throw rather
+    /// than discarding it. Split out from the provider call so the partial-answer path can be
+    /// driven directly by a test: no AL statement and no BC build can make BC's provider throw
+    /// after yielding rows, and BC's provider produces 0 rows in this runner anyway.
+    /// </summary>
+    internal static NavAppExtraProviderOutcome ConsumeNavAppExtraProviderRows(
+        System.Collections.IEnumerable rows, Action<object> insert)
+    {
         var inserted = 0;
         try
         {
-            foreach (var buffer in enumerable)
+            foreach (var buffer in rows)
             {
                 if (buffer == null) continue;
-                InsertPreBuiltVirtualRow(store, buffer);
+                insert(buffer);
                 inserted++;
             }
         }
-        catch
+        catch (Exception ex)
         {
-            // Enumeration is lazy in BC's provider, so a throw can arrive here rather than
-            // above. Rows already inserted stay: they are BC's own and are not wrong. The
-            // caller tops the table up from the loaded-module list only when NOTHING arrived,
-            // so a partial BC answer is never mixed with a synthesised one.
-            return inserted;
+            return new NavAppExtraProviderOutcome(inserted, UnwrapNavAppExtraFault(ex));
         }
 
-        return inserted;
+        return new NavAppExtraProviderOutcome(inserted, null);
     }
+
+    private static Exception UnwrapNavAppExtraFault(Exception ex)
+        => ex is TargetInvocationException tie && tie.InnerException != null ? tie.InnerException : ex;
+
+    /// <summary>
+    /// Classify a BC-provider outcome. Behaviour-preserving extraction of the call site's
+    /// former `if (inserted > 0) latch`.
+    /// </summary>
+    internal static NavAppExtraBcAnswer DecideNavAppExtraBcAnswer(in NavAppExtraProviderOutcome outcome)
+        => outcome.Inserted > 0 ? NavAppExtraBcAnswer.Latch : NavAppExtraBcAnswer.FallBack;
+
+    /// <summary>Record that BC's own provider has answered for this store.</summary>
+    internal static void MarkNavAppExtraBcProviderAnswered(object store)
+        => _naeBcProviderAnswered.Add(store, new object());
 
     /// <summary>
     /// Build one row per app the runner loaded, from the same <c>BcRuntime.RegisteredModules()</c>
