@@ -606,12 +606,32 @@ jobs:
               --label "AlRunner.Tests — BC ${{ matrix.target.bc-version }} (4-way parallel, CONTENDED)" \
               --step-seconds $(( $(date +%s) - $(cat phase-step-start-unit 2>/dev/null || date +%s) ))
 
+      # #3675. The corpus is resolved per run, so a committed exact count for it
+      # would go stale the moment an upstream corpus PR merged -- every leg red,
+      # exit 4, with nothing in this repository to fix. The comparison is against
+      # the LAST COUNT A MAIN RUN RECORDED instead, carried in the Actions cache:
+      # main writes it, and every branch can read main's caches. A cache miss is a
+      # warning and a recorded count, never a failure.
+      - name: Restore the last corpus count main recorded
+        id: prev-count
+        uses: actions/cache/restore@v4
+        with:
+          path: corpus-count
+          # The exact key hits when a main run already measured THIS corpus commit
+          # on this BC version; the prefix falls back to the most recent count for
+          # this version whatever corpus it was measured at, which is what a
+          # comparison needs and why the stored document names its own corpus SHA.
+          key: corpus-count-${{ matrix.target.bc-version }}-${{ steps.corpus.outputs.sha }}
+          restore-keys: |
+            corpus-count-${{ matrix.target.bc-version }}-
+
       - name: Run al-language corpus
         id: al-language
         env:
           AL_RUNNER_PHASE_LOG: ${{ github.workspace }}/phase-log-corpus.jsonl
         run: |
-          # The canonical corpus lives in the tests/al-language submodule.
+          # The corpus was checked out by the checkout-corpus step above, which
+          # printed the SHA this leg measures.
           # See docs/expectations.md for how OOS-by-design tests are declared.
           #
           # --strict makes the runner exit non-zero when ANY test fails (1), a bucket
@@ -621,25 +641,23 @@ jobs:
           # declared OOS-by-design in tests/expectations/, which reclassifies it to a
           # pass). Crash codes (134/139) also surface here as a non-zero exit → red.
           #
-          # --count-baseline (#1880) is the companion guard: --strict only fails on a
-          # test FAILING, so a bundle/app-group that silently stops being discovered
-          # (dependency rename, duplicate app-id collision — #1850, dropped app group —
-          # #1861) still exits 0 as long as every SURVIVING test passes. It is an EXACT
-          # match, not a floor: a DROP below the recorded baseline exits 4, and so does
-          # GROWTH above it — the count must be bumped in
-          # tests/expectations/count-baseline/ in the same PR that changed it, or this
-          # leg goes red with the exact expected/actual numbers to use.
+          # There is deliberately NO --count-baseline here any more (#3675). The
+          # corpus suites are not declared in that file: the corpus is resolved per
+          # run (#3737), so an exact committed count for it goes stale the moment an
+          # upstream corpus PR merges. The count guard is the compare step below,
+          # against the last count a main run recorded. `runner-extras` keeps its
+          # committed baseline, because it lives in this repository.
           #
           # The corpus apps are ENUMERATED, never named (#2984). This step used to
           # pass the single path tests/al-language/tests/al-language, and the corpus
           # then gained a second test app (tests/al-language-onprem, target OnPrem,
           # for the Scope = OnPrem system tables a Cloud-target app cannot name at
-          # all). With one path hardcoded here, the submodule pin bump that pulls a
-          # new app in is green BY CONSTRUCTION: the app is checked out, never
-          # executed, and the leg still reports success. Nothing is even visibly
-          # skipped — those tests never enter the run, so neither --strict nor
-          # --count-baseline can see them missing. Adding a test app to the corpus
-          # must be enough to make this leg execute it, with no edit here.
+          # all). With one path hardcoded here, a corpus that gains an app is green
+          # BY CONSTRUCTION: the app is checked out, never executed, and the leg
+          # still reports success. Nothing is even visibly skipped — those tests
+          # never enter the run, so neither --strict nor the count comparison can
+          # see them missing. Adding a test app to the corpus must be enough to make
+          # this leg execute it, with no edit here.
           #
           # Each app is a SEPARATE positional bundle root, not one root over their
           # parent directory. Measured against corpus PR #179: one root over the
@@ -669,14 +687,44 @@ jobs:
               --package-cache "$HOME/.al-runner/test-apps" \
               --strict \
               --expectations-require-match \
-              --count-baseline tests/expectations/count-baseline/test-count-baseline.json \
               --out al-language-results.json || rc=$?
           elapsed=$(( SECONDS - start ))
           echo "elapsed=${elapsed}s" >> "$GITHUB_OUTPUT"
           if [ "$rc" -ne 0 ]; then
-            echo "::error::al-language run failed (exit $rc: 1=test failure, 2=exec fail, 3=compile fail, 4=count-baseline mismatch, 5=expectations entry matched no test, 134/139=crash)"
+            echo "::error::al-language run failed (exit $rc: 1=test failure, 2=exec fail, 3=compile fail, 5=expectations entry matched no test, 134/139=crash)"
             exit "$rc"
           fi
+
+      # The count guard, which --strict cannot be: a suite that stops being
+      # DISCOVERED does not fail, it stops existing, and every surviving test
+      # still passes (#1850, #1861). always(), because a leg that is already red
+      # for another reason is exactly when a silently smaller corpus is easiest to
+      # miss -- and because this step's own exit 3 means "nothing was measured",
+      # which is worth saying out loud rather than inheriting the earlier failure.
+      - name: Compare the corpus count against main's last recorded one
+        if: ${{ always() }}
+        run: |
+          # --previous and --out are the SAME path on purpose: the script reads the
+          # restored document before writing this run's, so the directory the cache
+          # save step stores below holds the count this leg just measured.
+          python3 .github/scripts/compare_corpus_count.py \
+              --results al-language-results.json \
+              --corpus-sha "${{ steps.corpus.outputs.sha }}" \
+              --bc-version "${{ matrix.target.bc-version }}" \
+              --previous corpus-count/corpus-count.json \
+              --out corpus-count/corpus-count.json
+
+      # Only main records. A pull request comparing against its own earlier count
+      # would ratchet against itself: drop 50 tests, record 50 fewer, and the next
+      # push is green against the smaller number. publish.yml runs on a tag and is
+      # excluded by the ref test; main-verdict-floor.yml runs on main and is not,
+      # which is deliberate -- it measures main's HEAD, so its count is main's.
+      - name: Record this count for the next run
+        if: ${{ success() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v4
+        with:
+          path: corpus-count
+          key: corpus-count-${{ matrix.target.bc-version }}-${{ steps.corpus.outputs.sha }}
 
       - name: Run al-language xmlport tests in isolation (order-independence guard)
         # always() so this still runs when the full-corpus leg above is red — it answers a

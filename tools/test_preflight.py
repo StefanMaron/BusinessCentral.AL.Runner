@@ -1550,33 +1550,24 @@ check("the JSON refusal carries no checks and says why",
 print()
 print("preflight.py -- corpus baseline")
 
-# The three corpus apps `scripts/corpus-app-dirs.py` enumerates, and the shape
-# tests/expectations/count-baseline/test-count-baseline.json records for them.
-# Numbers deliberately unlike the live ones: the check must read the file it is
-# handed, not a constant that happened to be right the day it was written.
+# The three corpus apps `scripts/corpus-app-dirs.py` enumerates.
+#
+# There is no committed expected count for them any more (#3675): the corpus is
+# resolved per run (#3737), so a number checked in here would go stale the moment
+# an upstream corpus PR merged and this check would fail on a healthy box. CI
+# compares against the last count a main run recorded, at its corpus SHA -- a
+# second endpoint a single local run does not have. What this check still holds
+# is everything it could always read for itself: failures, lost suites, a missing
+# summary, a timeout, an enumerator that produced nothing, and the run's own
+# summary against its per-bundle PASS lines.
 CORPUS_APPS = ["tests/al-language/tests/al-language",
                "tests/al-language/tests/al-language-internals-fixture",
                "tests/al-language/tests/al-language-onprem"]
-CORPUS_BASELINE = {
-    "suites": {
-        "al-language": {"tests": {"default": 12}, "appGroups": {"default": 1}},
-        "al-language-internals-fixture": {"tests": {"default": 0},
-                                          "appGroups": {"default": 1}},
-        "al-language-onprem": {"tests": {"default": 3}, "appGroups": {"default": 1}},
-        "runner-extras": {"groups": {"x": {"tests": 2}}},
-    }
-}
 
 
-def corpus_repo(baseline=CORPUS_BASELINE):
-    """A throwaway repo root carrying only the baseline file the check reads."""
-    root = tempfile.mkdtemp(prefix="preflight-corpus-")
-    d = os.path.join(root, "tests/expectations/count-baseline")
-    os.makedirs(d)
-    if baseline is not None:
-        with open(os.path.join(d, "test-count-baseline.json"), "w") as fh:
-            json.dump(baseline, fh)
-    return root
+def corpus_repo():
+    """A throwaway repo root for the corpus check to run against."""
+    return tempfile.mkdtemp(prefix="preflight-corpus-")
 
 
 # Verbatim shape of a real run, captured from
@@ -1650,9 +1641,9 @@ class CorpusScript:
         return pf.Ran(rc=self.rc, out=self.output, err="", timed_out=self.timed_out)
 
 
-def corpus_result(output, *, baseline=CORPUS_BASELINE, **kw):
+def corpus_result(output, **kw):
     script = CorpusScript(output, **kw)
-    root = corpus_repo(baseline)
+    root = corpus_repo()
     saved = pf.run
     pf.run = script
     try:
@@ -1662,32 +1653,23 @@ def corpus_result(output, *, baseline=CORPUS_BASELINE, **kw):
         shutil.rmtree(root, ignore_errors=True)
 
 
-# ---- THE defect: a run that exits 0 having passed far fewer tests than the
-# baseline records used to report "the corpus baseline reproduced on this box".
-_short = corpus_output({"al-language": 3,
-                        "al-language-internals-fixture": 0,
-                        "al-language-onprem": 3})
-_res, _ = corpus_result(_short)
-check("a shortfall FAILs even though the process exited 0",
-      _res.status == "FAIL", f"{_res.status}: {_res.summary}")
-check("...and names both numbers, so the reader can act on it",
-      any("3" in d and "12" in d for d in _res.detail + [_res.summary]),
-      f"{_res.summary} {_res.detail}")
-check("...and names the suite that fell short",
-      any("al-language" in d for d in _res.detail + [_res.summary]), _res.detail)
-check("...and the machine-readable answer carries the counts",
-      _res.data.get("observed", {}).get("al-language") == 3
-      and _res.data.get("expected", {}).get("al-language") == 12, _res.data)
-
-# ---- the positive: the exact baseline, and nothing else, is a PASS
+# ---- the positive: a clean run PASSes and REPORTS what it counted
+#
+# It no longer asserts a number against a checked-in one, so the claim is
+# narrower and is stated as such: the run was clean, and here is what it ran.
+# What must not happen is a PASS that names no count at all -- then nobody can
+# tell this box's result from another's (#3737).
 _full = corpus_output({"al-language": 12,
                        "al-language-internals-fixture": 0,
                        "al-language-onprem": 3}, oos=2, known_gap=1)
 _res, _script = corpus_result(_full)
-check("reproducing the baseline exactly PASSes",
-      _res.status == "PASS", f"{_res.status}: {_res.summary} {_res.detail}")
-check("...and the summary states the count it verified, not just 'ok'",
+check("a clean corpus run PASSes",
+      _res.status == "PASS", f"{_res.status}: {_res.summary}")
+check("...and the summary states the count it observed, not just 'ok'",
       "15" in _res.summary or any("15" in d for d in _res.detail),
+      f"{_res.summary} {_res.detail}")
+check("...and names the corpus it measured, since nothing in the tree records it",
+      "corpus" in (_res.summary + " ".join(_res.detail)).lower(),
       f"{_res.summary} {_res.detail}")
 check("expectation-reclassified passes -- PASS (oos) / PASS (known-gap) -- still count",
       _res.data.get("observed", {}).get("al-language") == 12, _res.data)
@@ -1702,29 +1684,8 @@ check("the corpus apps are enumerated, never hardcoded to one path",
       any("corpus-app-dirs" in a for c in _script.calls for a in c), _script.calls)
 check("the SHARED package caches are used -- a private one is blind to this failure",
       _argv.count("--package-cache") == 2, _argv)
-
-# ---- growth fails too, and says which direction
-_over = corpus_output({"al-language": 13,
-                       "al-language-internals-fixture": 0,
-                       "al-language-onprem": 3})
-_res, _ = corpus_result(_over)
-check("a count ABOVE the baseline FAILs as well", _res.status == "FAIL",
-      f"{_res.status}: {_res.summary}")
-check("...and the direction is named", any("more" in d or "above" in d or "13" in d
-                                           for d in _res.detail), _res.detail)
-
-# ---- the RUN-WIDE total is not enough: one suite's tests can vanish into
-# another's count and leave the sum intact. Without a per-suite comparison this
-# case is indistinguishable from a healthy run.
-_redistributed = corpus_output({"al-language": 15,
-                                "al-language-internals-fixture": 0,
-                                "al-language-onprem": 0})
-_res, _ = corpus_result(_redistributed)
-check("a per-suite mismatch FAILs even when the run-wide total is exactly right",
-      _res.status == "FAIL", f"{_res.status}: {_res.summary}")
-check("...and names both suites that moved",
-      any("al-language-onprem" in d for d in _res.detail)
-      and any("al-language:" in d for d in _res.detail), _res.detail)
+check("--count-baseline is gone: the corpus suites are no longer declared in it",
+      "--count-baseline" not in _argv, _argv)
 
 # ---- a failing test is a FAIL even when the counts add up
 _failing = corpus_output({"al-language": 11,
@@ -1770,14 +1731,6 @@ _res, _ = corpus_result(_lying)
 check("a summary that disagrees with the per-bundle PASS lines FAILs",
       _res.status == "FAIL", f"{_res.status}: {_res.summary}")
 
-# ---- a baseline it cannot compute an expected count from is a refusal, not a pass
-_res, _ = corpus_result(_full, baseline={"suites": {"al-language": {"tests": {"default": 12}}}})
-check("an enumerated app with no baseline entry FAILs rather than counting as 0",
-      _res.status == "FAIL", f"{_res.status}: {_res.summary}")
-check("...and names the suite it has no expected count for",
-      any("al-language-onprem" in d for d in _res.detail + [_res.summary]),
-      f"{_res.summary} {_res.detail}")
-
 _res, _ = corpus_result(_full, apps=[])
 check("an enumerator that produced no apps FAILs -- a run of nothing is not a baseline",
       _res.status == "FAIL", f"{_res.status}: {_res.summary}")
@@ -1789,192 +1742,98 @@ check("the default is still SKIP, never folded into the passing count",
 
 
 # --------------------------------------------------------------------------
-# the shared corpus submodule checkout (#3404)
+# which corpus is checked out here (#3737)
 # --------------------------------------------------------------------------
-# Classification is tested against captured readings rather than a live box: the
-# hazard is a state some OTHER process leaves behind, so a suite that reads the
-# real submodule passes for the wrong reason whenever the box happens to be clean
-# and cannot be made to fail on demand. The end-to-end proof that the readings
-# themselves are gathered correctly is in tools/test_corpus_pin.py, which builds a
-# real superproject and really moves its submodule off the pin.
-_PIN = "af01bbbc176b4cc5ca3d7020094103911af51a35"
-_OTHER = "17b015efdc6cd52aed789cbbfc522d7cf1040155"
-_STAGED = "9ee6bbcd12d433547f230d36d017231d53a17937"
+# The pin is gone, and with it the hazard this section used to cover: a submodule
+# working directory shared by every worktree, which one process could silently
+# move for all of them (#3404). Each worktree now has its own clone, so there is
+# nothing left to share.
+#
+# What the check answers instead is WHICH corpus this worktree holds. Nothing in
+# the tree records that any more, so a PASS naming no SHA would be a green tick
+# with the answer missing -- classification is asserted against captured readings,
+# and the gatherer end-to-end against real directories.
+print()
+print("preflight.py -- corpus checkout")
+
+_SHA = "af01bbbc176b4cc5ca3d7020094103911af51a35"
 
 
-def pin_readings(pin=_PIN, index=None, worktree=None, error="", head=None):
-    return {"pin": pin, "index": index, "head": head,
-            "worktree": worktree, "error": error}
+def checkout_reading(state="ok", sha=_SHA, error=""):
+    return {"state": state, "sha": sha if state == "ok" else None,
+            "path": "tests/al-language", "error": error}
 
 
-# ---- agreement is a PASS, and it says which commit it verified
-_res = pf.classify_corpus_pin(pin_readings(worktree=_PIN))
-check("a shared checkout sitting at the pin PASSes",
-      _res.status == "PASS", f"{_res.status}: {_res.summary}")
-check("...and names the commit it agreed on",
-      _PIN[:8] in _res.summary, _res.summary)
+_res = pf.classify_corpus_checkout(checkout_reading())
+check("a corpus clone PASSes", _res.status == "PASS", f"{_res.status}: {_res.summary}")
+check("...and the summary NAMES the commit, which is the whole point of the check",
+      _SHA in _res.summary, _res.summary)
+check("...and points at the tool that moves it",
+      "corpus-checkout.py" in (_res.summary + _res.command + " ".join(_res.detail)),
+      f"{_res.summary} {_res.command} {_res.detail}")
 
-# ---- THE REAL SHAPE: the working directory is at a commit that is not the pin
-_res = pf.classify_corpus_pin(pin_readings(worktree=_OTHER))
-check("a shared checkout that is NOT at the pin WARNs",
+_res = pf.classify_corpus_checkout(checkout_reading("absent"))
+check("no corpus checked out is a WARN, not a FAIL -- one command fixes it",
       _res.status == "WARN", f"{_res.status}: {_res.summary}")
-check("...naming both the wrong commit and the pin, so the reader can see the gap",
-      _OTHER[:8] in _res.summary and _PIN[:8] in _res.summary, _res.summary)
-check("...and it explains the sharing, which is why it has no owner",
-      any("shared by EVERY worktree" in d for d in _res.detail), _res.detail)
-check("...and the remedy is the tree read, not a checkout inside the submodule",
-      "ls-tree" in (_res.remedy or "") and "--quiet" in (_res.remedy or ""), _res.remedy)
-# The severity is deliberate and load-bearing: a FAIL here would halt every agent
-# on the box, repository-wide, for a hazard one documented command sidesteps.
-check("the WARN says why it is not a FAIL",
-      "always available" in (_res.remedy or ""), _res.remedy)
+check("...and it never claims a SHA it does not have",
+      _SHA not in _res.summary, _res.summary)
+check("...and says a fresh worktree is the ordinary way to get here",
+      any("fresh worktree" in d for d in _res.detail), _res.detail)
 
-# ---- the three-way case measured live on this box while #3404 was open
-_res = pf.classify_corpus_pin(pin_readings(index=_STAGED, head=_STAGED, worktree=_OTHER))
-check("a third value belonging to neither end still WARNs",
+_res = pf.classify_corpus_checkout(checkout_reading("submodule-leftover"))
+check("the pre-#3737 submodule checkout WARNs", _res.status == "WARN",
+      f"{_res.status}: {_res.summary}")
+check("...and the remedy is the removal, spelled out",
+      "rm -rf tests/al-language" in (_res.remedy or ""), _res.remedy)
+check("...and it says why no tool does it for you",
+      any("every worktree shares" in d for d in _res.detail), _res.detail)
+
+_res = pf.classify_corpus_checkout(checkout_reading("unreadable", error="bad object"))
+check("a corpus whose commit cannot be read WARNs rather than passing",
       _res.status == "WARN", f"{_res.status}: {_res.summary}")
-check("...and compares against the STAGED pin, which is what that checkout owes",
-      _STAGED[:8] in _res.summary, _res.summary)
-check("...and reports every reading, never collapsing them to one",
-      all(any(v[:8] in d for d in _res.detail)
-          for v in (_PIN, _STAGED, _OTHER)), _res.detail)
+check("...and quotes what git said", "bad object" in _res.summary, _res.summary)
 
-# ---- a bump in progress is correct work and must not be flagged
-# The branch has moved its own gitlink AND its submodule checkout together. A
-# check that fires on this trains the reader to ignore it.
-_res = pf.classify_corpus_pin(pin_readings(index=_STAGED, head=_STAGED, worktree=_STAGED))
-check("a staged bump whose checkout matches it is not a finding",
-      _res.status == "PASS", f"{_res.status}: {_res.summary}")
-
-# ---- BEHIND is not MID-BUMP, and the wrong one must not be called "the pin"
-# The index carries a gitlink at all times, so an UNSTAGED index pin equal to this
-# checkout's own HEAD is just a behind worktree -- the common case. Calling that
-# value "the pin" in the summary is a second wrong statement on the same line, and
-# it is the value the reader is being told to trust.
-_res = pf.classify_corpus_pin(pin_readings(head=_STAGED, worktree=_STAGED))
-check("a behind checkout whose submodule matches its own HEAD is not a hazard",
-      _res.status == "PASS", f"{_res.status}: {_res.summary}")
-check("...and is reported as behind rather than as agreement with origin/main",
-      "behind" in _res.summary.lower(), _res.summary)
-check("...and never calls this checkout's stale HEAD pin 'the pin'",
-      f"not the pin {_STAGED[:8]}" not in _res.summary, _res.summary)
-
-# A behind checkout whose SHARED directory has also drifted is still a hazard, and
-# the reference it names is this checkout's own HEAD pin -- not origin/main's,
-# which this checkout does not claim to be at.
-_res = pf.classify_corpus_pin(pin_readings(head=_STAGED, worktree=_OTHER))
-check("a behind checkout with a drifted shared directory still WARNs",
-      _res.status == "WARN", f"{_res.status}: {_res.summary}")
-check("...naming the commit this checkout expects, not origin/main's",
-      _STAGED[:8] in _res.summary and _OTHER[:8] in _res.summary, _res.summary)
-
-# ---- "could not read" is not "they agree"
-_res = pf.classify_corpus_pin(pin_readings(worktree=None,
-                                           error="tests/al-language is not initialised"))
-check("an uninitialised submodule cannot mislead anyone, so it PASSes",
-      _res.status == "PASS", f"{_res.status}: {_res.summary}")
-check("...but says so rather than claiming the readings were verified equal",
-      "no shared corpus checkout" in _res.summary, _res.summary)
-
-_res = pf.classify_corpus_pin(pin_readings(pin=None, worktree=_OTHER))
-check("an unreadable pin is not a divergence verdict",
-      _res.status == "PASS", f"{_res.status}: {_res.summary}")
-
-# ---- the gatherer reads the TREE, never the working directory
-# Proven end-to-end against a real repository: the superproject's tree says one
-# commit and the submodule checkout says another, and the `pin` reading must be
-# the tree's. This is the misreading the whole issue is about.
-_pin_tmp = tempfile.mkdtemp()
+# ---- the gatherer, against real directories on disk
+_co_tmp = tempfile.mkdtemp()
 try:
-    _sub = os.path.join(_pin_tmp, "corpus")
-    os.makedirs(_sub)
-    subprocess.run(["git", "init", "-q", "-b", "master", _sub], check=True,
-                   capture_output=True)
-
     def _g(root, *a):
         return subprocess.run(["git", "-C", root, *a], capture_output=True,
                               text=True).stdout.strip()
 
-    _g(_sub, "config", "user.email", "t@example.invalid")
-    _g(_sub, "config", "user.name", "T")
-    open(os.path.join(_sub, "a"), "w").write("1\n")
-    _g(_sub, "add", "a")
-    _g(_sub, "commit", "-qm", "one")
-    _first = _g(_sub, "rev-parse", "HEAD")
-    open(os.path.join(_sub, "b"), "w").write("2\n")
-    _g(_sub, "add", "b")
-    _g(_sub, "commit", "-qm", "two")
-    _second = _g(_sub, "rev-parse", "HEAD")
-    _g(_sub, "checkout", "-q", _first)
+    _repo = os.path.join(_co_tmp, "runner")
+    os.makedirs(os.path.join(_repo, "tests"))
+    check("a worktree with no corpus directory reads as absent",
+          pf.corpus_checkout_reading(_repo)["state"] == "absent",
+          pf.corpus_checkout_reading(_repo))
 
-    _sup = os.path.join(_pin_tmp, "super")
-    os.makedirs(_sup)
-    subprocess.run(["git", "init", "-q", "-b", "main", _sup], check=True,
+    _corpus = os.path.join(_repo, "tests", "al-language")
+    os.makedirs(_corpus)
+    check("an EMPTY corpus directory is absent, not unreadable",
+          pf.corpus_checkout_reading(_repo)["state"] == "absent",
+          pf.corpus_checkout_reading(_repo))
+
+    subprocess.run(["git", "init", "-q", "-b", "master", _corpus], check=True,
                    capture_output=True)
-    _g(_sup, "config", "user.email", "t@example.invalid")
-    _g(_sup, "config", "user.name", "T")
-    open(os.path.join(_sup, "r"), "w").write("x\n")
-    _g(_sup, "add", "r")
-    _g(_sup, "commit", "-qm", "init")
-    _g(_sup, "-c", "protocol.file.allow=always", "submodule", "add", "-q", _sub,
-       "tests/al-language")
-    _g(_sup, "commit", "-qm", "pin the corpus")
+    _g(_corpus, "config", "user.email", "t@example.invalid")
+    _g(_corpus, "config", "user.name", "T")
+    open(os.path.join(_corpus, "a"), "w").write("1\n")
+    _g(_corpus, "add", "a")
+    _g(_corpus, "commit", "-qm", "one")
+    _head = _g(_corpus, "rev-parse", "HEAD")
+    _read = pf.corpus_checkout_reading(_repo)
+    check("a real clone reads as ok with its own HEAD",
+          _read["state"] == "ok" and _read["sha"] == _head, f"{_read} {_head}")
 
-    # `origin/main` is what the gatherer reads the pin out of, so give the fixture
-    # one -- pointing at the commit that pinned the corpus at _first.
-    _g(_sup, "update-ref", "refs/remotes/origin/main", _g(_sup, "rev-parse", "HEAD"))
-
-    # Move the SHARED checkout off the pin, exactly as another process would.
-    _g(os.path.join(_sup, "tests/al-language"), "checkout", "-q", _second)
-
-    _read = pf.corpus_pin_readings(_sup)
-    # THE CLAIM, stated directly: the pin comes out of origin/main's TREE, so it is
-    # _first even though the submodule's HEAD now says _second. Read from the
-    # working directory instead and this reading becomes _second -- which is the
-    # entire defect #3404 is about, and nothing else in this suite would notice.
-    check("the gatherer reads the pin from origin/main's TREE, not from the checkout",
-          _read["pin"] == _first, f"pin={_read['pin']} first={_first} second={_second}")
-    check("...and specifically NOT the commit the shared checkout is sitting on",
-          _read["pin"] != _second, f"{_read}")
-    check("the gatherer reads the working directory as what it is",
-          _read["worktree"] == _second, f"{_read}")
-    check("the gatherer reads THIS checkout's HEAD pin separately from origin/main's",
-          _read["head"] == _first, f"{_read}")
-    check("...and reads no STAGED pin, because nothing was staged",
-          _read["index"] is None, f"{_read}")
-    check("...and the two genuinely disagree, so the fixture proves the point",
-          _first != _second)
-    check("a poisoned checkout is classified as a WARN end to end",
-          pf.classify_corpus_pin(_read).status == "WARN",
-          pf.classify_corpus_pin(_read).summary)
-
-    # An UNPOPULATED submodule directory -- the state of every fresh worktree,
-    # because `git worktree add` does not populate submodules. `git -C <empty dir>
-    # rev-parse HEAD` walks UP and returns the SUPERPROJECT's commit, exit 0, so
-    # the naive read reports a divergence in every new worktree. A check that is
-    # wrong by default is one people learn to skip, which is worse than no check.
-    _bare = os.path.join(_pin_tmp, "bare")
-    os.makedirs(_bare)
-    subprocess.run(["git", "init", "-q", "-b", "main", _bare], check=True,
-                   capture_output=True)
-    _g(_bare, "config", "user.email", "t@example.invalid")
-    _g(_bare, "config", "user.name", "T")
-    open(os.path.join(_bare, "R"), "w").write("x\n")
-    _g(_bare, "add", "R")
-    _g(_bare, "commit", "-qm", "init")
-    os.makedirs(os.path.join(_bare, "tests/al-language"))
-    _bare_head = _g(_bare, "rev-parse", "HEAD")
-    check("git really answers the SUPERPROJECT commit from an empty submodule dir",
-          _g(os.path.join(_bare, "tests/al-language"), "rev-parse", "HEAD") == _bare_head,
-          "the trap no longer reproduces; this test is no longer proving anything")
-    _bare_read = pf.corpus_pin_readings(_bare)
-    check("an unpopulated submodule is not read as a corpus checkout",
-          _bare_read["worktree"] is None, f"{_bare_read}")
-    check("...and a fresh worktree therefore does not WARN",
-          pf.classify_corpus_pin(_bare_read).status == "PASS",
-          pf.classify_corpus_pin(_bare_read).summary)
+    # The migration state: a `.git` FILE, pointing into the superproject.
+    _left = os.path.join(_co_tmp, "left")
+    os.makedirs(os.path.join(_left, "tests", "al-language"))
+    with open(os.path.join(_left, "tests", "al-language", ".git"), "w") as fh:
+        fh.write("gitdir: ../../.git/modules/tests/al-language\n")
+    check("a .git FILE reads as the submodule leftover, never as a clone",
+          pf.corpus_checkout_reading(_left)["state"] == "submodule-leftover",
+          pf.corpus_checkout_reading(_left))
 finally:
-    shutil.rmtree(_pin_tmp, ignore_errors=True)
+    shutil.rmtree(_co_tmp, ignore_errors=True)
 
 
 print()

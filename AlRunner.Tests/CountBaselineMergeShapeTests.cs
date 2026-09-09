@@ -19,6 +19,11 @@
 // The tests below reproduce that as a real three-way merge (`git merge-file`) of two
 // independent branches, each carrying out the full bump procedure a PR author must carry
 // out. They are the RED for #2485 and they stay as the regression guard.
+//
+// The al-language suites left this file with the pin (#3737, #3675): the corpus is
+// resolved per run, so an exact count committed here would go stale on every upstream
+// corpus merge. `runner-extras` stays, because it lives in this repository and its count
+// moves only when a commit here moves it.
 using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -75,18 +80,26 @@ public sealed class CountBaselineMergeShapeTests
     }
 
     /// <summary>
-    /// Two PRs moving DIFFERENT suites — a corpus pin bump and a runner-extras addition —
-    /// do not disagree about a single number, and must not collide. They did, because both
-    /// had to append their rationale to the same `_comment` line.
+    /// One PR adding an app group and another changing an EXISTING group's count. They
+    /// disagree about no number and must not collide.
     /// </summary>
+    /// <remarks>
+    /// This replaces a case that paired a corpus pin bump with a runner-extras addition.
+    /// There is no corpus suite in this file any more: the corpus is resolved per run
+    /// (#3737), so a committed count for it would go stale the moment an upstream corpus
+    /// PR merged, and CI compares against the last count a main run recorded instead
+    /// (#3675). What is left in this file is `runner-extras`, which lives in this
+    /// repository — so the merge shape being pinned is now entirely within one suite,
+    /// which is exactly where two independent PRs still land in one file.
+    /// </remarks>
     [Fact]
-    public void PrBumpingTheCorpusAndPrAddingAnAppGroup_MergeCleanly()
+    public void PrAddingAnAppGroupAndPrChangingAnExistingCount_MergeCleanly()
     {
         var (base_, ours, theirs) = ThreeCopies();
-        ApplyBump(ours, "al-language", newAppGroup: null, addedTests: 6,
-            note: "Corpus pin bump: 6 tests from an upstream corpus PR.");
-        ApplyBump(theirs, "runner-extras", newAppGroup: "zzz-probe-suite-two", addedTests: 3,
+        ApplyBump(ours, "runner-extras", newAppGroup: "zzz-probe-suite-two", addedTests: 3,
             note: "New app group zzz-probe-suite-two: 3 tests.");
+        ApplyBump(theirs, "runner-extras", newAppGroup: null, addedTests: 2,
+            note: "Two more tests in an existing group.");
 
         AssertMergesCleanly(base_, ours, theirs);
     }
