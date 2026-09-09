@@ -84,10 +84,20 @@
 #   PR_BODY        - the pull request's body/description
 #   CHANGED_FILES  - the PR's changed paths, one per line
 #
+# Optional:
+#   PIN_PATH       - the submodule gitlink whose movement fires this guard.
+#                    Defaults to tests/al-language, and must name a submodule
+#                    .gitmodules declares; one that does not is refused with
+#                    exit 3 rather than silently never firing (#3681).
+#
 # Exit codes
 #   0  no pin bump, or the entry is present, or a well-formed opt-out
 #   1  the pin moved and neither an entry nor a usable opt-out is present
 #   2  the check could not run (a required input was not passed at all)
+#   3  the answer cannot be determined -- PIN_PATH names no submodule this
+#      repository declares, so no changed path could ever match it and every
+#      verdict below would be vacuous. NOT a pass and NOT a missing-entry
+#      verdict; the remedy is a constant in this file, not a history entry.
 
 set -uo pipefail
 
@@ -104,8 +114,62 @@ if [ -z "${PR_BODY+set}" ]; then
   exit 2
 fi
 
-PIN_PATH="tests/al-language"
+# PIN_PATH is overridable for the same reason SUBMODULE_PATH is in
+# check_corpus_pin_forward.sh: a constant nothing can vary is a constant nothing
+# can test, and this one decides whether the guard fires at all.
+PIN_PATH="${PIN_PATH:-tests/al-language}"
 HISTORY_PATH="tests/expectations/count-baseline/history.md"
+
+# --- PIN_PATH must name a submodule this repository declares (#3681) ----------
+#
+# The same defect as #3299, one file over, and it disarms this gate completely.
+# PIN_PATH is compared for exact equality against each changed path; if it names
+# nothing -- a renamed submodule, a typo -- no path can ever equal it, pin_moved
+# is never set, and this script prints "does not move the tests/al-language pin"
+# and exits 0 on every pull request, forever, with a green tick. Nothing says the
+# gate stopped firing.
+#
+# The check is made BEFORE the changed-file scan, not after, because a PIN_PATH
+# that names nothing has already made every verdict this script could reach
+# meaningless -- including the ones that look like passes. It gets exit 3, the
+# cannot-determine code check_corpus_pin_forward.sh and tools/ci-wait.py use, so
+# it is never confusable with the missing-entry failure (exit 1): those need
+# different remedies, and sending an author to write a history entry when the
+# real problem is a constant in this file wastes the one thing the message is
+# for.
+#
+# Two things this must NOT do, both learned from #3299:
+#
+#   * It must not hard-error a repository that genuinely declares no submodule.
+#     There, a corpus pin bump is not a thing that can occur, so no history entry
+#     can be owed and this guard has nothing to say -- pass.
+#   * It must not conflate "no .gitmodules" with "could not read .gitmodules".
+#     The first is that legitimate pass; the second is a broken measurement, and
+#     folding them puts the broken case back on the exit-0 path.
+#
+# The read is from the working tree's HEAD rather than from an event-payload
+# commit, and that is a deliberate narrowing rather than an oversight about
+# #3261. This job passes no BASE_SHA, and unlike a PIN it does not need one: the
+# question is only "does this repository declare a submodule at this path",
+# whose answer is the same at base, head and the merge ref in every case that is
+# not itself a submodule add or removal -- and a submodule add or removal is a
+# structural change a human reviews, which check_corpus_pin_forward.sh already
+# refuses to judge (exit 3) on its own endpoints.
+if git cat-file -e HEAD:.gitmodules 2>/dev/null; then
+  declared_pin_paths="$(git config --blob HEAD:.gitmodules \
+      --get-regexp '^submodule\..*\.path$' 2>/dev/null \
+    | awk '{ $1 = ""; sub(/^ /, ""); print }' | awk 'NF' | sort -u)"
+
+  if [ -z "$declared_pin_paths" ]; then
+    echo "::error::check_count_baseline_history.sh: .gitmodules is present but no submodule path could be read from it, so whether PIN_PATH='$PIN_PATH' names a real submodule cannot be established. That is a broken measurement, not a verdict -- a pass here would be a pass without having checked anything." >&2
+    exit 3
+  fi
+
+  if ! printf '%s\n' "$declared_pin_paths" | command grep -qxF "$PIN_PATH"; then
+    echo "::error::check_count_baseline_history.sh: PIN_PATH='$PIN_PATH' is not a submodule this repository declares. .gitmodules declares: $(printf '%s' "$declared_pin_paths" | tr '\n' ' '). No changed path can ever equal '$PIN_PATH', so this gate would report that no pin bump occurred on EVERY pull request -- a green tick with nothing behind it. Fix PIN_PATH (or this script's default) to name a declared submodule path." >&2
+    exit 3
+  fi
+fi
 
 # --- Did the pin move, and was an entry written? -----------------------------
 #

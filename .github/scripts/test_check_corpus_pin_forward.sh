@@ -89,7 +89,14 @@ trap 'rm -rf "$TMP"' EXIT
 #             D1            a divergent branch, no ancestry either way with C2
 #
 # C1 stands for the pin main carried when a PR branched; C2 for the pin main
-# carries now. The #3181 shape is head=C1, base=C2.
+# carries now. The backward shape is head=C1, base=C2.
+#
+# The commit subjects below name corpus #199 and #201 because those were the two
+# corpus PRs the original header wrongly claimed were about to be dropped by
+# PR #3181 (#3299 -- they were ancestors of #3181's base pin and were never at
+# risk). They are kept as fixture labels ONLY: the construction here is a
+# synthetic corpus with a synthetic backward pin, and nothing about it depends on
+# what those real corpus PRs contain. Do not read them as provenance.
 
 CORPUS="$TMP/corpus"
 git init -q -b master "$CORPUS"
@@ -165,7 +172,7 @@ pin_to() {
 }
 
 BASE_AT_C2=$(pin_to "$C2")     # main today: the newer pin
-HEAD_AT_C1=$(pin_to "$C1")     # a PR still carrying the older pin  -- the #3181 shape
+HEAD_AT_C1=$(pin_to "$C1")     # a PR still carrying the older pin -- the backward shape
 HEAD_AT_C2=$(pin_to "$C2")     # a PR that did not touch the pin
 HEAD_AT_D1=$(pin_to "$D1")     # a PR carrying a divergent corpus commit
 BASE_AT_C1=$(pin_to "$C1")     # main at the older pin, for the forward-bump case
@@ -184,10 +191,15 @@ assert_rc "a genuine forward bump passes" 0 \
   BASE_SHA="$BASE_AT_C1" HEAD_SHA="$HEAD_AT_C2"
 assert_output_has "a forward bump names the direction it verified" "ancestor"
 
-# The centre of the suite: #3181's real shape, reconstructed. The head pin is an
+# The centre of the suite: the backward shape, constructed. The head pin is an
 # ancestor of the base pin, so merging it would un-pin every corpus commit in
 # between -- suites already validated against a real service tier.
-assert_rc "a BACKWARD pin fails (#3181's shape: head pin is an ancestor of base pin)" 1 \
+#
+# This construction is sound and is the defect the guard exists to catch. It is
+# NOT a reconstruction of a pull request that happened: the suite used to call it
+# "#3181's real shape", and #3181 moved its pin forward (#3299). No real-world
+# instance of the backward shape has occurred yet.
+assert_rc "a BACKWARD pin fails (head pin is an ancestor of base pin)" 1 \
   BASE_SHA="$BASE_AT_C2" HEAD_SHA="$HEAD_AT_C1"
 assert_output_has "the backward failure is a GitHub error annotation" "::error::"
 # head=C1, base=C2, so the corpus commit that would be un-pinned is C2 -- the
@@ -342,6 +354,89 @@ git -C "$SUPER" checkout -q --detach "$BASE_AT_C2"
 assert_rc "a backward pin is still caught whatever is checked out" 1 \
   BASE_SHA="$BASE_AT_C2" HEAD_SHA="$HEAD_AT_C1"
 git -C "$SUPER" checkout -q main
+
+# --- SUBMODULE_PATH that names nothing (#3299) -------------------------------
+#
+# The gap this closes: the script's default is a hardcoded string, and until
+# #3299 nothing tied it to what .gitmodules declares. Rename the submodule, or
+# mistype the default, and read_pin returns empty at BOTH endpoints, the script
+# prints "there is no corpus pin to compare" and exits 0 -- forever, on every
+# pull request, with a green tick. That is the same green-run-that-measured-
+# nothing shape this script spends exit 3 refusing everywhere else, and it is
+# the one path where it produced it.
+#
+# The discrimination has to be made from the ENDPOINT COMMITS, not the working
+# tree, for the same #3261 reason every other read here does: .gitmodules on
+# disk belongs to whatever is checked out. A repository that genuinely declares
+# no submodules must stay a pass -- turning that into a hard error would trade
+# one defect for another.
+#
+#   .gitmodules declares SUBMODULE_PATH, no gitlink anywhere -> 3, and say so
+#   .gitmodules exists but declares something else            -> 3, name what it does declare
+#   no .gitmodules at either endpoint                         -> 0, genuinely submodule-free
+
+assert_rc "a SUBMODULE_PATH matching nothing is CANNOT-DETERMINE, not a silent pass" 3 \
+  SUBMODULE_PATH=tests/al-langauge BASE_SHA="$BASE_AT_C2" HEAD_SHA="$HEAD_AT_C1"
+assert_output_has "the mis-set path is named in the message" "tests/al-langauge"
+assert_output_has "the message names what .gitmodules DOES declare, so the typo is visible" \
+  "tests/al-language"
+
+# The same refusal must apply to a path that is not merely misspelled but absent
+# from the repository altogether -- e.g. a default left behind by a rename.
+assert_rc "a wholly unknown SUBMODULE_PATH is refused too" 3 \
+  SUBMODULE_PATH=vendor/some-other-corpus BASE_SHA="$BASE_AT_C2" HEAD_SHA="$HEAD_AT_C2"
+
+# ...and it must be annotated, not merely non-zero: a silent 3 in the CI log is
+# only half a fix.
+if [ "$LAST_OUTPUT" != "${LAST_OUTPUT/::error::/}" ]; then
+  ok "the mis-set-path refusal is annotated in the CI log"
+else
+  bad "the mis-set-path refusal produced no ::error:: annotation. Got: $LAST_OUTPUT"
+fi
+
+# The default must not be a string nobody checks. Asserted against THIS
+# repository's real .gitmodules, from the repository root rather than the
+# fixture, because that is the file the shipped default has to agree with.
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+default_path="$(command sed -n 's/^SUBMODULE_PATH="\${SUBMODULE_PATH:-\(.*\)}"$/\1/p' "$SCRIPT")"
+check_eq "the script has exactly one parseable SUBMODULE_PATH default" \
+  "1" "$(printf '%s\n' "$default_path" | command grep -c .)"
+if git -C "$REPO_ROOT" config --blob HEAD:.gitmodules --get-regexp '^submodule\..*\.path$' 2>/dev/null \
+     | awk '{print $2}' | command grep -qxF "$default_path"; then
+  ok "the shipped SUBMODULE_PATH default ('$default_path') is a path .gitmodules really declares"
+else
+  bad "the shipped SUBMODULE_PATH default ('$default_path') is not declared in this repository's .gitmodules -- the guard would pass every PR while measuring nothing"
+fi
+
+# --- A repository that genuinely has no submodule ----------------------------
+#
+# The constraint on the fix above: refusing an unknown path must not turn a
+# checkout with no submodules at all into a hard error. There is nothing to
+# compare there and nothing being un-pinned, so 0 is the honest answer -- and
+# the message must not imply a measurement was made.
+
+NOSUB="$TMP/no-submodule"
+git init -q -b main "$NOSUB"
+git -C "$NOSUB" config user.email test@example.com
+git -C "$NOSUB" config user.name Test
+echo "a repository with no submodules" > "$NOSUB/README.md"
+git -C "$NOSUB" add -A && git -C "$NOSUB" commit -qm "root"
+NOSUB_A=$(git -C "$NOSUB" rev-parse HEAD)
+echo "another commit" >> "$NOSUB/README.md"
+git -C "$NOSUB" commit -qam "second"
+NOSUB_B=$(git -C "$NOSUB" rev-parse HEAD)
+
+if [ -e "$NOSUB/.gitmodules" ]; then
+  bad "fixture setup: the no-submodule repository unexpectedly has a .gitmodules"
+else
+  ok "the no-submodule fixture genuinely declares no submodules"
+fi
+
+SUPER="$NOSUB"
+assert_rc "a repository that genuinely declares no submodule still passes" 0 \
+  BASE_SHA="$NOSUB_A" HEAD_SHA="$NOSUB_B"
+assert_output_has "the submodule-free pass says there is nothing to compare" "no corpus pin"
+SUPER="$SUPER_REAL"
 
 # --- Prove, not pass: both stub directions must be caught --------------------
 #

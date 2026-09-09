@@ -34,9 +34,15 @@ pass=0
 fail=0
 
 assert_exit() {
-  local desc="$1" expected_rc="$2" files="$3" body="${4-}"
+  local desc="$1" expected_rc="$2" files="$3" body="${4-}" extra_env="${5-}"
   local rc
-  CHANGED_FILES="$files" PR_BODY="$body" "$SCRIPT" >/dev/null 2>&1
+  # $5 carries an optional VAR=value for the cases that vary PIN_PATH. Passed
+  # through `env` rather than exported, so one case cannot leak into the next.
+  if [ -n "$extra_env" ]; then
+    CHANGED_FILES="$files" PR_BODY="$body" env "$extra_env" "$SCRIPT" >/dev/null 2>&1
+  else
+    CHANGED_FILES="$files" PR_BODY="$body" "$SCRIPT" >/dev/null 2>&1
+  fi
   rc=$?
   if [ "$rc" = "$expected_rc" ]; then
     echo "ok   - $desc"
@@ -253,6 +259,108 @@ fi
 # must fire rather than error -- the omission is still an omission.
 assert_exit "an empty body on a pin bump still fires" 1 \
   "$(printf '%s\n%s\n' "$PIN" "$BASELINE")" ""
+
+# --- PIN_PATH must name a submodule .gitmodules declares (#3681) --------------
+#
+# The same defect as #3299, one file over. PIN_PATH was a hardcoded constant with
+# nothing tying it to what .gitmodules declares. Rename the submodule -- or
+# mistype the constant -- and no changed path ever equals it, pin_moved is never
+# set, the script prints "does not move the tests/al-language pin" and exits 0 on
+# every pull request, forever, with a green tick. The gate stops firing and
+# nothing says so.
+#
+# The section below already asserted that the PATH exists in the tree. That is a
+# weaker claim and it does not close this: it checks the path is there, not that
+# PIN_PATH IS that path, and not that a mismatch is refused AT RUNTIME. With the
+# constant typo'd, that assertion still passes -- it looks up "tests/al-language"
+# from its own $PIN variable, which the script never reads -- while a real pin
+# bump with no history entry sails through at exit 0. Measured before this was
+# written.
+#
+# PIN_PATH is therefore overridable, for the same reason SUBMODULE_PATH is in
+# check_corpus_pin_forward.sh: a constant nothing can vary is a constant nothing
+# can test.
+
+assert_exit "a PIN_PATH matching no declared submodule is refused, not passed" 3 \
+  "$(printf '%s\n%s\n' "$PIN" "$BASELINE")" "" "PIN_PATH=tests/al-langauge"
+
+# It must be the REFUSAL that fires, not the ordinary missing-entry failure --
+# those need different remedies (fix the constant vs. write a history entry), and
+# reporting one as the other sends the author to the wrong file.
+out=$(CHANGED_FILES="$(printf '%s\n%s\n' "$PIN" "$BASELINE")" PR_BODY="" \
+      PIN_PATH=tests/al-langauge "$SCRIPT" 2>&1)
+if printf '%s' "$out" | command grep -qF 'tests/al-langauge' \
+   && printf '%s' "$out" | command grep -qF 'tests/al-language' \
+   && printf '%s' "$out" | command grep -qF '::error::'; then
+  echo "ok   - the refusal is annotated and names both the mis-set path and what .gitmodules declares"
+  pass=$((pass + 1))
+else
+  echo "FAIL - the mis-set-PIN_PATH refusal should be an ::error:: naming both paths. Got: $out"
+  fail=$((fail + 1))
+fi
+
+# The refusal must not depend on the diff looking like a bump: a PIN_PATH that
+# names nothing has already made every verdict from this script meaningless, so
+# it is refused before the changed-file scan reaches a conclusion either way.
+assert_exit "a mis-set PIN_PATH is refused even on a diff that would otherwise pass" 3 \
+  "README.md" "" "PIN_PATH=vendor/some-other-corpus"
+
+# The shipped default is the thing that actually ships, so assert it directly
+# against .gitmodules rather than only against a path existing on disk.
+REPO_ROOT_EARLY="$(cd "$SCRIPT_DIR/../.." && pwd)"
+default_pin="$(command sed -n 's/^PIN_PATH="\${PIN_PATH:-\(.*\)}"$/\1/p' "$SCRIPT")"
+if [ "$(printf '%s\n' "$default_pin" | command grep -c .)" = "1" ]; then
+  echo "ok   - the script has exactly one parseable PIN_PATH default"
+  pass=$((pass + 1))
+else
+  echo "FAIL - PIN_PATH's default is not parseable as a single overridable value; got '$default_pin'"
+  fail=$((fail + 1))
+fi
+if git -C "$REPO_ROOT_EARLY" config --blob HEAD:.gitmodules \
+     --get-regexp '^submodule\..*\.path$' 2>/dev/null \
+     | awk '{print $2}' | command grep -qxF "$default_pin"; then
+  echo "ok   - the shipped PIN_PATH default ('$default_pin') is a path .gitmodules really declares"
+  pass=$((pass + 1))
+else
+  echo "FAIL - the shipped PIN_PATH default ('$default_pin') is not declared in .gitmodules -- the gate would pass every PR while measuring nothing"
+  fail=$((fail + 1))
+fi
+
+# --- ...and a repository with no submodule at all must still work -------------
+#
+# The constraint #3299 sets, applied identically here: refusing an undeclared
+# PIN_PATH must not turn a checkout that genuinely declares no submodule into a
+# hard error. There the answer was a pass, because there was nothing to un-pin.
+# Here it is a pass for a different and stronger reason: with no submodule, a
+# corpus pin bump is not a thing that can occur, so no history entry can be owed
+# and the guard has nothing to say. Run from a real submodule-free repository so
+# the claim is measured rather than asserted about a code path.
+
+NOSUB="$(mktemp -d)"
+trap 'rm -rf "$NOSUB"' EXIT
+git init -q -b main "$NOSUB"
+git -C "$NOSUB" config user.email test@example.com
+git -C "$NOSUB" config user.name Test
+echo "a repository with no submodules" > "$NOSUB/README.md"
+git -C "$NOSUB" add -A && git -C "$NOSUB" commit -qm root
+
+if [ -e "$NOSUB/.gitmodules" ]; then
+  echo "FAIL - fixture setup: the no-submodule repository unexpectedly has a .gitmodules"
+  fail=$((fail + 1))
+else
+  echo "ok   - the no-submodule fixture genuinely declares no submodules"
+  pass=$((pass + 1))
+fi
+
+rc=0
+(cd "$NOSUB" && CHANGED_FILES="README.md" PR_BODY="" bash "$SCRIPT" >/dev/null 2>&1) || rc=$?
+if [ "$rc" = "0" ]; then
+  echo "ok   - a repository that declares no submodule is a pass, not a hard error"
+  pass=$((pass + 1))
+else
+  echo "FAIL - a submodule-free repository should pass, got exit $rc -- the fix traded one defect for another"
+  fail=$((fail + 1))
+fi
 
 # --- The paths this guard names must exist -----------------------------------
 #
