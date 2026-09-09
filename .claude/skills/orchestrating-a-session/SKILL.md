@@ -154,8 +154,8 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
 - No *other* PR in the same batch conflicts with it. Where two do — two submodule pin bumps to
   different revisions, say — arm only the one that must merge first and report the ordering.
 - **The newest review comment on the PR ends with a `Verdict: MERGE` line whose head equals the
-  PR's current head** (`gh pr view <N> --json headRefOid`). A FIX-FIRST or HOLD, a missing
-  verdict line, or a head that has moved since the verdict: do not arm.
+  PR's current head** (`gh pr view <N> --json headRefOid`); any other line, or none, sends the
+  PR back to its reviewer naming what is missing.
 
 **Record the head you armed against** — it is the head in that verdict line. If the head moves
 afterwards, GitHub keeps auto-merge armed against the new head, which nobody has reviewed, and

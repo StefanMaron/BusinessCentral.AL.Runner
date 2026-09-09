@@ -129,9 +129,8 @@ replacement when a reviewer returns.
 minutes when other loops and outside contributors are pushing. A verdict without a SHA cannot be
 checked for staleness, and merging on a stale one has already nearly merged a commit whose CI was
 red. Re-read the head immediately before merging and pass `--match-head-commit`, so the merge
-refuses rather than silently taking something else. The SHA belongs in the verdict line
-defined in `.claude/agents/reviewer.md`; compare it with `gh pr view <N> --json headRefOid`
-before arming.
+refuses rather than silently taking something else. The SHA is the head in the verdict line
+(`.claude/agents/reviewer.md`, "The verdict line"); the arming list compares it.
 
 These numbers come from a single session and review time varies with PR size. Re-measure with
 `tools/agent-cost.py` before treating the ratio as fixed.

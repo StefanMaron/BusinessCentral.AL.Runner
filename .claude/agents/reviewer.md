@@ -180,7 +180,9 @@ evidence, and what would settle it. Say plainly when you found nothing — a rev
 findings to look thorough is worse than no review.
 
 State explicitly whether, in your judgement, the PR meets the merge bar, and end the comment
-with the verdict line below. The invoking session decides; you do not merge.
+with the verdict line below. On MERGE, run the arming list (`orchestrating-a-session`, "A
+reviewer that approves a PR arms auto-merge") and arm when every condition holds; on anything
+else, hand the PR back with the verdict. You never merge by hand.
 
 That verdict goes **on the PR**, not only into your reply. Post it as a comment before you
 return, and say in your reply that you did. Where `gh` exists, `gh pr comment <N> --repo <owner>/<repo>
@@ -196,24 +198,28 @@ End every review comment with one verdict line, and write nothing after it:
 Verdict: MERGE|FIX-FIRST|HOLD (<reason, only for FIX-FIRST/HOLD>) — head <full 40-char sha> — kind: full|re-review
 ```
 
-1. Decide MERGE, FIX-FIRST or HOLD. FIX-FIRST and HOLD carry the reason in parentheses; MERGE
+1. Before reading the diff, record the head: `gh pr view <N> --repo <owner>/<repo> --json
+   headRefOid --jq .headRefOid`; without `gh`, `mcp__github__pull_request_read` with
+   `method: get` returns it as `head.sha`. Review that commit.
+2. Decide MERGE, FIX-FIRST or HOLD. FIX-FIRST and HOLD carry the reason in parentheses; MERGE
    carries none.
-2. Read the head: `gh pr view <N> --repo <owner>/<repo> --json headRefOid --jq .headRefOid`.
-   Without `gh`, read `headRefOid` through `mcp__github__pull_request_read`. Write the full
-   40-character SHA.
-3. Sign the comment, then write the verdict line as its last line.
+3. Read the head again. Equal to step 1: sign the comment, then write the verdict line as its
+   last line with that full 40-character SHA. Different: review the new commits, then return
+   to step 2.
 
 Done when the posted comment's last line is the verdict line and its head equals the PR's head
-at the moment you post. Re-read the head if the review took long enough for someone to push;
-a verdict on a head that has already moved is not a verdict on the PR.
+at the moment you post.
 
-`kind:` says which pass produced it. Use `full` for the review above. Use `re-review` for a
-pass over a diff that has not changed since your last full review: compare `gh pr diff <N>`
-with the diff you reviewed then, and when they are identical re-check only the mechanical
-conditions in the arming list (`orchestrating-a-session`, "A reviewer that approves a PR arms
-auto-merge"). When the diff differs at all, do a full review and stamp `full`.
+`kind:` says which pass produced it. `full` is the review above. `re-review` is a pass over a
+diff unchanged since your last full review: with `<old>` the head in your previous verdict
+line and `<new>` the head from step 1, after `git fetch upstream main` the command
+`diff <(git diff $(git merge-base upstream/main <old>) <old>) <(git diff $(git merge-base
+upstream/main <new>) <new>)` prints nothing. Then re-check only the mechanical conditions in
+the arming list and stamp `re-review`. Any output, or an `<old>` git cannot resolve: full
+review, stamp `full`.
 
-On a corpus PR the same line applies, with that repository's `--repo` on the head read.
+On a corpus PR the same line applies, with that repository's `--repo` on the head read and
+`master` as the base.
 
 Why: an arming step can only check a verdict it can find, on the head it is about to merge
 ([e-11](https://fbakkensen.github.io/al-runner-retro/#e-11)).

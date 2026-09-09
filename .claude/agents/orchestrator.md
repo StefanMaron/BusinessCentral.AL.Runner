@@ -56,11 +56,9 @@ For each PR:
    Do **not** merge until it's resolved. (No `docs/coverage.yaml` to check for — retired at the v1→v2 cutover, see `al-runner-tests` skill.)
 6. **No shipped SA implementations.** Auto-generated blank shells for dependency objects are fine — that is how the runner works. Forbidden is a *real implementation* of a System Application codeunit inside the runner (an actual Image processing / Cryptography / File Mgt. implementation, as AL the runner emits or as C# under `AlRunner/Patches/` standing in for the SA codeunit's body). The only exceptions are test-automation libraries (`LibraryAssert` 130, `LibraryVariableStorage` 131004). If the diff adds anything else under that umbrella, block with:
    > The runner does not ship real implementations of System Application codeunits — only auto-generated blank shells (normal) and test-automation libraries (`LibraryAssert`, `LibraryVariableStorage`). This change appears to add a real SA implementation; please remove it. If the AL under test actually needs SA behavior to mean anything, file a runner-gap issue describing the AL pattern instead.
-7. **Read the review verdict before arming.** The newest review comment ends with a
-   `Verdict: MERGE` line whose head equals `gh pr view <N> --json headRefOid`; anything else
-   (FIX-FIRST, HOLD, no line, head moved) hands the PR back with the reason. The full arming
-   list is in the `orchestrating-a-session` skill under "A reviewer that approves a PR arms
-   auto-merge".
+7. **Read the review verdict before arming.** The arming list in the `orchestrating-a-session`
+   skill ("A reviewer that approves a PR arms auto-merge") includes it; a PR that fails any
+   condition on that list goes back to its reviewer with the reason.
 8. Sanity check passed (step 1) + CI green + no CHANGELOG + no stray `tests/al-language/` edits + no forbidden SA implementation:
    - CI in progress: `gh pr merge <N> --auto --squash --repo StefanMaron/BusinessCentral.AL.Runner` (auto-merge is a repo setting — `allow_auto_merge=true`, `delete_branch_on_merge=true` — so this queues the merge rather than failing; it won't show in a checkout diff). **`--auto` only queues while the required checks are still pending. If they are already green it MERGES IMMEDIATELY** — `gh` branches on that itself — so do not reach for it as a safe "arm it and decide later": running it on a green PR is the merge (#3127).
    - CI complete: `gh pr merge <N> --squash --repo StefanMaron/BusinessCentral.AL.Runner`
