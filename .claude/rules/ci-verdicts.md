@@ -524,3 +524,5 @@ narrowly-scoped tool, not an addition to `ci-wait.py`.
 - `branch-and-pr.md` — branch naming, `Closes #N`, the assignee boundary
 - `verify-execution-not-the-tick.md` — the corpus-side companion: a green leg does not
   prove the tests you added executed, and the check for that false-zeros
+- `guards-need-a-third-state.md` — why exit 3 exists at all, and the four other guards
+  that did or do resolve "could not tell" toward success
