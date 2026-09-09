@@ -365,10 +365,8 @@ a merge can turn `main` red, which outranks everything you were about to do.
    found only by a manual sweep, because the priority order below asks about *red* and a
    conflicted PR never becomes red.
 
-   ```bash
-   gh pr list --repo <owner>/<repo> --state open \
-     --json number,mergeStateStatus,statusCheckRollup
-   ```
+   The one listing per sweep (`orchestrating-a-session`, the merge bar) returns
+   `mergeStateStatus` beside the rollup; take both from it.
 
    `DIRTY`/`CONFLICTING` → rebase on the base branch, resolve, force-push with
    `--force-with-lease`, re-check until it reads `BLOCKED` or `CLEAN`. **Resolve on the merits,
@@ -388,12 +386,13 @@ a merge can turn `main` red, which outranks everything you were about to do.
    - every required check is green **on the current head**, with no `CANCELLED` required context;
    - `git merge-tree` is clean against current `main`, and the affected tests were re-run if the
      branch was rebased;
-   - if it asserts anything about BC's behaviour, the corpus PR proving it **has merged**, and
-     its pin bump and count-baseline update are folded into this PR;
+   - the corpus-PR condition of the arming list (`orchestrating-a-session`) holds;
    - it is not a release window (`publish.yml` pushes a fast-forward; a merge during its run
      kills it).
 
-   A PR from anyone else is reviewed, and its findings go to the human queue. Never merged.
+   A PR from anyone else is reviewed, and its findings go to the human queue. Never merged. After
+   a merge lands, clear the labels of every issue the PR named (`.claude/agents/orchestrator.md`
+   Step 2), with this loop's own dispatch record as the identity list that step requires.
 
    The reviewer is dispatched by the loop, so it is not independent oversight — it is a second
    pass by the same lineage. It catches carelessness, not a shared wrong assumption. That is why
@@ -553,10 +552,18 @@ time. Deliberately not an OS scheduler as the mechanism: contributors run Window
 Linux and macOS, and a shell loop behaves identically on all three, with a systemd unit or Task
 Scheduler entry as optional restart-on-boot hardening.
 
-**Bound the session's lifetime either way.** Even with compaction, a session running for days
-accumulates state that is not context — tool handles, temp files, harness state. Have the loop
-end itself after a set period or number of cycles and let the timer restart it. That keeps the
-`/loop` experience while capping accumulation, and it is better than either pure option.
+**End the session after 10 cycles and let the timer start the next one.** A session running for
+days accumulates state that is not context — tool handles, temp files, harness state. On the
+tenth cycle, comment the cycle state on the session's status issue, then end the session; the
+next one starts from that comment. The status issue is found at startup: the number on the
+first line of the cycle log wins; otherwise `gh issue list --state open --search "Coordinator
+status <identity> in:title" --json number,createdAt --jq 'max_by(.createdAt).number'` picks
+this loop's newest; when none exists, open one titled `Coordinator status <identity> <date>`.
+Write its number as the first line of the cycle log so a cold start reads it there. The comment lists every open PR by number with its
+`ci-wait` verdict, armed or not, and what is held for a person. Done when every number
+`gh pr list --state open --limit 500 --json number --repo <owner>/<repo>` prints appears in the
+comment with those three fields, and that listing returned fewer than 500 rows (500 means it
+may be cut: say so instead of claiming completeness).
 
 **Where compaction lands matters more than when it fires.** A compaction inside a unit of work
 discards that unit's working context; one between units costs nothing, because everything

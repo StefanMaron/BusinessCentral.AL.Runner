@@ -150,8 +150,11 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
 - No release run is in progress (`publish.yml` pushes a fast-forward; a merge during its
   ~40-minute run kills it).
 - `git merge-tree --write-tree --messages origin/<base> origin/<branch>` is clean.
-- If the PR asserts anything about BC's behaviour, its corpus PR has **merged**, and the pin bump
-  and count-baseline update are folded in.
+- **Every `Corpus-PR:` line in the body names a merged corpus PR**, pin bump and count-baseline
+  update folded in; a PR touching an AL-observable path with neither a `Corpus-PR:` nor a
+  `Corpus-NA:` line is held (the linkage gate, `bc-behavior-tests-go-upstream.md`): `gh pr view <M> --repo StefanMaron/BusinessCentral.AL.Language.Tests --json
+  state,mergedAt --jq '"\(.state) \(.mergedAt)"'` prints `MERGED` and a date before the arm
+  command runs. Any other answer means reporting that corpus PR's number instead of arming.
 - No *other* PR in the same batch conflicts with it. Where two do — two submodule pin bumps to
   different revisions, say — arm only the one that must merge first and report the ordering.
 - **The newest comment on the PR whose last line begins `Verdict:` reads `Verdict: MERGE` with a
@@ -231,18 +234,22 @@ Merge when **all of**:
    `main` via `main-verdict-floor.yml`, not on the PR.
 2. `git merge-tree --write-tree --messages origin/main origin/<branch>` is clean.
    `mergeStateStatus: CLEAN` only covers textual conflicts.
-3. The proving test exists. If the claim is about BC's behavior, that test is upstream and
-   merged, or merging in the same pass.
+3. The proving test exists, and the corpus-PR condition of the arming list above holds.
 
-**Read the verdict with `tools/ci-wait.py <PR> --timeout 0`; never block on it.** One pass,
-one answer, returns at once: 0 green on current head, 1 failed with the log already fetched,
-2 still running (*not* a verdict), 3 undetermined, 4 blocked with everything green — a
+**One listing per sweep, one verdict per PR you arm:** `gh pr list --repo <owner>/<repo> --state
+open --limit 500 --json number,headRefOid,isDraft,mergeStateStatus,statusCheckRollup` returns
+every open PR's head, merge state and rollup in one call, which orders the sweep and replaces
+per-PR run listings; 500 rows returned means the list may be cut, so say so and stop. The
+rollup is never the verdict: run `tools/ci-wait.py <PR> --timeout 0` for every PR you consider
+arming, and never block on it. One pass, one answer, returns at once: 0 green on current head, 1 failed
+with the log already fetched, 2 still running (*not* a verdict, and the ordinary answer on a PR
+just opened — leave it for the next sweep, since arming `--auto` lands a reviewed PR the moment
+its checks go green with nobody present), 3 undetermined, 4 blocked with everything green — a
 cancelled required context (below), or a required context that produced no check run at all
 once every workflow run finished (#2807).
 
-Exit 2 is the ordinary answer on a PR you just opened, and it is not a problem: leave it and
-read again on the next sweep. Waiting buys nothing, because arming `--auto` lands a reviewed
-PR the moment its checks go green with nobody present (`.claude/rules/ci-verdicts.md` §0).
+After a merge lands, clear the labels of every issue the PR named (`.claude/agents/orchestrator.md`
+Step 2), with your own dispatch record as the identity list that step requires.
 
 **A FAILED verdict names what has reported so far.** While other required checks are
 still running the failing list can grow, and the tool says how many have not reported.
@@ -354,8 +361,8 @@ possible to red-test something with AL tests, that should add tests to the corpu
 the fix can be proven by AL running against a real service tier, it owes an upstream test even
 when its claim does not read as a statement about BC. The service-tier clause is the boundary:
 runner-only claims are red-testable in AL too, and they stay in `tests/runner-extras/`.
-Nothing about this changes when a PR may merge — a PR asserting BC behaviour still merges only
-after its corpus PR has, pin bump folded in.
+Nothing about this changes when a PR may merge: the corpus-PR condition of the arming list
+above decides.
 
 **"The corpus cannot express this" is a claim, and it needs its evidence like any other.** It
 is sometimes true and the reason is usually structural: corpus tests are compiled from AL
