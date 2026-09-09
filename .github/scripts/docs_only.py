@@ -10,8 +10,8 @@ pr_changed_files.sh -- and prints one GITHUB_OUTPUT line:
 "Documentation" is exactly a path ending in ".md", nowhere else. That is the
 narrowest definition that covers docs/, README.md, CHANGELOG.md and the
 .claude/ rules and skills, and it cannot misfire on the things that look
-like prose but are read by code: app.json, the expectations manifests, the
-tests/al-language gitlink, docs/archive/coverage.yaml.
+like prose but are read by code: app.json, the expectations manifests,
+docs/archive/coverage.yaml.
 
 Exit codes
   0  classified (either answer)

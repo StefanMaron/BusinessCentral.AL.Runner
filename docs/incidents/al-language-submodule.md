@@ -1,5 +1,11 @@
 # Incidents behind .claude/rules/al-language-submodule.md
 
+**The pin these incidents are about no longer exists.** `tests/al-language` stopped being a
+submodule and a gitlink at #3737: the corpus is resolved per run, at `master` or at the head of
+the corpus pull request a PR body names, and each run prints the SHA it resolved. Everything
+below is kept as the record of why the pin machinery was built and what it cost — a reader
+finding `tools/corpus-pin.py` in the history needs it — not as instructions.
+
 Narrative moved verbatim out of the rule (#3728). The rule keeps the instruction, its citation and its trap; this file keeps the incidents that produced them.
 
 ## The corpus default branch is `master`, not `main`

@@ -1,6 +1,6 @@
 # Test expectations manifest
 
-The runner consumes tests from the `tests/al-language` submodule
+The runner consumes tests from the read-only corpus in `tests/al-language`
 (`StefanMaron/BusinessCentral.AL.Language.Tests`). That corpus is the canonical
 spec of AL language behaviour against a real BC service tier. By design, some
 tests in the corpus exercise surfaces the runner cannot — and will never —

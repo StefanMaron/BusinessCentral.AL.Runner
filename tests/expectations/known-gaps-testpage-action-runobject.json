@@ -1,0 +1,50 @@
+[
+  {
+    "codeunitId": 60559,
+    "CodeunitName": "TPAROK Tests",
+    "Method": "RunObjectNamingAReportIsRefusedByTheTestPageSurface",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2943",
+    "Note": "A TestPage action whose RunObject names a Report, Codeunit, XmlPort or Query raises the runner's own out-of-scope signal with reason not-yet-implemented -- 'the runner only performs a RunObject that names a PAGE so far' -- where the corpus test expects real BC's error. The message already names #2943, which is open and has no fix in flight. Arrived with corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#273, and reached this repository because the corpus is resolved at master rather than pinned (#3737): measured on run 34412771210, BC 27.0 leg, corpus 818ee21b75a01b66a33ea05412fc3b0985a63adf -- 3313 tests, 3307 pass, exactly these 6 fail. The other two [Test] procedures in codeunit 60559 PASS, which is why this file names six methods rather than using Method '*'. The fix for #2943 removes this file."
+  },
+  {
+    "codeunitId": 60559,
+    "CodeunitName": "TPAROK Tests",
+    "Method": "RunObjectNamingAReportWithNoRequestPageIsRefusedTheSameWay",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2943",
+    "Note": "The report variant with no request page. Same surface and same signal as the sibling entry above -- reason not-yet-implemented, naming #2943 -- so it is the same gap rather than a second one; the runner refuses before the presence of a request page could matter."
+  },
+  {
+    "codeunitId": 60559,
+    "CodeunitName": "TPAROK Tests",
+    "Method": "RunObjectNamingACodeunitRunsItOnTheHostsRow",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2943",
+    "Note": "RunObject = Codeunit. Real BC runs the codeunit on the host page's row; the runner refuses the action outright with reason not-yet-implemented (#2943). Tracked by the same issue as the report and xmlport variants because one implementation -- performing a RunObject that names something other than a page -- answers all of them."
+  },
+  {
+    "codeunitId": 60559,
+    "CodeunitName": "TPAROK Tests",
+    "Method": "RunObjectNamingACodeunitWithRunPageOnRecIsHandedTheHostsRow",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2943",
+    "Note": "The RunPageOnRec variant of the codeunit case. Refused at the same point, with the same not-yet-implemented signal, so no separate gap is claimed for it (#2943)."
+  },
+  {
+    "codeunitId": 60559,
+    "CodeunitName": "TPAROK Tests",
+    "Method": "RunObjectNamingAnXmlPortIsRefusedByTheTestPageSurface",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2943",
+    "Note": "RunObject = XmlPort. The corpus test asserts real BC's refusal message; the runner raises its own not-yet-implemented signal first, so the assertion never sees it (#2943)."
+  },
+  {
+    "codeunitId": 60559,
+    "CodeunitName": "TPAROK Tests",
+    "Method": "RunObjectNamingAQueryIsRefusedBeforeItsMetadataIsResolved",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2943",
+    "Note": "RunObject = Query, the variant that pins WHEN the refusal happens -- before the query's metadata is resolved. Same not-yet-implemented signal as the rest of this codeunit (#2943)."
+  }
+]

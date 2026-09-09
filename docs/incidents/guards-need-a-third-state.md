@@ -27,7 +27,7 @@ separately as its own defect.
 | #3296 | `agent_self_freshness` cannot establish provenance | full GREEN, exit 0 | **closed**, fixed |
 | #3351 | `ci-wait.py --timeout 0` — no poll could occur | exit 2, a verdict-shaped non-verdict | **closed**, fixed |
 | #3299 | `SUBMODULE_PATH` matches nothing | exit 0, identical output to a real forward-bump | **open**, fixed in PR #3683 |
-| #3681 | `check_count_baseline_history.sh`'s `PIN_PATH` matches nothing | exit 0, "does not move the pin", on every PR forever | **open**, fixed in PR #3683 |
+| #3681 | `check_count_baseline_history.sh`'s `PIN_PATH` matches nothing | exit 0, "does not move the pin", on every PR forever | fixed in PR #3683; the script itself went with the corpus pin at #3737 |
 | #3361 (part 2) | a leg summary lost its `fail` key | zero failures | **open** |
 
 **#3681 is the argument for writing this down.** `check_count_baseline_history.sh` landed on

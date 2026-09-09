@@ -1,0 +1,126 @@
+name: Resolve which corpus this run measures
+description: >-
+  master, or the head of the corpus pull request this PR body names (#3737).
+
+# Resolved ONCE per run, in the caller, and handed to every leg — not resolved
+# per leg. `master` moves, so eight legs resolving it independently can measure
+# eight different corpora, and the count comparison downstream would then be
+# comparing numbers from different trees. One resolution, one ref, N legs.
+#
+# It is also the only step here that talks to api.github.com, which is why it is
+# separate from checkout-corpus: that one runs inside every matrix leg and does
+# nothing but git.
+
+inputs:
+  pr-number:
+    description: >-
+      The pull request whose body may carry a `Corpus-PR:` line. Empty on a push,
+      a release or a dispatch — all of which resolve master.
+    required: false
+    default: ''
+  pr-body-fallback:
+    description: >-
+      The body from the event payload, used only if the live read fails. It is the
+      body as of the last push, which is what a run saw before this existed.
+    required: false
+    default: ''
+  token:
+    description: Reads this repository's pull request, and the corpus's.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  ref:
+    description: The corpus ref to check out.
+    value: ${{ steps.resolve.outputs.ref }}
+  why:
+    description: One phrase saying how that ref was arrived at.
+    value: ${{ steps.resolve.outputs.why }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve the corpus ref
+      id: resolve
+      shell: bash
+      env:
+        # Via env, never interpolated into the script body: a `${{ }}` expansion
+        # inside `run:` is textual substitution before bash sees it, and a pull
+        # request body is attacker-controlled text on a public repository.
+        PR_NUMBER: ${{ inputs.pr-number }}
+        PR_BODY_FALLBACK: ${{ inputs.pr-body-fallback }}
+        THIS_REPO: ${{ github.repository }}
+        GH_TOKEN: ${{ inputs.token }}
+      run: |
+        set -uo pipefail
+        CORPUS_REPO=StefanMaron/BusinessCentral.AL.Language.Tests
+
+        emit() {
+          echo "ref=$1" >> "$GITHUB_OUTPUT"
+          echo "why=$2" >> "$GITHUB_OUTPUT"
+          echo "corpus ref: $1 ($2)"
+        }
+
+        if [ -z "$PR_NUMBER" ]; then
+          emit master "no pull request in this event"
+          exit 0
+        fi
+
+        # The body is read LIVE, not from the event payload. `pull_request` here
+        # deliberately does not carry the `edited` type — adding it would re-run
+        # the whole matrix on every PR-body write — so the payload body is the
+        # body as of the last PUSH, and a `Corpus-PR:` line added after pushing
+        # would otherwise be ignored while the run reported green.
+        body=""
+        if body="$(gh api "repos/$THIS_REPO/pulls/$PR_NUMBER" --jq .body 2>/dev/null)"; then
+          echo "read pull request #$PR_NUMBER's body from the API"
+        elif [ -n "$PR_BODY_FALLBACK" ]; then
+          echo "::warning::could not read pull request #$PR_NUMBER's body from the API; using the event-payload body, which is the body as of the last push. A Corpus-PR line added since then is NOT in it — push an empty commit to re-measure."
+          body="$PR_BODY_FALLBACK"
+        else
+          echo "::error::could not read pull request #$PR_NUMBER's body from the API, and no event-payload body was passed. Refusing to resolve a corpus: a body this run never read cannot be said to declare nothing, and resolving master on that basis is the one wrong answer that looks exactly like the right one (#3737)."
+          exit 3
+        fi
+
+        # `--jq .body` prints the four characters `null` for an EMPTY body. No
+        # regex in check_corpus_linkage.sh matches it, so it behaves as empty —
+        # said here so the next reader need not rediscover it.
+        [ "$body" = "null" ] && body=""
+
+        out="$(PR_BODY="$body" bash .github/scripts/resolve_corpus_ref.sh)"
+        rc=$?
+        if [ "$rc" -ne 0 ]; then
+          echo "::error::resolve_corpus_ref.sh exited $rc; its message is above. No corpus was resolved."
+          exit "$rc"
+        fi
+        corpus_pr="${out#corpus-pr=}"
+
+        if [ -z "$corpus_pr" ]; then
+          emit master "this pull request declares no corpus PR"
+          exit 0
+        fi
+
+        # An OPEN corpus PR is measured at its own branch head. A MERGED one is
+        # measured at master, which now carries it: `refs/pull/<N>/head` stops
+        # moving at merge, so continuing to resolve it would keep this pull
+        # request measuring an older corpus than everybody else gets — and the
+        # `Corpus-PR:` line must STAY in the body, because the linkage gate
+        # requires it (`bc-behavior-tests-go-upstream.md`).
+        state="$(gh api "repos/$CORPUS_REPO/pulls/$corpus_pr" --jq '.state + " " + (.merged|tostring)' 2>/dev/null)"
+        if [ -z "$state" ]; then
+          echo "::error::this pull request declares Corpus-PR #$corpus_pr, and reading that pull request from $CORPUS_REPO failed — it may not exist, or the API may be unreachable. Refusing to resolve master instead: the run would then measure a corpus nobody asked for and report green (#3737, guards-need-a-third-state.md)."
+          exit 3
+        fi
+        echo "corpus pull request #$corpus_pr: $state"
+        case "$state" in
+          "open false")
+            emit "refs/pull/$corpus_pr/head" "corpus PR #$corpus_pr is open"
+            ;;
+          "closed true")
+            emit master "corpus PR #$corpus_pr has merged, so master carries it"
+            ;;
+          *)
+            echo "::error::corpus pull request #$corpus_pr is closed WITHOUT having merged ($state). Refusing to resolve it or master: its branch may be gone, and master does not carry it, so neither answer is the corpus this pull request declares. Update the Corpus-PR line, or reopen it."
+            exit 3
+            ;;
+        esac

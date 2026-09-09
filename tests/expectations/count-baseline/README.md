@@ -1,8 +1,18 @@
 # `--count-baseline`: the expected test count per suite
 
 `test-count-baseline.json` says how many tests and how many app groups each suite must run.
-CI passes it on both corpus legs (`.github/workflows/bc-tests.yml`), and the runner exits **4**
-when a count does not match — in **either** direction.
+CI passes it on the `runner-extras` leg (`.github/workflows/bc-tests.yml`), and the runner
+exits **4** when a count does not match — in **either** direction.
+
+**The al-language corpus suites are deliberately not in this file** (#3675). The corpus is
+resolved per run rather than pinned (#3737), so a committed exact count for it would go stale
+the moment an upstream corpus PR merged — every BC leg red, exit 4, with nothing in this
+repository to fix. `CountBaselineCheck` imposes no expectation on a suite this file does not
+name, so removing them is a complete removal, not a silent zero. What guards the corpus count
+instead is `.github/scripts/compare_corpus_count.py`: each leg counts what it ran and compares
+against the last count a `main` run recorded, naming both corpus SHAs on a drop. That guard is
+a one-way ratchet — growth is allowed and recorded, because an upstream PR adding tests arrives
+here without anyone pushing anything.
 
 Both directions are the point. `--strict` fails a run when a test *fails*, but a suite that
 silently stops being discovered (a dependency rename, a duplicate app id — #1850, a dropped
@@ -46,10 +56,10 @@ cannot agree with a regression: every number it adds up is checked in and review
 of it is read back from the run. A test that stops being discovered makes its group's
 contribution smaller than the sum says, and that is the DROP the runner exits 4 on.
 
-### Flat (`tests` / `appGroups`) — `al-language`, and any external caller
+### Flat (`tests` / `appGroups`) — for any external caller
 
 ```json
-"al-language": {
+"some-suite": {
   "tests": { "default": 2523 },
   "appGroups": { "default": 1 }
 }
@@ -57,15 +67,9 @@ contribution smaller than the sum says, and that is the DROP the runner exits 4 
 
 `byBcVersion` may override `default` per BC version key (`"27.0"`, `"28.4"`, …).
 
-`al-language` deliberately stays flat. Its count only ever moves when the `tests/al-language`
-submodule pin moves, and a pin is a single gitlink entry: two PRs that both bump the corpus
-conflict on the pin whatever this file looks like (measured: of the last 25 commits touching
-this file, 11 also moved the gitlink). Splitting the corpus per codeunit would buy no merge
-that is not already blocked, and would make every pin bump regenerate hundreds of lines that
-must match CI on all eight legs.
-
 `--count-baseline` is a public CLI flag, so the flat form is supported forever, not a
-migration step.
+migration step. No suite in this repository uses it today: `al-language` did, until the corpus
+stopped being pinned (#3675, above).
 
 ## How to bump it
 
@@ -75,9 +79,8 @@ are derived. A group that only compiles from BC 28.0 on gets `absentOn`.
 
 **Added or removed tests in an existing runner-extras group** — edit that group's `tests`.
 
-**Bumped the corpus pin** — edit `al-language`'s `tests.default` to the number the run
-reported, and add an entry to `history.md` under `## al-language` saying which upstream PRs
-came in and that you measured it rather than computed it.
+**Moved the corpus** — nothing to do here. The corpus is resolved per run and its count is
+compared in CI (above).
 
 **Never** record the reason for a bump inside `test-count-baseline.json`. It used to live in
 one 40,178-character `_comment` line, and because every count-changing PR had to append to it,
@@ -99,19 +102,9 @@ That holds the *shape* of a `history.md` section if one is written. It cannot se
 and for a long time nothing could: PR #3588 bumped the pin, passed all 13 required checks
 green, and wrote no entry at all — caught by a reviewer, not by CI (#3591).
 
-`.github/scripts/check_count_baseline_history.sh`, run by `pr-gate.yml`, closes that. It fires
-when a PR moves the `tests/al-language` gitlink and does not touch `history.md`. The trigger is
-the **pin**, not this file: adding or removing a `runner-extras` group line needs no entry —
-the group name and its count say what changed — and of the last 12 commits touching
-`test-count-baseline.json` when the guard was written, the 2 that carried no `history.md`
-change were both exactly that, and neither was a violation. Of the 31 commits that moved the
-pin since `history.md` existed, all 31 carried an entry.
-
-If a bump genuinely has nothing to record, say so on its own line in the PR body — the reason
-is mandatory, and a placeholder is refused:
-
-```
-Count-Baseline-History-NA: <why this bump has nothing to record>
-```
-
-It checks only that an entry *exists*. Whether it is a good one is a reviewer's call.
+`.github/scripts/check_count_baseline_history.sh` used to close that: it fired when a PR moved
+the `tests/al-language` gitlink without touching `history.md`. Both the gitlink and the guard
+went at #3737 — a `runner-extras` group line names its own app group and its count, which is
+why that guard never keyed on this file in the first place. `history.md` is frozen as the
+record of the pin era; per-run corpus SHAs are printed by each leg and carried in the run
+summary.

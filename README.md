@@ -70,7 +70,7 @@ On Windows, exclude the runner's cache/output directories from real-time antivir
 
 ### Run
 
-The runner takes one or more **bundle directories**. A bundle is an `app.json`-rooted AL project (the same shape every BC extension has). The `tests/al-language/` submodule is a canonical example.
+The runner takes one or more **bundle directories**. A bundle is an `app.json`-rooted AL project (the same shape every BC extension has). The corpus in `tests/al-language/` is a canonical example.
 
 ```bash
 # Run a single bundle
@@ -188,7 +188,9 @@ This dispatches the single-app compile-to-DLL path. The output DLL is bit-compat
 ### Build from source
 
 ```bash
-git clone --recurse-submodules https://github.com/StefanMaron/BusinessCentral.AL.Runner
+git clone https://github.com/StefanMaron/BusinessCentral.AL.Runner
+cd BusinessCentral.AL.Runner
+tools/corpus-checkout.py                 # the corpus is not in git; this clones it
 dotnet build AlRunner.slnx -c Release -p:AllowBcArtifactDownload=true
 dotnet run --project AlRunner -c Release -- tests/al-language/tests/al-language
 ```
@@ -238,11 +240,11 @@ Environment variables: `AL_RUNNER_VERBOSE=1`, `AL_RUNNER_SHOW_PASS=1`, `AL_RUNNE
 
 ## Test Corpus
 
-The canonical AL test corpus lives in [`tests/al-language/`](tests/al-language/) — a read-only git submodule pinned at [`StefanMaron/BusinessCentral.AL.Language.Tests`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests). Each test is a behavioural contract validated against a real BC service tier. The runner runs that corpus unmodified; tests it cannot execute by design (SMTP, real HTTP, report rendering, etc.) are declared in [`tests/expectations/`](tests/expectations/) using the schema in [`docs/expectations.md`](docs/expectations.md).
+The canonical AL test corpus is [`StefanMaron/BusinessCentral.AL.Language.Tests`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests), read-only here and checked out into `tests/al-language/` by `tools/corpus-checkout.py` (or, in CI, per job). It is **resolved rather than pinned**: every run prints `corpus: <full sha> (<ref>)`, which is what a result is attributable to. Each test is a behavioural contract validated against a real BC service tier. The runner runs that corpus unmodified; tests it cannot execute by design (SMTP, real HTTP, report rendering, etc.) are declared in [`tests/expectations/`](tests/expectations/) using the schema in [`docs/expectations.md`](docs/expectations.md).
 
 Runner-specific positive tests (e.g. "this surface must throw `RunnerOutOfScopeException` with reason X") live in [`tests/runner-extras/`](tests/runner-extras/).
 
-See `.claude/rules/al-language-submodule.md` for the read-only contract.
+See `.claude/rules/al-language-submodule.md` for the read-only contract and how a run resolves the corpus.
 
 ## What's Supported
 

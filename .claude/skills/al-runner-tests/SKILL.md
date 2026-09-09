@@ -1,6 +1,6 @@
 ---
 name: al-runner-tests
-description: How AL tests are organised and run — the read-only al-language submodule corpus, the runner-owned expectations manifest, runner-extras for runner-specific positive tests, the proving-test rules, the run command, and how to bump the corpus pin. Use when investigating a corpus failure, adding an expectation entry, writing a runner-specific test, or evaluating whether an existing test "proves" anything.
+description: How AL tests are organised and run — the read-only al-language corpus and how a run resolves it, the runner-owned expectations manifest, runner-extras for runner-specific positive tests, the proving-test rules, and the run command. Use when investigating a corpus failure, adding an expectation entry, writing a runner-specific test, or evaluating whether an existing test "proves" anything.
 ---
 
 # Running and writing AL tests
@@ -9,9 +9,10 @@ description: How AL tests are organised and run — the read-only al-language su
 
 ```
 tests/
-  al-language/         ← git submodule, READ-ONLY (StefanMaron/BusinessCentral.AL.Language.Tests).
-                         The canonical AL-language test corpus validated against a real BC service tier.
-                         Never edit. Pin bump folds into the fix PR it enables — see below.
+  al-language/         ← RESOLVED PER RUN, gitignored, READ-ONLY (#3737).
+                         StefanMaron/BusinessCentral.AL.Language.Tests, the canonical AL-language
+                         test corpus validated against a real BC service tier. Never edit.
+                         `tools/corpus-checkout.py` puts it here — see below.
   expectations/        ← runner-owned JSON manifest declaring expected outcomes for corpus tests
                          the runner cannot or does not yet run.
                          - oos-<area>.json         out-of-scope-by-design
@@ -20,14 +21,26 @@ tests/
                          - disabled-<area>.json    won't compile or won't run; pure skip
                          - count-baseline/         SEPARATE schema for --count-baseline; a
                                                    subdirectory so the (non-recursive) --expectations
-                                                   scan never parses it as a classification array
+                                                   scan never parses it as a classification array.
+                                                   runner-extras only — the corpus suites left it
+                                                   with the pin (#3675).
   runner-extras/       ← runner-specific positive tests (e.g. "surface X throws OOS with reason Y")
   archive/             ← v1 buckets and fixtures, frozen, scheduled for deletion
 ```
 
 There is no `bucket-1/`, `bucket-2/`, `stubs/`, or per-bucket `idRange`. The corpus already organises tests by area (`record/`, `recordref/`, `codeunit/`, `json/`, `streams/`, `out-of-scope/`, etc.) — see `tests/al-language/README.md`.
 
-## Run the corpus
+## Get the corpus, then run it
+
+`tests/al-language/` is not in git. Check it out first, and note the SHA it prints — that line
+is the only record of which corpus a local result is about:
+
+```bash
+tools/corpus-checkout.py                   # master
+tools/corpus-checkout.py --corpus-pr 293   # a corpus pull request's head
+tools/corpus-checkout.py --print           # what this worktree holds now
+# corpus: 1a2b3c4d... (master)
+```
 
 ```bash
 dotnet build AlRunner.slnx -c Release
@@ -41,9 +54,14 @@ dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
     tests/al-language/tests/al-language \
     --package-cache "$HOME/.al-runner/platform-apps" \
     --strict \
-    --count-baseline tests/expectations/count-baseline/test-count-baseline.json \
     --out al-language-results.json
 ```
+
+CI passes no `--count-baseline` on the corpus legs since #3675: the corpus suites are not
+declared in `tests/expectations/count-baseline/` at all, because a committed exact count would
+go stale on every upstream corpus merge. Each leg counts what it ran and compares against the
+last count a `main` run recorded, naming both corpus SHAs on a drop. `runner-extras` keeps its
+committed baseline.
 
 and `tests/runner-extras` with a second `--package-cache "$HOME/.al-runner/test-apps"`. The
 `$HOME/.al-runner/platform-apps` cache is what `provision` / `--auto-provision` (on by default
@@ -80,7 +98,7 @@ dotnet run --project AlRunner -c Release -- --out results.json tests/al-language
 
 ## Interpreting output
 
-Today the reporter prints raw PASS / FAIL / ERROR per test plus aggregate counts. Exit codes: `0` all passed, `1` at least one test FAILED or ERRORED, `2` a bundle could not execute (process-level error — also a bad invocation: unknown flag or a missing bundle path), `3` a bundle could not compile, `4` a `--count-baseline` count mismatch. `--no-strict-exit` forces `0`.
+Today the reporter prints raw PASS / FAIL / ERROR per test plus aggregate counts. Exit codes: `0` all passed, `1` at least one test FAILED or ERRORED, `2` a bundle could not execute (process-level error — also a bad invocation: unknown flag or a missing bundle path), `3` a bundle could not compile, `4` a `--count-baseline` count mismatch (still live for `runner-extras`). `--no-strict-exit` forces `0`.
 
 `AlRunner/Infrastructure/ExpectationManifest.cs` loads the schema described in `docs/expectations.md` and is wired into the run, so results are additionally classified as:
 
@@ -197,69 +215,45 @@ When a corpus test exercises a surface the runner refuses by design (SMTP, real 
 
 When the claim is "this runner surface throws `RunnerOutOfScopeException` with the expected reason" or otherwise asserts runner-specific behaviour the upstream corpus cannot, put it in `tests/runner-extras/` as a normal `app.json`-rooted AL project. Apply the proving-test rules above.
 
-**Check the sorting first.** A test asserting plain BC behaviour — what BC does, with nothing runner-specific in the claim — belongs **upstream in the corpus**, not here, even when writing it locally would be quicker. `tests/runner-extras/` is for claims that only make sense *because* this is the runner. See `.claude/rules/bc-behavior-tests-go-upstream.md` for the sorting test and the corpus-PR → pin-bump → runner-fix order.
+**Check the sorting first.** A test asserting plain BC behaviour — what BC does, with nothing runner-specific in the claim — belongs **upstream in the corpus**, not here, even when writing it locally would be quicker. `tests/runner-extras/` is for claims that only make sense *because* this is the runner. See `.claude/rules/bc-behavior-tests-go-upstream.md` for the sorting test and the corpus-PR → runner-fix merge order.
 
 ## Coverage tracking (there isn't any)
 
 v1 tracked AL-language coverage in a hand-curated `docs/coverage.yaml`, and the orchestrator blocked merges that didn't update it. That was retired at the v1→v2 cutover — the file is archived at `docs/archive/coverage.yaml` and nothing reads it. **In v2 the coverage record is the corpus plus `tests/runner-extras/`.** A PR's tests are its coverage entry; do not add, update, or ask anyone to update a coverage file.
 
-## Bumping the corpus pin
+## Which corpus a run measures
 
-The submodule is read-only. **First: `HEAD` inside `tests/al-language/` is not the pin.**
+There is no pin (#3737). `git ls-tree origin/main tests/al-language` answers nothing, the
+directory is gitignored, and each run resolves the corpus for itself:
 
-A submodule working directory is shared by every worktree of this repository, exactly like
-`refs/stash`. Any process that checks out a corpus commit in there leaves it for everyone;
-it has no owner and nothing resets it. So the two obvious reads answer different questions:
+| where | resolves |
+|---|---|
+| a pull request declaring `Corpus-PR: …/pull/<M>` | that pull request's branch head while it is open, `master` once it has merged |
+| any other pull request, a push to `main`, the floor, a release | `master` |
+| your worktree | whatever `tools/corpus-checkout.py` last put there |
 
-```bash
-git ls-tree origin/main tests/al-language     # THE PIN — what CI replays
-git -C tests/al-language rev-parse HEAD       # whatever the last process left behind
-```
+**Every run prints `corpus: <full sha> (<ref>)`** — the job log, the run summary, and
+`tools/corpus-checkout.py` locally. Quote the SHA, never the ref: `master` moves, and so does
+a corpus pull request's branch head.
 
-Ask the tool rather than choosing between them (#3404):
+Two traps:
 
-```bash
-tools/corpus-pin.py            # all three readings; exit 1 if the checkout has drifted
-PIN=$(tools/corpus-pin.py --quiet)   # always the pin, never the shared checkout
-```
+- **A PR body edited after your last push is not what the matrix read.** `pull_request` here
+  deliberately does not trigger on `edited` — that would re-run the matrix on every body write
+  — so after adding or changing a `Corpus-PR:` line, push an empty commit.
+- **A worktree created before #3737** still holds the old submodule checkout, whose `.git` is a
+  *file* pointing into `.git/modules/`, shared by every worktree. Nothing removes it for you:
+  `rm -rf tests/al-language && tools/corpus-checkout.py`.
 
-Nothing about the wrong read announces itself: `git status` shows a stale checkout as an
-ordinary dirty submodule, `git log` inside it prints a real history, and every commit it
-lists genuinely exists. It answers a question nobody asked. Measured on 2026-09-07 the pin
-was one commit behind `master` and the shared directory made it read as **17**, which is the
-dangerous direction — it justifies a large measurement run and invites bisecting a range
-whose predecessors are already pinned. `tools/preflight.py` now WARNs when they disagree.
-
-To review and bump:
+To review what a corpus pull request adds before it merges, read it in the corpus clone:
 
 ```bash
-PIN=$(tools/corpus-pin.py --quiet)
-git -C tests/al-language fetch
-git -C tests/al-language log --oneline "$PIN..origin/master"
-git -C tests/al-language diff "$PIN..origin/master"   # review
-git -C tests/al-language checkout origin/master
-git add tests/al-language
+tools/corpus-checkout.py --corpus-pr 293
+git -C tests/al-language log --oneline -5
 ```
 
-That `checkout` is the step that poisons the shared directory for every other worktree, so
-it belongs only in the bump itself — where you immediately `git add` it, making the checkout
-and the pin agree again. **Never run it just to measure.** To measure, give your worktree its
-own clone:
-
-```bash
-git clone https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests /tmp/corpus
-git -C /tmp/corpus rev-list --count "$PIN..origin/master"
-```
-
-**A pin bump that pulls in a test needing a new fix cannot be its own PR — it
-is red by construction.** Those upstream tests exist because they exercise a gap
-the runner does not yet handle; bumping the pin alone fails CI for that reason
-before anyone reviews it. Fold that bump into the **fix PR** that makes those new
-tests pass, together with the `tests/expectations/count-baseline/test-count-baseline.json`
-update (`--count-baseline` is an exact match — it fails on growth as well as
-shrinkage). Any other tests that newly fail after the bump are separate runner
-gaps: patch the runner or add an expectation entry for them; never patch the
-corpus.
+Corpus tests that newly fail are runner gaps: patch the runner or add an expectation entry;
+never patch the corpus.
 
 ## Sister docs
 

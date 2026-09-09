@@ -84,6 +84,15 @@
 # in the workflow keeps it under these unit tests, which is the whole reason
 # this mode exists.
 #
+# Third mode, for the corpus RESOLVER (#3737):
+#
+#   check_corpus_linkage.sh --print-corpus-pr-marker-lines
+#
+# prints every line CARRYING the marker, well-formed or not. resolve_corpus_ref.sh
+# compares its count against the URL mode's, so a malformed declaration refuses to
+# resolve a corpus rather than resolving master -- which is what a body with NO
+# declaration resolves, and the two must never come out the same.
+#
 # Exit codes
 #   0  in scope and declared, or out of scope entirely (or extraction mode)
 #   1  in scope and the declaration is missing or malformed
@@ -115,6 +124,24 @@ if [ "${1:-}" = "--print-corpus-pr-urls" ]; then
     if printf '%s' "$line" | command grep -qiP "$CORPUS_PR_LINE_RE"; then
       url="$(printf '%s' "$line" | command grep -oiP "$CORPUS_REPO_URL")"
       printf '%s\n' "${url%/}"
+    fi
+  done <<< "$PR_BODY"
+  exit 0
+fi
+
+# --- Marker mode (#3737) -----------------------------------------------------
+#
+# Every line that CARRIES the marker, well-formed or not. The URL mode above
+# cannot answer "does this body declare a corpus PR badly", and
+# resolve_corpus_ref.sh needs exactly that: a body whose Corpus-PR line is
+# malformed must refuse to resolve a corpus rather than quietly resolve master,
+# because master is also what a body with no line at all resolves. Those two
+# states must never produce the same corpus (`guards-need-a-third-state.md`).
+
+if [ "${1:-}" = "--print-corpus-pr-marker-lines" ]; then
+  while IFS= read -r line; do
+    if printf '%s' "$line" | command grep -qiP "$CORPUS_PR_MARKER_RE"; then
+      printf '%s\n' "$line"
     fi
   done <<< "$PR_BODY"
   exit 0

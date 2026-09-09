@@ -5,8 +5,8 @@
     * keep the "No linked issue:" line and write the reason after the colon,
       if it closes nothing.
 
-  A pin bump, a docs typo, a revert and a test-only follow-up all close
-  nothing, and all need the second form. The reason is mandatory: a bare
+  A docs typo, a revert and a test-only follow-up all close nothing, and all
+  need the second form. The reason is mandatory: a bare
   opt-out marker gets pasted in reflexively, which is what it exists to stop.
 
   Leaving BOTH lines untouched fails the check, on purpose.

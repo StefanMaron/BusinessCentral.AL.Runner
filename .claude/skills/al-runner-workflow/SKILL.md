@@ -1,6 +1,6 @@
 ---
 name: al-runner-workflow
-description: Multi-agent workflow contract for this repo — orchestrator vs implementation agents, GitHub label state machine, PR lifecycle, the al-language submodule contract, and the expectations-manifest path for OOS-by-design tests. Use when acting as orchestrator/impl-agent without the dedicated sub-agent, when triaging the issue/PR queue manually, or when deciding whether an issue is a runner gap, an OOS-by-design declaration, or a corpus bug to upstream.
+description: Multi-agent workflow contract for this repo — orchestrator vs implementation agents, GitHub label state machine, PR lifecycle, the read-only al-language corpus and how a run resolves it, and the expectations-manifest path for OOS-by-design tests. Use when acting as orchestrator/impl-agent without the dedicated sub-agent, when triaging the issue/PR queue manually, or when deciding whether an issue is a runner gap, an OOS-by-design declaration, or a corpus bug to upstream.
 ---
 
 # Agent workflow
@@ -30,13 +30,16 @@ If you are `impl-1` or `impl-2`:
 
 | Kind | Test lives in | Notes |
 |---|---|---|
-| Runner gap on an in-scope AL pattern | An al-language test that fails before, passes after. If the corpus does not cover the pattern, write the upstream test first in `StefanMaron/BusinessCentral.AL.Language.Tests`, get it merged, then bump the submodule pin in your runner PR. | Most common. The corpus must validate against real BC before the runner can claim parity. |
+| Runner gap on an in-scope AL pattern | An al-language test that fails before, passes after. If the corpus does not cover the pattern, write the upstream test first in `StefanMaron/BusinessCentral.AL.Language.Tests` and cite it with a `Corpus-PR:` line — there is no pin to bump (#3737); that line is what makes your PR's matrix resolve the corpus at your corpus PR's branch head. | Most common. The corpus must validate against real BC before the runner can claim parity. |
 | Test is OOS-by-design (SMTP, real HTTP, …) | New entry in `tests/expectations/oos-<area>.json` per `docs/expectations.md`. | The runner must throw `RunnerOutOfScopeException` with the reason from `docs/scope.md`. `.claude/rules/loud-failures.md`. |
 | In-scope but not yet implemented | `tests/expectations/known-gaps-<area>.json` entry linking the GH issue. | Transient — entry is removed when the gap is closed. |
 | Runner-specific positive assertion | New suite under `tests/runner-extras/`. | E.g. "calling X throws OOS with reason Y". |
-| Corpus bug (test mis-asserts something real BC also fails) | Upstream PR against the corpus. | Do not edit the submodule from this repo. |
+| Corpus bug (test mis-asserts something real BC also fails) | Upstream PR against the corpus. | Do not edit the corpus from this repo. |
 
-`tests/al-language/` is read-only. Never edit. See `.claude/rules/al-language-submodule.md`.
+`tests/al-language/` is read-only, and since #3737 it is not in git at all: it is resolved per
+run — at `master`, or at the head of the corpus pull request a PR body's `Corpus-PR:` line names
+— and every run prints `corpus: <full sha> (<ref>)`. Locally, `tools/corpus-checkout.py` puts it
+there. Never edit it. See `.claude/rules/al-language-submodule.md`.
 
 ## Orchestrator loop (priority order)
 
@@ -92,7 +95,7 @@ The **GitHub assignee field** is the boundary between agent-owned and human-owne
 - Set `status: review-ready` on the PR when you mark it ready; the coordinator reads CI.
 - One PR at a time per impl agent.
 - Never edit `CHANGELOG.md`.
-- Never edit a file inside `tests/al-language/`. A pin bump is folded into the fix PR it enables when that fix is new; a catch-up bump, whose fix already merged, is its own PR (`al-language-submodule.md`).
+- Never edit a file inside `tests/al-language/` — it is gitignored and resolved per run, so a diff cannot legitimately reach it. Cite a corpus change with a `Corpus-PR:` line instead (`al-language-submodule.md`).
 - Honour the precompiled-DLL contract (`.claude/rules/precompiled-dll-respect.md`) and loud-failures rule (`.claude/rules/loud-failures.md`).
 - `--repo StefanMaron/BusinessCentral.AL.Runner` on every `gh` command when running outside the repo's default.
 

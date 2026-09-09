@@ -85,9 +85,11 @@ jobs:
     # state to be MERGED. On the normal path described in
     # .claude/rules/bc-behavior-tests-go-upstream.md the corpus PR is still OPEN
     # while the runner PR is in review -- the orchestrator merges it once the BC
-    # legs are green, and only then does the pin bump land. A check demanding
-    # `merged` here would therefore be red on every correctly executed fold-case
-    # PR, which is the opposite of the behaviour the rule asks for.
+    # legs are green, and the runner PR merges after it. A check demanding
+    # `merged` here would therefore be red on every correctly executed PR of that
+    # shape, which is the opposite of the behaviour the rule asks for. Since #3737
+    # an open corpus PR is also what the matrix RESOLVES the corpus at, so this
+    # state is load-bearing beyond the declaration.
     #
     # What it is actually good for: catching a URL that points at nothing, at
     # the AL.Runner repository instead of the corpus, or at a PR that was
@@ -136,7 +138,7 @@ jobs:
             echo "  state=$state  title=$title"
             case "$state" in
               MERGED) echo "  the corpus test has merged; a real service tier has adjudicated it." ;;
-              OPEN)   echo "::notice::Corpus PR #$num is still open. That is the normal state while this PR is in review -- it must merge upstream before the submodule pin can move." ;;
+              OPEN)   echo "::notice::Corpus PR #$num is still open. That is the normal state while this PR is in review, and this run resolved the corpus at that pull request's branch head (#3737) -- read the 'corpus: <sha>' line in a BC leg. It must merge upstream before this PR does." ;;
               CLOSED) echo "::warning::Corpus PR #$num was CLOSED WITHOUT MERGING. This PR cites upstream verification that did not happen -- check whether the BC-behaviour claim was ever adjudicated."; rc=1 ;;
             esac
           done <<< "$urls"

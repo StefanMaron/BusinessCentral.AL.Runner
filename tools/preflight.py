@@ -1636,7 +1636,7 @@ def classify_checkout(lags: list) -> CheckResult:
         detail=detail,
         remedy="Refresh before reading anything out of it as current:\n"
                "    git fetch origin && git merge --ff-only origin/main\n"
-               "    git submodule update --init --recursive\n"
+               "    tools/corpus-checkout.py      # the corpus is not in git (#3737)\n"
                "A branch mid-task is legitimately behind -- the point is not to MEASURE from a "
                "tree this old, or to conclude anything about a tool from the copy in it.",
         data={"lags": lags})
@@ -2242,9 +2242,8 @@ def probe_decompiler(repo: str, timeout: float = 90) -> DecompilerState:
 # --------------------------------------------------------------------------
 # the corpus baseline
 # --------------------------------------------------------------------------
-CORPUS_BASELINE_REL = "tests/expectations/count-baseline/test-count-baseline.json"
+CORPUS_PATH_REL = "tests/al-language"
 CORPUS_APP_ENUMERATOR = "scripts/corpus-app-dirs.py"
-CORPUS_SUBMODULE = "tests/al-language"
 
 # `=== <bundle> ===`, and the three variants that carry a stage after an em dash
 # (`— COMPILE FAIL`, `— EXEC FAIL`, `— SUITE ERRORS (n)`). The `=== ` with a
@@ -2336,203 +2335,118 @@ def parse_corpus_run(text: str, parser=None) -> CorpusRun:
     return out
 
 
-def corpus_expected_counts(doc: dict, suites: Iterable[str]) -> tuple[dict, list]:
-    """Expected test count per suite, read from the checked-in baseline document.
-
-    Anything it cannot compute is a PROBLEM, never a zero. A suite silently
-    treated as expecting 0 tests is a check that passes when the run executes
-    none of it, which is the failure this whole function exists inside of.
-    """
-    counts: dict[str, int] = {}
-    problems: list[str] = []
-    suites_doc = (doc or {}).get("suites")
-    if not isinstance(suites_doc, dict):
-        return {}, [f"the baseline file has no `suites` object "
-                    f"(see {CORPUS_BASELINE_REL})"]
-    for s in suites:
-        entry = suites_doc.get(s)
-        if not isinstance(entry, dict):
-            problems.append(f"{s}: the run would execute this app, and the baseline "
-                            f"has no entry for it")
-            continue
-        tests = entry.get("tests")
-        if not isinstance(tests, dict) or not isinstance(tests.get("default"), int):
-            problems.append(f"{s}: baseline entry has no flat `tests.default` "
-                            f"(the per-app-group form is not one this check reads)")
-            continue
-        extra = sorted(k for k in tests if k != "default")
-        if extra:
-            # byBcVersion overrides the default per BC version, and preflight does
-            # not know which BC version this box will select. Refusing is loud and
-            # fixable; guessing `default` would quietly compare against a number
-            # that does not apply to this box.
-            problems.append(f"{s}: baseline entry carries {', '.join(extra)}, which "
-                            f"this check cannot resolve without knowing the BC version")
-            continue
-        counts[s] = tests["default"]
-    return counts, problems
-
-
 # --------------------------------------------------------------------------
-# the shared corpus submodule checkout (issue #3404)
+# which corpus is checked out here (issue #3737)
 # --------------------------------------------------------------------------
-# SEVERITY: WARN, and the argument is worth stating because the FAIL case is
-# genuinely arguable.
+# The corpus stopped being a pinned gitlink. There is no pin to disagree with a
+# checkout any more -- and with it went the hazard this section used to report,
+# a submodule working directory shared by every worktree of the repository that
+# one process could silently move for all of them (#3404).
 #
-# The doctrine at the top of this file keeps FAIL for "this box produces wrong
-# answers", and a poisoned submodule checkout does produce wrong answers -- a
-# 1-commit corpus gap read as 17, three times in one session by three different
-# actors. What decides it against FAIL is the OTHER half of the same doctrine:
-# a condition earns FAIL when it has no fallback that still produces correct
-# work. The stray graphify graph, the one thing here that can FAIL, has none --
-# no rebuild reaches it, so every query after it is wrong and nothing an agent
-# does helps.
-#
-# This one has a fallback, and it is always available: `git ls-tree` reads the
-# pin out of a tree and cannot see the working directory at all. An agent that
-# uses it -- or tools/corpus-pin.py, or the CI scripts, which already do -- works
-# correctly on a poisoned box. So this makes an agent WRONG only if it reaches
-# for the other read, which is a choice the warning exists to redirect.
-#
-# The second reason is about what FAIL costs: it halts the autonomous cycle, and
-# the condition is REPOSITORY-WIDE and NOT SELF-HEALING. One stray checkout would
-# then stop every agent on the box from starting any work at all, including work
-# that never touches the corpus, until a human intervened -- for a hazard that a
-# single documented command sidesteps. A check that can halt everything for a
-# condition most cycles do not care about is a check people route around.
-CORPUS_PIN_TOOL = "tools/corpus-pin.py"
+# What replaced that question is a simpler one with the same purpose: WHICH
+# corpus is in this worktree? A run measures whatever is in tests/al-language,
+# and with nothing in the tree recording what that should be, the answer is only
+# knowable by asking the checkout.
+CORPUS_CHECKOUT_TOOL = "tools/corpus-checkout.py"
 
 
-def corpus_pin_readings(repo: str) -> dict:
-    """The pin from origin/main's tree, the pin in the index, and the shared checkout.
+def corpus_checkout_reading(repo: str) -> dict:
+    """The corpus SHA in this worktree, or why there is none.
 
-    Three readings kept apart, because the DIVERGENCE is the finding. Collapsing
-    them to one number would discard exactly the fact this check exists to
-    report. Each is None when it could not be read, which is distinct from "they
-    disagree" and is reported as such.
+    `state` is one of `ok`, `absent`, `submodule-leftover`, `unreadable` -- kept
+    apart because they need different remedies, and because "no corpus here" is
+    an ordinary state for a fresh worktree while "a pre-#3737 submodule checkout"
+    is a migration step somebody has to take by hand.
     """
-    out = {"pin": None, "index": None, "head": None, "worktree": None, "error": ""}
-
-    def tree_pin(rev):
-        parts = run(["git", "-C", repo, "ls-tree", rev, CORPUS_SUBMODULE]).out.strip().split()
-        if len(parts) >= 3 and parts[0] == "160000" and parts[1] == "commit":
-            return parts[2]
-        return None
-
-    out["pin"] = tree_pin("refs/remotes/origin/main")
-    out["head"] = tree_pin("HEAD")
-
-    # STAGED, not merely recorded. The index carries a gitlink for the submodule at
-    # ALL times -- normally just a copy of HEAD's -- so `ls-files -s` alone cannot
-    # tell "somebody is bumping the pin" from "this checkout is behind", and the
-    # second is the COMMON case for an agent worktree while the first is rare.
-    # Reading it the other way made this check WARN on every behind worktree and
-    # call that checkout's stale HEAD pin "the pin" (#3404, caught in review).
-    if run(["git", "-C", repo, "diff", "--cached", "--name-only", "--",
-            CORPUS_SUBMODULE]).out.strip():
-        sparts = run(["git", "-C", repo, "ls-files", "-s",
-                      CORPUS_SUBMODULE]).out.strip().split()
-        if len(sparts) >= 2 and sparts[0] == "160000":
-            out["index"] = sparts[1]
-
-    sub = os.path.join(repo, CORPUS_SUBMODULE)
-    if not os.path.isdir(sub):
-        out["error"] = f"{CORPUS_SUBMODULE} is not initialised"
+    out = {"state": "absent", "sha": None, "path": CORPUS_PATH_REL, "error": ""}
+    full = os.path.join(repo, CORPUS_PATH_REL)
+    if not os.path.isdir(full):
         return out
-    # An UNPOPULATED submodule directory is not a checkout, and asking it for HEAD
-    # does not fail -- `git -C <empty dir> rev-parse HEAD` walks UP to the
-    # superproject and returns the SUPERPROJECT's commit, exit 0. `git worktree
-    # add` does not populate submodules, so that is the state of every fresh
-    # worktree: measured, a new worktree at 4e4abbcb reported `4e4abbcb` as its
-    # "corpus checkout". Warning on that would fire in every new worktree, and a
-    # check that is wrong by default is one people learn to skip.
-    top = run(["git", "-C", sub, "rev-parse", "--show-toplevel"]).out.strip()
-    if not top or os.path.realpath(top) != os.path.realpath(sub):
-        out["error"] = f"{CORPUS_SUBMODULE} is not populated in this checkout"
+    dot_git = os.path.join(full, ".git")
+    if os.path.isfile(dot_git):
+        out["state"] = "submodule-leftover"
         return out
-    head = run(["git", "-C", sub, "rev-parse", "HEAD"]).out.strip()
-    if head:
-        out["worktree"] = head
-    else:
-        out["error"] = f"could not read HEAD in {CORPUS_SUBMODULE}"
+    if not os.path.isdir(dot_git):
+        out["state"] = "absent" if not os.listdir(full) else "unreadable"
+        out["error"] = "" if out["state"] == "absent" else "not a git repository"
+        return out
+    r = run(["git", "-C", full, "rev-parse", "HEAD"], cwd=repo, timeout=30)
+    sha = (r.out or "").strip()
+    if not r.ok or len(sha) != 40:
+        out["state"] = "unreadable"
+        out["error"] = (r.err or r.out or "").strip()[:200]
+        return out
+    out["state"], out["sha"] = "ok", sha
     return out
 
 
-def classify_corpus_pin(readings: dict) -> CheckResult:
-    """PASS/WARN on whether the shared corpus checkout is at the pin."""
-    pin, index, worktree = readings["pin"], readings["index"], readings["worktree"]
-    head = readings.get("head")
-    # What THIS checkout legitimately expects the submodule to sit at: a staged
-    # bump if there is one, otherwise its own HEAD pin. origin/main's is the last
-    # resort, because a behind checkout does not claim to be at it.
-    ref = index or head or pin
-    behind = index is None and head is not None and pin is not None and head != pin
-    detail = [
-        f"pin on origin/main       {(pin or '<unreadable>')[:8]}   <- what CI replays",
-        f"pin in this checkout HEAD {(head or '<none>')[:8]}"
-        + ("   <- BEHIND; not a bump" if behind else ""),
-        f"shared working directory {(worktree or '<absent>')[:8]}",
-    ]
-    if index is not None:
-        detail.insert(2, f"pin STAGED in the index  {index[:8]}   (a bump in progress)")
-    if readings["error"] or ref is None or worktree is None:
-        # "could not read" is not "they agree". A submodule nobody has initialised
-        # cannot mislead anyone, so this is not a finding -- but it must not be
-        # reported as a verified agreement either.
+def classify_corpus_checkout(reading: dict) -> CheckResult:
+    """PASS naming the corpus SHA; WARN when there is nothing to name.
+
+    A WARN rather than a FAIL in every branch: a box with no corpus checked out
+    still produces correct work for everything that is not a corpus run, and the
+    remedy is one command. What must never happen is a PASS that names no SHA --
+    "which corpus did this box measure" is the question this check exists to
+    answer, and a green tick with no answer in it is the shape #3737 removed from
+    CI (`guards-need-a-third-state.md`).
+    """
+    state, sha = reading["state"], reading["sha"]
+    remedy = f"Run `{CORPUS_CHECKOUT_TOOL}` in this worktree; it prints the SHA it resolved."
+    if state == "ok":
         return CheckResult(
-            name="corpus-pin", status="PASS",
-            summary="no shared corpus checkout to disagree with the pin"
-                    + (f" ({readings['error']})" if readings["error"] else ""),
-            command=CORPUS_PIN_TOOL, detail=detail, data=readings)
-    if behind:
-        detail.append(
-            f"This checkout is BEHIND origin/main on the corpus pin ({head[:8]} vs "
-            f"{pin[:8]}), and nothing is staged -- an un-refreshed worktree, not a bump. "
-            f"`{CORPUS_PIN_TOOL} --quiet` answers origin/main's pin, which is what CI "
-            f"replays. Refresh with `git fetch origin main`.")
-    if worktree == ref:
-        expected = ("the commit this checkout expects" if behind
-                    else "the pin")
+            name="corpus-checkout", status="PASS",
+            summary=f"corpus: {sha} (tests/al-language)",
+            command=f"{CORPUS_CHECKOUT_TOOL} --print",
+            detail=["The corpus is resolved per run since #3737, not pinned, so this SHA "
+                    "is the only record of which corpus a local run measures. Quote it "
+                    "with any local corpus result.",
+                    f"Move it with `{CORPUS_CHECKOUT_TOOL}` "
+                    f"(`--corpus-pr <N>` for a corpus pull request)."],
+            data=reading)
+    if state == "submodule-leftover":
         return CheckResult(
-            name="corpus-pin", status="PASS",
-            summary=f"the shared {CORPUS_SUBMODULE} checkout is at {expected} ({ref[:8]})"
-                    + (f"; this checkout is behind origin/main ({pin[:8]})" if behind else ""),
-            command=CORPUS_PIN_TOOL, detail=detail, data=readings)
-    detail.append(
-        "A submodule working directory is shared by EVERY worktree of this repository, like "
-        "refs/stash. Some other process left this one behind; it has no owner and nothing "
-        "resets it. It does not announce itself: `git status` shows it as an ordinary dirty "
-        "submodule, and `git log` inside it prints a real history of the wrong commit.")
-    # Name the reference for what it is. Calling this checkout's own HEAD pin "the
-    # pin" was a second wrong statement on the same line, about the value the reader
-    # is being told to trust.
-    ref_label = ("the pin STAGED here" if index
-                 else "the pin this checkout's HEAD records" if head
-                 else "the pin on origin/main")
+            name="corpus-checkout", status="WARN",
+            summary="tests/al-language is still the pre-#3737 submodule checkout",
+            command=f"{CORPUS_CHECKOUT_TOOL} --print",
+            detail=["Its `.git` is a FILE pointing into this repository's .git/modules, "
+                    "which every worktree shares -- so no tool here removes it for you.",
+                    "Nothing is lost by removing it: the corpus is read-only and is "
+                    "re-cloned from the remote."],
+            remedy="rm -rf tests/al-language && " + CORPUS_CHECKOUT_TOOL,
+            data=reading)
+    if state == "unreadable":
+        return CheckResult(
+            name="corpus-checkout", status="WARN",
+            summary=f"tests/al-language exists but its commit could not be read "
+                    f"({reading['error'] or 'no detail'})",
+            command=f"{CORPUS_CHECKOUT_TOOL} --print",
+            detail=["A corpus whose commit cannot be read is a corpus nothing can "
+                    "attribute a result to."],
+            remedy="rm -rf tests/al-language && " + CORPUS_CHECKOUT_TOOL,
+            data=reading)
     return CheckResult(
-        name="corpus-pin", status="WARN",
-        summary=f"the shared {CORPUS_SUBMODULE} checkout is at {worktree[:8]}, not "
-                f"{ref_label} ({ref[:8]}) - anything measured from it is about the "
-                f"wrong commit",
-        command=CORPUS_PIN_TOOL,
-        detail=detail,
-        remedy="Do not read the pin from the submodule's HEAD. Read it from a tree:\n"
-               f"    PIN=$({CORPUS_PIN_TOOL} --quiet)\n"
-               f"    # or: git ls-tree origin/main {CORPUS_SUBMODULE} | awk '{{print $3}}'\n"
-               "To measure against the corpus, give your worktree its OWN clone -- checking "
-               f"out inside {CORPUS_SUBMODULE} is the act that poisons it for everyone else. "
-               "This is a WARN rather than a FAIL because the correct read is always "
-               "available, so the box still produces correct work for an agent that uses it.",
-        data=readings)
+        name="corpus-checkout", status="WARN",
+        summary="no corpus checked out in this worktree",
+        command=f"{CORPUS_CHECKOUT_TOOL} --print",
+        detail=["Ordinary in a fresh worktree -- `git worktree add` does not create it, "
+                "and since #3737 there is no submodule for `git submodule update` to "
+                "populate.",
+                "Any local corpus run needs it; CI checks its own out per job."],
+        remedy=remedy, data=reading)
 
 
-def check_corpus_pin(repo: str) -> CheckResult:
-    return classify_corpus_pin(corpus_pin_readings(repo))
+def check_corpus_checkout(repo: str) -> CheckResult:
+    return classify_corpus_checkout(corpus_checkout_reading(repo))
 
 
 def check_corpus(repo: str, enabled: bool) -> CheckResult:
-    """The skill's step 1: the corpus is the known-good baseline, and its expected
-    count is checked in at tests/expectations/count-baseline/.
+    """The skill's step 1: the corpus is the known-good baseline for this box.
+
+    There is no checked-in expected count for it since #3675 -- the corpus is
+    resolved per run (#3737), so a committed number would go stale on every
+    upstream merge. What is asserted here is everything a single run can read for
+    itself: no failures, no lost suites, a summary that exists, and that summary
+    agreeing with the per-bundle PASS lines.
 
     Off by default because it is a multi-minute run and this script is meant to be
     run before every cycle; --with-corpus turns it on. A SKIP is reported as a
@@ -2546,37 +2460,21 @@ def check_corpus(repo: str, enabled: bool) -> CheckResult:
     an unchanged exit code", was the one thing it could not see. A non-zero exit
     can still ADD a failure here; it can never grant a pass.
     """
-    baseline = os.path.join(repo, CORPUS_BASELINE_REL)
     invocation = ("mapfile -t APPS < <(python3 scripts/corpus-app-dirs.py tests/al-language)\n"
                   "dotnet run --project AlRunner -c Release -- \"${APPS[@]}\" "
                   "--package-cache ~/.al-runner/platform-apps "
-                  "--package-cache ~/.al-runner/test-apps --show-pass --strict "
-                  "--count-baseline " + CORPUS_BASELINE_REL)
+                  "--package-cache ~/.al-runner/test-apps --show-pass --strict")
     if not enabled:
         return CheckResult(name="corpus-baseline", status="SKIP",
                            summary="not run (multi-minute); pass --with-corpus to run it",
                            command="tools/preflight.py --with-corpus",
-                           detail=[f"expected counts live in {CORPUS_BASELINE_REL}",
-                                   "A box that cannot reproduce the corpus baseline produces "
-                                   "results that cannot be trusted - notably a shared cache "
-                                   "left inconsistent by a killed run, which once cost 76% of "
+                           detail=["A box that cannot run the corpus clean produces results "
+                                   "that cannot be trusted - notably a shared cache left "
+                                   "inconsistent by a killed run, which once cost 76% of "
                                    "passing tests with no error and an unchanged exit code."],
                            remedy="Run it at least once on a fresh or drifted box, against the "
                                   "SHARED cache the work will actually use - a private cache is "
                                   "blind to exactly the failure this catches.")
-    if not os.path.exists(baseline):
-        return CheckResult(name="corpus-baseline", status="FAIL",
-                           summary=f"no baseline file at {baseline}",
-                           command=f"ls {baseline}",
-                           remedy="Check out the repository fully, including tests/expectations.")
-    try:
-        with open(baseline) as fh:
-            doc = json.load(fh)
-    except (OSError, ValueError) as exc:
-        return CheckResult(name="corpus-baseline", status="FAIL",
-                           summary=f"the baseline file could not be read: {exc}",
-                           command=f"python3 -m json.tool {CORPUS_BASELINE_REL}",
-                           remedy="Repair or re-check-out the baseline file.")
 
     def fail(summary: str, detail: list, remedy: str, data: Optional[dict] = None) -> CheckResult:
         return CheckResult(name="corpus-baseline", status="FAIL", summary=summary,
@@ -2586,29 +2484,20 @@ def check_corpus(repo: str, enabled: bool) -> CheckResult:
     # The apps are ENUMERATED, never named (#2984): a hardcoded path is green by
     # construction the day the corpus gains an app, because the new app is checked
     # out and never executed.
-    enum = run(["python3", CORPUS_APP_ENUMERATOR, CORPUS_SUBMODULE], cwd=repo, timeout=120)
+    enum = run(["python3", CORPUS_APP_ENUMERATOR, CORPUS_PATH_REL], cwd=repo, timeout=120)
     apps = [ln.strip() for ln in enum.out.splitlines() if ln.strip()]
     if not enum.ok or not apps:
         return fail("the corpus apps could not be enumerated, so nothing was measured",
                     [(enum.out + enum.err).strip()[-800:] or "no output"],
-                    f"Check {CORPUS_APP_ENUMERATOR} and that the {CORPUS_SUBMODULE} "
-                    f"submodule is checked out (git submodule update --init).")
+                    f"Check {CORPUS_APP_ENUMERATOR} and that the corpus is checked out "
+                    f"({CORPUS_CHECKOUT_TOOL}).")
 
     suites = [os.path.basename(a.rstrip("/")) for a in apps]
-    expected, problems = corpus_expected_counts(doc, suites)
-    if problems:
-        return fail("the expected count cannot be computed, so the run cannot be judged",
-                    problems,
-                    f"Add or correct the entries in {CORPUS_BASELINE_REL} "
-                    f"(its README.md has the schema), then re-run.",
-                    {"apps": apps, "expected": expected})
-    want = sum(expected.values())
 
     r = run(["dotnet", "run", "--project", "AlRunner", "-c", "Release", "--", *apps,
              "--package-cache", os.path.expanduser("~/.al-runner/platform-apps"),
              "--package-cache", os.path.expanduser("~/.al-runner/test-apps"),
-             "--show-pass", "--strict", "--expectations-require-match",
-             "--count-baseline", CORPUS_BASELINE_REL],
+             "--show-pass", "--strict", "--expectations-require-match"],
             cwd=repo, timeout=3600)
     text = r.out + "\n" + r.err
     tail = "\n".join(text.strip().splitlines()[-15:])
@@ -2625,10 +2514,11 @@ def check_corpus(repo: str, enabled: bool) -> CheckResult:
                     "Fix tools/corpus-pass-count.py / this parser before trusting any "
                     "result from this box.")
 
-    data = {"expected": expected, "observed": obs.per_bucket, "apps": apps,
-            "exit_code": r.rc, "summary": obs.summary}
-    lines = [f"{s}: expected {expected[s]}, observed {obs.per_bucket.get(s, 0)}"
-             for s in suites]
+    corpus = corpus_checkout_reading(repo)
+    data = {"observed": obs.per_bucket, "apps": apps, "exit_code": r.rc,
+            "summary": obs.summary, "corpus_sha": corpus.get("sha")}
+    lines = [f"{s}: {obs.per_bucket.get(s, 0)} passed" for s in suites]
+    lines.append(f"corpus: {corpus.get('sha') or '<unreadable>'}")
 
     if obs.summary is None:
         return fail("the run printed no test summary, so nothing was verified - "
@@ -2648,26 +2538,20 @@ def check_corpus(repo: str, enabled: bool) -> CheckResult:
                     "Stop, notify, and open an issue. Do not start a cycle on a box "
                     "whose baseline does not reproduce.", data)
 
-    mism = [f"{s}: expected {expected[s]}, observed {obs.per_bucket.get(s, 0)} "
-            f"({obs.per_bucket.get(s, 0) - expected[s]:+d})"
-            for s in suites if obs.per_bucket.get(s, 0) != expected[s]]
-    if mism:
-        # Both directions, deliberately. A shortfall is the incident this check is
-        # named for; a SURPLUS is only reachable through double counting or a tree
-        # whose pin and baseline disagree, and both mean the numbers this box
-        # produces describe something other than the corpus. A floor ("at least N")
-        # is the shape that let a stale baseline hide a later real drop (#1880).
-        return fail("the corpus baseline did NOT reproduce - the pass count does not "
-                    "match the checked-in baseline",
-                    mism + [f"total: expected {want}, "
-                            f"observed {sum(obs.per_bucket.values())}"],
-                    "Stop, notify, and open an issue. Do not start a cycle on a box "
-                    "whose baseline does not reproduce. If the corpus pin moved, the "
-                    f"baseline in {CORPUS_BASELINE_REL} moves with it, in that PR.",
-                    data)
-    if obs.summary.get("pass") != want:
+    # There is no checked-in expected count to compare against any more (#3675):
+    # the corpus is resolved per run (#3737), so a number committed here would go
+    # stale the moment an upstream corpus PR merged, and this check would fail on
+    # a healthy box. CI compares against the last count a main run recorded, at
+    # its corpus SHA -- a comparison a single local run has no second endpoint for.
+    #
+    # What survives is the reading this check could always make for itself: the
+    # run's own summary against its per-bundle PASS lines. Two differently-shaped
+    # readings of one run, and a disagreement means one of them stopped measuring
+    # what it names (`verify-execution-not-the-tick.md`).
+    counted = sum(obs.per_bucket.values())
+    if obs.summary.get("pass") != counted:
         return fail("the run's own summary disagrees with its per-bundle PASS lines - "
-                    f"summary says {obs.summary.get('pass')}, the lines add up to {want}",
+                    f"summary says {obs.summary.get('pass')}, the lines add up to {counted}",
                     [tail] + lines,
                     "Do not trust either number until they agree; one of the two "
                     "readings stopped measuring what it names.", data)
@@ -2682,9 +2566,9 @@ def check_corpus(repo: str, enabled: bool) -> CheckResult:
                     "Read the tail above: 4=count-baseline mismatch, "
                     "5=an expectations entry matched no test, 134/139=crash.", data)
     return CheckResult(name="corpus-baseline", status="PASS",
-                       summary=f"the corpus baseline reproduced on this box: {want} tests "
-                               f"passed across {len(apps)} app(s), matching "
-                               f"{CORPUS_BASELINE_REL}",
+                       summary=f"the corpus ran clean on this box: {counted} tests passed "
+                               f"across {len(apps)} app(s) at corpus "
+                               f"{(corpus.get('sha') or '<unreadable>')[:8]}",
                        command=invocation, detail=lines, data=data)
 
 
@@ -2931,7 +2815,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         check_push(repo, identity),
         check_commit(repo),
         check_github(slug),
-        check_corpus_pin(repo),
+        check_corpus_checkout(repo),
         check_corpus(repo, args.with_corpus),
     ]
     if args.no_tools:

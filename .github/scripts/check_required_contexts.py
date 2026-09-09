@@ -216,13 +216,6 @@ PENDING_REQUIRED_CONTEXTS: list[str] = [
     # workflow, not cancellable on the head commit -- which is the whole point of
     # the seam.
     "A PR closing a gap issue must not leave its known-gap entry behind",
-    # #3288's gate. pr-gate.yml's require-forward-corpus-pin job produces this
-    # context, which refuses a pull request whose tests/al-language pin is not a
-    # descendant of the base branch's. Same discipline as the two above, and for
-    # the same #3002 reason: listed here so it is ANALYSED like a required one,
-    # deliberately NOT promoted into DEFAULT_REQUIRED_CONTEXTS or into
-    # ci-wait.py's RULESET_CONTEXTS until the ruleset actually requires it.
-    "The corpus pin must not move backward",
 ]
 
 REPO = "StefanMaron/BusinessCentral.AL.Runner"

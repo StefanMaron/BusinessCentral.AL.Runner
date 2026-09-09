@@ -4,12 +4,16 @@ Why every number in `test-count-baseline.json` is the number it is. One entry pe
 that two PRs bumping different suites append to different sections and git merges them
 itself (#2485).
 
-**Where to write.** A corpus pin bump goes under `## al-language`: say which upstream corpus
-PRs came in, what they assert, and that the count was measured on a real run rather than
-computed. A runner-extras change usually needs nothing here — the group entry it adds to
-`test-count-baseline.json` already names the app group and its test count. Write an entry
-when the *reason* is not obvious from that line (a suite that only exists from BC 28.0 on, a
-count that moved without any file being added, a number you had to re-measure after a
+**The `## al-language` section below is closed** (#3675). Those numbers moved only when the
+`tests/al-language` pin moved, and there is no pin: the corpus is resolved per run (#3737) and
+its count is compared in CI against the last count a `main` run recorded, which names both
+corpus SHAs on a drop. Nothing appends there any more. It is kept because each entry says what
+an upstream corpus PR asserted and why the number moved — a record no run log carries.
+
+**Where to write.** A `runner-extras` change usually needs nothing here: the group entry it
+adds to `test-count-baseline.json` already names the app group and its test count. Write an
+entry when the *reason* is not obvious from that line (a suite that only exists from BC 28.0
+on, a count that moved without any file being added, a number you had to re-measure after a
 rebase).
 
 Newest last, within each section.

@@ -409,9 +409,15 @@ public sealed class CountBaselineGroupsFormTests
         Assert.Equal(extras.Tests.Resolve("27.5"), on27);
         Assert.Equal(on28, extras.Tests.Resolve("28.0"));
 
-        // al-language stays on the flat form on purpose (see this directory's README).
-        Assert.NotNull(manifest.Suites["al-language"].Tests);
-        Assert.Equal(manifest.Suites["al-language"].Tests!.Resolve("28.4"),
-                     manifest.Suites["al-language"].Tests!.Resolve("27.0"));
+        // The corpus suites are deliberately NOT here (#3675). They used to be, on the flat
+        // form, because the count could only move when a PR moved the pin; with the corpus
+        // resolved per run (#3737) a committed number goes stale on the next upstream merge
+        // and every BC leg exits 4 with nothing in this repository to fix. The corpus count
+        // is compared per run instead — `.github/scripts/compare_corpus_count.py` against the
+        // last one a main run recorded — and `CorpusAppEnumerationWorkflowTests` asserts this
+        // file declares no `al-language*` suite. Asserted here too, at the loader, because
+        // this is where an entry re-added by hand would first do damage.
+        Assert.DoesNotContain(manifest.Suites.Keys,
+            k => k.StartsWith("al-language", StringComparison.Ordinal));
     }
 }

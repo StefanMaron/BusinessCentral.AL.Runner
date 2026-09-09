@@ -1,10 +1,47 @@
-# The `tests/al-language` submodule is read-only
+# The `tests/al-language` corpus is read-only, and resolved rather than pinned
 
-`tests/al-language/` is a git submodule pinned at
+`tests/al-language/` holds
 [`StefanMaron/BusinessCentral.AL.Language.Tests`](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests),
 the canonical AL-language test corpus, validated against a real BC service tier. **Never edit
 any file under `tests/al-language/`.** The corpus does not know about AL Runner and must stay
 that way.
+
+It is **not a submodule and not a gitlink** since #3737: `git ls-tree origin/main
+tests/al-language` answers nothing, the directory is gitignored, and every run resolves the
+corpus for itself.
+
+## Which corpus a run measures
+
+| where | resolves | how |
+|---|---|---|
+| a pull request with no `Corpus-PR:` line | `master` | `.github/actions/resolve-corpus-ref` |
+| a pull request declaring `Corpus-PR: …/pull/<M>` | that PR's branch head while it is open; `master` once it has merged | the same action, which asks the corpus PR its state |
+| a push to `main`, the floor, a release | `master` | the same |
+| your worktree | whatever you last checked out | `tools/corpus-checkout.py` |
+
+**Every run prints `corpus: <full sha> (<ref>)`** — in the job log, in the run summary, and
+locally from `tools/corpus-checkout.py` (`--print` reads it back without a network call).
+That line is the whole record: with nothing pinned in the tree, a result nobody can attribute
+to a corpus commit is a result nobody can reproduce. Quote the SHA, never the ref — `master`
+moves, and so does a corpus PR's branch head.
+
+```bash
+tools/corpus-checkout.py                   # master, into tests/al-language/
+tools/corpus-checkout.py --corpus-pr 293   # a corpus pull request's head
+tools/corpus-checkout.py --print           # what this worktree holds now
+```
+
+**Trap: a worktree made before #3737** still has a `.git` *file* under `tests/al-language/`
+pointing into `.git/modules/`, which every worktree of this repository shares. No tool here
+removes it for you — `rm -rf tests/al-language && tools/corpus-checkout.py`, which loses
+nothing, because the corpus is read-only and re-cloned from the remote. `tools/preflight.py`
+reports that state, and reports the resolved SHA otherwise.
+
+**There is no pin to bump, so there is no fold / catch-up / blocked-by-intervening-commit
+question.** A merged corpus PR reaches this repository on its next run. What replaced the pin
+bump as the thing to get right is the **merge order**: a runner PR asserting BC behaviour
+merges after the corpus PR it cites, and the coordinator merges the pair in one step
+(`orchestrating-a-session`).
 
 ## The corpus default branch is `master`, not `main`
 
@@ -12,46 +49,6 @@ Target `master` on a corpus PR. `gh pr create` with no explicit `--base` picks i
 a hand-written `--base main`, or an API call assuming `main`, fails with a 422 that does not say
 why. The same asymmetry applies to every command naming a branch — `git merge-tree --write-tree
 origin/master origin/<branch>` for a conflict check in the corpus, `origin/main` for one here.
-
-```bash
-gh repo view StefanMaron/BusinessCentral.AL.Language.Tests --json defaultBranchRef \
-  --jq '.defaultBranchRef.name'      # master
-```
-
-## The pin is `git ls-tree`, not the submodule working directory
-
-Two plausible commands, both exit 0, both print a real SHA, and they answer different questions:
-
-```bash
-git ls-tree origin/main tests/al-language     # THE PIN — what CI replays
-git -C tests/al-language rev-parse HEAD       # whatever the last process left checked out
-```
-
-**Use the tool; do not choose between them** (#3404):
-
-```bash
-tools/corpus-pin.py                  # all three readings, labelled; exit 1 if drifted
-PIN=$(tools/corpus-pin.py --quiet)   # always the pin, never the shared checkout
-```
-
-`--quiet` prints the pin even when it exits 1, so a caller that ignores the exit code still
-captures the right value; `tools/preflight.py` reports the same divergence as a WARN.
-
-`tests/al-language/` is a **submodule working directory shared by every worktree of this
-repository** — like `refs/stash` (`no-git-stash-with-worktrees.md`). Any process that checks a
-different corpus commit out inside it leaves it there for everyone, and nothing resets it.
-
-**Trap: behind is not mid-bump.** The index carries a gitlink at all times, so "the index
-differs from `origin/main`" usually means the checkout is behind — the ordinary state of an
-agent worktree — and only a genuinely **staged** bump (`git diff --cached`) outranks
-`origin/main`. A stale checkout announces nothing: it shows as `M tests/al-language`, and `git
-log` inside it prints a real history at a real commit. What it produces is a confident
-*overestimate* of remaining work, which justifies a large measurement run against commits that
-are already pinned (#3404).
-
-**To measure against the corpus, give your worktree its own clone.** A `git checkout` inside
-`tests/al-language/` poisons it for every other worktree, so it belongs only in a bump, where
-the `git add` that follows makes the checkout and the pin agree again.
 
 ## What this means in practice
 
@@ -61,22 +58,15 @@ the `git add` that follows makes the checkout and the pin agree again.
 - **`_fixtures/Assert.al`, table fixtures, helper codeunits — all off-limits.** If
   `Assert.IsNumber` excludes a type and that causes failures, the bug is that the runner
   classifies that type differently from real BC; fix the classification.
-- **Updating the corpus** = bumping the submodule pin together with the
-  `tests/expectations/count-baseline/` update. Inspect the diff first —
-  `git -C tests/al-language diff $OLD..$NEW`, where `$OLD` is the pin above and **not** the
-  submodule's `HEAD`. **The corpus PR is the proof; the pin only decides when this repository's
-  CI replays it**, so a corpus PR merged with green BC legs has already been adjudicated by a
-  real service tier whether or not our pin has caught up. Which PR the bump belongs in depends
-  on what the new commits need:
-
-  - **Fold** — the corpus test and the runner fix are both new. The bump goes **in the fix
-    PR**; alone it is red by construction, because the new test fails without the fix.
-  - **Catch-up** — the fix has already merged upstream and here. A bump alone is green and is
-    legitimately its own PR.
-  - **Blocked by an intervening commit** — you cannot pin corpus commit N without pinning its
-    predecessors, and one of *those* may need a runner fix that is still open, possibly someone
-    else's. Pin the newest commit whose predecessors are all satisfied, leave the rest, and name
-    the open issue holding the remainder.
+- **A corpus commit is measured here on the next run that resolves `master`** — the next push
+  to `main`, or the next floor run that is not debounced away (`main-verdict-floor.yml` keys a
+  conclusive verdict on the *runner* SHA, which no longer implies a corpus). So an upstream PR
+  merged with red runner-side consequences shows up as a red `main` here, not as a pin nobody
+  moved: the corpus PR and the runner fix that needs it belong to one merge step, in that order.
+- **The test count is compared in CI, not committed** (#3675). `tests/expectations/count-baseline/`
+  no longer declares the corpus suites; each leg counts what it ran and compares against the
+  last count a `main` run recorded, naming both corpus SHAs on a drop. Growth is allowed and
+  recorded — an upstream PR adding tests arrives here on its own.
 
 ## Out-of-scope tests use the expectations manifest
 
@@ -89,7 +79,21 @@ required fields live in [`docs/expectations.md`](../../docs/expectations.md).
 
 Manifest drift is loud in both directions: a test that starts passing despite an `expect-oos`
 entry fails the run with "remove the entry"; one that starts throwing OOS without an entry
-fails with "add an entry".
+fails with "add an entry". With a moving corpus that drift can arrive without anyone here
+pushing anything, which is a red `main` to fix rather than a mystery.
+
+**A corpus merge that reds `main` is answered on the next coordinator sweep — with a fix, or
+with an `expect-fail-known-gap` entry linking an open issue. Never by waiting.** That is the
+pin's cost, paid where it belongs: the pin used to hold a red corpus commit outside the
+repository until someone chose to take it, and nothing chooses now. So for each corpus test
+newly failing, either land the runner fix, or add an entry naming the issue that tracks it —
+searching the open queue first and filing a runner-gap issue only when none exists
+(`file-issues-for-gaps.md`). Two things to get right, both learned the first time this fired
+(#3737, corpus PR #273 → six failures on `Codeunit60559.RunObjectNaming*`, tracked by #2943):
+name the **methods**, not `Method: "*"`, unless every test in the codeunit fails — two of that
+codeunit's eight passed, and a wildcard would have claimed those as failures and drifted the
+other way; and read the failing set from a leg that **finished**, because a leg that died in its
+unit tests never ran the corpus at all and reports no failures rather than none.
 
 ## Which tests belong here at all
 

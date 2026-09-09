@@ -3,8 +3,8 @@
 
 RED before #2984: this module did not exist, and `.github/workflows/bc-tests.yml`
 named `tests/al-language/tests/al-language` directly, so a second corpus test app
-was checked out by the submodule pin and never executed -- a leg green because it
-ran nothing.
+was checked out with the corpus and never executed -- a leg green because it ran
+nothing.
 
 GREEN proves both directions:
 
@@ -120,7 +120,7 @@ class MainExitCodes(unittest.TestCase):
             self.assertEqual("", out.getvalue())
             self.assertIn("no app directory found", err.getvalue())
 
-    def test_a_missing_root_names_the_submodule_as_the_likely_cause(self):
+    def test_a_missing_root_names_the_corpus_checkout_as_the_likely_cause(self):
         with tempfile.TemporaryDirectory() as tmp:
             out, err = io.StringIO(), io.StringIO()
             with redirect_stdout(out), redirect_stderr(err):
@@ -128,7 +128,7 @@ class MainExitCodes(unittest.TestCase):
 
             self.assertEqual(1, rc)
             self.assertEqual("", out.getvalue())
-            self.assertIn("git submodule update --init", err.getvalue())
+            self.assertIn("tools/corpus-checkout.py", err.getvalue())
 
     def test_success_prints_one_path_per_line_and_exits_zero(self):
         with tempfile.TemporaryDirectory() as tmp:

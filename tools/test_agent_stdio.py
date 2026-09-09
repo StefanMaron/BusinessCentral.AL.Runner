@@ -177,8 +177,8 @@ ROBOT = b"\xf0\x9f\xa4\x96"
 DASH = b"\xe2\x80\x94"
 CP1252_DASH = b"\x97"
 
-TOOLS = ["pr-body.py", "ci-wait.py", "preflight.py", "corpus-pin.py",
-         "corpus-pass-count.py", "corpus-pin-advance.py", "context-pack.py",
+TOOLS = ["pr-body.py", "ci-wait.py", "preflight.py", "corpus-checkout.py",
+         "corpus-pass-count.py", "context-pack.py",
          "lsp-query.py", "agent_scratchpad.py", "agent-cost.py", "comment-density.py"]
 
 env = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0")

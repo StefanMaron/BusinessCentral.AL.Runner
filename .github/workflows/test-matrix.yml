@@ -89,6 +89,38 @@ jobs:
           printf '%s\n' "$files"
           printf '%s\n' "$files" | python3 .github/scripts/docs_only.py >> "$GITHUB_OUTPUT"
 
+  corpus:
+    # Which corpus does this run measure? (#3737) tests/al-language stopped being
+    # a pinned gitlink: a run resolves it at master, or at the head of the corpus
+    # pull request this PR body's `Corpus-PR:` line names.
+    #
+    # Resolved HERE, once, and handed to every leg. `master` moves, so legs
+    # resolving it independently could measure different corpora within one run,
+    # and the count comparison downstream would then be over numbers from
+    # different trees.
+    #
+    # It is also the only place in the matrix path that talks to api.github.com.
+    # A pull request with no `Corpus-PR:` line degrades to the event-payload body
+    # with a warning rather than failing, so an API blip cannot block a merge for
+    # something no author can fix; a pull request that DOES name a corpus PR fails
+    # loudly instead, because resolving master for it would report green on a
+    # corpus nobody asked for (`guards-need-a-third-state.md`).
+    name: Resolve the corpus
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      ref: ${{ steps.resolve.outputs.ref }}
+      why: ${{ steps.resolve.outputs.why }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/resolve-corpus-ref
+        id: resolve
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
+          pr-body-fallback: ${{ github.event.pull_request.body }}
+
   bc-tests:
     # The matrix itself lives in bc-tests.yml so the release path (publish.yml)
     # runs THESE steps rather than a hand-maintained copy of them. That copy
@@ -98,9 +130,11 @@ jobs:
     # Skipped on a docs-only pull request (#2890). The `if:` is on THIS job and
     # deliberately not on all-tests below: the aggregate is the required context,
     # and it has to report on every path — see its comment.
-    needs: [changes]
+    needs: [changes, corpus]
     if: needs.changes.outputs.docs-only != 'true'
     uses: ./.github/workflows/bc-tests.yml
+    with:
+      corpus-ref: ${{ needs.corpus.outputs.ref }}
 
   all-tests:
     name: BC test matrix passed
@@ -125,7 +159,7 @@ jobs:
     # runs, under `if: always()`, and reports success with a message saying why.
     # That is the whole trick: a `paths-ignore` on the workflow would leave the
     # required context unreported and the pull request BLOCKED forever (#2726).
-    needs: [changes, bc-tests]
+    needs: [changes, corpus, bc-tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -134,6 +168,14 @@ jobs:
           if [ "${{ needs.changes.result }}" != "success" ]; then
             echo "Could not classify the change (result: ${{ needs.changes.result }})."
             echo "Nothing below is a verdict on the matrix — open the 'Classify the change' job."
+            exit 1
+          fi
+          # A corpus that could not be resolved is not a matrix that passed. This
+          # runs under `if: always()`, so without this the aggregate would report
+          # success for a run that never checked a corpus out (#3737).
+          if [ "${{ needs.corpus.result }}" != "success" ]; then
+            echo "Could not resolve the corpus (result: ${{ needs.corpus.result }})."
+            echo "Nothing below is a verdict — open the 'Resolve the corpus' job."
             exit 1
           fi
           if [ "${{ needs.changes.outputs.docs-only }}" = "true" ] && [ "${{ needs.bc-tests.result }}" = "skipped" ]; then
@@ -154,6 +196,8 @@ jobs:
             exit 1
           fi
           echo "The BC test matrix passed."
+          echo "Corpus: ${{ needs.corpus.outputs.ref }} (${{ needs.corpus.outputs.why }})."
+          echo "Each leg's log and this run's summary carry the full corpus SHA it measured."
           echo "Which versions ran is decided by resolve-versions in bc-tests.yml:"
           echo "  pull_request        -> .github/pr-bc-versions.txt (a subset, see #3141)"
           echo "  push (main)         -> .github/bc-versions.txt (every version)"

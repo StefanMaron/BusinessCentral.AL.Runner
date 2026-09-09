@@ -106,7 +106,7 @@ The full ruleset for the new layout lives in
 ```bash
 git fetch
 git checkout main
-git submodule update --init --recursive
+tools/corpus-checkout.py            # the corpus is not in git (#3737)
 dotnet build AlRunner.slnx -c Release -p:AllowBcArtifactDownload=true
 dotnet run --project AlRunner -c Release -- tests/al-language/tests/al-language
 ```

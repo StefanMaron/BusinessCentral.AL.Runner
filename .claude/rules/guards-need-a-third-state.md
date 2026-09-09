@@ -20,38 +20,38 @@ that the message says which of the three it is.
   `True`/`False`/**`None`**, with `None` "deliberately distinct from False: an unknown must
   never be resolved toward GREEN" (#2807). What each of its refusals means, including the
   narrowed-ruleset one, is `ci-verdicts.md`'s to state.
-- **`.github/scripts/check_corpus_pin_forward.sh`, exit 3** via `die_undetermined`, at seven
-  call sites (#3683): `.gitmodules` present but declaring no readable submodule path;
-  `SUBMODULE_PATH` naming no submodule the repository declares; the submodule present at one
-  endpoint and absent at the other — **adding or removing the corpus submodule is not a pin
-  bump, and only a human reviewer can judge it**; an unchecked-out submodule; a corpus commit
-  absent from the clone; a shallow clone, where the measurement is unreliable; and a
-  `merge-base` that failed rather than answering. They share no common cause — what they share
-  is that **none resolves toward success**. Enumerate those call sites rather than counting
-  them — the definition line matches too, so `grep -c die_undetermined` over-answers by one.
+- **`.github/scripts/resolve_corpus_ref.sh`, exit 3** — which corpus a run measures. A body
+  with **no** `Corpus-PR:` line resolves `master`, and that stays a pass; a body whose line is
+  **malformed**, or which declares **two**, refuses. The distinction is the whole guard: both
+  wrong answers would be `master`, which is also the right answer for the ordinary case, so a
+  typo and a deliberate omission would be indistinguishable and nothing would say so.
+  `.github/actions/resolve-corpus-ref` extends it — a corpus PR that cannot be read, or is
+  closed without having merged, refuses rather than falling back to `master` (#3737).
 - **`tools/corpus-pass-count.py`, `classify()`** — `ran` / `failed` / `not-run` / `no-suite`,
   so "not in this leg's suite" and "this leg never reached the test phase" cannot be read as
   "your tests did not run". A zero has three meanings and a bare grep gives all three the same
   answer.
 
-## The worked example: three-way discrimination (#3299, #3681, PR #3683)
+## The worked example: three-way discrimination (#3299, #3681, PR #3683, #3737)
 
 Two gate scripts hardcoded a submodule path tied to nothing in `.gitmodules`, so a rename or a
 typo made `SUBMODULE_PATH` match nothing — reported as the **success** state, a green tick
-forever with nothing behind it. The fix is not an unconditional assertion but a discrimination
-over three cases:
+forever with nothing behind it. (Both scripts went with the corpus pin at #3737; the shape they
+taught is what stays.) The fix is not an unconditional assertion but a discrimination over
+three cases:
 
-| at the endpoint commits | verdict | why |
+| the thing being read | verdict | why |
 |---|---|---|
-| `.gitmodules` **absent** at both | **0 — pass** | a repository that genuinely declares no submodule has nothing to un-pin |
-| present, declaring paths, **none matching** the configured one | **3**, naming what it *does* declare | a typo is visible in the message rather than inferred from an absence |
-| present but **unreadable** | **3**, deliberately *not* folded into row 1 | an absent file is the legitimate pass; an unreadable one is a broken measurement |
+| genuinely **absent** | **0 — pass** | nothing declared is a legitimate state, not a broken measurement |
+| present, but **naming nothing that exists** | **3**, naming what it *does* say | a typo is visible in the message rather than inferred from an absence |
+| present but **unreadable** | **3**, deliberately *not* folded into row 1 | an absent thing is the legitimate pass; an unreadable one is a broken measurement |
 
 **Folding the third row into the first puts the broken case back on the exit-0 path** the
 change exists to take it off.
 
-Read `.gitmodules` at the **endpoint commits**, never the working tree, for the same reason the
-pins are read there (#3261): under `actions/checkout` the working tree is `refs/pull/N/merge`.
+The live instance is `resolve_corpus_ref.sh` (above): no `Corpus-PR:` line is row 1, a
+malformed one is row 2, and a corpus pull request that cannot be read is row 3 — and all three
+would otherwise have produced the same corpus.
 
 ## The constraint that stops the fix trading one defect for another
 
@@ -79,12 +79,13 @@ and conflating the two refused every CI run in the first version of that fix (#3
    subject can be broken: missing input, unreachable network, a pattern matching nothing, a
    file absent, a key absent, a subprocess that failed rather than answering.
 2. **Give each a verdict that is not the success state**, and a message naming what could not
-   be established and what would fix it. `check_corpus_pin_forward.sh`'s messages are the
-   model: each names its own cause, which sends the reader to the right remedy.
-3. **Check it before the work, not after** — `check_count_baseline_history.sh` puts its
-   `PIN_PATH` check *ahead of the changed-file scan* (#3681), because a `PIN_PATH` that names
-   nothing has already made every verdict the script could reach meaningless, including the ones
-   that look like passes.
+   be established and what would fix it. `resolve_corpus_ref.sh`'s messages are the model:
+   each names its own cause, which sends the reader to the right remedy.
+3. **Check it before the work, not after** — `resolve_corpus_ref.sh` refuses an UNSET
+   `PR_BODY` before it parses anything, because a resolver handed nothing would answer
+   `master` for every pull request in the repository, and every verdict it could then reach is
+   meaningless, including the ones that look like passes (the shape #3681 fixed for the pin
+   guards, which have since been removed).
 4. **Keep the genuinely-absent case a pass**, per the constraint above.
 5. **Prove the third state fires.** A refusal path with no test is indistinguishable from a
    never-fire path, which is the defect itself. `pr-gate.yml` discovers `test_*.sh` and

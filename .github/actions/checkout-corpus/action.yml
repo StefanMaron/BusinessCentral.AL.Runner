@@ -1,0 +1,81 @@
+name: Check out the AL-language corpus
+description: >-
+  Clone tests/al-language at a resolved ref and print the SHA this run measured (#3737).
+
+# The corpus is not pinned. Every job that runs it checks it out here, and prints
+# one line — `corpus: <full sha> (<ref>)` — to the job log AND the run summary,
+# because with a moving corpus that line is the only record of what a verdict was
+# measured against. A run that does not name its corpus has produced a verdict
+# nobody can attribute afterwards.
+#
+# Which ref to check out is `.github/actions/resolve-corpus-ref`'s question, and
+# it is answered ONCE per run in the caller. This action talks to no API: git and
+# nothing else, so it can run inside every matrix leg without making the leg
+# depend on api.github.com.
+#
+# One composite action rather than steps copied per workflow: bc-tests.yml is a
+# reusable workflow called by test-matrix.yml, publish.yml, main-verdict-floor.yml
+# and bc-leg-rerun.yml, and a second hand-maintained copy of shared steps has
+# drifted and failed two releases here before (#1976, #2724).
+
+inputs:
+  corpus-ref:
+    description: >-
+      The corpus ref to check out. Empty means master, which is the right answer
+      for a push, a release and a dispatch; a pull request's ref comes from
+      resolve-corpus-ref.
+    required: false
+    default: ''
+  path:
+    description: Where the corpus is checked out.
+    required: false
+    default: tests/al-language
+
+outputs:
+  sha:
+    description: The full corpus SHA this run resolved.
+    value: ${{ steps.checkout.outputs.sha }}
+  ref:
+    description: The corpus ref that SHA came from.
+    value: ${{ steps.checkout.outputs.ref }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check out the corpus
+      id: checkout
+      shell: bash
+      env:
+        CORPUS_REF_INPUT: ${{ inputs.corpus-ref }}
+        CORPUS_PATH: ${{ inputs.path }}
+      run: |
+        set -uo pipefail
+        CORPUS_REMOTE=https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests.git
+        CORPUS_REF="${CORPUS_REF_INPUT:-master}"
+
+        rm -rf "$CORPUS_PATH"
+        mkdir -p "$CORPUS_PATH"
+        git init --quiet "$CORPUS_PATH"
+        git -C "$CORPUS_PATH" remote add origin "$CORPUS_REMOTE"
+        # --depth 1: no guard compares corpus commits any more, so no job needs
+        # its history. The one that did (check_corpus_pin_forward.sh, which
+        # compared two pins) went with the pin.
+        if ! git -C "$CORPUS_PATH" fetch --depth 1 --force origin "$CORPUS_REF"; then
+          echo "::error::could not fetch '$CORPUS_REF' from the corpus. NOT falling back to master: a run that silently measures a corpus other than the one declared reports green for work nobody checked (#3737)."
+          exit 3
+        fi
+        git -C "$CORPUS_PATH" -c advice.detachedHead=false checkout --detach --force FETCH_HEAD
+
+        sha="$(git -C "$CORPUS_PATH" rev-parse HEAD)"
+        if [ "${#sha}" -ne 40 ]; then
+          echo "::error::checked out '$CORPUS_REF' but could not read a full SHA back ('$sha')."
+          exit 3
+        fi
+
+        line="corpus: $sha ($CORPUS_REF)"
+        echo "$line"
+        echo "sha=$sha" >> "$GITHUB_OUTPUT"
+        echo "ref=$CORPUS_REF" >> "$GITHUB_OUTPUT"
+        # The summary, not only the log: a verdict is read from the run page, so
+        # the corpus it measured has to be readable in the same place.
+        printf '`%s`\n\n' "$line" >> "$GITHUB_STEP_SUMMARY"

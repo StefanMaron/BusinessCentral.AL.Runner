@@ -103,3 +103,10 @@ AlRunner/graphify-out/
 # Per-box state written by the autonomous-cycle preflight (machine profile,
 # claimed label slot, baseline result). Describes one box, never the repository.
 .claude/autonomous-state.json
+
+# The AL-language corpus is RESOLVED per run, not pinned (#3737): CI checks it
+# out at master, or at the head of the corpus pull request the PR body names,
+# and prints the SHA it resolved. Locally, `tools/corpus-checkout.py` clones it
+# here. It is never committed -- there is no gitlink and no .gitmodules entry,
+# and `git ls-tree origin/main tests/al-language` answers nothing.
+tests/al-language/

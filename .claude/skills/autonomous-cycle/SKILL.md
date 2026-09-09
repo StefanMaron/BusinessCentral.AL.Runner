@@ -107,7 +107,8 @@ were measured:
   takes ~15 min/PR and heads move every 30-60 min under load, so the batch has to finish inside
   the window in which its subjects hold still.
 - **Batches of one lose the findings that matter most.** The single most valuable result in that
-  session was cross-PR: two PRs bumped the same submodule pin to different revisions, conflicting
+  session was cross-PR: two PRs bumped the same submodule pin to different revisions (a shape
+  #3737 removed by dropping the pin), conflicting
   three ways, and the reviewer worked out which had to merge first because its revision was an
   ancestor of the other. **A one-PR-at-a-time reviewer cannot see that**, and neither can the
   coordinator, who is not reading the diffs.
@@ -165,10 +166,10 @@ Two things about the verdicts it produces, because both change what "stop" means
   scope, which is not a reason to stop: it means pull requests touching `.github/workflows/`
   need a human to merge them, and the loop must not route them differently (#3192).
 
-1. **Known-good baseline — run the corpus.** `tests/al-language` is green or it is not, and its
-   expected count lives in `tests/expectations/count-baseline/`, checked in and only moved by a
-   PR that deliberately bumps it. That makes it the right health check and means no new baseline
-   needs inventing: a box that cannot reproduce it is a box whose results cannot be trusted.
+1. **Known-good baseline — run the corpus.** `tests/al-language` is green or it is not, which
+   makes it the right health check: a box that cannot run it clean is a box whose results
+   cannot be trusted. Check it out first (`tools/corpus-checkout.py`) — it is resolved per run
+   and not committed (#3737), and the SHA it prints is what any local corpus result is about.
 
    Do **not** gate on a Microsoft bucket's pass count. There is no green there — it is a number
    that rises as the runner improves, so equality-gating on it would halt the loop on its first
@@ -178,11 +179,16 @@ Two things about the verdicts it produces, because both change what "stop" means
    this catches is a cache left inconsistent by a killed run, which once cost 76% of passing
    tests with no error and an unchanged exit code — a private cache is blind to exactly that.
 
-   The verdict is the **numbers**, not the exit code. `preflight.py --with-corpus` reads
-   `test-count-baseline.json`, enumerates the corpus apps the way CI does, and compares the
-   observed pass count **per app** against that file, failing on any difference in either
-   direction. A non-zero exit adds a failure; it can never grant a pass. It used to be the only
+   The verdict is the **numbers**, not the exit code. `preflight.py --with-corpus` enumerates
+   the corpus apps the way CI does, then fails on any test that failed, any lost suite, a
+   missing summary, a timeout, and on the run's own summary disagreeing with its per-bundle
+   PASS lines. A non-zero exit adds a failure; it can never grant a pass. It used to be the only
    thing checked, which made the check blind to the one failure it is named for (#3357).
+
+   It no longer compares against a checked-in expected count: with the corpus resolved per run,
+   a committed number would go stale on every upstream merge (#3675). CI holds that comparison
+   instead — each leg counts what it ran and compares against the last count a `main` run
+   recorded, naming both corpus SHAs on a drop.
 
    If it does not reproduce: stop, notify, and open an issue. Everything downstream is untrusted
    until it does.
@@ -433,9 +439,10 @@ a merge can turn `main` red, which outranks everything you were about to do.
 
    Corollary for the loop's own output: if it merges several fixes and opens no corpus PR, treat
    that as a signal to check rather than as evidence the work was all infrastructure.
-4. **A corpus PR has all legs green.** Merge it, then move the submodule pin and the
-   count-baseline update — folded into the runner PR that needs it when the fix is new, or as
-   its own catch-up PR when that fix has already merged (`al-language-submodule.md`).
+4. **A corpus PR has all legs green.** Merge it. There is no pin to move (#3737): the runner
+   PR citing it with a `Corpus-PR:` line was already measured against that branch head, and
+   after the merge the same line resolves `master`. Merge the runner PR next
+   (`al-language-submodule.md`).
 5. **An issue is ready to work.** Take the highest-value one — prefer a measured failure count
    over a guess — and implement it. One issue at a time. Where value does not separate two
    candidates, take the older (`orchestrating-a-session` § The ready queue).

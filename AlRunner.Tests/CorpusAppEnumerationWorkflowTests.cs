@@ -65,7 +65,6 @@ public sealed class CorpusAppEnumerationWorkflowTests
         var body = string.Join('\n', lines[start..end]
             .Where(l => !l.TrimStart().StartsWith('#')));
 
-        Assert.Contains("--count-baseline", body);
         return body;
     }
 
@@ -91,9 +90,109 @@ public sealed class CorpusAppEnumerationWorkflowTests
         // one-app-runs bug in a different disguise.
         Assert.Contains("\"${CORPUS_APPS[@]}\"", body);
         // The teeth. Enumeration without --strict runs the new app's tests and ignores their
-        // failures; without --count-baseline a suite that stops being discovered is silent.
+        // failures; without a count guard a suite that stops being discovered is silent.
         Assert.Contains("--strict", body);
-        Assert.Contains("test-count-baseline.json", body);
+        // The count guard is no longer --count-baseline on this step (#3675): the corpus
+        // suites are not declared in test-count-baseline.json, because the corpus is
+        // resolved per run (#3737) and a committed exact count would go stale on every
+        // upstream corpus merge. It is the compare step, asserted below.
+        Assert.Contains("--out al-language-results.json", body);
+    }
+
+    /// <summary>
+    /// The count guard, in the place it moved to (#3675). The corpus leg must still be
+    /// unable to report green while running fewer tests than the last main run did — and
+    /// the three steps below are what makes that true, so a leg keeping `--strict` and
+    /// losing this is the same silent shrinkage in a new disguise.
+    /// </summary>
+    [Fact]
+    public void CorpusLeg_ComparesItsTestCountAgainstMainsLastRecordedOne()
+    {
+        var wf = ReadWorkflow("bc-tests.yml");
+
+        Assert.Contains(".github/scripts/compare_corpus_count.py", wf);
+        // The comparison is only as good as the two ends it names: what this leg ran, and
+        // the corpus it ran it against.
+        Assert.Contains("--corpus-sha", wf);
+
+        // ...and it must read the COUNT document, never the failure report. `--out` carries
+        // `generated`/`total_failures`/`classifications`/`all_failures` and no test list at
+        // all, so a comparison pointed at it refuses on every leg and the guard silently
+        // never runs — which is exactly what shipped and what run 34412771210 caught.
+        Assert.Contains("--count-out corpus-count-measured.json", wf);
+        Assert.Contains("--counts corpus-count-measured.json", wf);
+        Assert.DoesNotContain("--results al-language-results.json", wf);
+        // Restored from the cache before the run, recorded after it.
+        Assert.Contains("actions/cache/restore@v4", wf);
+        Assert.Contains("actions/cache/save@v4", wf);
+
+        // Only main records. Comparing a pull request against its own earlier count would
+        // ratchet against itself: drop 50 tests, record 50 fewer, next push green.
+        var save = wf[wf.IndexOf("- name: Record this count for the next run", StringComparison.Ordinal)..];
+        var guard = save[..save.IndexOf("uses:", StringComparison.Ordinal)];
+        Assert.Contains("github.ref == 'refs/heads/main'", guard);
+        Assert.Contains("github.event_name != 'pull_request'", guard);
+        // ...and a single-leg diagnostic dispatched against main with an explicit
+        // corpus-ref must not write a corpus PULL REQUEST's count as main's.
+        Assert.Contains("inputs.corpus-ref == ''", guard);
+
+        // THE WEDGE (caught in review of #3737). `success()` here means a DROP is never
+        // recorded, so main restores the same larger count on every later run — and so
+        // does every pull request, through the shared prefix key — and fails against it
+        // forever with no in-repo remedy. The save must be gated on whether a count was
+        // MEASURED, which the compare step reports as an output, not on whether the step
+        // passed. Exit 3 must still be excluded: the script returns before writing --out,
+        // so the restored PREVIOUS document is what a bare always() would save under this
+        // run's corpus SHA.
+        Assert.DoesNotContain("success()", guard);
+        Assert.Contains("steps.count.outputs.measured == 'true'", guard);
+
+        // ...and `measured` alone is not enough, which is the trap the wedge fix opened.
+        // It answers "could the compare script read a results document", NOT "did the
+        // corpus run finish": Program.cs writes --out from the results it has whatever the
+        // exit code, so a leg exiting 2 (a bundle could not execute) or 3 (a bundle could
+        // not compile) still produces a SHORT results file. On main that would be: leg red
+        // for the real failure, compare sees a large drop, measured=true, and the PARTIAL
+        // count becomes main's baseline — after which a genuine suite disappearance inside
+        // that margin passes, and the next full run reads the recovery as growth and bakes
+        // the drop in. An upstream corpus commit the runner cannot compile yet is the
+        // routine way a corpus move lands here (caught in round 2 of #3737's review).
+        //
+        // This cannot reintroduce the wedge: a legitimate corpus shrink has a GREEN corpus
+        // step and a compare that exits 1, so it still records and still unwedges main.
+        Assert.Contains("steps.al-language.outcome == 'success'", guard);
+
+        var compare = wf[wf.IndexOf("- name: Compare the corpus count against main's last recorded one",
+            StringComparison.Ordinal)..];
+        compare = compare[..compare.IndexOf("- name: Record this count", StringComparison.Ordinal)];
+        Assert.Contains("id: count", compare);
+        // measured=true for exit 0 and exit 1, false otherwise — and the step still fails
+        // on a drop, so the leg goes red while the number is recorded.
+        Assert.Contains("measured=true", compare);
+        Assert.Contains("measured=false", compare);
+        Assert.Contains("exit \"$rc\"", compare);
+    }
+
+    /// <summary>
+    /// Every job that RUNS the corpus must check one out, and say which one. There is no
+    /// gitlink any more (#3737), so a job that forgot the step would run against an empty
+    /// directory — and `--strict` over nothing is not red, it is a shorter run.
+    /// </summary>
+    [Fact]
+    public void EveryCorpusJob_ChecksOutACorpusAndPrintsTheShaItResolved()
+    {
+        var wf = ReadWorkflow("bc-tests.yml");
+        Assert.Contains("./.github/actions/checkout-corpus", wf);
+        // The gating leg reads that step's output, which only exists if the step has an id.
+        Assert.Contains("steps.corpus.outputs.sha", wf);
+
+        var action = File.ReadAllText(Path.Combine(
+            RepoRoot, ".github", "actions", "checkout-corpus", "action.yml"));
+        // The one line that makes a verdict attributable to a corpus commit.
+        Assert.Contains("corpus: $sha ($CORPUS_REF)", action);
+        Assert.Contains("GITHUB_STEP_SUMMARY", action);
+        // ...and it must never quietly substitute master for a ref it could not fetch.
+        Assert.Contains("NOT falling back to master", action);
     }
 
     [Fact]
@@ -136,76 +235,41 @@ public sealed class CorpusAppEnumerationWorkflowTests
     }
 
     /// <summary>
-    /// The sibling of <c>CountBaselineMergeShapeTests.RunnerExtrasGroupKeys_AreExactlyTheAppGroupDirectories</c>,
-    /// which the corpus had no equivalent of. Now that every corpus app runs, every corpus app
-    /// must also carry a count baseline — otherwise a newly-executed app's test count is
-    /// unguarded, and it can later stop being discovered exactly as quietly as before:
-    /// <c>CountBaselineCheck</c> imposes no expectation on a suite the manifest never names.
+    /// This used to be <c>EveryCorpusAppHasACountBaselineEntry</c>: every corpus app had to
+    /// carry a line in <c>test-count-baseline.json</c>, or its tests were unguarded.
+    /// <para>The corpus suites left that file at #3675, because the corpus is resolved per
+    /// run (#3737) and a committed exact count goes stale on every upstream merge. The
+    /// property it protected did not go with it: a corpus app that arrives and is never
+    /// executed must not be invisible. Two things hold it now — the enumeration above, which
+    /// makes every app on disk a bundle root, and the per-run count comparison, which sees
+    /// the total fall if an app stops being discovered.</para>
+    /// <para>So what is asserted here is the half a static check can still make: the corpus
+    /// suites are NOT declared in the baseline file. An entry for one would impose an exact
+    /// count on a moving corpus and turn every leg red on the next upstream merge — the
+    /// failure mode this arrangement exists to remove.</para>
     /// </summary>
     [Fact]
-    public void EveryCorpusAppHasACountBaselineEntry()
+    public void CountBaseline_DeclaresNoCorpusSuite()
     {
-        var corpusRoot = Path.Combine(RepoRoot, "tests", "al-language");
-        var appDirs = EnumerateCorpusApps(corpusRoot);
-        if (appDirs.Count == 0)
-        {
-            // The submodule is not checked out (a bare `git clone` without --recursive).
-            // Asserting here would fail for a reason that has nothing to do with the
-            // baseline; CI always checks it out, and the workflow's own enumeration exits 1
-            // with the `git submodule update --init` hint when it is missing.
-            Assert.False(Directory.Exists(Path.Combine(corpusRoot, "tests")),
-                $"{corpusRoot} is checked out but no app directory was found under it — "
-                + "the enumeration rule and the corpus layout have diverged.");
-            return;
-        }
-
         using var doc = System.Text.Json.JsonDocument.Parse(
             File.ReadAllText(Path.Combine(
                 RepoRoot, "tests", "expectations", "count-baseline", "test-count-baseline.json")));
         var declared = doc.RootElement.GetProperty("suites").EnumerateObject()
-            .Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
+            .Select(p => p.Name).ToList();
 
-        var missing = appDirs.Select(Path.GetFileName)
-            .Where(n => !declared.Contains(n!))
-            .OrderBy(n => n, StringComparer.Ordinal)
+        var corpusSuites = declared
+            .Where(n => n.StartsWith("al-language", StringComparison.Ordinal))
             .ToList();
 
-        Assert.True(missing.Count == 0,
-            "tests/expectations/count-baseline/test-count-baseline.json has no suite entry for "
-            + string.Join(", ", missing)
-            + ".\nThe corpus leg now runs every corpus app as its own bundle root, and the suite key "
-            + "is the app directory's basename. Add one line per app — a dependency-only app with no "
-            + "tests of its own is { \"tests\": { \"default\": 0 }, \"appGroups\": { \"default\": 1 } } "
-            + "and still counts.");
+        Assert.True(corpusSuites.Count == 0,
+            "test-count-baseline.json declares corpus suite(s) " + string.Join(", ", corpusSuites)
+            + ". The corpus is resolved per run (#3737), so an exact committed count for it goes "
+            + "stale the moment an upstream corpus PR merges — every BC leg red with nothing in "
+            + "this repository to fix. The corpus count is compared in CI against the last count "
+            + "a main run recorded (#3675); runner-extras keeps its committed baseline.");
+
+        // ...and the file is not thereby empty: runner-extras still declares its groups, so
+        // this test cannot pass by the file having lost everything.
+        Assert.Contains("runner-extras", declared);
     }
-
-    /// <summary>
-    /// The same rule <c>scripts/corpus-app-dirs.py</c> implements and
-    /// <c>ProgramSupport.LooksLikeSuite</c> defines: a directory that declares its own
-    /// app.json, or uses the src//test/ split, is one app, and descent stops there.
-    /// </summary>
-    private static List<string> EnumerateCorpusApps(string root)
-    {
-        var found = new List<string>();
-        if (!Directory.Exists(root)) return found;
-        if (LooksLikeApp(root)) { found.Add(root); return found; }
-
-        void Descend(string dir)
-        {
-            foreach (var child in Directory.GetDirectories(dir).OrderBy(d => d, StringComparer.Ordinal))
-            {
-                if (Path.GetFileName(child).StartsWith('.')) continue;
-                if (LooksLikeApp(child)) found.Add(child);
-                else Descend(child);
-            }
-        }
-
-        Descend(root);
-        return found;
-    }
-
-    private static bool LooksLikeApp(string dir)
-        => File.Exists(Path.Combine(dir, "app.json"))
-        || Directory.Exists(Path.Combine(dir, "src"))
-        || Directory.Exists(Path.Combine(dir, "test"));
 }

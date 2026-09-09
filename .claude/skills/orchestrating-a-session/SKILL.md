@@ -129,7 +129,8 @@ like progress and starting a reviewer feels like overhead - and the queue grows 
 minutes, during which three PRs from the brief merged and two heads moved, so a third of the
 verdicts came back "no verdict on current head". Smaller batches lose the cross-PR findings that
 are the reason to batch at all - the most valuable result that day was spotting that two PRs
-bumped the same submodule pin to different revisions and working out which had to merge first.
+bumped the same submodule pin to different revisions and working out which had to merge first
+(a shape #3737 removed: there is no pin).
 A per-PR reviewer cannot see that, and neither can you.
 
 **A reviewer that approves a PR arms auto-merge on it immediately, in the same pass.** Do not
@@ -150,12 +151,11 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
 - No release run is in progress (`publish.yml` pushes a fast-forward; a merge during its
   ~40-minute run kills it).
 - `git merge-tree --write-tree --messages origin/<base> origin/<branch>` is clean.
-- **Every `Corpus-PR:` line in the body names a merged corpus PR**, pin bump and count-baseline
-  update folded in; a PR touching an AL-observable path with neither a `Corpus-PR:` nor a
+- **Every `Corpus-PR:` line in the body names a merged corpus PR**; a PR touching an AL-observable path with neither a `Corpus-PR:` nor a
   `Corpus-NA:` line is held (the linkage gate, `bc-behavior-tests-go-upstream.md`): `gh pr view <M> --repo StefanMaron/BusinessCentral.AL.Language.Tests --json
   state,mergedAt --jq '"\(.state) \(.mergedAt)"'` prints `MERGED` and a date before the arm
   command runs. Any other answer means reporting that corpus PR's number instead of arming.
-- No *other* PR in the same batch conflicts with it. Where two do — two submodule pin bumps to
+- No *other* PR in the same batch conflicts with it. Where two do — historically two submodule pin bumps to
   different revisions, say — arm only the one that must merge first and report the ordering.
 - **The newest comment on the PR whose last line begins `Verdict:` reads `Verdict: MERGE` with a
   head equal to the PR's current head** (`gh pr view <N> --json headRefOid`); any other line, or none, sends the
@@ -319,9 +319,12 @@ green alone and wrong together. So arm freely when PRs touch **different** files
 touch the same file, still land one and rebase the other with its affected tests **re-run**
 rather than trusting the earlier verdict. `git merge-tree` only answers the textual question.
 
-**Order matters when PRs carry submodule pins.** Two PRs both bumping the pin and the
-count-baseline will conflict; merge one, then tell the other to rebase and *re-measure*
-rather than carrying its old number forward.
+**Order matters between a corpus PR and the runner PR citing it.** Merge the corpus PR first,
+then the runner PR — which was measured against that corpus PR's branch head and, after the
+merge, resolves `master` (#3737). There is no pin and no count-baseline line to conflict on any
+more; what a second run can still change is the corpus itself, so a runner PR whose verdict
+predates a corpus merge is measured against the older corpus. Read the `corpus: <sha> (<ref>)`
+line the legs print before arming, and re-run rather than carrying an old verdict forward.
 
 **Expectation-manifest drift is dispatched from here, and only from here.** A known-gap entry left behind after its issue closed, or a red `main` from manifest drift, gets one implementation agent per drift, briefed to carry the entry's key, `<CodeunitName>.<Method>` from the manifest entry, in both the issue title and the PR title, after `gh pr list --state open --search "\"<CodeunitName>.<Method>\" in:title" --json number,title` returns no title containing that key; when it returns one, that PR is the fix in flight. Done when exactly one open PR title carries the key. An implementation agent that finds a drift comments and keeps its own task (`.claude/agents/impl-agent.md`).
 
