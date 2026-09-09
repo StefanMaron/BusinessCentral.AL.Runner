@@ -1,0 +1,142 @@
+name: Issue label hygiene
+
+# #3678, from the 30-day agent-workflow retrospective. Two label states that
+# nothing maintained, both measured over that window:
+#
+#   * 561 of 872 issues closed in the window still carried `status: in-progress`
+#     and 645 an `agent:` label, so every label query had to filter on state
+#     first or drown in closed issues (finding b-8);
+#   * 5 of the 8 open in-progress issues sat behind a MERGED "Part of #N" pull
+#     request that nobody relabelled, so the work was neither in progress nor
+#     on the ready queue -- invisible to the next agent (finding b-8, b-20).
+#
+# Both were manual steps in the orchestrator's merge pass. A step that has to
+# be remembered on every merge is one that gets skipped, and the numbers above
+# are what skipping it looks like after a month.
+#
+# Deliberately NOT here: closing issues, commenting, and any judgement about
+# whether the remaining work is understood. Those stay in the merge pass,
+# where an agent that read the diff can say what actually landed.
+
+on:
+  # `closed` only. `reopened` is a separate event type, so an issue coming back
+  # cannot trigger this and cannot lose the labels its next claimant sets.
+  issues:
+    types: [closed]
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  strip-labels-on-close:
+    name: Strip status and agent labels from a closed issue
+    # Two independent guards on "never touches an open issue": the trigger type,
+    # and the payload's own state at the moment the job runs.
+    if: >-
+      github.event_name == 'issues'
+      && github.event.issue.state == 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Remove every status: and agent: label the issue carries"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ISSUE: ${{ github.event.issue.number }}
+          # The labels come from the event payload, so the job removes exactly
+          # what is there and nothing else. That is what makes it idempotent: a
+          # second run finds none of them and edits nothing.
+          LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          mapfile -t doomed < <(
+            printf '%s' "$LABELS" \
+              | jq -r '.[] | select(startswith("status:") or startswith("agent:"))'
+          )
+          if [ ${#doomed[@]} -eq 0 ]; then
+            echo "Issue #$ISSUE carries no status: or agent: label -- nothing to do."
+            exit 0
+          fi
+          args=()
+          for label in "${doomed[@]}"; do
+            args+=(--remove-label "$label")
+          done
+          printf 'Removing from #%s:' "$ISSUE"
+          printf ' %s;' "${doomed[@]}"
+          printf '\n'
+          gh issue edit "$ISSUE" "${args[@]}"
+
+  release-part-of-issues:
+    name: Put a merged PR's Part of issues back on the ready queue
+    # A fork PR's token is read-only, so the job would fail on the first label
+    # edit rather than do anything useful; the branch convention this reads is
+    # in-repo anyway.
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.merged == true
+      && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # The default branch, NOT the pull request's own merge ref: this job
+          # holds a write token, and checking out the head of the pull request
+          # that just merged would run whatever version of the extractor that
+          # branch shipped.
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Relabel each open Part of issue this PR named
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -uo pipefail
+          numbers=$(bash .github/scripts/part_of_references.sh) || exit 1
+          if [ -z "$numbers" ]; then
+            echo "PR #$PR_NUMBER declares no 'Part of #N' line -- nothing to do."
+            exit 0
+          fi
+          # The PR's own agent: labels. An issue whose agent: labels are all in
+          # this set was claimed by the loop that opened this PR, so releasing
+          # it is releasing this PR's own claim. Any OTHER agent: label means a
+          # second loop is on that issue, and preservation comes first: the
+          # issue is left exactly as it is and the merge pass decides.
+          mine=$(printf '%s' "$PR_LABELS" | jq -r '.[] | select(startswith("agent:"))')
+          for n in $numbers; do
+            meta=$(gh issue view "$n" --json state,labels 2>/dev/null) || {
+              echo "#$n is not an issue in this repository (or is not readable) -- skipped."
+              continue
+            }
+            state=$(printf '%s' "$meta" | jq -r '.state')
+            if [ "$state" != "OPEN" ]; then
+              echo "#$n is $state -- the close path already cleared its labels."
+              continue
+            fi
+            foreign=$(
+              printf '%s' "$meta" \
+                | jq -r --arg mine "$mine" '
+                    ($mine | split("\n") | map(select(length > 0))) as $m
+                    | .labels[].name
+                    | select(startswith("agent:"))
+                    | select(. as $l | $m | index($l) | not)'
+            )
+            if [ -n "$foreign" ]; then
+              echo "#$n carries an agent: label this PR does not ($(printf '%s' "$foreign" | tr '\n' ' ')) -- left untouched."
+              continue
+            fi
+            args=()
+            while IFS= read -r label; do
+              [ -n "$label" ] && args+=(--remove-label "$label")
+            done < <(
+              printf '%s' "$meta" \
+                | jq -r '.labels[].name | select(startswith("status:") or startswith("agent:"))'
+            )
+            echo "Releasing #$n: PR #$PR_NUMBER merged and declared 'Part of #$n'."
+            gh issue edit "$n" "${args[@]}" --add-label "status: ready" || exit 1
+          done
