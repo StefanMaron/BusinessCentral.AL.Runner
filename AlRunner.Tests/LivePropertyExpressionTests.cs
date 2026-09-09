@@ -10,6 +10,9 @@
 // shapes the corpus arms use once a resolver answers field names at all — including an
 // Option compared against ORDINALS, which is how the AL compiler writes such a comparison into
 // the page metadata.
+//
+// FlowFieldBoundLivePropertyTests at the bottom of this file is the exception: it spawns the
+// runner over a generated bundle, for the reason its own header gives.
 using System;
 using System.Diagnostics;
 using System.Text;
