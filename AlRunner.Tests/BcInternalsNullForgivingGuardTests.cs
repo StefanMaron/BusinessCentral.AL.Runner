@@ -244,7 +244,12 @@ public sealed class BcInternalsNullForgivingGuardTests
         // under the empty name. The enclosing catch still turns a refusal back into the
         // documented degradation; what changed is that the shape gap is now named rather than
         // silently answered.
-        Assert.Equal(89, converted);
+        //
+        // 89 -> 90 for the GetPackageStream lookup in RecordPatches.BcAppFallback.cs, the
+        // engine-bootstrap step that registers the platform SystemApp package: its failure used
+        // to log and return, so "registration failed" was spelled as "initialization succeeded"
+        // and the run continued without the NCL-internal system tables (#3581).
+        Assert.Equal(90, converted);
     }
 
     /// <summary>
