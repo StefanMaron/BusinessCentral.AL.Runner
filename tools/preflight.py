@@ -60,6 +60,14 @@ from typing import Any, Iterable, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
+    import agent_stdio as _stdio
+except Exception:  # pragma: no cover - a copy detached from its sibling module
+    _stdio = None
+if _stdio is not None:
+    # Before any print: stdout is built from the console codec, and cp1252
+    # cannot encode the robot emoji in an agent-authored PR body (#3589).
+    _stdio.enable_utf8_stdio()
+try:
     import agent_self_freshness as _freshness
 except Exception:  # pragma: no cover - a copy detached from its sibling module
     _freshness = None

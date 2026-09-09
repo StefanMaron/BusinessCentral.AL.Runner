@@ -774,6 +774,46 @@ else:
     check("non-UTF-8 locale (%s): the body file keeps the em dash" % verdict["encoding"],
           verdict["written"].strip() == EM, ascii(verdict["written"]))
 
+# --------------------------------------------------------------------------
+# #3589: the whole tool, end to end, under a stdout the console codec owns.
+# `print(d)` at the two --dry-run / writing sites encodes the PR BODY, and a
+# body carrying the robot emoji of the Claude Code footer killed the tool on
+# this box AFTER the write had landed and verified -- so the caller saw a crash
+# for a successful edit. A child interpreter is the only lever: PYTHONIOENCODING
+# is read by the interpreter before main() exists.
+# --------------------------------------------------------------------------
+CP1252_CHILD = r'''
+import importlib.util, json, sys
+pre = (sys.stdout.encoding or "").lower().replace("-", "")
+if pre != "cp1252":
+    # PYTHONIOENCODING is honoured on every platform, so anything else here is a
+    # broken test environment, never a reason to skip.
+    sys.stderr.write("PRECONDITION-FAIL: stdout encoding is %s" % pre)
+    raise SystemExit(3)
+spec = importlib.util.spec_from_file_location("pr_body", sys.argv[1])
+pb = importlib.util.module_from_spec(spec)
+sys.modules["pr_body"] = pb
+spec.loader.exec_module(pb)
+pb._freshness = None       # no origin/main question here; this is about printing
+body = "footer \U0001f916 with an em dash \u2014 in it. " * 12   # over the --min-bytes floor
+pb.gh = lambda args, attempts=4: (0, json.dumps({"body": body}, ensure_ascii=False))
+raise SystemExit(pb.main(["1", "--repo", "R", "--dry-run", "--append", "tail"]))
+'''
+assert CP1252_CHILD.isascii(), "CP1252_CHILD must survive an ASCII argv"
+ROBOT_UTF8 = "\U0001f916".encode("utf-8")
+DASH_UTF8 = "—".encode("utf-8")
+DASH_CP1252 = "—".encode("cp1252")
+_env = dict(os.environ, PYTHONIOENCODING="cp1252", PYTHONUTF8="0")
+_child = subprocess.run([sys.executable, "-c", CP1252_CHILD, os.path.join(HERE, "pr-body.py")],
+                        capture_output=True, env=_env)
+_detail = ascii(_child.stdout[-200:]) + " " + ascii(_child.stderr[-400:])
+check("#3589: --dry-run exits 0 with a cp1252 stdout and an emoji in the body",
+      _child.returncode == 0, _detail)
+check("#3589: the printed diff carries the emoji as UTF-8",
+      ROBOT_UTF8 in _child.stdout, _detail)
+check("#3589: the printed diff carries the em dash as UTF-8, not as cp1252 0x97",
+      DASH_UTF8 in _child.stdout and DASH_CP1252 not in _child.stdout, _detail)
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")

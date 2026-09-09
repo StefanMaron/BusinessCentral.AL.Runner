@@ -35,6 +35,16 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import agent_stdio as _stdio
+except Exception:  # pragma: no cover - a copy detached from its sibling module
+    _stdio = None
+if _stdio is not None:
+    # Before any print: stdout is built from the console codec, and cp1252
+    # cannot encode the robot emoji in an agent-authored PR body (#3589).
+    _stdio.enable_utf8_stdio()
+
 KINDS = [
     ("context-pack", r"context-pack\.py"),
     ("lsp-query", r"lsp-query\.py"),
