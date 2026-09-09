@@ -140,7 +140,9 @@ permissions:
 # What that trades away, stated rather than discovered later: a pending job is cancelled when
 # a newer job joins its group, so a floor matrix waiting behind another can be dropped by a
 # third. That costs a verdict on a superseded tree, which is the one this workflow already
-# declines to buy, and the schedule re-asks within a cadence either way.
+# declines to buy, and the schedule re-asks within a cadence. `floor-verdict` skips on that
+# result, so the run concludes `cancelled` rather than `failure`: a dropped matrix is not a
+# red `main`.
 
 jobs:
   wait:
@@ -191,39 +193,23 @@ jobs:
           # for an older push is not this commit's result (ci-verdicts.md section 2). Both
           # producers count, this workflow and the gating one, so a floor run does not
           # re-verify a commit an earlier floor run already answered for.
-          runs=$(gh api \
-            "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SHA}&per_page=100")
-
-          conclusive=$(printf '%s' "$runs" | jq '[.workflow_runs[]
+          conclusive=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs?head_sha=${SHA}&per_page=100" \
+            --jq '[.workflow_runs[]
                    | select(.path == ".github/workflows/test-matrix.yml"
                          or .path == ".github/workflows/main-verdict-floor.yml")
                    | select(.conclusion == "success" or .conclusion == "failure")]
                   | length')
 
-          # #3679: a floor run ALREADY establishing this commit's verdict. Without this, every
-          # quiet-period merge costs two full matrices — the push path takes ~33 min against a
-          # 30-minute cadence, so a scheduled run lands inside it, sees nothing conclusive yet,
-          # and starts a second matrix on the same commit.
-          #
-          # Only a FLOOR run counts. An in-flight `test-matrix.yml` run on `main` is precisely
-          # what the next merge cancels (#3003), so deferring to one would reproduce the gap
-          # this workflow exists to close. GITHUB_RUN_ID excludes this run, which is itself
-          # in flight and would otherwise make the floor skip forever.
-          inflight=$(printf '%s' "$runs" | jq --arg me "$GITHUB_RUN_ID" '[.workflow_runs[]
-                   | select(.path == ".github/workflows/main-verdict-floor.yml")
-                   | select((.id | tostring) != $me)
-                   | select(.status != "completed")]
-                  | length')
-
+          # CONCLUSIVE only, never in-flight. A run that skipped the matrix still concludes
+          # `success`, so the skip is honest ONLY while a conclusive run co-exists on this
+          # SHA — deferring to an in-flight one would conclude `success` for a commit nothing
+          # had measured, and this very check, plus tools/ci-wait.py, would read that as a
+          # verdict (#3679). Not deferring costs a duplicate matrix when a scheduled run lands
+          # inside a push-triggered one; the pull request prices it.
           if [ "$conclusive" -gt 0 ]; then
             echo "needed=false" >> "$GITHUB_OUTPUT"
             echo "$SHA already has $conclusive conclusive matrix run(s) — nothing to do."
-          elif [ "$inflight" -gt 0 ]; then
-            echo "needed=false" >> "$GITHUB_OUTPUT"
-            echo "$SHA has $inflight floor run(s) in flight already establishing its verdict."
-            echo "Deferring rather than running a second matrix on the same commit. If that"
-            echo "run does not finish, this commit has no conclusive verdict and the next"
-            echo "scheduled run asks again."
           else
             echo "needed=true" >> "$GITHUB_OUTPUT"
             echo "$SHA has no conclusive matrix run. Establishing one."
@@ -269,11 +255,16 @@ jobs:
     # of this workflow.
     name: main verdict (post-merge)
     needs: [verdict-needed, floor-matrix]
-    # `always()` so a red matrix still reports, but ONLY when the guard actually ran. A run
-    # whose `wait` a newer merge cancelled has nothing to say, and reporting success there
-    # would make the run conclude `success` — which `verdict-needed` above and
-    # tools/ci-wait.py both read as a verdict for a commit nothing measured (#3679).
+    # `always()` so a red matrix still reports, but only when there is something to report
+    # about. Two cases must NOT reach it, and both are about this run's own conclusion
+    # rather than about tidiness (#3679): a run whose `wait` a newer merge cancelled has
+    # nothing to say, and reporting success there would conclude `success` for a commit
+    # nothing measured; and a matrix DROPPED while pending — the trade-off named above
+    # `jobs:` — would exit 1 here, concluding `failure`, i.e. a measured RED on a commit
+    # that never ran. `verdict-needed` above and tools/ci-wait.py read both conclusions as
+    # verdicts; skipping leaves the run `cancelled`, which neither counts.
     if: always() && needs.verdict-needed.result == 'success'
+        && needs.floor-matrix.result != 'cancelled'
     runs-on: ubuntu-latest
     steps:
       - name: Report
@@ -283,9 +274,7 @@ jobs:
           result='${{ needs.floor-matrix.result }}'
 
           if [ "$needed" != "true" ]; then
-            echo "main HEAD ${GITHUB_SHA} already had a verdict, or a floor run in flight is"
-            echo "establishing one; this run did not re-run the matrix. The guard job's log"
-            echo "says which of the two it was."
+            echo "main HEAD ${GITHUB_SHA} already had a verdict; floor did not re-run the matrix."
             exit 0
           fi
 

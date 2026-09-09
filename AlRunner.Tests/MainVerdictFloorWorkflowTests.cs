@@ -142,21 +142,30 @@ public sealed class MainVerdictFloorWorkflowTests
     }
 
     [Fact]
-    public void Floor_DoesNotDuplicateAFloorRunAlreadyEstablishingThisCommit()
+    public void Floor_ReportsOnlyOnRunsThatMeasuredSomething()
     {
-        // Without this, every quiet-period merge costs two full matrices: the push-triggered
-        // floor run takes ~33 min (10 debounce + 23 matrix), the cadence is 30, so a
-        // scheduled run lands inside it, finds no CONCLUSIVE run yet, and starts a second one
-        // on the same commit. The guard defers to an in-flight FLOOR run only — an in-flight
-        // `test-matrix.yml` run on `main` is the thing the next merge cancels (#3003), so
-        // deferring to that would reproduce the gap this workflow exists to close.
-        var needed = WorkflowParity.SplitJobs(CodeOnly(Read(Floor)))["verdict-needed"];
+        // Both halves are about this RUN'S CONCLUSION, which is what `verdict-needed` above
+        // and tools/ci-wait.py read as a verdict — so a `floor-verdict` that reports on a run
+        // which measured nothing writes a verdict for a commit nobody ran (#3679):
+        //
+        //   * `wait` cancelled by a newer merge  -> reporting success concludes `success`
+        //   * `floor-matrix` DROPPED while pending -> exit 1 concludes `failure`, a RED on a
+        //     commit that never ran (the trade-off of moving the group down to that job)
+        //
+        // Skipping in both cases leaves the run `cancelled`, which neither consumer counts.
+        var jobs = WorkflowParity.SplitJobs(CodeOnly(Read(Floor)));
+        var verdict = jobs["floor-verdict"];
 
-        Assert.Contains("status", needed, StringComparison.Ordinal);
-        Assert.Contains("completed", needed, StringComparison.Ordinal);
-        // ...and it must exclude ITSELF, or the check sees this very run in flight and the
-        // floor never runs again.
-        Assert.Contains("GITHUB_RUN_ID", needed, StringComparison.Ordinal);
+        Assert.Matches(new Regex(@"needs\.verdict-needed\.result\s*==\s*'success'"), verdict);
+        Assert.Matches(new Regex(@"needs\.floor-matrix\.result\s*!=\s*'cancelled'"), verdict);
+
+        // And the guard job may only skip the matrix on a CONCLUSIVE run for this commit. An
+        // in-flight one is not a verdict: deferring to it would conclude `success` here while
+        // nothing had measured the commit, and if that run is then dropped, nothing ever does.
+        var needed = jobs["verdict-needed"];
+        Assert.Contains("conclusion", needed, StringComparison.Ordinal);
+        Assert.DoesNotContain("in_progress", needed, StringComparison.Ordinal);
+        Assert.DoesNotMatch(new Regex(@"\.status\s*!=\s*""completed"""), needed);
     }
 
     [Fact]
