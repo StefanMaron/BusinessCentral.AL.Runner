@@ -1,0 +1,24 @@
+[
+  {
+    "codeunitId": 65900,
+    "CodeunitName": "Precompiled Implicit Return",
+    "Method": "PrecompiledBooleanMethodWithNoExit_ReturnsFalse",
+    "Suites": [
+      "tests/runner-extras/precompiled-implicit-return-3347"
+    ],
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3710",
+    "Note": "Codeunit 2000 \"Time Series Management\".GetMLForecastCredentials is declared Boolean (SymbolReference.json: ReturnType Boolean; IL: ValueTask<System.Boolean>) and its body has no exit(<value>), so AL's implicit default return requires false. The runner answers true. The two assertions ABOVE the failing one pass -- the byref URL suffix is written and the returned key is empty -- so the body genuinely ran and only the return value diverges.\n\nThis is NOT a general AL implicit-return gap: corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#316 pins eight variants of the shape, including one that discards a true returned by another codeunit, and all eight pass on the runner. What diverges is the runner's execution of Microsoft's PRECOMPILED copy -- see the sibling test LocallyCompiledMirrorOfTheSameShape_AlsoReturnsFalse, which passes on a mirror of the identical body in this same bundle.\n\nNor is it universal across precompiled no-exit methods: PrecompiledNoExitMethod_IsNotUniversallyBroken passes on Codeunit 7046 \"Price Asset - G/L Account\".ValidateUnitOfMeasure, which has the same shape. #3710 records the hypotheses ruled out by measurement (key vault lookups, __IsAsync routing, the SecretText byref, a data-recipe difference) and the one structural difference found: Codeunit 2000 dispatches through NavApplicationObjectBase.InvokeAsync and pops the result, Codeunit 7046 does not."
+  },
+  {
+    "codeunitId": 65900,
+    "CodeunitName": "Precompiled Implicit Return",
+    "Method": "PrecompiledAndLocallyCompiledCopies_AgreeWithEachOther",
+    "Suites": [
+      "tests/runner-extras/precompiled-implicit-return-3347"
+    ],
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3710",
+    "Note": "The differential form of the entry above, and the one that names the defect most precisely: the same body, compiled by Microsoft and compiled here, called in the same test, must return the same value. It reports 'expected No, got Yes' while its own AreEqualText on the byref output passes -- so both copies ran and produced identical side effects, and only the return values disagree. Whether AL was precompiled by Microsoft or emitted by the runner is not an observable an AL caller may depend on; #3710 tracks the work."
+  }
+]
