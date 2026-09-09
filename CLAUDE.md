@@ -108,8 +108,9 @@ It answers `findReferences`, `incomingCalls`, `goToDefinition` and `workspaceSym
 `GetDataAccessForTableCore` returns its three call sites across two partial-class files in one
 call.
 
-**The harness disables `LSP` inside subagents** (anthropics/claude-code#62904), and neither the
-agent's `tools:` frontmatter nor `ENABLE_LSP_TOOL=1` re-enables it. **If you are a subagent, use
+**The harness disables `LSP` inside subagents on build v2.1.252** (it worked on v2.1.152;
+anthropics/claude-code#62904), and neither the agent's `tools:` frontmatter nor
+`ENABLE_LSP_TOOL=1` re-enables it; re-measure on a new build before assuming either way. **If you are a subagent, use
 `tools/lsp-query.py`** and do not spend calls rediscovering this.
 
 When you are the main session briefing a subagent, resolve its symbols first and paste the
