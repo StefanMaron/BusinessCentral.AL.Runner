@@ -157,16 +157,32 @@ three log lines *before* its extension's delta was registered.
 This is much narrower than it looks, and it is the reason `Caption` is what the corpus test
 asserts. One probe bundle per property, BC 28.1, compiled through the runner:
 
-| accepted | rejected, and with what |
+| accepted | rejected (all `AL0246`, "cannot be customized") |
 |---|---|
-| `Caption`, `ToolTip`, `Description`, `TableRelation`, `CaptionClass` | `AL0246` — `NotBlank`, `Editable`, `DataClassification`, `ObsoleteState`, `ObsoleteReason`, `ExtendedDatatype`, `AccessByPermission`, `ValidateTableRelation`, `TestTableRelation`, `AutoFormatType`, `Numeric`, `CharAllowed`, `DateFormula`<br>`AL0294` — `MinValue`, `MaxValue`<br>`AL0843` — `OptionCaption` |
+| `Caption`, `ToolTip`, `Description`, `TableRelation`, `CaptionClass`, `OptionCaption`, `BlankZero` | `NotBlank`, `MinValue`, `MaxValue`, `Editable`, `DataClassification`, `ObsoleteState`, `ObsoleteReason`, `ExtendedDatatype`, `AccessByPermission`, `ValidateTableRelation`, `TestTableRelation`, `AutoFormatType`, `DecimalPlaces`, `Numeric`, `CharAllowed`, `DateFormula` |
 
-Two things this table settles. Every property #3614's own reproducer named — `NotBlank`,
-`MinValue`, `MaxValue` — is rejected by BC's compiler in that position, so that reproducer
-does not compile; the issue's *mechanism* was right and its example was not. And of the five
-accepted, `Description` emits an **empty** `<FieldChange>` (it is design-time only), and
-`ToolTip`/`CaptionClass`/`TableRelation` have no AL-readable surface on the derivation today —
-which leaves `Caption` as the one property that is both permitted here and observable from AL.
+**Put each property on a field whose TYPE accepts it, or the measurement is about the wrong
+thing.** A first version of this table declared every property on one `Text[50]` field and got
+two rows wrong: `MinValue`/`MaxValue` reported `AL0294` ("the type of property value 5 does not
+match the field's type") because a `Text` field cannot carry them at all, and `OptionCaption`
+reported `AL0843` for the same reason — neither compile ever reached the customizability check
+that `modify(...)` is the subject of. Re-measured against `Decimal` and `Option` fields, all
+three answer differently: the first two are `AL0246` like everything else in the rejected
+column, and `OptionCaption` is **accepted**. A type-mismatch diagnostic here is a statement
+about the probe, not about `modify(...)`.
+
+Two things the corrected table settles. Every property #3614's own reproducer named —
+`NotBlank`, `MinValue`, `MaxValue` — is rejected in that position, so that reproducer does not
+compile; the issue's *mechanism* was right and its example was not. And of the seven accepted,
+`Description` emits an **empty** `<FieldChange>` (it is design-time only), while `ToolTip`,
+`CaptionClass`, `TableRelation`, `OptionCaption` and `BlankZero` have no AL-readable surface on
+the derivation today — which leaves `Caption` as the one property that is both permitted here
+and observable from AL, and so the only one this conversion applies.
+
+The other six are **not** silently dropped: `ReadBcFieldChanges` reports any `<FieldChange>`
+attribute it does not apply, naming the property and the field, so the next one that acquires
+an AL-readable surface shows up as a diagnostic rather than as a wrong value. `OptionCaption`
+and `BlankZero` were themselves found this way — by re-measuring, not by reading the AL.
 
 <a id="scope"></a>
 

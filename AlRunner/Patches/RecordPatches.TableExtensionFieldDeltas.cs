@@ -109,6 +109,8 @@ public static partial class RecordPatches
 
                 if (caption != null)
                     changes.Add(new BcFieldChange(targetId, caption));
+
+                ReportUnappliedAttributes(extensionId, targetId, node);
             }
             return changes;
         }
@@ -119,6 +121,44 @@ public static partial class RecordPatches
                 + $"parsed ({ex.GetType().Name}: {ex.Message}); every modify(...) property change it "
                 + "declares is NOT applied");
             return Array.Empty<BcFieldChange>();
+        }
+    }
+
+    /// <summary>
+    /// Attributes on a <c>&lt;FieldChange&gt;</c> that carry no property change to apply:
+    /// the two that identify the entry, and the ones BC puts on every element.
+    /// </summary>
+    private static readonly HashSet<string> FieldChangeBookkeepingAttributes =
+        new(StringComparer.Ordinal) { "TargetID", "TargetType", "xmlns" };
+
+    /// <summary>
+    /// Report every property this reader did NOT apply, naming the property and the field.
+    ///
+    /// <para>Seven properties are legal in a table field's <c>modify(...)</c> and only
+    /// <c>Caption</c> has an AL-readable surface on the derivation today
+    /// (docs/object-metadata-from-bc.md#modify-accepts). Staying quiet about the other six
+    /// would rebuild the exact defect #3614 reports one level down: a property change BC
+    /// stated, dropped with nothing said. So the unhandled ones are named rather than
+    /// ignored, and the next one to acquire a surface shows up as a diagnostic instead of as
+    /// a wrong value.</para>
+    ///
+    /// <para>Attribute-driven rather than a list of known-unhandled names: a property BC adds
+    /// later is reported the day it appears, with no edit here.</para>
+    /// </summary>
+    private static void ReportUnappliedAttributes(int extensionId, int targetFieldId, XmlElement node)
+    {
+        foreach (var attribute in node.Attributes.OfType<XmlAttribute>())
+        {
+            var name = attribute.LocalName;
+            if (FieldChangeBookkeepingAttributes.Contains(name)) continue;
+            if (name.StartsWith("xmlns", StringComparison.Ordinal)) continue;
+            // The one this reader does apply.
+            if (string.Equals(name, "CaptionML", StringComparison.Ordinal)) continue;
+
+            Console.Error.WriteLine(
+                $"[TableExtDelta] tableextension {extensionId}: modify(...) on field {targetFieldId} "
+                + $"declares {name}='{attribute.Value}', which this runner does not apply — the field "
+                + "keeps its original value. See docs/object-metadata-from-bc.md#modify-accepts");
         }
     }
 
