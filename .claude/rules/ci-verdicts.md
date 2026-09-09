@@ -45,7 +45,7 @@ verdict belongs to one commit, a cancelled run is not a failure, and a failed jo
 never be re-run away. What changed is only *when* you read — on your next pass over the PR,
 rather than by keeping a turn open until the answer arrives.
 
-**Who reads it, and when.** An implementation agent opens its PR and hands back; it never
+**Who reads it, and when.** An implementation agent marks its PR ready and hands back; it never
 waits and never merges (`.claude/agents/impl-agent.md`). The coordinator sweeps open PRs once
 per cycle and reads each verdict then. A PR whose checks have not reported yet is simply read
 again on the next sweep — and nothing is lost by that, because `gh pr merge --auto` lands a

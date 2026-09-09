@@ -1,7 +1,8 @@
 # Before claiming or dispatching an issue, look for an open PR that closes it
 
-**An open PR carrying `Closes #N` means issue N is in progress. Do not claim it, do not
-dispatch an agent onto it, whatever the assignee and the labels say.**
+**An open PR carrying `Closes #N` means issue N is in progress. Do not claim it, and dispatch
+an agent onto it only to repair that PR by name (`.claude/agents/impl-agent.md`, Step 1),
+whatever the assignee and the labels say.**
 
 The claiming protocol says the assignee locks and the `agent:` label discriminates. On this
 repository that pair cannot decide ownership, because **every loop pushes under one GitHub
@@ -11,7 +12,11 @@ account**. Three signals, and only one of them answers the question:
 |---|---|---|
 | assignee | that *somebody* claimed it | **who** — every loop is the same login |
 | `agent: <tag>` label | which loop *last wrote a label* | whether that loop is live, finished, or dead |
-| open PR with `Closes #N` | that work exists **and is real** | — |
+| open **draft** PR with `Closes #N` | that a loop claimed it, minutes after it claimed | whether the fix is written yet |
+| open **ready** PR with `Closes #N` | that work exists **and is real** | — |
+
+The draft is what makes a claim visible that early: an implementation agent opens one as the
+last act of claiming (`.claude/agents/impl-agent.md`, Step 2).
 
 ## The check
 
@@ -19,18 +24,27 @@ Per issue, at claim time:
 
 ```bash
 gh pr list --repo StefanMaron/BusinessCentral.AL.Runner --state open --limit 100 \
-  --json number,closingIssuesReferences,labels \
-  --jq '.[] | select(.closingIssuesReferences[]?.number == <N>) | {number, labels: [.labels[].name]}'
+  --json number,isDraft,closingIssuesReferences,labels \
+  --jq '.[] | select(.closingIssuesReferences[]?.number == <N>) | {number, isDraft, labels: [.labels[].name]}'
 ```
 
-Non-empty → in progress. Pick something else.
+Non-empty → in progress, draft or ready alike. Pick something else. `--state open` returns
+both kinds; `isDraft` tells you which you found.
+
+A draft is abandoned when its newest commit (`gh pr view <N> --json commits --jq
+'.commits[-1].committedDate'`) is older than 24 hours and the loop that opened it has
+returned. Only the coordinator that dispatched that loop releases it: comment on the draft
+with those two facts, close it, remove that loop's `agent:` label from the issue, and return
+the issue to `status: ready`; only then is the issue free. A draft opened by a loop you did
+not dispatch stays where it is (`autonomous-cycle`: a foreign `agent:` label is never yours
+to clear).
 
 **A coordinator dispatching several agents builds the map once per cycle**, not once per
 issue — one call, then check every candidate against it:
 
 ```bash
 gh pr list --repo StefanMaron/BusinessCentral.AL.Runner --state open --limit 100 \
-  --json number,closingIssuesReferences,labels
+  --json number,isDraft,closingIssuesReferences,labels
 ```
 
 `closingIssuesReferences` is GitHub's own parse of the PR, so it reflects what will actually

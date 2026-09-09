@@ -90,8 +90,8 @@ The queue grows by arithmetic, not by anyone choosing badly. The balancing ratio
 agents whenever a slot frees will fall behind indefinitely without ever making an obvious
 mistake.
 
-**Count an open unreviewed PR against the concurrency budget, exactly like an unfinished
-implementation.** A coordinator running 6 implementation agents with 6 unreviewed PRs is
+**Count an open unreviewed ready PR against the concurrency budget, exactly like an unfinished
+implementation** (a draft is the claim of an implementation already counted). A coordinator running 6 implementation agents with 6 unreviewed PRs is
 running at 12, not 6, and should stop starting new work. This is the accounting that makes
 priority 3 below fire on its own instead of needing to be remembered — the priority order
 already puts "a PR is waiting on review" *above* "an issue is ready to work", and it still got
@@ -230,9 +230,10 @@ Two things about the verdicts it produces, because both change what "stop" means
    `impl-69`, 82 worktrees, 10 GB — was caused by nothing ever *deleting* a worktree. Preflight's
    stale-worktree check is the actual fix for that.
 
-   Use that one identity everywhere: labels, branch names, worktree directories, scratch and
-   cache paths. Several loops can then run under one account, and several accounts against one
-   repository, without ever writing the same name.
+   Use that identity in labels and branch names; worktrees add the issue number and scratch,
+   cache and clone paths add the issue and a session token (`.claude/agents/impl-agent.md`,
+   "Namespace every path you write to"). Several loops can then run under one account, and
+   several accounts against one repository, without ever writing the same name.
 
    The existing `agent: impl-N` convention is the counter-example worth avoiding: a global
    counter with no owner, which drifted to `impl-69` while leaving 82 worktrees and 10 GB of disk
@@ -524,8 +525,8 @@ the issue so it returns to the pool. An issue you cannot finish should not stay 
 name. Release by removing **your own** `agent:` label — on a shared account the assignee you would
 remove may be another loop's lock, and a foreign `agent:` label is never yours to clear.
 
-**Your own stale claims are yours to reclaim** — a claim of yours with no linked PR and no
-activity for hours is from a run that died, and rule 1 above picks it up automatically.
+**Your own stale claims are yours to reclaim** — a claim of yours whose draft has had no commit for 24 hours
+(`check-open-prs-before-claiming.md`) is from a run that died, and rule 1 above picks it up automatically.
 **Someone else's stale claim is not yours to take**, even if it looks abandoned. You cannot tell
 a dead box from a contributor who is asleep — and that refusal covers a foreign `agent:` label
 too, which looks identical whether the loop that wrote it is live or gone. Surface it to the

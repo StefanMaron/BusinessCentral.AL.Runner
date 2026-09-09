@@ -53,7 +53,7 @@ For each free identity slot (`impl-1`, `impl-2`) where the queue still has uncla
 Agent({
   subagent_type: "impl-agent",
   description: "impl-<id> claim and implement next ready issue",
-  prompt: "You are <AGENT-ID>. Follow your agent definition exactly: claim the next `status: ready` issue with no `agent:` label, implement with strict TDD, open a PR with `Closes #N`, label it `agent: <AGENT-ID>` + `status: review-ready`, then monitor through CI until merged or blocked. Hard stop after one issue — do not loop to a second.",
+  prompt: "You are <AGENT-ID>. Follow your agent definition exactly: claim the next `status: ready` issue with no `agent:` label (the claim ends with a draft PR carrying `Closes #N`), implement with strict TDD, mark the PR ready and label it `status: review-ready`, then return. Hard stop after one issue — do not loop to a second.",
   isolation: "worktree",
   run_in_background: true
 })

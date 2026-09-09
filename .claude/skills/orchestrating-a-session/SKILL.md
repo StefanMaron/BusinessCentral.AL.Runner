@@ -75,7 +75,7 @@ failing test names, the stack top, the counts, the falsified hypotheses — and 
 are cause A and these 10 are cause B, here is the evidence" is a complete answer with no fix.
 Say so explicitly, or agents will force one fix over two causes to make the PR look bigger.
 
-**Agents do NOT wait for CI.** Their deliverable is "PR opened and pushed". Waiting costs an
+**Agents do NOT wait for CI.** Their deliverable is "PR marked ready and pushed". Waiting costs an
 agent slot for 15-25 minutes watching a run it cannot influence, and you are watching CI
 anyway. `impl-agent.md`'s Step 5 says this; keep briefs consistent with it. A failure is never
 lost by returning early — resume the agent, or dispatch a fresh one with the failure in hand.
@@ -119,7 +119,8 @@ Implementation agents take 35-85 minutes and produce one PR each, so six of them
 **5-6 PRs/hour**. One reviewer cannot keep up with six implementation agents. Budget roughly
 **one reviewer per four implementation agents**.
 
-**Treat an open unreviewed PR as unfinished work that counts against your concurrency budget.**
+**Treat an open unreviewed ready PR as unfinished work that counts against your concurrency
+budget** (a draft is the claim of an implementation you already count).
 Six implementation agents plus six unreviewed PRs is twelve, not six. Without that accounting
 you will keep starting implementation agents whenever a slot frees, because starting one feels
 like progress and starting a reviewer feels like overhead - and the queue grows every hour.
