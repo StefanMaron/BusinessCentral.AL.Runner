@@ -34,6 +34,9 @@ public class ExpectationManifestSchemaTests : IDisposable
 
     private const string Head = @"[{""codeunitId"":60877,""CodeunitName"":""Cu"",""Method"":""M"",""Mode"":""expect-divergence""";
 
+    private const string AcceptHead = @"[{""codeunitId"":2,""CodeunitName"":""Company-Initialize"","
+        + @"""Method"":""*"",""Mode"":""accept-partial-company-init""";
+
     [Fact]
     public void ExpectDivergence_WithReasonAndDoc_Loads()
     {
@@ -69,6 +72,37 @@ public class ExpectationManifestSchemaTests : IDisposable
         Assert.Contains("must not carry 'Issue'",
             LoadError(Head + @",""Reason"":""r"",""Doc"":""docs/scope.md#jobs"","
                 + @"""Issue"":""https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/1733""}]"));
+    }
+
+    /// <summary>
+    /// #3561: an accept-partial-company-init entry is a standing decision about this project's
+    /// company, not tracked work, so an <c>Issue</c> link is refused at load time — the same
+    /// refusal expect-divergence has directly above, for the same reason. The end-to-end arms in
+    /// PartialCompanyInitAcceptanceTests cover the placeholder-Reason and non-"*" Method
+    /// refusals; this one is in-process because the loader is where all three are decided and a
+    /// third runner spawn would buy nothing.
+    /// </summary>
+    [Fact]
+    public void AcceptPartialCompanyInit_WithAnIssueLink_IsRejected()
+    {
+        Assert.Contains("must not carry 'Issue'", LoadError(AcceptHead
+            + @",""Reason"":""ships without the dependency codeunit 2 needs"","
+            + @"""Issue"":""https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3561""}]"));
+    }
+
+    /// <summary>The positive control for the arm above: the same entry without the link loads,
+    /// stays out of the test-lookup table (it names no test) and is offered as an acceptance.</summary>
+    [Fact]
+    public void AcceptPartialCompanyInit_WithoutAnIssue_LoadsAsARunLevelAcceptance()
+    {
+        var m = Load(AcceptHead + @",""Reason"":""ships without the dependency codeunit 2 needs""}]");
+        Assert.Null(m.Lookup("Company-Initialize", "*"));
+        var e = Assert.Single(m.CompanyInitAcceptances);
+        Assert.Equal(ExpectationMode.AcceptPartialCompanyInit, e.Mode);
+        Assert.Equal(2, e.CodeunitId);
+        Assert.Equal("ships without the dependency codeunit 2 needs", e.Reason);
+        Assert.NotNull(m.FindCompanyInitAcceptance(2, "Company-Initialize"));
+        Assert.Null(m.FindCompanyInitAcceptance(2, "Some Other Initialize"));
     }
 
     [Fact]

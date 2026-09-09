@@ -27,90 +27,16 @@
 // in a C# fixture (.claude/rules/no-base-app-in-csharp-tests.md) and, at ~70s per invocation,
 // unable to guarantee the completion anyway. AL_RUNNER_TEST_COMPANY_INIT_COMPLETED=1 records the
 // completion at exactly the line the real one does, so the drift check under test is the real one.
-using System.Diagnostics;
-using System.Text;
 using System.Text.Json;
 using Xunit;
+using static AlRunner.Tests.CipAcceptanceHarness;
 
 namespace AlRunner.Tests;
 
+// The runner spawn, the manifest writer and the two injected env vars live in
+// CipAcceptanceHarness, shared with PartialCompanyInitAcceptanceEscalationTests.
 public sealed class PartialCompanyInitAcceptanceTests
 {
-    private static readonly string RepoRoot = Path.GetFullPath(
-        Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-    private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
-    private static readonly string FixturePath = Path.Combine(
-        RepoRoot, "AlRunner.Tests", "Fixtures", "CompanyInitPartial");
-
-    private const string InjectedReason = "CIP-INJECTED-ABORT: InitSourceCodeSetup did not finish";
-    private const string AcceptedBecause =
-        "this project ships without the Manufacturing dependency codeunit 2 needs; tracked in-house";
-
-    private sealed record Run(string Output, int Exit);
-
-    private static Run RunRunner(string cacheDir, string? expectationsDir,
-        bool injectAbort = true, bool injectCompleted = false, bool outputJson = false)
-    {
-        var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append($" --cache \"{cacheDir}\"");
-        if (expectationsDir != null) args.Append($" --expectations \"{expectationsDir}\"");
-        if (outputJson) args.Append(" --output-json");
-        args.Append($" \"{FixturePath}\"");
-
-        var psi = new ProcessStartInfo
-        {
-            FileName = "dotnet",
-            Arguments = args.ToString(),
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            WorkingDirectory = RepoRoot,
-        };
-        if (injectAbort) psi.Environment["AL_RUNNER_TEST_FAIL_COMPANY_INIT"] = InjectedReason;
-        else psi.Environment.Remove("AL_RUNNER_TEST_FAIL_COMPANY_INIT");
-        if (injectCompleted) psi.Environment["AL_RUNNER_TEST_COMPANY_INIT_COMPLETED"] = "1";
-
-        var sb = new StringBuilder();
-        using var p = Process.Start(psi)!;
-        p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        p.BeginOutputReadLine();
-        p.BeginErrorReadLine();
-        if (!p.WaitForExit(240_000)) { try { p.Kill(true); } catch { } throw new TimeoutException("runner hung"); }
-        p.WaitForExit();
-        lock (sb) return new Run(sb.ToString(), p.ExitCode);
-    }
-
-    private static string NewCacheDir()
-    {
-        var dir = TestScratch.Dir("al-runner-cipa-cache");
-        Directory.CreateDirectory(dir);
-        return dir;
-    }
-
-    /// <summary>Write a one-entry manifest directory and return its path.</summary>
-    private static string ManifestDir(string name, string entryJson)
-    {
-        var dir = TestScratch.Dir("al-runner-cipa-manifest-" + name);
-        Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, "accept-company-init.json"), "[\n" + entryJson + "\n]\n");
-        return dir;
-    }
-
-    private static string AcceptEntry(int codeunitId = 2, string codeunitName = "Company-Initialize",
-        string reason = AcceptedBecause, string method = "*")
-        => $$"""
-          {
-            "codeunitId": {{codeunitId}},
-            "CodeunitName": "{{codeunitName}}",
-            "Method": "{{method}}",
-            "Mode": "accept-partial-company-init",
-            "Reason": "{{reason}}"
-          }
-        """;
-
     /// <summary>
     /// The positive case. An accepted abort keeps every reporting surface it already had — the
     /// summary block, the reason text, the JSON document — and adds the entry's reason to them,
