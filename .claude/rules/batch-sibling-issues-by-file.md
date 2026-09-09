@@ -27,7 +27,8 @@ still before you write the test.
 
 Splitting fixes that touch one file manufactures a rebase treadmill: two PRs editing one loop
 need a forced merge order (#3197, #3180), and every virtual-table PR conflicts at the same
-if-chain in `RecordPatches.cs`.
+if-chain, which #3676 moved to `RecordPatches.DataAccessDispatch.cs` so the rest of
+`RecordPatches.cs` stopped being part of that collision.
 
 **Same file, not same subsystem, and not "the identical edit fixes both".** A subsystem spans
 dozens of files and folds into an unreviewable PR that conflicts with everything; the narrower
