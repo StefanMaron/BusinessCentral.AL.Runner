@@ -1967,12 +1967,12 @@ internal class LiveNavTestPage : MockITestPage
         // Measured on a real service tier: corpus codeunit 60663 "Opf Ok Part Flush Tests"
         // (StefanMaron/BusinessCentral.AL.Language.Tests#315).
         //
-        // Order here is row THEN parts -- the reverse of Close()/Dispose()/SaveCurrentRow(),
-        // which flush parts first so a part's OnValidate still finds an unflushed header. Both
-        // orders are safe because each flush latches: FlushPendingNewRow/FlushPendingModify
-        // clear their flag on entry, so the later Close()/Dispose() pass writes nothing twice.
-        // Do not delete Invoke()'s FlushRow() on the strength of this call -- FlushParts() does
-        // not write the host page's own row, and no test here would catch its loss.
+        // Order here is row THEN parts: Invoke() above has already flushed this page's own row.
+        // Close()/Dispose()/SaveCurrentRow() are parts-then-row because a part's OnValidate can
+        // touch the header. The repeat pass is a no-op -- FlushPendingNewRow/FlushPendingModify
+        // clear their flag on entry -- so nothing is written twice. Do not delete Invoke()'s
+        // FlushRow() on the strength of this call: FlushParts() does not write the host row, and
+        // no test here would catch its loss.
         FlushParts();
 
         // Both refusals leave the form OPEN and raise nothing here, which is what makes
