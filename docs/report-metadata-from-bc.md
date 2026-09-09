@@ -191,11 +191,78 @@ A precompiled dependency report has no emitted document, so it keeps its
 `Field<N>` lists** (the other 1294 data items state the property not at all). The same
 `FieldNumbersFrom` therefore lands on BC's answer for every one of them.
 
-`Sorting Fields` does **not** follow, and stays empty on that path. A symbol file's
-`DataItemTableView` is the AL *source text* — `sorting("Company Name")`, field names — not the
-compiled form, so answering it would need a real per-table field lookup for all 659 reports at
-virtual-table population time. That is the cost recorded above as having blown the 60s
-watchdog, and BC's type default is the honest answer until something cheaper exists.
+`Sorting Fields` does **not** follow from the same rule, and needed its own mechanism —
+[below](#sorting-fields-on-the-dependency-path).
+
+<a id="sorting-fields-on-the-dependency-path"></a>
+
+### `Sorting Fields` on the dependency path (#3627)
+
+A symbol file's `DataItemTableView` is the AL *source text*, not the compiled form. Measured on
+BC 28.1's Base Application `SymbolReference.json`: its **659 reports carry 1927 data items, 1795
+of which state a `DataItemTableView` and 1759 of those a `SORTING` clause — 3201 sorting tokens
+in total, 988 bare identifiers and 2213 double-quoted names, and none in `Field<N>` form.** So
+`FieldNumbersFrom`, which drops every token that is not `Field<N>`, answered empty for all 1759.
+
+Two things had to be different from the document path:
+
+| | document (`SortingClauseOf`) | AL text (`AlSortingClauseOf`) |
+|---|---|---|
+| keyword | `SORTING(`, matched `Ordinal` | `sorting(`, matched case-insensitively |
+| clause end | the first `)` — a field token cannot contain one | matched by depth, ignoring AL quotes: `sorting("Amount (LCY)")` is a legal name |
+
+Pointing the document's parser at AL text answers empty for every one of the 1759, which is the
+symptom the issue records. The two are kept as separate methods rather than one widened one: on
+the document path a case-insensitive match would also accept a `WHERE` filter value that happens
+to spell `sorting(`, and the first-`)` rule there is a stated property of the input.
+
+#### The resolution order is BC's
+
+A sorting token reaches `TableViewResolver.AddSortingField`, which calls
+`TableFilterResolver.ResolveField(field, trapError: true)` —
+`NCLMetaTable.FindFieldMatch(field, prefixFallback: true, trapError: true)`. Decompiled from BC
+28.1, that method is, in order:
+
+1. strip a leading `Field` or `#`; if the remainder parses as an integer, `GetFieldByNo`;
+2. else `TryGetFieldByName`, then `TryGetFieldByCaption`;
+3. else — `prefixFallback` is `true` on this path — the first field whose *name*, then whose
+   *caption*, starts with the token;
+4. else `null`, which `AddSortingField` traces and **skips**, keeping the rest of the clause.
+
+`BuildSortFieldIndex` / `ResolveSortFieldNo` are that list. Step 1 is why a view already in BC's
+normal form still resolves here without a lookup, so the #3620 path does not regress; step 4 is
+why one unresolvable token does not discard the fields around it.
+
+`BuildSortFieldIndex` reads `GetAllFieldsIncludingExtensions`, not `ParsedTable.Fields` — the
+same rule `TryResolveDependencyFieldId`, the page-control field map and the AL page parser each
+state at their own call site (#2490). Base Application 28.1 has **0 of its 3201 sorting tokens**
+resolving only through a tableextension, so this is unmeasurable there and would have shipped
+answering a silently *shorter* sort key for the first ISV app whose report sorts by an extension
+field. `AlRunner.Tests/DependencyReportSortingFieldsTests.SortingToken_NamingATableExtensionField_Resolves`
+pins it.
+
+#### Where the cost is paid
+
+The cost is the whole reason the column was left empty, so: the lookup is paid **once per run**,
+not per population. `EnumerateKnownReports` caches its result per (registration epoch, parsed
+report count), so every population after the first hands back the same list; within one build the
+name index is memoized per *table*, so 1927 data items cost one index per distinct data-item
+table; and each index is built off the `ParsedTable` that `ResolveTableIdByName` has already
+faulted into `_parsedTables` one line above, so it costs no symbol read and constructs no
+`NCLMetaTable`.
+
+Measured end to end on the real Base Application — `tests/runner-extras/standalone-suites`
+filtered to codeunit 61952, which loads all 660 dependency reports, five warm reps per arm on one
+box, BC 28.1.49838.53910:
+
+| | test-run phase | codeunit 61952 |
+|---|---|---|
+| before | 2.6 / 2.7 / 2.7 / 2.5 / 2.8 s — mean **2.66 s** | 6 of 9 passing |
+| after | 2.7 / 2.5 / 2.7 / 2.8 / 2.6 s — mean **2.66 s** | 9 of 9 passing |
+
+No measurable cost. The contrast is with the first attempt at #3607, which reached for the
+request-page-building metadata synthesizer *per object* and blew the 60s per-test watchdog; that
+is a per-population cost, and this is not one.
 
 ### What the AL parser lost
 

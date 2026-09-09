@@ -55,6 +55,7 @@ public class DependencyReportSortingFieldsTests
     private const int NoSortingReportId = 88451103;
     private const int UnknownFieldReportId = 88451104;
     private const int NormalFormReportId = 88451105;
+    private const int ExtensionFieldReportId = 88451106;
     private const int DepTableId = 88451190;
 
     // The fixture table's fields are 1 / 2 / 5, deliberately non-contiguous, so a resolved
@@ -132,6 +133,22 @@ public class DependencyReportSortingFieldsTests
                   ]
                 },
                 {
+                  "Id": 88451106,
+                  "Name": "DRSF Extension Field",
+                  "Properties": [],
+                  "DataItems": [
+                    {
+                      "Id": 16,
+                      "Name": "Src",
+                      "RelatedTable": "DRSF Sample",
+                      "Indentation": 0,
+                      "Properties": [
+                        { "Name": "DataItemTableView", "Value": "sorting(\"Alt Code\", \"DRSF Ext Field\")" }
+                      ]
+                    }
+                  ]
+                },
+                {
                   "Id": 88451105,
                   "Name": "DRSF Normal Form",
                   "Properties": [],
@@ -162,7 +179,16 @@ public class DependencyReportSortingFieldsTests
               ]
             }
           ],
-          "TableExtensions": []
+          "TableExtensions": [
+            {
+              "Id": 88451191,
+              "Name": "DRSF Sample Ext",
+              "TargetObject": "DRSF Sample",
+              "Fields": [
+                { "TypeDefinition": { "Name": "Code[10]" }, "Properties": [], "Id": 40, "Name": "DRSF Ext Field" }
+              ]
+            }
+          ]
         }
         """;
 
@@ -263,6 +289,40 @@ public class DependencyReportSortingFieldsTests
             // SORTING(Field5,Field2) must keep resolving through the Field<N> rule and must
             // not be pushed through a name lookup that would find no field called "Field5".
             Assert.Equal("5,2", SortingFieldsOf(NormalFormReportId, dataItemId: 15));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// A sorting token may name a field a TABLEEXTENSION added, and <c>ParsedTable.Fields</c>
+    /// does not carry one. Found by asking whether a sibling doing the same job has a guard
+    /// this one lacks: <c>TryResolveDependencyFieldId</c>, the page-control field map and the
+    /// AL page parser each resolve a dependency field name through
+    /// <c>GetAllFieldsIncludingExtensions</c>, each with its own comment saying "not
+    /// table.Fields alone" (#2490).
+    ///
+    /// <para>Base Application 28.1 has no such sorting token today — 0 of its 3201 resolve
+    /// only through an extension — so this could not have been caught by the corpus, by the
+    /// AL-level tests in this PR, or by any Base Application measurement. It would have
+    /// shipped and answered a SHORTER sort key than BC applies for the first ISV app whose
+    /// report sorts by an extension field.</para>
+    /// </summary>
+    [Fact]
+    public void SortingToken_NamingATableExtensionField_Resolves()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-report-sorting-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir));
+
+            // "Alt Code" is a base field (5) and "DRSF Ext Field" is contributed by
+            // tableextension 88451191 as field 40. Against table.Fields alone the second
+            // token is dropped and the answer is "5" — a shorter key, silently.
+            Assert.Equal("5,40", SortingFieldsOf(ExtensionFieldReportId, dataItemId: 16));
         }
         finally
         {

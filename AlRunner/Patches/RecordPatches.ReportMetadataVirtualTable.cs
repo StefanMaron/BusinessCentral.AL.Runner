@@ -258,10 +258,20 @@ public static partial class RecordPatches
     /// </summary>
     private static Dictionary<string, int> BuildSortFieldIndex(ParsedTable table)
     {
+        // GetAllFieldsIncludingExtensions, not table.Fields alone — the same rule
+        // TryResolveDependencyFieldId (#2490), the page-control map and the AL page parser
+        // each state at their own call site. A report may sort by a field a TABLEEXTENSION
+        // added, and table.Fields does not carry one, so the token would be dropped and the
+        // data item would answer a SHORTER key than BC applies. Base Application 28.1 has no
+        // such token today (measured: 0 of its 3201 sorting tokens resolve only through an
+        // extension), which is exactly why this would have shipped unnoticed and broken on
+        // the first ISV app that did it.
+        // Materialised once: the source is a lazy Concat, and it is walked twice below.
+        var all = GetAllFieldsIncludingExtensions(table).ToList();
         var byName = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-        foreach (var f in table.Fields)
+        foreach (var f in all)
             byName.TryAdd(f.FieldName, f.FieldId);
-        foreach (var f in table.Fields)
+        foreach (var f in all)
             if (!string.IsNullOrEmpty(f.Caption))
                 byName.TryAdd(f.Caption!, f.FieldId);
         return byName;

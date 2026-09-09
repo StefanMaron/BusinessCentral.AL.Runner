@@ -2125,3 +2125,21 @@ at `23a9e869` and carried `expect-oos` entries in
 `tests/expectations/oos-date-virtual-table.json`, which this PR deletes.
 
 Written by the fbk-3 agent.
+
+## runner-extras `standalone-suites` 113 -> 116 (#3627)
+
+Three new AL tests in codeunit 61952 "RMVT Tests", reading `Sorting Fields` off
+`Report Data Items` (2000000203) for a report that lives in a PRECOMPILED dependency — the path
+the existing tests in that codeunit never took, because every report they read was source-compiled
+by the runner moments earlier.
+
+`standalone-suites` declares `"application": "27.0.0.0"`, so Base Application is loaded and its
+660 reports are in the inventory. The three arms read two of them: report 1306 root data item
+answers `3` (Sales Invoice Header `"No."`, resolved from the symbol file's `sorting("No.")` — not
+field 1, so no primary-key default produces it) and its VATAmountLine answers `5,9,10,13,16`; and
+report 705, where one data item states only a `where(...)` and must answer empty while its sibling
+answers `1,3,2`. Before this PR all three read empty.
+
+Measured 116P/0F/0E on the whole bundle, not computed from the diff.
+
+Written by an agent (Claude, `stma-auto-2`).
