@@ -433,8 +433,12 @@ public static partial class RecordPatches
                 //     in play — and this line is what tells the reader why that exception is
                 //     about to appear.
                 //
-                // _userRowSeededForThisBundle is deliberately NOT set: no row was seeded, and a
-                // flag claiming otherwise is the defect this branch exists to remove.
+                // _userRowSeededForThisBundle is CLEARED here, not merely left unset. Since #3698
+                // this method runs twice per app group, so an earlier call can have set it true
+                // over a row that install code has since deleted — and the flag's stated
+                // invariant is that it is true only while the table holds a row for the session
+                // user's security id. AccessControlSeed reads it.
+                _userRowSeededForThisBundle = false;
                 Console.Error.WriteLine(
                     $"[warn] UserSystemTable: the User row (2000000120) for the session user "
                     + $"'{userName}' ({userSid}) was REFUSED and is NOT present — {refusalDetail}. "
