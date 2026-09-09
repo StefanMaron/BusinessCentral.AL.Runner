@@ -98,7 +98,8 @@ public static partial class RecordPatches
                 BaseName: Unquote(pe.BaseObject?.ToString()?.Trim() ?? ""),
                 Controls: extControls,
                 MemberIdToName: ParseMemberNames(id, pe),
-                MemberIdToActionRefTarget: ParseActionRefTargets(id, pe));
+                MemberIdToActionRefTarget: ParseActionRefTargets(id, pe),
+                ModifiedControlNames: ParseModifiedControlNames(pe));
         }
     }
 
@@ -158,6 +159,47 @@ public static partial class RecordPatches
     internal static bool PageDeclaresSystemAction(int pageId, string systemActionName)
         => _parsedPages.TryGetValue(pageId, out var page)
            && page.DeclaredSystemActions.Contains(systemActionName);
+
+    /// <summary>
+    /// The NAMES of the base-page controls a pageextension's <c>modify(...)</c> blocks target.
+    ///
+    /// <para>Issue #3573. A <c>modify(Control)</c> block keeps the EXISTING control's identity:
+    /// the control still belongs to the base page and BC still drives it by the base page's own
+    /// member id, but any <c>OnBeforeValidate</c>/<c>OnAfterValidate</c> the block declares is
+    /// compiled onto the EXTENSION's type. So the emitted method's name mangles the base page's
+    /// control name while living on an object whose id space would hash it differently — which
+    /// is precisely why <see cref="RecordPatches"/>.ParseMemberNames (keyed in the DECLARING
+    /// object's id space) cannot reach it, and why dispatch has to re-derive the id in the BASE
+    /// page's space instead. See RunnerPageInstance.FindModifiedControlTriggers.</para>
+    ///
+    /// <para>An <c>addfirst</c>/<c>addlast</c> control is a different case entirely and is NOT
+    /// collected here: that control is declared BY the extension, so it lives in the
+    /// extension's own id space and ParseMemberNames already indexes it.</para>
+    /// </summary>
+    private static HashSet<string> ParseModifiedControlNames(SyntaxNode obj)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var modify in obj.DescendantNodes().OfType<NavSyntax.ControlModifyChangeSyntax>())
+        {
+            var name = IdentText(modify.Name);
+            if (name.Length > 0) names.Add(name);
+        }
+        return names;
+    }
+
+    /// <summary>
+    /// The base-page control names <paramref name="extensionId"/>'s <c>modify(...)</c> blocks
+    /// target, or an empty set for an extension this run never AL-source-parsed. See
+    /// <see cref="ParseModifiedControlNames"/> (#3573).
+    /// <para>Empty for a PRECOMPILED pageextension: a dependency's SymbolReference.json states
+    /// the extension's own controls, not which inherited controls it modifies, so a precompiled
+    /// extension's modified-control triggers stay unreachable. That is a narrower, DECLARED gap
+    /// than the silent skip it replaces — tracked separately rather than guessed at.</para>
+    /// </summary>
+    internal static IReadOnlySet<string> GetModifiedControlNames(int extensionId)
+        => _parsedPageExtensions.TryGetValue(extensionId, out var ext)
+            ? ext.ModifiedControlNames
+            : (IReadOnlySet<string>)new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
     private static Dictionary<int, string> ParseMemberNames(int declaringObjectId, SyntaxNode obj)
     {
@@ -791,7 +833,11 @@ internal record ParsedPage(
     IReadOnlyDictionary<int, string>? MemberIdToActionRefTarget = null,
     /// <summary>The names declared inside <c>area(SystemActions)</c> — see
     /// <see cref="RecordPatches"/>.ParseDeclaredSystemActions (#3283).</summary>
-    IReadOnlySet<string>? DeclaredSystemActions = null)
+    IReadOnlySet<string>? DeclaredSystemActions = null,
+    /// <summary>For a pageextension: the BASE-page control names its <c>modify(...)</c> blocks
+    /// target — see <see cref="RecordPatches"/>.ParseModifiedControlNames (#3573). Always empty
+    /// for a page.</summary>
+    IReadOnlySet<string>? ModifiedControlNames = null)
 {
     // Positional records can't give a collection parameter a literal default that isn't a
     // constant, so a null Controls (constructed via the shorter historical call sites/tests,
@@ -805,4 +851,7 @@ internal record ParsedPage(
     // the literal "OK"/"Cancel" spellings while the source may say `systemaction(ok)`.
     public IReadOnlySet<string> DeclaredSystemActions { get; init; }
         = DeclaredSystemActions ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+    // OrdinalIgnoreCase for the same reason: `modify(name)` targets `field(Name; ...)`.
+    public IReadOnlySet<string> ModifiedControlNames { get; init; }
+        = ModifiedControlNames ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 }
