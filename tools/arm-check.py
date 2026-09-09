@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """The cheap re-review pass: everything the arming decision needs, no judgement.
 
-Claim: most reviewer runs re-confirm a PR that has not changed. Of 84 runs
-measured on one operator's side, 25 changed the PR; the rest re-confirmed an
-already mergeable one at a median 12.6k output tokens each
-(https://fbakkensen.github.io/al-runner-retro/#e-12). Re-reading a diff nobody
-has touched is what that spends, and the mechanical preconditions in
+Claim: most reviewer runs re-confirm a PR that has not changed, and re-reading
+an untouched diff is what that spends
+(https://fbakkensen.github.io/al-runner-retro/#e-12 has the run counts and the
+median output tokens). The mechanical preconditions in
 `.claude/skills/orchestrating-a-session/SKILL.md` -- branch ownership, a clean
 merge-tree, green required checks, corpus linkage, no release run -- are
 checkable without reading anything.
@@ -21,10 +20,12 @@ verdict stamp to paste. It never arms auto-merge and never comments -- the
 reviewer does both, so that the actor and the check stay separate.
 
 Trap: check (f) accepts a MERGE verdict whose head has moved as long as the
-patch-id has not, because that pair means a rebase. `git patch-id --stable` is
-invariant to line-number shifts but not to changed context lines, so a rebase
-that had to resolve anything moves the id and lands you in a full review --
-the safe direction, and the reason the id is checked rather than the SHA alone.
+diff fingerprint has not, because that pair means a rebase. The fingerprint
+(`pr-verdict.py`'s `canonical_diff`) drops hunk headers and blob hashes and
+keeps everything else byte for byte, so a rebase that had to resolve anything --
+or a whitespace-only edit, which `git patch-id` cannot see at all -- moves it
+and lands you in a full review. That is the safe direction, and the reason the
+fingerprint is checked rather than the SHA alone.
 """
 from __future__ import annotations
 
@@ -38,6 +39,19 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+
+try:
+    import agent_stdio as _stdio
+except Exception:  # pragma: no cover - a copy detached from its sibling module
+    _stdio = None
+    print("note: tools/agent_stdio.py could not be imported alongside this copy of "
+          "arm-check.py -- the verdict stamp carries em dashes, which a cp1252 "
+          "console cannot print. Extract that file too.", file=sys.stderr)
+if _stdio is not None:
+    # Before any print, and in THIS file rather than only in the module it
+    # imports: tools/test_agent_stdio.py checks each CLI for the call at module
+    # level, because an import chain is not a guarantee the next edit keeps.
+    _stdio.enable_utf8_stdio()
 
 _spec = importlib.util.spec_from_file_location("pr_verdict", os.path.join(HERE, "pr-verdict.py"))
 pv = importlib.util.module_from_spec(_spec)
@@ -86,6 +100,16 @@ def run(pr: str, repo: str = REPO, *, runner=None, evaluate=None, ci_wait=None,
     lines: list[str] = []
     checks: list[tuple[str, bool, str]] = []
 
+    # ci-wait.py takes no --repo and hardcodes this one, so on any other
+    # repository check (c) would silently report on THIS repository's PR of the
+    # same number -- a green about a different pull request. Refuse instead of
+    # answering; teaching ci-wait.py a --repo is a change to that tool.
+    if repo != REPO:
+        return 3, [f"REFUSING to check PR #{pr} on {repo}: this tool only supports "
+                   f"{REPO}, because ci-wait.py -- which decides the required-checks "
+                   "check -- takes no --repo and would report on the same-numbered PR "
+                   "of that repository instead. Nothing was checked."]
+
     pr_json = pv.read_pr(repo, pr, runner)
     if not pr_json or not pr_json.get("headRefOid"):
         return 3, [f"could not read PR #{pr} on {repo} -- nothing was checked."]
@@ -110,8 +134,21 @@ def run(pr: str, repo: str = REPO, *, runner=None, evaluate=None, ci_wait=None,
     if not remote:
         checks.append(("merge-tree clean", False, f"no git remote points at {repo}"))
     else:
-        runner(["git", "fetch", "--quiet", remote, f"refs/pull/{pr}/head"])
-        runner(["git", "fetch", "--quiet", remote, base])
+        for spec in (f"refs/pull/{pr}/head", base):
+            rc, out = runner(["git", "fetch", "--quiet", remote, spec])
+            if rc != 0:
+                # merge-tree against a stale cached ref answers about older
+                # code and looks exactly like a clean result.
+                return 3, [f"REFUSING to check PR #{pr}: git fetch {remote} {spec} "
+                           f"failed (rc={rc}), so a merge-tree here would compare "
+                           "against cached refs. Nothing was checked. "
+                           + (out.splitlines()[0][:160] if out else "")]
+        rc, out = runner(["git", "rev-parse", "--verify", "--quiet",
+                          f"{remote}/{base}^{{commit}}"])
+        if rc != 0:
+            return 3, [f"REFUSING to check PR #{pr}: {remote}/{base} does not resolve "
+                       "after the fetch, so there is no base to compare against. "
+                       "Nothing was checked."]
         rc, out = runner(["git", "merge-tree", "--write-tree", "--messages",
                           f"{remote}/{base}", head])
         checks.append(("merge-tree clean", rc == 0,
@@ -128,13 +165,18 @@ def run(pr: str, repo: str = REPO, *, runner=None, evaluate=None, ci_wait=None,
 
     # (d) corpus linkage, in both directions the merge bar asks for.
     detail, ok = "", True
-    m = CORPUS_PR_LINE.search(body)
-    if m:
-        num = m.group(1)
-        data = _json(runner, ["gh", "api", f"repos/{corpus_repo}/pulls/{num}"], default=None)
-        merged = bool(data.get("merged")) if isinstance(data, dict) else False
-        ok = merged
-        detail = f"corpus PR #{num} " + ("MERGED" if merged else "NOT merged")
+    # EVERY declaration: a body can carry more than one, and checking only the
+    # first passes a PR whose second corpus PR is still open.
+    nums = CORPUS_PR_LINE.findall(body)
+    if nums:
+        states = []
+        for num in nums:
+            data = _json(runner, ["gh", "api", f"repos/{corpus_repo}/pulls/{num}"],
+                         default=None)
+            merged = bool(data.get("merged")) if isinstance(data, dict) else False
+            ok = ok and merged
+            states.append(f"#{num} " + ("MERGED" if merged else "NOT merged"))
+        detail = "corpus PR " + ", ".join(states)
     else:
         detail = "no Corpus-PR: declaration in the body"
     files = _json(runner, ["gh", "api", f"repos/{repo}/pulls/{pr}/files", "--paginate"],
@@ -168,7 +210,15 @@ def run(pr: str, repo: str = REPO, *, runner=None, evaluate=None, ci_wait=None,
 
     # (f) the review verdict itself. A rebase (head moved, patch-id unchanged) is
     # the case this whole pass exists for and is accepted; anything else is not.
-    res = evaluate(repo, pr, runner=runner)
+    res = evaluate(repo, pr, runner=runner, expect_head=head)
+    if res.head_moved_during_check:
+        for label, ok, dtl in checks:
+            lines.append(("PASS " if ok else "FAIL ") + f"{label}: {dtl}")
+        lines.extend(res.lines)
+        lines.append("NOT arm-able: the head moved while this pass was running, so "
+                     "the checks above describe a commit that is no longer the head. "
+                     "No stamp is printed.")
+        return 2, lines
     verdict_ok = res.exit_code == 0 or (res.exit_code == 2 and res.patch_ok)
     how = {0: "MERGE on this head and patch",
            1: "FIX-FIRST/HOLD",
@@ -185,8 +235,15 @@ def run(pr: str, repo: str = REPO, *, runner=None, evaluate=None, ci_wait=None,
         lines.append(f"NOT arm-able: {len(failed)} check(s) failed ({', '.join(failed)}). "
                      "No stamp is printed -- report this to the coordinator.")
         return 1, lines
+    if not res.patch:
+        # Every passing path above computed a patch-id, so this cannot normally
+        # happen -- and a stamp built from an empty one would be malformed, which
+        # pr-verdict.py would then read as "no verdict" on the next pass.
+        lines.append("NOT arm-able: every check passed but no patch-id is available, "
+                     "so no verdict line can be stamped.")
+        return 1, lines
     lines.append("All checks passed. Paste this as the last line of your review comment:")
-    lines.append("Verdict: MERGE " + pv.stamp(res.head or head, res.patch or "", "arm-check"))
+    lines.append("Verdict: MERGE " + pv.stamp(head, res.patch, "arm-check"))
     return 0, lines
 
 

@@ -112,60 +112,17 @@ were measured:
   ancestor of the other. **A one-PR-at-a-time reviewer cannot see that**, and neither can the
   coordinator, who is not reading the diffs.
 
-**A reviewer that approves a PR arms auto-merge on it immediately, in the same pass.** Do not
-hand an approval back to the coordinator and wait for it to act — that round trip is where the
-verdict goes stale, and staleness is the main cost of reviewing in batches. The reviewer has
-just read the head SHA; it is the only actor that knows the verdict and the SHA are consistent
-at that instant.
+**A reviewer that approves a PR arms auto-merge on it immediately, in the same pass** — the
+command, the conditions that must all hold, and what the verdict has to record are one list, in
+the `orchestrating-a-session` skill under "A reviewer that approves a PR arms auto-merge".
+Follow it there. This section used to carry a verbatim copy of it, which is how the two skills
+came to give different instructions about the same act while both read as authoritative.
 
-```bash
-gh pr merge <N> --repo <owner>/<repo> --squash --auto
-```
-
-Arm **only** when all of these hold. Any one missing means report it to the coordinator instead:
-
-- **The PR is on a branch this loop owns.** Check the **branch prefix**, never the author field
-  — every loop running under one account reports that account as the author, and an outside
-  contributor's PR is never merged by us.
-- No release run is in progress (`publish.yml` pushes a fast-forward; a merge during its
-  ~40-minute run kills it).
-- `git merge-tree --write-tree --messages origin/<base> origin/<branch>` is clean.
-- If the PR asserts anything about BC's behaviour, its corpus PR has **merged**, and the pin bump
-  and count-baseline update are folded in.
-- No *other* PR in the same batch conflicts with it. Where two do — two submodule pin bumps to
-  different revisions, say — arm only the one that must merge first and report the ordering.
-
-**Record the SHA you armed against** in the verdict. If the head moves afterwards, GitHub keeps
-auto-merge armed against the new head, which nobody has reviewed; the coordinator needs the SHA
-to notice.
-
-**One command, two outcomes — and on a green PR it MERGES.** `--auto` is not "queue it for
-later":
-
-- required checks **not yet green** → auto-merge is armed, and the PR lands when they pass;
-- required checks **already green** → the PR **merges on the spot**.
-
-`gh` picks between the two itself, before calling anything — its merge command carries a
-function named `isImmediatelyMergeable` for exactly this. Both outcomes are intended: if review
-approves and CI is green, the PR should merge.
-
-**So on a green PR, the approval decision IS the merge decision.** There is no coordinator
-checkpoint after it, and nobody looks again. This matters more in an unattended loop than
-anywhere else: every condition in the list above has to hold at the moment you run the command,
-because running it is the merge — not a request for one.
-
-An earlier version of this section claimed the opposite: that GitHub *refuses* to arm an
-already-mergeable PR, answering `Pull request is in clean status`, and that the coordinator
-would merge it by hand. That was wrong, and a reviewer following it would report "it refused,
-please merge it yourself" about a PR that had already merged. It was falsified on PR #3095 —
-the documented command returned rc=0 and merged it immediately at the reviewed SHA. `gh` never
-produces that message at all; the phrase does not occur anywhere in the binary. It appears to be
-a GitHub API error from the `enablePullRequestAutoMerge` mutation, which is the call `gh` skips
-when the PR is already mergeable — so it is not something this command can produce. See #3127.
-
-**Check the exit code either way.** It is not decoration: `gh pr merge` exits non-zero for real
-reasons (`Pull request #N is not mergeable: ...`), and a loop that printed "armed" regardless of
-it once left four green PRs sitting unarmed.
+Two of its consequences bite harder in an unattended loop than anywhere else. On a PR whose
+checks are already green, `--auto` **merges on the spot** rather than queueing, so the approval
+decision is the merge decision and nobody looks again. And the command's exit code is not
+decoration — `gh pr merge` exits non-zero for real reasons, and a loop that printed "armed"
+regardless of it once left four green PRs sitting unarmed.
 
 When it arms rather than merges, arming is still not merging, and it does not replace the merge
 bar — it is the bar expressed as a standing instruction to GitHub, so a PR lands the moment its
@@ -180,7 +137,9 @@ replacement when a reviewer returns.
 minutes when other loops and outside contributors are pushing. A verdict without a SHA cannot be
 checked for staleness, and merging on a stale one has already nearly merged a commit whose CI was
 red. Re-read the head immediately before merging and pass `--match-head-commit`, so the merge
-refuses rather than silently taking something else.
+refuses rather than silently taking something else. The shape that carries the SHA is the
+verdict line in `.claude/agents/reviewer.md`, and `tools/pr-verdict.py <N>` is what checks it
+against the current head.
 
 These numbers come from a single session and review time varies with PR size. Re-measure with
 `tools/agent-cost.py` before treating the ratio as fixed.

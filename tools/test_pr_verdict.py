@@ -3,11 +3,11 @@
 
 The grammar is the whole point of the tool, so it is proven here against the
 comment shapes that actually exist on this repository rather than only against
-the one shape the tool was written for. 1 of 796 merged pull requests in the
-measured window carries a GitHub review object -- review happens in comments,
-in at least five header styles, none of them parseable
-(https://fbakkensen.github.io/al-runner-retro/#e-11). Each of those five is a
-fixture below and each must come back "no verdict", never a green.
+the one shape the tool was written for: review happens in comments, in at least
+five header styles, none of them parseable
+(https://fbakkensen.github.io/al-runner-retro/#e-11 has the counts). Each of
+those five is a fixture below and each must come back "no verdict", never a
+green.
 
 The asymmetry that matters: exit 0 is the only answer that lets a PR be armed
 for auto-merge, so every fixture that is not an exact MERGE on the current head
@@ -47,7 +47,28 @@ OTHER = "9988776655443322110099887766554433221100"
 PATCH = "0123456789ab"
 OTHER_PATCH = "ba9876543210"
 
-DOCUMENTED = f"Verdict: MERGE — head {HEAD} — patch {PATCH} — kind: full"
+def instantiate(grammar: str, decision: str = "MERGE", reason: str | None = None,
+                head: str = HEAD, patch: str = PATCH, kind: str = "full") -> str:
+    """A concrete line built FROM the grammar constant, not written beside it.
+
+    reviewer.md is checked against GRAMMAR and GRAMMAR is instantiated here, so
+    the prose, the constant and VERDICT_RE are one chain: renaming a placeholder
+    fails loudly instead of leaving a hand-written example agreeing with a regex
+    the documentation no longer describes.
+    """
+    line = (grammar
+            .replace("MERGE|FIX-FIRST|HOLD", decision)
+            .replace(" (<reason, only for FIX-FIRST/HOLD>)",
+                     f" ({reason})" if reason else "")
+            .replace("<full 40-char sha>", head)
+            .replace("<diff fingerprint, 12 hex>", patch)
+            .replace("full|arm-check", kind))
+    assert "<" not in line and "|" not in line, (
+        "a placeholder in GRAMMAR was renamed and this helper no longer fills it: " + line)
+    return line
+
+
+DOCUMENTED = instantiate(pv.GRAMMAR)
 
 # The five header styles found in the window. None carries a verdict line, so
 # each must be unparseable -- that is the state this PR is changing, and the
@@ -131,8 +152,9 @@ check("--stamp output round-trips (HOLD, arm-check)",
 
 # --- newest wins ----------------------------------------------------------
 
-def comment(body: str, when: str, cid: int = 0):
-    return {"body": body, "created_at": when, "id": cid}
+def comment(body: str, when: str, cid: int = 0, assoc: str = "OWNER", login: str = "maintainer"):
+    return {"body": body, "created_at": when, "id": cid,
+            "author_association": assoc, "user": {"login": login}}
 
 
 older = "Verdict: FIX-FIRST (missing negative case) " + pv.stamp(OTHER, OTHER_PATCH, "full")
@@ -228,6 +250,76 @@ check("newest_verdict reports the older verdict AND the newer malformed line",
 v, bad = parsed(f"**Verdict: MERGE** — head {HEAD} — patch {PATCH} — kind: full")
 check("a bolded marker is reported as malformed, not absent", bad is not None, repr(bad))
 
+# A verdict line with the signature UNDER it: the comment carries a verdict, so
+# treating it as carrying none would leave the older MERGE below as the newest
+# actionable verdict -- a newer HOLD read as an earlier MERGE.
+v, bad = parsed(instantiate(pv.GRAMMAR, "HOLD", "the corpus PR is open")
+                + "\n\n-- posted by an automated reviewer")
+check("a verdict followed by a signature is malformed, not absent",
+      v is None and bad is not None and "LAST" in (bad or ""), f"{v} {bad}")
+
+SIGNED_HOLD_OVER_MERGE = [
+    comment(instantiate(pv.GRAMMAR), "2026-09-01T10:00:00Z", 1),
+    comment(instantiate(pv.GRAMMAR, "HOLD", "the corpus PR is open")
+            + "\n\n-- posted by an automated reviewer", "2026-09-02T10:00:00Z", 2)]
+r = result(SIGNED_HOLD_OVER_MERGE)
+check("a newer signed HOLD never leaves the older MERGE standing", r.exit_code == 3,
+      f"{r.exit_code} {r.lines}")
+
+# (C) every check in a multi-check pass must describe ONE commit.
+r = pv.evaluate("o/r", "1", runner=fake(PRJSON, []),
+                patch_id_of=lambda *a, **k: (PATCH, ""), expect_head=OTHER)
+check("a head that moved since the caller's own read exits 2", r.exit_code == 2,
+      str(r.exit_code))
+check("...and is flagged as moved-during-check, not as a stale verdict",
+      r.head_moved_during_check, str(r.head_moved_during_check))
+
+# (B) a failed fetch must not be answered from cached refs.
+def fetch_fails(argv, **kw):
+    if argv[:2] == ["git", "remote"]:
+        return 0, "origin	https://github.com/o/r.git (fetch)"
+    if argv[:2] == ["git", "fetch"]:
+        return 128, "fatal: could not read from remote repository"
+    return 0, HEAD
+
+
+pid, note = pv.patch_id_for_pr("o/r", "1", HEAD, "main", fetch_fails)
+check("a failed git fetch yields no fingerprint", pid is None, str(pid))
+check("...and says so rather than comparing cached refs",
+      "fetch" in note and "cached" in note, note)
+
+# This is a PUBLIC repository and both the head SHA and the patch-id are public,
+# so a well-formed MERGE line is composable by anyone. Write access is the
+# boundary the tool enforces.
+UNTRUSTED = [comment("Verdict: MERGE " + pv.stamp(HEAD, PATCH, "full"),
+                     "2026-09-02T10:00:00Z", 1, assoc="NONE", login="passer-by")]
+r = result(UNTRUSTED)
+check("a MERGE from an author with no write access never exits 0", r.exit_code == 3,
+      f"{r.exit_code} {r.lines}")
+check("...and says on stderr whose comment was ignored",
+      any("passer-by" in l for l in r.stderr_lines), str(r.stderr_lines))
+
+r = result([comment("Verdict: MERGE " + pv.stamp(HEAD, PATCH, "full"),
+                    "2026-09-02T10:00:00Z", 1, assoc="CONTRIBUTOR", login="drive-by")])
+check("CONTRIBUTOR is not write access either", r.exit_code == 3, str(r.exit_code))
+
+for assoc in pv.TRUSTED_ASSOCIATIONS:
+    r = result([comment("Verdict: MERGE " + pv.stamp(HEAD, PATCH, "full"),
+                        "2026-09-02T10:00:00Z", 1, assoc=assoc)])
+    check(f"{assoc} may hand down a verdict", r.exit_code == 0, str(r.exit_code))
+
+r = result([{"body": "Verdict: MERGE " + pv.stamp(HEAD, PATCH, "full"),
+             "created_at": "2026-09-02T10:00:00Z", "id": 1}])
+check("a comment with no author_association at all is not trusted", r.exit_code == 3,
+      str(r.exit_code))
+
+# An edited comment keeps its original created_at, so updated_at has to count.
+r = result([comment("Verdict: MERGE " + pv.stamp(HEAD, PATCH, "full"), "2026-09-02T10:00:00Z", 1),
+            dict(comment("Verdict: FIX-FIRST (edited in later) " + pv.stamp(HEAD, PATCH, "full"),
+                         "2026-09-01T10:00:00Z", 2), updated_at="2026-09-03T10:00:00Z")])
+check("an edited comment is ordered by updated_at, so its FIX-FIRST wins",
+      r.exit_code == 1, f"{r.exit_code} {r.lines}")
+
 r = result([comment("Verdict: MERGE " + pv.stamp(HEAD, PATCH, "full"), "2026-09-02T10:00:00Z")],
            pr_json=None)
 check("an unreadable PR exits 3", r.exit_code == 3, str(r.exit_code))
@@ -252,42 +344,150 @@ for comments in ([comment("Verdict: MERGE " + pv.stamp(OTHER, PATCH, "full"), "2
                  [comment("Verdict: FIX-FIRST (x) " + pv.stamp(HEAD, PATCH, "full"),
                           "2026-09-02T10:00:00Z")],
                  [comment(LEGACY[0], "2026-09-02T10:00:00Z")], [],
-                 STALE_MERGE_UNDER_MALFORMED):
+                 STALE_MERGE_UNDER_MALFORMED, UNTRUSTED):
     if result(comments).exit_code == 0:
         greens += 1
 check("no non-MERGE fixture exits 0", greens == 0, f"{greens} green(s)")
 
 
-# --- patch-id computation -------------------------------------------------
+# --- the patch fingerprint ------------------------------------------------
 
-DIFF = b"diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n"
-
-
-def brunner(argv, input=None):
-    if argv[:2] == ["git", "diff"]:
-        return 0, DIFF
-    if argv[:2] == ["git", "patch-id"]:
-        assert input == DIFF, "the diff must be piped in unchanged"
-        return 0, b"0123456789abcdef0123456789abcdef01234567 " + b"0" * 40 + b"\n"
-    return 1, b""
+DIFF = (b"diff --git a/x b/x\nindex 1111111..2222222 100644\n--- a/x\n+++ b/x\n"
+        b"@@ -10,3 +10,4 @@ def f():\n-a\n+    b\n")
+SHIFTED = (DIFF.replace(b"@@ -10,3 +10,4 @@ def f():", b"@@ -99,3 +99,4 @@ def g():")
+               .replace(b"index 1111111..2222222", b"index aaaaaaa..bbbbbbb"))
+DEDENTED = DIFF.replace(b"+    b", b"+b")
 
 
-pid, note = pv.compute_patch_id("origin/main", HEAD, brunner=brunner)
-check("compute_patch_id returns the first 12 hex of the patch id", pid == "0123456789ab", str(pid))
+def brunner_for(diff):
+    def brunner(argv, input=None):
+        return (0, diff) if argv[:2] == ["git", "diff"] else (1, b"")
+    return brunner
 
 
-def empty_brunner(argv, input=None):
-    return 0, b""
+base, _ = pv.compute_patch_fingerprint("origin/main", HEAD, brunner=brunner_for(DIFF))
+shifted, _ = pv.compute_patch_fingerprint("origin/main", HEAD, brunner=brunner_for(SHIFTED))
+dedented, _ = pv.compute_patch_fingerprint("origin/main", HEAD, brunner=brunner_for(DEDENTED))
+check("the fingerprint is 12 hex", bool(base) and len(base) == 12, str(base))
+check("a rebase (line numbers and blob hashes move) keeps it", base == shifted,
+      f"{base} {shifted}")
+check("a whitespace-only difference CHANGES it -- git patch-id would not",
+      base != dedented, f"{base} {dedented}")
+
+pid, note = pv.compute_patch_fingerprint("origin/main", HEAD, brunner=brunner_for(b""))
+check("an empty diff is None, never a value", pid is None, str(pid))
 
 
-pid, note = pv.compute_patch_id("origin/main", HEAD, brunner=empty_brunner)
-check("an empty patch-id is None, never a value", pid is None, str(pid))
+# (H) the same claim through real git, not through a canned diff.
+import subprocess  # noqa: E402
+import tempfile  # noqa: E402
+
+
+def git(d, *args):
+    return subprocess.run(["git", "-C", d, *args], capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
+
+
+with tempfile.TemporaryDirectory() as d:
+    git(d, "init", "-q", "-b", "main")
+    git(d, "config", "user.email", "t@example.invalid")
+    git(d, "config", "user.name", "t")
+    src = os.path.join(d, "m.py")
+    open(src, "w", encoding="utf-8").write("def f(x):\n    if x:\n        return 1\n    return 2\n")
+    git(d, "add", "-A"); git(d, "commit", "-qm", "base")
+    root = git(d, "rev-parse", "HEAD").stdout.strip()
+
+    # A behaviour change: the return moves OUT of the conditional. Indentation
+    # only -- which is exactly what git patch-id cannot see.
+    open(src, "w", encoding="utf-8").write("def f(x):\n    if x:\n        return 1\n    return 3\n")
+    git(d, "add", "-A"); git(d, "commit", "-qm", "a")
+    a = git(d, "rev-parse", "HEAD").stdout.strip()
+    git(d, "reset", "-q", "--hard", root)
+    open(src, "w", encoding="utf-8").write("def f(x):\n    if x:\n        return 1\n        return 3\n")
+    git(d, "add", "-A"); git(d, "commit", "-qm", "b")
+    b = git(d, "rev-parse", "HEAD").stdout.strip()
+
+    fa, na = pv.compute_patch_fingerprint(root, a, repo_dir=d)
+    fb, nb = pv.compute_patch_fingerprint(root, b, repo_dir=d)
+    check("real git: a fingerprint is produced", bool(fa) and bool(fb), f"{fa} {fb} {na} {nb}")
+    check("real git: two edits differing only in indentation do NOT share a fingerprint",
+          fa != fb, f"{fa} {fb}")
+    pid_a = subprocess.run(["git", "-C", d, "patch-id", "--stable"],
+                           input=subprocess.run(["git", "-C", d, "diff", root + "..." + a],
+                                                capture_output=True).stdout,
+                           capture_output=True).stdout.split()[0]
+    pid_b = subprocess.run(["git", "-C", d, "patch-id", "--stable"],
+                           input=subprocess.run(["git", "-C", d, "diff", root + "..." + b],
+                                                capture_output=True).stdout,
+                           capture_output=True).stdout.split()[0]
+    check("real git: git patch-id --stable DOES share one, which is why it is not used",
+          pid_a == pid_b, f"{pid_a} {pid_b}")
+
+
+# --- --stamp's stdout is pasted, so it carries the stamp and nothing else --
+
+import contextlib  # noqa: E402  (used only by the CLI checks below)
+import io  # noqa: E402
+
+_out, _err = io.StringIO(), io.StringIO()
+with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_err):
+    rc = pv.main(["1", "--repo", "o/r", "--stamp", "--no-freshness-fetch"],
+                 runner=fake(PRJSON, []), patch_id_of=lambda *a, **k: (PATCH, ""))
+check("--stamp exits 0", rc == 0, f"{rc} {_err.getvalue()!r}")
+check("--stamp prints exactly the stamp on stdout",
+      _out.getvalue().strip() == pv.stamp(HEAD, PATCH, "full"), repr(_out.getvalue()))
+check("--stamp's freshness notes go to stderr, not stdout",
+      "note:" not in _out.getvalue(), repr(_out.getvalue()))
+check("...and the notes are not simply lost", "note:" in _err.getvalue(),
+      repr(_err.getvalue()))
+
+_out, _err = io.StringIO(), io.StringIO()
+with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_err):
+    rc = pv.main(["1", "--repo", "o/r", "--stamp", "--kind", "arm-check",
+                  "--no-freshness-fetch"],
+                 runner=fake(PRJSON, []), patch_id_of=lambda *a, **k: (PATCH, ""))
+check("--kind arm-check is carried into the stamp",
+      _out.getvalue().strip().endswith("kind: arm-check"), repr(_out.getvalue()))
+
+
+# (F) a session with no gh can still stamp: --head skips the PR read, --patch
+# skips the fingerprint too. The runner below fails the test if gh is reached.
+def no_gh(argv, **kw):
+    raise AssertionError("gh must not be called on the --head/--patch path: " + " ".join(argv))
+
+
+_out, _err = io.StringIO(), io.StringIO()
+with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_err):
+    rc = pv.main(["1", "--repo", "o/r", "--stamp", "--head", HEAD, "--patch", PATCH,
+                  "--no-freshness-fetch"], runner=no_gh)
+check("--stamp --head --patch needs no gh at all", rc == 0, f"{rc} {_err.getvalue()!r}")
+check("...and prints the same stamp",
+      _out.getvalue().strip() == pv.stamp(HEAD, PATCH, "full"), repr(_out.getvalue()))
+check("...and its parse round-trips",
+      pv.parse_verdict("Verdict: MERGE " + _out.getvalue().strip())[0] is not None,
+      repr(_out.getvalue()))
+
+for bad_argv, why in ((["1", "--head", HEAD], "--head without --stamp"),
+                      (["1", "--stamp", "--patch", "nothex"], "a non-hex --patch"),
+                      (["1", "--stamp", "--head", HEAD[:8]], "an abbreviated --head")):
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            pv.main(bad_argv, runner=no_gh)
+        ok = False
+    except SystemExit as exc:
+        ok = exc.code != 0
+    check(f"{why} is refused", ok)
 
 
 # --- prose and parser cannot drift ---------------------------------------
 
 reviewer = open(os.path.join(ROOT, ".claude", "agents", "reviewer.md"), encoding="utf-8").read()
 check("reviewer.md carries the grammar verbatim", pv.GRAMMAR in reviewer, "GRAMMAR=" + pv.GRAMMAR)
+check("the grammar instantiated is what VERDICT_RE accepts",
+      pv.parse_verdict(instantiate(pv.GRAMMAR))[0] is not None
+      and pv.parse_verdict(instantiate(pv.GRAMMAR, "HOLD", "a reason",
+                                       kind="arm-check"))[0] is not None,
+      instantiate(pv.GRAMMAR))
 check("reviewer.md tells the reviewer how to produce the line",
       "tools/pr-verdict.py --stamp" in reviewer)
 check("reviewer.md says the verdict is the last line",

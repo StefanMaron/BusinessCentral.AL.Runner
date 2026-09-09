@@ -2,11 +2,10 @@
 """Read a pull request's newest REVIEW VERDICT and say whether it still applies.
 
 Claim: a review verdict is only actionable if a machine can find it and tell
-whether it belongs to the code that is about to merge. Measured over 796 merged
-pull requests, 1 carries a GitHub review object -- review happens in comments,
-in at least five header styles, so nothing could extract a verdict and a
-FIX-FIRST could be armed for auto-merge by mistake
-(https://fbakkensen.github.io/al-runner-retro/#e-11).
+whether it belongs to the code that is about to merge. Review here happens in
+comments, in at least five header styles, so nothing could extract a verdict and
+a FIX-FIRST could be armed for auto-merge by mistake
+(https://fbakkensen.github.io/al-runner-retro/#e-11 has the counts).
 
 So `.claude/agents/reviewer.md` now requires one fixed last line per review
 comment, and this tool is the reader of it. The grammar lives here in `GRAMMAR`
@@ -15,6 +14,14 @@ and the parser cannot drift apart.
 
     tools/pr-verdict.py <PR>            # read the newest verdict, judge it
     tools/pr-verdict.py --stamp <PR>    # print the line's tail, to paste
+    tools/pr-verdict.py --stamp <PR> --head <sha> [--patch <id>]
+                                        # ...in a session with no `gh`
+
+Reading a verdict needs `gh`: it is a GitHub query with no local equivalent, so
+in an MCP-only session (`github-access.md`) that half is unavailable and the
+tool says so instead of guessing. Stamping does not -- pass the head SHA you
+read through `mcp__github__pull_request_read` and the fingerprint is computed
+from your own checkout with `git`.
 
 Exit codes
 ----------
@@ -28,12 +35,13 @@ Exit codes
 
 Two traps, both load-bearing:
 
-* The patch-id is `git diff <base>...<head> | git patch-id --stable`, which is
-  invariant to line-number shifts. A clean rebase therefore keeps it while the
-  head SHA moves -- that pair is exactly what tells a rebase (arm-check is
-  enough) from a new push (a full review is owed). Where the rebase changed
-  context lines the patch-id moves too, and the answer errs toward a full
-  review, which is the safe direction.
+* The patch field is a fingerprint of `git diff <base>...<head>` with hunk
+  headers and blob hashes removed and everything else kept byte for byte, so it
+  survives a clean rebase (the head SHA moves, the fingerprint does not) and is
+  **whitespace-sensitive on purpose** -- `git patch-id` normalises whitespace
+  away and answers the same id for a line moved into or out of a Python
+  conditional, which is a behaviour change. Anything that moves the fingerprint
+  costs a full review, which is the safe direction. See `canonical_diff`.
 * A verdict must be the LAST non-empty line of its comment, so an agent
   signature belongs above it. A trailing "thanks" makes the comment carry no
   verdict at all, which is exit 3 -- never a silent green.
@@ -41,6 +49,7 @@ Two traps, both load-bearing:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -68,8 +77,15 @@ REPO = "StefanMaron/BusinessCentral.AL.Runner"
 # tools/test_pr_verdict.py so a reviewer cannot be told one shape while the
 # parser reads another.
 GRAMMAR = ("Verdict: MERGE|FIX-FIRST|HOLD (<reason, only for FIX-FIRST/HOLD>) "
-           "— head <full 40-char sha> — patch <patch-id first 12 hex> "
+           "— head <full 40-char sha> — patch <diff fingerprint, 12 hex> "
            "— kind: full|arm-check")
+
+# Who may hand down a verdict. GitHub reports the commenter's relationship to
+# the repository on every comment, and this is a PUBLIC repository -- the head
+# SHA and the patch-id are both public, so anyone can compose a well-formed
+# MERGE line for the current code. Write access is the boundary; the login is
+# not, because the maintainer's verdicts must count too.
+TRUSTED_ASSOCIATIONS = ("OWNER", "MEMBER", "COLLABORATOR")
 
 VERDICT_RE = re.compile(
     r"^Verdict: (?P<decision>MERGE|FIX-FIRST|HOLD)"
@@ -100,9 +116,18 @@ class Result:
 
     def __init__(self, exit_code: int, lines: list[str], verdict: Verdict | None = None,
                  head: str | None = None, patch: str | None = None,
-                 head_ok: bool = False, patch_ok: bool = False):
+                 head_ok: bool = False, patch_ok: bool = False,
+                 stderr_lines: list[str] | None = None,
+                 head_moved_during_check: bool = False):
+        # True only when the caller named the head it had already checked and
+        # the PR has moved since: a different fact from "the verdict is stale",
+        # and the caller must abandon its pass rather than restate it.
+        self.head_moved_during_check = head_moved_during_check
         self.exit_code = exit_code
         self.lines = lines
+        # Notes rather than verdict: printed to stderr so a caller capturing
+        # stdout gets the judgement and nothing else.
+        self.stderr_lines = stderr_lines or []
         self.verdict = verdict
         self.head = head
         self.patch = patch
@@ -135,6 +160,16 @@ def parse_verdict(body: str) -> tuple[Verdict | None, str | None]:
         # they already posted.
         if "Verdict:" in last:
             return None, f"malformed verdict line: {last!r}"
+        # ...and anywhere in the COMMENT, not just in its last line. A verdict
+        # followed by a signature is the single most likely way to write one
+        # wrong, and treating that comment as carrying no verdict at all leaves
+        # an OLDER verdict standing as the newest actionable one -- a newer HOLD
+        # then reads as the earlier MERGE.
+        for l in lines[:-1]:
+            if VERDICT_RE.match(l.strip()) or "Verdict:" in l:
+                return None, ("malformed verdict comment: a verdict line is present "
+                              f"but {last!r} follows it -- the verdict must be the "
+                              "LAST non-empty line, with the signature above it")
         return None, None
     decision, reason = m.group("decision"), m.group("reason")
     if decision == "MERGE" and reason is not None:
@@ -157,8 +192,14 @@ def newest_verdict(comments: list[dict]) -> tuple[Verdict | None, str | None]:
     earlier MERGE standing, which is the exact mis-arming this grammar exists to
     stop (https://fbakkensen.github.io/al-runner-retro/#e-11).
     """
+    # An edited comment carries its new text under its ORIGINAL created_at, so
+    # ordering on that alone reads a corrected verdict as older than the one it
+    # corrects. Newest of the two timestamps is what "the reviewer's latest
+    # word" means.
     ordered = sorted(comments or [],
-                     key=lambda c: (str(c.get("created_at") or ""), c.get("id") or 0),
+                     key=lambda c: (max(str(c.get("created_at") or ""),
+                                        str(c.get("updated_at") or "")),
+                                    c.get("id") or 0),
                      reverse=True)
     malformed = None
     for c in ordered:
@@ -168,6 +209,28 @@ def newest_verdict(comments: list[dict]) -> tuple[Verdict | None, str | None]:
         if bad and malformed is None:
             malformed = bad
     return None, malformed
+
+
+def filter_trusted(comments: list[dict]) -> tuple[list[dict], list[str]]:
+    """(comments that may carry a verdict, notes about the ones dropped).
+
+    A comment with no `author_association` at all is dropped too: the field is
+    on every GitHub comment payload, so its absence means the payload did not
+    come from GitHub, and defaulting an unknown author to trusted is the whole
+    hole this closes.
+    """
+    kept, dropped = [], {}
+    for c in comments or []:
+        assoc = str(c.get("author_association") or "NONE").upper()
+        if assoc in TRUSTED_ASSOCIATIONS:
+            kept.append(c)
+        else:
+            login = (c.get("user") or {}).get("login") or "?"
+            dropped[f"{login} ({assoc})"] = dropped.get(f"{login} ({assoc})", 0) + 1
+    notes = [f"note: ignoring {n} comment(s) from {who} -- a verdict counts only "
+             f"from {', '.join(TRUSTED_ASSOCIATIONS)}"
+             for who, n in sorted(dropped.items())]
+    return kept, notes
 
 
 def _default_runner(argv: list[str], input: str | None = None) -> tuple[int, str]:
@@ -202,27 +265,44 @@ def load_json(text: str):
     return out
 
 
-def compute_patch_id(base_ref: str, head: str, *, brunner=_default_brunner,
-                     repo_dir: str | None = None) -> tuple[str | None, str]:
-    """(first 12 hex of the stable patch-id, note). None when it cannot be had.
+_HUNK = re.compile(rb"^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@.*$", re.MULTILINE)
+_INDEX = re.compile(rb"^index [0-9a-f]+\.\.[0-9a-f]+.*$", re.MULTILINE)
 
-    An empty patch-id is never a value: `git diff` printing nothing means the
-    range did not resolve as often as it means an empty change, and a caller
-    that treats "" as a patch would compare it equal to another "".
+
+def canonical_diff(diff: bytes) -> bytes:
+    """A diff reduced to what a rebase does NOT change, byte-exact otherwise.
+
+    Two properties are needed at once and `git patch-id` gives only the first:
+
+    * **rebase-invariant** -- a clean rebase shifts line numbers and blob hashes
+      without changing the change, so hunk headers and `index` lines are dropped.
+    * **whitespace-sensitive** -- `git patch-id` normalises whitespace away, so
+      it answers the same id for two diffs that differ only in indentation. In
+      Python that is a behaviour change (a line moved into or out of a
+      conditional), and a fingerprint that cannot see it would license an
+      arm-check on a diff that is not the reviewed one. Content lines are
+      therefore kept byte for byte.
+    """
+    out = _HUNK.sub(b"@@", diff)
+    return _INDEX.sub(b"index", out)
+
+
+def compute_patch_fingerprint(base_ref: str, head: str, *, brunner=_default_brunner,
+                              repo_dir: str | None = None) -> tuple[str | None, str]:
+    """(first 12 hex of sha256(canonical diff), note). None when it cannot be had.
+
+    An empty diff is never a value: `git diff` printing nothing means the range
+    did not resolve as often as it means an empty change, and a caller that
+    treats "" as a fingerprint would compare it equal to another "".
     """
     pre = ["git"] + (["-C", repo_dir] if repo_dir else [])
     rc, diff = brunner(pre + ["diff", f"{base_ref}...{head}"])
     if rc != 0:
         return None, f"git diff {base_ref}...{head} failed (rc={rc})"
-    rc, out = brunner(pre + ["patch-id", "--stable"], input=diff)
-    if rc != 0:
-        return None, f"git patch-id failed (rc={rc})"
-    text = (out or b"").decode("utf-8", "replace").strip()
-    token = text.split()[0] if text else ""
-    if not re.fullmatch(r"[0-9a-f]{40}", token):
-        return None, ("git patch-id produced no id -- the diff was empty or the "
+    if not (diff or b"").strip():
+        return None, ("git diff produced nothing -- the diff was empty or the "
                       "range did not resolve")
-    return token[:12], ""
+    return hashlib.sha256(canonical_diff(diff)).hexdigest()[:12], ""
 
 
 def _remote_for(repo: str, runner) -> str | None:
@@ -244,8 +324,13 @@ def patch_id_for_pr(repo: str, pr: str, head: str, base: str,
     remote = _remote_for(repo, runner)
     if not remote:
         return None, f"no configured git remote points at {repo}"
-    runner(["git", "fetch", "--quiet", remote, f"refs/pull/{pr}/head"])
-    runner(["git", "fetch", "--quiet", remote, base])
+    # A fetch that failed leaves whatever refs were already on disk, and the
+    # comparison then silently answers about older code. Read both return codes.
+    for spec in (f"refs/pull/{pr}/head", base):
+        rc, out = runner(["git", "fetch", "--quiet", remote, spec])
+        if rc != 0:
+            return None, (f"git fetch {remote} {spec} failed (rc={rc}) -- refusing to "
+                          f"compare against cached refs: {out.splitlines()[0][:120] if out else ''}")
     base_ref = f"{remote}/{base}"
     rc, _ = runner(["git", "rev-parse", "--verify", "--quiet", base_ref + "^{commit}"])
     if rc != 0:
@@ -253,7 +338,7 @@ def patch_id_for_pr(repo: str, pr: str, head: str, base: str,
     rc, _ = runner(["git", "rev-parse", "--verify", "--quiet", head + "^{commit}"])
     if rc != 0:
         return None, f"the head commit {head[:8]} is not in this checkout"
-    return compute_patch_id(base_ref, head, brunner=brunner)
+    return compute_patch_fingerprint(base_ref, head, brunner=brunner)
 
 
 def read_pr(repo: str, pr: str, runner) -> dict | None:
@@ -272,7 +357,7 @@ def read_comments(repo: str, pr: str, runner) -> list | None:
     # and review objects are 1 of 796 here, so a verdict is always an issue
     # comment on the PR.
     rc, out = runner(["gh", "api", f"repos/{repo}/issues/{pr}/comments",
-                      "--paginate"])
+                      "--paginate"])  # the payload carries author_association
     if rc != 0:
         return None
     try:
@@ -281,7 +366,8 @@ def read_comments(repo: str, pr: str, runner) -> list | None:
         return None
 
 
-def evaluate(repo: str, pr: str, *, runner=None, patch_id_of=None) -> Result:
+def evaluate(repo: str, pr: str, *, runner=None, patch_id_of=None,
+             expect_head: str | None = None) -> Result:
     """The judgement, with no printing and no argparse, so tests can drive it."""
     runner = runner or _default_runner
     patch_id_of = patch_id_of or (
@@ -294,12 +380,21 @@ def evaluate(repo: str, pr: str, *, runner=None, patch_id_of=None) -> Result:
             return Result(3, lines)
         head = pr_json["headRefOid"]
         base = pr_json.get("baseRefName") or "main"
+        if expect_head and head != expect_head:
+            # The caller checked other things against expect_head. Answering
+            # about a different commit would let a multi-check pass mix two
+            # heads and stamp the newer one as reviewed.
+            lines.append(f"the head of PR #{pr} moved during this check: "
+                         f"{expect_head[:12]} -> {head[:12]}. Nothing is judged; "
+                         "start the pass again against the new head.")
+            return Result(2, lines, head=head, head_moved_during_check=True)
 
         comments = read_comments(repo, pr, runner)
         if comments is None:
             lines.append(f"could not read the comments on PR #{pr} -- no verdict.")
             return Result(3, lines)
 
+        comments, untrusted = filter_trusted(comments)
         verdict, malformed = newest_verdict(comments)
         if verdict is not None and malformed:
             lines.append(malformed)
@@ -307,7 +402,7 @@ def evaluate(repo: str, pr: str, *, runner=None, patch_id_of=None) -> Result:
                          f"({verdict.decision} on {verdict.head[:12]}), so the readable "
                          "one is not the current answer -- refusing to judge on it.")
             lines.append("  " + GRAMMAR)
-            return Result(3, lines)
+            return Result(3, lines, stderr_lines=untrusted)
         if verdict is None:
             if malformed:
                 lines.append(malformed)
@@ -317,13 +412,14 @@ def evaluate(repo: str, pr: str, *, runner=None, patch_id_of=None) -> Result:
                 lines.append(f"PR #{pr} carries no verdict comment "
                              f"({len(comments)} comment(s) read). The grammar is:")
             lines.append("  " + GRAMMAR)
-            return Result(3, lines)
+            return Result(3, lines, stderr_lines=untrusted)
 
         patch, note = patch_id_of(repo, pr, head, base, runner)
         if not patch:
             lines.append(f"could not compute the patch-id for PR #{pr}: {note}")
             lines.append("Without it a MERGE verdict cannot be tied to a diff -- no verdict.")
-            return Result(3, lines, verdict=verdict, head=head)
+            return Result(3, lines, verdict=verdict, head=head,
+                          stderr_lines=untrusted)
 
         head_ok = verdict.head == head
         patch_ok = verdict.patch == patch
@@ -337,10 +433,10 @@ def evaluate(repo: str, pr: str, *, runner=None, patch_id_of=None) -> Result:
 
         if verdict.decision != "MERGE":
             lines.append(f"{verdict.decision} — do not arm auto-merge.")
-            return Result(1, lines, verdict, head, patch, head_ok, patch_ok)
+            return Result(1, lines, verdict, head, patch, head_ok, patch_ok, untrusted)
         if head_ok and patch_ok:
             lines.append("MERGE on the current head and the current patch.")
-            return Result(0, lines, verdict, head, patch, True, True)
+            return Result(0, lines, verdict, head, patch, True, True, untrusted)
         moved = ",".join(x for x, ok in (("head", head_ok), ("patch", patch_ok)) if not ok)
         lines.append(f"MOVED: {moved}")
         lines.append("A MERGE verdict exists, but it was given on other code. "
@@ -348,7 +444,7 @@ def evaluate(repo: str, pr: str, *, runner=None, patch_id_of=None) -> Result:
                         "pass is enough (tools/arm-check.py)."
                         if patch_ok else
                         "The diff itself changed, so a full review is owed."))
-        return Result(2, lines, verdict, head, patch, head_ok, patch_ok)
+        return Result(2, lines, verdict, head, patch, head_ok, patch_ok, untrusted)
     except Exception as exc:  # a broken environment is never a verdict
         lines.append(f"could not judge PR #{pr}: {exc.__class__.__name__}: {exc}")
         return Result(3, lines)
@@ -380,7 +476,7 @@ def freshness_gate(paths: list[str], *, remote_check: bool = True) -> tuple[bool
     return refused, out
 
 
-def main() -> int:
+def main(argv: list[str] | None = None, *, runner=None, patch_id_of=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("pr")
@@ -390,32 +486,69 @@ def main() -> int:
                          "head and patch-id, for the reviewer to paste")
     ap.add_argument("--kind", choices=("full", "arm-check"), default="full",
                     help="which pass produced the verdict being stamped (default: full)")
+    ap.add_argument("--head", metavar="SHA",
+                    help="with --stamp: the head SHA to stamp, instead of asking gh "
+                         "(for a session with no gh -- read it through "
+                         "mcp__github__pull_request_read)")
+    ap.add_argument("--patch", metavar="ID",
+                    help="with --stamp: the 12-hex fingerprint to stamp, instead of "
+                         "computing it from this checkout")
+    ap.add_argument("--base", default="main", metavar="BRANCH",
+                    help="with --stamp --head: the base branch the fingerprint is "
+                         "taken against (default: main)")
     ap.add_argument("--no-freshness-fetch", action="store_true",
                     help="skip the ls-remote that confirms the local origin/main ref")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
+    if (args.head or args.patch) and not args.stamp:
+        ap.error("--head/--patch are inputs to --stamp; reading a verdict takes "
+                 "neither, because it reports the PR's CURRENT head and fingerprint")
+    if args.patch and not re.fullmatch(r"[0-9a-f]{12}", args.patch):
+        ap.error("--patch must be 12 lowercase hex characters, as printed by --stamp")
+    if args.head and not re.fullmatch(r"[0-9a-f]{40}", args.head):
+        ap.error("--head must be a full 40-character SHA, not an abbreviation")
 
+    # --stamp's stdout is pasted into a comment, and gets captured with $(...).
+    # Anything else it prints becomes part of the verdict line, so under --stamp
+    # every note goes to stderr and stdout carries exactly one line.
+    notes_to = sys.stderr if args.stamp else sys.stdout
     refused, notes = freshness_gate([os.path.abspath(__file__)],
                                     remote_check=not args.no_freshness_fetch)
     for line in notes:
-        print(line)
+        print(line, file=notes_to)
     if refused:
         return 3
 
+    runner = runner or _default_runner
     if args.stamp:
-        runner = _default_runner
-        pr_json = read_pr(args.repo, args.pr, runner)
-        if not pr_json or not pr_json.get("headRefOid"):
-            print(f"could not read PR #{args.pr} on {args.repo}", file=sys.stderr)
-            return 3
-        patch, note = patch_id_for_pr(args.repo, args.pr, pr_json["headRefOid"],
-                                      pr_json.get("baseRefName") or "main", runner)
+        if args.head:
+            # No gh at all on this path: the caller read the head elsewhere.
+            head, base = args.head, args.base
+        else:
+            pr_json = read_pr(args.repo, args.pr, runner)
+            if not pr_json or not pr_json.get("headRefOid"):
+                print(f"could not read PR #{args.pr} on {args.repo}", file=sys.stderr)
+                return 3
+            head = pr_json["headRefOid"]
+            base = pr_json.get("baseRefName") or "main"
+        if args.patch:
+            patch, note = args.patch, ""
+        elif args.head:
+            # Local git only -- no refs/pull fetch, because that needs gh's repo
+            # too; the caller's checkout must already carry the commit.
+            patch, note = compute_patch_fingerprint(f"origin/{base}", head)
+        else:
+            patch, note = (patch_id_of(args.repo, args.pr, head, base, runner)
+                           if patch_id_of else
+                           patch_id_for_pr(args.repo, args.pr, head, base, runner))
         if not patch:
             print(f"could not compute the patch-id: {note}", file=sys.stderr)
             return 3
-        print(stamp(pr_json["headRefOid"], patch, args.kind))
+        print(stamp(head, patch, args.kind))
         return 0
 
-    res = evaluate(args.repo, args.pr)
+    res = evaluate(args.repo, args.pr, runner=runner, patch_id_of=patch_id_of)
+    for line in res.stderr_lines:
+        print(line, file=sys.stderr)
     for line in res.lines:
         print(line)
     return res.exit_code

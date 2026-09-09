@@ -199,12 +199,21 @@ so nothing could extract one, and a hold-worded review could be armed for auto-m
 So the **last line** of your comment is fixed, and nothing follows it:
 
 ```
-Verdict: MERGE|FIX-FIRST|HOLD (<reason, only for FIX-FIRST/HOLD>) — head <full 40-char sha> — patch <patch-id first 12 hex> — kind: full|arm-check
+Verdict: MERGE|FIX-FIRST|HOLD (<reason, only for FIX-FIRST/HOLD>) — head <full 40-char sha> — patch <diff fingerprint, 12 hex> — kind: full|arm-check
 ```
 
 Run `tools/pr-verdict.py --stamp <PR>` at review time: it prints everything from `— head`
-onward for you to paste after your decision. It reads the head from `gh pr view --json
-headRefOid` and the patch from `git diff <merge-base>...<head> | git patch-id --stable`.
+onward for you to paste after your decision, and nothing else on stdout. It reads the head from
+`gh pr view --json headRefOid` and fingerprints `git diff <merge-base>...<head>` with hunk
+headers and blob hashes removed — so the fingerprint survives a clean rebase and is
+**whitespace-sensitive on purpose**, because `git patch-id` normalises whitespace away and would
+answer the same id for a line moved into or out of a conditional.
+
+**In a session without `gh`** (`github-access.md`): read `headRefOid` through
+`mcp__github__pull_request_read` and pass it — `tools/pr-verdict.py --stamp <PR> --head <sha>`
+computes the fingerprint from your own checkout with `git` alone, and `--patch <id>` skips even
+that. Reading someone else's verdict stays `gh`-only; it is a GitHub query with no local
+equivalent, so on that path the tool refuses rather than guessing.
 
 - **The reason is required for FIX-FIRST and HOLD, and forbidden on MERGE.** A line that gets
   this wrong is reported as *malformed*, which is not a verdict.
