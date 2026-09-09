@@ -110,7 +110,7 @@ check, and the code carries a pointer to it rather than a second copy of it.
 matching the code with nothing failing. That is a real cost and it is why the pointer is
 mandatory rather than optional: a reader who finds the claim finds the document. Where the moved
 prose carries a load-bearing claim, pin it with a drift test — this repository already has
-roughly ten of them (`BcMatrixDocumentationDriftTests`, `CliDocumentationTests` and siblings),
+roughly ten of them (`tools/test_matrix_docs_drift.py`, `CliDocumentationTests` and siblings),
 so the pattern is established rather than proposed.
 
 ## Anti-patterns (don't ship these)

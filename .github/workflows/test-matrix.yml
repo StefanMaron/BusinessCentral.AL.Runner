@@ -49,10 +49,13 @@ jobs:
     # cheap docs-only success as "this SHA has a conclusive verdict" and would then
     # never establish the eight-leg one a superseded run was cancelled out of.
     #
-    # What a docs-only pull request gives up: the unit tests that read .md files
-    # (BcMatrixDocumentationDriftTests, ProseRelocationPointerTests,
-    # AgentWorktreePathCollisionGuardTests) run on the merge commit's push, not on
-    # the pull request. A drift they catch surfaces as a red main, not a red PR.
+    # The unit tests that read .md files used to be what a docs-only pull request
+    # gave up -- they ran on the merge commit's push, so a drift surfaced as a red
+    # main rather than a red PR. All three have since moved to tools/test_*.py,
+    # which pr-gate.yml runs on every pull request: ProseRelocationPointerTests ->
+    # tools/test_doc_pointers.py (#3425), and BcMatrixDocumentationDriftTests +
+    # AgentWorktreePathCollisionGuardTests -> tools/test_matrix_docs_drift.py
+    # (#3426). Keep new .md-reading guards there, not in AlRunner.Tests.
     name: Classify the change
     runs-on: ubuntu-latest
     outputs:

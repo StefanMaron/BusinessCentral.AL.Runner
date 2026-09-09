@@ -277,10 +277,11 @@ the dispatch or an empty commit over reading a pattern out of three data points.
 **A pull request whose every changed path ends in `.md` runs no legs at all** (#2890):
 `test-matrix.yml`'s `changes` job measures the diff through `pr_changed_files.sh`, `bc-tests`
 is skipped, and `BC test matrix passed` still reports — success, with a step log saying the
-matrix was not run. The decision comes from the diff, never from the `docs-only` label. `BcMatrixDocumentationDriftTests` still runs on the merge commit's push to `main` rather than
-on the PR. The doc-pointer checks do NOT: `tools/test_doc_pointers.py` replaced the old
-`ProseRelocationPointerTests` precisely so they gate a docs-only PR, under the required
-`tools/ unit tests` context.
+matrix was not run. The decision comes from the diff, never from the `docs-only` label. The
+guards that read `.md` files do NOT depend on the matrix any more: `tools/test_doc_pointers.py`
+replaced `ProseRelocationPointerTests` (#3425) and `tools/test_matrix_docs_drift.py` replaced
+`BcMatrixDocumentationDriftTests` and `AgentWorktreePathCollisionGuardTests` (#3426), precisely
+so they gate a docs-only PR, under the required `tools/ unit tests` context.
 
 Read the result with `tools/ci-wait.py <PR> --timeout 0`; do **not** block on it and do not
 hand-roll a `gh run view` poll loop (section 0). Anything other than `completed` means "not yet
