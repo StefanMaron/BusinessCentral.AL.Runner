@@ -1965,8 +1965,14 @@ internal class LiveNavTestPage : MockITestPage
         // above flushes only this page's own row, so without this the trigger sees a part one
         // row short and a page that materialises its part contents on OK saves nothing (#3701).
         // Measured on a real service tier: corpus codeunit 60663 "Opf Ok Part Flush Tests"
-        // (StefanMaron/BusinessCentral.AL.Language.Tests#315). Same order as Close()/Dispose():
-        // parts first, because a part's OnValidate can touch the header.
+        // (StefanMaron/BusinessCentral.AL.Language.Tests#315).
+        //
+        // Order here is row THEN parts -- the reverse of Close()/Dispose()/SaveCurrentRow(),
+        // which flush parts first so a part's OnValidate still finds an unflushed header. Both
+        // orders are safe because each flush latches: FlushPendingNewRow/FlushPendingModify
+        // clear their flag on entry, so the later Close()/Dispose() pass writes nothing twice.
+        // Do not delete Invoke()'s FlushRow() on the strength of this call -- FlushParts() does
+        // not write the host page's own row, and no test here would catch its loss.
         FlushParts();
 
         // Both refusals leave the form OPEN and raise nothing here, which is what makes
