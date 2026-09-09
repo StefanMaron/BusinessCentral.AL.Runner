@@ -82,6 +82,19 @@ entry fails the run with "remove the entry"; one that starts throwing OOS withou
 fails with "add an entry". With a moving corpus that drift can arrive without anyone here
 pushing anything, which is a red `main` to fix rather than a mystery.
 
+**A corpus merge that reds `main` is answered on the next coordinator sweep — with a fix, or
+with an `expect-fail-known-gap` entry linking an open issue. Never by waiting.** That is the
+pin's cost, paid where it belongs: the pin used to hold a red corpus commit outside the
+repository until someone chose to take it, and nothing chooses now. So for each corpus test
+newly failing, either land the runner fix, or add an entry naming the issue that tracks it —
+searching the open queue first and filing a runner-gap issue only when none exists
+(`file-issues-for-gaps.md`). Two things to get right, both learned the first time this fired
+(#3737, corpus PR #273 → six failures on `Codeunit60559.RunObjectNaming*`, tracked by #2943):
+name the **methods**, not `Method: "*"`, unless every test in the codeunit fails — two of that
+codeunit's eight passed, and a wildcard would have claimed those as failures and drifted the
+other way; and read the failing set from a leg that **finished**, because a leg that died in its
+unit tests never ran the corpus at all and reports no failures rather than none.
+
 ## Which tests belong here at all
 
 `bc-behavior-tests-go-upstream.md` decides that in both directions — what goes upstream, and
