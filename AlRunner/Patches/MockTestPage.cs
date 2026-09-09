@@ -3933,7 +3933,24 @@ internal sealed class LiveNavTestField : ITestField
     }
 
     public void Lookup(NavDataSet dataSet) => Lookup();
-    public void AssistEdit() { }
+
+    /// <summary>
+    /// Run the control's OnAssistEdit trigger — see RunnerPageInstance.RaiseOnAssistEdit,
+    /// including why a control with no such trigger stays silent here rather than refusing.
+    /// Was a literal no-op (#2362, #3642), so a page's declared OnAssistEdit never ran and
+    /// nothing said so: the UI handlers the test bound for what that trigger raises went
+    /// unexecuted and the test failed at teardown, pointing at the handlers rather than here.
+    /// </summary>
+    public void AssistEdit()
+    {
+        if (_page == null)
+            throw TestPageShapeGap.AssistEdit(
+                $"TestPage assist-edit on field {_fieldNo}",
+                "no AL page object was built for this page, so its OnAssistEdit trigger cannot "
+                + "be reached");
+
+        _page.RaiseOnAssistEdit(_controlId);
+    }
 
     /// <summary>
     /// Run the control's OnDrillDown trigger — see RunnerPageInstance.RaiseOnDrillDown for the
@@ -4193,7 +4210,8 @@ internal sealed class PageVariableTestField : ITestField
         if (picked != null) Value = picked.ToString();
     }
     public void Lookup(NavDataSet dataSet) => Lookup();
-    public void AssistEdit() { }
+    /// <summary>Run the control's OnAssistEdit trigger — see LiveNavTestField.AssistEdit.</summary>
+    public void AssistEdit() => _page.RaiseOnAssistEdit(_controlId);
     /// <summary>Run the control's OnDrillDown trigger — see LiveNavTestField.Drilldown.</summary>
     public void Drilldown() => _page.RaiseOnDrillDown(_controlId);
     public void Invoke() { }

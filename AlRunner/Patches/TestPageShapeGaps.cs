@@ -235,6 +235,14 @@ internal static class TestPageShapeGap
         => Build(api, "testpage-drilldown", detail);
 
     /// <summary>
+    /// An OnAssistEdit trigger the runner could not reach. Raised only when there is no AL page
+    /// object to ask at all — a control that HAS no OnAssistEdit is silent rather than refused,
+    /// because BC's own ALAssistEdit raises nothing there either (RunnerPageInstance.RaiseOnAssistEdit).
+    /// </summary>
+    internal static RunnerOutOfScopeException AssistEdit(string api, string detail)
+        => Build(api, "testpage-assist-edit", detail);
+
+    /// <summary>
     /// Two emitted methods on one object resolving to a single member id. The surface is passed
     /// in because the caller serves OnValidate, OnAction, OnLookup and OnDrillDown from one
     /// method and the anchor names which one was being resolved.
