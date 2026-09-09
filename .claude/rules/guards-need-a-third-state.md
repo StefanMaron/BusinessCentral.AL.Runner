@@ -28,10 +28,20 @@ from the success state**, and that the message says which of the three it is.
   read that comes back **narrower** than the built-in floor is refused as `degraded` rather than
   judged on the smaller set, because "a partial read and a context genuinely removed by a person
   look identical here" (#3002).
-- **`.github/scripts/check_corpus_pin_forward.sh`, exit 3** via `die_undetermined`, used at five
-  call sites — an unchecked-out submodule, a shallow clone, a corpus commit absent from the
-  clone, a `merge-base` that failed rather than answering. Each message says *this is a checkout
-  problem, not a verdict about the pin*.
+- **`.github/scripts/check_corpus_pin_forward.sh`, exit 3** via `die_undetermined`, used at seven
+  call sites — `.gitmodules` present but declaring no readable submodule path, `SUBMODULE_PATH`
+  naming no submodule the repository declares, the submodule present at one endpoint and absent
+  at the other, an unchecked-out submodule, a corpus commit absent from the clone, a shallow
+  clone, and a `merge-base` that failed rather than answering. What they share is not a common
+  cause: two name a checkout problem, one a change the guard has no basis to judge ("Adding or
+  removing the corpus submodule is not a pin bump… A human reviewer should"), one a measurement
+  the clone depth makes unreliable, three a broken measurement. What they share is that **none
+  resolves toward success** — `die_undetermined` unconditionally exits 3.
+
+  Count them with care: the definition line matches too, so a bare `grep -c die_undetermined`
+  answers **eight**. The first draft of this file said five and listed four; the correction said
+  five when #3683 had just made it seven. Both slips were the same one — trusting a count over
+  the enumeration.
 - **`tools/corpus-pass-count.py`, `classify()`** — `ran` / `failed` / `not-run` / `no-suite`, so
   "the codeunit is not in this leg's suite" and "this leg never reached the test phase" cannot
   be read as "your tests did not run". A zero has three meanings and a bare grep gives all three
@@ -113,8 +123,9 @@ neighbour is on this list.
    file absent, a key absent, a subprocess that failed rather than answering.
 2. **Give each a verdict that is not the success state**, and a message naming what could not be
    established and what would fix it. `check_corpus_pin_forward.sh`'s messages are the model:
-   they say *this is a checkout problem, not a verdict about the pin*, which sends the reader to
-   the right remedy instead of blaming the author.
+   each names its own cause — a checkout problem, a clone depth, a change only a human can judge —
+   rather than a generic refusal, which sends the reader to the right remedy instead of blaming
+   the author.
 3. **Check it before the work, not after.** #3681's guard puts the `PIN_PATH` check ahead of the
    changed-file scan, "because a `PIN_PATH` that names nothing has already made every verdict
    this script could reach meaningless — including the ones that look like passes."
