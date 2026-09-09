@@ -41,12 +41,19 @@
 // SCOPE — WHAT THIS DOES NOT CLAIM
 //   Ncl's provider fills 29 Report Metadata columns off NCLMetaReport. This fills the ones
 //   the document states directly and leaves the rest on BC's own GetDefaultNavValue, exactly
-//   as before. Sorting Fields and Request Filter Fields both resolve through a table's
-//   NCLMetaField numbering (GetSortingFieldsIfAny / GetRequestFilterFieldsIfAny), and
-//   ReqFilterFields is stated on the request page's filter control rather than on the data
-//   item at all — a separate resolution step this change does not take on; #3620 tracks it.
-//   Nothing here answers a column with a guess: a report with no registered document keeps
-//   the AL-derived row it had before.
+//   as before. Nothing here answers a column with a guess: a report with no registered
+//   document keeps the AL-derived row it had before.
+//
+// SORTING FIELDS AND REQUEST FILTER FIELDS — NO NCLMetaTable LOOKUP IS NEEDED (#3620)
+//   Ncl resolves both through a table's field numbering — GetSortingFieldsIfAny runs
+//   TableViewParser over DataItemTableView, GetRequestFilterFieldsIfAny calls
+//   NCLMetaTable.FindFieldMatch per name — so #3607 deferred them as "a different mechanism".
+//   Measured against the emitted document, that resolution has ALREADY HAPPENED at compile
+//   time: BC writes both as the Field<N> token form, and FindFieldMatch's first branch strips
+//   a "Field" prefix and parses the rest as a field number. So reading the numbers out of the
+//   document is not an approximation of BC's resolution — it lands on the identical value by
+//   the identical rule, without a table lookup and without a request-page build.
+//   docs/report-metadata-from-bc.md#sorting-and-request-filter-fields has the measurement.
 //
 // PRECOMPILED-DLL RESPECT
 //   Reads an XML document BC's own emitter produced. No BC method body is rewritten, no BC
@@ -66,8 +73,16 @@ public static partial class RecordPatches
         bool ProcessingOnly, bool UseRequestPage, string WordMergeDataItem,
         List<BcReportDocumentDataItem> DataItems);
 
+    /// <summary>
+    /// <see cref="SortingFields"/> and <see cref="RequestFilterFields"/> are already the
+    /// comma-separated FIELD NUMBERS Ncl's provider hands out, derived from the document by
+    /// <see cref="FieldNumbersFrom"/>. <see cref="ViewName"/> is the document's own
+    /// <c>DataItemViewName</c> — the key Ncl matches a data item to its request-page filter
+    /// control on, and the reason a filter control is reachable without building the page.
+    /// </summary>
     private sealed record BcReportDocumentDataItem(
-        int Id, string VarName, int TableId, int Indent, string TableView);
+        int Id, string VarName, int TableId, int Indent, string TableView,
+        string ViewName, string SortingFields, string RequestFilterFields);
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<int, BcReportDocument?>
         _bcReportDocuments = new();
@@ -118,10 +133,12 @@ public static partial class RecordPatches
 
     private static BcReportDocument ParseBcReportDocument(XmlElement root)
     {
+        var reqFilterFieldsByViewName = CollectBcRequestPageFilterFields(root);
+
         var items = new List<BcReportDocumentDataItem>();
         foreach (XmlNode child in root.ChildNodes)
             if (child is XmlElement e && e.Name == "DataItem")
-                CollectBcDataItem(e, items);
+                CollectBcDataItem(e, reqFilterFieldsByViewName, items);
 
         return new BcReportDocument(
             // AL's own defaults where the document is silent, which is what BC's emitter does
@@ -138,18 +155,131 @@ public static partial class RecordPatches
     /// anything that still pairs them up. DataItemIndent is read from the document rather than
     /// counted, because the document states it and a counted depth would be a second opinion.
     /// </summary>
-    private static void CollectBcDataItem(XmlElement item, List<BcReportDocumentDataItem> into)
+    private static void CollectBcDataItem(
+        XmlElement item, Dictionary<string, string> reqFilterFieldsByViewName,
+        List<BcReportDocumentDataItem> into)
     {
+        var viewName = ReadBcText(item, "DataItemViewName");
+        var tableView = ReadBcText(item, "DataItemTableView");
+
         into.Add(new BcReportDocumentDataItem(
             Id: ReadBcInt(item, "ID"),
             VarName: ReadBcText(item, "DataItemVarName"),
             TableId: ReadBcInt(item, "DataItemTable"),
             Indent: ReadBcInt(item, "DataItemIndent"),
-            TableView: ReadBcText(item, "DataItemTableView")));
+            TableView: tableView,
+            ViewName: viewName,
+            SortingFields: FieldNumbersFrom(SortingClauseOf(tableView)),
+            RequestFilterFields: FieldNumbersFrom(
+                viewName.Length > 0 && reqFilterFieldsByViewName.TryGetValue(viewName, out var rff)
+                    ? rff : string.Empty)));
 
         foreach (XmlNode child in item.ChildNodes)
             if (child is XmlElement e && e.Name == "DataItem")
-                CollectBcDataItem(e, into);
+                CollectBcDataItem(e, reqFilterFieldsByViewName, into);
+    }
+
+    /// <summary>
+    /// Every request-page filter control's <c>ReqFilterFields</c>, keyed by the
+    /// <c>DataColumnName</c> that matches a data item's <c>DataItemViewName</c> — the exact
+    /// pairing <c>ReportDataItemsDataProvider.GetReportDataItems</c> performs with
+    /// <c>filterControls.SingleOrDefault(x =&gt; x.DataColumnName == dataColumnName)</c>.
+    ///
+    /// <para>Walks the whole subtree rather than the documented nesting
+    /// (<c>RequestPage/PageDefinition/Content/Containers/Controls/Controls</c>): Ncl reaches
+    /// these through <c>RequestPageDefinition.FindAll</c>, which is also depth-agnostic, and a
+    /// control group nested one level deeper for an extra data item would otherwise be
+    /// silently dropped. The element is identified by its <c>xsi:type</c> attribute, because
+    /// every control in that tree is spelled <c>&lt;Controls&gt;</c>.</para>
+    ///
+    /// <para>A control with no <c>ReqFilterFields</c> attribute — the shape a data item that
+    /// declares none produces — is skipped rather than stored empty, so the two are
+    /// indistinguishable downstream, which is what BC does with a null: an absent entry and an
+    /// empty string both yield <c>string.Empty</c> from <c>GetRequestFilterFieldsIfAny</c>.</para>
+    ///
+    /// <para>A duplicate <c>DataColumnName</c> is dropped, not overwritten. Ncl's own
+    /// <c>SingleOrDefault</c> THROWS on that shape, so a document containing one is malformed;
+    /// answering nothing for the ambiguous data item is the closer of the two available
+    /// approximations to "no answer", and it cannot silently pick the wrong control.</para>
+    /// </summary>
+    private static Dictionary<string, string> CollectBcRequestPageFilterFields(XmlElement root)
+    {
+        var byViewName = new Dictionary<string, string>(StringComparer.Ordinal);
+        var ambiguous = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (XmlNode node in root.GetElementsByTagName("Controls"))
+        {
+            if (node is not XmlElement control) continue;
+            var type = control.GetAttribute("type", "http://www.w3.org/2001/XMLSchema-instance");
+            if (type != "FilterControlDefinition") continue;
+
+            var dataColumnName = control.GetAttribute("DataColumnName");
+            if (dataColumnName.Length == 0) continue;
+            if (!control.HasAttribute("ReqFilterFields")) continue;
+
+            if (!byViewName.TryAdd(dataColumnName, control.GetAttribute("ReqFilterFields")))
+                ambiguous.Add(dataColumnName);
+        }
+
+        foreach (var name in ambiguous) byViewName.Remove(name);
+        return byViewName;
+    }
+
+    /// <summary>
+    /// The contents of the compiled view's <c>SORTING(...)</c> clause, or empty when it states
+    /// none. The view is BC's own normal form — <c>SORTING(Field5,Field2) ORDER(1)
+    /// WHERE(Field5=1(&gt;A))</c> — so the clause is delimited by the first <c>)</c>: a field
+    /// token cannot contain one, and the parenthesised filter expressions that can all sit
+    /// inside WHERE, after this clause.
+    /// </summary>
+    private static string SortingClauseOf(string tableView)
+    {
+        const string marker = "SORTING(";
+        var start = tableView.IndexOf(marker, StringComparison.Ordinal);
+        if (start < 0) return string.Empty;
+        start += marker.Length;
+        var end = tableView.IndexOf(')', start);
+        return end < 0 ? string.Empty : tableView.Substring(start, end - start);
+    }
+
+    /// <summary>
+    /// A comma-separated list of the document's <c>Field&lt;N&gt;</c> tokens, rendered as the
+    /// comma-separated field NUMBERS both columns carry.
+    ///
+    /// <para>This is BC's own resolution rule, not an approximation of it.
+    /// <c>NCLMetaTable.FindFieldMatch</c> — which is what both
+    /// <c>GetRequestFilterFieldsIfAny</c> and, through <c>TableViewResolver.AddSortingField</c>,
+    /// <c>GetSortingFieldsIfAny</c> call — begins by stripping a leading <c>Field</c> (or
+    /// <c>#</c>) and returning <c>GetFieldByNo</c> of the remainder when it parses as an
+    /// integer. Every token BC's emitter writes into these two places is in that form, so the
+    /// name-lookup and prefix-fallback branches below it are never reached from here and no
+    /// <c>NCLMetaTable</c> is required. Verified on BC 28.1; the fixture measurement is in
+    /// docs/report-metadata-from-bc.md#sorting-and-request-filter-fields.</para>
+    ///
+    /// <para>A token in any other shape is DROPPED, which is what BC does with one it cannot
+    /// resolve: <c>GetRequestFilterFieldsIfAny</c> skips a null <c>FindFieldMatch</c> result
+    /// (it passes <c>trapError: true</c>) and <c>AddSortingField</c> traces and skips. Dropping
+    /// keeps the answer a list of field numbers in every case — never a name leaking into a
+    /// column whose contract is numbers, which is exactly the wrong answer this replaces.</para>
+    /// </summary>
+    private static string FieldNumbersFrom(string tokens)
+    {
+        if (string.IsNullOrEmpty(tokens)) return string.Empty;
+
+        var sb = new System.Text.StringBuilder();
+        foreach (var raw in tokens.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var token = raw.Trim();
+            if (token.StartsWith("Field", StringComparison.OrdinalIgnoreCase))
+                token = token.Substring(5);
+            else if (token.StartsWith('#'))
+                token = token.Substring(1);
+            if (!int.TryParse(token, out var fieldNo)) continue;
+
+            if (sb.Length > 0) sb.Append(',');
+            sb.Append(fieldNo);
+        }
+        return sb.ToString();
     }
 
     private static string ReadBcText(XmlElement parent, string name)
@@ -203,13 +333,12 @@ public static partial class RecordPatches
             // to claim one, so the whole row falls back rather than answering 0 — the same
             // refusal EnumerateKnownReports makes for a table it cannot resolve by name.
             if (di.TableId <= 0) return row;
+            // Both field-number columns come from the document (#3620). Neither falls back to
+            // the AL-derived text: the columns' contract is field NUMBERS, so the AL names the
+            // row used to carry were never a partial answer — they were a different answer.
             items.Add(new ReportDataItemRow(
                 di.Id, di.VarName, di.TableId, di.Indent, di.TableView,
-                // ReqFilterFields is stated on the request page's filter control, not on the
-                // data item, and BC resolves it to field NUMBERS. Keeping the AL-derived text
-                // is the honest half-answer until #3620 does that resolution; replacing it
-                // with "" would lose information the row already carried.
-                RequestFilterFieldsFor(row, di)));
+                di.RequestFilterFields, di.SortingFields));
         }
 
         return row with
@@ -220,18 +349,5 @@ public static partial class RecordPatches
             FirstDataItemTableId = FirstRootTableId(items),
             DataItems = items,
         };
-    }
-
-    /// <summary>
-    /// The AL-derived Request Filter Fields text for the data item BC calls
-    /// <paramref name="di"/>, matched by variable name — the one key both sources agree on,
-    /// since BC's id and the parser's ordinal are different numbers.
-    /// </summary>
-    private static string RequestFilterFieldsFor(ReportRow row, BcReportDocumentDataItem di)
-    {
-        foreach (var existing in row.DataItems)
-            if (string.Equals(existing.Name, di.VarName, StringComparison.OrdinalIgnoreCase))
-                return existing.RequestFilterFields;
-        return string.Empty;
     }
 }

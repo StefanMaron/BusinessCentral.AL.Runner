@@ -106,9 +106,15 @@ public static partial class RecordPatches
         string WordMergeDataItem, int FirstDataItemTableId,
         List<ReportDataItemRow> DataItems);
 
+    /// <summary>
+    /// <see cref="RequestFilterFields"/> and <see cref="SortingFields"/> carry BC's own answer
+    /// for those two columns: comma-separated field NUMBERS, not names. They are populated by
+    /// RecordPatches.ReportRowFromBcDocument from the report's emitted document, and are empty
+    /// for a report with no document (the AL parser cannot answer either one — see #3620).
+    /// </summary>
     private sealed record ReportDataItemRow(
         int Id, string Name, int RelatedTableId, int Indentation,
-        string DataItemTableView, string RequestFilterFields);
+        string DataItemTableView, string RequestFilterFields, string SortingFields = "");
 
     // Cached inventory both tables read. Rebuilt whenever the runner has learned about
     // more source-parsed reports or registered another dependency .app since the last
@@ -258,11 +264,14 @@ public static partial class RecordPatches
                 return _aovNavIntegerCreate!.Invoke(null, new object?[] { item.Indentation });
             case "dataitemtableview":
                 return Text(item.DataItemTableView);
+            // Both are comma-separated field NUMBERS on a real tier, and both are already in
+            // that form on the row — resolved from BC's own document, never from an AL name.
+            // A report with no document answers "" for both rather than a name, which is the
+            // type default and the same thing BC answers for a data item declaring neither.
             case "requestfilterfields":
                 return Text(item.RequestFilterFields);
-            // "Sorting Fields" is derived from the table view's sorting(...) clause on a
-            // real tier; the runner does not parse that expression, so it gets the type
-            // default rather than a guess. The full view text is on the row above it.
+            case "sortingfields":
+                return Text(item.SortingFields);
             default:
                 return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
         }
@@ -310,8 +319,17 @@ public static partial class RecordPatches
                         ok = false;
                         break;
                     }
+                    // RequestFilterFields is deliberately EMPTY here, not the AL text. The
+                    // column's contract is comma-separated field NUMBERS
+                    // (ReportDataItemsDataProvider.GetRequestFilterFieldsIfAny), and the AL
+                    // parser has only the names the source wrote. ApplyBcReportDocument
+                    // replaces this whole list with BC's own numbers whenever the report has
+                    // an emitted document, which for a source-compiled report is always;
+                    // handing out a name in the meantime was a wrong answer, not a partial
+                    // one (#3620). Same for Sorting Fields, which the AL text cannot answer
+                    // at all.
                     items.Add(new ReportDataItemRow(di.Ordinal, di.Name, tableId, di.Indentation,
-                        di.DataItemTableView ?? string.Empty, di.RequestFilterFields ?? string.Empty));
+                        di.DataItemTableView ?? string.Empty, string.Empty));
                 }
                 if (!ok) continue;
 
@@ -342,8 +360,23 @@ public static partial class RecordPatches
                     }
                     // The symbol file's own compiler-assigned data-item id when it has one,
                     // else declaration order. Never a fabricated hash.
+                    //
+                    // RequestFilterFields is run through the same Field<N> -> number rule the
+                    // emitted document goes through, because SymbolReference.json states it
+                    // in that identical form: measured on BC 28.1's Base Application, all 633
+                    // of its reports' RequestFilterFields values are Field<N> lists. So this
+                    // path reaches BC's answer with no NCLMetaTable lookup either (#3620).
+                    //
+                    // Sorting Fields stays empty on this path, which is BC's own default for
+                    // a column it cannot compute. Unlike the document, a symbol file's
+                    // DataItemTableView is the AL SOURCE TEXT — sorting("Company Name"), field
+                    // NAMES — so answering it here would need a real per-table field lookup
+                    // for all 659 reports at virtual-table population time, which is the cost
+                    // this file's header records as having blown the 60s watchdog. Empty is
+                    // the honest answer; #3620's PR body records it as deliberately left.
                     items.Add(new ReportDataItemRow(di.Id != 0 ? di.Id : ordinal, di.Name, tableId, di.Indentation,
-                        di.DataItemTableView ?? string.Empty, di.RequestFilterFields ?? string.Empty));
+                        di.DataItemTableView ?? string.Empty,
+                        FieldNumbersFrom(di.RequestFilterFields ?? string.Empty)));
                 }
                 if (!ok) continue;
 

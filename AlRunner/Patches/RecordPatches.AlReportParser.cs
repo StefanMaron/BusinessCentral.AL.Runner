@@ -101,8 +101,7 @@ public static partial class RecordPatches
             // A namespaced reference collapses to its last segment.
             RelatedTable: LastNameSegment(di.DataItemTable?.ToString()),
             Indentation: indentation,
-            DataItemTableView: TableViewText(PropertyTextFrom(PropValue(props, "DataItemTableView"))),
-            RequestFilterFields: PropertyTextFrom(PropValue(props, "RequestFilterFields"))));
+            DataItemTableView: TableViewText(PropertyTextFrom(PropValue(props, "DataItemTableView")))));
 
         foreach (var child in di.Elements.OfType<NavSyntax.ReportDataItemSyntax>())
             AddDataItem(child, indentation + 1, result);
@@ -152,6 +151,12 @@ internal record ParsedReport(int Id, string Name, bool IsExtension, bool Process
 /// One entry of a report's data-item tree, as the Report Data Items virtual table
 /// (2000000203) exposes it. <paramref name="Ordinal"/> is 1-based declaration order.
 /// </summary>
+/// <remarks>
+/// Carries no RequestFilterFields. The Report Data Items column of that name reports
+/// comma-separated field NUMBERS, which the AL text cannot state — BC's own emitted document
+/// does, already resolved, and RecordPatches.ReportRowFromBcDocument reads it from there
+/// (#3620). Parsing the AL names here only ever produced a value of the wrong kind.
+/// </remarks>
 internal record ParsedReportDataItem(
     int Ordinal, string Name, string RelatedTable, int Indentation,
-    string? DataItemTableView, string? RequestFilterFields);
+    string? DataItemTableView);
