@@ -861,7 +861,7 @@ public sealed class DependencyResolverTests : IDisposable
         // 27.0/27.3 tolerance above.
         Assert.Contains("Library Assert", result.Select(r => r.Manifest.Name));
 
-        var report = Assert.Single(resolver.UnservableDependencies, d => d.Contains("Library Assert", StringComparison.Ordinal));
+        var report = Assert.Single(resolver.ProvisioningGaps, d => d.Contains("Library Assert", StringComparison.Ordinal));
         Assert.Contains("Microsoft/System", report, StringComparison.Ordinal);
         Assert.Contains("28.0.0.0", report, StringComparison.Ordinal);   // the declared floor
         Assert.Contains("27.0.38460.0", report, StringComparison.Ordinal); // what was found instead
@@ -889,7 +889,7 @@ public sealed class DependencyResolverTests : IDisposable
             new DependencyRef(Guid.Parse(assertId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
         });
 
-        var report = Assert.Single(resolver.UnservableDependencies, d => d.Contains("Library Assert", StringComparison.Ordinal));
+        var report = Assert.Single(resolver.ProvisioningGaps, d => d.Contains("Library Assert", StringComparison.Ordinal));
         Assert.Contains("Microsoft/System", report, StringComparison.Ordinal);
         Assert.Contains("28.0.0.0", report, StringComparison.Ordinal);
         Assert.Contains("provision", report, StringComparison.OrdinalIgnoreCase);
@@ -915,7 +915,7 @@ public sealed class DependencyResolverTests : IDisposable
             new DependencyRef(Guid.Parse(depId), "Precompiled", "Contoso", new Version(1, 0, 0, 0)),
         });
 
-        Assert.DoesNotContain(resolver.UnservableDependencies, d => d.Contains("Microsoft/System", StringComparison.Ordinal));
+        Assert.DoesNotContain(resolver.ProvisioningGaps, d => d.Contains("Microsoft/System", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -940,7 +940,88 @@ public sealed class DependencyResolverTests : IDisposable
         });
 
         Assert.Equal(new[] { "System", "Library Assert" }, result.Select(r => r.Manifest.Name).ToArray());
-        Assert.DoesNotContain(resolver.UnservableDependencies, d => d.Contains("Microsoft/System", StringComparison.Ordinal));
+        Assert.DoesNotContain(resolver.ProvisioningGaps, d => d.Contains("Microsoft/System", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The gate is three predicates, and only the AL-source one had a fact of its own: the
+    /// R2R negative used a fixture with no AL source either, so a wrong gate consisting only
+    /// of `if (!HasAlSource) return` passed everything (#3810 review). This package has BOTH
+    /// an R2R payload AND AL source, so it separates them — Tier-2 serves it, and it must
+    /// stay silent.
+    /// </summary>
+    [Fact]
+    public void PackageWithBothR2RAndAlSource_FloorAbsent_IsNotReported()
+    {
+        var dir = MakeDir("FloorR2RPlusSource");
+        var depId = "00000000-0000-0000-0000-0000000c2222";
+        File.WriteAllBytes(Path.Combine(dir, "Contoso_Both.app"),
+            MakeMinimalApp(depId, "Both", "Contoso", "1.0.0.0", r2r: true, alSource: true, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(depId), "Both", "Contoso", new Version(1, 0, 0, 0)),
+        });
+
+        Assert.Empty(resolver.ProvisioningGaps);
+    }
+
+    /// <summary>
+    /// One floor unmet for two source-bearing packages is two reports, one per owner — they
+    /// name different packages and a reader needs both. The same (owner, floor) pair twice is
+    /// not, and a second Resolve on one resolver must not duplicate what the first said
+    /// (#3810 review).
+    /// </summary>
+    [Fact]
+    public void UnsuppliableFloor_IsReportedOncePerOwner_AndNotRepeatedAcrossResolves()
+    {
+        var dir = MakeDir("FloorDedup");
+        var oneId = "00000000-0000-0000-0000-0000000d1111";
+        var twoId = "00000000-0000-0000-0000-0000000d2222";
+        File.WriteAllBytes(Path.Combine(dir, "Contoso_One.app"),
+            MakeMinimalApp(oneId, "One", "Contoso", "1.0.0.0", r2r: false, alSource: true, platform: "28.0.0.0"));
+        File.WriteAllBytes(Path.Combine(dir, "Contoso_Two.app"),
+            MakeMinimalApp(twoId, "Two", "Contoso", "1.0.0.0", r2r: false, alSource: true, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var roots = new[]
+        {
+            new DependencyRef(Guid.Parse(oneId), "One", "Contoso", new Version(1, 0, 0, 0)),
+            new DependencyRef(Guid.Parse(twoId), "Two", "Contoso", new Version(1, 0, 0, 0)),
+        };
+        resolver.Resolve(roots);
+
+        Assert.Equal(2, resolver.ProvisioningGaps.Count);
+        Assert.Single(resolver.ProvisioningGaps, g => g.Contains("Contoso/One", StringComparison.Ordinal));
+        Assert.Single(resolver.ProvisioningGaps, g => g.Contains("Contoso/Two", StringComparison.Ordinal));
+
+        resolver.Resolve(roots);
+
+        Assert.Equal(2, resolver.ProvisioningGaps.Count);
+    }
+
+    /// <summary>
+    /// An unmet floor is not an unservable package, and must not be filed as one: #1689's list
+    /// means "no loader tier can implement this", which is certain, while this package has AL
+    /// source and may well be served from a cache without compiling at all.
+    /// </summary>
+    [Fact]
+    public void UnsuppliableFloor_DoesNotEnterTheUnservableList()
+    {
+        var dir = MakeDir("FloorNotUnservable");
+        var assertId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Library Assert.app"),
+            MakeMinimalApp(assertId, "Library Assert", "Microsoft", "28.1.49838.54169", r2r: false, alSource: true, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(assertId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        Assert.Single(resolver.ProvisioningGaps);
+        Assert.Empty(resolver.UnservableDependencies);
     }
 
     // ── #1689: a resolved package that NO loader tier can implement ───────────

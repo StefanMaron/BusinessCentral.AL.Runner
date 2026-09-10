@@ -2557,6 +2557,16 @@ foreach (var bundle in bundles)
                     Console.Error.WriteLine(u);
                     bundleProvisionGaps.Add(u);
                 }
+                // Also always-on, and for the same reason, but a weaker claim than the list
+                // above: a floor this package cache cannot supply for a package that may be
+                // source-compiled (#3794). Kept a separate list on the resolver so
+                // "unservable" keeps meaning "certain failure"; printed and collected the
+                // same way, because the failure it precedes names nothing (#3719).
+                foreach (var g in resolver.ProvisioningGaps)
+                {
+                    Console.Error.WriteLine(g);
+                    bundleProvisionGaps.Add(g);
+                }
                 // Compiler sees only non-workspace dirs in its .app scanner; the
                 // synthetic workspace dirs are registered as symbols.json-only
                 // sources via SetExtraSymbolDirs (called AFTER SetResolvedDeps,

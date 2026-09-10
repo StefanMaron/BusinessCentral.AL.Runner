@@ -765,8 +765,8 @@ public sealed class ProvisioningCheckTests : IDisposable
     /// <summary>
     /// #3794 let the reachability walk start at a non-Microsoft root, and this is the guard
     /// on it: a third-party app that merely SHARES a Microsoft app's name is not that app.
-    /// A third-party root is followed through its recorded edges only, so one with no edges
-    /// on disk — this — requires nothing, exactly as before.
+    /// Its node key is qualified, so it can neither satisfy a Microsoft goal by
+    /// self-membership nor read a Microsoft app's edges. Empty graph.
     /// </summary>
     [Fact]
     public void DetermineManifestNeeds_NonMicrosoftPublisher_RootNameIsNotAnIdentity()
@@ -778,6 +778,55 @@ public sealed class ProvisioningCheckTests : IDisposable
         var needs = ProvisioningCheck.DetermineManifestNeeds(roots);
         Assert.False(needs.NeedsPlatformApps);
         Assert.False(needs.NeedsTestApps);
+    }
+
+    /// <summary>
+    /// The half the fact above cannot reach, and the one the #3810 review called out as the
+    /// dangerous case: the colliding name is PRESENT in the graph. An implementation that is
+    /// correct only when the key is absent — and reads the Microsoft app's edges when it is —
+    /// passes the empty-graph fact and fails this one. Both directions here: the third-party
+    /// root must not borrow the Microsoft edges, and the Microsoft root must still use them.
+    /// </summary>
+    [Fact]
+    public void DetermineManifestNeeds_NonMicrosoftRoot_DoesNotBorrowASameNamedMicrosoftAppsEdges()
+    {
+        var edges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            // What a scan of a real cache would hold for Microsoft's own app...
+            ["Tests-TestLibraries"] = new[] { "Application Test Library" },
+            // ...beside an unrelated third-party app of the same NAME, which declares nothing.
+            ["Contoso ISV/Tests-TestLibraries"] = Array.Empty<string>(),
+        };
+
+        var isv = ProvisioningCheck.DetermineManifestNeeds(
+            new[] { new DependencyRef(Guid.NewGuid(), "Tests-TestLibraries", "Contoso ISV", new Version(1, 0, 0, 0)) },
+            edges);
+        Assert.False(isv.NeedsPlatformApps);
+        Assert.Empty(isv.RequiredPlatformApps);
+
+        var ms = ProvisioningCheck.DetermineManifestNeeds(
+            new[] { new DependencyRef(Guid.NewGuid(), "Tests-TestLibraries", "Microsoft", new Version(28, 1, 0, 0)) },
+            edges);
+        Assert.Equal(new[] { "Application Test Library" }, ms.RequiredPlatformApps);
+    }
+
+    /// <summary>
+    /// The mirror: a Microsoft root must not pick up a third-party package's edges. Only the
+    /// third-party node is in the graph, so the Microsoft root reaches nothing beyond itself.
+    /// </summary>
+    [Fact]
+    public void DetermineManifestNeeds_MicrosoftRoot_DoesNotBorrowASameNamedThirdPartyAppsEdges()
+    {
+        var edges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Contoso ISV/Tests-TestLibraries"] = new[] { "Application Test Library" },
+        };
+
+        var needs = ProvisioningCheck.DetermineManifestNeeds(
+            new[] { new DependencyRef(Guid.NewGuid(), "Tests-TestLibraries", "Microsoft", new Version(28, 1, 0, 0)) },
+            edges);
+
+        Assert.DoesNotContain("Application Test Library", needs.RequiredPlatformApps);
     }
 
     [Fact]
