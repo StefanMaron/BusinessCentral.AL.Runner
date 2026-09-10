@@ -27,6 +27,11 @@
 //   Insert/Modify/DeleteAllowed, AutoSplitKey, MultipleNewLines, DelayedInsert,
 //   SourceTableView (#2820), and LinksAllowed / ShowFilter / SaveValues /
 //   PopulateAllFields / DataCaptionFields (#2860, see EmitSourceObjectPropertiesXml).
+//   #3784 added the <Properties> scalars on the same rule — Extensible (which this used to
+//   HARDCODE to "1", a wrong answer on 105 of 236 measured pages), RefreshOnActivate,
+//   UsageCategory, HelpLink, IsPreview, the four ML strings and the two inherent permission
+//   masks; see EmitPagePropertiesXml, which also records which nearby members are
+//   DERIVATIONS rather than reads and therefore deliberately still absent.
 //
 // WHAT IS DELIBERATELY OMITTED, AND WHY THAT IS SAFE HERE
 //   Ordinary field Content/Controls, ActionContainers, ViewContainers,
@@ -125,7 +130,13 @@ public static partial class RecordPatches
             w.WriteAttributeString("SourceExtensionType", "ModernDev");
             w.WriteAttributeString("PageType", page.PageType);
             w.WriteAttributeString("Editable", page.Editable ? "1" : "0");
-            w.WriteAttributeString("Extensible", "1");
+            // #3784. Written unconditionally, carrying what the symbol file states — NOT the
+            // literal "1" this used to write for every page, which was a WRONG answer rather
+            // than a missing one on the 105 of 236 System Application + Business Foundation
+            // pages BC's own emitter writes "0" for, all 105 of which state Extensible = "0"
+            // in the symbol file with zero omissions. Same shape as Editable above it.
+            w.WriteAttributeString("Extensible", page.Extensible ? "1" : "0");
+            EmitPagePropertiesXml(w, page);
             if (!string.IsNullOrEmpty(page.Caption))
             {
                 w.WriteStartElement("CaptionML");
@@ -157,15 +168,13 @@ public static partial class RecordPatches
                     page.SourceTableId.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 if (page.SourceTableTemporary)
                     w.WriteAttributeString("SourceTableTemporary", "1");
-                if (!page.InsertAllowed) w.WriteAttributeString("InsertAllowed", "0");
-                if (!page.ModifyAllowed) w.WriteAttributeString("ModifyAllowed", "0");
-                if (!page.DeleteAllowed) w.WriteAttributeString("DeleteAllowed", "0");
-                // The three flags the AL compiler writes here alongside SourceTable, all
-                // three defaulting to false, so only a true one is written — the same
-                // "state what the symbol file states, default the rest" rule as above.
+                // AutoSplitKey defaults to false in AL, so only a true one is written, and it
+                // stays INSIDE this branch: all 3 pages of the 236 measured that state it also
+                // declare a source table, and NeedsAutoSplitKey's reader only runs for a bound
+                // page anyway.
                 //
-                // Measured by compiling a page declaring all three and reading back the
-                // metadata the compiler captured for it, on BC 28.1:
+                // Measured by compiling a page declaring it and reading back the metadata the
+                // compiler captured for it, on BC 28.1:
                 //     <SourceObject AutoSplitKey="1" DelayedInsert="1"
                 //                   MultipleNewLines="1" SourceTable="65940" />
                 //
@@ -176,15 +185,13 @@ public static partial class RecordPatches
                 // and per the note in MockTestPage the first new row then lands at line
                 // no. 0 and the second fails on a duplicate primary key.
                 if (page.AutoSplitKey) w.WriteAttributeString("AutoSplitKey", "1");
-                if (page.MultipleNewLines) w.WriteAttributeString("MultipleNewLines", "1");
-                if (page.DelayedInsert) w.WriteAttributeString("DelayedInsert", "1");
             }
-            // The attributes above only mean anything alongside a SourceTable, so a page
-            // without one gets the bare element the compiler itself emits — not
+            // SourceTable and AutoSplitKey above only mean anything alongside a source table,
+            // so a page without one gets the bare element the compiler itself emits — not
             // SourceTable="0", which would answer "table 0" to a question about a table the
             // page does not have.
             //
-            // The five below are OUTSIDE that branch on purpose — measured, not assumed; see
+            // Everything below is OUTSIDE that branch on purpose — measured, not assumed; see
             // EmitSourceObjectPropertiesXml.
             //
             // ORDER IS LOAD-BEARING, and this is the whole reason the SourceTableView child
@@ -253,6 +260,128 @@ public static partial class RecordPatches
     private const string XsiNs = "http://www.w3.org/2001/XMLSchema-instance";
 
     /// <summary>
+    /// The <c>&lt;Properties&gt;</c> attributes SymbolReference.json states and this
+    /// synthesizer used to drop (issue #3784), all of them a READ: the symbol file states the
+    /// value and this writes it, with no resolution, derivation or default-guessing anywhere.
+    ///
+    /// <para>THE RULE, in two halves, because BC's emitter applies a different one per
+    /// property and the difference is measurable. <c>RefreshOnActivate</c> is written
+    /// UNCONDITIONALLY, carrying the AL default when the file states nothing, exactly like
+    /// <c>Extensible</c> and <c>Editable</c> at the call site. Everything else is written IF
+    /// AND ONLY IF the file states it, because BC's <c>PageProperties</c> raises a
+    /// <c>…Specified</c> bit from the SETTER — <c>UsageCategorySpecified</c>,
+    /// <c>InherentEntitlementsSpecified</c>, <c>InherentPermissionsSpecified</c> — which its
+    /// <c>Equals()</c> compares, so writing a "default" for a silent page is a DIFFERENT
+    /// document, not a harmless one.</para>
+    ///
+    /// <para>Measured on BC 28.4.53241.54407 over Business Foundation (11 pages) + System
+    /// Application (225), by cross-tabulating each app's shipped SymbolReference.json against
+    /// the PageDefinition documents <c>tools/gen-metadata-ground-truth.sh</c> produces from
+    /// BC's own emitter. Every pair below agreed on all 236 pages:</para>
+    /// <code>
+    /// RefreshOnActivate    absent -> "0" (207 pages);  "1" -> "1" (29)
+    /// UsageCategory        written iff stated, verbatim (68 pages, 6 distinct enum names)
+    /// HelpLink             written iff stated, verbatim (6)
+    /// IsPreview            written iff stated (1)
+    /// AboutTitle/AboutText/AdditionalSearchTerms/InstructionalText
+    ///                      -> the SAME attribute prefixed "ENU=" (21/21/28/6)
+    /// InherentEntitlements/InherentPermissions   "X" -> "16"   (94/92)
+    /// </code>
+    ///
+    /// <para>WHAT IS DELIBERATELY NOT READ HERE, having been checked rather than assumed.
+    /// <c>AnalysisModeEnabled</c> and <c>OnAfterGetCurrentRecordEnabled</c> are NOT symbol
+    /// reads: cross-tabulated over the same 236 pages, the first tracks <c>PageType</c>
+    /// (List/Worksheet -> "1", every other type -> absent) on 94 pages whose symbol file
+    /// states nothing at all, and the second tracks trigger presence.
+    /// <c>IndirectPermissions</c> needs table NAME -> id resolution plus a permission-mask
+    /// encode; <c>CardFormID</c> needs page NAME -> id; <c>DataCaptionExpr</c> is BC's own
+    /// literal marker <c>"DataCaptionExprCode"</c> and carries none of the AL expression the
+    /// symbol file states. Each is a derivation, which is a different change from a read —
+    /// see the file header and issues #2460 / #3504.</para>
+    /// </summary>
+    private static void EmitPagePropertiesXml(XmlWriter w, BcAppSymbolCache.PageSymbol page)
+    {
+        // Unconditional, carrying the AL default for a page that states nothing — the same
+        // shape as Extensible and Editable at the call site.
+        w.WriteAttributeString("RefreshOnActivate", page.RefreshOnActivate ? "1" : "0");
+
+        void Scalar(string name, string? stated)
+        {
+            if (!string.IsNullOrEmpty(stated)) w.WriteAttributeString(name, stated);
+        }
+
+        Scalar("UsageCategory", page.UsageCategory);
+        Scalar("HelpLink", page.HelpLink);
+        if (page.IsPreview) w.WriteAttributeString("IsPreview", "1");
+
+        // BC's emitter writes these four as a MultiLanguage attribute, and its own
+        // MultiLanguage parser reads "ENU=<text>" — the identical form EmitPartControlXml
+        // already writes for a part's CaptionML. The symbol file states the bare text.
+        void MultiLanguage(string name, string? stated)
+        {
+            if (!string.IsNullOrEmpty(stated)) w.WriteAttributeString(name, "ENU=" + stated);
+        }
+
+        MultiLanguage("AboutTitleML", page.AboutTitle);
+        MultiLanguage("AboutTextML", page.AboutText);
+        MultiLanguage("AdditionalSearchTermsML", page.AdditionalSearchTerms);
+        MultiLanguage("InstructionalTextML", page.InstructionalText);
+
+        EmitInherentMask(w, page, "InherentEntitlements", page.InherentEntitlements);
+        EmitInherentMask(w, page, "InherentPermissions", page.InherentPermissions);
+    }
+
+    /// <summary>
+    /// One inherent-permission mask: the symbol file states AL permission LETTERS
+    /// (<c>InherentEntitlements = X</c>) and BC's <c>PageProperties</c> holds an
+    /// <c>Int32</c>, so the letters are decoded against
+    /// <c>Microsoft.Dynamics.Nav.Types.PermissionMask</c> — <c>Read 1, Insert 2, Modify 4,
+    /// Delete 8, Execute 16</c>. That enum is what makes this a DECODE of a stated value
+    /// rather than a guess at an absent one.
+    ///
+    /// <para>Measured on Base Application + System Application + Business Foundation at BC
+    /// 28.4.53241.54407 (2,852 pages): the only value either property ever takes is
+    /// <c>"X"</c> — 101 + 99 occurrences — which BC's emitter writes as <c>16</c>. The other
+    /// four letters are implemented because the decode is total and cheap, not because a page
+    /// stating them was observed; that is why an unknown letter refuses rather than
+    /// contributing nothing.</para>
+    ///
+    /// <para>A letter this cannot read is REFUSED and SAID, never folded into 0 — the same
+    /// choice, and the same reason, as the unreadable-boolean and wrong-shape-DataCaptionFields
+    /// arms of <see cref="EmitSourceObjectPropertiesXml"/>. Both a mask of 0 and an absent
+    /// attribute are answers BC can tell apart (the <c>Specified</c> bit its setter raises),
+    /// so inventing either from a value nobody could read would be a silent wrong answer on a
+    /// surface with no way to fail.</para>
+    /// </summary>
+    private static void EmitInherentMask(
+        XmlWriter w, BcAppSymbolCache.PageSymbol page, string attribute, string? stated)
+    {
+        if (string.IsNullOrWhiteSpace(stated)) return;
+
+        int mask = 0;
+        foreach (var c in stated)
+        {
+            if (c == ' ' || c == ',') continue;
+            int bit = char.ToUpperInvariant(c) switch
+            {
+                'R' => 1, 'I' => 2, 'M' => 4, 'D' => 8, 'X' => 16,
+                _ => 0,
+            };
+            if (bit == 0)
+            {
+                Console.Error.WriteLine(
+                    $"[RecordPatches] page {page.Id} \"{page.Name}\": {attribute} \"{stated}\" "
+                    + "is not the R/I/M/D/X permission-letter list BC reads — omitted, so the "
+                    + "page reads as declaring none");
+                return;
+            }
+            mask |= bit;
+        }
+
+        w.WriteAttributeString(attribute, mask.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
     /// The five further <c>&lt;SourceObject&gt;</c> properties the symbol file states and this
     /// synthesizer used to drop (issue #2860): <c>LinksAllowed</c>, <c>ShowFilter</c>,
     /// <c>SaveValues</c>, <c>PopulateAllFields</c> and <c>DataCaptionFields</c>.
@@ -319,6 +448,29 @@ public static partial class RecordPatches
         Flag("ShowFilter", page.ShowFilter);
         Flag("SaveValues", page.SaveValues);
         Flag("PopulateAllFields", page.PopulateAllFields);
+
+        // #3784's five, on exactly the same rule and for exactly the same reason — the only
+        // difference is that these were already being written, just wrongly: the trio could
+        // only ever emit a "0" (so an explicitly-stated `InsertAllowed = true`, which BC's
+        // emitter writes on 18 of the 236 pages measured, was dropped), and all five sat
+        // inside the `SourceTable > 0` branch, which silenced them entirely for the 5 System
+        // Application pages that state one with no source table — 502 OAuth2ControlAddIn,
+        // 2718 Page Summary Settings, 4326 Agent Creation Control, 7775 Copilot AI
+        // Capabilities, 9260 Customer Experience Survey. BC's emitter writes the attributes
+        // for all five, and BC's SourceObjectDefinition reader has no SourceTable guard.
+        //
+        // Cross-tabulated over those 236 pages (BC 28.4.53241.54407), symbol value -> emitted
+        // attribute, with no disagreement in either direction:
+        //     InsertAllowed    "0"->"0" 121, "1"->"1" 1,  absent->absent 114
+        //     ModifyAllowed    "0"->"0" 80,  "1"->"1" 11, absent->absent 145
+        //     DeleteAllowed    "0"->"0" 101, "1"->"1" 6,  absent->absent 129
+        //     DelayedInsert    "1"->"1" 14,  "0"->"0" 1,  absent->absent 221
+        //     MultipleNewLines "0"->"0" 3,   "1"->"1" 1,  absent->absent 232
+        Flag("InsertAllowed", page.InsertAllowedStated);
+        Flag("ModifyAllowed", page.ModifyAllowedStated);
+        Flag("DeleteAllowed", page.DeleteAllowedStated);
+        Flag("MultipleNewLines", page.MultipleNewLinesStated);
+        Flag("DelayedInsert", page.DelayedInsertStated);
 
         // A boolean the symbol file STATED in a form the parser could not read comes through
         // as the same null as "not stated at all", and therefore as the same absent attribute
