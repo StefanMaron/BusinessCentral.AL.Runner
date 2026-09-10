@@ -100,11 +100,23 @@ settled id differs, and `TryDeleteAccessControlSuperRow` withdraws the row the s
 wrote for the old id first. It withdraws only the exact shape this seeder writes — the
 all-companies SUPER row for that one security id — never a grant install code contributed.
 
-One residual, stated rather than emulated: an adoption that happens on a dep-company cache **HIT**
-against a snapshot written by an earlier *process* has no in-process latched id to compare
-against, so a SUPER row restored for the generated id and left behind by the withdrawal is
-possible in principle. Nothing measures it today; a cascade of BC's own delete semantics is not
-something the runner reproduces.
+**Measured, on the fixture that actually moves the identity.** On
+`AlRunner.Tests/Fixtures/InstallTriggerSessionIdentity` the table ends with **exactly one** SUPER
+row, naming the adopted id, on both the cold and the warm arm —
+`ItsiExactlyOneSuperRowAndItNamesTheAdoptedId` asserts the count and the id. What makes the
+withdrawal cheap rather than load-bearing there is BC's own cascade: a `User` delete cascades to
+Access Control (2000000053) — `UserTableTriggerPatches.CascadeDeleteForUser`, BC's first cascade
+target — and adoption arises from the colliding row REPLACING the seeded one, so the pre-adoption
+grant is already gone by the time the mismatch is detected. The cold run says so in as many words:
+`the session identity moved to {D41F…}; the SUPER row for {C0A1…} was already gone`. On the warm
+arm the snapshot carries no SUPER row at all, because the capture happens between the cascade and
+the post-window seed.
+
+So the withdrawal is a guard on a path BC's cascade normally clears first, and its `ALDelete` is
+not exercised by any fixture today — what the fixtures pin is the branch (the log line above) and
+the outcome (one row, right id). A collision that adopts WITHOUT deleting the previous row would be
+the case that exercises the delete; nothing arranges one, because adoption follows from the
+replacement.
 
 **The bundle's Published Application row cannot move into the window at all**, and that is
 structural rather than a preference. The window's snapshot is keyed on the dependency set and is
