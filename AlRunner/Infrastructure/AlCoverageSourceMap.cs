@@ -198,6 +198,17 @@ public static class AlCoverageSourceMap
         NavSyntax.QuerySyntax => "Query",
         NavSyntax.XmlPortSyntax => "XmlPort",
         NavSyntax.EnumTypeSyntax => "Enum",
+        // #3833: extension objects carry executable procedures and triggers, and BC emits
+        // scope classes for them — so without these their statements had a runtime identity
+        // and no file, and were dropped. The label must match AlCallStackCapture's prefix map,
+        // and both match the spelling RecordPatches.AlSourceParser already uses. An extension
+        // has its own object id, so it occupies its own map entry rather than sharing the base
+        // object's. Enum extensions are deliberately absent: they declare values, not code,
+        // and BC emits no scope class for one (measured — nothing for `enumextension` appears
+        // among the [SourceSpans]-carrying types of a bundle that declares one).
+        NavSyntax.TableExtensionSyntax => "TableExtension",
+        NavSyntax.PageExtensionSyntax => "PageExtension",
+        NavSyntax.ReportExtensionSyntax => "ReportExtension",
         _ => null,
     };
 }

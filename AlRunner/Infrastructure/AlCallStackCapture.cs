@@ -300,6 +300,17 @@ public static class AlCallStackCapture
             ("NavCodeunit",   "CodeUnit"),   // generic codeunit base class
             ("NavTestCodeunit","CodeUnit"),
             ("Codeunit",      "CodeUnit"),
+            // EXTENSION objects, before their base kinds — the "longest prefixes first" note
+            // below was written for this and the entries were never added, so every extension
+            // scope parsed to ("?", 0) and was dropped before any map was consulted (#3833).
+            // Measured on BC 28.1.49838.54169: a tableextension's procedure emits
+            // `TableExtension63701+Doubled_Scope_750224019`, a pageextension's
+            // `PageExtension63721+Tripled_Scope_1853489953`. The id is the EXTENSION's own,
+            // not the base object's, so these cannot collide with the base or with each other.
+            // Labels match the spelling RecordPatches.AlSourceParser already uses.
+            ("TableExtension",  "TableExtension"),
+            ("PageExtension",   "PageExtension"),
+            ("ReportExtension", "ReportExtension"),
             ("Table",         "Table"),
             // Table TRIGGER scopes (OnInsert/OnModify/…) are nested inside the table's
             // generated record wrapper class, named Record<N> — NOT Table<N> (confirmed

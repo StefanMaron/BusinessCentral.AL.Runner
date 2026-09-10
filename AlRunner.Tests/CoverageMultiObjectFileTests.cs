@@ -437,6 +437,93 @@ public sealed class CoverageMultiObjectFileTests : IDisposable
     }
 
     /// <summary>
+    /// #3833: an EXTENSION object's executable statements were invisible. `LabelOf` maps seven
+    /// top-level kinds and no extension, and AlCallStackCapture's prefix map has no extension
+    /// entry either — measured, BC emits `TableExtension63701+Doubled_Scope_...`, which parsed
+    /// to ("?", 0) and was dropped before the map was ever consulted.
+    ///
+    /// The statement runs: the test calls the extension's procedure and asserts its result, so
+    /// a report that omits it is omitting executed code. Both halves are asserted, because
+    /// fixing only the parser leaves the (label, id) unmapped and fixing only LabelOf leaves it
+    /// unparsed.
+    /// </summary>
+    [SkippableFact]
+    public void Coverage_TableExtensionProcedure_IsReportedOnItsOwnFile()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Path.Combine(_root, "bundle-tableext");
+        Directory.CreateDirectory(bundle);
+        File.WriteAllText(Path.Combine(bundle, "app.json"), """
+        {
+          "id": "5a3f0b11-3833-4a0d-800d-000000003833",
+          "name": "CMOF TableExt Probe",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 63700, "to": 63739 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(bundle, "Base.Table.al"), """
+        table 63700 "P3833 Base"
+        {
+            DataClassification = SystemMetadata;
+            fields
+            {
+                field(1; "Code"; Code[20]) { }
+                field(2; "Value"; Integer) { }
+            }
+            keys { key(PK; "Code") { Clustered = true; } }
+        }
+        """);
+        // The executed statement is `exit(Value * 2);` on line 10 of this file.
+        File.WriteAllText(Path.Combine(bundle, "Ext.TableExt.al"), """
+        tableextension 63701 "P3833 Ext" extends "P3833 Base"
+        {
+            fields
+            {
+                field(50; "Extra"; Integer) { }
+            }
+
+            procedure Doubled(): Integer
+            begin
+                exit(Value * 2);
+            end;
+        }
+        """);
+        File.WriteAllText(Path.Combine(bundle, "T.Codeunit.al"), """
+        codeunit 63710 "P3833 Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure ExtensionProcedureRuns()
+            var
+                R: Record "P3833 Base";
+            begin
+                R.Init();
+                R.Code := 'A';
+                R.Value := 21;
+                if R.Doubled() <> 42 then
+                    Error('Doubled');
+            end;
+        }
+        """);
+
+        var coveragePath = Path.Combine(_root, "cobertura-tableext.xml");
+        var (output, exit) = Spawn(bundle, "--coverage", $"--coverage-out \"{coveragePath}\"");
+
+        Assert.Equal(0, exit);
+        Assert.True(File.Exists(coveragePath), $"cobertura.xml was not written.\n{output}");
+        var doc = XDocument.Load(coveragePath);
+
+        var lines = LinesOf(ClassFor(doc, "Ext.TableExt.al"));
+        Assert.Equal(new[] { 10 }, lines.Keys.OrderBy(k => k).ToArray());
+        Assert.Equal(1, lines[10]);
+    }
+
+    /// <summary>
     /// #3822, the shape that stresses both halves of the origin rule at once: a REAL preamble
     /// (header comment, namespace, using) AND an unmapped object in front of the mapped one.
     ///
