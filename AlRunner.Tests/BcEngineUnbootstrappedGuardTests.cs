@@ -198,15 +198,18 @@ public sealed class BcEngineUnbootstrappedGuardTests
     /// actually in — and asserts the behaviour appropriate to that state.
     ///
     /// Deliberately written to hold in BOTH states and to assert something different in
-    /// each, rather than asserting only the one this box happens to be in: an
-    /// unbootstrapped box must see the property THROW (that is #3835's fix, and it is the
-    /// state a post-build run is in), and a bootstrapped one must see it answer without
-    /// throwing (the guard must not fire on a working box). Either way the assertion is
-    /// specific, so this cannot degrade into a test that passes because nothing happened.
+    /// each: an unbootstrapped box must see the property THROW (that is #3835's fix, and
+    /// the state a post-build run is in), and a bootstrapped one must see it answer.
     ///
-    /// Note it does NOT call TestArtifacts.SkipIf on the way in: doing so would read
-    /// _engine.SkipReason and therefore trip the very guard under test before asserting
-    /// anything.
+    /// It does NOT call TestArtifacts.SkipIf on the way in: that would read
+    /// _engine.SkipReason and so trip the very guard under test before asserting anything.
+    ///
+    /// Measured caveat, and why <see cref="TheWiring_IsPresent_InEveryState"/> exists beside
+    /// it: on a BOOTSTRAPPED box this test can only assert that the property does not throw,
+    /// which is also what a completely unwired property does. The mutation check confirmed
+    /// exactly that — with the guard call deleted, this test failed unbootstrapped and
+    /// PASSED bootstrapped. CI is always bootstrapped, so this test alone would prove
+    /// nothing there.
     /// </summary>
     [Fact]
     public void WiredInto_TheRealFixture_SkipReasonProperty()
@@ -216,10 +219,10 @@ public sealed class BcEngineUnbootstrappedGuardTests
         if (fixture.Ready)
         {
             // A bootstrapped box: the property answers, and the guard stays out of the way.
-            // Reading it must not throw — a guard that fires on a working box would make the
-            // collection unrunnable everywhere including CI.
-            var reason = Record.Exception(() => _ = fixture.SkipReason);
-            Assert.Null(reason);
+            // A guard that fired on a working box would make the collection unrunnable
+            // everywhere, CI included.
+            Assert.Null(Record.Exception(() => _ = fixture.SkipReason));
+            Assert.NotEmpty(fixture.SkipReason);
             return;
         }
 
@@ -239,5 +242,73 @@ public sealed class BcEngineUnbootstrappedGuardTests
         // this issue is about. The property must refuse.
         Assert.NotNull(ex);
         Assert.Contains(BcEngineSkipReason.BootstrapTool, ex!.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The wiring, asserted in a way that does not depend on which state this box is in —
+    /// which the test above cannot do, because on a bootstrapped box "the property did not
+    /// throw" is indistinguishable from "the property has no guard in it".
+    ///
+    /// Deleting the guard call from BcEngineFixture.SkipReason is the mutation this catches
+    /// on EVERY box, including CI. It reads the property's IL for the call rather than
+    /// invoking it, because invoking it is precisely what cannot discriminate here: a
+    /// source scan would be the cheaper spelling but would match the call in a comment
+    /// (#3813 is the live instance of that defect in this suite), and the IL carries only
+    /// what the compiler actually emitted.
+    /// </summary>
+    [Fact]
+    public void TheWiring_IsPresent_InEveryState()
+    {
+        var getter = typeof(BcEngineFixture)
+            .GetProperty(nameof(BcEngineFixture.SkipReason))!
+            .GetGetMethod()!;
+
+        var body = getter.GetMethodBody();
+        Assert.NotNull(body);
+        var il = body!.GetILAsByteArray();
+        Assert.NotNull(il);
+
+        var guard = typeof(BcEngineUnbootstrappedGuard)
+            .GetMethod(nameof(BcEngineUnbootstrappedGuard.AssertBootstrapWasRun),
+                       System.Reflection.BindingFlags.Static
+                       | System.Reflection.BindingFlags.NonPublic
+                       | System.Reflection.BindingFlags.Public)!;
+
+        // 0x28 = call, followed by a 4-byte metadata token. Scanning for the token itself is
+        // what makes this a statement about the emitted call and not about the source text.
+        var wanted = BitConverter.GetBytes(guard.MetadataToken);
+        var found = false;
+        for (var i = 0; i + 4 < il!.Length && !found; i++)
+        {
+            if (il[i] != 0x28) continue;
+            found = il[i + 1] == wanted[0] && il[i + 2] == wanted[1]
+                 && il[i + 3] == wanted[2] && il[i + 4] == wanted[3];
+        }
+
+        Assert.True(found,
+            $"BcEngineFixture.SkipReason does not call {nameof(BcEngineUnbootstrappedGuard)}."
+            + $"{nameof(BcEngineUnbootstrappedGuard.AssertBootstrapWasRun)}. That call is what "
+            + "converts a silent skip of the entire bc-engine-serial collection into a named "
+            + "failure at all ~300 call sites, so without it issue #3835 is back and a "
+            + "post-build `dotnet test` reports `Skipped: N` with exit 0 again.");
+    }
+
+    /// <summary>
+    /// Fixture guard for the test above: a metadata-token scan that found nothing because
+    /// the IL was empty, or because 0x28 never appears, would report the same "not found"
+    /// as a genuinely deleted call. Pinning that the scan CAN fire — on a method known to
+    /// call the guard — is what separates the two.
+    /// </summary>
+    [Fact]
+    public void TheILScan_ItselfDetectsACall_SoItsNegativeIsMeaningful()
+    {
+        var body = typeof(BcEngineFixture)
+            .GetProperty(nameof(BcEngineFixture.SkipReason))!
+            .GetGetMethod()!
+            .GetMethodBody()!;
+        var il = body.GetILAsByteArray()!;
+
+        Assert.NotEmpty(il);
+        Assert.Contains((byte)0x28, il);
     }
 }
