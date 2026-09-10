@@ -24,22 +24,58 @@ public readonly record struct DapResolvedBreakpoint(
 public static class DapBreakpointResolver
 {
     /// <summary>
-    /// Resolves each request against every AL object type currently loaded. Only
-    /// objects present in <paramref name="sourceMap"/> (built from the SAME bundle
-    /// roots the run compiled, e.g. via AlCoverageSourceMap.Build) can match — a
+    /// How two source paths are compared. Case-insensitive on Windows and macOS, where the
+    /// filesystem is, and case-SENSITIVE elsewhere (#3786 review): on Linux <c>Foo.al</c> and
+    /// <c>foo.al</c> are two files, and folding them together merges their object lists so a
+    /// line can bind to a statement in the wrong file. That was harmless while the index held
+    /// one object per path and simply evicted; it stops being harmless once the entries merge.
+    /// Exposed so the DAP loop's own per-source breakpoint bookkeeping keys the same way —
+    /// two components disagreeing about path identity is the same bug wearing a different hat.
+    /// </summary>
+    public static StringComparer PathComparer { get; } =
+        OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
+
+    /// <summary>
+    /// Resolves each request against every AL object type currently loaded that the source
+    /// map knows. Only objects present in <paramref name="sourceMap"/> (built from the SAME
+    /// bundle roots the run compiled, e.g. via AlCoverageSourceMap.Build) can match — a
     /// breakpoint in a file outside the debugged bundle is unverified, not a crash.
+    /// <para>
+    /// "Every object" is bounded by what that map registers, and it registers seven top-level
+    /// kinds: table, page, report, codeunit, query, xmlport, enum. EXTENSION objects
+    /// (tableextension, pageextension, …) are not in it and never resolve a breakpoint, which
+    /// is a pre-existing limit of AlCoverageSourceMap.LabelOf and of the runtime identity
+    /// parsing in AlCallStackCapture, not a decision made here (#3786 review).
+    /// </para>
+    /// <para>
+    /// Takes <see cref="AlSourceLocationMap"/> rather than the dictionary interface it
+    /// implements because #3786 needs its <see cref="AlSourceLocationMap.LineOffset"/>: the
+    /// path alone cannot say where an object's text begins, and a caller that supplied only
+    /// paths would silently get the pre-#3786 behaviour for every object after the first in
+    /// a file. The DAP path in Program.cs already builds one.
+    /// </para>
     /// </summary>
     public static List<DapResolvedBreakpoint> Resolve(
         IReadOnlyList<DapBreakpointRequest> requests,
-        IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
+        AlSourceLocationMap sourceMap)
     {
-        // Invert (label,id)->path into full-path -> (label,id). Both sides are real
-        // filesystem paths (not bare filenames — see docs/archive/dap.md's filename-only
-        // caveat, which this improves on), compared case-insensitively for
-        // cross-platform DAP clients.
-        var byPath = new Dictionary<string, (string Label, int Id)>(StringComparer.OrdinalIgnoreCase);
+        // Invert path -> (label,id), MANY per path. One .al file may declare any number of
+        // objects, and this used to be a one-value dictionary, so the last object written
+        // for a file evicted every earlier one and a breakpoint could only ever match
+        // whichever survived (#3786). That is why a request inside the FIRST object of a
+        // two-object file came back unverified as readily as one inside the second — not
+        // the mis-resolution the issue predicted, but a whole object missing from the index.
+        //
+        // Both sides are real filesystem paths (not bare filenames — see
+        // docs/archive/dap.md's filename-only caveat, which this improves on), compared
+        // with PathComparer.
+        var byPath = new Dictionary<string, List<(string Label, int Id)>>(PathComparer);
         foreach (var kv in sourceMap)
-            byPath[Path.GetFullPath(kv.Value)] = kv.Key;
+        {
+            var full = Path.GetFullPath(kv.Value);
+            if (!byPath.TryGetValue(full, out var keys)) byPath[full] = keys = new();
+            keys.Add(kv.Key);
+        }
 
         // (label,id) -> every loaded scope type for that object, each with its own
         // (statement index -> absolute AL line) map.
@@ -58,12 +94,20 @@ public static class DapBreakpointResolver
                 var (label, id) = AlCallStackCapture.ParseObjectTypeAndId(t);
                 if (id == 0) continue;
 
+                // #3786: a [SourceSpans] line is relative to the OWNING OBJECT's text, not
+                // to the file. For the first object in a file the two coincide and nothing
+                // is visible; for any later one every line is short by the number of lines
+                // its text starts down the file. LineOffset is what AlCoverageSourceMap
+                // recorded when it parsed the file, and it is 0 for an object the map does
+                // not know — so an unmapped object keeps exactly its old behaviour rather
+                // than being shifted by a guess.
+                var lineOffset = sourceMap.LineOffset(label, id);
                 var instrumented = AlCoverageInstrumentedStatements.Find(t);
                 var lineByStmt = new Dictionary<int, int>();
                 foreach (var i in instrumented)
                 {
                     if (i < 0 || i >= spans.Length) continue; // defensive: BC shape drift
-                    lineByStmt[i] = AlSourceSpanCodec.AbsoluteFromLine(spans[i]);
+                    lineByStmt[i] = AlSourceSpanCodec.AbsoluteFromLine(spans[i]) + lineOffset;
                 }
                 if (!byObject.TryGetValue((label, id), out var list))
                     byObject[(label, id)] = list = new();
@@ -76,15 +120,32 @@ public static class DapBreakpointResolver
         {
             var full = Path.GetFullPath(req.SourcePath);
             (Type Type, int Stmt, int Line)? match = null;
-            if (byPath.TryGetValue(full, out var objKey) && byObject.TryGetValue(objKey, out var scopes))
+            if (byPath.TryGetValue(full, out var objKeys))
             {
-                foreach (var (type, lineByStmt) in scopes)
+                // Every object the file declares, not just one.
+                //
+                // The first exact match wins, and that is a real limitation rather than a
+                // proof of uniqueness (#3786 review). AL permits two statements on one
+                // physical line — CollectStatementTable's doc comment says so explicitly, and
+                // keeps them apart by id and column precisely because a line cannot — so a
+                // requested line can have more than one executable target, in one scope or
+                // across several. Binding one of them means a breakpoint on such a line stops
+                // only if execution reaches the target that was picked. #3820 tracks
+                // registering every match behind the single DAP breakpoint the protocol
+                // returns; it needs DapResolvedBreakpoint to carry a set, so it is not a
+                // widening of this change.
+                foreach (var objKey in objKeys)
                 {
-                    foreach (var kv in lineByStmt)
+                    if (!byObject.TryGetValue(objKey, out var scopes)) continue;
+                    foreach (var (type, lineByStmt) in scopes)
                     {
-                        if (kv.Value != req.Line) continue;
-                        match = (type, kv.Key, kv.Value);
-                        break;
+                        foreach (var kv in lineByStmt)
+                        {
+                            if (kv.Value != req.Line) continue;
+                            match = (type, kv.Key, kv.Value);
+                            break;
+                        }
+                        if (match != null) break;
                     }
                     if (match != null) break;
                 }
