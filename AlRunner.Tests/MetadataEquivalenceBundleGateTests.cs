@@ -85,8 +85,13 @@ public sealed class MetadataEquivalenceBundleGateTests
             "not scanning what it claims to. The detection strings are probably stale.");
     }
 
-    // SkippableFact, not Fact: BundleReaders() can raise SkipException, and a SkipException out
-    // of a plain [Fact] is reported Failed rather than Skipped (TestArtifactsGateTests).
+    // SkippableFact, not Fact, and NOT because this test can skip: BundleReaders() only does
+    // EnumerateFiles/ReadAllText and cannot raise SkipException. EveryTestThatCanSkipIsDeclared-
+    // Skippable is a TEXTUAL scanner over the source, and the regex literal a few lines below
+    // matches its pattern. So this attribute answers a string in a comment, not a real skip
+    // path -- and the match is attributed to whichever test precedes the line it sits on.
+    // Trap: rewording or moving that comment changes which test needs the attribute. Writing
+    // this note is itself how that was discovered. Tracked as its own issue.
     [SkippableFact]
     public void No_bundle_reader_writes_its_own_empty_bundle_skip()
     {
@@ -113,8 +118,14 @@ public sealed class MetadataEquivalenceBundleGateTests
         // empty directory through AL_RUNNER_METADATA_GROUND_TRUTH, which is the same override
         // the skip message tells a developer about — so this exercises the real code path
         // rather than a reimplementation of it.
-        // Owned: this directory IS created, so a killed test host would leak it (#2743).
-        // TestScratch.FlatDir creates it and records an owner, which the sweep deletes.
+        // Owned rather than a raw Path.GetTempPath() combine (#2743): FlatDir reserves the
+        // path and writes ScratchDirs' sidecar, so the sweep deletes it if this host is killed.
+        // It does NOT create the directory -- ScratchDirs.Reserve is explicitly "WITHOUT
+        // creating it" (ScratchDirsTests.Reserve_WritesSidecarButDoesNotCreateTheDirectory).
+        // That is fine here and is the point: RequireBundles reads
+        // Path.Combine(<override>, <serviceTierDirName>), which is absent either way, so the
+        // gate sees no bundle. An earlier version of this comment claimed the directory is
+        // created; it is not, and nothing depends on it being so.
         var empty = TestScratch.FlatDir("al-runner-bundle-gate");
 
         var previousRoot = Environment.GetEnvironmentVariable("AL_RUNNER_METADATA_GROUND_TRUTH");
