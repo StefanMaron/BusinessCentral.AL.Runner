@@ -43,28 +43,54 @@ the entire app, not a partial result. Measured per app:
 | app | `.al` files | outcome | documents |
 |---|---|---|---|
 | Business Foundation | 96 | clean, 6.0–6.2 s | **55** (11 tables, 16 codeunits, 13 permission sets, 9 pages, 5 tableextensions, 1 enum) |
-| System Application | 1,319 | **`BadExpression` while emitting `Codeunit System.Visualization."Business Chart"::Initialize()`** | **0** |
+| System Application | 1,319 | clean since #3745, 10.9–13.1 s | **1,218** (138 tables, 533 codeunits, 224 pages, 164 permission sets, 142 enums, 7 queries, 5 runtime deltas, 4 xmlports, 1 report) |
 | Base Application | 8,025 | not attempted — see below | — |
 
-So the feature is **opt-in and per-app**, `AL_RUNNER_DEP_METADATA_FROM_BC`:
+The feature stays **opt-in**, `AL_RUNNER_DEP_METADATA_FROM_BC` — the cost of the first compile
+per (app, BC version) is real even though it is paid once:
 
 - unset / `0` — off. Byte-identical to the behaviour before #3549; verified as a regression arm.
 - `1` — every source-shipping dependency.
 - `Business Foundation` (comma-separated names) — exactly those apps.
 
-Naming the app is the difference between a dependency whose metadata is BC's own and a run that
-refuses to start. #3745 tracks removing the need for it.
+Since #3745 both source-shipping Microsoft apps the runner compiles — Business Foundation and
+System Application — succeed, so `1` no longer means "a run that refuses to start"; naming apps
+individually is now a cost choice rather than a way around a blocker.
 
-### System Application: a .NET reference the runner does not resolve
+### System Application: fixed in #3745 by staging the shim the ground truth already used
 
-The failure is not in the AL. `tools/metadata-ground-truth/` compiles the same app cleanly
-(1,218 documents in 14.5 s) because it ships **dedicated .NET reference-pack shims** and puts
-them at the head of BC's probing paths — its `CopyDotNetShims` target explains the one it needs
-today, and names this exact shape as "the same shape as the Base Application blocker in #3549".
-`BcCompiler`'s probing paths differ, the DotNet declaration does not bind, and the unbound
-expression reaches the emitter as `BadExpression`.
+The failure was never in the AL. `tools/metadata-ground-truth/` compiled the same app cleanly
+because it ships a **.NET reference shim** at the head of BC's probing paths; `BcCompiler` did
+not, so one DotNet declaration failed to bind and `Emit`'s per-module atomicity turned that into
+zero documents for all 1,319 files.
 
-That is a compile-configuration difference, not a metadata problem, and it is #3745.
+**The specific assembly, measured rather than inferred.** System Application's
+`SamplingPerfProfilerImpl` calls `JsonSerializer.Deserialize(TextReader, Type)`. The service tier
+ships only the **net6.0** build of `Newtonsoft.Json`, whose `TextReader` parameter is typed
+against `System.Runtime 6.0.0.0`; no .NET 6 reference assemblies exist on a net8 box, so that
+parameter type never resolves and the call raises **AL0133**. The **netstandard2.0** build of the
+same Newtonsoft version binds against netstandard, which does resolve.
+
+How it was isolated, on BC 28.1.49838: removing the shim directory from the ground-truth tool —
+the only change — took it from `success=True objects=1218 errors=0` to
+`success=False objects=0 errors=1` with that AL0133 named. Three other candidate differences
+were tested and **ruled out**: the `System.app` version (28.0.53872.0 vs the 28.0.54265.0 the
+runner resolves — 1,218 objects either way), the package's resources (stripping `addin/` gives
+62 × AL0327, a different signature), and the DotNet probing *order*, which already matched.
+
+`AlRunner.csproj` now stages that shim into a `dotnet-shims` directory as build **content**, so
+it travels with `al-runner.dll` into every output that references the project, and
+`BcCompiler.BuildDotNetProbingPaths` probes it **first** — ahead of the service tier, which is
+load-bearing, because the tier is where the copy that does not bind lives.
+
+**The 23 AL0185 "is missing" declaration errors this used to report were a consequence, not a
+cause.** With the shim in place they become 62 × AL0327 for control-add-in resources the
+producer's work directory does not carry, which are non-fatal: the emit produces all 1,218
+documents anyway.
+
+Note what this does **not** fix: Base Application's blocker is a different assembly
+(`Microsoft.AspNetCore.StaticFiles` with `PublicKeyToken=null`, which no BC artifact ships at
+all — verified absent from the 28.1 artifacts) and it remains excluded.
 
 ### Base Application: a hard blocker, not a cost question
 

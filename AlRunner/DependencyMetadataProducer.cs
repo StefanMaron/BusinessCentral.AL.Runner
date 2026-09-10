@@ -45,16 +45,18 @@
 //   replayed on every later run. Business Foundation (96 AL files): ~6.2 s cold, 55 documents.
 //
 //   Emit is atomic per module, so one object BC cannot emit yields ZERO documents for the whole
-//   app rather than a partial result. System Application hits exactly that — BadExpression on
-//   `Business Chart.Initialize()` under the runner's .NET probing paths — which is why
-//   AL_RUNNER_DEP_METADATA_FROM_BC takes app NAMES and not just "on". #3745 is that blocker;
-//   the same app compiles clean in tools/metadata-ground-truth/, which ships .NET reference
-//   shims the runner's probing paths do not.
+//   app rather than a partial result. System Application hit exactly that until #3745: the
+//   service tier ships only the net6.0 Newtonsoft.Json, one System Application call against it
+//   raised AL0133, and all 1,319 files produced nothing. AlRunner.csproj now stages the
+//   netstandard2.0 build into dotnet-shims and BcCompiler probes it ahead of the tier; the app
+//   produces 1,218 documents in ~11-13 s (docs/dependency-metadata-from-bc.md).
 //
 // NOT BASE APPLICATION
 //   Base Application ships 8,025 AL files and is deliberately excluded. Its emit needs a
 //   PublicKeyToken=null copy of Microsoft.AspNetCore.StaticFiles that no BC artifact ships,
 //   and without it the emitter produces ZERO objects — a hard blocker, not a cost question.
+//   #3745's shim does NOT reach it: that is a different assembly, absent from the artifacts
+//   entirely rather than present in a build that does not bind.
 //   tests/expectations/metadata-equivalence/apps.json records the same exclusion for the same
 //   reason. EmitProducedNothing below is what turns that into a loud failure rather than an
 //   empty cache entry that would read as "this app has no metadata".
