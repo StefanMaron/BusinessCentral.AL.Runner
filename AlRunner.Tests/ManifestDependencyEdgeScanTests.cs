@@ -77,6 +77,73 @@ public sealed class ManifestDependencyEdgeScanTests : IDisposable
         File.WriteAllBytes(Path.Combine(dir, $"{publisher}_{name}.app"), WrapNavx(xml));
     }
 
+    /// <summary>As <see cref="WriteApp"/>, with the App element's <c>Platform</c> attribute set —
+    /// the only dependency Microsoft's test-toolkit packages declare (Library Assert's manifest:
+    /// <c>Platform="28.0.0.0"</c>, empty <c>&lt;Dependencies /&gt;</c>).</summary>
+    private static void WriteAppWithPlatform(
+        string dir, string name, string publisher, string version, string platform,
+        params (string Name, string Publisher)[] dependencies)
+    {
+        var deps = string.Concat(dependencies.Select(d =>
+            $"""    <Dependency Id="{Guid.NewGuid()}" Name="{d.Name}" Publisher="{d.Publisher}" MinVersion="{version}" />{"\n"}"""));
+        var xml = $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
+              <App Id="{Guid.NewGuid()}" Name="{name}" Publisher="{publisher}" Version="{version}" Platform="{platform}"/>
+              <Dependencies>
+            {deps}  </Dependencies>
+            </Package>
+            """;
+        File.WriteAllBytes(Path.Combine(dir, $"{publisher}_{name}.app"), WrapNavx(xml));
+    }
+
+    // ── #3719: a package's own Platform floor is an edge ──────────────────────
+
+    [Fact]
+    public void ScanDependencyEdges_PackageDeclaringPlatform_RecordsAnEdgeToSystem()
+    {
+        var dir = NewDir("floor-edge");
+        WriteAppWithPlatform(dir, "Library Assert", "Microsoft", "28.1.49838.54169", platform: "28.0.0.0");
+
+        var edges = ProvisioningCheck.ScanDependencyEdges(new[] { dir }).Edges;
+
+        Assert.Equal(new[] { "System" }, edges["Library Assert"]);
+    }
+
+    /// <summary>The floor edge does not point a package at itself: a System.app that declares a
+    /// Platform records an empty edge list, exactly as an app declaring nothing does.</summary>
+    [Fact]
+    public void ScanDependencyEdges_SystemDeclaringPlatform_RecordsNoSelfEdge()
+    {
+        var dir = NewDir("floor-edge-self");
+        WriteAppWithPlatform(dir, "System", "Microsoft", "28.0.54265.0", platform: "28.0.54265.0");
+
+        var edges = ProvisioningCheck.ScanDependencyEdges(new[] { dir }).Edges;
+
+        Assert.Empty(edges["System"]);
+    }
+
+    /// <summary>
+    /// The end-to-end need: a bundle naming only Library Assert, with the real-shaped toolkit
+    /// package on disk, requires System — derived from that package's Platform floor, in the
+    /// same second round that learns Application Test Library from Tests-TestLibraries. Without
+    /// the edge the bundle downloaded test-apps alone and Library Assert's source compile died
+    /// with EMIT-ZERO on the first run.
+    /// </summary>
+    [Fact]
+    public void DetermineManifestNeeds_LibraryAssertOnDisk_RequiresSystemThroughItsPlatformFloor()
+    {
+        var dir = NewDir("floor-need");
+        WriteAppWithPlatform(dir, "Library Assert", "Microsoft", "28.1.49838.54169", platform: "28.0.0.0");
+        var edges = ProvisioningCheck.ScanDependencyEdges(new[] { dir }).Edges;
+
+        var needs = ProvisioningCheck.DetermineManifestNeeds(
+            new[] { Root("Library Assert", version: "28.0.0.0") }, edges);
+
+        Assert.True(needs.NeedsTestApps);
+        Assert.Equal(new[] { "System" }, needs.RequiredPlatformApps);
+    }
+
     /// <summary>As <see cref="WriteApp"/>, but the package carries a
     /// <c>publishedartifacts/</c> entry — i.e. an R2R runtime package rather than a
     /// symbol-only one, which is what a real provisioned platform-apps dir holds.</summary>

@@ -611,11 +611,22 @@ public sealed class DependencyResolverTests : IDisposable
 
     private static byte[] MakeMinimalApp(string appId, string name, string publisher, string version,
         bool r2r, bool alSource)
+        => MakeMinimalApp(appId, name, publisher, version, r2r, alSource, platform: null);
+
+    /// <summary>
+    /// <paramref name="platform"/> becomes the App element's <c>Platform</c> attribute — the
+    /// floor the real `al` compiler turns into an implicit Microsoft/System dependency, and
+    /// the only dependency Microsoft's test-toolkit packages declare (Library Assert's manifest:
+    /// <c>Platform="28.0.0.0"</c>, an empty <c>&lt;Dependencies /&gt;</c>).
+    /// </summary>
+    private static byte[] MakeMinimalApp(string appId, string name, string publisher, string version,
+        bool r2r, bool alSource, string? platform)
     {
+        var platformAttr = platform == null ? "" : $" Platform=\"{platform}\"";
         var xml = $"""
             <?xml version="1.0" encoding="utf-8"?>
             <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
-              <App Id="{appId}" Name="{name}" Publisher="{publisher}" Version="{version}"/>
+              <App Id="{appId}" Name="{name}" Publisher="{publisher}" Version="{version}"{platformAttr}/>
             </Package>
             """;
 
@@ -650,6 +661,85 @@ public sealed class DependencyResolverTests : IDisposable
         BitConverter.TryWriteBytes(result.AsSpan(4, 4), (uint)8);
         zipBytes.CopyTo(result, 8);
         return result;
+    }
+
+    // ── #3719: a resolved package's OWN platform floor joins the closure ──────
+    //
+    // Library Assert's manifest declares Platform="28.0.0.0" and no <Dependencies>. A consumer
+    // whose app.json declares neither `platform` nor `application` (LethAL's sandbox-data
+    // fixture; nothing in AL requires the keys) therefore resolved a closure with no System.app
+    // in it, Library Assert was source-compiled against that closure, and BC's emitter died on
+    // `Table 'Field' is missing` / `namespace 'Reflection' is unknown` — reported as EMIT-ZERO.
+    // Adding `"platform"` to the CONSUMER made the same fixture pass, 66 tests. The resolver must
+    // follow a resolved package's own Platform/Application floors the way it follows its
+    // <Dependencies>, so the dependency compiles against what ITS manifest asks for.
+
+    [Fact]
+    public void ResolvedPackageDeclaringPlatform_PullsSystemIntoTheClosure_BeforeIt()
+    {
+        var dir = MakeDir("PlatformFloor");
+        var systemId = "00000000-0000-0000-0000-00000000c0de";
+        var assertId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
+        File.WriteAllBytes(Path.Combine(dir, "System.app"),
+            MakeMinimalApp(systemId, "System", "Microsoft", "28.0.54265.0", r2r: false, alSource: false, platform: null));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Library Assert.app"),
+            MakeMinimalApp(assertId, "Library Assert", "Microsoft", "28.1.49838.54169", r2r: false, alSource: true, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var result = resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(assertId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        var names = result.Select(r => r.Manifest.Name).ToList();
+        Assert.Equal(new[] { "System", "Library Assert" }, names); // topological: the floor first
+    }
+
+    /// <summary>
+    /// The floor is Optional, exactly like the implicit roots a consumer's app.json yields: a
+    /// cache without System.app resolves the package alone rather than throwing. (Whether the
+    /// compile then fails is the loader's business, and it does fail loudly.)
+    /// </summary>
+    [Fact]
+    public void ResolvedPackageDeclaringPlatform_SystemAbsent_ResolvesThePackageAlone()
+    {
+        var dir = MakeDir("PlatformFloorAbsent");
+        var assertId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Library Assert.app"),
+            MakeMinimalApp(assertId, "Library Assert", "Microsoft", "28.1.49838.54169", r2r: false, alSource: true, platform: "28.0.0.0"));
+
+        var result = new DependencyResolver(new[] { dir }).Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(assertId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        Assert.Equal(new[] { "Library Assert" }, result.Select(r => r.Manifest.Name).ToArray());
+    }
+
+    /// <summary>
+    /// The trap AppLoader.ImplicitRoots' own doc comment names: every Microsoft platform app's
+    /// manifest carries these attributes and they reference each other (Application → Base
+    /// Application → Application …), so following a PLATFORM app's floors would cycle. They
+    /// are not followed; only a non-platform package's are. Base Application declaring a
+    /// Platform floor resolves to exactly itself, no System, no cycle exception.
+    /// </summary>
+    [Fact]
+    public void MicrosoftPlatformAppDeclaringPlatform_FloorIsNotFollowed()
+    {
+        var dir = MakeDir("PlatformFloorGuard");
+        var systemId = "00000000-0000-0000-0000-00000000c0de";
+        var baseId = "437dbf0e-84ff-417a-965d-ed2bb9650972";
+        File.WriteAllBytes(Path.Combine(dir, "System.app"),
+            MakeMinimalApp(systemId, "System", "Microsoft", "28.0.54265.0", r2r: false, alSource: false, platform: "28.0.54265.0"));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Base Application.app"),
+            MakeMinimalApp(baseId, "Base Application", "Microsoft", "28.1.49838.54169", r2r: true, alSource: false, platform: "28.0.0.0"));
+
+        var result = new DependencyResolver(new[] { dir }).Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(baseId), "Base Application", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        Assert.Equal(new[] { "Base Application" }, result.Select(r => r.Manifest.Name).ToArray());
     }
 
     // ── #1689: a resolved package that NO loader tier can implement ───────────
