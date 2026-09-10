@@ -503,16 +503,64 @@ Two things had to be right for pairing to actually engage, and each failed silen
 235 pages, **32,958 differences across 124 members** on BC 28.1.49838.53910. Two groups, and they
 need different answers:
 
-- **~92 members: the control tree the runner deliberately does not reconstruct** — `ActionContainers`
-  (1,153), `Expressions` (762), `Triggers` (332), `Content.Containers` (253), `ViewContainers` (7),
-  `Methods` (5), plus `ControlGUID` and the translation keys. `DependencyPageMetadataXml.cs`'s own
-  header states why: a field control's value binding lives in the `.app`'s IL, not in this XML, so
-  reconstructing one from `SymbolReference.json` would add guessed data with no way to prove it
-  faithful. These are declared out of scope in the allowlist.
-- **22 members whose value IS in `SymbolReference.json` and is simply not read** — tracked on
-  **#3784**, with the per-property table measured off the shipped symbol file. `Extensible` is the
-  sharpest: the runner hardcodes `"1"`, and BC says `False` on 104 of 235 pages, so it is a wrong
-  answer rather than a missing one.
+**First, read the entry count correctly.** The allowlist gains 117 page entries, but **49 of them
+are `#field` / `*Specified` companions** that BC's serializer sets from the same value as the member
+beside them. There are **68 distinct members**, and comparing 117 against the table side's counts
+overstates the page gap.
+
+- **55 entries / 30 distinct members — values `SymbolReference.json` already carries and
+  `EmitPageXml` does not read.** Tracked on **#3784**. This includes the `Actions` (106 pages),
+  `Methods` (107) and `Views` (4) arrays, which are whole objects the runner emits no element for.
+  `Extensible` is the sharpest: the runner hardcodes `"1"`, BC answers `0` on 104 of 235 pages, and
+  the symbol file states `Extensible=0` for **all 104 with zero omissions** — a pure
+  read-don't-guess fix rather than merely a wrong default.
+- **62 entries / 38 distinct members — the ordinary field-control tree the runner does not build
+  today**, plus the translation keys.
+
+<a id="the-control-tree-is-a-cost-decision-not-an-unprovable-one"></a>
+### The control tree is a cost decision, and it has a proof path
+
+**No page entry in the allowlist claims a value is underivable, and that distinction is the point.**
+
+An earlier draft of this document and of the allowlist said the control tree could not be
+reconstructed faithfully, because `SymbolReference.json` stores the binding as AL text (`Rec."No."`)
+while BC's document stores the compiled `DataColumnName`. The first half is true; the conclusion
+drawn from it was wrong, and it would have recorded a live architecture question as settled.
+
+`DataColumnName` **is the field number**, resolvable through table metadata the runner already
+builds, and control ids are identical in both sources — so every derived value is independently
+checkable against the ground truth this harness now provides. Measured on BC 28.1.49838.53910:
+
+| | |
+|---|---|
+| Rec-bound controls whose source table is in the bundle | **442 of 442 exact, 0 wrong** |
+| residual category 1 | field names differing in case or spacing (`Rec."Task Id"` vs `Task ID`) |
+| residual category 2 | controls bound to a page **variable**, which BC names `"Control" + <id of the first control bound to that variable>` — a dedup rule over data the symbol file already carries |
+
+**The resolution machinery already exists and is in use.** `DependencyPageMetadataXml.cs`'s own
+header records that `SubFormLink` field names "ARE resolved (to numeric ids, off the part's own and
+the host's SourceTable — see `EmitSubFormLinkXml`)". The file cited as evidence for impossibility
+does the resolution.
+
+`ControlGUID` is the same shape — a **pure encoding**, not an opaque designer token:
+
+```
+{<pageId:08x>-<ctlId & 0xFFFF:04x>-0000-0c<(ctlId >> 24) & 0xFF:02x>-<(ctlId >> 16) & 0xFF:02x>00836bd2d2}
+```
+
+Page 257, control 791368264 gives `{00000101-5248-0000-0c2f-2b00836bd2d2}`, character for character
+what BC emits: **5,001 of 5,001 exact** on 28.1.49838.53910 and 5,035 of 5,035 on 28.4.53241.54407.
+
+So these are **cost and scope decisions with a proof path**, tracked on #2460 for actions. What the
+entries record is that the work has not been done — never that it could not be.
+
+<a id="what-the-page-measurement-does-not-cover"></a>
+### What the page measurement does not cover
+
+**One BC build, two apps.** Base Application's ~4,000 pages are not measured at all: `apps.json`
+excludes it because its emit needs a `PublicKeyToken=null` copy of `Microsoft.AspNetCore.StaticFiles`
+that no BC artifact ships (#3549). None of the figures above is evidence about the pages most AL
+tests actually touch.
 
 **Base Application is not covered.** Its emit needs a `PublicKeyToken=null` copy of
 `Microsoft.AspNetCore.StaticFiles` that no BC artifact ships, and without it BC's emitter
