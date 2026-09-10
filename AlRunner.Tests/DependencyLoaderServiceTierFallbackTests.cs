@@ -80,4 +80,59 @@ public sealed class DependencyLoaderServiceTierFallbackTests
 
         Assert.True(result);
     }
+
+    // ---- #3749: the METADATA-* family must never be swallowed --------------------
+    //
+    // DependencyMetadataProducer (#3549) raises METADATA-EMIT-FAIL / METADATA-EMIT-ZERO /
+    // METADATA-SOURCE-UNREADABLE through DependencyLoadException, the same type this catch
+    // guard is written for. Its whole purpose is that a failed emit must never be downgraded
+    // to the hand-derivation, so the service-tier fallback -- which is about an app's CODE --
+    // must not answer for it: a service-tier DLL supplies procedure bodies, never BC's
+    // metadata documents, so deferring to it leaves the metadata question silently unanswered.
+
+    [Theory]
+    [InlineData("METADATA-EMIT-FAIL")]
+    [InlineData("METADATA-EMIT-ZERO")]
+    [InlineData("METADATA-SOURCE-UNREADABLE")]
+    public void MetadataStages_AreNeverSwallowed_EvenWithFullServiceTierCoverage(string stage)
+    {
+        // Every OTHER condition for swallowing is satisfied: Microsoft source-only, and the
+        // index covers this app's codeunit. Only the stage differs, so the stage is what the
+        // assertion is about.
+        Assert.False(DependencyLoader.IsServiceTierFallbackEligible(
+            stage,
+            serviceTierIndexAvailable: true,
+            codeunitTypeNames: new[] { "Codeunit130002" },
+            indexContains: _ => true));
+    }
+
+    [Theory]
+    [InlineData("EMIT-FAIL")]
+    [InlineData("EMIT-ZERO")]
+    [InlineData("COMPILE-FAIL")]
+    [InlineData("LOAD-FAIL")]
+    public void CodeStages_AreStillSwallowedWhenTheIndexCoversTheApp(string stage)
+    {
+        // The #2131 behaviour is unchanged: a CODE failure on an app the index really serves
+        // is a faithful deferral to real MS-compiled bodies. Narrowing the guard for the
+        // metadata family must not narrow it for these.
+        Assert.True(DependencyLoader.IsServiceTierFallbackEligible(
+            stage,
+            serviceTierIndexAvailable: true,
+            codeunitTypeNames: new[] { "Codeunit130002" },
+            indexContains: _ => true));
+    }
+
+    [Fact]
+    public void CodeStage_IsStillNotSwallowedWithoutCoverage()
+    {
+        // The Library Assert shape #2131 fixed, re-pinned through the new predicate so the
+        // stage check cannot accidentally re-open it.
+        Assert.False(DependencyLoader.IsServiceTierFallbackEligible(
+            "EMIT-ZERO",
+            serviceTierIndexAvailable: true,
+            codeunitTypeNames: new[] { "Codeunit130002" },
+            indexContains: _ => false));
+    }
+
 }

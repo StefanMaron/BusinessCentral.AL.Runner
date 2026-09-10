@@ -14,7 +14,12 @@
 //   The availability-vs-failure split (`.claude/rules/loud-failures.md`) is the property this
 //   whole class exists to protect: a dependency with no source must be a quiet 0, and a
 //   dependency whose compile failed must throw. Those two answers must never be spelled the
-//   same way, which is what LoudFailure_And_NoSource_AreDifferentAnswers asserts structurally.
+//   same way, which NoSource_ReturnsZero_WhileFailedEmit_Throws asserts by DRIVING both arms.
+//
+//   That test used to assert over reflection metadata -- that Ensure returns int and Loud
+//   returns an exception type -- and #3749 found it would still have passed if Ensure swallowed
+//   its own throw, which is the one defect it was named for. A null compiler is what makes the
+//   emit fail without a BC runtime, so the conversion under test runs for real.
 
 using System;
 using System.IO;
@@ -130,45 +135,90 @@ public sealed class DependencyMetadataProducerTests
     // ---- availability vs failure ---------------------------------------------------
 
     /// <summary>
-    /// A package with no readable source answers "nothing to produce" (false) rather than
-    /// throwing, and it answers that from the PACKAGE — before any compile — which is what
-    /// keeps "unavailable" from ever being inferred from a failure. #3590 is why that ordering
-    /// is load-bearing: a construction failure that reached the consumer would be
-    /// indistinguishable from a document that was never produced.
+    /// A package the reader cannot open at all is a LOUD failure, not an absence.
+    /// <c>ReadSource</c> is the seam that separates the two (#3748): it lets
+    /// <c>ExtractAlWithPaths</c>'s empty list mean "symbol-only, nothing to produce" and turns
+    /// a read that THREW into <c>METADATA-SOURCE-UNREADABLE</c>. Asserted by driving
+    /// <c>Ensure</c> for real, so it fails if the throw is ever softened to a sentinel return.
     /// </summary>
     [Fact]
-    public void HasCompilableSource_IsFalseForAnUnreadablePackage_AndDoesNotThrow()
+    public void UnreadablePackage_ThrowsSourceUnreadable_RatherThanReturningZero()
     {
-        var missing = Path.Combine(Path.GetTempPath(), $"no-such-package-{Guid.NewGuid():N}.app");
-        Assert.False(DependencyMetadataProducer.HasCompilableSource(missing));
-
-        // An owned scratch file: this one IS created, so a killed test host would leak it
-        // (#2743). TestScratch.FilePath creates the owning directory, which is what the
-        // sweep deletes -- so no hand-rolled finally is needed to avoid leaking it.
         var notAnApp = TestScratch.FilePath("dep-metadata-producer", "garbage.app");
         File.WriteAllText(notAnApp, "this is not a NAVX package");
-        Assert.False(DependencyMetadataProducer.HasCompilableSource(notAnApp));
+
+        var ex = Assert.Throws<AlRunner.Infrastructure.DependencyLoadException>(
+            () => DependencyMetadataProducer.Ensure(
+                Manifest("Business Foundation"), notAnApp, compiler: null!));
+
+        Assert.Equal("METADATA-SOURCE-UNREADABLE", ex.Stage);
+        Assert.Equal("Business Foundation", ex.AppName);
     }
 
     /// <summary>
-    /// The two outcomes are structurally different — one returns, one throws — so no caller can
-    /// treat a failed compile as an absent document by reading a return value. Asserted on the
-    /// declared signature rather than by running a compile, so it holds without a BC runtime and
-    /// fails loudly if someone converts the throw into a sentinel return.
+    /// The two answers are observably different when the code actually RUNS, which is the
+    /// property #3749 found the previous version of this test could not make: it asserted that
+    /// <c>Ensure</c> returns <c>int</c> and that <c>Loud</c> returns an exception type, both of
+    /// which stay true if <c>Ensure</c> swallows its own throw.
+    ///
+    /// <para>So both arms are driven here. A package that ships NO AL source returns 0 — the
+    /// ordinary symbol-only case. A package that DOES ship source and whose emit fails throws
+    /// <c>METADATA-EMIT-FAIL</c>. A `null` compiler is what makes the emit fail without a BC
+    /// runtime: <c>Ensure</c> catches whatever the emit raises and restates it as that stage,
+    /// which is exactly the conversion under test.</para>
     /// </summary>
     [Fact]
-    public void LoudFailure_And_NoSource_AreDifferentAnswers()
+    public void NoSource_ReturnsZero_WhileFailedEmit_Throws()
     {
-        var ensure = typeof(DependencyMetadataProducer)
-            .GetMethod("Ensure", BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Public);
-        Assert.NotNull(ensure);
-        // "How many documents are available" — never a status code with a failure value in it.
-        Assert.Equal(typeof(int), ensure!.ReturnType);
+        // Arm 1 — source-less package: a quiet 0, no throw.
+        var symbolOnly = WritePackage("no-source", ("SymbolReference.json", "{}"));
+        Assert.Equal(0, DependencyMetadataProducer.Ensure(
+            Manifest("Business Foundation"), symbolOnly, compiler: null!));
 
-        var loud = typeof(DependencyMetadataProducer)
-            .GetMethod("Loud", BindingFlags.NonPublic | BindingFlags.Static);
-        Assert.NotNull(loud);
-        Assert.Equal(typeof(AlRunner.Infrastructure.DependencyLoadException), loud!.ReturnType);
+        // Arm 2 — the SAME call shape on a package that ships source: throws instead.
+        var withSource = WritePackage("with-source",
+            ("src/Thing.Table.al", "table 50000 Thing { fields { field(1; A; Integer) { } } }"));
+
+        var ex = Assert.Throws<AlRunner.Infrastructure.DependencyLoadException>(
+            () => DependencyMetadataProducer.Ensure(
+                Manifest("Business Foundation"), withSource, compiler: null!));
+
+        Assert.Equal("METADATA-EMIT-FAIL", ex.Stage);
+
+        // The distinction is the point: absence returned a value, failure did not.
+        Assert.NotEqual("METADATA-SOURCE-UNREADABLE", ex.Stage);
+    }
+
+    // ---- NAVX package fixtures -----------------------------------------------------
+
+    private static byte[] Navx(byte[] zipBytes)
+    {
+        var result = new byte[8 + zipBytes.Length];
+        result[0] = (byte)'N'; result[1] = (byte)'A'; result[2] = (byte)'V'; result[3] = (byte)'X';
+        BitConverter.TryWriteBytes(result.AsSpan(4, 4), (uint)8);
+        zipBytes.CopyTo(result, 8);
+        return result;
+    }
+
+    private static byte[] ZipWith(params (string Name, string Content)[] entries)
+    {
+        using var ms = new MemoryStream();
+        using (var zip = new System.IO.Compression.ZipArchive(
+            ms, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+            foreach (var (name, content) in entries)
+            {
+                var e = zip.CreateEntry(name);
+                using var s = e.Open();
+                s.Write(System.Text.Encoding.UTF8.GetBytes(content));
+            }
+        return ms.ToArray();
+    }
+
+    private static string WritePackage(string suffix, params (string Name, string Content)[] entries)
+    {
+        var path = TestScratch.FilePath("dep-metadata-producer", $"pkg-{suffix}.app");
+        File.WriteAllBytes(path, Navx(ZipWith(entries)));
+        return path;
     }
 
     private sealed class EnvVar : IDisposable

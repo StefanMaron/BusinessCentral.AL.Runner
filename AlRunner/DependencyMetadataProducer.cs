@@ -29,9 +29,13 @@
 //                                    is the silent-default shape .claude/rules/loud-failures.md
 //                                    exists to prevent, so it throws.
 //
-//   The seam that separates them is HasCompilableSource: it is answered from the package
-//   BEFORE any compile is attempted, so "unavailable" is never inferred from a failure.
-//   #3590 is why that ordering is load-bearing rather than stylistic — BuildNCLMetaTable
+//   The seam that separates them is ReadSource, and it separates them by ANSWER SHAPE rather
+//   than by ordering: an empty list means the package ships no source, and a package that
+//   could not be read THROWS (METADATA-SOURCE-UNREADABLE) instead of returning empty. So an
+//   unreadable package can never enter through the "absence" door — which is the property
+//   that matters, and the one a boolean precondition answered before the compile could not
+//   give, because a boolean has no way to say "I could not tell" (guards-need-a-third-state.md).
+//   #3590 is why that distinction is load-bearing rather than stylistic — BuildNCLMetaTable
 //   swallows a construction failure into a cached null with its log line filtered out by
 //   default, so a failure that reached the consumer would be indistinguishable from absence.
 //
@@ -77,18 +81,6 @@ internal static class DependencyMetadataProducer
     /// </summary>
     private static readonly HashSet<string> NeverCompile =
         new(StringComparer.OrdinalIgnoreCase) { "Base Application" };
-
-    /// <summary>
-    /// True when this package carries AL source a compile could consume. Answered from the
-    /// package alone, BEFORE any compile — that is what lets a caller tell "nothing to
-    /// produce" apart from "the compile failed", which the header explains is the one
-    /// distinction this class must never blur.
-    /// </summary>
-    internal static bool HasCompilableSource(string appPath)
-    {
-        try { return AppLoader.ExtractAlWithPaths(appPath).Count > 0; }
-        catch { return false; }
-    }
 
     internal static bool IsExcluded(AppManifest m) => NeverCompile.Contains(m.Name);
 
@@ -268,6 +260,12 @@ internal static class DependencyMetadataProducer
         catch { return empty; }
     }
 
+    /// <summary>
+    /// The seam between "nothing to produce" and "the compile failed" (#3748). An empty list
+    /// means the package ships no AL source — the ordinary symbol-only case, which Ensure
+    /// turns into a quiet 0. A package that cannot be READ throws instead, so an unreadable
+    /// package never reaches the caller as an absence.
+    /// </summary>
     private static IReadOnlyList<(string Path, string Source)> ReadSource(AppManifest m, string appPath)
     {
         try { return AppLoader.ExtractAlWithPaths(appPath); }
