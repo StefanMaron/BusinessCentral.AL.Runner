@@ -113,13 +113,30 @@ public static partial class RecordPatches
             QLog($"BuildRealNCLMetaQuery({queryId}): built {(meta == null ? "NULL" : meta.GetType().Name)} clrType={clrType.FullName}");
             return meta;
         }
-        catch (Exception ex)
+        // #3776 — the reflection-availability check above sits OUTSIDE this try, so everything
+        // reaching here is a failure to build a query the runner had already established it
+        // could build. The absorbed null flows to CodeunitPatches.cs's NavQuery ctor and to
+        // EnsureQueryInMetadataCache, where it is dereferenced inside BC's own ALSetFilter /
+        // ValidateExpectedType — #3499's shape.
+        //
+        // The visibility half differs from the form/report builders and is WORSE: their write
+        // was merely tag-filtered at default verbosity, while QLog writes nothing at all unless
+        // AL_RUNNER_QDIAG=1, so an absorbed failure here produced no output anywhere. The
+        // absorbed case now writes the same unfiltered stderr line the others do; QLog keeps
+        // the stack-trace detail for a diagnostic run.
+        catch (Exception ex) when (BuildRealNclMetaQueryCatchMayAbsorb(ex))
         {
             var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
             QLog($"BuildRealNCLMetaQuery({queryId}) FAILED: {inner.GetType().Name}: {inner.Message}\n{inner.StackTrace}");
+            Console.Error.WriteLine(BuildRealNclMetaQueryFailureLine(queryId, ex));
             return null;
         }
     }
+
+    private static bool BuildRealNclMetaQueryCatchMayAbsorb(Exception ex) => MetaObjectCatchMayAbsorb(ex);
+
+    private static string BuildRealNclMetaQueryFailureLine(int queryId, Exception ex)
+        => MetaObjectFailureLine("query", queryId, ex);
 
     // Generic MetaQuery design builder, driven by the query's SymbolReference.json
     // definition (parsed by BcAppSymbolCache, indexed by BcAppFallback). Works for both

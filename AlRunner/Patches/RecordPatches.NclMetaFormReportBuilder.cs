@@ -148,13 +148,35 @@ public static partial class RecordPatches
 
             return meta;
         }
-        catch (Exception ex)
+        // #3776 — the existence checks above sit OUTSIDE this try, so nothing reaching here is a
+        // "no such page" case: everything is a failure to build a page the runner had already
+        // established exists. Absorbing a deliberate refusal into the same null turns it into
+        // NavForm.GetMasterPage's not-found several layers later, naming neither page nor cause.
+        // Same filter and same reason as BuildNCLMetaTable's (#3590).
+        catch (Exception ex) when (BuildNclMetaFormCatchMayAbsorb(ex))
         {
-            var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-            Console.Error.WriteLine($"[RecordPatches] BuildNCLMetaForm({pageId}) failed: {inner.GetType().Name}: {inner.Message}");
+            Console.Error.WriteLine(BuildNclMetaFormFailureLine(pageId, ex));
             return null;
         }
     }
+
+    /// <summary>
+    /// Whether <see cref="BuildNCLMetaForm"/>'s catch may absorb <paramref name="ex"/> into the
+    /// cached null, or must let it reach the caller so the cause is attributable (#3776).
+    /// False for the three deliberate refusals; true for everything else, which is what keeps
+    /// each caller's real not-found branch (guards-need-a-third-state.md). Both <c>Find</c> calls
+    /// walk the inner chain rather than testing with <c>is</c>: every construction step here is a
+    /// reflective invoke, so a refusal arrives wrapped in a <see cref="TargetInvocationException"/>.
+    /// </summary>
+    private static bool BuildNclMetaFormCatchMayAbsorb(Exception ex) => MetaObjectCatchMayAbsorb(ex);
+
+    /// <summary>
+    /// The stderr line for a page-metadata construction failure this catch DID absorb (#3776).
+    /// No leading <c>[RecordPatches]</c> tag — <c>Log.FilteredWriter</c> (AlRunner/Log.cs) drops a
+    /// line starting with one unless <c>--verbose</c>, which is what made the old write invisible.
+    /// </summary>
+    private static string BuildNclMetaFormFailureLine(int pageId, Exception ex)
+        => MetaObjectFailureLine("page", pageId, ex);
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static object? BuildNCLMetaReport(int reportId)
@@ -189,13 +211,20 @@ public static partial class RecordPatches
 
             return meta;
         }
-        catch (Exception ex)
+        // #3776 — see BuildNclMetaFormCatchMayAbsorb. KnownReportIdSet() above is the existence
+        // check and it is outside this try, so everything here is a build failure for a report
+        // that exists, not a missing report.
+        catch (Exception ex) when (BuildNclMetaReportCatchMayAbsorb(ex))
         {
-            var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-            Console.Error.WriteLine($"[RecordPatches] BuildNCLMetaReport({reportId}) failed: {inner.GetType().Name}: {inner.Message}");
+            Console.Error.WriteLine(BuildNclMetaReportFailureLine(reportId, ex));
             return null;
         }
     }
+
+    private static bool BuildNclMetaReportCatchMayAbsorb(Exception ex) => MetaObjectCatchMayAbsorb(ex);
+
+    private static string BuildNclMetaReportFailureLine(int reportId, Exception ex)
+        => MetaObjectFailureLine("report", reportId, ex);
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static object? BuildNCLMetaQuery(int queryId)
@@ -221,13 +250,20 @@ public static partial class RecordPatches
 
             return meta;
         }
-        catch (Exception ex)
+        // #3776 — see BuildNclMetaFormCatchMayAbsorb. This is the SKELETON query builder; the
+        // real one is BuildRealNCLMetaQueryCore in RecordPatches.NclMetaQueryBuilder.cs, which
+        // carries the same filter.
+        catch (Exception ex) when (BuildNclMetaQueryCatchMayAbsorb(ex))
         {
-            var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-            Console.Error.WriteLine($"[RecordPatches] BuildNCLMetaQuery({queryId}) failed: {inner.GetType().Name}: {inner.Message}");
+            Console.Error.WriteLine(BuildNclMetaQueryFailureLine(queryId, ex));
             return null;
         }
     }
+
+    private static bool BuildNclMetaQueryCatchMayAbsorb(Exception ex) => MetaObjectCatchMayAbsorb(ex);
+
+    private static string BuildNclMetaQueryFailureLine(int queryId, Exception ex)
+        => MetaObjectFailureLine("query", queryId, ex);
 
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static object? BuildNCLMetaXmlPort(int xmlPortId)
@@ -256,11 +292,55 @@ public static partial class RecordPatches
 
             return meta;
         }
-        catch (Exception ex)
+        // #3776 — see BuildNclMetaFormCatchMayAbsorb. #3510 is this null's symptom end for
+        // xmlports: it surfaces as NavMetadataNotFoundException from inside the xmlport's own
+        // ctor, naming neither the failing construction step nor the cause.
+        catch (Exception ex) when (BuildNclMetaXmlPortCatchMayAbsorb(ex))
         {
-            var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-            Console.Error.WriteLine($"[RecordPatches] BuildNCLMetaXmlPort({xmlPortId}) failed: {inner.GetType().Name}: {inner.Message}");
+            Console.Error.WriteLine(BuildNclMetaXmlPortFailureLine(xmlPortId, ex));
             return null;
         }
+    }
+
+    private static bool BuildNclMetaXmlPortCatchMayAbsorb(Exception ex) => MetaObjectCatchMayAbsorb(ex);
+
+    private static string BuildNclMetaXmlPortFailureLine(int xmlPortId, Exception ex)
+        => MetaObjectFailureLine("xmlport", xmlPortId, ex);
+
+    /// <summary>
+    /// The classification every metadata-object builder's catch filters on (#3776, #3590).
+    ///
+    /// <para>False — must NOT be absorbed — for the three refusals the runner raises
+    /// deliberately: <see cref="BcShapeGapException"/> (a BC member moved; contractually
+    /// uncatchable at AL's seams), <see cref="BcAppSymbolReadException"/> (a dependency's symbols
+    /// would not read to completion), and a TYPED <see cref="RunnerOutOfScopeException"/>. Typed
+    /// only: a BC exception whose message merely carries the convention is not one of ours
+    /// (#3048).</para>
+    ///
+    /// <para>Both <c>Find</c> calls walk the inner chain rather than testing with <c>is</c>,
+    /// because a refusal raised under a reflective invoke arrives wrapped in a
+    /// <see cref="TargetInvocationException"/>.</para>
+    ///
+    /// <para>Trap: this is shared by five catches whose builders each have their own named
+    /// wrapper, so the wrappers are what the proving test drives and what a future divergence
+    /// would specialise. Widening this predicate widens all five at once.</para>
+    /// </summary>
+    private static bool MetaObjectCatchMayAbsorb(Exception ex)
+        => AlRunner.Infrastructure.BcShapeGapException.Find(ex) is null
+           && AlRunner.Infrastructure.BcAppSymbolReadException.Find(ex) is null
+           && AlRunner.Infrastructure.OutOfScopeMessage.FromException(ex) is not { Typed: true };
+
+    /// <summary>
+    /// The stderr line for a construction failure a metadata-object builder's catch DID absorb
+    /// (#3776). Names the object kind, the id and the unwrapped cause, and carries no leading
+    /// bracketed component tag so <c>Log.FilteredWriter</c> cannot drop it at default verbosity.
+    /// Header and top frame are ONE write: a second write would be filtered independently.
+    /// </summary>
+    private static string MetaObjectFailureLine(string objectKind, int objectId, Exception ex)
+    {
+        var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+        return $"al-runner: {objectKind} {objectId} metadata could not be built: "
+               + $"{inner.GetType().Name}: {inner.Message}"
+               + (inner.StackTrace != null ? "\n" + inner.StackTrace.Split('\n')[0] : "");
     }
 }
