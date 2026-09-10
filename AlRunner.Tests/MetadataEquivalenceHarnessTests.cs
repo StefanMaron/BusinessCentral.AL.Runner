@@ -279,11 +279,43 @@ public sealed class MetadataEquivalenceHarnessTests
     {
         var differences = report.Differences.Where(d => d.Signature == signature).ToArray();
         Assert.True(differences.Length == 0,
-            $"{report.Bundle.Label}: {signature} was fixed by #3545 and its allowlist entry " +
-            $"deleted with it, so any difference here is a regression in the reader rule. " +
+            $"{report.Bundle.Label}: {signature} was fixed by a landed reader change and its " +
+            $"allowlist entry deleted with it, so any difference here is a regression. " +
             $"{differences.Length} difference(s), first {Math.Min(5, differences.Length)}:" +
             Environment.NewLine +
             string.Join(Environment.NewLine, differences.Take(5).Select(d => "  " + d)));
+    }
+
+    [SkippableFact]
+    public void The_reader_states_every_key_property_the_symbol_file_carries()
+    {
+        // #3568, the key cluster. Four members BC propagates into the LIVE NCLMetaKey that AL
+        // reaches, all four of which the symbol file states and the reader dropped:
+        // NCLMetaKey.CreateFromMetaKey passes metaKey.KeyName, metaKey.Unique,
+        // metaKey.SumIndexFields and `clusteredOverride || metaKey.Clustered` into the
+        // NCLMetaKey ctor (BC 28.1, Ncl.dll). So these are AL-observable, not emitter-only:
+        // ObsolescenceGuard.ThrowIfObsoleted formats key.GetKeyName() into the error a
+        // SetCurrentKey on an obsoleted key raises, which named "PK" for every key in the
+        // repository before this change.
+        //
+        // MetaKey.Name is deliberately NOT here. BC derives it as the positional field spec
+        // ("Field1,Field2" over field IDs) and CreateFromMetaKey never passes it, so it reaches
+        // no AL surface; its allowlist entry stays.
+        foreach (var report in RunAll())
+        {
+            AssertReaderAgrees(report, "MetaKey.KeyName");
+            AssertReaderAgrees(report, "MetaKey.Clustered");
+            AssertReaderAgrees(report, "MetaKey.Unique");
+            AssertReaderAgrees(report, "MetaKey.SumIndexFields." + MetadataObjectDiff.PresenceMember);
+            AssertReaderAgrees(report, "FieldMetadataRelation.Name");
+            // Follows from KeyName rather than from Name, which is why it went green with the
+            // four above and its allowlist entry was deleted: MetaKey.DebuggerDisplay formats
+            // "Key: {KeyName} Index: ... Sift: ...", measured by constructing a MetaKey with
+            // name and keyName set to distinguishable values (BC 28.1 Types.dll). The entry
+            // that used to cover it said it derived from Name and was "not separately
+            // fixable"; it was neither.
+            AssertReaderAgrees(report, "MetaKey.DebuggerDisplay");
+        }
     }
 
     [SkippableFact]
@@ -303,7 +335,15 @@ public sealed class MetadataEquivalenceHarnessTests
         //     (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue)
         // and a key is "<Kind> <hash>" components joined by " - ", ending in the property.
         //
-        // This is evidence, not an implementation. The reader fix (#3568) is where it lands.
+        // This is evidence, NOT a plan to implement it. Translations are out of scope for the
+        // runner by a decision of the repository owner (2026-09-10, relayed on #3568):
+        // translations are not relevant right now and nothing in a run has ever had to do with
+        // them. So nobody should derive these keys — and this test does not ask anyone to.
+        //
+        // It stays because it constrains the ALLOWLIST REASON rather than the reader: it is what
+        // stops those seven entries being re-justified as a permanent limit of the symbol file,
+        // which is the wrong reason and the one that would hide them forever. Out-of-scope and
+        // impossible are different claims, and only the first is true here.
         var bundles = MetadataEquivalenceHarness.LoadBundles(
             MetadataEquivalencePaths.GroundTruthDirForThisBuild());
         Skip.If(bundles.Count == 0, "no metadata ground-truth bundle for this BC build.");

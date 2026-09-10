@@ -23,7 +23,7 @@
     "reproduced), and the runner reads no translation files anyway, so it is out of scope rather",
     "than impossible. 'Nothing is stored' is evidence about storage, never about derivability.",
     "",
-    "Ten entries are DIRECTION-SCOPED. An entry covers both directions unless it says otherwise,",
+    "Nine entries are DIRECTION-SCOPED. An entry covers both directions unless it says otherwise,",
     "and a reason that justifies one direction must not license the other. All three",
     "oracleLimitation entries are runner-only: they exist because the runner shows a merged",
     "runtime view, so BC-absent / runner-present is what they justify \u2014 while the reverse, BC",
@@ -34,50 +34,52 @@
     "rebuild \u2014 the counts move with the BC build and with which apps are bundled \u2014 so any cap",
     "would be a number nobody measured. Direction narrows categorically instead.",
     "",
-    "Measured on BC 28.1.49838.54044 over Business Foundation (12 tables) and System Application",
-    "(138 tables): 70,728 differences across 74 members. Per-member counts and examples are on",
-    "issue #3568."
+    "Measured on BC 28.1.49838.53910 over Business Foundation (12 tables) and System Application",
+    "(138 tables): 67,344 differences across 65 members. #3568 removed six of them -- 688",
+    "differences on MetaKey.KeyName / Clustered / Unique / SumIndexFields, MetaKey.DebuggerDisplay",
+    "and FieldMetadataRelation.Name -- see docs/metadata-equivalence.md#keys. Per-member counts",
+    "and examples are on issue #3568."
   ],
   "differences": [
     {
       "member": "TranslationKey.#Id2",
-      "reason": "The field-name or property-name component of a translation-file lookup id. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "reason": "The field-name or property-name component of a translation-file lookup id. SCOPE DECISION BY THE REPOSITORY OWNER, 2026-09-10 (relayed on #3568): translations are out of scope for the runner. In the owner's terms, translations are not relevant right now and nothing in a run has ever had to do with them. So this is a surface the runner does not need to reproduce -- decided, not assumed, and not a statement that the derivation is correct. WHAT THE RUNNER ANSWERS HERE IS UNMEASURED, NOT RIGHT: 0 and Module are what the MetaField ctor's own defaults leave behind, on a surface nothing exercises. Nobody has checked them against BC and nobody should spend effort doing so. Corroborating the decision rather than grounding it: the runner has no .xlf or Translations/ handling anywhere -- zero references in AlRunner/ -- and docs/limitations.md records that it installs no BC translation resources, so no AL test could observe this member today even if the scope call went the other way. Separately measured, and the reason this can never be called a permanent LIMIT: the key IS derivable -- (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). Deriving it is possible and simply not wanted. What invalidates this entry is the owner putting translations back in scope. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
       "member": "TranslationKey.#NavSymbolKind1",
-      "reason": "The symbol kind of a translation key's first component (BC: Table, runner: Module). A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "reason": "The symbol kind of a translation key's first component (BC: Table, runner: Module). SCOPE DECISION BY THE REPOSITORY OWNER, 2026-09-10 (relayed on #3568): translations are out of scope for the runner. In the owner's terms, translations are not relevant right now and nothing in a run has ever had to do with them. So this is a surface the runner does not need to reproduce -- decided, not assumed, and not a statement that the derivation is correct. WHAT THE RUNNER ANSWERS HERE IS UNMEASURED, NOT RIGHT: 0 and Module are what the MetaField ctor's own defaults leave behind, on a surface nothing exercises. Nobody has checked them against BC and nobody should spend effort doing so. Corroborating the decision rather than grounding it: the runner has no .xlf or Translations/ handling anywhere -- zero references in AlRunner/ -- and docs/limitations.md records that it installs no BC translation resources, so no AL test could observe this member today even if the scope call went the other way. Separately measured, and the reason this can never be called a permanent LIMIT: the key IS derivable -- (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). Deriving it is possible and simply not wanted. What invalidates this entry is the owner putting translations back in scope. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
       "member": "TranslationKey.#NavSymbolKind2",
-      "reason": "The symbol kind of a translation key's second component. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "reason": "The symbol kind of a translation key's second component. SCOPE DECISION BY THE REPOSITORY OWNER, 2026-09-10 (relayed on #3568): translations are out of scope for the runner. In the owner's terms, translations are not relevant right now and nothing in a run has ever had to do with them. So this is a surface the runner does not need to reproduce -- decided, not assumed, and not a statement that the derivation is correct. WHAT THE RUNNER ANSWERS HERE IS UNMEASURED, NOT RIGHT: 0 and Module are what the MetaField ctor's own defaults leave behind, on a surface nothing exercises. Nobody has checked them against BC and nobody should spend effort doing so. Corroborating the decision rather than grounding it: the runner has no .xlf or Translations/ handling anywhere -- zero references in AlRunner/ -- and docs/limitations.md records that it installs no BC translation resources, so no AL test could observe this member today even if the scope call went the other way. Separately measured, and the reason this can never be called a permanent LIMIT: the key IS derivable -- (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). Deriving it is possible and simply not wanted. What invalidates this entry is the owner putting translations back in scope. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
       "member": "TranslationKey.#NavSymbolKind3",
-      "reason": "The symbol kind of a translation key's third component. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "reason": "The symbol kind of a translation key's third component. SCOPE DECISION BY THE REPOSITORY OWNER, 2026-09-10 (relayed on #3568): translations are out of scope for the runner. In the owner's terms, translations are not relevant right now and nothing in a run has ever had to do with them. So this is a surface the runner does not need to reproduce -- decided, not assumed, and not a statement that the derivation is correct. WHAT THE RUNNER ANSWERS HERE IS UNMEASURED, NOT RIGHT: 0 and Module are what the MetaField ctor's own defaults leave behind, on a surface nothing exercises. Nobody has checked them against BC and nobody should spend effort doing so. Corroborating the decision rather than grounding it: the runner has no .xlf or Translations/ handling anywhere -- zero references in AlRunner/ -- and docs/limitations.md records that it installs no BC translation resources, so no AL test could observe this member today even if the scope call went the other way. Separately measured, and the reason this can never be called a permanent LIMIT: the key IS derivable -- (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). Deriving it is possible and simply not wanted. What invalidates this entry is the owner putting translations back in scope. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
       "member": "TranslationKey.#NavSymbolKind4",
-      "reason": "The symbol kind of a translation key's fourth component. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "reason": "The symbol kind of a translation key's fourth component. SCOPE DECISION BY THE REPOSITORY OWNER, 2026-09-10 (relayed on #3568): translations are out of scope for the runner. In the owner's terms, translations are not relevant right now and nothing in a run has ever had to do with them. So this is a surface the runner does not need to reproduce -- decided, not assumed, and not a statement that the derivation is correct. WHAT THE RUNNER ANSWERS HERE IS UNMEASURED, NOT RIGHT: 0 and Module are what the MetaField ctor's own defaults leave behind, on a surface nothing exercises. Nobody has checked them against BC and nobody should spend effort doing so. Corroborating the decision rather than grounding it: the runner has no .xlf or Translations/ handling anywhere -- zero references in AlRunner/ -- and docs/limitations.md records that it installs no BC translation resources, so no AL test could observe this member today even if the scope call went the other way. Separately measured, and the reason this can never be called a permanent LIMIT: the key IS derivable -- (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). Deriving it is possible and simply not wanted. What invalidates this entry is the owner putting translations back in scope. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
       "member": "TranslationKey.#Id3",
-      "reason": "The property-name component of a field's translation-file lookup id. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "reason": "The property-name component of a field's translation-file lookup id. SCOPE DECISION BY THE REPOSITORY OWNER, 2026-09-10 (relayed on #3568): translations are out of scope for the runner. In the owner's terms, translations are not relevant right now and nothing in a run has ever had to do with them. So this is a surface the runner does not need to reproduce -- decided, not assumed, and not a statement that the derivation is correct. WHAT THE RUNNER ANSWERS HERE IS UNMEASURED, NOT RIGHT: 0 and Module are what the MetaField ctor's own defaults leave behind, on a surface nothing exercises. Nobody has checked them against BC and nobody should spend effort doing so. Corroborating the decision rather than grounding it: the runner has no .xlf or Translations/ handling anywhere -- zero references in AlRunner/ -- and docs/limitations.md records that it installs no BC translation resources, so no AL test could observe this member today even if the scope call went the other way. Separately measured, and the reason this can never be called a permanent LIMIT: the key IS derivable -- (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). Deriving it is possible and simply not wanted. What invalidates this entry is the owner putting translations back in scope. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
       "member": "TranslationKey.#Id1",
-      "reason": "The object-name component of a translation-file lookup id. A translation key only means anything to something that reads translation files. Measured: the runner has no .xlf or Translations/ handling anywhere \u2014 zero references in AlRunner/ \u2014 and docs/limitations.md already records that it installs no BC translation resources. Separately, the key IS derivable: (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). So this is a scope boundary, never a permanent limit \u2014 the runner gaining translation support is what invalidates this entry. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
+      "reason": "The object-name component of a translation-file lookup id. SCOPE DECISION BY THE REPOSITORY OWNER, 2026-09-10 (relayed on #3568): translations are out of scope for the runner. In the owner's terms, translations are not relevant right now and nothing in a run has ever had to do with them. So this is a surface the runner does not need to reproduce -- decided, not assumed, and not a statement that the derivation is correct. WHAT THE RUNNER ANSWERS HERE IS UNMEASURED, NOT RIGHT: 0 and Module are what the MetaField ctor's own defaults leave behind, on a surface nothing exercises. Nobody has checked them against BC and nobody should spend effort doing so. Corroborating the decision rather than grounding it: the runner has no .xlf or Translations/ handling anywhere -- zero references in AlRunner/ -- and docs/limitations.md records that it installs no BC translation resources, so no AL test could observe this member today even if the scope call went the other way. Separately measured, and the reason this can never be called a permanent LIMIT: the key IS derivable -- (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue) reproduces 2,153 of 2,153 keys in the ground truth (TranslationKeysAreDerivable_NotAPermanentLimit). Deriving it is possible and simply not wanted. What invalidates this entry is the owner putting translations back in scope. NOT to be confused with MetaField.CaptionML, which is the caption TEXT, is AL-observable, and is declared separately as a defect.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
@@ -198,11 +200,6 @@
       "issue": 3568
     },
     {
-      "member": "FieldMetadataRelation.Name",
-      "reason": "BC names each field a key refers to; the runner leaves the name null and carries the id alone.",
-      "issue": 3568
-    },
-    {
       "member": "MetaField.Relations.<presence>",
       "reason": "BC gives SystemCreatedBy and SystemModifiedBy a TableRelation to User (2000000120); the runner gives them none. This is the difference already observable from plain AL as FieldRef.Relation() answering 0 \u2014 see #3549. Direction-scoped to BC-present / runner-absent; the runner inventing a relation BC does not have would be a different defect and is not covered.",
       "issue": 3568,
@@ -219,13 +216,8 @@
       "issue": 3568
     },
     {
-      "member": "MetaKey.DebuggerDisplay",
-      "reason": "Derived from MetaKey.Name and the key's field names, so it differs wherever those do. Not separately fixable.",
-      "issue": 3568
-    },
-    {
       "member": "MetaKey.Name",
-      "reason": "BC's key name is the SQL key spec it generates (Field1); the runner's is the AL key name (PK). Two different naming schemes, so this is not a value being lost.",
+      "reason": "BC derives this as the POSITIONAL FIELD SPEC over field ids (\"Field1,Field2\"), not as a name anyone declared, and NCLMetaKey.CreateFromMetaKey never passes it \u2014 the declared AL name travels as MetaKey.KeyName, which the reader now states (#3568). So no AL surface can observe this member, and the runner keeps its own spelling rather than reproducing a spec BC regenerates. Superseded reason, recorded because it hid a real defect: this used to read \"two different naming schemes\", and MetaKey.KeyName was declared as \"the same disagreement on the second of the two name properties\". That was wrong \u2014 KeyName is the DECLARED name, the symbol file states it verbatim, and it reaches AL through ObsolescenceGuard.ThrowIfObsoleted.",
       "issue": 3568
     },
     {
@@ -295,11 +287,6 @@
       "issue": 3568
     },
     {
-      "member": "MetaKey.KeyName",
-      "reason": "The same naming disagreement as MetaKey.Name, on the second of the two name properties.",
-      "issue": 3568
-    },
-    {
       "member": "MetaField.Access",
       "reason": "BC states Internal on fields whose AL declares it; the runner answers Public. The symbol file carries Access.",
       "issue": 3568
@@ -354,17 +341,6 @@
       "direction": "bc-only"
     },
     {
-      "member": "MetaKey.Clustered",
-      "reason": "BC answers false on a key AL does not declare clustered; the runner answers true. The symbol file carries Clustered.",
-      "issue": 3568
-    },
-    {
-      "member": "MetaKey.SumIndexFields.<presence>",
-      "reason": "BC builds the declared SumIndexFields; the runner builds none. Direction-scoped to BC-present / runner-absent.",
-      "issue": 3568,
-      "direction": "bc-only"
-    },
-    {
       "member": "MetaField.Lookup",
       "reason": "BC states Lookup where AL declares it; the runner answers false.",
       "issue": 3568
@@ -397,11 +373,6 @@
     {
       "member": "MetaField.BlankZero",
       "reason": "BC states BlankZero where AL declares it; the runner answers false.",
-      "issue": 3568
-    },
-    {
-      "member": "MetaKey.Unique",
-      "reason": "BC states Unique where AL declares it; the runner answers false.",
       "issue": 3568
     },
     {

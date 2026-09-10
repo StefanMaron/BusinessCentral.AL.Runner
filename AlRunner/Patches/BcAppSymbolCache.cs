@@ -225,7 +225,15 @@ internal static partial class BcAppSymbolCache
     // to present. Measured warm on 28.1.49838.54308 before the bump: the harness still reported
     // 15 MetaField.EnumTypeId differences naming enum 8889, from a payload written by the
     // previous parse.
-    private const int CacheVersion = 36;
+    //
+    // v37: ParsedKey gained Clustered / Unique / SumIndexFieldIds and ParsedTable gained
+    // PrimaryKey (#3568) — the key name and properties the symbol file states and this reader
+    // discarded. The record shape changed, so PayloadShape would key a fresh payload on its
+    // own; the integer is here because the PRIMARY key changed meaning without changing shape.
+    // It used to reach the builder as a bare id list under a hardcoded "PK", and now carries
+    // its declared name, so a warm payload written by the previous parse replays keys that
+    // are shaped identically and named wrongly — the v35 trap exactly.
+    private const int CacheVersion = 37;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -2191,6 +2199,7 @@ internal static partial class BcAppSymbolCache
 
         var pkFieldIds = new List<int>();
         var secondaryKeys = new List<ParsedKey>();
+        ParsedKey? primaryKey = null;
         if (table.TryGetProperty("Keys", out var keysJson) && keysJson.ValueKind == JsonValueKind.Array)
         {
             var first = true;
@@ -2210,14 +2219,30 @@ internal static partial class BcAppSymbolCache
                         if (field != null) ids.Add(field.FieldId);
                     }
                 }
+                // #3568 — the key's own properties, which BC propagates into the live
+                // NCLMetaKey via CreateFromMetaKey and this reader used to discard. The
+                // symbol file states booleans as "1"/"0" and SumIndexFields as a
+                // "Field<id>,Field<id>" list of field IDS — not names, which is how the AL
+                // SOURCE form states the same property (RecordPatches.AlSourceParser).
+                var keyProps = SymbolProperties(key);
+                bool? clustered = keyProps.TryGetValue("Clustered", out var cl)
+                    ? cl == "1" || string.Equals(cl, "true", StringComparison.OrdinalIgnoreCase)
+                    : null;
+                var unique = keyProps.TryGetValue("Unique", out var uq)
+                    && (uq == "1" || string.Equals(uq, "true", StringComparison.OrdinalIgnoreCase));
+                var siftIds = keyProps.TryGetValue("SumIndexFields", out var sift)
+                    ? ParseFieldIdList(sift)
+                    : null;
+                var parsedKey = new ParsedKey(keyName, ids, clustered, unique, siftIds);
                 if (first)
                 {
                     pkFieldIds.AddRange(ids);
+                    primaryKey = parsedKey;
                     first = false;
                 }
                 else if (ids.Count > 0)
                 {
-                    secondaryKeys.Add(new ParsedKey(keyName, ids));
+                    secondaryKeys.Add(parsedKey);
                 }
             }
         }
@@ -2261,7 +2286,8 @@ internal static partial class BcAppSymbolCache
             DrillDownPageName: string.IsNullOrWhiteSpace(drillDownPageName) ? null : drillDownPageName,
             TableTypeName: string.IsNullOrWhiteSpace(tableType) ? null : tableType.Trim(),
             DataClassificationName: string.IsNullOrWhiteSpace(dataClassification) ? null : dataClassification.Trim(),
-            ExternalName: string.IsNullOrWhiteSpace(externalName) ? null : externalName.Trim());
+            ExternalName: string.IsNullOrWhiteSpace(externalName) ? null : externalName.Trim(),
+            PrimaryKey: primaryKey);
     }
 
     /// <summary>
@@ -2347,6 +2373,24 @@ internal static partial class BcAppSymbolCache
         foreach (var part in text.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             if (int.TryParse(part, out var id))
                 ids.Add(id);
+        return ids.Count > 0 ? ids : null;
+    }
+
+    /// <summary>
+    /// A symbol-file <c>"Field11,Field12"</c> field-id list (#3568). Returns null when nothing
+    /// parses, so an unrecognised spelling leaves the property absent rather than silently
+    /// becoming an empty list, which would read as "declared, and empty".
+    /// </summary>
+    private static List<int>? ParseFieldIdList(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var ids = new List<int>();
+        foreach (var raw in text.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var t = raw.Trim();
+            if (t.StartsWith("Field", StringComparison.OrdinalIgnoreCase)) t = t.Substring(5);
+            if (int.TryParse(t, out var id)) ids.Add(id);
+        }
         return ids.Count > 0 ? ids : null;
     }
 

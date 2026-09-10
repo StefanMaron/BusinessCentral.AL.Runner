@@ -117,17 +117,28 @@ observation is true. The conclusion drawn from it was wrong twice over, and both
 below. **"Nothing is stored" is evidence about storage, never about derivability.**
 
 <a id="translation-keys-are-out-of-scope"></a>
-## Translation keys are out of scope, and separately are derivable
+## Translation keys are out of scope by decision, and separately are derivable
 
-A `CaptionTranslationKey` is a lookup id into a translation file. It means something only to
-something that reads those files, and **the runner reads none**: there is no `.xlf` or
-`Translations/` handling anywhere in `AlRunner/`, and `docs/limitations.md` already records that
-the runner installs no BC translation resources. So no AL test can observe this member, and the
-honest declaration is a scope boundary. What would invalidate it is the runner gaining
-translation support — not anything about BC.
+**Translations are out of scope for the runner. This is a scope decision by the repository
+owner, made 2026-09-10** (relayed on #3568): translations are not relevant right now, and
+nothing in a run has ever had to do with them. These seven members are therefore a surface the
+runner does not need to reproduce, and **no one should spend effort deriving BC's translation
+keys or symbol kinds**. Seven members, ~25,700 differences — about a third of the total.
+
+**The runner's answers here are unmeasured, not right.** `0` and `Module` are what the
+`MetaField` ctor's own defaults leave behind. Nothing has checked them against BC, and the
+entries say so, because an out-of-scope declaration that reads as "the derivation is correct"
+would be a false claim rather than a scope boundary.
+
+Corroborating that decision rather than grounding it: a `CaptionTranslationKey` is a lookup id
+into a translation file, it means something only to something that reads those files, and **the
+runner reads none** — no `.xlf` or `Translations/` handling anywhere in `AlRunner/`, and
+`docs/limitations.md` records that it installs no BC translation resources. So no AL test could
+observe this member today even if the scope call went the other way. What invalidates these
+entries is **the owner putting translations back in scope**, not anything about BC.
 
 It is also **derivable**, which matters because it means the entry can never become a permanent
-limit. BC's own `LanguageKeyHelper.ConstructObjectHash` is
+limit — deriving it is possible and simply not wanted. BC's own `LanguageKeyHelper.ConstructObjectHash` is
 
 ```
 (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue)
@@ -236,6 +247,67 @@ enum's OBJECT ID is not in the type text, and the name alone would produce a pai
 — an id of 0 beside a real name. A source-compiled enum field is served by
 `FixupEnumFieldOptionMetadata`, a different mechanism, and half of this pair is worse than none
 of it.
+
+<a id="keys"></a>
+## Four key properties the reader dropped, and the two names that are not the same name (#3568)
+
+`MetaKey` carries **two** name members and they mean different things. Getting that wrong is
+what kept this cluster mis-declared through two issues.
+
+| member | what it is | reaches AL? |
+|---|---|---|
+| `MetaKey.KeyName` | the name AL **declared** (`Key1`, `PrimaryKey`, `UniqueID`), stated verbatim in `SymbolReference.json` | **yes** |
+| `MetaKey.Name` | a **derived** positional field spec over field ids (`Field1,Field2`), which BC regenerates | no |
+
+`NCLMetaKey.CreateFromMetaKey` (BC 28.1, `Ncl.dll`) settles it: it passes `metaKey.KeyName`,
+`metaKey.Unique`, `metaKey.SumIndexFields` and `clusteredOverride || metaKey.Clustered` into the
+`NCLMetaKey` the runtime uses, and never passes `metaKey.Name` at all. So `KeyName` is
+AL-observable — `ObsolescenceGuard.ThrowIfObsoleted` formats `key.GetKeyName()` into the error a
+`SetCurrentKey` on an obsoleted key raises — and `Name` is emitter-only and stays declared in the
+allowlist.
+
+The reader built the primary key under a hardcoded `"PK"` with `clustered: true`, carried
+neither `Unique` nor `SumIndexFields` on any key, and gave `FieldMetadataRelation` an id with no
+name. Six members, **688 differences**, all now zero:
+
+| member | differences | what it was |
+|---|---:|---|
+| `FieldMetadataRelation.Name` | 340 | the id was carried, the name was not |
+| `MetaKey.DebuggerDisplay` | 226 | follows `KeyName`, not `Name` — it went green with the rest |
+| `MetaKey.KeyName` | 91 | hardcoded `"PK"` on every primary key |
+| `MetaKey.Clustered` | 11 | hardcoded `true` on every primary key |
+| `MetaKey.SumIndexFields` | 8 | never built |
+| `MetaKey.Unique` | 3 | never read |
+
+<a id="clustered"></a>
+### `Clustered` defaults to FALSE, and the synthesized key is the exception
+
+This is the one that reads backwards. Measured over all 150 tables of Business Foundation +
+System Application at 28.1.49838.53910, joining each key in `SymbolReference.json` to the same
+key in BC's own emitted document — **150 tables, 236 keys, zero counterexamples**:
+
+| what the symbol file says | BC emits | count |
+|---|---|---:|
+| `Clustered = "1"` | true | 133 |
+| `Clustered = "0"` | false | 1 |
+| a **declared key** stating no `Clustered` | **false** | 86 (11 of them primary keys) |
+| **no `Keys` at all** on the table | **true** | 6 |
+
+So `Clustered` is stated verbatim with false as the default, and the only key BC clusters
+without being told to is the one it **synthesizes** for a table that declares no key — those 6
+tables carry `"Keys": null`. BC names that synthesized key after its single field (`ID`,
+`IgnoreCase`, `ApiVersion`, `User Security ID`, `Code Set`), not `"PK"`.
+
+Assuming instead that a primary key defaults to clustered is what the reader did, and it was
+wrong on the 11 declared primary keys that state nothing.
+
+### Two spellings, because the two sources disagree
+
+`SumIndexFields` is stated as **field ids** in the symbol file (`"Field11,Field12"`) and as
+**field names** in AL source (`SumIndexFields = "Self Time", "Full Time"`). Both readers exist
+and they parse different things; `BcAppSymbolCacheKeyPropertiesReadTests` pins the symbol-file
+form, including the `"1"`/`"0"` booleans and the absent-versus-false distinction the builder
+depends on.
 
 <a id="field-dataclassification-inherits-its-owner"></a>
 ## A field's DataClassification inherits its OWNER, with two exceptions

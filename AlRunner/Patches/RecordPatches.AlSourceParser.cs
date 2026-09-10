@@ -203,6 +203,42 @@ public static partial class RecordPatches
         string.Equals(PropValue(list, name)?.ToString()?.Trim(), expected,
             StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// A boolean AL property as three states: true, false, and ABSENT (null). The distinction
+    /// carries weight for key properties — a key that declares no <c>Clustered</c> is not the
+    /// same as one declaring <c>Clustered = false</c>, because which key BC then treats as
+    /// clustered is decided by position rather than by the property (#3568).
+    /// </summary>
+    private static bool? BoolPropValue(NavSyntax.PropertyListSyntax? list, string name)
+    {
+        var text = PropValue(list, name)?.ToString()?.Trim();
+        if (string.IsNullOrEmpty(text)) return null;
+        if (bool.TryParse(text, out var b)) return b;
+        // AL's compiled form states these as 1/0; the source form states true/false.
+        return text == "1" ? true : text == "0" ? false : null;
+    }
+
+    /// <summary>
+    /// A key's declared <c>SumIndexFields</c>, resolved against the table's own fields. A name
+    /// that resolves to no field is dropped rather than guessed at — the same rule
+    /// <c>AppendExtensionKeys</c> applies to key fields.
+    /// </summary>
+    private static List<int>? ResolveSumIndexFieldIds(
+        NavSyntax.PropertyListSyntax? list, List<ParsedField> fields)
+    {
+        var text = PropValue(list, "SumIndexFields")?.ToString();
+        if (string.IsNullOrWhiteSpace(text)) return null;
+        var ids = new List<int>();
+        foreach (var raw in text.Split(',', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var n = Unquote(raw.Trim());
+            var f = fields.FirstOrDefault(x =>
+                string.Equals(x.FieldName, n, StringComparison.OrdinalIgnoreCase));
+            if (f != null) ids.Add(f.FieldId);
+        }
+        return ids.Count > 0 ? ids : null;
+    }
+
     // Single-slot memo of the most recently built syntax tree's object list, keyed on the
     // exact (text, active preprocessor symbols) pair that produced it. #1903: the eight
     // TryParse*File extractors (table, tableextension, page, report, query, xmlport,
@@ -805,6 +841,7 @@ public static partial class RecordPatches
             // First key is the PK; all subsequent keys are secondary.
             var pkFieldIds = new List<int>();
             var secondaryKeys = new List<ParsedKey>();
+            ParsedKey? primaryKey = null;
             bool firstKey = true;
             if (table.Keys != null)
             {
@@ -819,14 +856,20 @@ public static partial class RecordPatches
                             string.Equals(x.FieldName, kn, StringComparison.OrdinalIgnoreCase));
                         if (f != null) keyFieldIds.Add(f.FieldId);
                     }
+                    // #3568 — the key's own properties, which BC propagates into the live
+                    // NCLMetaKey via CreateFromMetaKey and the reader used to discard.
+                    var clustered = BoolPropValue(k.PropertyList, "Clustered");
+                    var unique = BoolPropValue(k.PropertyList, "Unique") == true;
+                    var siftIds = ResolveSumIndexFieldIds(k.PropertyList, fields);
                     if (firstKey)
                     {
                         pkFieldIds.AddRange(keyFieldIds);
+                        primaryKey = new ParsedKey(keyName, keyFieldIds, clustered, unique, siftIds);
                         firstKey = false;
                     }
                     else if (keyFieldIds.Count > 0)
                     {
-                        secondaryKeys.Add(new ParsedKey(keyName, keyFieldIds));
+                        secondaryKeys.Add(new ParsedKey(keyName, keyFieldIds, clustered, unique, siftIds));
                     }
                 }
             }
@@ -873,7 +916,8 @@ public static partial class RecordPatches
                 TableTypeName: string.IsNullOrWhiteSpace(tableTypeName) ? null : tableTypeName.Trim(),
                 DataClassificationName: string.IsNullOrWhiteSpace(dataClassification) ? null : dataClassification,
                 ExternalName: string.IsNullOrWhiteSpace(externalName) ? null : externalName,
-                OwningAppId: filePath != null ? ResolveOwningApp(filePath)?.AppId : null);
+                OwningAppId: filePath != null ? ResolveOwningApp(filePath)?.AppId : null,
+                PrimaryKey: primaryKey);
         }
     }
 
@@ -1557,7 +1601,17 @@ internal record ParsedRelationArm(string TableName, string? FieldName, List<Pars
 /// <param name="EnumTypeName">The enum's name, paired with <see cref="EnumTypeId"/>; null when
 /// the field is not enum-typed.</param>
 internal record ParsedField(int FieldId, string FieldName, string TypeName, int Length, bool IsFlowField = false, ParsedCalcFormula? CalcFormula = null, string? OptionMembers = null, string? InitValueText = null, bool IsAutoIncrement = false, string? Caption = null, List<ParsedRelationArm>? RelationArms = null, bool RelationValidate = true, bool IsFlowFilter = false, string ObsoleteState = "No", string? ObsoleteReason = null, string? MinValue = null, string? MaxValue = null, bool? Editable = null, string? DataClassificationName = null, int EnumTypeId = 0, string? EnumTypeName = null);
-internal record ParsedKey(string Name, List<int> FieldIds);
+/// <param name="Name">The key's declared AL name (<c>Key1</c>, <c>PrimaryKey</c>, <c>UniqueID</c>),
+/// which is what BC states as <c>MetaKey.KeyName</c> and propagates into the live
+/// <c>NCLMetaKey</c>. NOT <c>MetaKey.Name</c>, which BC derives separately as the positional
+/// field spec (<c>Field1,Field2</c> over field IDs) and never passes to the runtime (#3568).</param>
+/// <param name="Clustered">Declared <c>Clustered</c>. Null means the key does not declare one;
+/// which key is then clustered is the caller's rule, not this record's.</param>
+/// <param name="SumIndexFieldIds">Declared <c>SumIndexFields</c>, resolved to field ids.
+/// <c>NCLMetaKey.CreateFromMetaKey</c> turns these into the SIFT field array, so dropping them
+/// leaves a key that maintains no SIFT index.</param>
+internal record ParsedKey(string Name, List<int> FieldIds, bool? Clustered = null,
+    bool Unique = false, List<int>? SumIndexFieldIds = null);
 
 /// <summary>A key declared by a <c>tableextension</c> on the table it extends (#3216).
 /// <para>Carries field NAMES, not field ids, which is the whole reason it is not a
@@ -1618,10 +1672,15 @@ internal record ParsedColumnFilter(string FieldName, ParsedColumnFilterKind Kind
 /// <c>TryParseTableFile</c>) or no app.json was found above it. #3600's table-metadata-source
 /// guard uses this to tell a same-app tableextension from a cross-app one; see
 /// <see cref="RecordPatches._extensionSourceInfo"/>.</param>
+/// <param name="PrimaryKey">The table's FIRST declared key, with its name and properties —
+/// <see cref="PkFieldIds"/> carries the same field ids and stays for its existing consumers,
+/// which want only the ids. Null when the table declares no key at all, in which case
+/// <c>PkFieldIds</c> holds the first-field fallback and there is no declared name to state
+/// (#3568).</param>
 internal record ParsedTable(int TableId, string TableName,
     List<ParsedField> Fields, List<int> PkFieldIds, List<ParsedKey>? SecondaryKeys = null,
     bool IsTableTypeTemporary = false, bool DataPerCompany = true,
     string? LookupPageName = null, string? DrillDownPageName = null,
     string? TableTypeName = null,
     string? DataClassificationName = null, string? ExternalName = null,
-    Guid? OwningAppId = null);
+    Guid? OwningAppId = null, ParsedKey? PrimaryKey = null);
