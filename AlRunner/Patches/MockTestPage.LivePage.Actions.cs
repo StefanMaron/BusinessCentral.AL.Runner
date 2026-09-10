@@ -277,15 +277,37 @@ internal partial class LiveNavTestPage
             // one would be a silent wrong answer.
             //
             // NO AL CAN REACH THIS TODAY (#3735), and it stays as the guard that keeps it that
-            // way. Both routes to a live client require an inventory that also states a
-            // PageType: LiveOverRecord needs a source table, which TestPageFactory.TryBuild
-            // resolves through the same two lookups TryGetAnyPageType reads, and LiveRecordless
-            // needs IsPageShapeKnown outright — so a page in neither gets MockITestPage, whose
-            // View()/Edit() never enter this method, and CreateTestPageClient's `[warn] …
-            // navigation mock` line is the user-visible signal instead. What would widen the
-            // inventory is a runtime-package metadata reader (#3537); BC's captured emitter
-            // metadata cannot, because it exists only for objects this run compiles.
-            // Pinned by AlRunner.Tests/LiveTestPagePageTypeKnownTests.cs.
+            // way. ALL THREE routes that construct a LiveNavTestPage are covered, but not by
+            // one argument — the third rests on a weaker invariant, which is the thing a later
+            // editor would get wrong:
+            //
+            //   1-2. CodeunitPatches.CreateTestPageClient, via TestPageClientConstructionRule.
+            //        LiveOverRecord needs a source table, which TestPageFactory.TryBuild
+            //        resolves through the same two lookups TryGetAnyPageType reads;
+            //        LiveRecordless needs IsPageShapeKnown outright. A page in neither gets
+            //        MockITestPage, whose View()/Edit() never enter this method, and
+            //        CreateTestPageClient's `[warn] … navigation mock` line says so.
+            //   3.   RunnerTestClientSession.GetPage — the [PageHandler]/[ModalPageHandler]
+            //        route — applies NO shape gate at all. Its only gate is form construction
+            //        (FindFormType, CodeunitPatches), a CLR-type inventory that is NOT
+            //        contained in the symbol inventory by construction: the symbol side is
+            //        per-bundle (ResetForReload clears _sourceDirs and _parsedPages;
+            //        ClearPerBundleBcAppPaths drops _bcAppPaths) while loaded assemblies are
+            //        process-wide and BcRuntime.IsStaleBundleAssembly excludes only superseded
+            //        generations. What keeps it unreachable is one step earlier: BC picks the
+            //        handler from its `TestPage "X"` parameter type, so the page must resolve
+            //        in THIS bundle's compile, and every compile symbol source is also a
+            //        registration source (Program.cs — one `ordered` list feeds both
+            //        DependencyLoader.LoadAll and AddBcAppPath; the layered-workspace packages
+            //        SetExtraSymbolDirs adds are resolved as declared dependencies; the
+            //        registered source dirs mirror the compile's CollectSuitePaths). That last
+            //        one is MAINTAINED, not structural, and #3611/#3714 are the record of the
+            //        two sets having drifted apart before — so widening what the compiler can
+            //        see without widening what RecordPatches registers makes this reachable.
+            //
+            // What would widen the inventory is a runtime-package metadata reader (#3537); BC's
+            // captured emitter metadata cannot, because it exists only for objects this run
+            // compiles. Pinned by AlRunner.Tests/LiveTestPagePageTypeKnownTests.cs.
             case BuiltInPageModeShape.RefuseUnknownPageType:
                 throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     $"TestPage.{actionName}() on page {_pageId}",

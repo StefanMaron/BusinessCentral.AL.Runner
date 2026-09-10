@@ -18,6 +18,22 @@
 //   A page in neither gets MockITestPage, whose View()/Edit() are the base mock's and never
 //   reach BuiltInPageModeActionFor at all.
 //
+//   THERE IS A THIRD CONSTRUCTION ROUTE, and it is gated differently.
+//   RunnerTestClientSession.GetPage — the [PageHandler]/[ModalPageHandler] route — builds a
+//   LiveNavTestPage with no IsPageShapeKnown/TryGetAnyPageType check at all; its only gate is
+//   form construction (CodeunitPatches.FindFormType), a CLR-type inventory that is NOT
+//   contained in the symbol inventory by construction, because the two have different
+//   lifetimes: ResetForReload clears _sourceDirs and _parsedPages and ClearPerBundleBcAppPaths
+//   drops _bcAppPaths, while loaded assemblies are process-wide and
+//   BcRuntime.IsStaleBundleAssembly excludes only superseded generations of a registered name.
+//   What keeps that route unreachable is one step earlier: BC selects the handler from its
+//   `TestPage "X"` parameter type, so the page has to resolve in THIS bundle's compile, and
+//   every compile symbol source is also a registration source (Program.cs). That is a
+//   MAINTAINED invariant, not a structural one — #3611/#3714 are the record of the compile's
+//   file set and the registered source dirs having drifted apart before. Program.cs wiring is
+//   not unit-pinnable here; the rows below pin the part that is, including that the dependency
+//   reader's own skip keeps both predicates on the same side.
+//
 //   So the refusal STAYS as a guard on a state no AL can reach today, and the diagnosis is what
 //   #3735 wanted: BC's own captured emitter metadata (docs/object-metadata-capture.md) is not
 //   the second source, because it exists only for objects THIS run compiles — a subset of
@@ -49,6 +65,7 @@ public class LiveTestPagePageTypeKnownTests
     private const int NoPageTypePropId = 88373502;  // no PageType property at all
     private const int BlankPageTypeId = 88373503;   // PageType present but empty
     private const int NoSourceNoTypeId = 88373504;  // neither property — the recordless shape
+    private const int NamelessPageId = 88373505;    // declared with an EMPTY Name — the reader skips it
     private const int UndeclaredPageId = 88373509;  // no loaded .app declares it
 
     // 2000000120 is table "User", the same real table DependencyPageShapeResolutionTests uses,
@@ -84,6 +101,14 @@ public class LiveTestPagePageTypeKnownTests
               "Id": 88373504,
               "Name": "LTP No Source No Type",
               "Properties": []
+            },
+            {
+              "Id": 88373505,
+              "Name": "",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "SourceTable", "Value": "2000000120" }
+              ]
             }
           ]
         }
@@ -144,6 +169,7 @@ public class LiveTestPagePageTypeKnownTests
     [InlineData(NoPageTypePropId, true)]
     [InlineData(BlankPageTypeId, true)]
     [InlineData(NoSourceNoTypeId, true)]
+    [InlineData(NamelessPageId, false)]
     [InlineData(UndeclaredPageId, false)]
     public void PageTypeIsNonNull_ExactlyWhenThePageShapeIsKnown(int pageId, bool known)
         => WithLoadedDependency(() =>
@@ -190,6 +216,34 @@ public class LiveTestPagePageTypeKnownTests
             recordBuilt: false,
             pageShapeKnown: RecordPatches.IsPageShapeKnown(pageId),
             pageDeclaresSourceTable: RecordPatches.ResolvePageDeclaresSourceTableForAnyPage(pageId));
+
+    /// <summary>
+    /// The dependency reader SKIPS a page entry it cannot parse — BcAppSymbolCache
+    /// .TryParsePageSymbol returns null for a missing/non-positive Id or an empty Name, and the
+    /// caller drops it. That is the one way an id present in a registered .app's own
+    /// SymbolReference.json can still be absent from the symbol inventory, so it is the
+    /// candidate for the CLR-type-inventory containment the third construction route
+    /// (RunnerTestClientSession.GetPage) rests on.
+    /// <para>Measured, both halves: the skip leaves the two predicates on the SAME side — it
+    /// cannot produce a shape-known page with a null PageType, which is what would make the
+    /// refusal reachable — and the entry it drops is exactly one the AL compiler cannot name
+    /// either, so no [PageHandler]/[ModalPageHandler] can be typed over it. Asserted against
+    /// the page's stated PageType ("List") rather than any value, so a reader that started
+    /// accepting the nameless entry fails here rather than passing silently.</para>
+    /// </summary>
+    [Fact]
+    public void ANamelessDependencyPageEntry_IsAbsentFromBothInventories()
+        => WithLoadedDependency(() =>
+        {
+            Assert.False(RecordPatches.IsPageParsed(NamelessPageId),
+                "the fixture pages must NOT be AL-source-parsed, or this proves nothing");
+            Assert.False(RecordPatches.IsPageShapeKnown(NamelessPageId));
+            Assert.Null(RecordPatches.TryGetAnyPageType(NamelessPageId));
+            // Not merely "unknown": the entry states PageType List and SourceTable 2000000120,
+            // so a reader that stopped skipping it would answer both of those instead of null.
+            Assert.Equal(0, RecordPatches.ResolveSourceTableIdForAnyPage(NamelessPageId));
+            Assert.Equal(TestPageClientKind.NavigationMock, ClientKindFor(NamelessPageId));
+        });
 
     /// <summary>
     /// The last link: the client an unknown page actually gets answers View()/Edit() out of the
