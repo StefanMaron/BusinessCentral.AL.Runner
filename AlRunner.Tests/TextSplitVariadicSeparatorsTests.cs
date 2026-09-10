@@ -55,9 +55,11 @@ public sealed class TextSplitVariadicSeparatorsTests : IDisposable
           "runtime": "14.0"
         }
         """);
-        // Every receiver/separator shape the emitter produces: literal receiver + literal
-        // separators, variable receiver + variable separators, mixed, two and three separators,
-        // multi-character separators. Each procedure only has to compile and run to completion.
+        // The variadic shapes #3712 is about — literal receiver + literal separators, variable
+        // receiver + variable separators, literal receiver + variable separators, mixed, two and
+        // three separators, multi-character separators — plus the two arities that bound before
+        // (one separator) and that a second params overload would make ambiguous (none). Each
+        // procedure only has to compile and run to completion.
         File.WriteAllText(Path.Combine(dir, "SplitShapes.Codeunit.al"), """
         codeunit 63400 "TSVS Split Shapes"
         {
@@ -69,6 +71,26 @@ public sealed class TextSplitVariadicSeparatorsTests : IDisposable
                 Parts: List of [Text];
             begin
                 Parts := 'a,b;c'.Split(',', ';');
+            end;
+
+            [Test]
+            procedure NoSeparator_Compiles()
+            var
+                Parts: List of [Text];
+            begin
+                Parts := 'a b c'.Split();
+            end;
+
+            [Test]
+            procedure LiteralReceiver_VariableSeparators_Compiles()
+            var
+                Sep1: Text;
+                Sep2: Text;
+                Parts: List of [Text];
+            begin
+                Sep1 := ',';
+                Sep2 := ';';
+                Parts := 'a,b;c'.Split(Sep1, Sep2);
             end;
 
             [Test]
@@ -159,12 +181,20 @@ public sealed class TextSplitVariadicSeparatorsTests : IDisposable
         var (output, exit) = RunRunner(_root);
 
         Assert.DoesNotContain("CS1501", output);
+        // CS0121 is what a second params overload beside (string, params string[]) produces for
+        // the zero-separator Split(): two expanded-form candidates, nothing to prefer.
+        Assert.DoesNotContain("CS0121", output);
         Assert.DoesNotContain("COMPILE-FAIL", output);
-        Assert.Equal(5, TestCount(output));
-        Assert.True(Regex.IsMatch(output, @"PASS\s+\S*\bTwoLiteralSeparators_Compiles\b"),
-            $"no PASS line for TwoLiteralSeparators_Compiles. Output:\n{output}");
-        Assert.True(Regex.IsMatch(output, @"PASS\s+\S*\bTwoVariableSeparators_OnAVariable_Compiles\b"),
-            $"no PASS line for TwoVariableSeparators_OnAVariable_Compiles. Output:\n{output}");
+        Assert.Equal(7, TestCount(output));
+        foreach (var name in new[]
+        {
+            "TwoLiteralSeparators_Compiles", "NoSeparator_Compiles",
+            "TwoVariableSeparators_OnAVariable_Compiles", "LiteralReceiver_VariableSeparators_Compiles",
+        })
+        {
+            Assert.True(Regex.IsMatch(output, $@"PASS\s+\S*\b{name}\b"),
+                $"no PASS line for {name}. Output:\n{output}");
+        }
         Assert.Equal(0, exit);
     }
 }
