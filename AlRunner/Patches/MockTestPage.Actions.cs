@@ -60,7 +60,10 @@ internal sealed class LiveNavTestAction : ITestAction
         // SaveCurrentRow stays ahead of the gate: BC's TestActionProxy.Invoke calls
         // parent.ActivateControl(this) before actionControl.Invoke(), so the row reaches the
         // server whether or not the trigger fires. Not separately measured.
-        if (!_page.ActionEnabled(_actionId))
+        // ActionEnabledForInvoke, not ActionEnabled: a gate the runner cannot evaluate must not
+        // cost the OnAction trigger its run. See that method for the measurement and why the
+        // READ below keeps refusing.
+        if (!_page.ActionEnabledForInvoke(_actionId))
         {
             Console.Error.WriteLine(
                 $"[warn] TestPage: action {_actionId} is not Enabled, so Invoke() did not run "

@@ -679,6 +679,89 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The <c>Editable</c> / <c>Visible</c> / <c>Enabled</c> a control of a PRECOMPILED
+    /// dependency page DECLARES, exactly as the compiler wrote it, or null when it declares
+    /// none (issue #3504).
+    ///
+    /// <para>A page shipping precompiled in a dependency .app gets no control tree in its
+    /// synthesized runtime metadata — <see cref="TryBuildDependencyPageMetadata"/> omits one
+    /// because a control's VALUE BINDING lives in the .app's IL, not in any XML this could
+    /// reconstruct. These three properties are not value bindings: the compiler writes each as
+    /// a plain string that is either a literal or the name of an expression the page's own IL
+    /// registers, which is precisely what <c>RunnerPageInstance.EvaluateProperty</c> already
+    /// resolves. So the omission that is right for a binding was wrong for these, and every
+    /// control on every such page answered <c>Editable() = true</c>.</para>
+    ///
+    /// <para>Read from the SAME <c>SymbolReference.json</c> slice
+    /// <see cref="GetPageControlFieldMap"/> and the "Page Control Field" virtual table (#1779)
+    /// already trust — one dependency-control source, not a second one. Verbatim, with no
+    /// normalising: the caller owns the literal-vs-expression decision, and deciding it here
+    /// would fork that rule.</para>
+    ///
+    /// <para>Scale, measured on Base Application 28.1.49838.53910 (2,610 pages, 37,185 field
+    /// controls): <c>Editable</c> is declared on 5,920 controls, <c>Visible</c> on 11,505 and
+    /// <c>Enabled</c> on 797 — 18,222 declarations answered <c>true</c> regardless. 4,915 of
+    /// the Editable ones are the compile-time literal, so most need no page state at all.</para>
+    ///
+    /// <para>Null keeps meaning "declares none", which is the AL default of true — the
+    /// distinction #3504 is about. Only these three names resolve; anything else answers null
+    /// rather than being mapped onto one of them.</para>
+    /// </summary>
+    internal static string? TryGetDependencyControlDeclaredProperty(int pageId, int controlId, string propertyName)
+    {
+        var symbol = TryGetDependencyPageSymbol(pageId);
+        if (symbol?.Controls == null || symbol.Controls.Count == 0) return null;
+
+        foreach (var control in symbol.Controls)
+        {
+            if (control.Id != controlId) continue;
+            return propertyName switch
+            {
+                "Editable" => control.EditableExpr,
+                "Visible" => control.VisibleExpr,
+                "Enabled" => control.EnabledExpr,
+                _ => null,
+            };
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The <c>Enabled</c> / <c>Visible</c> an ACTION of a PRECOMPILED dependency page
+    /// DECLARES, exactly as the compiler wrote it, or null when it declares none (issue
+    /// #2460).
+    ///
+    /// <para>The action-side twin of
+    /// <see cref="TryGetDependencyControlDeclaredProperty"/>, and the same defect one tree
+    /// over: <c>TryBuildDependencyPageMetadata</c> reconstructs no ACTION tree either, so
+    /// <c>RunnerPageInstance.ActionDefinition</c> — which resolves through BC's own
+    /// <c>TryGetCommonActionDefinitionById</c> over that empty tree — answered null for every
+    /// action and every one reported <c>Enabled = true</c> / <c>Visible = true</c>. A silent
+    /// wrong answer, so <c>Assert.IsTrue(action.Enabled())</c> passed vacuously and only
+    /// <c>Assert.IsFalse</c> caught it — six measured failures in Tests-SINGLESERVER on BC
+    /// 28.1, all on Base Application 977 "Time Sheet Setup Wizard", whose three wizard actions
+    /// declare <c>Enabled = BackActionEnabled</c> / <c>NextActionEnabled</c> /
+    /// <c>FinishActionEnabled</c>.</para>
+    ///
+    /// <para>Base Application 28.1 declares <c>Enabled</c> on 1,129 of its 25,184 actions and
+    /// <c>Visible</c> on 1,101. There is no <c>Editable</c>: AL does not give an action one, so
+    /// that name answers null here rather than being mapped onto one of the two.</para>
+    /// </summary>
+    internal static string? TryGetDependencyActionDeclaredProperty(int pageId, int actionId, string propertyName)
+    {
+        var symbol = TryGetDependencyPageSymbol(pageId);
+        if (symbol?.MemberIdToDeclaredProperties is not { } declared) return null;
+        if (!declared.TryGetValue(actionId, out var properties)) return null;
+
+        return propertyName switch
+        {
+            "Enabled" => properties.Enabled,
+            "Visible" => properties.Visible,
+            _ => null,
+        };
+    }
+
+    /// <summary>
     /// Every field control of a SOURCE-PARSED page, base plus matching pageextensions,
     /// for the "Page Control Field" (2000000192) virtual table. Same base+extension merge
     /// rule as <see cref="GetPageControlFieldMap"/> (only extensions of THIS page), same

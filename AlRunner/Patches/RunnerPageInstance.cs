@@ -768,12 +768,51 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     internal bool PageEditable => _form is not NavForm form || form.Editable;
 
+    /// <summary>
+    /// What a control DECLARES for one of the three boolean properties, whichever metadata
+    /// states it — the merged runtime tree for a page the runner compiled, the declaring
+    /// dependency's SymbolReference.json for one that ships precompiled (issue #3504).
+    ///
+    /// <para>Both answer the same thing: the string the AL compiler wrote, which
+    /// <see cref="EvaluateProperty"/> then resolves. The second source exists because
+    /// <c>DependencyPageMetadataXml</c> reconstructs no control tree — right for a control's
+    /// VALUE BINDING, which is IL — so <see cref="ControlDefinition"/> is null for every
+    /// control of such a page and all three properties read as "declares none", the AL default
+    /// of true. Base Application 28.1 declares them on 18,222 field controls; every one of
+    /// those answered true.</para>
+    ///
+    /// <para>ORDER IS THE CONTRACT: the runtime tree wins whenever it has a definition, so this
+    /// can only ADD an answer where there was none, never override one. A page the runner
+    /// compiled itself is unaffected — <c>TryGetDependencyControlDeclaredProperty</c> is only
+    /// consulted when the definition is missing, and answers null for a page no dependency
+    /// declares.</para>
+    ///
+    /// <para>Trap: null must stay distinguishable from the empty string here. Empty is
+    /// <see cref="ClientExpressionTheCompilerDropped"/>'s "the compiler had an expression and
+    /// dropped it" (AL0573); null is "nothing was declared". Coalescing to <c>?? ""</c>
+    /// anywhere on this path would route every undeclared control of a precompiled page into
+    /// that refusal.</para>
+    /// </summary>
+    private string? DeclaredControlProperty(int controlId, string propertyName)
+    {
+        if (ControlDefinition(controlId) is { } definition)
+            return propertyName switch
+            {
+                "Editable" => definition.Editable,
+                "Visible" => definition.Visible,
+                "Enabled" => definition.Enabled,
+                _ => null,
+            };
+
+        return RecordPatches.TryGetDependencyControlDeclaredProperty(_pageId, controlId, propertyName);
+    }
+
     /// <summary>Editable for a data-bound control, combined with the page's own state.</summary>
     internal bool ControlEditable(int controlId)
-        => PageEditable && EvaluateProperty(ControlDefinition(controlId)?.Editable, "Editable", controlId, PageElementKind.Control, atOpen: false);
+        => PageEditable && EvaluateProperty(DeclaredControlProperty(controlId, "Editable"), "Editable", controlId, PageElementKind.Control, atOpen: false);
 
     internal bool ControlEnabled(int controlId)
-        => EvaluateProperty(ControlDefinition(controlId)?.Enabled, "Enabled", controlId, PageElementKind.Control, atOpen: false);
+        => EvaluateProperty(DeclaredControlProperty(controlId, "Enabled"), "Enabled", controlId, PageElementKind.Control, atOpen: false);
 
     /// <summary>
     /// A control's effective visibility is its own <c>Visible</c> combined with EVERY
@@ -795,7 +834,7 @@ internal sealed partial class RunnerPageInstance
     {
         // atOpen: the control's OWN Visible is the one property real BC does not re-evaluate
         // after the page is open. See SnapshotExpressionValues.
-        if (!EvaluateProperty(ControlDefinition(controlId)?.Visible, "Visible", controlId, PageElementKind.Control, atOpen: true))
+        if (!EvaluateProperty(DeclaredControlProperty(controlId, "Visible"), "Visible", controlId, PageElementKind.Control, atOpen: true))
             return false;
 
         if (_form is not NavForm form) return true;
@@ -923,8 +962,95 @@ internal sealed partial class RunnerPageInstance
     internal static bool IsLiteralFalse(string? raw)
         => raw != null && (string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) || raw == "0");
 
+    /// <summary>
+    /// What an action DECLARES for one of its two boolean properties, whichever metadata
+    /// states it — the merged runtime tree, or the declaring dependency's SymbolReference.json
+    /// for a page that ships precompiled (issue #2460).
+    ///
+    /// <para>The action-side twin of <see cref="DeclaredControlProperty"/>, with the same
+    /// contract: the runtime tree wins whenever it has a definition, so this can only ADD an
+    /// answer where there was none. An action has no <c>Editable</c> in AL, which is why only
+    /// two names appear here and not three.</para>
+    /// </summary>
+    private string? DeclaredActionProperty(int actionId, string propertyName)
+    {
+        if (ActionDefinition(actionId) is { } definition)
+            return propertyName switch
+            {
+                "Enabled" => definition.Enabled,
+                "Visible" => definition.Visible,
+                _ => null,
+            };
+
+        return RecordPatches.TryGetDependencyActionDeclaredProperty(_pageId, actionId, propertyName);
+    }
+
     internal bool ActionEnabled(int actionId)
-        => EvaluateProperty(ActionDefinition(actionId)?.Enabled, "Enabled", actionId, PageElementKind.Action, atOpen: false);
+        => EvaluateProperty(DeclaredActionProperty(actionId, "Enabled"), "Enabled", actionId, PageElementKind.Action, atOpen: false);
+
+    /// <summary>
+    /// <c>Enabled</c> for the INVOKE gate specifically: the same answer as
+    /// <see cref="ActionEnabled"/> wherever one can be computed, and <c>true</c> — the AL
+    /// default, and the behaviour before #3504 — where the declared expression cannot be
+    /// resolved on a precompiled page.
+    ///
+    /// <para>WHY THE TWO CALLERS DIFFER, because collapsing them is the mistake this exists to
+    /// prevent. When AL <b>reads</b> <c>action.Enabled()</c> the value IS the answer, so a
+    /// value we cannot compute must refuse (<c>loud-failures.md</c>): returning either boolean
+    /// would be a silent wrong answer to the exact question asked. When AL calls
+    /// <c>Invoke()</c> the value is only a <b>gate</b> in front of the OnAction trigger, and
+    /// refusing there converts "I cannot evaluate one property" into "this action's business
+    /// logic does not run at all" — a strictly larger loss than the one the refusal prevents,
+    /// on a path where BC itself would have run the trigger.</para>
+    ///
+    /// <para>Measured: Base Application 790 "G/L Account Categories" declares
+    /// <c>Enabled = PageEditable</c> on five actions, a page global its own
+    /// <c>OnOpenPage</c> sets to <c>CurrPage.Editable</c> — so on a page opened with
+    /// <c>OpenEdit()</c> real BC evaluates it true and runs the OnAction. Refusing the invoke
+    /// made <c>Codeunit64571.KeywordActionName_OnPrecompiledBasePage_RunsItsOnAction</c> fail
+    /// on BC 27.0 (run 34515369115) where it had passed, and that test asserts a row was
+    /// actually inserted — real business logic, not a property read.</para>
+    ///
+    /// <para>This narrows a refusal introduced by this change; it does not widen the pre-#3504
+    /// silent default. A declaration the runner CAN resolve still gates the invoke exactly as
+    /// before, including the literal <c>Enabled = false</c> that corpus codeunit 60583 pins.
+    /// #3825 removes the unresolvable case entirely, at which point this method collapses back
+    /// into <see cref="ActionEnabled"/>.</para>
+    /// </summary>
+    internal bool ActionEnabledForInvoke(int actionId)
+    {
+        try
+        {
+            return ActionEnabled(actionId);
+        }
+        catch (AlRunner.Infrastructure.RunnerOutOfScopeException)
+        {
+            // Deliberately not silent: the surface stays visible to whoever reads the run, and
+            // the message names the same issue an `Enabled()` READ would have refused with.
+            WarnOnceAboutUnresolvableInvokeGate(_pageId.ToString(), actionId);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Once per (page, action) for the process — a bundle invoking one action in ten tests must
+    /// not print ten copies. Returns whether this call printed, so AlRunner.Tests can pin the
+    /// "once" without a live NavForm.
+    /// </summary>
+    internal static bool WarnOnceAboutUnresolvableInvokeGate(string pageId, int actionId)
+    {
+        if (!_unresolvableInvokeGateWarned.TryAdd((pageId, actionId), true)) return false;
+
+        Console.Error.WriteLine(
+            $"[warn] TestPage: action {actionId} on page {pageId} declares an Enabled the runner "
+            + "cannot evaluate on a precompiled page, so Invoke() ran its OnAction rather than "
+            + "refusing — real BC evaluates the expression and would decide. Reading "
+            + "Enabled() still refuses rather than guessing. See issue #3825.");
+        return true;
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Page, int Action), bool>
+        _unresolvableInvokeGateWarned = new();
 
     /// <summary>
     /// Live, like every other property except a CONTROL's own Visible — and it follows the
@@ -944,7 +1070,7 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     internal bool ActionVisible(int actionId)
     {
-        if (!EvaluateProperty(ActionDefinition(actionId)?.Visible, "Visible", actionId, PageElementKind.Action, atOpen: false))
+        if (!EvaluateProperty(DeclaredActionProperty(actionId, "Visible"), "Visible", actionId, PageElementKind.Action, atOpen: false))
             return false;
 
         foreach (var ancestor in EnclosingActionGroups(actionId))
