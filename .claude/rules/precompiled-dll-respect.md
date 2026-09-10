@@ -43,9 +43,11 @@ in the cached DLL itself.
 
 ## Reuse before you re-implement — check whether Microsoft already ships it
 
-"Fix" means **the outcome is correct**. How we get there is not prescribed, and reusing
-something Microsoft already shipped beats writing our own — a component from MS is right by
-construction, ours is right only as long as we keep it right across every BC version.
+**The best code is no code written at all.** "Fix" means **the outcome is correct**, not that we
+wrote the thing producing it. Code we do not write cannot rot, cannot drift as BC moves, and
+needs no test — so reusing something Microsoft already ships beats writing our own by default: a
+component from MS is right by construction, ours is right only as long as we keep it right
+across every BC version, forever.
 
 So **before adding a shim to the "New types we add" row, establish that Microsoft does not
 already ship that component in the artifacts.** That row permits new types; it is not a licence
