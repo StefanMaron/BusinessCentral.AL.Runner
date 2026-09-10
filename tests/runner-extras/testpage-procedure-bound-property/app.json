@@ -1,0 +1,18 @@
+{
+  "id": "6b1f0f2a-9c33-4d17-8f21-2a5f4de71c90",
+  "name": "Runner Extras - TestPage Procedure-Bound Property",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3731: a page property bound to a procedure call (Enabled = SomeProcedure()) compiles with warning AL0573 -- 'Procedure calls is not valid for client expressions' -- and real BC never evaluates it, so an action declaring it reads Enabled = false and its OnAction is skipped. The runner used to resolve the call and answer true.",
+  "description": "This claim cannot go in the al-language corpus: AL0573 states the warning becomes an ERROR in a future release, so a corpus codeunit carrying this shape is one BC minor away from failing the corpus app's compile on every leg. That structural reason -- not convenience -- is why the proof lives here. The measurement behind the answered arm is BC 28.4.53241.0 (onprem w1, container, test toolkit), recorded on issue #3731. The arms BC was not measured on refuse loudly rather than guess (.claude/rules/loud-failures.md).",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 65910,
+      "to": 65919
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}

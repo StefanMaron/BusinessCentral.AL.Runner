@@ -2238,3 +2238,23 @@ these red. Each was measured red under its own sabotage.
 Measured 8P/0F/0E on the whole bundle, not computed from the diff.
 
 Written by an agent (Claude, `stma-auto-2`).
+
+## runner-extras `testpage-procedure-bound-property` NEW, 6 (#3731)
+
+A new bundle. A page property bound to a procedure call (`Enabled = IsAllowed()`) compiles with
+warning AL0573 on an action and error AL0322 on a control, and real BC never evaluates the
+expression: the action reads `Enabled` false and its OnAction is skipped, though the procedure
+returns true unconditionally (measured on BC 28.4.53241.0, onprem w1, container, test toolkit —
+issue #3731). The runner answered true.
+
+Six tests: the two arms of the measured claim (`Enabled()` false, `Invoke()` skips the trigger),
+three controls that fail if the fix over-reaches (`Enabled = true`, no `Enabled` declared at all,
+`Enabled = Rec.Flag`), and the refusal an action's `Visible` raises because no service tier has
+been asked what BC answers there.
+
+This claim cannot live in the corpus: AL0573 becomes an error in a future release, so a corpus
+codeunit carrying this AL is one BC minor away from failing every leg's compile.
+
+Measured 6P/0F/0E on the whole bundle, not computed from the diff.
+
+Written by an agent (Claude, `fbk-3`).

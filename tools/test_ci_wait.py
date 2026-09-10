@@ -1822,7 +1822,11 @@ def _drive_main(code, extra_argv=()):
     """Run main() with everything below classify() faked. Returns (rc, stdout)."""
     saved = {name: getattr(cw, name) for name in
              ("_freshness", "head_sha", "resolve_required_contexts", "workflow_runs_for",
-              "required_checks", "classify", "fetch_floor_runs", "fetch_runs_for_sha")}
+              "required_checks", "classify", "fetch_floor_runs", "fetch_runs_for_sha",
+              # #3674: stubbed for the same reason the floor fetches are -- left
+              # real it would make a live `gh pr view` call from this suite on
+              # every CI run, and the assertion below would be about the network.
+              "corpus_state_lines")}
     argv = sys.argv
     buf = io.StringIO()
     out = sys.stdout
@@ -1842,6 +1846,8 @@ def _drive_main(code, extra_argv=()):
             [_fr("main-verdict-floor.yml", "failure", "8b6885f4aaaa", "2026-09-09T11:00:00Z")], "")
         cw.fetch_runs_for_sha = lambda sha: (
             [_fr("main-verdict-floor.yml", "failure", "8b6885f4aaaa", "2026-09-09T11:00:00Z")], "")
+        cw.corpus_state_lines = lambda pr: [
+            "corpus PR #226: NOT-MERGEABLE (head 321ac71a) -- a required BC leg is red"]
         sys.argv = ["ci-wait.py", "3740", "--timeout", "0", "--no-log", *extra_argv]
         sys.stdout = buf
         rc = cw.main()
@@ -1866,6 +1872,113 @@ for _code, _want_rc, _headline in ((0, 0, "GREEN"), (1, 1, "FAILED"),
           _floor and _floor[0].startswith("main floor: RED on 8b6885f4"), repr(_floor))
     check(f"#3679: ...beside the PR verdict, not instead of it",
           _headline in _text, _text[-300:])
+    _corpus = [l for l in _text.splitlines() if l.startswith("corpus PR")]
+    check(f"#3674: main() exit {_want_rc} ({_headline}) prints the corpus PR line exactly once",
+          len(_corpus) == 1, f"rc={_rc} lines={_corpus!r}")
+    check(f"#3674: ...and the corpus line does not change exit {_want_rc}",
+          _rc == _want_rc, f"rc={_rc} out={_text[-300:]!r}")
+
+# --------------------------------------------------------------------------
+# #3674 -- the state of the corpus PR this PR's body cites, printed beside the
+# verdict.
+#
+# The linkage gate checks that a `Corpus-PR:` line was DECLARED, never what
+# became of the pull request it names. Four merged runner PRs cite corpus PRs
+# that closed without merging, and four more merged while their corpus PR was
+# still open. This line is what an agent and a reviewer see before arming.
+#
+# Three claims, and the last is the one that keeps this suite offline: the state
+# comes from .github/scripts/corpus_pr_state.py rather than from a second parser
+# here; a read that fails says `unavailable` rather than reporting a state; and
+# nothing about the line can change the PR's exit code.
+# --------------------------------------------------------------------------
+_CORPUS_URL = "https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/226"
+
+
+class _CorpusStub:
+    """Stands in for corpus_pr_state.py -- the module ci-wait.py must delegate to."""
+
+    def __init__(self, entries=(), why=""):
+        self.entries = list(entries)
+        self.why = why
+        self.bodies: list[str] = []
+
+    def states_for_body(self, body, **kw):
+        self.bodies.append(body)
+        return self.entries, self.why
+
+    @staticmethod
+    def format_line(entry):
+        return f"corpus PR #{entry['number']}: {entry['state']} (head {entry['head'][:8]})"
+
+
+def _entry(number, state, head=""):
+    return {"number": number, "state": state, "head": head}
+
+
+_stub = _CorpusStub([_entry(226, "MERGEABLE", "321ac71a04c4797723dd7c90875a315b42f5b356")])
+_lines = cw.corpus_state_lines("3740",
+                               body_fetch=lambda pr: (f"Closes #1\n\nCorpus-PR: {_CORPUS_URL}", ""),
+                               module=_stub)
+check("#3674: the corpus state comes back as one line naming the PR, the state and the head",
+      _lines == ["corpus PR #226: MERGEABLE (head 321ac71a)"], repr(_lines))
+check("#3674: ...and the body it classified is the one that was read",
+      _stub.bodies and _CORPUS_URL in _stub.bodies[0], repr(_stub.bodies))
+
+_lines = cw.corpus_state_lines("3740",
+                               body_fetch=lambda pr: ("Closes #1\n", ""),
+                               module=_CorpusStub([]))
+check("#3674: a body with no Corpus-PR line says so rather than printing nothing",
+      _lines == ["corpus PR: none declared"], repr(_lines))
+
+_lines = cw.corpus_state_lines("3740", body_fetch=lambda pr: (None, "gh pr view failed"),
+                               module=_CorpusStub([_entry(226, "MERGED")]))
+check("#3674: a failed body read is unavailable, never a state",
+      len(_lines) == 1 and _lines[0].startswith("corpus PR: unavailable")
+      and "gh pr view failed" in _lines[0], repr(_lines))
+
+_lines = cw.corpus_state_lines("3740", body_fetch=lambda pr: ("body", ""), module=None)
+check("#3674: with corpus_pr_state.py not importable the line is unavailable -- which is "
+      "what a copy extracted to /tmp gets, and it must not read as a verdict",
+      len(_lines) == 1 and _lines[0].startswith("corpus PR: unavailable"), repr(_lines))
+
+_lines = cw.corpus_state_lines("3740", body_fetch=lambda pr: ("body", ""),
+                               module=_CorpusStub([], why="malformed Corpus-PR line"))
+check("#3674: a malformed declaration reports UNREADABLE, not 'none declared'",
+      len(_lines) == 1 and "UNREADABLE" in _lines[0]
+      and "malformed" in _lines[0], repr(_lines))
+
+
+class _Boom:
+    @staticmethod
+    def states_for_body(body, **kw):
+        raise RuntimeError("kaboom")
+
+
+_lines = cw.corpus_state_lines("3740", body_fetch=lambda pr: ("body", ""), module=_Boom)
+check("#3674: an exception inside the resolver is unavailable, never an exception out of here",
+      len(_lines) == 1 and _lines[0].startswith("corpus PR: unavailable"), repr(_lines))
+
+_buf = io.StringIO()
+_stdout = sys.stdout
+try:
+    sys.stdout = _buf
+    _ret = cw.print_corpus_pr_states("3740")
+finally:
+    sys.stdout = _stdout
+check("#3674: printing the corpus line returns nothing (it cannot change an exit code)",
+      _ret is None, repr(_ret))
+
+# The module really is the one under .github/scripts, not a lookalike: loading it
+# from this checkout must yield the six states the gate uses.
+_real = cw.load_corpus_pr_state()
+check("#3674: ci-wait.py loads the SAME module the gate runs",
+      _real is not None and hasattr(_real, "states_for_body")
+      and hasattr(_real, "format_line"), repr(_real))
+check("#3674: ...and that module classifies a merged corpus PR as MERGED",
+      _real is not None
+      and _real.classify({"state": "closed", "merged": True})[0] == "MERGED",
+      repr(_real.classify({"state": "closed", "merged": True}) if _real else None))
 
 print()
 if FAILURES:

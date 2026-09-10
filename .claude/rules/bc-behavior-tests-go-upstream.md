@@ -39,13 +39,18 @@ Step 3 is the one that is never optional. Full detail, including escape hatches:
    Mandatory — a test becomes part of the corpus only by merging into that repo's `master`. The
    orchestrator merges it, not the authoring agent, once the corpus's required BC legs are green
    (`verify-execution-not-the-tick.md` § "Which legs were ever going to run it" says which of the
-   sixteen those are, and which of them ever run your tests).
+   sixteen those are, and which of them ever run your tests). While it is open,
+   `pr-gate.yml`'s `A cited corpus PR must be able to merge` job reads it through
+   `.github/scripts/corpus_pr_state.py` and fails your runner PR if that corpus PR cannot merge —
+   a red or unreported required leg, a conflict, a draft, or closed unmerged (#3674).
 4. **Once that PR merges, this repository measures it on its next run** — there is no pin
    to bump (#3737). Until it merges, cite it with a `Corpus-PR:` line and CI resolves the
    corpus at your corpus PR's branch head, so the runner PR is measured against exactly the
    tests it is being written for.
 5. **Then merge the runner change here.** The order is the merge bar, not a formality: a PR
-   asserting BC behaviour merges after the corpus PR it cites (`orchestrating-a-session`).
+   asserting BC behaviour merges after the corpus PR it cites (`orchestrating-a-session`), whose
+   arming list holds out for `MERGED` from that same script — CI passing on a merely *mergeable*
+   corpus PR is not the bar, because the pair lands in one coordinator step.
 
 **No local BC container is not a blocker** — open the corpus PR and let its CI adjudicate (step
 2). **No verdict available at all** (corpus CI broken, BC legs failing for unrelated reasons,

@@ -43,11 +43,8 @@ For each PR:
    If the diff looks like nonsense — implementation doesn't match the issue, the test doesn't exercise the reported AL pattern, or it is suspicious for any reason a quick read surfaces — leave one specific actionable comment naming what's wrong and **do not merge**. Do not approve "to be safe"; the goal is catching obvious-bad PRs, not deep-reviewing correct ones. Otherwise continue to the mechanical checks.
 
 2. `tools/ci-wait.py <N> --timeout 0` for every PR you consider arming; the rollup from step 1 is never the verdict: it lists check runs without the required-context set and without the run each belongs to, so a superseded run's leftover and a missing required context both read as green there; the tool resolves both.
-3. `gh pr diff <N> --name-only --repo StefanMaron/BusinessCentral.AL.Runner | grep -E "CHANGELOG|^tests/al-language/"`
-4. **CHANGELOG.md in diff** → check existing comments (`gh pr view <N> --json comments`); if not yet posted:
-   > Please revert all changes to CHANGELOG.md — it is generated from commit messages post-merge and must not be edited in PRs.
-
-   Do **not** merge until CHANGELOG.md is gone.
+3. `gh pr diff <N> --name-only --repo StefanMaron/BusinessCentral.AL.Runner | grep -E "^tests/al-language/"`
+4. **CHANGELOG.md** — not in item 3's grep any more → `pr-gate.yml`'s `CHANGELOG.md must not be changed in a pull request` job checks this on every PR (#3677), so read its tick rather than grepping the diff yourself. Until a maintainer adds that context to the branch ruleset it reports without gating (`ci-verdicts.md` §2), so a red one is yours to honour: do **not** merge, and comment naming `.claude/rules/no-changelog-edits.md` if nobody has.
 5. **`tests/al-language/` in diff** → since #3737 that path is gitignored and resolved per run, so a diff cannot legitimately touch it at all — there is no gitlink line and no pin bump. Flag any change under it:
    > `tests/al-language/` is the read-only corpus, checked out per run rather than committed (#3737) — please revert any change under it. A corpus change goes to `StefanMaron/BusinessCentral.AL.Language.Tests` and is cited with a `Corpus-PR:` line, which is what points this PR's matrix at it.
    >
@@ -105,7 +102,7 @@ Full pass with no actions: print summary (PRs merged, comments posted, issues cl
 - No code, no branches, no commits, no direct push to main.
 - `--repo StefanMaron/BusinessCentral.AL.Runner` on every `gh` command.
 - No duplicate comments — check existing comments before posting.
-- No merge if `CHANGELOG.md` is in the diff.
+- No merge if `CHANGELOG.md` is in the diff — `pr-gate.yml`'s `CHANGELOG.md must not be changed in a pull request` job reports it (`no-changelog-edits.md`).
 - No merge if the diff touches `tests/al-language/` at all — it is gitignored and resolved per run (`al-language-submodule.md`).
 - No merge if the PR ships a real SA codeunit implementation (only auto-generated blank shells and test-automation libraries are allowed).
 - `git fetch origin main` at the start of each pass (Step 0).

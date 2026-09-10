@@ -685,6 +685,30 @@ internal partial class LiveNavTestPage
         // instead of closing -- measured on real BC, Close() does NOT silently no-op here.
         if (_tornDown) throw MakeTestPageNotOpenException();
 
+        // The EXPLICIT close route's flush, BEFORE the trigger. BC's client sends the row being
+        // edited -- INCLUDING a row typed into a part -- and only then drives the close, so
+        // OnQueryClosePage reads a part that already holds it. Measured on a real service tier
+        // for this route: corpus codeunit 60438 "Opc Close Part Flush Tests"
+        // (StefanMaron/BusinessCentral.AL.Language.Tests#320), the TestPage.Close() twin of
+        // codeunit 60663's OK-press arms (#315). Issue #3708.
+        //
+        // Order is parts THEN row here, as at every other close point, because a part's
+        // OnValidate can touch the header; the OK route is row-then-parts only because
+        // Invoke() has already written this page's own row (#3701).
+        //
+        // It runs before the refusal branches below on purpose: BC's send-then-close order does
+        // not depend on what the trigger answers, and the modal route already flushes ahead of
+        // its own raise (AttemptHandlerDrivenClose). No service tier has been asked what a
+        // refused close leaves behind on this route, and no test here asserts it either way.
+        //
+        // The modal route does not come through here at all -- it reaches Dispose() instead --
+        // and the two ROUTES nevertheless agree about an uncommitted subpage-part row, because
+        // both end in a flush: corpus codeunit 60420 "TPMF Tests"
+        // (StefanMaron/BusinessCentral.AL.Language.Tests#311, merged 22e226c4) drives one page
+        // through both routes and both persist the row, green on all eight cloud legs of run
+        // 34345468218. So neither call site may lose its flush; issue #3682.
+        FlushParts(); FlushRow();
+
         // Two ways BC refuses a close, and they are not the same question — see
         // RunnerPageInstance.CloseRefusal.
         if (_page != null && !_page.RaiseOnClosePage(_formResult, out var refusal))
@@ -696,7 +720,7 @@ internal partial class LiveNavTestPage
             // handler exactly once on this route, and the page is left OPEN.
             //
             // Returning here is the whole of that: the tear-down below is skipped, so _opened
-            // stays true, no row is flushed by the close, and BC's own form state is untouched
+            // stays true and BC's own form state is untouched
             // — the test's TestPage variable keeps working, which is what a real tier leaves it
             // holding. It is deliberately NOT a refusal any more; raising one here would be the
             // runner erroring on a path BC completes without an error (issue #3179).
@@ -713,14 +737,7 @@ internal partial class LiveNavTestPage
                 "testpage-close-veto — the page's OnQueryClosePage returned false, which in BC "
                 + "leaves the page open awaiting the user. See docs/scope.md");
         }
-        // The EXPLICIT close route's flush. The modal route does not come through here at all
-        // -- it reaches Dispose() instead (see there) -- and the two ROUTES nevertheless agree
-        // about an uncommitted subpage-part row, because both end in a flush. That agreement is
-        // real BC's, not a runner convention: corpus codeunit 60420 "TPMF Tests"
-        // (StefanMaron/BusinessCentral.AL.Language.Tests#311, merged 22e226c4) drives one page
-        // through both routes and both persist the row, green on all eight cloud legs of run
-        // 34345468218. So neither call site may lose its flush; issue #3682.
-        FlushParts(); FlushRow(); _opened = false;
+        _opened = false;
 
         // The triggers above are this page's close, so BC's own form state has to agree that
         // it happened — otherwise IsOpen stays true and whoever else is holding the form runs
