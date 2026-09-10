@@ -43,9 +43,11 @@ public sealed class LibraryAssertPlatformlessConsumerTests : IDisposable
     }
 
     /// <summary>
-    /// A provisioned test-apps directory holding Microsoft_Library Assert.app, and a platform-apps
-    /// directory holding System.app — the runner-owned layout under the artifacts root, or the
-    /// legacy ~/.al-runner layout CI populates. Null when either is absent.
+    /// A test-apps directory holding Microsoft_Library Assert.app together with a platform-apps
+    /// directory holding System.app. Both come from ONE candidate location — the legacy
+    /// <c>~/.al-runner</c> layout CI populates, or one version directory under the artifacts
+    /// root — never mixed across versions, which would measure a pairing no real run produces.
+    /// Null when no single location has both.
     /// </summary>
     private static (string TestApps, string PlatformApps)? FindProvisionedDirs()
     {
@@ -58,13 +60,11 @@ public sealed class LibraryAssertPlatformlessConsumerTests : IDisposable
             foreach (var ver in Directory.EnumerateDirectories(root).OrderByDescending(d => d, StringComparer.Ordinal))
                 candidates.Add((Path.Combine(ver, "test-apps"), Path.Combine(ver, "platform-apps")));
 
-        string? testApps = null, platformApps = null;
         foreach (var c in candidates)
-        {
-            if (testApps == null && File.Exists(Path.Combine(c.TestApps, "Microsoft_Library Assert.app"))) testApps = c.TestApps;
-            if (platformApps == null && File.Exists(Path.Combine(c.PlatformApps, "System.app"))) platformApps = c.PlatformApps;
-        }
-        return testApps != null && platformApps != null ? (testApps, platformApps) : null;
+            if (File.Exists(Path.Combine(c.TestApps, "Microsoft_Library Assert.app"))
+                && File.Exists(Path.Combine(c.PlatformApps, "System.app")))
+                return c;
+        return null;
     }
 
     private void WriteBundles(out string app, out string tests)
@@ -161,7 +161,14 @@ public sealed class LibraryAssertPlatformlessConsumerTests : IDisposable
     {
         TestArtifacts.SkipIfMissing();
         var dirs = FindProvisionedDirs();
-        Skip.If(dirs == null, "no provisioned Microsoft_Library Assert.app + System.app pair on this box");
+        // On CI the toolkit and platform sets are provisioned, so their absence is a broken leg
+        // rather than an unavailable environment — fail, do not skip, matching
+        // TestArtifacts.SkipIfMissingIn's own rule.
+        if (dirs == null && TestArtifacts.RunningOnCi)
+            Assert.Fail("no Microsoft_Library Assert.app + System.app pair in one provisioned location; "
+                + "CI provisions both (al-runner provision --test-apps --platform-apps).");
+        TestArtifacts.SkipIf(dirs == null,
+            "no Microsoft_Library Assert.app + System.app pair in one provisioned location on this box.");
         WriteBundles(out var app, out var tests);
 
         var (output, exit) = RunRunner(app, tests, dirs!.Value.TestApps, dirs.Value.PlatformApps);

@@ -25,13 +25,22 @@ namespace AlRunner.Infrastructure;
 /// <summary>
 /// Identity read from a bundle's app.json, used to synthesize a NAVX .app.
 /// </summary>
+/// <param name="Application">app.json's <c>application</c> floor, or null when it declares none.</param>
+/// <param name="Platform">
+/// app.json's <c>platform</c> floor, or null. #3719: both are written onto the synthesized
+/// package's App element, because a resolved package's floors are dependencies —
+/// <see cref="AlRunner.AppLoader.ImplicitRoots"/>, followed by DependencyResolver. Dropping
+/// them here made a synthesized sibling lose the platform symbols its own app.json asked for.
+/// </param>
 public sealed record BundleIdentity(
     Guid AppId,
     string Name,
     string Publisher,
     Version Version,
     Version RuntimeVersion,
-    IReadOnlyList<DependencyRef> Dependencies);
+    IReadOnlyList<DependencyRef> Dependencies,
+    Version? Application = null,
+    Version? Platform = null);
 
 public static class InProcessAppPackager
 {
@@ -108,7 +117,11 @@ public static class InProcessAppPackager
                 }
             }
             // Inject implicit MS deps from application/platform fields (same logic as
-            // Program.cs ReadDependencies) so the reference loader resolves them.
+            // Program.cs ReadDependencies) so the reference loader resolves them. #3719: the
+            // floors are ALSO carried on the identity, because BuildNavxManifestXml drops every
+            // Optional dep — so without them a synthesized package's manifest would declare
+            // neither the dependency nor the floor, and the resolver could not follow either.
+            Version? applicationFloor = null, platformFloor = null;
             foreach (var (field, implName) in new[] { ("application", "Application"), ("platform", "System") })
             {
                 if (root.TryGetProperty(field, out var fv)
@@ -117,10 +130,11 @@ public static class InProcessAppPackager
                 {
                     if (!Version.TryParse(fv.GetString(), out var iv)) iv = new Version(0, 0, 0, 0);
                     deps.Add(new DependencyRef(Guid.Empty, implName, "Microsoft", iv, Optional: true));
+                    if (implName == "Application") applicationFloor = iv; else platformFloor = iv;
                 }
             }
 
-            return new BundleIdentity(appId, name, pub, ver, rtVer, deps);
+            return new BundleIdentity(appId, name, pub, ver, rtVer, deps, applicationFloor, platformFloor);
         }
         catch (Exception ex)
         {
@@ -347,6 +361,11 @@ public static class InProcessAppPackager
                     new XAttribute("Name", identity.Name),
                     new XAttribute("Publisher", identity.Publisher),
                     new XAttribute("Version", identity.Version.ToString()),
+                    // #3719: the floors go on the App element, the way a real package declares
+                    // them, NOT into <Dependencies> above — that list is filtered to non-Optional
+                    // entries, and AppLoader reads the floors from these attributes.
+                    identity.Application == null ? null : new XAttribute("Application", identity.Application.ToString()),
+                    identity.Platform == null ? null : new XAttribute("Platform", identity.Platform.ToString()),
                     new XAttribute("ShowMyCode", "true")),
                 depsEl));
 

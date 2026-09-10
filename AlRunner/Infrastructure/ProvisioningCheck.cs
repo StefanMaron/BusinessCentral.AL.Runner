@@ -1049,19 +1049,18 @@ public static class ProvisioningCheck
                         deps.Add(d.Name);
                 }
                 // #3719: a package's Platform / Application floors are dependencies the real `al`
-                // compiler injects (Microsoft/System, Microsoft/Application), and Microsoft's
-                // test-toolkit packages declare NOTHING else — Library Assert's manifest is
-                // Platform="28.0.0.0" with an empty <Dependencies />. Recording them as edges is
-                // what lets a bundle that names only a toolkit app learn, from the package's own
-                // manifest once the test set is on disk, that it needs the platform set too;
-                // without System.app the toolkit's source compile dies (EMIT-ZERO). Same walk,
-                // same round order as every other edge here; no hand rule.
-                foreach (var floor in AlRunner.AppLoader.ImplicitRoots(manifest))
-                {
-                    if (string.Equals(floor.Name, manifest.Name, StringComparison.OrdinalIgnoreCase)) continue;
-                    if (!deps.Any(x => string.Equals(x, floor.Name, StringComparison.OrdinalIgnoreCase)))
-                        deps.Add(floor.Name);
-                }
+                // compiler injects (Microsoft/System, Microsoft/Application). Library Assert
+                // declares Platform="28.0.0.0" and an empty <Dependencies />, so without this
+                // edge a bundle naming only it never learns it needs the platform set, downloads
+                // the test set alone, and the toolkit's source compile dies (EMIT-ZERO).
+                // Trap: skipped for the Microsoft platform apps themselves, matching
+                // DependencyResolver.Visit's guard — their manifests reference each other
+                // (Application -> Base Application -> Application ...), and a graph the resolver
+                // does not walk would make provisioning fetch a set resolution never asks for.
+                if (!AlRunner.DependencyResolver.IsMicrosoftPlatformApp(manifest.Name, manifest.Publisher))
+                    foreach (var floor in AlRunner.AppLoader.ImplicitRoots(manifest))
+                        if (!deps.Any(x => string.Equals(x, floor.Name, StringComparison.OrdinalIgnoreCase)))
+                            deps.Add(floor.Name);
                 edges[manifest.Name] = deps;
             }
         }

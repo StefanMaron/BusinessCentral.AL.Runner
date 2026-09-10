@@ -83,13 +83,22 @@ public sealed class ManifestDependencyEdgeScanTests : IDisposable
     private static void WriteAppWithPlatform(
         string dir, string name, string publisher, string version, string platform,
         params (string Name, string Publisher)[] dependencies)
+        => WriteAppWithFloors(dir, name, publisher, version, platform, application: null, dependencies);
+
+    /// <summary>As <see cref="WriteApp"/>, with either or both floor attributes set.</summary>
+    private static void WriteAppWithFloors(
+        string dir, string name, string publisher, string version,
+        string? platform, string? application,
+        params (string Name, string Publisher)[] dependencies)
     {
         var deps = string.Concat(dependencies.Select(d =>
             $"""    <Dependency Id="{Guid.NewGuid()}" Name="{d.Name}" Publisher="{d.Publisher}" MinVersion="{version}" />{"\n"}"""));
+        var platformAttr = platform == null ? "" : $" Platform=\"{platform}\"";
+        var applicationAttr = application == null ? "" : $" Application=\"{application}\"";
         var xml = $"""
             <?xml version="1.0" encoding="utf-8"?>
             <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
-              <App Id="{Guid.NewGuid()}" Name="{name}" Publisher="{publisher}" Version="{version}" Platform="{platform}"/>
+              <App Id="{Guid.NewGuid()}" Name="{name}" Publisher="{publisher}" Version="{version}"{applicationAttr}{platformAttr}/>
               <Dependencies>
             {deps}  </Dependencies>
             </Package>
@@ -110,17 +119,42 @@ public sealed class ManifestDependencyEdgeScanTests : IDisposable
         Assert.Equal(new[] { "System" }, edges["Library Assert"]);
     }
 
-    /// <summary>The floor edge does not point a package at itself: a System.app that declares a
-    /// Platform records an empty edge list, exactly as an app declaring nothing does.</summary>
+    /// <summary>
+    /// A Microsoft PLATFORM app's own floor is not recorded, matching
+    /// DependencyResolver.Visit's guard: their manifests reference each other
+    /// (Application → Base Application → Application …), and an edge the resolver refuses to
+    /// walk would make provisioning fetch a set resolution never asks for. Both directions
+    /// here — a self-pointing floor (System declaring Platform) and a cross-pointing one
+    /// (Base Application declaring Platform, i.e. → System).
+    /// </summary>
     [Fact]
-    public void ScanDependencyEdges_SystemDeclaringPlatform_RecordsNoSelfEdge()
+    public void ScanDependencyEdges_PlatformAppsOwnFloor_IsNotRecorded()
     {
-        var dir = NewDir("floor-edge-self");
+        var dir = NewDir("floor-edge-platform");
         WriteAppWithPlatform(dir, "System", "Microsoft", "28.0.54265.0", platform: "28.0.54265.0");
+        WriteAppWithPlatform(dir, "Base Application", "Microsoft", "28.1.49838.54169", platform: "28.0.0.0");
 
         var edges = ProvisioningCheck.ScanDependencyEdges(new[] { dir }).Edges;
 
         Assert.Empty(edges["System"]);
+        Assert.Empty(edges["Base Application"]);
+    }
+
+    /// <summary>
+    /// The Application floor is recorded too, not only Platform — an implementation that
+    /// handled `Platform` alone would pass every other fact here. Microsoft's test packages
+    /// really do declare it: Tests-ERM's manifest is Platform="28.0.0.0" Application="28.1.0.0".
+    /// </summary>
+    [Fact]
+    public void ScanDependencyEdges_PackageDeclaringApplication_RecordsAnEdgeToApplication()
+    {
+        var dir = NewDir("floor-edge-application");
+        WriteAppWithFloors(dir, "Tests-ERM", "Microsoft", "28.1.49838.54169",
+            platform: "28.0.0.0", application: "28.1.0.0", ("Library Assert", "Microsoft"));
+
+        var edges = ProvisioningCheck.ScanDependencyEdges(new[] { dir }).Edges;
+
+        Assert.Equal(new[] { "Library Assert", "Application", "System" }, edges["Tests-ERM"]);
     }
 
     /// <summary>

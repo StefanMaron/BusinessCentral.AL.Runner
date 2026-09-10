@@ -621,12 +621,17 @@ public sealed class DependencyResolverTests : IDisposable
     /// </summary>
     private static byte[] MakeMinimalApp(string appId, string name, string publisher, string version,
         bool r2r, bool alSource, string? platform)
+        => MakeMinimalApp(appId, name, publisher, version, r2r, alSource, platform, application: null);
+
+    private static byte[] MakeMinimalApp(string appId, string name, string publisher, string version,
+        bool r2r, bool alSource, string? platform, string? application)
     {
         var platformAttr = platform == null ? "" : $" Platform=\"{platform}\"";
+        var applicationAttr = application == null ? "" : $" Application=\"{application}\"";
         var xml = $"""
             <?xml version="1.0" encoding="utf-8"?>
             <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
-              <App Id="{appId}" Name="{name}" Publisher="{publisher}" Version="{version}"{platformAttr}/>
+              <App Id="{appId}" Name="{name}" Publisher="{publisher}" Version="{version}"{applicationAttr}{platformAttr}/>
             </Package>
             """;
 
@@ -714,6 +719,76 @@ public sealed class DependencyResolverTests : IDisposable
         });
 
         Assert.Equal(new[] { "Library Assert" }, result.Select(r => r.Manifest.Name).ToArray());
+    }
+
+    /// <summary>
+    /// The Application floor is followed too, not only Platform — an implementation handling
+    /// `Platform` alone passes every other fact here. Microsoft's test packages really declare
+    /// it: Tests-ERM's manifest is <c>Platform="28.0.0.0" Application="28.1.0.0"</c>.
+    /// </summary>
+    [Fact]
+    public void ResolvedPackageDeclaringApplication_PullsApplicationIntoTheClosure()
+    {
+        var dir = MakeDir("ApplicationFloor");
+        var applicationId = "00000000-0000-0000-0000-0000000a9911";
+        var ermId = "00000000-0000-0000-0000-0000000e2222";
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Application.app"),
+            MakeMinimalApp(applicationId, "Application", "Microsoft", "28.1.49838.54368", r2r: false, alSource: false, platform: null));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Tests-ERM.app"),
+            MakeMinimalApp(ermId, "Tests-ERM", "Microsoft", "28.1.49838.54169", r2r: false, alSource: true,
+                platform: null, application: "28.1.0.0"));
+
+        var result = new DependencyResolver(new[] { dir }).Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(ermId), "Tests-ERM", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        Assert.Equal(new[] { "Application", "Tests-ERM" }, result.Select(r => r.Manifest.Name).ToArray());
+    }
+
+    /// <summary>
+    /// #3719: a package this run SYNTHESIZED from source must carry its own app.json floors, or
+    /// the resolver has nothing to follow and the sibling is source-compiled without the platform
+    /// symbols it asked for — the reported bug, on a path the runner manufactures itself.
+    /// BuildNavxManifestXml filters <c>&lt;Dependencies&gt;</c> to non-Optional entries, which is
+    /// exactly where the implicit floors live, so they have to travel as App attributes.
+    /// </summary>
+    [Fact]
+    public void SynthesizedPackage_CarriesTheAppJsonFloors_SoTheResolverCanFollowThem()
+    {
+        var src = MakeDir("SynthSource");
+        File.WriteAllText(Path.Combine(src, "app.json"), """
+        {
+          "id": "00000000-0000-0000-0000-0000000b1111",
+          "name": "Synth Sibling",
+          "publisher": "Contoso",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "28.0.0.0",
+          "application": "28.1.0.0",
+          "runtime": "13.0"
+        }
+        """);
+
+        var identity = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(Path.Combine(src, "app.json"));
+        Assert.NotNull(identity);
+        Assert.Equal(new Version(28, 0, 0, 0), identity!.Platform);
+        Assert.Equal(new Version(28, 1, 0, 0), identity.Application);
+
+        // Round-trip: package it the way SiblingCompile does, read it back the way
+        // DependencyResolver does.
+        File.WriteAllText(Path.Combine(src, "Helper.Codeunit.al"), "codeunit 63900 \"Synth Helper\" { }");
+        var outDir = MakeDir("SynthOut");
+        var appPath = Path.Combine(outDir, "Contoso_Synth_Sibling.app");
+        AlRunner.Infrastructure.InProcessAppPackager.EmitAppPackageToFile(src, identity, appPath);
+
+        var manifest = AppLoader.ReadManifest(appPath);
+        Assert.NotNull(manifest);
+        Assert.Equal(new Version(28, 0, 0, 0), manifest!.Platform);
+        Assert.Equal(new Version(28, 1, 0, 0), manifest.Application);
+        Assert.Equal(
+            new[] { "Application", "System" },
+            AppLoader.ImplicitRoots(manifest).Select(r => r.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
     }
 
     /// <summary>
