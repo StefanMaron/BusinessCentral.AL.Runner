@@ -763,6 +763,40 @@ in either direction — which is how #3790 stayed hidden: the symbol file writes
 codeunit parser matched only the word `"true"`, so all 38 single-instance System Application
 codeunits read as false. `CodeunitSymbolSingleInstanceSpellingTests` pins both spellings.
 
+<a id="one-verdict-for-a-missing-bundle"></a>
+## One verdict for a missing bundle, shared by every reader
+
+"There is no ground-truth bundle" has **three** answers, not two, and only
+`MetadataEquivalenceBundleGate.RequireBundles()` gives them (#3789):
+
+| state | verdict |
+|---|---|
+| bundles exist | return them |
+| none, on a developer box | **skip** — the generator is a provisioning step nobody has run |
+| none, **on CI** | **fail** — the generator runs before `dotnet test` by construction, so its absence is a workflow regression |
+
+The third is the one that matters, and it is the one that was missing. Five classes read a
+bundle and each had written its own `Skip.If(bundles.Count == 0, …)` — including
+`MetadataEquivalencePageOracleTests`, whose entire purpose is pinning that BC's
+`MetaPageDefinition` accepts the emitter's document and reads nothing from it. **A skip reads
+green in the summary line**, so a bundle-less CI leg silenced precisely the discrimination that
+stops the harness measuring nothing: the anti-green-over-nothing class was the one without the
+guard.
+
+Not currently exploitable, and worth saying so rather than overstating the fix — the real gate
+runs through `RunAll()` and does fail loudly, and `Unbuildable.Count == 0` plus
+`No_allowlist_entry_has_gone_stale` make "N objects compared, 0 differences" unreachable without
+something failing. It is still the wrong shape, for the reason
+`.claude/rules/guards-need-a-third-state.md` gives: the third state must not be spelled as the
+success state, and a guard safe only by accident of a neighbour is still on that rule's list.
+
+**Held in place by a test, not a convention.** `MetadataEquivalenceBundleGateTests` asserts that
+nothing but the gate calls `LoadBundles`, that no reader writes its own empty-bundle skip, and
+that the gate really throws under `CI=true` and really skips without it — driven through
+`AL_RUNNER_METADATA_GROUND_TRUTH` pointed at an empty directory, so it exercises the real path.
+That matters because #3782 has five more object kinds to go, each adding a class that reads a
+bundle, and the cheap thing to write is a bare `Skip.If`.
+
 <a id="every-bundled-object-must-state-a-real-id"></a>
 ## Every bundled object must state a real id, and BC spells it two ways
 
