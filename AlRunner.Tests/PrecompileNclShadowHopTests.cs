@@ -73,7 +73,7 @@ public sealed class PrecompileNclShadowHopTests
             "something wrote it (the defect issue #2065 is about), and mirroring would copy " +
             "that contamination forward and make these tests assert nothing.");
 
-        var privateDir = Directory.CreateTempSubdirectory("al-runner-precompile-mirror-").FullName;
+        var privateDir = Directory.CreateDirectory(TestScratch.FlatDir("al-runner-precompile-mirror-")).FullName;
         NclShadowRuntime.MirrorInstallDirectory(originalBinDir, privateDir);
         return privateDir;
     }

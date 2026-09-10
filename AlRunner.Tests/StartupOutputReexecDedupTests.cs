@@ -428,7 +428,7 @@ public sealed class StartupOutputReexecDedupTests
     [Fact]
     public void DeleteDirectoryOrFail_UndeletableDirectory_FailsLoudlyNamingDirectoryAndException()
     {
-        var dir = Directory.CreateTempSubdirectory("al-runner-deletedirorfail-").FullName;
+        var dir = Directory.CreateDirectory(TestScratch.FlatDir("al-runner-deletedirorfail-")).FullName;
         File.WriteAllText(Path.Combine(dir, "Microsoft.Dynamics.Nav.Ncl.dll"), "not a real dll — just needs to exist");
         try
         {
@@ -465,7 +465,7 @@ public sealed class StartupOutputReexecDedupTests
     [Fact]
     public void DeleteDirectoryOrFail_DeletableDirectory_DeletesAndReturns()
     {
-        var dir = Directory.CreateTempSubdirectory("al-runner-deletedirorfail-ok-").FullName;
+        var dir = Directory.CreateDirectory(TestScratch.FlatDir("al-runner-deletedirorfail-ok-")).FullName;
         File.WriteAllText(Path.Combine(dir, "Microsoft.Dynamics.Nav.Ncl.dll"), "not a real dll — just needs to exist");
 
         DeleteDirectoryOrFail(dir);
@@ -558,7 +558,7 @@ public sealed class StartupOutputReexecDedupTests
             "hand) has contaminated the shared source, and the private mirror below would " +
             "otherwise silently copy that contamination forward.");
 
-        var privateDir = Directory.CreateTempSubdirectory("al-runner-startup-mirror-").FullName;
+        var privateDir = Directory.CreateDirectory(TestScratch.FlatDir("al-runner-startup-mirror-")).FullName;
         NclShadowRuntime.MirrorInstallDirectory(originalBinDir, privateDir);
         return privateDir;
     }

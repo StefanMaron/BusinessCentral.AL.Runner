@@ -44,7 +44,8 @@ namespace AlRunner.Tests;
 
 public sealed class JUnitCollateralFailureTests : IDisposable
 {
-    private readonly string _dir = Directory.CreateTempSubdirectory("al-runner-junit-collateral-").FullName;
+    private readonly string _dir =
+        Directory.CreateDirectory(TestScratch.FlatDir("al-runner-junit-collateral-")).FullName;
 
     public void Dispose()
     {

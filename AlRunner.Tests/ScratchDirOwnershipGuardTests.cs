@@ -16,10 +16,18 @@ namespace AlRunner.Tests;
 /// (it skips any depth-0 name without a scanned prefix). Nothing noticed for three weeks,
 /// because a textual conversion leaves no record of what it missed.
 ///
-/// So the remainder is enforced here rather than described in a PR body. A new
-/// <c>Path.GetTempPath()</c> in AlRunner.Tests fails this test unless its file is on the
-/// allowlist below WITH the reason the site cannot be owned — and the COUNT is part of the
-/// allowlist, so adding a second, ownable site to an allowlisted file still fails.
+/// So the remainder is enforced here rather than described in a PR body. A new scanned
+/// expression in AlRunner.Tests fails this test unless its file is on the allowlist below WITH
+/// the reason the site cannot be owned — and the COUNT is part of the allowlist, so adding a
+/// second, ownable site to an allowlisted file still fails.
+///
+/// #3831 widened WHAT is scanned, which is the axis that had never been questioned. The scan
+/// matched <c>Path.GetTempPath()</c> only, so <c>Directory.CreateTempSubdirectory</c> — which
+/// creates a directory under the same <c>TMPDIR</c> and leaks identically — was invisible, and
+/// the guard reported green on 13 such sites across 6 files for as long as it had existed. Two
+/// of them were instance fields, leaking once per test-class instantiation rather than once per
+/// run. A guard silent on the API a developer is most likely to reach for is reporting its
+/// success state about something it never measured (<c>guards-need-a-third-state.md</c>).
 ///
 /// The failure mode this shape exists to avoid is the one
 /// <c>.claude/rules/no-base-app-in-csharp-tests.md</c> already recorded: an allowlist written
@@ -46,7 +54,26 @@ public sealed class ScratchDirOwnershipGuardTests
 
     private static string TestsDir => Path.Combine(RepoRoot, "AlRunner.Tests");
 
-    private const string Expression = "Path.GetTempPath()";
+    /// <summary>
+    /// Every way this project has of naming a location under <c>TMPDIR</c>. All of them leak the
+    /// same way, so all of them are scanned and all of them count against the same per-file
+    /// budget — a file may not trade an allowlisted <c>Path.GetTempPath()</c> for an unowned
+    /// <c>CreateTempSubdirectory</c> without the count moving.
+    ///
+    /// <c>Path.GetTempFileName</c> is deliberately here with ZERO call sites today (#3831
+    /// measured it). It is the third member of the family and creates a real file in the temp
+    /// root, so scanning for it costs one string and closes the gap before a first caller opens
+    /// it, rather than after — which is the whole complaint this test was widened to answer.
+    /// It is scanned, not special-cased: if it ever appears it is an ordinary offender.
+    /// </summary>
+    private static readonly string[] Expressions =
+    [
+        "Path.GetTempPath()",
+        "Directory.CreateTempSubdirectory",
+        "Path.GetTempFileName",
+    ];
+
+    private static string ExpressionList => string.Join(", ", Expressions);
 
     /// <summary>
     /// Source path, relative to <c>AlRunner.Tests</c> → (how many non-comment
@@ -60,7 +87,10 @@ public sealed class ScratchDirOwnershipGuardTests
         ["TestScratch.cs"] =
             (3, "the helper itself — Dir, FlatDir and FilePath are what everything else calls"),
         ["ScratchDirOwnershipGuardTests.cs"] =
-            (1, "the literal this guard scans for, in the const it scans with"),
+            (5, "the literals this guard scans FOR, never paths it creates: 3 in the Expressions "
+              + "array and 2 more in EveryScannedExpression_IsMatchedByTheScanner_OnSyntheticSource, "
+              + "which builds synthetic source lines to prove each entry fires. Was 1 until #3831 "
+              + "widened the scan from one expression to three"),
 
         // ── paths that must NOT exist ───────────────────────────────────────────────────
         ["AppLoaderManifestCacheTests.cs"] =
@@ -147,42 +177,53 @@ public sealed class ScratchDirOwnershipGuardTests
         return paths;
     }
 
-    /// <summary>Non-comment occurrences of the expression, per source path.</summary>
-    private static Dictionary<string, int> Occurrences()
+    /// <summary>
+    /// Non-comment occurrences of any scanned expression, per source path, each carrying the
+    /// 1-based line it sits on. The line numbers are what makes a failure actionable: the
+    /// pre-#3831 message named 6 files and left the reader to find 13 sites inside them.
+    /// </summary>
+    private static Dictionary<string, List<(int Line, string Expression)>> Occurrences()
     {
-        var found = new Dictionary<string, int>(StringComparer.Ordinal);
+        var found = new Dictionary<string, List<(int, string)>>(StringComparer.Ordinal);
         foreach (var path in TestSources())
         {
-            var n = 0;
+            var hits = new List<(int, string)>();
+            var lineNo = 0;
             foreach (var raw in File.ReadAllLines(path))
             {
-                var line = raw.TrimStart();
-                if (line.StartsWith("//", StringComparison.Ordinal)
-                    || line.StartsWith("*", StringComparison.Ordinal)) continue;
-
-                var i = 0;
-                while ((i = raw.IndexOf(Expression, i, StringComparison.Ordinal)) >= 0)
+                lineNo++;
+                foreach (var expression in Expressions)
                 {
-                    n++;
-                    i += Expression.Length;
+                    if (!MatchesInLine(raw, expression)) continue;
+
+                    var i = 0;
+                    while ((i = raw.IndexOf(expression, i, StringComparison.Ordinal)) >= 0)
+                    {
+                        hits.Add((lineNo, expression));
+                        i += expression.Length;
+                    }
                 }
             }
-            if (n > 0) found[Key(path)] = n;
+            if (hits.Count > 0) found[Key(path)] = hits;
         }
         return found;
     }
 
     /// <summary>
-    /// The forward direction: a file using <c>Path.GetTempPath()</c> without being on the
-    /// allowlist is a scratch path nothing owns.
+    /// The forward direction: a file naming a temp location through any scanned expression,
+    /// without being on the allowlist, is a scratch path nothing owns.
     /// </summary>
     [Fact]
     public void NoTestSource_BuildsAnUnownedTempPath_ExceptTheAllowlisted()
     {
-        var offenders = Occurrences().Keys.Where(f => !Allowed.ContainsKey(f)).OrderBy(f => f).ToList();
+        var offenders = Occurrences()
+            .Where(kv => !Allowed.ContainsKey(kv.Key))
+            .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+            .SelectMany(kv => kv.Value.Select(h => $"{kv.Key}:{h.Line}  {h.Expression}"))
+            .ToList();
 
         Assert.True(offenders.Count == 0,
-            $"These test sources build a path under {Expression} directly, so nothing "
+            $"These test sources name a temp location directly ({ExpressionList}), so nothing "
             + "records an owner for it and a killed test host leaks it permanently:\n  "
             + string.Join("\n  ", offenders)
             + "\n\nUse TestScratch.Dir / TestScratch.FlatDir for a directory, or "
@@ -205,9 +246,12 @@ public sealed class ScratchDirOwnershipGuardTests
 
         foreach (var (name, (count, why)) in Allowed)
         {
-            var actual = found.TryGetValue(name, out var n) ? n : 0;
+            var actual = found.TryGetValue(name, out var hits) ? hits.Count : 0;
             if (actual != count)
-                wrong.Add($"{name}: allowlist says {count}, source has {actual} ({why})");
+                wrong.Add($"{name}: allowlist says {count}, source has {actual} ({why})"
+                    + (actual > 0
+                        ? " — at " + string.Join(", ", hits!.Select(h => $"line {h.Line} {h.Expression}"))
+                        : string.Empty));
         }
 
         Assert.True(wrong.Count == 0,
@@ -216,6 +260,85 @@ public sealed class ScratchDirOwnershipGuardTests
             + "already-allowlisted file — route it through TestScratch. Lower means the entry is "
             + "stale: correct the count, or delete the entry, so it stops pre-approving the next "
             + "site that lands in that file.");
+    }
+
+    /// <summary>
+    /// The scan itself, measured rather than assumed. <c>TestScratch.cs</c> is the one file
+    /// guaranteed to name a temp location — it is the helper every other site delegates to —
+    /// so finding it there proves the matcher runs, reads real source, and does not skip the
+    /// file as a comment.
+    ///
+    /// Without this, a typo in <see cref="Expressions"/>, a matcher that never fires, or an
+    /// enumeration that reached no source would leave
+    /// <see cref="NoTestSource_BuildsAnUnownedTempPath_ExceptTheAllowlisted"/> green with an
+    /// empty offender list — the guard reporting its success state about something it never
+    /// measured, which is the exact defect #3831 fixed one level up
+    /// (<c>guards-need-a-third-state.md</c>). <see cref="TestSources"/> asserts the enumeration
+    /// is non-empty; this asserts the MATCHING is.
+    ///
+    /// Only <c>Path.GetTempPath()</c> can be demanded of the live project: after #3831's sweep
+    /// no source uses <c>CreateTempSubdirectory</c> or <c>GetTempFileName</c> at all, which is
+    /// the desired end state, so demanding either would force a site to exist purely to keep
+    /// this green. Those two are proved to match by
+    /// <see cref="EveryScannedExpression_IsMatchedByTheScanner_OnSyntheticSource"/>, which
+    /// feeds the matcher source it writes itself.
+    /// </summary>
+    [Fact]
+    public void TheScanItself_ActuallyMatches_SoAnEmptyOffenderListMeansSomething()
+    {
+        var found = Occurrences();
+
+        Assert.True(found.TryGetValue("TestScratch.cs", out var helper),
+            "the scan found no temp expression in TestScratch.cs, the one file that must "
+            + $"contain them ({ExpressionList}) — so the matcher is not working and an empty "
+            + "offender list from this class proves nothing.");
+
+        Assert.Equal(3, helper!.Count);
+        Assert.All(helper, h => Assert.Equal("Path.GetTempPath()", h.Expression));
+    }
+
+    /// <summary>
+    /// Every entry in <see cref="Expressions"/> is matched by the same code path the project
+    /// scan uses, and a comment carrying it is not.
+    ///
+    /// This is what makes an entry with no live call site — <c>CreateTempSubdirectory</c> and
+    /// <c>GetTempFileName</c> after the #3831 sweep — a measured guard rather than a string
+    /// nobody has ever seen fire. A never-fire branch and a correctly-silent one are
+    /// indistinguishable from the outside, and the never-fire one is the whole defect.
+    /// </summary>
+    [Fact]
+    public void EveryScannedExpression_IsMatchedByTheScanner_OnSyntheticSource()
+    {
+        foreach (var expression in Expressions)
+        {
+            Assert.True(MatchesInLine($"        var x = {expression};", expression),
+                $"'{expression}' is listed as scanned but the matcher does not find it in a "
+                + "line that contains it — the entry would never fire, so the guard would be "
+                + "silent on it exactly as it was on CreateTempSubdirectory before #3831.");
+
+            Assert.False(MatchesInLine($"        // var x = {expression};", expression),
+                $"'{expression}' matched inside a comment. Files quote these while explaining "
+                + "that they deliberately do not use them, and flagging those would train "
+                + "readers to ignore this test.");
+        }
+
+        // Negative: a name that merely resembles a scanned one must not match, or the guard
+        // would report offenders nobody can act on.
+        Assert.False(MatchesInLine("var p = MyPath.GetTempPathish();", "Path.GetTempFileName"));
+    }
+
+    /// <summary>
+    /// The single-line form of the loop in <see cref="Occurrences"/>: comment lines skipped,
+    /// ordinal substring match. Kept separate so
+    /// <see cref="EveryScannedExpression_IsMatchedByTheScanner_OnSyntheticSource"/> exercises
+    /// the real predicate rather than a re-statement of it.
+    /// </summary>
+    private static bool MatchesInLine(string raw, string expression)
+    {
+        var line = raw.TrimStart();
+        if (line.StartsWith("//", StringComparison.Ordinal)
+            || line.StartsWith("*", StringComparison.Ordinal)) return false;
+        return raw.IndexOf(expression, StringComparison.Ordinal) >= 0;
     }
 
     /// <summary>
