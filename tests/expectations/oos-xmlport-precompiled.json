@@ -3,6 +3,9 @@
     "codeunitId": 65921,
     "CodeunitName": "XPD Tests",
     "Method": "PrecompiledDepXmlPort_MetadataObjectBuilds_SchemaStillOutOfScope",
+    "Suites": [
+      "tests/runner-extras/xmlport-precompiled-dep-metadata"
+    ],
     "Mode": "expect-oos",
     "Reason": "not-yet-implemented",
     "Doc": "docs/limitations.md#precompiled-xmlport-node-schema",
