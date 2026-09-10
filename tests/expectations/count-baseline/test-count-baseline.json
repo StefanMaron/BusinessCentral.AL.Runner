@@ -66,6 +66,7 @@
         "testpage-precompiled-dep-control": { "tests": 2 },
         "testpage-precompiled-member-names": { "tests": 8 },
         "testpage-promoted-actionref": { "tests": 18 },
+        "testpage-procedure-bound-property": { "tests": 6 },
         "testpage-same-value-modify": { "tests": 6 },
         "testpage-trigger-inject-timing": { "tests": 2 },
         "user-system-table-triggers": { "tests": 10 },

@@ -770,10 +770,10 @@ internal sealed partial class RunnerPageInstance
 
     /// <summary>Editable for a data-bound control, combined with the page's own state.</summary>
     internal bool ControlEditable(int controlId)
-        => PageEditable && EvaluateProperty(ControlDefinition(controlId)?.Editable, "Editable", controlId, atOpen: false);
+        => PageEditable && EvaluateProperty(ControlDefinition(controlId)?.Editable, "Editable", controlId, PageElementKind.Control, atOpen: false);
 
     internal bool ControlEnabled(int controlId)
-        => EvaluateProperty(ControlDefinition(controlId)?.Enabled, "Enabled", controlId, atOpen: false);
+        => EvaluateProperty(ControlDefinition(controlId)?.Enabled, "Enabled", controlId, PageElementKind.Control, atOpen: false);
 
     /// <summary>
     /// A control's effective visibility is its own <c>Visible</c> combined with EVERY
@@ -795,7 +795,7 @@ internal sealed partial class RunnerPageInstance
     {
         // atOpen: the control's OWN Visible is the one property real BC does not re-evaluate
         // after the page is open. See SnapshotExpressionValues.
-        if (!EvaluateProperty(ControlDefinition(controlId)?.Visible, "Visible", controlId, atOpen: true))
+        if (!EvaluateProperty(ControlDefinition(controlId)?.Visible, "Visible", controlId, PageElementKind.Control, atOpen: true))
             return false;
 
         if (_form is not NavForm form) return true;
@@ -823,7 +823,7 @@ internal sealed partial class RunnerPageInstance
             // LIVE, unlike the control's own Visible above. Corpus
             // TestPageFieldVisibleGroup_Tests flips a group's Visible expression after the
             // page is open and reads a field inside it as newly visible, green on real BC.
-            if (!EvaluateProperty(group.Visible, "Visible", group.ID, atOpen: false))
+            if (!EvaluateProperty(group.Visible, "Visible", group.ID, PageElementKind.Group, atOpen: false))
                 return false;
 
             currentId = group.ID;
@@ -924,7 +924,7 @@ internal sealed partial class RunnerPageInstance
         => raw != null && (string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) || raw == "0");
 
     internal bool ActionEnabled(int actionId)
-        => EvaluateProperty(ActionDefinition(actionId)?.Enabled, "Enabled", actionId, atOpen: false);
+        => EvaluateProperty(ActionDefinition(actionId)?.Enabled, "Enabled", actionId, PageElementKind.Action, atOpen: false);
 
     /// <summary>
     /// Live, like every other property except a CONTROL's own Visible — and it follows the
@@ -944,11 +944,11 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     internal bool ActionVisible(int actionId)
     {
-        if (!EvaluateProperty(ActionDefinition(actionId)?.Visible, "Visible", actionId, atOpen: false))
+        if (!EvaluateProperty(ActionDefinition(actionId)?.Visible, "Visible", actionId, PageElementKind.Action, atOpen: false))
             return false;
 
         foreach (var ancestor in EnclosingActionGroups(actionId))
-            if (!EvaluateProperty(ancestor.Visible, "Visible", ancestor.ID, atOpen: false))
+            if (!EvaluateProperty(ancestor.Visible, "Visible", ancestor.ID, PageElementKind.Group, atOpen: false))
                 return false;
 
         return true;
@@ -1025,9 +1025,15 @@ internal sealed partial class RunnerPageInstance
     /// Resolve one of the boolean control properties. Absent means the AL declared none, and
     /// the AL default for all three is true.
     /// </summary>
-    private bool EvaluateProperty(string? raw, string propertyName, int elementId, bool atOpen)
+    private bool EvaluateProperty(
+        string? raw, string propertyName, int elementId, PageElementKind kind, bool atOpen)
     {
-        if (string.IsNullOrEmpty(raw)) return true;
+        // null is "this element publishes no such property at all". An element that declares
+        // none publishes the AL default as a LITERAL instead — measured on BC 28.1 through this
+        // very seam: an action with no Enabled arrives as "true", one declaring Enabled = Rec.Flag
+        // as "Flag". So an EMPTY string is neither, and cannot be read as "none declared".
+        if (raw is null) return true;
+        if (raw.Length == 0) return ClientExpressionTheCompilerDropped(propertyName, elementId, kind);
 
         // The literal arrives in more than one spelling: the emitted XML carries "true" /
         // "false" on controls and actions and "1" / "0" in the page's Properties block, and
@@ -1079,6 +1085,75 @@ internal sealed partial class RunnerPageInstance
             $"TestPage {propertyName} on page {_pageId} element {elementId}",
             $"the property is bound to expression '{raw}', which cannot be evaluated: {why}");
     }
+
+    /// <summary>
+    /// Which kind of page element a property was read from. An action's Enabled is the one arm a
+    /// service tier measured for a dropped client expression, so the kind is what keeps the
+    /// measured answer from being extended to arms nobody measured.
+    /// </summary>
+    internal enum PageElementKind
+    {
+        Control,
+        Group,
+        Action,
+    }
+
+    /// <summary>
+    /// A property whose value arrives as the EMPTY string: the AL compiler had an expression here
+    /// and dropped it, because a client expression may not call a procedure —
+    /// <c>Enabled = IsAllowed()</c> compiles with AL0573 on an action ("Procedure calls is not
+    /// valid for client expressions ... This warning will become an error in a future release")
+    /// and with error AL0322 on a control, so only the action arms reach this at all.
+    ///
+    /// <para>An ACTION's Enabled answers <b>false</b>, and the OnAction is therefore skipped:
+    /// measured on BC 28.4.53241.0 (onprem w1, container, test toolkit) for a procedure returning
+    /// true unconditionally — issue #3731, proof in
+    /// tests/runner-extras/testpage-procedure-bound-property. That claim cannot go in the corpus:
+    /// AL0573 becomes an error in a future release, so a corpus codeunit carrying this AL is one
+    /// BC minor away from failing every leg's compile.</para>
+    ///
+    /// <para>Every other arm refuses. No service tier has been asked what BC answers for an
+    /// action's Visible, or for a group's, bound to a dropped expression, and borrowing the
+    /// Enabled answer would be a guess presented as a measurement
+    /// (.claude/rules/loud-failures.md). #3762 tracks measuring them.</para>
+    ///
+    /// <para>The answered arm is silent in BC, so the runner is silent too — but it warns once
+    /// per element, because the AL author wrote a procedure call meaning it to be called.</para>
+    /// </summary>
+    private bool ClientExpressionTheCompilerDropped(string propertyName, int elementId, PageElementKind kind)
+    {
+        if (kind != PageElementKind.Action || propertyName != "Enabled")
+            throw TestPageShapeGap.ControlProperty(
+                $"TestPage {propertyName} on page {_pageId} element {elementId}",
+                "the property is bound to a client expression the AL compiler dropped (a procedure "
+                + "call: AL0573), and what real BC answers for this property has not been measured "
+                + "on a service tier — see issue #3762");
+
+        WarnOnceAboutDroppedClientExpression(_pageId.ToString(), elementId, propertyName);
+        return false;
+    }
+
+    /// <summary>
+    /// Once per (page, element, property) for the whole process: a bundle that opens the same page
+    /// in ten tests must not print ten copies. `[warn]` because Log.Install() drops a tagged line
+    /// at default verbosity unless the tag is a severity — see AlRunner.Tests/LoudDiagnosisReachesTheUserTests.
+    /// Returns whether this call was the one that printed, so AlRunner.Tests can pin the "once"
+    /// without a live NavForm.
+    /// </summary>
+    internal static bool WarnOnceAboutDroppedClientExpression(string pageId, int elementId, string propertyName)
+    {
+        if (!_droppedClientExpressionWarned.TryAdd((pageId, elementId, propertyName), true)) return false;
+
+        Console.Error.WriteLine(
+            $"[warn] RunnerPageInstance: page {pageId} element {elementId}: {propertyName} is bound to a "
+            + "procedure call, which AL does not evaluate in a client expression (AL0573), so it "
+            + "answers false here as it does on real BC — the procedure is never called. Bind the "
+            + "property to a page variable a trigger assigns instead.");
+        return true;
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Page, int Element, string Property), bool>
+        _droppedClientExpressionWarned = new();
 
     /// <summary>
     /// The same resolution as <see cref="ResolveExpressionIdentifier"/>, but answering from the

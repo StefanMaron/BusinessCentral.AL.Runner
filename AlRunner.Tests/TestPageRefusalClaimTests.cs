@@ -431,7 +431,11 @@ public sealed class TestPageRefusalClaimTests
         // refusal for a spelling BC was never asked about.
         Assert.Equal(6, Regex.Matches(mock, @"throw new AlRunner\.Infrastructure\.BcShapeGapException\(").Count);
 
-        Assert.Equal(4, Regex.Matches(page, @"throw TestPageShapeGap\.").Count);
+        // 5 since #3731: a property whose value arrives as the EMPTY string is one the AL
+        // compiler dropped (a procedure call in a client expression, AL0573). An ACTION's
+        // Enabled answers false there, measured on BC 28.4; every other arm refuses, because no
+        // service tier has been asked what BC answers for it — #3762.
+        Assert.Equal(5, Regex.Matches(page, @"throw TestPageShapeGap\.").Count);
         // 2: the OnLookup-trigger read whose three-valued answer came back "could not determine"
         // (#2946/#2995), and #3447's NavForm.RegisterPageExtension lookup - the method BC's own
         // RaiseOn<trigger>Async loops depend on, so a build that stops declaring it would make
@@ -470,6 +474,7 @@ public sealed class TestPageRefusalClaimTests
         new object[] { "MockTestPage*.cs", "so its OnDrillDown trigger cannot be reached" },
         new object[] { "RunnerPageInstance.cs", "which is not a Boolean" },
         new object[] { "RunnerPageInstance.cs", "which cannot be evaluated:" },
+        new object[] { "RunnerPageInstance.cs", "has not been measured " },
         new object[] { "RunnerPageInstance.cs", "the runner cannot tell which trigger belongs to it" },
     };
 
