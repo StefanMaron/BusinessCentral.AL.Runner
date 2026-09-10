@@ -97,7 +97,8 @@ public sealed class BcEngineUnbootstrappedGuardTests
     /// The constraint guards-need-a-third-state.md sets on this class of fix: a genuinely
     /// absent thing stays a pass. A box with no BC service tier provisioned cannot run these
     /// tests for a correct reason, and failing there would make the suite unrunnable rather
-    /// than honest. It keeps the visible, counted skip TestArtifacts.SkipIf produces.
+    /// than honest. It keeps the visible, counted skip the shared test-artifacts gate
+    /// produces.
     /// </summary>
     [Theory]
     [InlineData(BcEngineSkipCause.ArtifactsMissing)]
@@ -201,7 +202,7 @@ public sealed class BcEngineUnbootstrappedGuardTests
     /// each: an unbootstrapped box must see the property THROW (that is #3835's fix, and
     /// the state a post-build run is in), and a bootstrapped one must see it answer.
     ///
-    /// It does NOT call TestArtifacts.SkipIf on the way in: that would read
+    /// It does NOT route through the shared artifacts gate on the way in: that would read
     /// _engine.SkipReason and so trip the very guard under test before asserting anything.
     ///
     /// Measured caveat, and why <see cref="TheWiring_IsPresent_InEveryState"/> exists beside
