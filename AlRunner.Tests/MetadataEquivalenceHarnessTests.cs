@@ -130,6 +130,14 @@ public sealed class MetadataEquivalenceHarnessTests
             foreach (var kind in report.KindsCompared)
                 Assert.Equal(report.Bundle.Census[kind],
                     report.Bundle.Objects.Count(o => o.Kind == kind));
+
+            // Enum-extension documents are skipped rather than compared (the harness's own
+            // comment says why), so the compared total is short by exactly that many. Asserting
+            // the arithmetic is what stops the skip becoming a place objects can quietly go:
+            // a second shape that started being skipped would break this rather than shrink the
+            // comparison unnoticed.
+            var comparableTotal = report.KindsCompared.Sum(k => report.Bundle.Census[k]);
+            Assert.Equal(comparableTotal - report.EnumExtensionDocuments.Count, report.ObjectsCompared);
         }
     }
 
@@ -174,10 +182,25 @@ public sealed class MetadataEquivalenceHarnessTests
         // programme finishes, which is the one outcome it must not punish.
         string[] stillUncompared =
         {
-            // step 3..8, in the order issue #3782's comment sets.
-            "Query", "XmlPort", "Report", "PermissionSet", "Enum",
+            // steps 3 and 4, in the order issue #3782's comment sets. Steps 2 (CodeUnit) and
+            // 5-7 (Report, PermissionSet, Enum) are compared and have been deleted from this
+            // list.
+            "Query", "XmlPort",
+            // Step 8, and NOT a step still to do: measured and found uncomparable
+            // non-circularly. MetadataEquivalenceHarness.UncomparableKinds carries the reason
+            // and the tracking issue, and the assertion below holds this list to it so the two
+            // cannot drift.
             "MetadataRuntimeDeltas",
         };
+
+        // A kind here for the measured reason must say so in UncomparableKinds, and vice versa.
+        // Without this the two lists say different things about the same kind and nothing
+        // notices — the list above would keep reading as "not got to yet" after step 8 closed
+        // the question.
+        Assert.Equal(
+            MetadataEquivalenceHarness.UncomparableKinds.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray(),
+            stillUncompared.Where(MetadataEquivalenceHarness.UncomparableKinds.ContainsKey)
+                .OrderBy(k => k, StringComparer.Ordinal).ToArray());
 
         foreach (var report in RunAll())
         {
@@ -203,6 +226,13 @@ public sealed class MetadataEquivalenceHarnessTests
             Assert.Contains("MetaTable", report.KindsCompared);
             Assert.Contains("PageDefinition", report.KindsCompared);
             Assert.Contains("CodeUnit", report.KindsCompared);
+            Assert.Contains("PermissionSet", report.KindsCompared);
+            Assert.Contains("Enum", report.KindsCompared);
+            // Report is asserted per-bundle rather than unconditionally: Business Foundation
+            // ships none, so a flat Assert.Contains would fail on a bundle that is simply
+            // reportless rather than on a comparison that stopped covering the kind.
+            if (report.Bundle.Census.ContainsKey("Report"))
+                Assert.Contains("Report", report.KindsCompared);
 
             foreach (var kind in stillUncompared.Where(k => report.Bundle.Census.ContainsKey(k)))
                 Assert.Contains(kind, report.KindsNotCompared);

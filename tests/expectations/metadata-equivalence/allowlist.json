@@ -26,12 +26,12 @@
     "Nine entries are DIRECTION-SCOPED. An entry covers both directions unless it says otherwise,",
     "and a reason that justifies one direction must not license the other. All three",
     "oracleLimitation entries are runner-only: they exist because the runner shows a merged",
-    "runtime view, so BC-absent / runner-present is what they justify \u2014 while the reverse, BC",
+    "runtime view, so BC-absent / runner-present is what they justify — while the reverse, BC",
     "emitting a field the runner never builds, is a hard reader defect that must still fail.",
     "",
     "There is deliberately NO occurrence cap. One was implemented and used by nothing, which made",
     "the PR claim a ratchet the code did not keep. No entry here has a bound that survives a",
-    "rebuild \u2014 the counts move with the BC build and with which apps are bundled \u2014 so any cap",
+    "rebuild — the counts move with the BC build and with which apps are bundled — so any cap",
     "would be a number nobody measured. Direction narrows categorically instead.",
     "",
     "Measured on BC 28.1.49838.53910 over Business Foundation (12 tables) and System Application",
@@ -88,11 +88,11 @@
     "",
     "CodeUnit (#3782 step 2). Measured on BC 28.1.49838.53910 over Business Foundation (25",
     "codeunits) and System Application (533): 2,220 differences across 5 members, all of them",
-    "one-directional (BC states a value, the runner states none \u2014 the runner invents nothing).",
+    "one-directional (BC states a value, the runner states none — the runner invents nothing).",
     "Five of MetaCodeunit's eleven members already agree EXACTLY across all 558 codeunits: Id,",
     "Name, SubType, TableNo and SingleInstance, including all 12 System Application codeunits",
     "that declare a TableNo. The five that differ are tracked on #3788, and none of them is a",
-    "limit of the symbol file \u2014 each was checked against SymbolReference.json directly.",
+    "limit of the symbol file — each was checked against SymbolReference.json directly.",
     "",
     "The five CodeUnit entries were AUDITED against versionContingent and none carries it. That is a",
     "measurement, not an omission: on the three ground-truth bundles present (27.5.46862.53931,",
@@ -147,92 +147,92 @@
     },
     {
       "member": "MetaField.Caption",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.CaptionClass",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.CaptionOriginal",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.CharAllowed",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ClrType",
-      "reason": "BC states the field's real CLR type and the runner states the empty string on all 1,888 fields. ClrType is not an XML attribute at all \u2014 BC derives it itself \u2014 and it is a PURE FUNCTION of Datatype, which the symbol file does carry and the runner already reads: measured over 988 observations, all 16 Datatypes map to exactly one ClrType each (BigInteger->System.Int64, GUID->System.Guid, Code/Text/DateFormula->System.String, Option/Integer->System.Int32, BLOB/RecordID->System.Byte[], Media->NSMediaWrapper, and so on). Recoverable with no app data.",
+      "reason": "BC states the field's real CLR type and the runner states the empty string on all 1,888 fields. ClrType is not an XML attribute at all — BC derives it itself — and it is a PURE FUNCTION of Datatype, which the symbol file does carry and the runner already reads: measured over 988 observations, all 16 Datatypes map to exactly one ClrType each (BigInteger->System.Int64, GUID->System.Guid, Code/Text/DateFormula->System.String, Option/Integer->System.Int32, BLOB/RecordID->System.Byte[], Media->NSMediaWrapper, and so on). Recoverable with no app data.",
       "issue": 3568
     },
     {
       "member": "MetaField.EnumTypeName",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ExternalName",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ExternalType",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ObsoleteReason",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.OptionCaption",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.OptionCaptionOriginal",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ToolTip",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ToolTipOriginal",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ValuesAllowed",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.MaxValue",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.MinValue",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.OptionString",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.InitValue",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
@@ -242,7 +242,7 @@
     },
     {
       "member": "MetaField.CaptionML.<presence>",
-      "reason": "BC builds a MultiLanguage caption for the field; the runner builds none. The symbol file carries Caption (2,743 occurrences in System Application) \u2014 the MultiLanguage object is its runtime form. Direction-scoped to BC-present / runner-absent; the runner inventing a caption BC does not have is a different defect.",
+      "reason": "BC builds a MultiLanguage caption for the field; the runner builds none. The symbol file carries Caption (2,743 occurrences in System Application) — the MultiLanguage object is its runtime form. Direction-scoped to BC-present / runner-absent; the runner inventing a caption BC does not have is a different defect.",
       "issue": 3568,
       "direction": "bc-only"
     },
@@ -263,7 +263,7 @@
     },
     {
       "member": "MetaField.Relations.<presence>",
-      "reason": "BC gives SystemCreatedBy and SystemModifiedBy a TableRelation to User (2000000120); the runner gives them none. This is the difference already observable from plain AL as FieldRef.Relation() answering 0 \u2014 see #3549. Direction-scoped to BC-present / runner-absent; the runner inventing a relation BC does not have would be a different defect and is not covered.",
+      "reason": "BC gives SystemCreatedBy and SystemModifiedBy a TableRelation to User (2000000120); the runner gives them none. This is the difference already observable from plain AL as FieldRef.Relation() answering 0 — see #3549. Direction-scoped to BC-present / runner-absent; the runner inventing a relation BC does not have would be a different defect and is not covered.",
       "issue": 3568,
       "direction": "bc-only"
     },
@@ -279,7 +279,7 @@
     },
     {
       "member": "MetaKey.Name",
-      "reason": "BC derives this as the POSITIONAL FIELD SPEC over field ids (\"Field1,Field2\"), not as a name anyone declared, and NCLMetaKey.CreateFromMetaKey never passes it \u2014 the declared AL name travels as MetaKey.KeyName, which the reader now states (#3568). So no AL surface can observe this member, and the runner keeps its own spelling rather than reproducing a spec BC regenerates. Superseded reason, recorded because it hid a real defect: this used to read \"two different naming schemes\", and MetaKey.KeyName was declared as \"the same disagreement on the second of the two name properties\". That was wrong \u2014 KeyName is the DECLARED name, the symbol file states it verbatim, and it reaches AL through ObsolescenceGuard.ThrowIfObsoleted.",
+      "reason": "BC derives this as the POSITIONAL FIELD SPEC over field ids (\"Field1,Field2\"), not as a name anyone declared, and NCLMetaKey.CreateFromMetaKey never passes it — the declared AL name travels as MetaKey.KeyName, which the reader now states (#3568). So no AL surface can observe this member, and the runner keeps its own spelling rather than reproducing a spec BC regenerates. Superseded reason, recorded because it hid a real defect: this used to read \"two different naming schemes\", and MetaKey.KeyName was declared as \"the same disagreement on the second of the two name properties\". That was wrong — KeyName is the DECLARED name, the symbol file states it verbatim, and it reaches AL through ObsolescenceGuard.ThrowIfObsoleted.",
       "issue": 3568
     },
     {
@@ -331,7 +331,7 @@
     },
     {
       "member": "MetaTable.Fields.<presence>",
-      "reason": "The runner models the MERGED RUNTIME state a running system has \u2014 every registered app's tableextension fields present on the base table. The ground truth is BC's BUILD-TIME per-app emit, which by construction sees only the app being compiled. Two different things, so this is a limitation of the oracle and not evidence about the runner: 115 fields on four Business Foundation tables (230, 242, 308, 6635). In BC 29 everything is merged at database level anyway, which makes the runner's merged view the forward-looking one. CONSEQUENCE: a multi-app bundle can never produce an empty diff, so a non-empty diff here is expected and must not be read as noise or as a bug. DIRECTION-SCOPED: covers only BC-absent / runner-present, which is the merged-runtime direction this reason justifies. The reverse \u2014 BC emitted a field and the runner built none \u2014 is a hard reader defect and is NOT covered.",
+      "reason": "The runner models the MERGED RUNTIME state a running system has — every registered app's tableextension fields present on the base table. The ground truth is BC's BUILD-TIME per-app emit, which by construction sees only the app being compiled. Two different things, so this is a limitation of the oracle and not evidence about the runner: 115 fields on four Business Foundation tables (230, 242, 308, 6635). In BC 29 everything is merged at database level anyway, which makes the runner's merged view the forward-looking one. CONSEQUENCE: a multi-app bundle can never produce an empty diff, so a non-empty diff here is expected and must not be read as noise or as a bug. DIRECTION-SCOPED: covers only BC-absent / runner-present, which is the merged-runtime direction this reason justifies. The reverse — BC emitted a field and the runner built none — is a hard reader defect and is NOT covered.",
       "oracleLimitation": true,
       "Doc": "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata",
       "direction": "runner-only"
@@ -467,7 +467,7 @@
     },
     {
       "member": "ControlContainerDefinition.#containerTypeField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
@@ -480,7 +480,7 @@
     },
     {
       "member": "ControlContainerDefinition.ContainerType",
-      "reason": "The container the page's controls sit in. The runner emits one ContentArea container to hold the parts it does reconstruct (EmitPartControlXml); BC states the real area for the real tree. The same control-tree boundary as the Controls entries. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The container the page's controls sit in. The runner emits one ContentArea container to hold the parts it does reconstruct (EmitPartControlXml); BC states the real area for the real tree. The same control-tree boundary as the Controls entries. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
@@ -521,7 +521,7 @@
     },
     {
       "member": "InfopartPageDefinition.#providerIDField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
@@ -596,21 +596,21 @@
     },
     {
       "member": "InfopartPageDefinition.Editable",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 113 pages declare Editable; EmitPartControlXml does not carry it onto the part control. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 113 pages declare Editable; EmitPartControlXml does not carry it onto the part control. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "issue": 3784,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
     {
       "member": "InfopartPageDefinition.ProviderID",
-      "reason": "The control that PROVIDES a part's data in the designer's provider/consumer wiring. It names a control id inside the host page's real control tree, which the runner does not reconstruct. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The control that PROVIDES a part's data in the designer's provider/consumer wiring. It names a control id inside the host page's real control tree, which the runner does not reconstruct. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
     },
     {
       "member": "InfopartPageDefinition.ProviderIDSpecified",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
@@ -756,7 +756,7 @@
     },
     {
       "member": "PageProperties.#aPIVersionField",
-      "reason": "The API version of an API page. Emitted by BC for the one API page in the bundle and absent from SymbolReference.json; API pages are a web-service publishing surface, which docs/scope.md places out of scope. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The API version of an API page. Emitted by BC for the one API page in the bundle and absent from SymbolReference.json; API pages are a web-service publishing surface, which docs/scope.md places out of scope. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
@@ -769,7 +769,7 @@
     },
     {
       "member": "PageProperties.#analysisModeEnabledField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.AnalysisModeEnabled, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.AnalysisModeEnabled, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "issue": 3784,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
@@ -803,7 +803,7 @@
     },
     {
       "member": "PageProperties.#isPreviewField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
@@ -846,7 +846,7 @@
     },
     {
       "member": "PageProperties.AnalysisModeEnabled",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 1 page declares AnalysisModeEnabled; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 1 page declares AnalysisModeEnabled; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "issue": 3784,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
@@ -903,7 +903,7 @@
     },
     {
       "member": "PageProperties.IsPreview",
-      "reason": "Marks a page shipped as preview. Not in SymbolReference.json in any form; BC's emitter derives it from a compiler-level attribute the symbol file does not carry. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "Marks a page shipped as preview. Not in SymbolReference.json in any form; BC's emitter derives it from a compiler-level attribute the symbol file does not carry. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
@@ -922,7 +922,7 @@
     },
     {
       "member": "SourceObjectDefinition.#delayedInsertField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.DelayedInsert, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.DelayedInsert, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "issue": 3784,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
@@ -934,14 +934,14 @@
     },
     {
       "member": "SourceObjectDefinition.#modifyAllowedField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.ModifyAllowed, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.ModifyAllowed, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "issue": 3784,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
     {
       "member": "SourceObjectDefinition.DelayedInsert",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 13 pages declare DelayedInsert, with the same SourceTable-branch condition. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 13 pages declare DelayedInsert, with the same SourceTable-branch condition. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "issue": 3784,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
@@ -953,7 +953,7 @@
     },
     {
       "member": "SourceObjectDefinition.ModifyAllowed",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 89 pages declare ModifyAllowed, with the same SourceTable-branch condition as InsertAllowed. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 89 pages declare ModifyAllowed, with the same SourceTable-branch condition as InsertAllowed. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "issue": 3784,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
@@ -966,17 +966,17 @@
     },
     {
       "member": "MetaCodeunit.InherentPermissions",
-      "reason": "BC states the inherent permission mask (Execute on 505 of 558); the runner leaves BC's own None default. Stated verbatim in the symbol file: codeunit 26 carries Properties [{'Name':'InherentPermissions','Value':'X'}], and presence agrees with BC's attribute for 533 of 533 System Application codeunits on BC 28.1.49838.53910. The letters are the same mask spelling RecordPatches.CodeunitMetadataFromBcDocument.cs already parses out of BC's OWN document for the CodeUnit Metadata virtual table, so the conversion exists and is merely not fed from the symbol file for a precompiled dependency. Derivable, tracked, not a limit. Deliberately NOT direction-scoped: the runner answers BC's own enum default None rather than leaving the member absent, and `bc-only` matches only a runner side that is <absent> or <null>. The narrowing that would be wanted here \u2014 'BC states a mask, the runner states None' \u2014 is not expressible as a direction, so the entry covers both and this sentence records why. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): System Application 455 / 481 / 482 codeunits state it, Business Foundation 24 on all three. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that.",
+      "reason": "BC states the inherent permission mask (Execute on 505 of 558); the runner leaves BC's own None default. Stated verbatim in the symbol file: codeunit 26 carries Properties [{'Name':'InherentPermissions','Value':'X'}], and presence agrees with BC's attribute for 533 of 533 System Application codeunits on BC 28.1.49838.53910. The letters are the same mask spelling RecordPatches.CodeunitMetadataFromBcDocument.cs already parses out of BC's OWN document for the CodeUnit Metadata virtual table, so the conversion exists and is merely not fed from the symbol file for a precompiled dependency. Derivable, tracked, not a limit. Deliberately NOT direction-scoped: the runner answers BC's own enum default None rather than leaving the member absent, and `bc-only` matches only a runner side that is <absent> or <null>. The narrowing that would be wanted here — 'BC states a mask, the runner states None' — is not expressible as a direction, so the entry covers both and this sentence records why. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): System Application 455 / 481 / 482 codeunits state it, Business Foundation 24 on all three. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that.",
       "issue": 3788
     },
     {
       "member": "MetaCodeunit.InherentEntitlements",
-      "reason": "Same shape and same evidence as MetaCodeunit.InherentPermissions, for the entitlement mask rather than the permission mask: stated in the symbol file as Properties [{'Name':'InherentEntitlements','Value':'X'}], presence agreeing for 533 of 533 on BC 28.1.49838.53910, and BC's default None answered by the runner in its place. Declared separately rather than folded in, because the two masks are independent AL properties and a fix that landed only one must still fail on the other. Deliberately NOT direction-scoped: the runner answers BC's own enum default None rather than leaving the member absent, and `bc-only` matches only a runner side that is <absent> or <null>. The narrowing that would be wanted here \u2014 'BC states a mask, the runner states None' \u2014 is not expressible as a direction, so the entry covers both and this sentence records why. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): System Application 455 / 481 / 482 codeunits state it, Business Foundation 24 on all three. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that.",
+      "reason": "Same shape and same evidence as MetaCodeunit.InherentPermissions, for the entitlement mask rather than the permission mask: stated in the symbol file as Properties [{'Name':'InherentEntitlements','Value':'X'}], presence agreeing for 533 of 533 on BC 28.1.49838.53910, and BC's default None answered by the runner in its place. Declared separately rather than folded in, because the two masks are independent AL properties and a fix that landed only one must still fail on the other. Deliberately NOT direction-scoped: the runner answers BC's own enum default None rather than leaving the member absent, and `bc-only` matches only a runner side that is <absent> or <null>. The narrowing that would be wanted here — 'BC states a mask, the runner states None' — is not expressible as a direction, so the entry covers both and this sentence records why. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): System Application 455 / 481 / 482 codeunits state it, Business Foundation 24 on all three. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that.",
       "issue": 3788
     },
     {
       "member": "MetaRuntimeInfo.Methods.<presence>",
-      "reason": "BC's document carries a <Methods> subtree for 137 of 558 codeunits and the runner's projection carries none, so every method BC states is reported absent. PARTLY derivable, and the remainder is measured rather than assumed: SymbolReference.json does state a Methods array (Id, Name, Parameters, ReturnTypeDefinition), and BC's emitted method names are a subset of the symbol file's for 64 codeunits \u2014 but for 73 they are not, because BC emits event-publisher and internal methods the symbol file omits. So this is a partial derivation with a known 73-codeunit gap, not a straight fix, which is why it is tracked rather than declared recoverable. Measured on BC 28.1.49838.53910. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): System Application 135 / 137 / 138 codeunits emit a <Methods> subtree, Business Foundation 8 on all three. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that.",
+      "reason": "BC's document carries a <Methods> subtree for 137 of 558 codeunits and the runner's projection carries none, so every method BC states is reported absent. PARTLY derivable, and the remainder is measured rather than assumed: SymbolReference.json does state a Methods array (Id, Name, Parameters, ReturnTypeDefinition), and BC's emitted method names are a subset of the symbol file's for 64 codeunits — but for 73 they are not, because BC emits event-publisher and internal methods the symbol file omits. So this is a partial derivation with a known 73-codeunit gap, not a straight fix, which is why it is tracked rather than declared recoverable. Measured on BC 28.1.49838.53910. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): System Application 135 / 137 / 138 codeunits emit a <Methods> subtree, Business Foundation 8 on all three. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that.",
       "issue": 3788,
       "direction": "bc-only"
     },
@@ -985,6 +985,96 @@
       "reason": "The SAME collection as MetaRuntimeInfo.Methods, reached under a second signature: MetaRuntimeInfo backs the property with a field, and the differ walks both, so one absent method subtree is reported twice. Declared separately because the allowlist matches on the signature and leaving this one off would report 326 undeclared differences for a gap already declared above. It disappears with the same fix. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): the same collection as MetaRuntimeInfo.Methods, so the same 135 / 137 / 138 and 8. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that.",
       "issue": 3788,
       "direction": "bc-only"
+    },
+    {
+      "member": "MetaReport.InherentEntitlements",
+      "reason": "BC resolves the report's InherentEntitlements mask to Execute; the runner answers None because BcAppSymbolCache's ReportSymbol does not carry the property at all. SymbolReference.json states it as the \"X\" mask spelling, and RecordPatches.CodeunitMetadataFromBcDocument.cs already parses that spelling for codeunits -- so this is a dropped property, not an underivable one. Same member and same \"X\" spelling as the codeunit gap (#3788) and the query gap (#3798); three kinds, one unparsed property. Measured on BC 28.1.49838.53910 on the single report System Application ships (9810 Change Password).",
+      "issue": 3808
+    },
+    {
+      "member": "MetaReport.InherentPermissions",
+      "reason": "The other half of the same dropped property: BC resolves Execute, the runner answers None. See MetaReport.InherentEntitlements immediately above -- one \"X\" mask in SymbolReference.json feeds both, and neither reaches ReportSymbol.",
+      "issue": 3808
+    },
+    {
+      "member": "MetaReport.ALNamespace",
+      "reason": "BC states the report's AL namespace (System.Security.AccessControl on report 9810); the runner answers null because ReportSymbol does not carry it. SymbolReference.json states the namespace -- it is what BcAppSymbolCache's own namespace walk already reads to build ObjectSymbol -- so this is derivable and simply not carried. Same member, same reason and same fix as MetaTable.ALNamespace (#3568), MetaPermissionSet.ALNamespace (#3806) and MetaEnum.ALNamespace (#3807).",
+      "issue": 3808
+    },
+    {
+      "member": "MetaReport.RequestPageDefinition.<presence>",
+      "reason": "BC's emitted document carries a full <RequestPage><PageDefinition> subtree even for report 9810, which declares UseRequestPage = false and ProcessingOnly = true; DependencyReportMetadata.EmitReportXml writes no <RequestPage> element at all, so BC's reader leaves the property null on the runner's side. Two questions are deliberately OPEN rather than answered here, and they are on #3808: whether BC emits a request page for every report (unanswerable from this bundle -- System Application ships exactly ONE report, and Base Application, which would settle it, is excluded from apps.json because its emit needs a .NET reference no BC artifact ships, #3549), and whether anything AL-observable reads MetaReport.RequestPageDefinition on a ProcessingOnly report. Declared as a tracked defect rather than out of scope precisely because neither is settled: an outOfScope claim here would be a guess wearing a classification.",
+      "issue": 3808
+    },
+    {
+      "member": "MetaReport.#requestPageDefinition.<presence>",
+      "reason": "The backing field of MetaReport.RequestPageDefinition. The differ walks the property and the field independently, so one absent subtree is reported twice; this entry exists so the second report is declared rather than left undeclared. Same fact, same issue -- see the property entry above for the two open questions.",
+      "issue": 3808
+    },
+    {
+      "member": "MetaPermissionSet.Name",
+      "reason": "BC's MetaPermissionSet.Create UPPERCASES the name it reads; the runner's object route sets Name verbatim from PermissionSetSymbol. This is BC's READER, not the document: measured on BC 28.1.49838.53910, 8 of 178 emitted permission-set documents state an already-uppercase Name (SUPER, SECURITY, LOGIN, TROUBLESHOOT TOOLS, SUPER (DATA), D365 SNAPSHOT DEBUG, D365 ATTACH DEBUG, D365 BACKUP/RESTORE) and 170 state mixed case, while Create answers all 178 upper-cased -- 178-8 = 170, exactly this entry's occurrence count. The value is a Code[20]/Code[30] ROLE ID and BC upper-cases codes, so the open question is WHERE the upper-casing belongs, not which spelling is right; MetadataEquivalenceReportEnumPermissionSetOracleTests asserts the reader's behaviour so this entry stays attributable to the reader. Note the runner is internally case-insensitive here (EnumerateKnownPermissionSets de-duplicates OrdinalIgnoreCase, PermissionSetIdByName is OrdinalIgnoreCase), so this only becomes observable where a value crosses into BC.",
+      "issue": 3806
+    },
+    {
+      "member": "MetaPermissionSet.Assignable",
+      "reason": "PermissionSet 68 'System Execute - Basic' only: BC answers False, the runner answers True. THIS IS THE MEASUREMENT #2417 ASKED FOR, and it is a measurement rather than an inference -- #2417 states the question must be settled against BC itself and not by reading SymbolReference.json. BC's own emitted document for 68 is the only one of 178 carrying no Assignable attribute at all (the distribution is 140 x \"0\", 37 x \"1\", 1 x absent), and BC's own MetaPermissionSet.Create resolved that absence to False. So BC's reader defaults absent -> false and CollectPermissionSets's absent -> true is wrong, exactly as #2417 predicted. The fix lands in BcAppSymbolCache/RecordPatches.MetadataPermissionSetVirtualTable rather than in the harness, so it is tracked on #3806 which records the answer and points at #2417. Deliberately NOT versionContingent despite matching a single object: the criterion is that the member's population depends on a per-object declaration, and this one does -- but it is one object on every BC build measured, and an entry that stopped matching would mean either the fix landed or BC changed its default, both of which must be loud.",
+      "issue": 3806
+    },
+    {
+      "member": "MetaPermissionSet.ALNamespace",
+      "reason": "BC states the permission set's AL namespace; the runner answers null on all 178 because PermissionSetSymbol does not carry it. Derivable -- SymbolReference.json states the namespace -- and simply not carried. Same member and same fix as MetaTable.ALNamespace (#3568), MetaReport.ALNamespace (#3808) and MetaEnum.ALNamespace (#3807).",
+      "issue": 3806
+    },
+    {
+      "member": "MetaPermissionSet.CaptionML.<presence>",
+      "reason": "BC builds a MultiLanguage caption on all 178 permission sets; the runner leaves it null. PermissionSetSymbol DOES carry Caption, so the caption text is available and it is the MultiLanguage-with-language-id shape that is not built -- the same shape, and the same distinction, as the already-declared MetaField.CaptionML entry on the table side. Not a translation-key entry: this is the caption TEXT, which is AL-observable.",
+      "issue": 3806
+    },
+    {
+      "member": "MetaPermissionSet.MetadataToken",
+      "reason": "BC's emitted document opens with MetadataVersion=\"130000\" and every one of BC's own readers copies it into MetadataToken; the runner states no metadata-format version anywhere, so BC's default of 0 stands on the runner's side. Measured on BC 28.1.49838.53910: 178 of 178 permission sets and 142 of 142 enums, i.e. EVERY object of both kinds and never a subset -- which is what shows this is a property of the document format rather than of any object's declaration. It is derivable trivially (write the same constant), and it is not stated because nothing in the runner consumes a metadata-format version. Tracked with the rest of each kind's derivation gap. NOT declared for MetaTable or PageDefinition: those two routes already agree, so this is genuinely a property of the kinds added in #3782 steps 5-7.",
+      "issue": 3806
+    },
+    {
+      "member": "MetaEnum.Extensible",
+      "reason": "BC answers True on 31 of 142 enums; the runner answers False on all of them, because BcAppSymbolCache.EnumSymbol does not carry Extensible at all -- the record is (Id, Name, Options, Indexes, Implementations, Captions, DefaultImplementations, UnknownImplementations) and nothing reads the property. The value IS in SymbolReference.json, in the same Properties bag TryParseEnumSymbol already reads DefaultImplementation and UnknownValueImplementation from a few lines away, so this is a dropped property rather than an underivable one. Not cosmetic: Extensible = false is what makes an enum refuse an enumextension, so the runner currently answers 'not extensible' for 31 enums that are. The other 111 agree only because the runner's constant happens to match.",
+      "issue": 3807
+    },
+    {
+      "member": "MetaEnumValue.InterfaceImplementation",
+      "reason": "BC states a value's interface-implementation codeunit ids (e.g. [306] on enum 397); the runner states []. The runner DOES parse these -- TryParseEnumSymbol reads a value's Implementation property into implementations[i] and AlEnumOptionMetadata uses them for GetImplementationCodeunitIdPublic (#2306) -- so the data is present and it is the <Value> render that has no element for it. Whether BC's <Value> shape can express it at all still needs checking before this is called a derivation gap; #3807 records that caveat rather than asserting either way.",
+      "issue": 3807
+    },
+    {
+      "member": "MetaEnum.DefaultImplementation",
+      "reason": "The enum-level interface fallback: BC states [1467] on enum 1465, the runner states []. EnumSymbol carries the list (#2306) and the <Enum> render states no element for it -- the same not-rendered-though-parsed shape as MetaEnumValue.InterfaceImplementation above, one level up.",
+      "issue": 3807
+    },
+    {
+      "member": "MetaEnum.UnknownImplementation",
+      "reason": "The other enum-level interface fallback, on the same enum 1465 and with the same cause as MetaEnum.DefaultImplementation immediately above: EnumSymbol carries it, the render does not state it.",
+      "issue": 3807
+    },
+    {
+      "member": "MetaEnum.ALNamespace",
+      "reason": "BC states the enum's AL namespace (System.Text on enum 59); the runner answers null on all 142 because EnumSymbol does not carry it. Derivable and simply not carried. Same member and same fix as MetaTable.ALNamespace (#3568), MetaReport.ALNamespace (#3808) and MetaPermissionSet.ALNamespace (#3806).",
+      "issue": 3807
+    },
+    {
+      "member": "MetaEnum.CaptionML.<presence>",
+      "reason": "The ENUM's own caption, on 2 enums: BC builds a MultiLanguage, the runner leaves it null. Note this is not the per-VALUE caption, which agrees on all 142 enums -- AlEnumMetadataRegistry.Entry.Captions carries a value's declared Caption (#1775) and the render states it as <CaptionML>, which is why this entry matches 2 rather than 142. The enum-level caption has no field on the registry entry to render from.",
+      "issue": 3807
+    },
+    {
+      "member": "MetaEnum.MetadataToken",
+      "reason": "BC's emitted document opens with MetadataVersion=\"130000\" and every one of BC's own readers copies it into MetadataToken; the runner states no metadata-format version anywhere, so BC's default of 0 stands on the runner's side. Measured on BC 28.1.49838.53910: 178 of 178 permission sets and 142 of 142 enums, i.e. EVERY object of both kinds and never a subset -- which is what shows this is a property of the document format rather than of any object's declaration. It is derivable trivially (write the same constant), and it is not stated because nothing in the runner consumes a metadata-format version. Tracked with the rest of each kind's derivation gap. NOT declared for MetaTable or PageDefinition: those two routes already agree, so this is genuinely a property of the kinds added in #3782 steps 5-7.",
+      "issue": 3807
+    },
+    {
+      "member": "MetaEnumValue.Ordinal",
+      "reason": "Enum 2616 'Printer Paper Kind' only: BC answers ordinal 0 for the value 'Custom', the runner answers 40. SymbolReference.json omits Ordinal exactly when it is ZERO -- the same absent-means-default convention PermissionSymbol's own doc comment records for PermissionObject -- and TryParseEnumSymbol reads an absent Ordinal as 'previous + 1' instead, which is an AL SOURCE-order convention. Measured across three shipped apps on BC 28.1.49838.53910: 671 values carry no Ordinal and the rule is wrong on exactly one, because 2616 is the only enum BC emits in an order that is not ordinal order (its values are name-sorted: A2=66, A3=8, A4=9, ...). The consequence is worse than a wrong number: ordinal 40 ends up claimed by both GermanStandardFanfold and Custom, so the enum has 67 distinct ordinals across 68 values and two AL enum members become indistinguishable by value. Fixed by reading an absent Ordinal as 0 (#3805), one line in BcAppSymbolCache -- deliberately not folded into #3782's harness PR, which touches no parser.",
+      "issue": 3805
     }
   ]
 }

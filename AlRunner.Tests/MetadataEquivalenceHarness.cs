@@ -49,11 +49,17 @@ internal sealed record MetadataEquivalenceReport(
     IReadOnlyList<string> KindsNotCompared,
     int ObjectsCompared,
     IReadOnlyList<string> Unbuildable,
-    IReadOnlyList<MetadataDifference> Differences)
+    IReadOnlyList<MetadataDifference> Differences,
+    // Enum-rooted documents that are an enumEXTENSION's rather than a base enum's, and so have
+    // no runner object addressable by their own id. Reported rather than dropped: an object
+    // silently missing from the denominator is the one way a shrinking comparison stays green
+    // (#3782 step 7; the derivation gap is #3807).
+    IReadOnlyList<string> EnumExtensionDocuments)
 {
     public string Summary =>
         $"{Bundle.Label} (BC {Bundle.BcBuild}): compared {ObjectsCompared} object(s) of kind(s) " +
         $"[{string.Join(", ", KindsCompared)}]; NOT compared: [{string.Join(", ", KindsNotCompared)}]; " +
+        $"{EnumExtensionDocuments.Count} enum-extension document(s) skipped; " +
         $"{Differences.Count} difference(s) across {Differences.Select(d => d.Signature).Distinct().Count()} member(s)";
 }
 
@@ -111,7 +117,31 @@ internal static class MetadataEquivalenceHarness
     /// #3782 is the programme that empties the NOT-compared list, one kind per pull request.
     /// The order and remaining kinds are on that issue.
     /// </summary>
-    internal static readonly string[] ComparedKinds = { "CodeUnit", "MetaTable", "PageDefinition" };
+    internal static readonly string[] ComparedKinds =
+        { "MetaTable", "PageDefinition", "CodeUnit", "Report", "PermissionSet", "Enum" };
+
+    /// <summary>
+    /// Kinds a bundle carries that this harness has MEASURED it cannot compare non-circularly,
+    /// each with the issue recording the measurement. Distinct from "not got to yet": these are
+    /// closed questions, and the difference matters because an unmeasured kind is work and a
+    /// measured one is a finding.
+    ///
+    /// <para><c>MetadataRuntimeDeltas</c> is BC's emitted form of an EXTENSION object —
+    /// tableextension, pageextension, permissionsetextension — and the runner builds no
+    /// extension-shaped metadata object at all: it folds an extension's contribution into the
+    /// object being extended at parse time and keeps nothing addressable by the extension's own
+    /// id. There is also no BC reader for the shape: measured on BC 28.4.53241.54407, no type
+    /// in <c>Microsoft.Dynamics.Nav.Types</c> or <c>Microsoft.Dynamics.Nav.Ncl</c> has "Delta"
+    /// in its name, so neither side of the comparison exists. See #3809 and
+    /// docs/metadata-equivalence.md#metadataruntimedeltas.</para>
+    /// </summary>
+    internal static readonly IReadOnlyDictionary<string, string> UncomparableKinds =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["MetadataRuntimeDeltas"] =
+                "the runner builds no extension-shaped metadata object, and BC ships no reader " +
+                "for the shape — neither side of the comparison exists (#3809)",
+        };
 
     public static IReadOnlyList<GroundTruthBundle> LoadBundles(string root)
     {
@@ -218,8 +248,64 @@ internal static class MetadataEquivalenceHarness
                 "comparison would become a hand-written XML walk against the runner — two " +
                 "derivations, no oracle.");
 
+
+        // BC's own reader for a Report document: MetaReport(XmlElement, CreateRequestForm, int,
+        // int, RemoveItemsOnPageBasedOnLicenseAndApplicationArea). Both delegates are optional
+        // and null is what the ctor's own body expects.
+        //
+        // Proven to parse rather than assumed to, per step 1's finding: measured on BC
+        // 28.1.49838.53910 against the emitter's own Report 9810 "Change Password", it answers
+        // Id=9810, Name="Change Password", ProcessingOnly=True, DefaultLayout=RDLC,
+        // TransactionType=UpdateNoLocks and ALNamespace="System.Security.AccessControl".
+        // MetadataEquivalenceReportEnumPermissionSetOracleTests pins that it reads the document
+        // AND that it discriminates between two different ones.
+        var reportType =
+            Type.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaReport, Microsoft.Dynamics.Nav.Types")
+            ?? throw new InvalidOperationException("MetaReport is not reachable.");
+        var reportFromXml = reportType.GetConstructors()
+                .FirstOrDefault(c => c.GetParameters() is { Length: 5 } ps
+                                     && ps[0].ParameterType == typeof(XmlElement))
+            ?? throw new InvalidOperationException(
+                "MetaReport has no (XmlElement, …) constructor. Without it there is no way to " +
+                "read BC's emitted Report document back into BC's own object model, and the " +
+                "comparison would become a hand-written XML walk against the runner — two " +
+                "derivations, no oracle.");
+
+        // BC's own reader for a PermissionSet document: a STATIC FACTORY taking the two
+        // app-group ids, not a constructor. Measured on the same build against PermissionSet 21
+        // "System Application - Read": Id=21, Name="SYSTEM APPLICATION - READ" (BC uppercases —
+        // see PermissionSetDiffOptions), Assignable=False, Access=Internal and
+        // IncludedPermissionSets[33].
+        var permissionSetType =
+            Type.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaPermissionSet, Microsoft.Dynamics.Nav.Types")
+            ?? throw new InvalidOperationException("MetaPermissionSet is not reachable.");
+        var permissionSetFromXml = permissionSetType.GetMethod(
+                "Create", BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException(
+                "MetaPermissionSet has no static Create(XmlNode, int, int). Without it there is " +
+                "no way to read BC's emitted PermissionSet document back into BC's own object " +
+                "model, and the comparison would become a hand-written XML walk against the " +
+                "runner — two derivations, no oracle.");
+
+        // BC's own reader for an Enum document. Measured on the same build against Enum 59
+        // "Auto Format": Id=59, Name="Auto Format", Extensible=True, Values[2] and
+        // ALNamespace="System.Text" — so it parses, unlike MetaPageDefinition.
+        var enumType =
+            Type.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaEnum, Microsoft.Dynamics.Nav.Types")
+            ?? throw new InvalidOperationException("MetaEnum is not reachable.");
+        var enumFromXml = enumType.GetConstructor(new[] { typeof(XmlNode) })
+            ?? throw new InvalidOperationException(
+                "MetaEnum has no (XmlNode) constructor. Without it there is no way to read BC's " +
+                "emitted Enum document back into BC's own object model, and the comparison would " +
+                "become a hand-written XML walk against the runner — two derivations, no oracle.");
+
+        // Built once per bundle, not per object: RunnerPermissionSetDeclarations drives the
+        // runner's own population, which is what makes IncludedPermissionSets resolvable at all.
+        IReadOnlyDictionary<int, BcAppSymbolCache.PermissionSetSymbol>? permissionSetsById = null;
+
         var differences = new List<MetadataDifference>();
         var unbuildable = new List<string>();
+        var enumExtensionDocuments = new List<string>();
         int compared = 0;
 
         foreach (var obj in bundle.Objects.Where(o => ComparedKinds.Contains(o.Kind, StringComparer.Ordinal))
@@ -263,6 +349,146 @@ internal static class MetadataEquivalenceHarness
                     var runnerDoc = new XmlDocument();
                     runnerDoc.LoadXml(runnerXml);
                     actual = codeunitFromXml.Invoke(new object?[] { runnerDoc.DocumentElement });
+            else if (obj.Kind == "Report")
+            {
+                objectKey = $"Report {obj.Id}";
+                try
+                {
+                    expected = reportFromXml.Invoke(new object?[] { document.DocumentElement, null, 0, 0, null });
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own MetaReport " +
+                                    $"constructor threw — {Describe(ex)}");
+                    continue;
+                }
+                if (expected is null)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own MetaReport " +
+                                    "constructor produced null");
+                    continue;
+                }
+
+                try
+                {
+                    // The runner's own report-metadata document — the one every runner consumer
+                    // of report metadata reads (RunnerXmlMetadataLoader hands this XML to BC).
+                    // NOT AlReportMetadataRegistry, which holds BC's emit-captured output and
+                    // would compare BC against BC.
+                    var runnerXml = RecordPatches.TryBuildReportMetadataEquivalenceXml(obj.Id);
+                    if (runnerXml is null)
+                    {
+                        unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': no registered " +
+                                        "dependency declares this report, so the runner built no " +
+                                        "report metadata at all");
+                        continue;
+                    }
+                    var runnerDoc = new XmlDocument();
+                    runnerDoc.LoadXml(runnerXml);
+                    actual = reportFromXml.Invoke(new object?[] { runnerDoc.DocumentElement, null, 0, 0, null });
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner threw — {Describe(ex)}");
+                    continue;
+                }
+            }
+            else if (obj.Kind == "PermissionSet")
+            {
+                objectKey = $"PermissionSet {obj.Id}";
+                try
+                {
+                    expected = permissionSetFromXml.Invoke(null, new object?[] { document.DocumentElement, 0, 0 });
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own " +
+                                    $"MetaPermissionSet.Create threw — {Describe(ex)}");
+                    continue;
+                }
+                if (expected is null)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own " +
+                                    "MetaPermissionSet.Create produced null");
+                    continue;
+                }
+
+                permissionSetsById ??= RecordPatches.RunnerPermissionSetDeclarations();
+                if (!permissionSetsById.TryGetValue(obj.Id, out var declaration))
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner has no " +
+                                    "permission-set declaration with that id");
+                    continue;
+                }
+
+                try
+                {
+                    // The runner's own MetaPermissionSet — the very object BC's
+                    // AssignFromMetaPermissionSet consumes at runtime, so both sides are
+                    // Types.Metadata.MetaPermissionSet and no rendering step is involved.
+                    actual = RecordPatches.BuildPermissionSetMetadataEquivalenceObject(declaration);
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner threw — {Describe(ex)}");
+                    continue;
+                }
+            }
+            else if (obj.Kind == "Enum")
+            {
+                // One <Enum> root covers both Enum and EnumExtension — the generator's own
+                // ClassifyDocument says so, and it is deliberate. The two are told apart by
+                // SHAPE: a base enum wraps its values in <Values>, an extension states bare
+                // <Value> children. Measured on BC 28.1.49838.53910, exactly 2 of 143 documents
+                // are the extension shape (327 "No. Series Copilot Cap.", 2015 "Entity Text
+                // Capability", both extending "Copilot Capability").
+                //
+                // They are SKIPPED rather than reported unbuildable, because the runner has
+                // nothing addressable to compare against and that is a property of the
+                // derivation rather than a per-object failure: AlEnumMetadataRegistry keys an
+                // extension's values by the id of the enum it EXTENDS, never by the extension's
+                // own id, and for a precompiled dependency the values are folded into the base
+                // entry through Register (not RegisterExtension) at BcAppFallback's registration
+                // — measured: SnapshotRaw reports 0 extension entries for both bundles. So there
+                // is no runner object with id 327 to build. Counted and reported by
+                // MetadataEquivalenceReport.EnumExtensionDocuments so it cannot be a silent drop;
+                // tracked by #3807.
+                if (IsEnumExtensionDocument(document))
+                {
+                    enumExtensionDocuments.Add($"Enum {obj.Id} '{obj.Name}'");
+                    continue;
+                }
+
+                objectKey = $"Enum {obj.Id}";
+                try
+                {
+                    expected = enumFromXml.Invoke(new object?[] { document.DocumentElement });
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own MetaEnum " +
+                                    $"constructor threw — {Describe(ex)}");
+                    continue;
+                }
+                if (expected is null)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own MetaEnum " +
+                                    "constructor produced null");
+                    continue;
+                }
+
+                try
+                {
+                    var runnerXml = RecordPatches.TryBuildEnumMetadataEquivalenceXml(obj.Id);
+                    if (runnerXml is null)
+                    {
+                        unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner's enum " +
+                                        "registry knows no enum with that id");
+                        continue;
+                    }
+                    var runnerDoc = new XmlDocument();
+                    runnerDoc.LoadXml(runnerXml);
+                    actual = enumFromXml.Invoke(new object?[] { runnerDoc.DocumentElement });
                 }
                 catch (Exception ex)
                 {
@@ -344,9 +570,12 @@ internal static class MetadataEquivalenceHarness
             }
 
             compared++;
-            differences.AddRange(obj.Kind == "PageDefinition"
-                ? MetadataObjectDiff.Compare(expected, actual, objectKey, PageDiffOptions)
-                : MetadataObjectDiff.Compare(expected, actual, objectKey));
+            differences.AddRange(obj.Kind switch
+            {
+                "PageDefinition" => MetadataObjectDiff.Compare(expected, actual, objectKey, PageDiffOptions),
+                "Enum" => MetadataObjectDiff.Compare(expected, actual, objectKey, EnumDiffOptions),
+                _ => MetadataObjectDiff.Compare(expected, actual, objectKey),
+            });
         }
 
         var kindsPresent = bundle.Census.Keys.ToArray();
@@ -354,8 +583,78 @@ internal static class MetadataEquivalenceHarness
             bundle,
             kindsPresent.Where(k => ComparedKinds.Contains(k, StringComparer.Ordinal)).ToArray(),
             kindsPresent.Where(k => !ComparedKinds.Contains(k, StringComparer.Ordinal)).ToArray(),
-            compared, unbuildable, differences);
+            compared, unbuildable, differences, enumExtensionDocuments);
     }
+
+    /// <summary>
+    /// Whether an <c>&lt;Enum&gt;</c> document is an ENUM EXTENSION's rather than a base enum's.
+    ///
+    /// <para>The discriminator is the value container, measured on BC 28.1.49838.53910 over all
+    /// 143 Enum-rooted documents in the two bundles: a base enum wraps its values in a
+    /// <c>&lt;Values&gt;</c> element, an extension states bare <c>&lt;Value&gt;</c> children of
+    /// the root. Deliberately NOT keyed on the CaptionTranslationKey text, which also says
+    /// <c>EnumExtension</c>: that is a computed string and reading a structural fact out of it
+    /// would break the moment BC changed its key format.</para>
+    /// </summary>
+    private static bool IsEnumExtensionDocument(XmlDocument document)
+    {
+        foreach (XmlNode child in document.DocumentElement!.ChildNodes)
+            if (child is XmlElement e && e.Name == "Value")
+                return true;
+        return false;
+    }
+
+    /// <summary>
+    /// An enum's values pair by their AL-declared <c>Ordinal</c>, not by position.
+    ///
+    /// <para>Not a convenience: BC's emitter writes an enum's values in NAME order while the
+    /// runner's registry holds them in declaration order, so the two lists are genuinely
+    /// permutations of each other and positional pairing fabricates a difference on every value
+    /// after the first divergence. Measured on BC 28.1.49838.53910, System Application enum 2616
+    /// "Printer Paper Kind": BC's document opens <c>A2=66, A3=8, A4=9, A5=11, A6=70</c> — plainly
+    /// alphabetical, plainly not ordinal order.</para>
+    ///
+    /// <para><b>And the one enum where pairing still falls back to position is the finding, not
+    /// a gap in this option.</b> <c>TryPairById</c> refuses a duplicate key, and enum 2616 is the
+    /// only one of the 142 whose runner-side ordinals contain a duplicate — because
+    /// <c>TryParseEnumSymbol</c> reads an absent <c>Ordinal</c> as "previous + 1" where
+    /// SymbolReference.json omits it to mean 0 (#3805). So the enum that cannot be paired is
+    /// exactly the enum with the defect, and <c>Values[67].Ordinal expected 0, got 40</c> is a
+    /// real disagreement reported through the positional path rather than an artifact of it.
+    /// Fixing #3805 makes this enum pair by ordinal like the other 141.</para>
+    ///
+    /// <para><c>Ordinal</c> is in <see cref="MetadataObjectDiffOptions.IdPropertyNames"/> here
+    /// rather than in the default set because it is an identity for THIS type only:
+    /// <c>MetaEnumValue</c> has no <c>Id</c>/<c>ID</c> at all, and a type carrying both would
+    /// otherwise pair on whichever reflection returned first.</para>
+    ///
+    /// <para>#Ordinal still fires when both sides hold the same ordinal set, so a genuine
+    /// reordering is not hidden — MetadataObjectDiffTests.Id_paired_elements_still_report_a_reordering.</para>
+    /// </summary>
+    private static readonly MetadataObjectDiffOptions EnumDiffOptions = new()
+    {
+        PairByIdMembers = EnumIdPairedMembers(),
+        IdPropertyNames = new[] { "Ordinal", "Id", "ID" },
+    };
+
+    private static IReadOnlySet<string> EnumIdPairedMembers()
+        // Two spellings, for the reason PageIdPairedMembers documents: BC backs the collection
+        // with a field and the differ walks both, so listing only the plain property leaves the
+        // field-backed path positionally paired.
+        //
+        // The field is `values`, NOT `valuesField` — MetaEnum declares a plain private field
+        // rather than using an auto-property, so the differ walks it as `#values` and the
+        // `#<name>Field` convention every page collection follows does not apply. Measured:
+        // with only the property listed, 3,014 of the enum value differences reported the paired
+        // path `Values[id=N]` while 477 reported the positional `Values[N]` — including the one
+        // genuine artifact this pairing exists to remove, `Enum 2616 Values[67].Ordinal`. A
+        // guessed field name is indistinguishable from no entry at all.
+        => new HashSet<string>(StringComparer.Ordinal)
+        {
+            "MetaTable.Fields",
+            "MetaEnum.Values",
+            "MetaEnum.#values",
+        };
 
     /// <summary>
     /// Page control collections pair by the control's own ID, not by position.
