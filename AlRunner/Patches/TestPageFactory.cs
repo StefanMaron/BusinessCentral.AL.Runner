@@ -39,12 +39,8 @@ internal static class TestPageFactory
         // PageType (#3735). A third source added here without being added there would make
         // BuiltInPageModeActionRule's RefuseUnknownPageType reachable — pinned by
         // AlRunner.Tests/LiveTestPagePageTypeKnownTests.cs.
-        //
-        // That is TWO of the three routes that construct a LiveNavTestPage. The third,
-        // RunnerTestClientSession.GetPage (the [PageHandler]/[ModalPageHandler] route), never
-        // calls this method and applies no shape gate at all; it rests on a DIFFERENT and
-        // weaker invariant — compile-time handler typing — stated in full at the refusal site,
-        // MockTestPage.LivePage.Actions.cs's RefuseUnknownPageType case.
+        // The third construction route, RunnerTestClientSession.GetPage, never calls this method
+        // and gates differently: see docs/page-shape-inventory.md#route-3.
         var tableId = RecordPatches.GetSourceTableIdForPage(pageId);
         if (tableId == 0)
             tableId = RecordPatches.TryGetDependencySourceTableIdForPage(pageId);

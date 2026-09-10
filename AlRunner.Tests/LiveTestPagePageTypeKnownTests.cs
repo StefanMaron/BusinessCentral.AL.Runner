@@ -21,18 +21,20 @@
 //   THERE IS A THIRD CONSTRUCTION ROUTE, and it is gated differently.
 //   RunnerTestClientSession.GetPage — the [PageHandler]/[ModalPageHandler] route — builds a
 //   LiveNavTestPage with no IsPageShapeKnown/TryGetAnyPageType check at all; its only gate is
-//   form construction (CodeunitPatches.FindFormType), a CLR-type inventory that is NOT
-//   contained in the symbol inventory by construction, because the two have different
-//   lifetimes: ResetForReload clears _sourceDirs and _parsedPages and ClearPerBundleBcAppPaths
-//   drops _bcAppPaths, while loaded assemblies are process-wide and
-//   BcRuntime.IsStaleBundleAssembly excludes only superseded generations of a registered name.
-//   What keeps that route unreachable is one step earlier: BC selects the handler from its
-//   `TestPage "X"` parameter type, so the page has to resolve in THIS bundle's compile, and
-//   every compile symbol source is also a registration source (Program.cs). That is a
-//   MAINTAINED invariant, not a structural one — #3611/#3714 are the record of the compile's
-//   file set and the registered source dirs having drifted apart before. Program.cs wiring is
-//   not unit-pinnable here; the rows below pin the part that is, including that the dependency
-//   reader's own skip keeps both predicates on the same side.
+//   form construction. What keeps it out of the refusal is one step earlier: BC selects the
+//   handler from its `TestPage "X"` parameter type, so the page has to resolve in THIS bundle's
+//   compile, and every compile symbol source is also a registration source.
+//
+//   That was NOT true when this file was written, and #3763 fixed it: the two
+//   register-source-dirs loops in Program.cs re-derived the suite's folder set and registered
+//   src/ only, so a page under test/ or app2/ compiled and was never parsed (a test/-only suite
+//   registered nothing at all). Both loops now call ProgramSupport.SuiteRegistrationDirs, which
+//   IS CollectSuitePaths — the same set by construction. SuiteRootAlFilesTests pins that half,
+//   end to end, including a [ModalPageHandler] driving a page declared under test/. One symbol
+//   source is still unmatched and unpinned: BcCompiler._usePackageCacheFallback (issue #3769).
+//   See docs/page-shape-inventory.md for the routes, the lifetimes and the residual; the rows
+//   below pin the two-inventory half, including that the dependency reader's own skip keeps
+//   both predicates on the same side.
 //
 //   So the refusal STAYS as a guard on a state no AL can reach today, and the diagnosis is what
 //   #3735 wanted: BC's own captured emitter metadata (docs/object-metadata-capture.md) is not

@@ -276,38 +276,23 @@ internal partial class LiveNavTestPage
             // editability moves, which is exactly what the caller is about to read, so picking
             // one would be a silent wrong answer.
             //
-            // NO AL CAN REACH THIS TODAY (#3735), and it stays as the guard that keeps it that
-            // way. ALL THREE routes that construct a LiveNavTestPage are covered, but not by
-            // one argument — the third rests on a weaker invariant, which is the thing a later
-            // editor would get wrong:
-            //
-            //   1-2. CodeunitPatches.CreateTestPageClient, via TestPageClientConstructionRule.
-            //        LiveOverRecord needs a source table, which TestPageFactory.TryBuild
-            //        resolves through the same two lookups TryGetAnyPageType reads;
-            //        LiveRecordless needs IsPageShapeKnown outright. A page in neither gets
-            //        MockITestPage, whose View()/Edit() never enter this method, and
-            //        CreateTestPageClient's `[warn] … navigation mock` line says so.
-            //   3.   RunnerTestClientSession.GetPage — the [PageHandler]/[ModalPageHandler]
-            //        route — applies NO shape gate at all. Its only gate is form construction
-            //        (FindFormType, CodeunitPatches), a CLR-type inventory that is NOT
-            //        contained in the symbol inventory by construction: the symbol side is
-            //        per-bundle (ResetForReload clears _sourceDirs and _parsedPages;
-            //        ClearPerBundleBcAppPaths drops _bcAppPaths) while loaded assemblies are
-            //        process-wide and BcRuntime.IsStaleBundleAssembly excludes only superseded
-            //        generations. What keeps it unreachable is one step earlier: BC picks the
-            //        handler from its `TestPage "X"` parameter type, so the page must resolve
-            //        in THIS bundle's compile, and every compile symbol source is also a
-            //        registration source (Program.cs — one `ordered` list feeds both
-            //        DependencyLoader.LoadAll and AddBcAppPath; the layered-workspace packages
-            //        SetExtraSymbolDirs adds are resolved as declared dependencies; the
-            //        registered source dirs mirror the compile's CollectSuitePaths). That last
-            //        one is MAINTAINED, not structural, and #3611/#3714 are the record of the
-            //        two sets having drifted apart before — so widening what the compiler can
-            //        see without widening what RecordPatches registers makes this reachable.
-            //
-            // What would widen the inventory is a runtime-package metadata reader (#3537); BC's
-            // captured emitter metadata cannot, because it exists only for objects this run
-            // compiles. Pinned by AlRunner.Tests/LiveTestPagePageTypeKnownTests.cs.
+            // NO AL IS KNOWN TO REACH THIS TODAY (#3735), and it stays as the guard that keeps it that
+            // way. THE TRAP, for whoever edits near here: two of the three routes that build a
+            // LiveNavTestPage gate on the page's shape, and the third does not.
+            // RunnerTestClientSession.GetPage — the [PageHandler]/[ModalPageHandler] route —
+            // applies no shape check at all; what keeps it out of this case is that BC picks the
+            // handler by its `TestPage "X"` parameter type, so the page must resolve in THIS
+            // bundle's compile, and every symbol source the compile has is also a registration
+            // source. The suite's own folders are that by construction since #3735
+            // (ProgramSupport.SuiteRegistrationDirs IS CollectSuitePaths); widening what the
+            // compiler can see without widening what RecordPatches registers puts this case back
+            // in reach, which is what #3611/#3714 and #3735 each shipped once.
+            // One source is still unmatched and unpinned: BcCompiler._usePackageCacheFallback
+            // (issue #3769).
+            // see docs/page-shape-inventory.md#route-3 — the routes, the two inventories, the
+            // per-bundle vs process-wide lifetimes, and the residual.
+            // Pinned by AlRunner.Tests/LiveTestPagePageTypeKnownTests.cs and
+            // AlRunner.Tests/SuiteRootAlFilesTests.cs.
             case BuiltInPageModeShape.RefuseUnknownPageType:
                 throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     $"TestPage.{actionName}() on page {_pageId}",
