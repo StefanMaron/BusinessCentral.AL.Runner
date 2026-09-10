@@ -259,6 +259,52 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 .github/scripts/corpus_pr_state.py
 
+  reject-changelog-edits:
+    name: CHANGELOG.md must not be changed in a pull request
+    runs-on: ubuntu-latest
+    # #3677. CHANGELOG.md is generated from squash-commit messages after merge by
+    # .github/scripts/generate_changelog.py, so an edit in a pull request is
+    # either overwritten or becomes a merge conflict that blocks the queue behind
+    # it. .claude/rules/no-changelog-edits.md said so in prose and the
+    # orchestrator checked it by hand, one PR at a time.
+    #
+    # It belongs on this side of the split by the header's rule of thumb: the
+    # verdict is a property of the PR's own diff, it makes no network call, and it
+    # costs about a second. No escape hatch and no bypass label -- the two
+    # workflows that legitimately write the file, sync-changelog-unreleased.yml
+    # and publish.yml, push straight to main and never open a pull request, so
+    # nothing that is meant to change it comes through here.
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Both endpoints of the diff must be present as objects; the PR head is
+          # a parent of the merge commit checked out here, reachable only with the
+          # full history fetched.
+          fetch-depth: 0
+
+      - name: Collect the PR's changed files
+        id: changed
+        # Both endpoints from the event payload, never the checked-out HEAD --
+        # see the same step in require-corpus-linkage above and the header of
+        # pr_changed_files.sh for why a range ending at HEAD silently measures a
+        # superset.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          files=$(bash .github/scripts/pr_changed_files.sh)
+          {
+            echo "files<<CHANGED_FILES_EOF"
+            printf '%s\n' "$files"
+            echo "CHANGED_FILES_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check the diff does not carry CHANGELOG.md
+        env:
+          CHANGED_FILES: ${{ steps.changed.outputs.files }}
+        run: bash .github/scripts/check_changelog_untouched.sh
+
   verify-trigger-list:
     name: pull_request trigger lists must keep their load-bearing event types
     runs-on: ubuntu-latest

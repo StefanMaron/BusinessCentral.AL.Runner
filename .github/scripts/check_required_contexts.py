@@ -226,6 +226,18 @@ PENDING_REQUIRED_CONTEXTS: list[str] = [
     # block merges, and no such argument exists today -- #3674's PR body sets
     # out why, including the stale-red window when the corpus PR moves.
     "A cited corpus PR must be able to merge",
+    # #3677's gate: pr-gate.yml's reject-changelog-edits job, which fails when
+    # the PR's own diff carries CHANGELOG.md. Listed here, not promoted, for the
+    # reason the header of this list gives: the code half lands through a pull
+    # request and the ruleset is edited by hand in the GitHub UI, so a PENDING
+    # name is analysed exactly like a required one -- produced by a pull_request
+    # workflow, not cancellable on the head commit -- while the live drift
+    # comparison tolerates it in either state. Unlike the entry above it, this one
+    # is meant to be promoted: it makes no network call, so nothing about it can go
+    # red for an environmental reason. Promote it into DEFAULT_REQUIRED_CONTEXTS
+    # above and into RULESET_CONTEXTS in tools/ci-wait.py in the same pass that
+    # adds it to the ruleset.
+    "CHANGELOG.md must not be changed in a pull request",
 ]
 
 REPO = "StefanMaron/BusinessCentral.AL.Runner"
