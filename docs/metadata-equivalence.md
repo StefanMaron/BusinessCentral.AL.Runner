@@ -439,17 +439,17 @@ reachable.
 <a id="what-is-compared"></a>
 ## What is compared, and what is not
 
-The harness compares `MetaTable`, `PageDefinition` and `CodeUnit` documents. A bundle carries
-every kind BC emitted — enums, permission sets, queries, reports, xmlports, and the
+The harness compares `MetaTable`, `PageDefinition`, `CodeUnit`, `Query` and `XmlPort`
+documents. A bundle carries every kind BC emitted — enums, permission sets, reports, and the
 `MetadataRuntimeDeltas` documents that cover table, page and permission-set extensions — and
 `MetadataEquivalenceHarnessTests` asserts the set it compares AND the set it does not, so
 covering less cannot happen quietly.
 
 **#3782 is the programme that empties the not-compared list**, one kind per pull request, in the
-order that issue records: `PageDefinition` (done), `CodeUnit` (done), then `Query`, `XmlPort`, `Report`,
-`PermissionSet`, `Enum`, `MetadataRuntimeDeltas`. Each step adds its kind to `ComparedKinds`,
-lands the resulting allowlist with a reason per member, and deletes its kind from the
-`stillUncompared` list in `The_harness_states_which_kinds_it_does_not_compare`.
+order that issue records: `PageDefinition`, `CodeUnit`, `Query` and `XmlPort` (done), then
+`Report`, `PermissionSet`, `Enum`, `MetadataRuntimeDeltas`. Each step adds its kind to
+`ComparedKinds`, lands the resulting allowlist with a reason per member, and deletes its kind
+from the `stillUncompared` list in `The_harness_states_which_kinds_it_does_not_compare`.
 
 <a id="the-page-oracle-is-pagedefinition-not-metapagedefinition"></a>
 ### The page oracle is `PageDefinition`, not `MetaPageDefinition`
@@ -762,6 +762,193 @@ declared permanent. Checked against `SymbolReference.json` directly, on the same
 in either direction — which is how #3790 stayed hidden: the symbol file writes `"1"` and the
 codeunit parser matched only the word `"true"`, so all 38 single-instance System Application
 codeunits read as false. `CodeunitSymbolSingleInstanceSpellingTests` pins both spellings.
+
+<a id="every-bundled-object-must-state-a-real-id"></a>
+## Every bundled object must state a real id, and BC spells it two ways
+
+BC's emitter states an object's id as a **root attribute** for `MetaTable`, `PageDefinition`,
+`CodeUnit`, `Enum`, `PermissionSet` and `MetadataRuntimeDeltas` — and as a **direct child `ID`
+element** for `Query`, `XmlPort` and `Report`.
+
+`ClassifyDocument` read the attribute only, so all 12 of those documents in a System Application
+bundle carried `Id = 0` (#3782, steps 3/4). That is the worst shape a wrong value can have: it
+keys nothing, it is not unique, and it reads exactly like a real id. The harness keys its
+comparison on `(kind, id)`, so seven queries would have collapsed onto one object key with
+nothing reporting it — and the generator's own *file naming* had already worked around the same
+fact, which is how it survived unnoticed:
+
+> An earlier dump keyed files on kind+id alone; Report, Query, XmlPort and ReportExtension carry
+> their id in a CHILD element, so every one of them landed on id=0 and collapsed onto a single
+> file per kind.
+
+The lookup now tries the attribute, then a **direct** child `ID`/`Id` — direct, because a
+`QueryColumn` states its own id the same way and a descendant search would return a column's id
+for the query itself. `MetadataGroundTruthObjectIdTests` pins all three claims against the
+bundle a test process is really about to read, over **every** kind rather than the compared
+ones, so the next step's `Report` fails before that step is written rather than after.
+
+The generator's duplicate-id guard was widened at the same time, from `MetaTable` alone to every
+id-keyed kind. `MetadataRuntimeDeltas` is deliberately excluded: one such root covers
+TableExtension, PageExtension and PermissionSetExtension, so several legitimately carry the id
+of the object they extend.
+
+<a id="queries"></a>
+## Queries
+
+**The oracle is `MetaQuery(XmlNode, int metadataAppGroupId, int languageAppGroupId)`**, a public
+constructor, proven to parse rather than assumed to — measured against the emitter's own Query
+774 "Users in Plans" on BC 28.1.49838.53910, it answers `Id=774`, `Name="Users in Plans"`,
+`QueryType=Normal`, `InherentPermissions=Execute` and `DataItems[2]`.
+
+**Queries are the one kind that needs no rendering step.** Tables hand over an `NCLMetaTable`,
+pages and xmlports hand over a document; a query hands over the object itself, because
+`RecordPatches.NclMetaQueryBuilder` already builds a real `Types.Metadata.MetaQuery` from
+`SymbolReference.json` — the same object `NCLMetaQuery.CreateDynamicQuery` consumes at runtime.
+So the comparison measures exactly what AL gets.
+
+**The circularity that had to be refused.** `BuildMetaQueryDesign` prefers BC's own captured
+document when one is registered (#3608), which is right at runtime and wrong here: that document
+*is* the ground truth, so the comparison would be BC against BC and would report perfect
+agreement having measured nothing. `TryBuildQueryMetadataEquivalenceDesign` therefore **throws**
+rather than falling back when `HasBcQueryMetadataDocument` is true. A ground-truth bundle holds
+precompiled dependency queries, which are never emitted here, so that throw is a finding rather
+than a case to handle.
+
+### What the query comparison found
+
+7 queries, **616 differences**, of which 581 are the seven already-declared `TranslationKey.*`
+members. The real remainder is **35 differences across 12 members**.
+
+**Every structural member agrees exactly** — zero differences on `MetaQueryColumn.*`,
+`MetaQueryDataItem.*` and `MetaQueryOrderBy.*`, including every compiler-assigned column id,
+`FieldNo`, `ColumnType`, `MethodType`, `QueryColumnIndex`, `DataItemLinkType` and
+`DataItemTable`. That is the strongest positive result the harness has produced for any kind,
+and `The_query_structural_tree_still_agrees_with_BC_exactly` pins it: those ids are handed
+verbatim to `NavQuery.ValidateExpectedType` and `GetColumnByNo` by precompiled callers, so a
+regression is an AL-visible wrong answer.
+
+| member | x | BC | runner | derivable from |
+|---|---:|---|---|---|
+| `MetaQuery.InherentEntitlements` | 4 | `Execute` | `None` | `InherentEntitlements = "X"`, 4 of 4 |
+| `MetaQuery.InherentPermissions` | 4 | `Execute` | `None` | `InherentPermissions = "X"`, 4 of 4 |
+| `MetaQuery.Caption` | 4 | see below | see below | both sides, see below |
+| `MetaQuery.HelpLink` | 7 | the docs URL | `<null>` | a constant BC writes unconditionally |
+| `MetaQuery.APIGroup` / `APIPublisher` / `QueryCategory` | 7 each | `<empty>` | `<null>` | a null/empty distinction only |
+| `MetaQuery.APIVersion` | 4 | `beta` | `<null>` | a constant on non-API queries |
+| `MetaQuery.RuntimeInfo.<presence>` | 7 | present | `<null>` | not stated in the symbol file |
+| `MetaQuery.CaptionML.<presence>` (+`#captionML`) | 4 + 4 | present | `<null>` | the flat `Caption`, plus the language id |
+| `MetaQueryDataItemLink.LinkOperator` | 4 | `=` | `<null>` | stated in BC's document; AL has no other operator |
+
+`Caption` is two different situations, which is why it is tracked rather than called a defect in
+one direction:
+
+```
+Query 777  Name='Role Center from Plans'  CaptionML='ENU=RoleCenter from Plans'
+           symbol Caption='RoleCenter from Plans'
+           BC's MetaQuery.Caption = 'Role Center from Plans'   runner = 'RoleCenter from Plans'
+Query 8888 Name='Outbox Emails'  no CaptionML at all  symbol states no Caption
+           BC's MetaQuery.Caption = 'Outbox Emails'            runner = <null>
+```
+
+On 777 BC's `Caption` property reports the object **name** while the runner reports the
+**declared caption** — which is what both the symbol file and BC's own `CaptionML` say. On
+8888/8889/8890 nothing is declared and BC falls back to `Name`. Both are derivable; which is
+correct depends on what AL observes through this property, and that is worth settling before
+changing anything. All of it is tracked on **#3798**.
+
+<a id="xmlports"></a>
+## XmlPorts
+
+**The oracle is `MetaXmlPort(XmlDocument, CreateRequestForm, int, int,
+RemoveItemsOnPageBasedOnLicenseAndApplicationArea)`** — an `XmlDocument` rather than an
+`XmlNode`, and two trailing **delegates** the harness passes null. That null is safe by BC's own
+body, which guards the only use with `if (createRequestForm != null && val != null)`, so it
+leaves `RequestFormMetadata` unbuilt on **both** sides; `MetadataEquivalenceQueryXmlPortOracleTests`
+measures that rather than resting on the decompile.
+
+**This kind cannot fail the way pages did.** `MetaXmlPort`'s body is a switch over the
+uppercased child element name ending in `throw new ArgumentException(name)`, so it cannot
+silently ignore a document — and the runner-side projection depends on that refusal to catch a
+mis-spelled element name. A test pins it.
+
+### The runner derives no xmlport structure at all
+
+The runner's whole knowledge of a precompiled xmlport is `BcAppSymbolCache.ObjectSymbol` —
+`(Kind, Id, Name, Caption)`. `RecordPatches.AlXmlPortParser` fills `_parsedXmlPorts` from the
+**corpus app's AL source text**, and `AlXmlPortMetadataRegistry` holds BC's **emit-captured**
+schema for locally-compiled xmlports; a System Application xmlport is in neither. So
+`TryBuildXmlPortMetadataEquivalenceXml` states two values, and that is the finding rather than
+an omission. Using the registry instead would have been the same circularity queries had to
+refuse.
+
+### What the xmlport comparison found
+
+4 xmlports, **306 differences across 39 members**. Two separable parts:
+
+**182 of them are one finding under two signatures.** `MetaXmlPort.Nodes.<presence>` and
+`#nodes.<presence>`, 91 each: every `<Node>` element BC emits across the four xmlports is absent.
+SymbolReference.json states an xmlport's `Id`, `Name`, `Properties` and `Variables` and **no node
+tree at all** — measured, not inferred. Nine further members are computed *from* the nodes and go
+green with them (`Schema`, `SchemaSet`, `SchemaTypeName`, `#typeNames`, `#xsdBuilder`,
+`#mainPrefix`, `DefaultNamespace`), and two of those — `Schema` and `SchemaTypeName` — do not
+merely differ but **throw `NullReferenceException`** when read on the runner's side. That is
+#3510's shape seen from the derivation end.
+
+This is **not** a claim that the tree is underivable. Nobody has measured whether it can be
+reconstructed, and "the symbol file does not store it" is evidence about storage, never about
+derivability — the mistake step 1 made about `DataColumnName` and `ControlGUID`.
+
+**15 of them are properties the symbol file states verbatim and the runner throws away.**
+`VisitSymbolContainer` keeps `TableNo`/`SingleInstance`/`Subtype` for `Codeunit` only; every
+other kind gets `new ObjectSymbol(kind, id, name, caption, TargetObjectName:)`, so an xmlport's
+whole `Properties` array is parsed and discarded:
+
+```
+XmlPort 9001  Direction sym=<none> bc=Both      Encoding sym=<none> bc=UTF-16  PreserveWhiteSpace sym=<none> bc=0
+XmlPort 9862  Direction sym=Export bc=Export    Encoding sym=UTF8   bc=UTF-8   PreserveWhiteSpace sym=1      bc=1
+XmlPort 9863  Direction sym=Export bc=Export    Encoding sym=UTF8   bc=UTF-8   PreserveWhiteSpace sym=1      bc=1
+XmlPort 9864  Direction sym=Import bc=Import    Encoding sym=UTF8   bc=UTF-8   PreserveWhiteSpace sym=1      bc=1
+```
+
+Every xmlport that declares one has it stated, and the three that state none are the three where
+BC answers its own default. A read-don't-guess fix, the same shape as `Extensible` in #3784.
+`Permissions` needs a normalization (`tabledata "Security Group" = r` against BC's
+`TableData Security Group=r`) and `UseRequestForm` needs AL's default rather than the CLR's.
+All of it is tracked on **#3797**.
+
+<a id="one-build-measured-three-evaluated-query-xmlport"></a>
+### These two populations were measured across four builds, and the flag is still not blanket
+
+`versionContingent` exempts an entry from the unused-entry check and nothing else. With only 7
+queries and 4 xmlports, the temptation is to apply it to every entry — and doing so was
+**measured wrong**.
+
+A mutation making the xmlport projection state BC's own `Direction` verbatim — manufacturing
+agreement, the precise failure these entries exist to prevent — **passed all 22 tests** with the
+flag applied everywhere, and failed `No_allowlist_entry_has_gone_stale` the moment the flag came
+off those two entries. The flag cannot hide a difference that exists; it does hide one that
+stopped existing for the wrong reason.
+
+So 21 of the 49 entries carry it — the members whose population depends on a per-object
+*declaration*, where one object changing empties the entry. The other 28 are values BC writes
+unconditionally for every object of the kind, so their population cannot shrink without the
+derivation having changed, which is exactly what the stale check should report.
+
+The population stability that would have justified the blanket application is real and was not
+sufficient. Measured across the four bundles on the authoring box — 27.5.46862.53931,
+28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 — both populations are **identical**:
+same 7 and 4 ids, same property values, same 9/20/22/40 node counts. The harness runs on
+unit-test legs only, which are exactly 27.5 and 28.4.
+
+<a id="what-the-query-and-xmlport-measurement-does-not-cover"></a>
+### What this measurement does not cover
+
+**One app.** Only System Application carries either kind, and Base Application is excluded
+(#3549). #3499's 356 query failures are BaseApp queries, so none of them is in this population —
+which is why all 7 queries here built successfully and this measurement is not a fix for that
+issue. What it contributes is the instrument: a runner-side null now reports as
+`the runner built no MetaQuery design at all` against a named id, rather than as a stack trace
+in a corpus run.
 
 <a id="running-it"></a>
 ## Running it
