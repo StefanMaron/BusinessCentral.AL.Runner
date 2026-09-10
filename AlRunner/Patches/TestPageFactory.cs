@@ -34,11 +34,17 @@ internal static class TestPageFactory
         // its SymbolReference.json's own SourceTable property — see
         // RecordPatches.TryGetDependencySourceTableIdForPage.
         //
-        // These are the same two inventories RecordPatches.TryGetAnyPageType reads, which is
-        // why a page driven live always knows its own PageType (#3735). A third source added
-        // here without being added there would make BuiltInPageModeActionRule's
-        // RefuseUnknownPageType reachable — pinned by
+        // These are the same two inventories RecordPatches.TryGetAnyPageType reads, which is why
+        // a page driven live THROUGH CodeunitPatches.CreateTestPageClient always knows its own
+        // PageType (#3735). A third source added here without being added there would make
+        // BuiltInPageModeActionRule's RefuseUnknownPageType reachable — pinned by
         // AlRunner.Tests/LiveTestPagePageTypeKnownTests.cs.
+        //
+        // That is TWO of the three routes that construct a LiveNavTestPage. The third,
+        // RunnerTestClientSession.GetPage (the [PageHandler]/[ModalPageHandler] route), never
+        // calls this method and applies no shape gate at all; it rests on a DIFFERENT and
+        // weaker invariant — compile-time handler typing — stated in full at the refusal site,
+        // MockTestPage.LivePage.Actions.cs's RefuseUnknownPageType case.
         var tableId = RecordPatches.GetSourceTableIdForPage(pageId);
         if (tableId == 0)
             tableId = RecordPatches.TryGetDependencySourceTableIdForPage(pageId);
