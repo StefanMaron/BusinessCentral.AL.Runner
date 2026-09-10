@@ -126,17 +126,46 @@ public sealed class MetadataEquivalencePageOracleTests
     }
 
     [SkippableFact]
-    public void The_harness_uses_the_type_that_parses()
+    public void The_harness_reads_the_document_through_the_type_that_parses()
     {
         // Ties the two tests above to the thing they are about. Without it they document an
         // asymmetry in BC and say nothing about which one this repository picked.
-        var (root, label) = EmitterPageDocument();
+        //
+        // Asserted against the harness's OWN comparison rather than by re-reading the source:
+        // if the harness were switched back to MetaPageDefinition, both sides would come out
+        // empty and identical, so it would report pages compared and ZERO page differences.
+        // That is precisely the state this whole test class exists to make unreachable, and it
+        // is observable from the report without naming a type at all.
+        Skip.IfNot(_engine.Ready, _engine.SkipReason);
 
-        var runner = AlRunner.Patches.RecordPatches.TryBuildDependencyPageMetadata(
-            int.Parse(root.GetAttribute("ID")));
-        Skip.If(runner is null,
-            $"{label}: no dependency .app registered in this test's process builds that page. " +
-            "MetadataEquivalenceHarnessTests covers the registered path; this test only needs a " +
-            "document to compare types with.");
+        var bundles = MetadataEquivalenceHarness.LoadBundles(
+            MetadataEquivalencePaths.GroundTruthDirForThisBuild());
+        Skip.If(bundles.Count == 0, "no metadata ground-truth bundle for this BC build.");
+
+        var pagesSeen = 0;
+        var pageDifferences = 0;
+        foreach (var bundle in bundles)
+        {
+            var app = MetadataEquivalenceHarness.FindAppPackage(bundle);
+            Skip.If(app is null, $"{bundle.Label}: its .app is not on this box.");
+
+            var report = MetadataEquivalenceHarness.Compare(bundle, app!);
+            pagesSeen += report.Bundle.Census.GetValueOrDefault("PageDefinition");
+            pageDifferences += report.Differences
+                .Count(d => d.ObjectKey.StartsWith("Page ", StringComparison.Ordinal));
+        }
+
+        Assert.True(pagesSeen > 0, "no bundle carried a PageDefinition, so this measured nothing.");
+
+        // The runner reconstructs a deliberate SUBSET of a page document
+        // (DependencyPageMetadataXml.cs's header lists what and why), so SOME difference is
+        // guaranteed for as long as that stays true. Zero here does not mean the derivation
+        // became perfect — it means the oracle stopped reading the document.
+        Assert.True(pageDifferences > 0,
+            $"{pagesSeen} page(s) compared and NOT ONE difference was found. The runner "
+            + "reconstructs only part of a page document, so zero differences means the page "
+            + "oracle stopped parsing — the MetaPageDefinition failure mode this class pins. "
+            + "If the derivation genuinely became complete, delete this assertion in the same "
+            + "change that made it true, and say so.");
     }
 }

@@ -439,11 +439,80 @@ reachable.
 <a id="what-is-compared"></a>
 ## What is compared, and what is not
 
-The harness compares `MetaTable` documents. A bundle carries every kind BC emitted — codeunits,
-pages, enums, permission sets, queries, reports, xmlports, and the `MetadataRuntimeDeltas`
-documents that cover table, page and permission-set extensions — and
+The harness compares `MetaTable` and `PageDefinition` documents. A bundle carries every kind BC
+emitted — codeunits, pages, enums, permission sets, queries, reports, xmlports, and the
+`MetadataRuntimeDeltas` documents that cover table, page and permission-set extensions — and
 `MetadataEquivalenceHarnessTests` asserts the set it compares AND the set it does not, so
 covering less cannot happen quietly.
+
+**#3782 is the programme that empties the not-compared list**, one kind per pull request, in the
+order that issue records: `PageDefinition` (done), then `CodeUnit`, `Query`, `XmlPort`, `Report`,
+`PermissionSet`, `Enum`, `MetadataRuntimeDeltas`. Each step adds its kind to `ComparedKinds`,
+lands the resulting allowlist with a reason per member, and deletes its kind from the
+`stillUncompared` list in `The_harness_states_which_kinds_it_does_not_compare`.
+
+<a id="the-page-oracle-is-pagedefinition-not-metapagedefinition"></a>
+### The page oracle is `PageDefinition`, not `MetaPageDefinition`
+
+Tables have a factory — `MetaTableSnapshotSerializationHelper.CreateMetaTableFromXml`. Pages have
+none; the reader is a constructor. BC's `Types` assembly ships **two** page types with the same
+public shape, both with a public `(XmlNode)` constructor, and **neither throws** on the emitter's
+own document:
+
+| type | reading the emitter's Page 257 document |
+|---|---|
+| `Microsoft.Dynamics.Nav.Types.Metadata.PageDefinition` | `ID=257`, `Name="Source Codes"`, `Properties` and `Content` populated |
+| `Microsoft.Dynamics.Nav.Types.Metadata.MetaPageDefinition` | `ID=0`, `Name=null`, `Properties=null`, `Content=null` |
+
+Measured on BC 28.1.49838.53910. `MetaPageDefinition` accepts the node and ignores it. Using it
+for both sides compares an empty object against an empty object: 235 pages "compared", **zero**
+differences, and every other test in the file still green, because they all measure
+*differences*. `MetadataEquivalencePageOracleTests` pins the asymmetry in both directions so the
+`Meta`-prefixed type cannot be reached for by analogy with `MetaTable`.
+
+<a id="page-controls-pair-by-id-in-three-spellings"></a>
+### Page control collections pair by id, in all three spellings
+
+The differ pairs collection elements by position by default, because order is meaningful in AL.
+That is wrong for page controls, for a structural reason: BC's `Controls` list holds the page's
+**ordinary field controls** as well as its part controls, and the runner reconstructs only the
+parts. The lists therefore differ in length by construction, and positional pairing shifts every
+element after the first divergence.
+
+Measured before pairing was applied: 12 fabricated `Name` / `ID` / `PagePartID` triples across 7
+System Application pages — page 4312 reporting `InputMessagePart` against `LogsPart`, page 9855
+`Permissions` against `MetadataPermissions`. Not one was a disagreement about any control.
+
+Two things had to be right for pairing to actually engage, and each failed silently on its own:
+
+1. **The id property's spelling.** `MetaField` spells it `Id`; every page control type spells it
+   `ID`, and reflection's name lookup is case-sensitive. `MetadataObjectDiffOptions.IdPropertyNames`
+   now lists both. A collection whose elements have no int id still falls back to position — that
+   is the legitimate answer, and `ControlContainerDefinition` and `ContentDefinition` genuinely
+   have no `ID`.
+2. **The member signature.** BC implements these interfaces *explicitly* and backs each collection
+   with a field, so the differ walks one collection three times and reports it under three
+   signatures — `ControlContainerDefinition.Controls`,
+   `ControlContainerDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaControlContainerDefinition.Controls`,
+   and `ControlContainerDefinition.#controlsField`. `PairByIdMembers` matches on the signature, so
+   all three must be listed; listing only the plain one leaves the other two positional.
+
+<a id="what-the-page-comparison-found"></a>
+### What the page comparison found
+
+235 pages, **32,958 differences across 124 members** on BC 28.1.49838.53910. Two groups, and they
+need different answers:
+
+- **~92 members: the control tree the runner deliberately does not reconstruct** — `ActionContainers`
+  (1,153), `Expressions` (762), `Triggers` (332), `Content.Containers` (253), `ViewContainers` (7),
+  `Methods` (5), plus `ControlGUID` and the translation keys. `DependencyPageMetadataXml.cs`'s own
+  header states why: a field control's value binding lives in the `.app`'s IL, not in this XML, so
+  reconstructing one from `SymbolReference.json` would add guessed data with no way to prove it
+  faithful. These are declared out of scope in the allowlist.
+- **22 members whose value IS in `SymbolReference.json` and is simply not read** — tracked on
+  **#3784**, with the per-property table measured off the shipped symbol file. `Extensible` is the
+  sharpest: the runner hardcodes `"1"`, and BC says `False` on 104 of 235 pages, so it is a wrong
+  answer rather than a missing one.
 
 **Base Application is not covered.** Its emit needs a `PublicKeyToken=null` copy of
 `Microsoft.AspNetCore.StaticFiles` that no BC artifact ships, and without it BC's emitter
