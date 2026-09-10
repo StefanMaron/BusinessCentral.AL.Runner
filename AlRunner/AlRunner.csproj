@@ -196,8 +196,6 @@
              Pack="true" PackagePath="tools/$(TargetFramework)/any/dotnet-shims/" />
   </ItemGroup>
 
-
-
   <!-- Per-BC-minor engine variants (#2024 item 3 / #2027). This binary is only ONE
        engine build (whichever _BCVersion it was compiled with); EngineVariants.cs +
        NclShadowRuntime pick and swap to the matching one at startup among whatever

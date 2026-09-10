@@ -535,18 +535,6 @@ public sealed partial class BcCompiler
     }
 
     /// <summary>
-    /// Directories holding .NET assemblies BC's AL binder must prefer over the service tier's
-    /// own copies. Staged next to the binary by <c>AlRunner.csproj</c>'s <c>CopyDotNetShims</c>
-    /// target, and overridable with <c>AL_RUNNER_DOTNET_SHIMS</c> (one path, or several
-    /// separated by the platform path separator) so a run can point at a different set without
-    /// a rebuild.
-    ///
-    /// <para>Yields candidates whether or not they exist; the caller filters. Both the
-    /// AppContext base directory and the assembly's own directory are probed because a
-    /// single-file or shadow-copied host makes those differ, and the shim ships beside the
-    /// assembly.</para>
-    /// </summary>
-    /// <summary>
     /// The DotNet probing paths BC's <c>AssemblyLocator</c> is given, in priority order. BC's
     /// DotNet metadata reader resolves a <c>DotNet "Type"</c> alias by loading the named
     /// assembly and looking the type up as a <b>TypeDefinition</b>; it does NOT follow
@@ -615,6 +603,18 @@ public sealed partial class BcCompiler
     private static string NormalizeDir(string path)
         => Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
+    /// <summary>
+    /// Directories holding .NET assemblies BC's AL binder must prefer over the service tier's
+    /// own copies. Staged next to the binary by <c>AlRunner.csproj</c>'s <c>CopyDotNetShims</c>
+    /// target, and overridable with <c>AL_RUNNER_DOTNET_SHIMS</c> (one path, or several
+    /// separated by the platform path separator) so a run can point at a different set without
+    /// a rebuild.
+    ///
+    /// <para>Yields candidates whether or not they exist; the caller filters. Both the
+    /// AppContext base directory and the assembly's own directory are probed because a
+    /// single-file or shadow-copied host makes those differ, and the shim ships beside the
+    /// assembly.</para>
+    /// </summary>
     private static IEnumerable<string> EnumerateDotNetShimDirs()
     {
         var overridePaths = Environment.GetEnvironmentVariable("AL_RUNNER_DOTNET_SHIMS");
