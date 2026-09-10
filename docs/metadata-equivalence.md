@@ -648,6 +648,33 @@ moves and goes stale silently when it is not — the same defect as the build-ke
 went inert in `The_current_reader_reproduces_the_known_defect_shapes`. What the flag declares is a
 *property* of the difference: its population is version-contingent.
 
+<a id="a-flagged-entry-can-go-stale-without-the-harness-saying-so"></a>
+### The flag's own blind spot: a flagged entry can go stale and nothing reports it
+
+Exempting an entry from the unused check removes the one signal that says "this entry is
+finished". So a `versionContingent` entry whose population has gone to zero **on every leg** —
+because the fix landed — sits in the file as inert cover, and the harness stays green.
+
+That has already happened once. #3791 moved five page flags outside the `SourceTable > 0` branch
+and thereby closed the entire remaining population of six flagged entries
+(`SourceObjectDefinition.{ModifyAllowed,DelayedInsert}` and their `#…Field` companions,
+`PageProperties.{IsPreview,#isPreviewField}`). The harness could not report it, precisely
+because the flag exempts them.
+
+**This is never a false green.** An undeclared difference still fails on every version, so the
+flag cannot hide a difference — it can only excuse an entry for not finding one. The cost is a
+stale entry nobody is told about, which is a follow-up rather than a blocker.
+
+Two consequences for anyone auditing:
+
+- **"The harness passes" does not confirm a flagged entry is still live.** The technique that
+  works is to flip the flag off and re-run: a genuinely stale entry then shows up in
+  `No_allowlist_entry_has_gone_stale`.
+- **An entry that is NOT flagged needs no such check** — it is already subject to the stale
+  check, so the harness passing *is* the liveness proof. That is why step 2's five CodeUnit
+  entries needed only the population measurement above: none is flagged, so none can go stale
+  unnoticed.
+
 **Applied to the population, not to the failure.** 15 of the 117 page entries have a whole
 population of one or two occurrences on the measured build, resting on one or two objects with one
 property shape. The four that failed on 27.5 are the ones that version happened to hit; all 15 are
