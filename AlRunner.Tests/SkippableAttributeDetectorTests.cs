@@ -433,7 +433,8 @@ public sealed class SkippableAttributeDetectorTests
     [Fact]
     public void TheSuiteWideScanExaminesTestDeclarations()
     {
-        Assert.True(TestArtifactsGateTests.CountTestDeclarations() > 100,
+        Assert.True(
+            TestArtifactsGateTests.CountTestDeclarations() > TestArtifactsGateTests.MinimumTestDeclarations,
             "the suite-wide skippable-attribute scan found almost no [Fact]/[Theory] declarations, "
             + "so its 'no offenders' verdict is about nothing.");
     }

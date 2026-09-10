@@ -410,13 +410,21 @@ public class TestArtifactsGateTests
             declarations += CountTestDeclarationsIn(text);
         }
 
-        Assert.True(declarations > 100,
+        Assert.True(declarations > MinimumTestDeclarations,
             $"only {declarations} [Fact]/[Theory] declaration(s) were examined across the suite, so "
-            + "'no offenders' would be a verdict about nothing rather than a clean suite.");
+            + "'no offenders' would be a verdict about nothing rather than a clean suite. "
+            + $"The floor of {MinimumTestDeclarations} is a tripwire against a scan that stopped "
+            + "matching, not a target: it was set when this landed, against 4,119 declarations in "
+            + "676 files — 41x headroom. So a count near the floor means the scan broke, and only "
+            + "a suite that genuinely lost most of its tests should reach it. If that shrink is "
+            + "real, lower this deliberately and say why.");
 
         Assert.True(offenders.Count == 0,
             "a SkipException out of a plain [Fact] is reported Failed, not Skipped:\n" + string.Join("\n", offenders));
     }
+
+    /// <summary>Tripwire floor; the reasoning and the calibration are in the failure message.</summary>
+    internal const int MinimumTestDeclarations = 100;
 
     private static readonly Regex FactLine =
         new(@"^\s*\[(?<attr>SkippableFact|SkippableTheory|Fact|Theory)[\](]");
