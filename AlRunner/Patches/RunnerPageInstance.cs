@@ -804,7 +804,58 @@ internal sealed partial class RunnerPageInstance
                 _ => null,
             };
 
-        return RecordPatches.TryGetDependencyControlDeclaredProperty(_pageId, controlId, propertyName);
+        return TranslateSymbolDeclarationToBindingKey(
+            RecordPatches.TryGetDependencyControlDeclaredProperty(_pageId, controlId, propertyName),
+            _sourceExpressions);
+    }
+
+    /// <summary>
+    /// Turn a declaration read from SymbolReference.json into the spelling
+    /// <see cref="EvaluateProperty"/> resolves against, or leave it alone when it is a literal.
+    ///
+    /// <para>THE TWO SPELLINGS. The compiled page metadata names an expression by its
+    /// <c>Id</c> — <c>p790p790PageEditable</c> — and BC keys the live binding table on exactly
+    /// that: <c>NavForm.RegisterSourceExpression</c> ends in
+    /// <c>sourceExpressions.Add(expression.Id, expression)</c>. The SYMBOL FILE states the raw
+    /// AL identifier instead — <c>PageEditable</c> — which is a different string and matches no
+    /// key. Feeding it straight through made a resolvable property refuse: Base Application 790
+    /// "G/L Account Categories" declares <c>Enabled = PageEditable</c> on five actions, and
+    /// invoking one raised "'PageEditable' is not a name the page publishes a binding for"
+    /// where BC evaluates the page global (assigned <c>PageEditable := CurrPage.Editable</c> in
+    /// that page's own OnOpenPage) and runs the OnAction.</para>
+    ///
+    /// <para>So the raw name is matched against each registered expression's <c>Name</c> —
+    /// <c>INavFormSourceExpression</c> carries both <c>Id</c> and <c>Name</c>, which is what
+    /// makes this a translation rather than a guess — and the <c>Id</c> is handed on. A name
+    /// nothing published is returned UNCHANGED, so the refusal it then earns is the honest one
+    /// about a binding the page really does not have, not an artefact of the spelling.</para>
+    ///
+    /// <para>Literals never reach the lookup: <c>EvaluateProperty</c> decides
+    /// literal-vs-expression itself, and 13,053 of Base Application 28.1's 20,452 declarations
+    /// are literals, so short-circuiting them keeps the common case free of a dictionary walk.</para>
+    ///
+    /// <para>Static and internal so <c>AlRunner.Tests</c> can pin the translation directly: the
+    /// live route needs a NavForm whose own compiled IL has run its
+    /// <c>RegisterSourceExpression</c> calls, which only the page-build pipeline produces.</para>
+    /// </summary>
+    internal static string? TranslateSymbolDeclarationToBindingKey(
+        string? declared, System.Collections.IDictionary sourceExpressions)
+    {
+        if (string.IsNullOrEmpty(declared)) return declared;
+        if (string.Equals(declared, "true", StringComparison.OrdinalIgnoreCase) || declared == "1") return declared;
+        if (string.Equals(declared, "false", StringComparison.OrdinalIgnoreCase) || declared == "0") return declared;
+
+        // Already an Id (the page registered this very key) — nothing to translate.
+        if (sourceExpressions[declared] != null) return declared;
+
+        foreach (System.Collections.DictionaryEntry entry in sourceExpressions)
+        {
+            if (entry.Value is not Microsoft.Dynamics.Nav.Runtime.INavFormSourceExpression expression) continue;
+            if (!string.Equals(expression.Name, declared, StringComparison.OrdinalIgnoreCase)) continue;
+            return entry.Key as string ?? declared;
+        }
+
+        return declared;
     }
 
     /// <summary>Editable for a data-bound control, combined with the page's own state.</summary>
@@ -982,7 +1033,11 @@ internal sealed partial class RunnerPageInstance
                 _ => null,
             };
 
-        return RecordPatches.TryGetDependencyActionDeclaredProperty(_pageId, actionId, propertyName);
+        // Same two-spelling translation as the control path — the shape #2460's own page 790
+        // is made of, five actions declaring Enabled = PageEditable.
+        return TranslateSymbolDeclarationToBindingKey(
+            RecordPatches.TryGetDependencyActionDeclaredProperty(_pageId, actionId, propertyName),
+            _sourceExpressions);
     }
 
     internal bool ActionEnabled(int actionId)
