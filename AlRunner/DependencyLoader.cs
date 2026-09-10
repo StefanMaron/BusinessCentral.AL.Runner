@@ -278,7 +278,13 @@ public sealed class DependencyLoader
             // `catch (DependencyLoadException ex)` handler, which aborts the WHOLE run with
             // one loud "FATAL: dependency compile failed — cannot continue. {ex.Message}"
             // line naming the dependency + stage — see .claude/rules/loud-failures.md.
-            catch (AlRunner.Infrastructure.DependencyLoadException) when (microsoftSourceOnly && HasServiceTierDllFallback(path))
+            // #3749: the METADATA-* family is never swallowed — why, on
+            // IsServiceTierFallbackEligible. The trap is that those throws are not visible from
+            // this line: EnsureDependencyMetadata runs at the TOP of LoadOne, inside this try.
+            catch (AlRunner.Infrastructure.DependencyLoadException ex) when (
+                microsoftSourceOnly
+                && !IsMetadataStage(ex.Stage)
+                && HasServiceTierDllFallback(path))
             {
                 Console.Error.WriteLine(
                     $"[deps] Microsoft source-only {m.Publisher}_{m.Name} v{m.Version}: Tier-3 compile " +
@@ -1029,6 +1035,29 @@ public sealed class DependencyLoader
             if (indexContains(name)) return true;
         return false;
     }
+
+    /// <summary>
+    /// Whether LoadAll's catch may swallow this <see cref="Infrastructure.DependencyLoadException"/>
+    /// and defer to service-tier DLL dispatch. The extracted DLLs supply procedure bodies, so
+    /// they can answer for a CODE failure but not for the METADATA-* family
+    /// (<see cref="DependencyMetadataProducer"/>, #3549) — deferring there would silently leave
+    /// the app's tables on the hand-derivation (#3749, loud-failures.md).
+    /// </summary>
+    internal static bool IsServiceTierFallbackEligible(
+        string stage,
+        bool serviceTierIndexAvailable,
+        IReadOnlyCollection<string> codeunitTypeNames,
+        Func<string, bool> indexContains)
+        => !IsMetadataStage(stage)
+           && HasFaithfulServiceTierFallback(serviceTierIndexAvailable, codeunitTypeNames, indexContains);
+
+    /// <summary>
+    /// True for the stages <see cref="DependencyMetadataProducer"/> raises. Matched on the
+    /// prefix rather than a fixed set, so a stage added there is loud by default: a new
+    /// METADATA-* name nobody listed here would otherwise become swallowable the day it lands.
+    /// </summary>
+    internal static bool IsMetadataStage(string stage)
+        => stage != null && stage.StartsWith("METADATA-", StringComparison.Ordinal);
 
     /// <summary>Real-state wrapper around <see cref="HasFaithfulServiceTierFallback"/> —
     /// extracts this app's own codeunit names and asks the actual ServiceTierDllIndex.
