@@ -85,13 +85,9 @@ public sealed class MetadataEquivalenceBundleGateTests
             "not scanning what it claims to. The detection strings are probably stale.");
     }
 
-    // SkippableFact, not Fact, and NOT because this test can skip: BundleReaders() only does
-    // EnumerateFiles/ReadAllText and cannot raise SkipException. EveryTestThatCanSkipIsDeclared-
-    // Skippable is a TEXTUAL scanner over the source, and the regex literal a few lines below
-    // matches its pattern. So this attribute answers a string in a comment, not a real skip
-    // path -- and the match is attributed to whichever test precedes the line it sits on.
-    // Trap: rewording or moving that comment changes which test needs the attribute. Writing
-    // this note is itself how that was discovered. Tracked as its own issue.
+    // SkippableFact, not Fact, though this test cannot skip: BundleReaders() only does
+    // EnumerateFiles/ReadAllText. The attribute answers a textual scanner, not a skip path --
+    // see #3813, which is where the mechanism is stated and pinned.
     [SkippableFact]
     public void No_bundle_reader_writes_its_own_empty_bundle_skip()
     {
@@ -124,8 +120,7 @@ public sealed class MetadataEquivalenceBundleGateTests
         // creating it" (ScratchDirsTests.Reserve_WritesSidecarButDoesNotCreateTheDirectory).
         // That is fine here and is the point: RequireBundles reads
         // Path.Combine(<override>, <serviceTierDirName>), which is absent either way, so the
-        // gate sees no bundle. An earlier version of this comment claimed the directory is
-        // created; it is not, and nothing depends on it being so.
+        // gate sees no bundle.
         var empty = TestScratch.FlatDir("al-runner-bundle-gate");
 
         var previousRoot = Environment.GetEnvironmentVariable("AL_RUNNER_METADATA_GROUND_TRUTH");
