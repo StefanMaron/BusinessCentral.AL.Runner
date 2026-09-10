@@ -1348,6 +1348,96 @@
       "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). BC's emitter writes this format default unconditionally (it answers '<NewLine><NewLine>' on all 4 xmlports) and the runner states nothing, so BC's own constructor leaves its own default behind. Not underivable -- a constant would reproduce it -- but it is written here as part of the same xmlport derivation gap rather than patched in isolation. The field backing TableSeparator.",
       "issue": 3797,
       "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaReport.InherentEntitlements",
+      "reason": "BC resolves the report's InherentEntitlements mask to Execute; the runner answers None because BcAppSymbolCache's ReportSymbol does not carry the property at all. SymbolReference.json states it as the \"X\" mask spelling, and RecordPatches.CodeunitMetadataFromBcDocument.cs already parses that spelling for codeunits -- so this is a dropped property, not an underivable one. Same member and same \"X\" spelling as the codeunit gap (#3788) and the query gap (#3798); three kinds, one unparsed property. Measured on BC 28.1.49838.53910 on the single report System Application ships (9810 Change Password).",
+      "issue": 3808
+    },
+    {
+      "member": "MetaReport.InherentPermissions",
+      "reason": "The other half of the same dropped property: BC resolves Execute, the runner answers None. See MetaReport.InherentEntitlements immediately above -- one \"X\" mask in SymbolReference.json feeds both, and neither reaches ReportSymbol.",
+      "issue": 3808
+    },
+    {
+      "member": "MetaReport.ALNamespace",
+      "reason": "BC states the report's AL namespace (System.Security.AccessControl on report 9810); the runner answers null because ReportSymbol does not carry it. SymbolReference.json states the namespace -- it is what BcAppSymbolCache's own namespace walk already reads to build ObjectSymbol -- so this is derivable and simply not carried. Same member, same reason and same fix as MetaTable.ALNamespace (#3568), MetaPermissionSet.ALNamespace (#3806) and MetaEnum.ALNamespace (#3807).",
+      "issue": 3808
+    },
+    {
+      "member": "MetaReport.RequestPageDefinition.<presence>",
+      "reason": "BC's emitted document carries a full <RequestPage><PageDefinition> subtree even for report 9810, which declares UseRequestPage = false and ProcessingOnly = true; DependencyReportMetadata.EmitReportXml writes no <RequestPage> element at all, so BC's reader leaves the property null on the runner's side. Two questions are deliberately OPEN rather than answered here, and they are on #3808: whether BC emits a request page for every report (unanswerable from this bundle -- System Application ships exactly ONE report, and Base Application, which would settle it, is excluded from apps.json because its emit needs a .NET reference no BC artifact ships, #3549), and whether anything AL-observable reads MetaReport.RequestPageDefinition on a ProcessingOnly report. Declared as a tracked defect rather than out of scope precisely because neither is settled: an outOfScope claim here would be a guess wearing a classification.",
+      "issue": 3808
+    },
+    {
+      "member": "MetaReport.#requestPageDefinition.<presence>",
+      "reason": "The backing field of MetaReport.RequestPageDefinition. The differ walks the property and the field independently, so one absent subtree is reported twice; this entry exists so the second report is declared rather than left undeclared. Same fact, same issue -- see the property entry above for the two open questions.",
+      "issue": 3808
+    },
+    {
+      "member": "MetaPermissionSet.Name",
+      "reason": "BC's MetaPermissionSet.Create UPPERCASES the name it reads; the runner's object route sets Name verbatim from PermissionSetSymbol. This is BC's READER, not the document: measured on BC 28.1.49838.53910, 8 of 178 emitted permission-set documents state an already-uppercase Name (SUPER, SECURITY, LOGIN, TROUBLESHOOT TOOLS, SUPER (DATA), D365 SNAPSHOT DEBUG, D365 ATTACH DEBUG, D365 BACKUP/RESTORE) and 170 state mixed case, while Create answers all 178 upper-cased -- 178-8 = 170, exactly this entry's occurrence count. The value is a Code[20]/Code[30] ROLE ID and BC upper-cases codes, so the open question is WHERE the upper-casing belongs, not which spelling is right; MetadataEquivalenceReportEnumPermissionSetOracleTests asserts the reader's behaviour so this entry stays attributable to the reader. Note the runner is internally case-insensitive here (EnumerateKnownPermissionSets de-duplicates OrdinalIgnoreCase, PermissionSetIdByName is OrdinalIgnoreCase), so this only becomes observable where a value crosses into BC.",
+      "issue": 3806
+    },
+    {
+      "member": "MetaPermissionSet.Assignable",
+      "reason": "PermissionSet 68 'System Execute - Basic' only: BC answers False, the runner answers True. THIS IS THE MEASUREMENT #2417 ASKED FOR, and it is a measurement rather than an inference -- #2417 states the question must be settled against BC itself and not by reading SymbolReference.json. BC's own emitted document for 68 is the only one of 178 carrying no Assignable attribute at all (the distribution is 140 x \"0\", 37 x \"1\", 1 x absent), and BC's own MetaPermissionSet.Create resolved that absence to False. So BC's reader defaults absent -> false and CollectPermissionSets's absent -> true is wrong, exactly as #2417 predicted. The fix lands in BcAppSymbolCache/RecordPatches.MetadataPermissionSetVirtualTable rather than in the harness, so it is tracked on #3806 which records the answer and points at #2417. Deliberately NOT versionContingent despite matching a single object: the criterion is that the member's population depends on a per-object declaration, and this one does -- but it is one object on every BC build measured, and an entry that stopped matching would mean either the fix landed or BC changed its default, both of which must be loud.",
+      "issue": 3806
+    },
+    {
+      "member": "MetaPermissionSet.ALNamespace",
+      "reason": "BC states the permission set's AL namespace; the runner answers null on all 178 because PermissionSetSymbol does not carry it. Derivable -- SymbolReference.json states the namespace -- and simply not carried. Same member and same fix as MetaTable.ALNamespace (#3568), MetaReport.ALNamespace (#3808) and MetaEnum.ALNamespace (#3807).",
+      "issue": 3806
+    },
+    {
+      "member": "MetaPermissionSet.CaptionML.<presence>",
+      "reason": "BC builds a MultiLanguage caption on all 178 permission sets; the runner leaves it null. PermissionSetSymbol DOES carry Caption, so the caption text is available and it is the MultiLanguage-with-language-id shape that is not built -- the same shape, and the same distinction, as the already-declared MetaField.CaptionML entry on the table side. Not a translation-key entry: this is the caption TEXT, which is AL-observable.",
+      "issue": 3806
+    },
+    {
+      "member": "MetaPermissionSet.MetadataToken",
+      "reason": "BC's emitted document opens with MetadataVersion=\"130000\" and every one of BC's own readers copies it into MetadataToken; the runner states no metadata-format version anywhere, so BC's default of 0 stands on the runner's side. Measured on BC 28.1.49838.53910: 178 of 178 permission sets and 142 of 142 enums, i.e. EVERY object of both kinds and never a subset -- which is what shows this is a property of the document format rather than of any object's declaration. It is derivable trivially (write the same constant), and it is not stated because nothing in the runner consumes a metadata-format version. Tracked with the rest of each kind's derivation gap. NOT declared for MetaTable or PageDefinition: those two routes already agree, so this is genuinely a property of the kinds added in #3782 steps 5-7.",
+      "issue": 3806
+    },
+    {
+      "member": "MetaEnum.Extensible",
+      "reason": "BC answers True on 31 of 142 enums; the runner answers False on all of them, because BcAppSymbolCache.EnumSymbol does not carry Extensible at all -- the record is (Id, Name, Options, Indexes, Implementations, Captions, DefaultImplementations, UnknownImplementations) and nothing reads the property. The value IS in SymbolReference.json, in the same Properties bag TryParseEnumSymbol already reads DefaultImplementation and UnknownValueImplementation from a few lines away, so this is a dropped property rather than an underivable one. Not cosmetic: Extensible = false is what makes an enum refuse an enumextension, so the runner currently answers 'not extensible' for 31 enums that are. The other 111 agree only because the runner's constant happens to match.",
+      "issue": 3807
+    },
+    {
+      "member": "MetaEnumValue.InterfaceImplementation",
+      "reason": "BC states a value's interface-implementation codeunit ids (e.g. [306] on enum 397); the runner states []. The runner DOES parse these -- TryParseEnumSymbol reads a value's Implementation property into implementations[i] and AlEnumOptionMetadata uses them for GetImplementationCodeunitIdPublic (#2306) -- so the data is present and it is the <Value> render that has no element for it. Whether BC's <Value> shape can express it at all still needs checking before this is called a derivation gap; #3807 records that caveat rather than asserting either way.",
+      "issue": 3807
+    },
+    {
+      "member": "MetaEnum.DefaultImplementation",
+      "reason": "The enum-level interface fallback: BC states [1467] on enum 1465, the runner states []. EnumSymbol carries the list (#2306) and the <Enum> render states no element for it -- the same not-rendered-though-parsed shape as MetaEnumValue.InterfaceImplementation above, one level up.",
+      "issue": 3807
+    },
+    {
+      "member": "MetaEnum.UnknownImplementation",
+      "reason": "The other enum-level interface fallback, on the same enum 1465 and with the same cause as MetaEnum.DefaultImplementation immediately above: EnumSymbol carries it, the render does not state it.",
+      "issue": 3807
+    },
+    {
+      "member": "MetaEnum.ALNamespace",
+      "reason": "BC states the enum's AL namespace (System.Text on enum 59); the runner answers null on all 142 because EnumSymbol does not carry it. Derivable and simply not carried. Same member and same fix as MetaTable.ALNamespace (#3568), MetaReport.ALNamespace (#3808) and MetaPermissionSet.ALNamespace (#3806).",
+      "issue": 3807
+    },
+    {
+      "member": "MetaEnum.CaptionML.<presence>",
+      "reason": "The ENUM's own caption, on 2 enums: BC builds a MultiLanguage, the runner leaves it null. Note this is not the per-VALUE caption, which agrees on all 142 enums -- AlEnumMetadataRegistry.Entry.Captions carries a value's declared Caption (#1775) and the render states it as <CaptionML>, which is why this entry matches 2 rather than 142. The enum-level caption has no field on the registry entry to render from.",
+      "issue": 3807
+    },
+    {
+      "member": "MetaEnum.MetadataToken",
+      "reason": "BC's emitted document opens with MetadataVersion=\"130000\" and every one of BC's own readers copies it into MetadataToken; the runner states no metadata-format version anywhere, so BC's default of 0 stands on the runner's side. Measured on BC 28.1.49838.53910: 178 of 178 permission sets and 142 of 142 enums, i.e. EVERY object of both kinds and never a subset -- which is what shows this is a property of the document format rather than of any object's declaration. It is derivable trivially (write the same constant), and it is not stated because nothing in the runner consumes a metadata-format version. Tracked with the rest of each kind's derivation gap. NOT declared for MetaTable or PageDefinition: those two routes already agree, so this is genuinely a property of the kinds added in #3782 steps 5-7.",
+      "issue": 3807
+    },
+    {
+      "member": "MetaEnumValue.Ordinal",
+      "reason": "Enum 2616 'Printer Paper Kind' only: BC answers ordinal 0 for the value 'Custom', the runner answers 40. SymbolReference.json omits Ordinal exactly when it is ZERO -- the same absent-means-default convention PermissionSymbol's own doc comment records for PermissionObject -- and TryParseEnumSymbol reads an absent Ordinal as 'previous + 1' instead, which is an AL SOURCE-order convention. Measured across three shipped apps on BC 28.1.49838.53910: 671 values carry no Ordinal and the rule is wrong on exactly one, because 2616 is the only enum BC emits in an order that is not ordinal order (its values are name-sorted: A2=66, A3=8, A4=9, ...). The consequence is worse than a wrong number: ordinal 40 ends up claimed by both GermanStandardFanfold and Custom, so the enum has 67 distinct ordinals across 68 values and two AL enum members become indistinguishable by value. Fixed by reading an absent Ordinal as 0 (#3805), one line in BcAppSymbolCache -- deliberately not folded into #3782's harness PR, which touches no parser.",
+      "issue": 3805
     }
   ]
 }
