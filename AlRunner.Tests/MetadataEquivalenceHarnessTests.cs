@@ -122,10 +122,27 @@ public sealed class MetadataEquivalenceHarnessTests
         // failure rather than a quietly smaller comparison.
         foreach (var report in RunAll())
         {
-            Assert.True(report.Unbuildable.Count == 0,
+            // MetadataRuntimeDeltas is the ONE kind where the runner has nothing to build, and
+            // it is unbuildable on every object rather than on some — a ONE-SIDED gap, not a
+            // per-object failure. BC's side parses (see the oracle test); the runner's
+            // GetExtensionDeltasForAppObject answers null because there is no published-app
+            // extension pipeline (#3809).
+            //
+            // Scoped by kind AND asserted to be TOTAL, so this cannot become a place other
+            // kinds' failures hide: a deltas object that somehow DID build, or any object of
+            // another kind that did not, still fails.
+            var deltasDeclared = report.Bundle.Census.GetValueOrDefault("MetadataRuntimeDeltas");
+            var deltasUnbuildable = report.Unbuildable
+                .Count(u => u.StartsWith("MetadataRuntimeDeltas ", StringComparison.Ordinal));
+            Assert.Equal(deltasDeclared, deltasUnbuildable);
+
+            var otherUnbuildable = report.Unbuildable
+                .Where(u => !u.StartsWith("MetadataRuntimeDeltas ", StringComparison.Ordinal))
+                .ToArray();
+            Assert.True(otherUnbuildable.Length == 0,
                 $"{report.Bundle.Label}: the runner produced no comparable metadata for " +
-                $"{report.Unbuildable.Count} object(s):{Environment.NewLine}" +
-                string.Join(Environment.NewLine, report.Unbuildable.Take(20)));
+                $"{otherUnbuildable.Length} object(s) outside MetadataRuntimeDeltas:" +
+                Environment.NewLine + string.Join(Environment.NewLine, otherUnbuildable.Take(20)));
 
             foreach (var kind in report.KindsCompared)
                 Assert.Equal(report.Bundle.Census[kind],
@@ -137,7 +154,9 @@ public sealed class MetadataEquivalenceHarnessTests
             // a second shape that started being skipped would break this rather than shrink the
             // comparison unnoticed.
             var comparableTotal = report.KindsCompared.Sum(k => report.Bundle.Census[k]);
-            Assert.Equal(comparableTotal - report.EnumExtensionDocuments.Count, report.ObjectsCompared);
+            Assert.Equal(
+                comparableTotal - report.EnumExtensionDocuments.Count - report.Unbuildable.Count,
+                report.ObjectsCompared);
         }
     }
 
@@ -182,25 +201,11 @@ public sealed class MetadataEquivalenceHarnessTests
         // programme finishes, which is the one outcome it must not punish.
         string[] stillUncompared =
         {
-            // steps 3 and 4, in the order issue #3782's comment sets. Steps 2 (CodeUnit) and
-            // 5-7 (Report, PermissionSet, Enum) are compared and have been deleted from this
-            // list.
+            // Steps 3 and 4 only, in the order issue #3782's comment sets. Every other kind —
+            // CodeUnit (step 2) and Report/PermissionSet/Enum/MetadataRuntimeDeltas (5-8) — is
+            // compared and has been deleted from this list.
             "Query", "XmlPort",
-            // Step 8, and NOT a step still to do: measured and found uncomparable
-            // non-circularly. MetadataEquivalenceHarness.UncomparableKinds carries the reason
-            // and the tracking issue, and the assertion below holds this list to it so the two
-            // cannot drift.
-            "MetadataRuntimeDeltas",
         };
-
-        // A kind here for the measured reason must say so in UncomparableKinds, and vice versa.
-        // Without this the two lists say different things about the same kind and nothing
-        // notices — the list above would keep reading as "not got to yet" after step 8 closed
-        // the question.
-        Assert.Equal(
-            MetadataEquivalenceHarness.UncomparableKinds.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray(),
-            stillUncompared.Where(MetadataEquivalenceHarness.UncomparableKinds.ContainsKey)
-                .OrderBy(k => k, StringComparer.Ordinal).ToArray());
 
         foreach (var report in RunAll())
         {

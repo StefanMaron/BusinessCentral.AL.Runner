@@ -1,19 +1,25 @@
-// MetadataEquivalenceReportEnumPermissionSetOracleTests — pins that the three BC types this
-// harness uses as oracles for Report, PermissionSet and Enum actually READ the document they
-// are handed.
+// MetadataEquivalenceReportEnumPermissionSetOracleTests — pins that the four BC readers this
+// harness uses as oracles for Report, PermissionSet, Enum and MetadataRuntimeDeltas actually
+// READ the document they are handed.
 //
-// Issue #3782, steps 5-7. The reason this class exists is step 1's finding, and it is not
+// Issue #3782, steps 5-8. The reason this class exists is step 1's finding, and it is not
 // hypothetical: BC's Types assembly ships PageDefinition AND MetaPageDefinition, both public,
 // both taking (XmlNode), and NEITHER throws — the Meta one silently ignores the document and
 // returns a default-constructed object. Handing that to the differ as both sides compared 235
 // pages, found 0 differences, and left every other test in the suite green.
 //
-// Every type here has the same trap available to it: MetaEnum has a parameterless constructor
+// Every reader here has the same trap available to it: MetaEnum has a parameterless constructor
 // alongside its (XmlNode) one, MetaReport's five-argument constructor takes two nullable
-// delegates, and MetaPermissionSet is built through a static factory rather than a constructor
-// at all. So "it did not throw" is worth nothing, and each is asserted to reproduce values that
-// are IN the document — against the document itself rather than against a literal, so the
-// assertions stay true on every BC build and every app.
+// delegates, and MetaPermissionSet and NavAppObjectMetadataRuntimeDeltas are built through static
+// factories rather than constructors at all. So "it did not throw" is worth nothing, and each is
+// asserted to reproduce values that are IN the document — against the document itself rather than
+// against a literal, so the assertions stay true on every BC build and every app.
+//
+// AND ONE OF THEM IS IN A THIRD ASSEMBLY. Every oracle but the deltas one comes from
+// Microsoft.Dynamics.Nav.Types or .Ncl, and MetadataRuntimeDeltas was first reported as having no
+// reader anywhere on the strength of a census over exactly those two. It is in
+// Microsoft.Dynamics.Nav.Apps.dll, one of 501 assemblies in the artifact directory. A negative
+// about BC's surface is only as wide as the search behind it.
 
 using System.Reflection;
 using System.Xml;
@@ -182,6 +188,81 @@ public sealed class MetadataEquivalenceReportEnumPermissionSetOracleTests
         // constructor's and not the document's.
         Assert.NotEqual(0, DocumentId(doc));
         Assert.NotEmpty(doc.DocumentElement!.GetAttribute("Name"));
+    }
+
+    [SkippableFact]
+    public void NavAppObjectMetadataRuntimeDeltas_FromXml_parses_every_emitted_deltas_document()
+    {
+        // This kind was first reported as having NO BC reader at all, and the census behind that
+        // claim searched two assemblies — Types and Ncl — because every other oracle in this
+        // harness comes from one of them. The reader is in a THIRD:
+        // Microsoft.Dynamics.Nav.Apps.dll. Re-measured over the whole artifact directory, 501
+        // assemblies carry 308 types whose name contains "Delta", 54 of them in that one.
+        //
+        // So the assertion here is not decoration: it is the check that turns "I did not find a
+        // reader" into "this document parses", and it is asserted over EVERY document rather
+        // than a sample, because the first bare probe of it parsed only 6 of 11 — a
+        // WindowsLanguageHelper static-init fault from loading outside the harness, which the
+        // skeleton this collection already has removes. Verified rather than assumed: 11 of 11.
+        Skip.IfNot(_engine.Ready, _engine.SkipReason);
+
+        var bundles = MetadataEquivalenceHarness.LoadBundles(
+            MetadataEquivalencePaths.GroundTruthDirForThisBuild());
+        Skip.If(bundles.Count == 0, "no metadata ground-truth bundle for this BC build.");
+
+        var apps = System.Reflection.Assembly.LoadFrom(Path.Combine(
+            AlRunner.Infrastructure.BcArtifacts.ServiceTierDir, "Microsoft.Dynamics.Nav.Apps.dll"));
+        var t = apps.GetType("Microsoft.Dynamics.Nav.Apps.MetadataDeltas.NavAppObjectMetadataRuntimeDeltas");
+        Assert.True(t is not null,
+            "NavAppObjectMetadataRuntimeDeltas is gone from Microsoft.Dynamics.Nav.Apps.dll — the "
+            + "MetadataRuntimeDeltas oracle has moved or been removed; re-measure before trusting "
+            + "either side of that comparison.");
+
+        // The root element BC's own reader keys on, asserted against the documents rather than
+        // against a literal: this is what makes "the oracle is for THIS document shape" a
+        // measurement instead of an assumption.
+        var baseType = apps.GetType("Microsoft.Dynamics.Nav.Apps.MetadataDeltas.NavAppObjectMetadataDeltaBase")!;
+        var rootName = baseType.GetProperty("MetadataRuntimeDeltasXName",
+            BindingFlags.Public | BindingFlags.Static)!.GetValue(null)!.ToString();
+        Assert.Equal("{urn:schemas-microsoft-com:dynamics:NAV:MetaObjects}MetadataRuntimeDeltas", rootName);
+
+        var fromXml = t!.GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .FirstOrDefault(m => m.Name == "FromXml"
+                                 && m.GetParameters() is { Length: 1 } ps
+                                 && ps[0].ParameterType == typeof(System.Xml.Linq.XDocument));
+        Assert.True(fromXml is not null, "NavAppObjectMetadataRuntimeDeltas has no static FromXml(XDocument).");
+
+        var seen = 0;
+        var withDeltas = 0;
+        foreach (var bundle in bundles)
+            foreach (var obj in bundle.Objects.Where(o => o.Kind == "MetadataRuntimeDeltas"))
+            {
+                var doc = System.Xml.Linq.XDocument.Load(Path.Combine(bundle.Directory, obj.File));
+                Assert.Equal(rootName, doc.Root!.Name.ToString());
+
+                var parsed = fromXml!.Invoke(null, new object?[] { doc });
+                Assert.True(parsed is not null,
+                    $"{bundle.Label} MetadataRuntimeDeltas {obj.Id} '{obj.Name}': FromXml returned null.");
+                seen++;
+
+                var all = (System.Collections.IEnumerable)parsed!.GetType()
+                    .GetProperty("AllDeltas", BindingFlags.Public | BindingFlags.Instance | BindingFlags.FlattenHierarchy)!
+                    .GetValue(parsed)!;
+                if (all.Cast<object>().Any()) withDeltas++;
+            }
+
+        Assert.True(seen > 0, "no bundle carried a MetadataRuntimeDeltas document, so this measured nothing.");
+
+        // Parsing without throwing is what MetaPageDefinition also did. The claim that separates
+        // a real reader from a default object is that it read CONTENT out of the document — so
+        // at least one document must yield a non-empty AllDeltas. Measured on BC
+        // 28.1.49838.53910: 6 of the 11 carry deltas (12 on page 774, 5 on 4318, 4 on 2515, 2 on
+        // 324, 1 on 9862) and 5 are genuinely empty <MetadataRuntimeDeltas/> elements, so a
+        // floor rather than an equality — but a floor of zero would be the vacuous claim.
+        Assert.True(withDeltas > 0,
+            $"{seen} MetadataRuntimeDeltas document(s) parsed and NOT ONE yielded a delta. Several "
+            + "of these documents plainly carry ControlAdd/ActionAdd/Expression content, so zero "
+            + "means FromXml stopped reading the document — the MetaPageDefinition failure mode.");
     }
 
     [SkippableFact]

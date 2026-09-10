@@ -81,6 +81,48 @@ public static partial class RecordPatches
         => BuildMetaPermissionSet(declaration);
 
     /// <summary>
+    /// The runner's extension-runtime-delta object for one extended object id, or null.
+    ///
+    /// <para><b>It is null for every id today, and that null is the measurement.</b>
+    /// <see cref="RunnerXmlMetadataLoader.GetExtensionDeltasForAppObject"/> is the one runner
+    /// member typed to return BC's <c>NavAppObjectMetadataRuntimeDeltas</c>, and it returns
+    /// <c>null!</c> by construction: the runner has no published-app extension pipeline, and
+    /// that comment records null as BC's own "no deltas" value. So this accessor exists to
+    /// report the absence per object rather than to hide it — the harness turns each null into
+    /// a named unbuildable entry naming #3809.</para>
+    ///
+    /// <para><b>Why it goes through the loader rather than short-circuiting to null.</b> If the
+    /// runner ever starts tracking extension deltas, this begins returning objects and the
+    /// comparison starts measuring them with no edit here. A hardcoded null would have to be
+    /// noticed and removed, which is the kind of thing nobody notices.</para>
+    /// </summary>
+    internal static object? TryGetRuntimeDeltasMetadataEquivalence(int extendedObjectId)
+    {
+        var loader = new RunnerXmlMetadataLoader();
+        var method = typeof(RunnerXmlMetadataLoader).GetMethod("GetExtensionDeltasForAppObject")
+            ?? throw new InvalidOperationException(
+                "RunnerXmlMetadataLoader.GetExtensionDeltasForAppObject is gone. It is the only " +
+                "runner member typed as NavAppObjectMetadataRuntimeDeltas, so without it the " +
+                "runner side of the MetadataRuntimeDeltas comparison cannot be located at all.");
+
+        // ApplicationObjectId's ctor takes (ObjectType, int). The ordinal is read off BC's own
+        // enum by NAME rather than hardcoded: a numeric literal here would silently point at a
+        // different object type if BC ever renumbers, and the comparison would then report a
+        // null that means "wrong id" rather than "no deltas".
+        var objectIdType = method.GetParameters()[0].ParameterType;
+        var objectTypeEnum = objectIdType.GetConstructors()
+            .Select(c => c.GetParameters())
+            .FirstOrDefault(ps => ps.Length == 2 && ps[0].ParameterType.IsEnum)?[0].ParameterType
+            ?? throw new InvalidOperationException(
+                "ApplicationObjectId has no (enum, int) constructor — BC's shape changed.");
+        var objectId = Activator.CreateInstance(
+            objectIdType,
+            new object?[] { Enum.Parse(objectTypeEnum, "Page"), extendedObjectId });
+
+        return method.Invoke(loader, new object?[] { objectId, null });
+    }
+
+    /// <summary>
     /// The runner's derivation for one enum, as the <c>&lt;Enum&gt;</c> document BC's
     /// <c>Types.Metadata.MetaEnum(XmlNode)</c> parses — or null when the runner's enum
     /// registry knows no enum with that id.

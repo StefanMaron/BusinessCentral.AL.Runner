@@ -118,30 +118,8 @@ internal static class MetadataEquivalenceHarness
     /// The order and remaining kinds are on that issue.
     /// </summary>
     internal static readonly string[] ComparedKinds =
-        { "MetaTable", "PageDefinition", "CodeUnit", "Report", "PermissionSet", "Enum" };
-
-    /// <summary>
-    /// Kinds a bundle carries that this harness has MEASURED it cannot compare non-circularly,
-    /// each with the issue recording the measurement. Distinct from "not got to yet": these are
-    /// closed questions, and the difference matters because an unmeasured kind is work and a
-    /// measured one is a finding.
-    ///
-    /// <para><c>MetadataRuntimeDeltas</c> is BC's emitted form of an EXTENSION object —
-    /// tableextension, pageextension, permissionsetextension — and the runner builds no
-    /// extension-shaped metadata object at all: it folds an extension's contribution into the
-    /// object being extended at parse time and keeps nothing addressable by the extension's own
-    /// id. There is also no BC reader for the shape: measured on BC 28.4.53241.54407, no type
-    /// in <c>Microsoft.Dynamics.Nav.Types</c> or <c>Microsoft.Dynamics.Nav.Ncl</c> has "Delta"
-    /// in its name, so neither side of the comparison exists. See #3809 and
-    /// docs/metadata-equivalence.md#metadataruntimedeltas.</para>
-    /// </summary>
-    internal static readonly IReadOnlyDictionary<string, string> UncomparableKinds =
-        new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            ["MetadataRuntimeDeltas"] =
-                "the runner builds no extension-shaped metadata object, and BC ships no reader " +
-                "for the shape — neither side of the comparison exists (#3809)",
-        };
+        { "MetaTable", "PageDefinition", "CodeUnit", "Report", "PermissionSet", "Enum",
+          "MetadataRuntimeDeltas" };
 
     public static IReadOnlyList<GroundTruthBundle> LoadBundles(string root)
     {
@@ -299,6 +277,40 @@ internal static class MetadataEquivalenceHarness
                 "emitted Enum document back into BC's own object model, and the comparison would " +
                 "become a hand-written XML walk against the runner — two derivations, no oracle.");
 
+        // BC's own reader for a MetadataRuntimeDeltas document — the emitted form of a
+        // tableextension, pageextension or permissionsetextension.
+        //
+        // IT LIVES IN A THIRD ASSEMBLY, and that is the whole reason this kind was first
+        // reported as having no reader at all. Microsoft.Dynamics.Nav.Apps.dll is neither of
+        // the two assemblies every other oracle here comes from, and a census over just those
+        // two answers zero — which reads exactly like "BC ships no reader" and is not. The
+        // artifact directory holds 501 assemblies; a metadata-only scan of all of them finds
+        // 308 types whose name contains "Delta", 54 of them in this one. Never conclude a
+        // negative about BC's surface from a search narrower than the thing being claimed.
+        //
+        // Proven to parse rather than assumed to: measured on BC 28.1.49838.53910 over all 11
+        // documents in the two bundles, FromXml(XDocument) returns a populated object for every
+        // one — AllDeltas of 12 for page 774, 5 for 4318, 4 for 2515, 2 for 324, 1 for 9862 and
+        // 0 for the five documents that are genuinely empty elements. Pinned in
+        // MetadataEquivalenceRuntimeDeltasOracleTests.
+        var appsAssembly = System.Reflection.Assembly.LoadFrom(Path.Combine(
+            AlRunner.Infrastructure.BcArtifacts.ServiceTierDir, "Microsoft.Dynamics.Nav.Apps.dll"));
+        var deltasType = appsAssembly.GetType(
+                "Microsoft.Dynamics.Nav.Apps.MetadataDeltas.NavAppObjectMetadataRuntimeDeltas")
+            ?? throw new InvalidOperationException("NavAppObjectMetadataRuntimeDeltas is not reachable.");
+        // The XDocument overload, not the XContainer one: an emitted document is handed over
+        // whole, and picking by parameter type rather than by position keeps this working if BC
+        // reorders the two.
+        var deltasFromXml = deltasType.GetMethods(BindingFlags.Public | BindingFlags.Static)
+                .FirstOrDefault(m => m.Name == "FromXml"
+                                     && m.GetParameters() is { Length: 1 } ps
+                                     && ps[0].ParameterType == typeof(System.Xml.Linq.XDocument))
+            ?? throw new InvalidOperationException(
+                "NavAppObjectMetadataRuntimeDeltas has no static FromXml(XDocument). Without it " +
+                "there is no way to read BC's emitted MetadataRuntimeDeltas document back into " +
+                "BC's own object model, and the comparison would become a hand-written XML walk " +
+                "against the runner — two derivations, no oracle.");
+
         // Built once per bundle, not per object: RunnerPermissionSetDeclarations drives the
         // runner's own population, which is what makes IncludedPermissionSets resolvable at all.
         IReadOnlyDictionary<int, BcAppSymbolCache.PermissionSetSymbol>? permissionSetsById = null;
@@ -393,6 +405,52 @@ internal static class MetadataEquivalenceHarness
                     var runnerDoc = new XmlDocument();
                     runnerDoc.LoadXml(runnerXml);
                     actual = reportFromXml.Invoke(new object?[] { runnerDoc.DocumentElement, null, 0, 0, null });
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner threw — {Describe(ex)}");
+                    continue;
+                }
+            }
+            else if (obj.Kind == "MetadataRuntimeDeltas")
+            {
+                objectKey = $"MetadataRuntimeDeltas {obj.Id}";
+                try
+                {
+                    expected = deltasFromXml.Invoke(
+                        null, new object?[] { System.Xml.Linq.XDocument.Load(xmlPath) });
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own " +
+                                    $"NavAppObjectMetadataRuntimeDeltas.FromXml threw — {Describe(ex)}");
+                    continue;
+                }
+                if (expected is null)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own " +
+                                    "NavAppObjectMetadataRuntimeDeltas.FromXml produced null");
+                    continue;
+                }
+
+                try
+                {
+                    // The runner's extension-delta answer for this object, through the one
+                    // member typed to return this type. It is NULL for every object today, and
+                    // that null is the finding rather than a failure to look: the runner has no
+                    // published-app extension pipeline, so RunnerXmlMetadataLoader's own comment
+                    // records null as BC's "no deltas" value. Reported per object as unbuildable,
+                    // which is exactly what a ONE-SIDED gap should look like — BC's side is real
+                    // and parses, the runner's is absent — and is a much narrower claim than the
+                    // "neither side exists" this harness first recorded. #3809.
+                    actual = RecordPatches.TryGetRuntimeDeltasMetadataEquivalence(obj.Id);
+                    if (actual is null)
+                    {
+                        unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner tracks no " +
+                                        "extension runtime deltas — GetExtensionDeltasForAppObject " +
+                                        "answers null for every object (#3809)");
+                        continue;
+                    }
                 }
                 catch (Exception ex)
                 {
