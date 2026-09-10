@@ -194,11 +194,46 @@ public static partial class RecordPatches
             var fields = allParsed.Select((f, idx) =>
                 BuildMetaField(f, idx, parsed.PkFieldIds.Contains(f.FieldId), parsed)).ToArray();
 
-            // Build primary key MetaKey via FieldMetadataRelation[]
-            var pkRelations = parsed.PkFieldIds
-                .Select(fid => BuildFieldMetadataRelation(fid))
+            // #3568 — a key states the name and the properties AL declared for it. BC's
+            // NCLMetaKey.CreateFromMetaKey passes metaKey.KeyName, metaKey.Unique,
+            // metaKey.SumIndexFields and `clusteredOverride || metaKey.Clustered` into the
+            // NCLMetaKey the runtime uses, so each of these reaches AL — an obsoleted key
+            // names itself through ObsolescenceGuard.ThrowIfObsoleted, which formatted "PK"
+            // for every key in the repository while this was hardcoded.
+            //
+            // Both fallbacks fire on the SAME condition — the table declares no key at all, so
+            // both parsers synthesize one over the first field. BC synthesizes the same key and
+            // NAMES IT AFTER THAT FIELD ("ID", "IgnoreCase", "ApiVersion"), not "PK"; it is
+            // also the only case in which BC clusters a key nothing declared clustered.
+            //
+            // Clustered is otherwise stated VERBATIM, defaulting to FALSE, which is the
+            // opposite of what it looks like it should be. Measured over all 150 tables of
+            // Business Foundation + System Application at 28.1.49838.53910 against BC's own
+            // emitted documents (docs/metadata-equivalence.md#keys): declared true → true
+            // (133), declared false → false (1), a DECLARED key stating nothing → false (86,
+            // of which 11 are primary keys), and no key declared at all → true (6, every one a
+            // table whose symbol entry carries "Keys": null). Assuming the primary key defaults
+            // to clustered is what this replaced, and it was wrong on those 11.
+            //
+            // "PK" survives only where the table has no first field to name either, which no
+            // measured table does — it is the floor, not a case anything relies on.
+            string NameOf(ParsedKey? k, string fallback) =>
+                string.IsNullOrEmpty(k?.Name) ? fallback : k!.Name;
+
+            var synthesizedPkName = parsed.PkFieldIds.Count > 0
+                ? FieldNameById(allParsed, parsed.PkFieldIds[0]) ?? "PK"
+                : "PK";
+
+            object[] RelationsOf(IEnumerable<int> fieldIds) => fieldIds
+                .Select(fid => BuildFieldMetadataRelation(fid, FieldNameById(allParsed, fid)))
                 .ToArray();
-            var pkKey = BuildMetaKey("PK", pkRelations, clustered: true);
+
+            var pkRelations = RelationsOf(parsed.PkFieldIds);
+            var pkKey = BuildMetaKey(
+                NameOf(parsed.PrimaryKey, synthesizedPkName), pkRelations,
+                clustered: parsed.PrimaryKey is null || (parsed.PrimaryKey.Clustered ?? false),
+                unique: parsed.PrimaryKey?.Unique ?? false,
+                sumIndexFields: SumIndexFieldsOf(parsed.PrimaryKey, allParsed));
 
             // Build secondary key MetaKey objects
             var allKeys = new List<object> { pkKey };
@@ -206,11 +241,11 @@ public static partial class RecordPatches
             {
                 foreach (var sk in parsed.SecondaryKeys)
                 {
-                    var skRelations = sk.FieldIds
-                        .Select(fid => BuildFieldMetadataRelation(fid))
-                        .ToArray();
+                    var skRelations = RelationsOf(sk.FieldIds);
                     if (skRelations.Length > 0)
-                        allKeys.Add(BuildMetaKey(sk.Name, skRelations, clustered: false));
+                        allKeys.Add(BuildMetaKey(sk.Name, skRelations,
+                            clustered: sk.Clustered ?? false, unique: sk.Unique,
+                            sumIndexFields: SumIndexFieldsOf(sk, allParsed)));
                 }
             }
 
@@ -1566,11 +1601,37 @@ public static partial class RecordPatches
                 continue;
             }
             if (ids.Count == 0) continue;
-            allKeys.Add(BuildMetaKey(ek.Name, ids.Select(BuildFieldMetadataRelation).ToArray(), clustered: false));
+            allKeys.Add(BuildMetaKey(ek.Name,
+                ids.Select(fid => BuildFieldMetadataRelation(fid, FieldNameById(allParsed, fid))).ToArray(),
+                clustered: false));
         }
     }
 
-    private static object BuildMetaKey(string name, object[] fieldRelations, bool clustered)
+    /// <summary>The field's name as the merged field list states it, or null when no field
+    /// carries that id — the id alone still goes on the relation (#3568).</summary>
+    private static string? FieldNameById(ParsedField[] allParsed, int fieldId)
+    {
+        foreach (var f in allParsed)
+            if (f.FieldId == fieldId && !string.IsNullOrEmpty(f.FieldName)) return f.FieldName;
+        return null;
+    }
+
+    /// <summary>
+    /// A key's declared SumIndexFields as <c>SumIndexField</c> objects. Null when the key
+    /// declares none, which is not the same as declaring an empty list.
+    /// </summary>
+    private static object[]? SumIndexFieldsOf(ParsedKey? key, ParsedField[] allParsed)
+    {
+        if (key?.SumIndexFieldIds is not { Count: > 0 } ids) return null;
+        return ids.Select(fid => BuildSumIndexField(fid, FieldNameById(allParsed, fid))).ToArray();
+    }
+
+    private static object BuildSumIndexField(int fieldId, string? fieldName)
+        => BuildIdNamePair(_tSumIndexField!, fieldId, fieldName);
+
+    private static object BuildMetaKey(
+        string name, object[] fieldRelations, bool clustered,
+        bool unique = false, object[]? sumIndexFields = null)
     {
         var ctor = _tMetaKey!.GetConstructors()
             .OrderByDescending(c => c.GetParameters().Length)
@@ -1580,12 +1641,25 @@ public static partial class RecordPatches
         for (int i = 0; i < ps.Length; i++)
         {
             var p = ps[i];
-            if (p.Name == "name" || p.Name == "keyName") { args[i] = name; continue; }
+            // `name` and `keyName` are two DIFFERENT members and only one of them is the AL
+            // key name. BC derives MetaKey.Name as the positional field spec ("Field1,Field2"
+            // over field ids) and never passes it to NCLMetaKey; MetaKey.KeyName is the
+            // declared AL name and is what the runtime carries. So the declared name goes on
+            // keyName only, and Name stays on the reader's own spelling — declared in
+            // tests/expectations/metadata-equivalence/allowlist.json, not silently divergent.
+            if (p.Name == "keyName") { args[i] = name; continue; }
+            if (p.Name == "name") { args[i] = name; continue; }
             if (p.Name == "clustered") { args[i] = clustered; continue; }
+            if (p.Name == "unique") { args[i] = unique; continue; }
             if (p.Name == "enabled") { args[i] = (bool?)true; continue; }
             if (p.Name == "fieldRelations")
             {
                 args[i] = MakeImmutableArray(_tFieldMetadataRelation!, fieldRelations);
+                continue;
+            }
+            if (p.Name == "sumIndexFields" && sumIndexFields is { Length: > 0 } && _tSumIndexField != null)
+            {
+                args[i] = MakeImmutableArray(_tSumIndexField, sumIndexFields);
                 continue;
             }
             if (p.HasDefaultValue) { args[i] = p.DefaultValue; continue; }
@@ -1594,9 +1668,14 @@ public static partial class RecordPatches
         return ctor.Invoke(args)!;
     }
 
-    private static object BuildFieldMetadataRelation(int fieldId)
+    private static object BuildFieldMetadataRelation(int fieldId, string? fieldName = null)
+        => BuildIdNamePair(_tFieldMetadataRelation!, fieldId, fieldName);
+
+    /// <summary>Both <c>FieldMetadataRelation</c> and <c>SumIndexField</c> are
+    /// <c>(int id, string name)</c> pairs, so one builder serves both.</summary>
+    private static object BuildIdNamePair(Type type, int fieldId, string? fieldName)
     {
-        var ctor = _tFieldMetadataRelation!.GetConstructors()
+        var ctor = type.GetConstructors()
             .OrderByDescending(c => c.GetParameters().Length)
             .First();
         var ps = ctor.GetParameters();
@@ -1605,6 +1684,7 @@ public static partial class RecordPatches
         {
             var p = ps[i];
             if (p.Name == "id") { args[i] = fieldId; continue; }
+            if (p.Name == "name" && fieldName != null) { args[i] = fieldName; continue; }
             if (p.HasDefaultValue) { args[i] = p.DefaultValue; continue; }
             args[i] = p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType) : null;
         }

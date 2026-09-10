@@ -198,11 +198,6 @@
       "issue": 3568
     },
     {
-      "member": "FieldMetadataRelation.Name",
-      "reason": "BC names each field a key refers to; the runner leaves the name null and carries the id alone.",
-      "issue": 3568
-    },
-    {
       "member": "MetaField.Relations.<presence>",
       "reason": "BC gives SystemCreatedBy and SystemModifiedBy a TableRelation to User (2000000120); the runner gives them none. This is the difference already observable from plain AL as FieldRef.Relation() answering 0 \u2014 see #3549. Direction-scoped to BC-present / runner-absent; the runner inventing a relation BC does not have would be a different defect and is not covered.",
       "issue": 3568,
@@ -219,13 +214,8 @@
       "issue": 3568
     },
     {
-      "member": "MetaKey.DebuggerDisplay",
-      "reason": "Derived from MetaKey.Name and the key's field names, so it differs wherever those do. Not separately fixable.",
-      "issue": 3568
-    },
-    {
       "member": "MetaKey.Name",
-      "reason": "BC's key name is the SQL key spec it generates (Field1); the runner's is the AL key name (PK). Two different naming schemes, so this is not a value being lost.",
+      "reason": "BC derives this as the POSITIONAL FIELD SPEC over field ids (\"Field1,Field2\"), not as a name anyone declared, and NCLMetaKey.CreateFromMetaKey never passes it \u2014 the declared AL name travels as MetaKey.KeyName, which the reader now states (#3568). So no AL surface can observe this member, and the runner keeps its own spelling rather than reproducing a spec BC regenerates. Superseded reason, recorded because it hid a real defect: this used to read \"two different naming schemes\", and MetaKey.KeyName was declared as \"the same disagreement on the second of the two name properties\". That was wrong \u2014 KeyName is the DECLARED name, the symbol file states it verbatim, and it reaches AL through ObsolescenceGuard.ThrowIfObsoleted.",
       "issue": 3568
     },
     {
@@ -295,11 +285,6 @@
       "issue": 3568
     },
     {
-      "member": "MetaKey.KeyName",
-      "reason": "The same naming disagreement as MetaKey.Name, on the second of the two name properties.",
-      "issue": 3568
-    },
-    {
       "member": "MetaField.Access",
       "reason": "BC states Internal on fields whose AL declares it; the runner answers Public. The symbol file carries Access.",
       "issue": 3568
@@ -354,17 +339,6 @@
       "direction": "bc-only"
     },
     {
-      "member": "MetaKey.Clustered",
-      "reason": "BC answers false on a key AL does not declare clustered; the runner answers true. The symbol file carries Clustered.",
-      "issue": 3568
-    },
-    {
-      "member": "MetaKey.SumIndexFields.<presence>",
-      "reason": "BC builds the declared SumIndexFields; the runner builds none. Direction-scoped to BC-present / runner-absent.",
-      "issue": 3568,
-      "direction": "bc-only"
-    },
-    {
       "member": "MetaField.Lookup",
       "reason": "BC states Lookup where AL declares it; the runner answers false.",
       "issue": 3568
@@ -397,11 +371,6 @@
     {
       "member": "MetaField.BlankZero",
       "reason": "BC states BlankZero where AL declares it; the runner answers false.",
-      "issue": 3568
-    },
-    {
-      "member": "MetaKey.Unique",
-      "reason": "BC states Unique where AL declares it; the runner answers false.",
       "issue": 3568
     },
     {

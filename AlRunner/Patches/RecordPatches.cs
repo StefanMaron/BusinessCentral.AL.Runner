@@ -28,6 +28,8 @@ public static partial class RecordPatches
     private static Type? _tMetaField;
     private static Type? _tMetaKey;
     private static Type? _tFieldMetadataRelation;
+    // MetaKey.sumIndexFields' element type (#3568) — the SIFT fields a key declares.
+    private static Type? _tSumIndexField;
     private static Type? _tNavType;
     private static Type? _tFieldClass;
     // Microsoft.Dynamics.Nav.Types.Metadata.ObsoleteState — MetaField's obsoleteState ctor
@@ -647,6 +649,7 @@ public static partial class RecordPatches
         _tMetaField = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaField")!;
         _tMetaKey   = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaKey")!;
         _tFieldMetadataRelation = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.FieldMetadataRelation")!;
+        _tSumIndexField = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.SumIndexField")!;
         _tNavType   = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.NavType")!;
         _tFieldClass = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.FieldClass")!;
         _tObsoleteState = typesAsm.GetType("Microsoft.Dynamics.Nav.Types.Metadata.ObsoleteState")!;
