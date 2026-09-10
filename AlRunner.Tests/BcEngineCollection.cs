@@ -225,8 +225,81 @@ public sealed class BcEngineFixture
     /// BcEngineCollection)."</c> — a fallback that is accurate and carries neither a cause
     /// nor a remedy, i.e. the same defect this issue is about, at 132 places. Making the
     /// property total fixes them all without touching one of them.
+    ///
+    /// #3835: and it THROWS rather than answering, when the cause is one
+    /// <c>tools/engine-test-bootstrap.sh</c> would have removed — see
+    /// <see cref="BcEngineUnbootstrappedGuard"/>. Same lever as above, for the same reason:
+    /// every call site in the collection reads this property and hands the result to
+    /// <c>TestArtifacts.SkipIf</c>, so refusing here converts a silent skip into a named
+    /// failure at all ~300 of them without editing one.
     /// </summary>
-    public string SkipReason => BcEngineSkipReason.OrDefault(BcEngineBootstrap.SkipReason);
+    public string SkipReason
+    {
+        get
+        {
+            var reason = BcEngineSkipReason.OrDefault(BcEngineBootstrap.SkipReason);
+            BcEngineUnbootstrappedGuard.AssertBootstrapWasRun(Ready, reason);
+            return reason;
+        }
+    }
+}
+
+/// <summary>
+/// #3835 — a bc-engine-serial run whose prerequisites were never bootstrapped must FAIL,
+/// naming <c>tools/engine-test-bootstrap.sh</c>, rather than skip.
+///
+/// The measured defect: after any build, the first `dotnet test` over this collection prints
+/// `Skipped! - Failed: 0, Passed: 0, Skipped: 5` and exits 0, and at default verbosity the
+/// skip reason is not printed at all. That is indistinguishable from a passing mutation
+/// check, and it invalidated a real RED baseline on PR #3829. #3078 named this remedy as the
+/// stronger of the two it proposed and only the other one (the script) was built.
+///
+/// The distinction that has to survive: a box with no BC artifacts genuinely cannot run
+/// these tests, and that stays a visible, counted skip
+/// (<see cref="BcEngineSkipReason.IsRecoverableLocally"/> is what splits the two). This
+/// guard fires only where the artifacts are present and the bootstrap is what is missing.
+///
+/// Split from the property it serves, and taking (ready, reason) as PARAMETERS, for the same
+/// reason <see cref="BcEngineReadinessGuard.AssertReadyOnCi"/> is: a pure function is
+/// provable with constructed inputs, on a box in any state — which for THIS guard is not a
+/// convenience but the only way it can be proven at all, since a test asserting over the
+/// ambient bootstrap state passes for opposite reasons on a bootstrapped and an
+/// unbootstrapped box.
+/// </summary>
+internal static class BcEngineUnbootstrappedGuard
+{
+    internal static void AssertBootstrapWasRun(bool ready, string? reason)
+    {
+        if (ready) return;
+
+        var cause = BcEngineSkipReason.CauseOf(reason);
+
+        // An unrecognised reason is NOT resolved toward either answer: it is not the
+        // engine-less box (which would carry an Artifacts* token) and not a diagnosed
+        // bootstrap gap either, so both a skip and a failure would be claiming something
+        // unmeasured. Say that (guards-need-a-third-state.md).
+        if (cause is null)
+        {
+            Assert.Fail(
+                $"[{BcEngineCollection.Name}] the in-process BC engine is not ready and the reason "
+                + "carries no recognisable cause token, so this run cannot tell an unprovisioned box "
+                + "from a missing bootstrap. Either is possible and neither has been measured, so "
+                + "this fails rather than skipping on an unknown (issue #3835). Reason as recorded: "
+                + (reason ?? "<none>"));
+        }
+
+        if (!BcEngineSkipReason.IsRecoverableLocally(cause.Value)) return;
+
+        Assert.Fail(
+            $"[{BcEngineCollection.Name}] REFUSING TO SKIP: BC artifacts are provisioned on this "
+            + "machine, so these tests CAN run — the in-process engine bootstrap simply was not "
+            + $"performed. Run `{BcEngineSkipReason.BootstrapTool}` and re-run `dotnet test` with "
+            + "`--settings engine.runsettings`; a build restores a pristine "
+            + "bin/Microsoft.Dynamics.Nav.Ncl.dll, so this is needed again after EVERY build. "
+            + "This used to be a silent skip: the run reported `Skipped! - Failed: 0, Passed: 0` "
+            + "and exit 0, which reads exactly like a passing mutation check and has invalidated a "
+            + "real RED baseline (issues #3078, #3835). " + reason);
+    }
 }
 
 [CollectionDefinition(Name, DisableParallelization = true)]
