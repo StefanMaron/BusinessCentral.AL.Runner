@@ -33,6 +33,12 @@ internal static class TestPageFactory
         // precompiled dependency's page (Base App / System App / an ISV .app) falls back to
         // its SymbolReference.json's own SourceTable property — see
         // RecordPatches.TryGetDependencySourceTableIdForPage.
+        //
+        // These are the same two inventories RecordPatches.TryGetAnyPageType reads, which is
+        // why a page driven live always knows its own PageType (#3735). A third source added
+        // here without being added there would make BuiltInPageModeActionRule's
+        // RefuseUnknownPageType reachable — pinned by
+        // AlRunner.Tests/LiveTestPagePageTypeKnownTests.cs.
         var tableId = RecordPatches.GetSourceTableIdForPage(pageId);
         if (tableId == 0)
             tableId = RecordPatches.TryGetDependencySourceTableIdForPage(pageId);

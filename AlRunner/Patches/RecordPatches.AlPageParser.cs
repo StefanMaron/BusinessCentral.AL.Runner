@@ -338,6 +338,12 @@ public static partial class RecordPatches
     /// <para>Issue #2931's consumer is RunnerPageInstance.TargetPageOpensModally: whether an
     /// action's RunObject target opens as a dialog is decided by the TARGET's PageType, so this
     /// is asked about a page other than the one being driven.</para>
+    /// <para><b>Null here is co-extensive with <see cref="IsPageShapeKnown"/> being false</b>
+    /// (#3735): both read these same two sources, and neither can yield a null PageType,
+    /// because each applies AL's absent-property default of "Card". A third source added to
+    /// one and not the other breaks that, and makes
+    /// BuiltInPageModeActionRule.RefuseUnknownPageType reachable — pinned by
+    /// AlRunner.Tests/LiveTestPagePageTypeKnownTests.cs.</para>
     /// </summary>
     internal static string? TryGetAnyPageType(int pageId)
     {

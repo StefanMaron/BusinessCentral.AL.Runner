@@ -275,6 +275,17 @@ internal partial class LiveNavTestPage
             // action, or a non-list's in-place switch. They differ in whether the page's
             // editability moves, which is exactly what the caller is about to read, so picking
             // one would be a silent wrong answer.
+            //
+            // NO AL CAN REACH THIS TODAY (#3735), and it stays as the guard that keeps it that
+            // way. Both routes to a live client require an inventory that also states a
+            // PageType: LiveOverRecord needs a source table, which TestPageFactory.TryBuild
+            // resolves through the same two lookups TryGetAnyPageType reads, and LiveRecordless
+            // needs IsPageShapeKnown outright — so a page in neither gets MockITestPage, whose
+            // View()/Edit() never enter this method, and CreateTestPageClient's `[warn] …
+            // navigation mock` line is the user-visible signal instead. What would widen the
+            // inventory is a runtime-package metadata reader (#3537); BC's captured emitter
+            // metadata cannot, because it exists only for objects this run compiles.
+            // Pinned by AlRunner.Tests/LiveTestPagePageTypeKnownTests.cs.
             case BuiltInPageModeShape.RefuseUnknownPageType:
                 throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     $"TestPage.{actionName}() on page {_pageId}",
