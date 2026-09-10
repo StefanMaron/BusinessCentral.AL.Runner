@@ -437,6 +437,187 @@ public sealed class CoverageMultiObjectFileTests : IDisposable
     }
 
     /// <summary>
+    /// #3841 review: the end-to-end fact proves a JOIN — a statement landed under the right
+    /// file — and a coordinated but wrong implementation returning the same invented label
+    /// from both halves would satisfy it. This pins the map side of the contract exactly:
+    /// the KEY, label and id together, for each extension kind.
+    ///
+    /// The labels are not free. They have to equal what AlCallStackCapture's prefix map
+    /// produces from the emitted type name, and both match the spelling
+    /// RecordPatches.AlSourceParser has always used.
+    /// </summary>
+    [SkippableFact]
+    public void Build_ExtensionObjects_AreKeyedByKindAndTheirOwnId()
+    {
+        RequireEngine();
+        File.WriteAllText(Path.Combine(_root, "Exts.al"), """
+        table 63700 "P3833 Base"
+        {
+            fields { field(1; "Value"; Integer) { } }
+        }
+
+        tableextension 63701 "P3833 TExt" extends "P3833 Base"
+        {
+            procedure Doubled(): Integer
+            begin
+                exit(Value * 2);
+            end;
+        }
+
+        page 63720 "P3833 Base Page"
+        {
+            PageType = Card;
+            SourceTable = "P3833 Base";
+        }
+
+        pageextension 63721 "P3833 PExt" extends "P3833 Base Page"
+        {
+            procedure Tripled(): Integer
+            begin
+                exit(Rec.Value * 3);
+            end;
+        }
+
+        report 63740 "P3833 Base Report"
+        {
+            dataset { dataitem(Loop; Integer) { column(Number; Number) { } } }
+        }
+
+        reportextension 63741 "P3833 RExt" extends "P3833 Base Report"
+        {
+            procedure Quadrupled(X: Integer): Integer
+            begin
+                exit(X * 4);
+            end;
+        }
+        """);
+
+        var map = AlCoverageSourceMap.Build(new[] { _root }, relativeTo: _root);
+
+        // The extension's OWN id, not the base object's, and its own kind label.
+        Assert.True(map.ContainsKey(("TableExtension", 63701)));
+        Assert.True(map.ContainsKey(("PageExtension", 63721)));
+        Assert.True(map.ContainsKey(("ReportExtension", 63741)));
+        // The base objects keep their own entries; an extension does not displace them.
+        Assert.True(map.ContainsKey(("Table", 63700)));
+        Assert.True(map.ContainsKey(("Page", 63720)));
+        Assert.True(map.ContainsKey(("Report", 63740)));
+        // And an extension is NOT filed under the base object's kind or the base's id.
+        Assert.False(map.ContainsKey(("Table", 63701)));
+        Assert.False(map.ContainsKey(("TableExtension", 63700)));
+    }
+
+    /// <summary>
+    /// The parser half, against the emitted type NAMES measured on BC 28.1.49838.54169 —
+    /// `TableExtension63701+Doubled_Scope_750224019` and
+    /// `PageExtension63721+Tripled_Scope_1853489953`. Controls included: the base kinds must
+    /// still parse, `Record&lt;N&gt;` must still mean Table (it is the table-trigger wrapper),
+    /// and a versioned suffix must not defeat the digit run.
+    /// </summary>
+    [Theory]
+    [InlineData("TableExtension63701", "TableExtension", 63701)]
+    [InlineData("PageExtension63721", "PageExtension", 63721)]
+    [InlineData("ReportExtension63731_v2", "ReportExtension", 63731)]
+    [InlineData("Table63700", "Table", 63700)]
+    [InlineData("Record63700", "Table", 63700)]
+    [InlineData("Page63720", "Page", 63720)]
+    [InlineData("Codeunit63710", "CodeUnit", 63710)]
+    public void ParseObjectTypeAndId_ExtensionAndBaseNames_ParseToTheirOwnKindAndId(
+        string typeName, string expectedLabel, int expectedId)
+    {
+        var (label, id) = AlCallStackCapture.ParseObjectTypeAndIdForTests(typeName);
+        Assert.Equal(expectedLabel, label);
+        Assert.Equal(expectedId, id);
+    }
+
+    /// <summary>
+    /// #3833: an EXTENSION object's executable statements were invisible. `LabelOf` maps seven
+    /// top-level kinds and no extension, and AlCallStackCapture's prefix map has no extension
+    /// entry either — measured, BC emits `TableExtension63701+Doubled_Scope_...`, which parsed
+    /// to ("?", 0) and was dropped before the map was ever consulted.
+    ///
+    /// The statement runs: the test calls the extension's procedure and asserts its result, so
+    /// a report that omits it is omitting executed code. Both halves are asserted, because
+    /// fixing only the parser leaves the (label, id) unmapped and fixing only LabelOf leaves it
+    /// unparsed.
+    /// </summary>
+    [SkippableFact]
+    public void Coverage_TableExtensionProcedure_IsReportedOnItsOwnFile()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Path.Combine(_root, "bundle-tableext");
+        Directory.CreateDirectory(bundle);
+        File.WriteAllText(Path.Combine(bundle, "app.json"), """
+        {
+          "id": "5a3f0b11-3833-4a0d-800d-000000003833",
+          "name": "CMOF TableExt Probe",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 63700, "to": 63739 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(bundle, "Base.Table.al"), """
+        table 63700 "P3833 Base"
+        {
+            DataClassification = SystemMetadata;
+            fields
+            {
+                field(1; "Code"; Code[20]) { }
+                field(2; "Value"; Integer) { }
+            }
+            keys { key(PK; "Code") { Clustered = true; } }
+        }
+        """);
+        // The executed statement is `exit(Value * 2);` on line 10 of this file.
+        File.WriteAllText(Path.Combine(bundle, "Ext.TableExt.al"), """
+        tableextension 63701 "P3833 Ext" extends "P3833 Base"
+        {
+            fields
+            {
+                field(50; "Extra"; Integer) { }
+            }
+
+            procedure Doubled(): Integer
+            begin
+                exit(Value * 2);
+            end;
+        }
+        """);
+        File.WriteAllText(Path.Combine(bundle, "T.Codeunit.al"), """
+        codeunit 63710 "P3833 Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure ExtensionProcedureRuns()
+            var
+                R: Record "P3833 Base";
+            begin
+                R.Init();
+                R.Code := 'A';
+                R.Value := 21;
+                if R.Doubled() <> 42 then
+                    Error('Doubled');
+            end;
+        }
+        """);
+
+        var coveragePath = Path.Combine(_root, "cobertura-tableext.xml");
+        var (output, exit) = Spawn(bundle, "--coverage", $"--coverage-out \"{coveragePath}\"");
+
+        Assert.Equal(0, exit);
+        Assert.True(File.Exists(coveragePath), $"cobertura.xml was not written.\n{output}");
+        var doc = XDocument.Load(coveragePath);
+
+        var lines = LinesOf(ClassFor(doc, "Ext.TableExt.al"));
+        Assert.Equal(new[] { 10 }, lines.Keys.OrderBy(k => k).ToArray());
+        Assert.Equal(1, lines[10]);
+    }
+
+    /// <summary>
     /// #3822, the shape that stresses both halves of the origin rule at once: a REAL preamble
     /// (header comment, namespace, using) AND an unmapped object in front of the mapped one.
     ///
