@@ -41,6 +41,17 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+sys.path.insert(0, HERE)
+try:
+    import agent_stdio as _stdio
+except Exception:  # pragma: no cover - a copy detached from its sibling module
+    _stdio = None
+if _stdio is not None:
+    # Before any print: stdout is built from the console codec, and this tool
+    # prints PR titles, which carry whatever an author wrote (#3589).
+    _stdio.enable_utf8_stdio()
+
 REPO = "StefanMaron/BusinessCentral.AL.Runner"
 STATE_MODULE = os.path.abspath(
     os.path.join(HERE, "..", ".github", "scripts", "corpus_pr_state.py"))

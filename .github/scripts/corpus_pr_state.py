@@ -181,6 +181,26 @@ def _linkage(mode: str, body: str, script: str) -> tuple[str | None, str]:
     return p.stdout, ""
 
 
+def marker_lines_only(body: str) -> str:
+    """`body` reduced to the lines that could possibly carry the marker.
+
+    A PREFILTER, not a parser. Both extraction modes of check_corpus_linkage.sh
+    anchor on `^[[:space:]]*Corpus-PR:`, so every line either of them can match
+    contains `corpus-pr:` case-insensitively; keeping exactly those lines cannot
+    change either mode's output, including the counts the refusal below compares.
+    Lines it keeps that the script then ignores (a mid-sentence mention, say) are
+    harmless -- a superset is safe in the direction that matters.
+
+    It exists because that script spawns two `grep` processes PER LINE, which is
+    milliseconds on the Linux runner and about 0.4s each on Windows: measured
+    2026-09-10 on this box, a 200-line body took 87.7s to parse and the same body
+    reduced to its one marker line took 1.2s. Without this, tools/ci-wait.py
+    would take a minute to print one line beside a verdict it answers in a
+    second, and the sweep over 68 bodies would take hours.
+    """
+    return "\n".join(l for l in body.splitlines() if "corpus-pr:" in l.lower())
+
+
 def corpus_pr_numbers(body: str, script: str | None = None
                       ) -> tuple[list[int] | None, str]:
     """(the corpus PR numbers this body declares, reason) -- None means REFUSED.
@@ -190,6 +210,7 @@ def corpus_pr_numbers(body: str, script: str | None = None
     back looking like "no declaration", because that is a pass.
     """
     script = script or LINKAGE
+    body = marker_lines_only(body)
     urls_out, why = _linkage("--print-corpus-pr-urls", body, script)
     if urls_out is None:
         return None, why

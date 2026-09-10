@@ -155,6 +155,47 @@ _nums, _why = cps.corpus_pr_numbers(GOOD, script=os.path.join(HERE, "no_such_scr
 check("with check_corpus_linkage.sh missing it refuses -- proof the regex is not duplicated here",
       _nums is None and "check_corpus_linkage.sh" in (_why or ""), f"{_nums!r} {_why!r}")
 
+# --- the prefilter, which must change no answer ------------------------------
+#
+# check_corpus_linkage.sh spawns two greps PER LINE, so a real PR body is parsed
+# in a minute on Windows and in milliseconds on the runner. Reducing the body to
+# its marker lines is what makes ci-wait.py's line cheap -- and it is only safe
+# because both extraction modes anchor on the marker at line start, so a line
+# neither can match cannot change either answer.
+FILLER = "\n".join(f"some prose line {i}" for i in range(30))
+
+check("the prefilter keeps a marker line",
+      cps.marker_lines_only(FILLER + "\n" + GOOD + "\n" + FILLER) == GOOD,
+      repr(cps.marker_lines_only(FILLER + "\n" + GOOD)))
+check("...case-insensitively",
+      cps.marker_lines_only("corpus-pr: x") == "corpus-pr: x",
+      repr(cps.marker_lines_only("corpus-pr: x")))
+check("...and keeps a MALFORMED marker line, so the refusal below still fires",
+      "228" in cps.marker_lines_only(
+          FILLER + "\nCorpus-PR: [#228](https://x/pull/228)\n"),
+      repr(cps.marker_lines_only(FILLER + "\nCorpus-PR: [#228](https://x/pull/228)")))
+check("...and drops a body with nothing to parse",
+      cps.marker_lines_only(FILLER + "\nCorpus-NA: tooling only\n") == "",
+      repr(cps.marker_lines_only(FILLER)))
+
+_padded, _why = cps.corpus_pr_numbers(FILLER + "\n" + GOOD + "\n" + FILLER + "\n")
+check("a marker buried in 60 lines of prose reads exactly as the compact body does",
+      _padded == [226] and not _why, f"{_padded!r} {_why!r}")
+
+# A mid-sentence mention is one of the six near-misses the gate refuses. It
+# survives the prefilter -- a superset -- and the script still does not count it,
+# so the well-formed line beside it is the only declaration.
+_mixed, _why = cps.corpus_pr_numbers(
+    "The `Corpus-PR:` for this is #226, see below.\n" + GOOD + "\n")
+check("a mid-sentence 'Corpus-PR:' mention beside a good line does not refuse the body",
+      _mixed == [226] and not _why, f"{_mixed!r} {_why!r}")
+
+_bad, _why = cps.corpus_pr_numbers(
+    FILLER + "\nCorpus-PR: [#228](https://github.com/StefanMaron/"
+    "BusinessCentral.AL.Language.Tests/pull/228)\n" + FILLER)
+check("a malformed line buried in prose still refuses",
+      _bad is None and _why, f"{_bad!r} {_why!r}")
+
 # ===========================================================================
 # The whole answer for a body, and the line it prints
 # ===========================================================================
