@@ -24,6 +24,7 @@ no per-worktree stash.
 | Set aside changes you will bring back | `git diff HEAD > /tmp/mine.patch`, then `git apply /tmp/mine.patch`. `git diff HEAD`, not `git diff` — plain `git diff` captures **nothing** once the change is staged. Neither captures untracked files; copy those by hand. |
 | Keep work safe across a crash or reboot | Commit it on your own branch; nobody else can pop it. |
 | Move to another branch with changes in hand | You should not need to — one agent, one worktree, one branch. |
+| Check whether your tree is clean, before a rebase or a push | `git status --porcelain` — empty output means clean. **Not the stash-listing command**, which is the pre-rebase reflex the hook refuses: it reports on the SHARED stack rather than on your worktree, so it is both blocked and the wrong instrument for the question. |
 
 Committing early is the preferred answer to all of these.
 
