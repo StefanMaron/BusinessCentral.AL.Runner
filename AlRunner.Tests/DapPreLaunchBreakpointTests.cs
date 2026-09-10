@@ -10,8 +10,10 @@
 // apart from "that line has no statement".
 //
 // The fix defers RESOLUTION rather than the `initialized` event: whichever request needs the
-// map first waits for the compile that is already running and builds it. That keeps both
-// client orderings working, which emitting `initialized` late would not.
+// map first waits for the compile that is already running and builds it. Deferring the event
+// would also work — compilation needs nothing from the client — but it holds the client's
+// WHOLE configuration sequence behind the compile rather than only the requests that need a
+// map. RunDapLoop's EnsureSourceMap carries the same note; keep the two in step.
 //
 // These facts drive a real DAP session against Fixtures/DapTwoObjects — the same fixture and
 // line numbers DapMultiObjectFileTests pins — with launch and setBreakpoints swapped.
@@ -220,20 +222,28 @@ public class DapPreLaunchBreakpointTests
             // an assertion that SOME message is present.
             Assert.DoesNotContain("no executable AL statement", message, StringComparison.OrdinalIgnoreCase);
 
-            // The diagnostic is CACHED, and a later launch must report it rather than
-            // succeeding against an empty map it now believes is resolved (#3845 review).
-            // This is the assertion that pins the latch: EnsureSourceMap marks itself
-            // resolved on the way out, so a version that recorded no reason would leave a
-            // green launch behind a bundle that cannot run.
+            // A later launch must report the same failure rather than succeeding against an
+            // empty map it now believes is resolved.
+            //
+            // What this does NOT cover, stated because an earlier version of this comment
+            // claimed it did (#3845 round-two review): a compile DIAGNOSTIC takes the
+            // ordinary branch of EnsureSourceMap and never enters its catch, so this fact
+            // would pass against the earlier implementation that latched before the work.
+            // The catch is for a bundleRunTask that FAULTS or an AlCoverageSourceMap.Build
+            // that throws, and proving that needs a seam to force one — #3846.
             var launchSeq = dap.SendRequest("launch", new { });
             var launchResp = await dap.ReadUntilResponseAsync(launchSeq, timeout: TimeSpan.FromSeconds(120));
             Assert.False(launchResp.GetProperty("success").GetBoolean(),
                 $"launch must fail on a bundle that does not compile: {launchResp}");
             var launchMsg = launchResp.TryGetProperty("message", out var lm) ? lm.GetString() ?? "" : "";
-            Assert.NotEqual("", launchMsg);
+            // The REAL compiler diagnostic, in both answers — not a generic "compile failed",
+            // which every other assertion here would accept (#3845 round-two review).
+            Assert.Contains("AL0134", launchMsg, StringComparison.Ordinal);
+            Assert.Contains("NoSuchType", launchMsg, StringComparison.Ordinal);
             // launch reports the diagnostic bare; the breakpoint message wraps the same
-            // string. Asserting containment ties the two answers to one cached value rather
-            // than to two independently-produced ones.
+            // string. Containment ties the two answers together — it does not by itself prove
+            // one cached value, since recomputing the same deterministic diagnostic would
+            // satisfy it too.
             Assert.Contains(launchMsg, message, StringComparison.Ordinal);
         }
         finally
