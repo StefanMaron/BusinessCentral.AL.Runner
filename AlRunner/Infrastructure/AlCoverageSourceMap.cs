@@ -139,8 +139,10 @@ public static class AlCoverageSourceMap
             var root = tree.GetCompilationUnitRoot();
 
             var objects = new List<(string Label, int Id, int Start)>();
+            var allStarts = new List<int>();
             foreach (var obj in root.Objects)
             {
+                allStarts.Add(tree.GetLineSpan(obj.FullSpan).StartLinePosition.Line);
                 var label = LabelOf(obj);
                 if (label == null) continue;
                 if (obj is not NavSyntax.ApplicationObjectSyntax ao || ao.ObjectId?.Value.Value is not int id) continue;
@@ -150,7 +152,12 @@ public static class AlCoverageSourceMap
             // object from its own text but keeps the file's preamble in front of each of them,
             // so a namespace/using header shifts the later objects by its length and the first
             // object by nothing (#3713, CoverageMultiObjectFileTests.Build_ObjectsAfterAFileHeader_*).
-            var firstStart = objects.Count > 0 ? objects.Min(o => o.Start) : 0;
+            // firstStart is the FILE PREAMBLE's length: BC's text for every object is
+            // [preamble][that object], while the parser's FullSpan starts after the preamble.
+            // Measured over EVERY object, not just the mapped ones (#3822) — an unmapped
+            // object in front is not preamble, and taking the first MAPPED object's start
+            // subtracts it as though it were.
+            var firstStart = allStarts.Count > 0 ? allStarts.Min() : 0;
             result = objects.Select(o => new ParsedObject(o.Label, o.Id, o.Start - firstStart)).ToList();
         }
         catch (Exception ex)

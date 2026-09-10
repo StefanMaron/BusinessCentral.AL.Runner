@@ -332,6 +332,77 @@ public sealed class CoverageMultiObjectFileTests : IDisposable
     }
 
     /// <summary>
+    /// #3822: the origin is measured from the first SUPPORTED object, and LabelOf maps only
+    /// seven top-level kinds. An `interface` is not one of them, so a file that opens with one
+    /// leaves the following codeunit as the first entry in the parsed list and gives it offset
+    /// 0 — while BC, which excludes other OBJECTS from an object's text but keeps the file
+    /// preamble, would have measured it from after the interface.
+    ///
+    /// The executed statement sits on file line 10. If the offset is wrong the report says 5.
+    /// </summary>
+    [SkippableFact]
+    public void Coverage_FileOpeningWithAnUnmappedObject_ReportsFileLines()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Path.Combine(_root, "bundle-unmapped-first");
+        Directory.CreateDirectory(bundle);
+        File.WriteAllText(Path.Combine(bundle, "app.json"), """
+        {
+          "id": "5a3f0b11-3822-4a0a-800a-000000003822",
+          "name": "CMOF Unmapped First Probe",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 63670, "to": 63689 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(bundle, "Two.Codeunit.al"), string.Join("\n", new[]
+        {
+            "interface \"Edge Iface\"",        // 1  NOT mapped by LabelOf
+            "{",                               // 2
+            "    procedure Ping(): Integer;",  // 3
+            "}",                               // 4
+            "",                                // 5
+            "codeunit 63670 \"Edge D\"",       // 6
+            "{",                               // 7
+            "    procedure D(): Integer",      // 8
+            "    begin",                       // 9
+            "        exit(4);",                // 10  called once
+            "    end;",                        // 11
+            "}",                               // 12
+            "",
+        }));
+        File.WriteAllText(Path.Combine(bundle, "T.Codeunit.al"), """
+        codeunit 63680 "Edge Unmapped Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure CallsD()
+            var
+                D: Codeunit "Edge D";
+            begin
+                if D.D() <> 4 then
+                    Error('D');
+            end;
+        }
+        """);
+
+        var coveragePath = Path.Combine(_root, "cobertura-unmapped.xml");
+        var (output, exit) = Spawn(bundle, "--coverage", $"--coverage-out \"{coveragePath}\"");
+
+        Assert.Equal(0, exit);
+        Assert.True(File.Exists(coveragePath), $"cobertura.xml was not written.\n{output}");
+        var doc = XDocument.Load(coveragePath);
+        var lines = LinesOf(ClassFor(doc, "Two.Codeunit.al"));
+
+        Assert.Equal(new[] { 10 }, lines.Keys.OrderBy(k => k).ToArray());
+        Assert.Equal(1, lines[10]);
+    }
+
+    /// <summary>
     /// Every shape that could move the origin, in one file: a UTF-8 BOM, CRLF line endings, two
     /// header comment lines, a file-scoped `namespace`, a `using`, a comment between objects, an
     /// indented declaration keyword, and a third object with no blank line before it. The
