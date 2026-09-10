@@ -850,8 +850,9 @@ than a case to handle.
 
 ### What the query comparison found
 
-7 queries, **616 differences**, of which 581 are the seven already-declared `TranslationKey.*`
-members. The real remainder is **35 differences across 12 members**.
+7 queries, **616 differences**, of which 553 are the seven already-declared `TranslationKey.*`
+members — they match on signature, so a query carries them like any other object. The real
+remainder is **63 differences across 12 members**.
 
 **Every structural member agrees exactly** — zero differences on `MetaQueryColumn.*`,
 `MetaQueryDataItem.*` and `MetaQueryOrderBy.*`, including every compiler-assigned column id,
@@ -917,9 +918,11 @@ refuse.
 
 ### What the xmlport comparison found
 
-4 xmlports, **306 differences across 39 members**. Two separable parts:
+4 xmlports, **322 differences across 43 members**, of which 296 are declared by entries this
+step added — the rest were already covered by the `TranslationKey.*` and `MetaRuntimeInfo`
+entries, which match on signature across every object kind. Two separable parts:
 
-**182 of them are one finding under two signatures.** `MetaXmlPort.Nodes.<presence>` and
+**182 of the 322 are one finding under two signatures.** `MetaXmlPort.Nodes.<presence>` and
 `#nodes.<presence>`, 91 each: every `<Node>` element BC emits across the four xmlports is absent.
 SymbolReference.json states an xmlport's `Id`, `Name`, `Properties` and `Variables` and **no node
 tree at all** — measured, not inferred. Nine further members are computed *from* the nodes and go
