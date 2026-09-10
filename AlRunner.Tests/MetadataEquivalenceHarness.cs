@@ -322,20 +322,50 @@ internal static class MetadataEquivalenceHarness
     /// </summary>
     private static readonly MetadataObjectDiffOptions PageDiffOptions = new()
     {
-        PairByIdMembers = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "MetaTable.Fields",
-            "ContentDefinition.Containers",
-            "ControlContainerDefinition.Controls",
-            "ControlGroupDefinition.Controls",
-            "RepeaterDefinition.Controls",
-            "GridLayoutDefinition.Controls",
-            "ColumnLayoutDefinition.Controls",
-            "PageDefinition.ActionContainers",
-            "ActionContainerDefinition.Actions",
-            "ActionGroupDefinition.Actions",
-        },
+        PairByIdMembers = PageIdPairedMembers(),
     };
+
+    /// <summary>
+    /// Every spelling of a page collection whose elements carry an <c>ID</c>.
+    ///
+    /// THREE spellings per member, and all three are needed. BC's page types implement their
+    /// interfaces EXPLICITLY and back each collection with a field, so the differ walks one
+    /// collection three times and reports it under three different signatures:
+    ///
+    ///     ControlContainerDefinition.Controls
+    ///     ControlContainerDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaControlContainerDefinition.Controls
+    ///     ControlContainerDefinition.#controlsField
+    ///
+    /// PairByIdMembers matches on the signature, so listing only the plain one leaves the other
+    /// two positionally paired — which is exactly the state that produced the 12 fabricated
+    /// 'InputMessagePart vs LogsPart' rows on BC 28.1.49838.53910, all of them on the
+    /// interface-qualified path (#3782).
+    ///
+    /// Deliberately NOT here: ContentDefinition.Containers and the container types themselves.
+    /// Measured on the same build — ControlContainerDefinition and ContentDefinition expose no
+    /// ID property at all, so pairing would fall back to position anyway, and listing them
+    /// would assert an identity BC does not give them.
+    /// </summary>
+    private static IReadOnlySet<string> PageIdPairedMembers()
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal) { "MetaTable.Fields" };
+        void Add(string declaringType, string iface, string member, string field)
+        {
+            set.Add($"{declaringType}.{member}");
+            set.Add($"{declaringType}.Microsoft.Dynamics.Nav.Types.Metadata.{iface}.{member}");
+            set.Add($"{declaringType}.{field}");
+        }
+
+        Add("ControlContainerDefinition", "IMetaControlContainerDefinition", "Controls", "#controlsField");
+        Add("ControlGroupDefinition", "IMetaControlGroupDefinition", "Controls", "#controlsField");
+        Add("RepeaterDefinition", "IMetaRepeaterDefinition", "Controls", "#controlsField");
+        Add("GridLayoutDefinition", "IMetaGridLayoutDefinition", "Controls", "#controlsField");
+        Add("ColumnLayoutDefinition", "IMetaColumnLayoutDefinition", "Controls", "#controlsField");
+        Add("PageDefinition", "IMetaPageDefinition", "ActionContainers", "#actionContainersField");
+        Add("ActionContainerDefinition", "IMetaActionContainerDefinition", "Actions", "#actionsField");
+        Add("ActionGroupDefinition", "IMetaActionGroupDefinition", "Actions", "#actionsField");
+        return set;
+    }
 
     /// <summary>
     /// A reflected call reports the real fault as InnerException; the outer
