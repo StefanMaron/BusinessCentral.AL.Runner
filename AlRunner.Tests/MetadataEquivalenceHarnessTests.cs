@@ -174,9 +174,9 @@ public sealed class MetadataEquivalenceHarnessTests
         // programme finishes, which is the one outcome it must not punish.
         string[] stillUncompared =
         {
-            // step 3..8, in the order issue #3782's comment sets.
-            "Query", "XmlPort", "Report", "PermissionSet", "Enum",
-            "MetadataRuntimeDeltas",
+            // step 5..8, in the order issue #3782's comment sets. CodeUnit left this list
+            // in step 2, Query and XmlPort in steps 3 and 4.
+            "Report", "PermissionSet", "Enum", "MetadataRuntimeDeltas",
         };
 
         foreach (var report in RunAll())
@@ -203,6 +203,13 @@ public sealed class MetadataEquivalenceHarnessTests
             Assert.Contains("MetaTable", report.KindsCompared);
             Assert.Contains("PageDefinition", report.KindsCompared);
             Assert.Contains("CodeUnit", report.KindsCompared);
+            // Only System Application carries Query or XmlPort, so these are asserted where
+            // they exist rather than unconditionally — a bundle without them (Business
+            // Foundation) is not a regression. MetaTable, PageDefinition and CodeUnit above
+            // are in every bundle, which is why they are asserted flat.
+            foreach (var kind in new[] { "Query", "XmlPort" })
+                if (report.Bundle.Census.ContainsKey(kind))
+                    Assert.Contains(kind, report.KindsCompared);
 
             foreach (var kind in stillUncompared.Where(k => report.Bundle.Census.ContainsKey(k)))
                 Assert.Contains(kind, report.KindsNotCompared);
@@ -259,6 +266,89 @@ public sealed class MetadataEquivalenceHarnessTests
             Assert.True(pageDifferences > 0 || report.ObjectsCompared >= declared,
                 $"{report.Bundle.Label}: {declared} PageDefinition(s) in the bundle and no page " +
                 "was compared. " + report.Summary);
+        }
+    }
+
+    [SkippableFact]
+    public void Queries_and_xmlports_are_compared_in_the_numbers_the_bundle_declares()
+    {
+        // The step-3/4 non-vacuity claim. Both kinds are SMALL — 7 and 4 — which makes the
+        // failure this guards against cheap to hit and invisible without it: a comparison that
+        // quietly compared none of them leaves every other test in this file green, because
+        // they all measure DIFFERENCES and zero objects produce zero of them.
+        //
+        // Asserted as an EQUALITY against the bundle's own census, not a floor, because unlike
+        // pages every one of these 11 objects currently produces differences. A kind that
+        // starts agreeing exactly would fail here and should: that is a finding to record, and
+        // the assertion below is the thing to change in the same commit.
+        foreach (var report in RunAll())
+            foreach (var kind in new[] { "Query", "XmlPort" })
+            {
+                // Business Foundation carries neither, and that is not a regression.
+                if (!report.Bundle.Census.TryGetValue(kind, out var declared)) continue;
+                Assert.True(declared > 0, $"{report.Bundle.Label}: census lists {kind} with 0.");
+
+                var prefix = kind == "Query" ? "Query " : "XmlPort ";
+                var withDifferences = report.Differences
+                    .Where(d => d.ObjectKey.StartsWith(prefix, StringComparison.Ordinal))
+                    .Select(d => d.ObjectKey).Distinct().Count();
+
+                Assert.True(withDifferences == declared,
+                    $"{report.Bundle.Label}: the bundle declares {declared} {kind}(s) and " +
+                    $"{withDifferences} produced differences. Every one of them differs today " +
+                    "(#3797 for XmlPort, #3798 for Query), so a lower number means either that " +
+                    "objects stopped being compared — which every other test here would report " +
+                    "as green — or that a derivation fix landed, in which case update this " +
+                    "assertion and the allowlist in the same change. " + report.Summary);
+            }
+    }
+
+    [SkippableFact]
+    public void The_query_structural_tree_still_agrees_with_BC_exactly()
+    {
+        // The GREEN half of step 3, and the claim most worth pinning: the runner's
+        // SymbolReference-derived MetaQuery reproduces BC's own column and dataitem tree
+        // member-for-member on all 7 queries. Every compiler-assigned column id, FieldNo,
+        // ColumnType, MethodType, QueryColumnIndex, DataItemLinkType and DataItemTable.
+        //
+        // Not decoration. Those ids are baked into precompiled callers — BcAppSymbolCache's
+        // QueryColumnSymbol says NavQuery.ValidateExpectedType and GetColumnByNo are handed them
+        // verbatim — so a regression here is an AL-visible wrong answer, and it would otherwise
+        // arrive as an undeclared allowlist member with nothing saying which derivation broke.
+        //
+        // MetaQueryDataItemLink.LinkOperator is deliberately excluded: BC states '=' and the
+        // runner leaves it null on all 4 links, which is declared on #3798. Listing it here
+        // would make this test fail today rather than pin what already holds.
+        foreach (var report in RunAll())
+        {
+            if (!report.Bundle.Census.ContainsKey("Query")) continue;
+
+            var structural = report.Differences
+                .Where(d => d.ObjectKey.StartsWith("Query ", StringComparison.Ordinal))
+                .Where(d => d.Signature.StartsWith("MetaQueryColumn.", StringComparison.Ordinal)
+                            || d.Signature.StartsWith("MetaQueryDataItem.", StringComparison.Ordinal)
+                            || d.Signature.StartsWith("MetaQueryOrderBy.", StringComparison.Ordinal)
+                            || (d.Signature.StartsWith("MetaQueryDataItemLink.", StringComparison.Ordinal)
+                                && d.Signature != "MetaQueryDataItemLink.LinkOperator"))
+                .ToArray();
+
+            Assert.True(structural.Length == 0,
+                $"{report.Bundle.Label}: the query structural tree agreed with BC exactly when " +
+                $"#3782 step 3 measured it, so any difference here is a regression in " +
+                $"RecordPatches.NclMetaQueryBuilder's derivation. {structural.Length} " +
+                $"difference(s), first {Math.Min(5, structural.Length)}:" + Environment.NewLine +
+                string.Join(Environment.NewLine, structural.Take(5).Select(d => "  " + d)));
+
+            // Non-vacuity: the columns must actually have been WALKED. Zero differences over
+            // zero compared members is how this would pass having checked nothing — the exact
+            // shape MetaPageDefinition produced in step 1.
+            var queryObjects = report.Differences
+                .Where(d => d.ObjectKey.StartsWith("Query ", StringComparison.Ordinal))
+                .Select(d => d.ObjectKey).Distinct().Count();
+            Assert.True(queryObjects == report.Bundle.Census["Query"],
+                $"{report.Bundle.Label}: {queryObjects} query object(s) produced any difference " +
+                $"at all, against {report.Bundle.Census["Query"]} in the census — so this test's " +
+                "silence is about queries that were never compared, not about agreement.");
         }
     }
 

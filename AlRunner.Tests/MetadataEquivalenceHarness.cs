@@ -111,7 +111,8 @@ internal static class MetadataEquivalenceHarness
     /// #3782 is the programme that empties the NOT-compared list, one kind per pull request.
     /// The order and remaining kinds are on that issue.
     /// </summary>
-    internal static readonly string[] ComparedKinds = { "CodeUnit", "MetaTable", "PageDefinition" };
+    internal static readonly string[] ComparedKinds =
+        { "CodeUnit", "MetaTable", "PageDefinition", "Query", "XmlPort" };
 
     public static IReadOnlyList<GroundTruthBundle> LoadBundles(string root)
     {
@@ -218,6 +219,48 @@ internal static class MetadataEquivalenceHarness
                 "comparison would become a hand-written XML walk against the runner — two " +
                 "derivations, no oracle.");
 
+        // BC's own reader for a Query document: a CONSTRUCTOR taking the two app-group ids,
+        // MetaQuery(XmlNode, int metadataAppGroupId, int languageAppGroupId).
+        //
+        // Proven to parse rather than assumed to, per step 1's finding. Measured on BC
+        // 28.1.49838.53910 against the emitter's own Query 774 "Users in Plans", it answers
+        // Id=774, Name="Users in Plans", QueryType=Normal, InherentPermissions=Execute and
+        // DataItems[2]. MetadataEquivalenceQueryXmlPortOracleTests pins that it reads the
+        // document AND that it discriminates between two different ones.
+        var queryType =
+            Type.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaQuery, Microsoft.Dynamics.Nav.Types")
+            ?? throw new InvalidOperationException("MetaQuery is not reachable.");
+        var queryFromXml = queryType.GetConstructor(new[] { typeof(XmlNode), typeof(int), typeof(int) })
+            ?? throw new InvalidOperationException(
+                "MetaQuery has no (XmlNode, int, int) constructor. Without it there is no way to " +
+                "read BC's emitted Query document back into BC's own object model, and the " +
+                "comparison would become a hand-written XML walk against the runner — two " +
+                "derivations, no oracle.");
+
+        // BC's own reader for an XmlPort document takes an XmlDocument, not an XmlNode, and two
+        // trailing DELEGATES which are both optional: MetaXmlPort(XmlDocument, CreateRequestForm,
+        // int, int, RemoveItemsOnPageBasedOnLicenseAndApplicationArea). Passing null for both is
+        // what the ctor's own body expects — it guards the only use with
+        // `if (createRequestForm != null && val != null)`, so a null simply leaves
+        // RequestFormMetadata unbuilt on BOTH sides and cannot skew the comparison.
+        //
+        // This one cannot silently ignore a document the way MetaPageDefinition did: its body is
+        // a switch over the uppercased child element name that THROWS ArgumentException on any
+        // name it does not know. Measured on BC 28.1.49838.53910 against XmlPort 9001, it
+        // answers Id=9001, Name="Export/Import Security Groups", Direction=Both, Encoding=UTF16
+        // and Nodes[9].
+        var xmlPortType =
+            Type.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaXmlPort, Microsoft.Dynamics.Nav.Types")
+            ?? throw new InvalidOperationException("MetaXmlPort is not reachable.");
+        var xmlPortFromXml = xmlPortType.GetConstructors()
+                .FirstOrDefault(c => c.GetParameters() is { Length: 5 } ps
+                                     && ps[0].ParameterType == typeof(XmlDocument))
+            ?? throw new InvalidOperationException(
+                "MetaXmlPort has no (XmlDocument, …) constructor. Without it there is no way to " +
+                "read BC's emitted XmlPort document back into BC's own object model, and the " +
+                "comparison would become a hand-written XML walk against the runner — two " +
+                "derivations, no oracle.");
+
         var differences = new List<MetadataDifference>();
         var unbuildable = new List<string>();
         int compared = 0;
@@ -263,6 +306,94 @@ internal static class MetadataEquivalenceHarness
                     var runnerDoc = new XmlDocument();
                     runnerDoc.LoadXml(runnerXml);
                     actual = codeunitFromXml.Invoke(new object?[] { runnerDoc.DocumentElement });
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner threw — {Describe(ex)}");
+                    continue;
+                }
+            }
+            else if (obj.Kind == "Query")
+            {
+                objectKey = $"Query {obj.Id}";
+                try
+                {
+                    expected = queryFromXml.Invoke(new object?[] { document.DocumentElement, 0, 0 });
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own MetaQuery " +
+                                    $"constructor threw — {Describe(ex)}");
+                    continue;
+                }
+                if (expected is null)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own MetaQuery " +
+                                    "constructor produced null");
+                    continue;
+                }
+
+                try
+                {
+                    // The runner's OWN MetaQuery design object, built from SymbolReference.json
+                    // — the same object NCLMetaQuery.CreateDynamicQuery consumes at runtime, so
+                    // this measures what AL actually gets. Not BC's captured document, which
+                    // TryBuildQueryMetadataEquivalenceDesign refuses outright: that route exists
+                    // for source-compiled queries (#3608) and would compare BC against BC here.
+                    //
+                    // No rendering step, unlike every other kind in this harness: both sides are
+                    // already Types.Metadata.MetaQuery.
+                    actual = RecordPatches.TryBuildQueryMetadataEquivalenceDesign(obj.Id);
+                    if (actual is null)
+                    {
+                        unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner built no " +
+                                        "MetaQuery design at all — this is #3499's null, the one " +
+                                        "AL reaches as a NullReferenceException inside BC's own " +
+                                        "ALSetFilter");
+                        continue;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner threw — {Describe(ex)}");
+                    continue;
+                }
+            }
+            else if (obj.Kind == "XmlPort")
+            {
+                objectKey = $"XmlPort {obj.Id}";
+                try
+                {
+                    expected = xmlPortFromXml.Invoke(new object?[] { document, null, 0, 0, null });
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own MetaXmlPort " +
+                                    $"constructor threw — {Describe(ex)}");
+                    continue;
+                }
+                if (expected is null)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own MetaXmlPort " +
+                                    "constructor produced null");
+                    continue;
+                }
+
+                try
+                {
+                    // The runner's derivation rendered as BC's document shape, then read back by
+                    // the SAME constructor — one type against itself. NOT AlXmlPortMetadataRegistry,
+                    // which holds BC's emit-captured schema and would compare BC against BC.
+                    var runnerXml = RecordPatches.TryBuildXmlPortMetadataEquivalenceXml(obj.Id);
+                    if (runnerXml is null)
+                    {
+                        unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner knows no " +
+                                        "xmlport with that id");
+                        continue;
+                    }
+                    var runnerDoc = new XmlDocument();
+                    runnerDoc.LoadXml(runnerXml);
+                    actual = xmlPortFromXml.Invoke(new object?[] { runnerDoc, null, 0, 0, null });
                 }
                 catch (Exception ex)
                 {
@@ -344,9 +475,12 @@ internal static class MetadataEquivalenceHarness
             }
 
             compared++;
-            differences.AddRange(obj.Kind == "PageDefinition"
-                ? MetadataObjectDiff.Compare(expected, actual, objectKey, PageDiffOptions)
-                : MetadataObjectDiff.Compare(expected, actual, objectKey));
+            differences.AddRange(obj.Kind switch
+            {
+                "PageDefinition" => MetadataObjectDiff.Compare(expected, actual, objectKey, PageDiffOptions),
+                "Query" => MetadataObjectDiff.Compare(expected, actual, objectKey, QueryDiffOptions),
+                _ => MetadataObjectDiff.Compare(expected, actual, objectKey),
+            });
         }
 
         var kindsPresent = bundle.Census.Keys.ToArray();
@@ -355,6 +489,45 @@ internal static class MetadataEquivalenceHarness
             kindsPresent.Where(k => ComparedKinds.Contains(k, StringComparer.Ordinal)).ToArray(),
             kindsPresent.Where(k => !ComparedKinds.Contains(k, StringComparer.Ordinal)).ToArray(),
             compared, unbuildable, differences);
+    }
+
+    /// <summary>
+    /// Query collections pair by the element's own Id, not by position, for the same
+    /// structural reason page controls do: the two sides legitimately differ in LENGTH, so
+    /// positional pairing turns one absent element into a cascade of fabricated
+    /// "A differs from B" rows on every element after it.
+    ///
+    /// <para>Measured on BC 28.1.49838.53910 before this option was passed — see the PR for
+    /// #3782 steps 3/4. The ids are BC-compiler-assigned and the runner uses them VERBATIM
+    /// (BcAppSymbolCache.QueryColumnSymbol's own comment says why: precompiled callers pass
+    /// them to NavQuery.ValidateExpectedType and GetColumnByNo), so pairing on them asserts an
+    /// identity BC itself relies on rather than one this harness invented.</para>
+    ///
+    /// <para>#Ordinal still fires when both sides hold the same id set, so a genuine reordering
+    /// is not hidden — MetadataObjectDiffTests.Id_paired_elements_still_report_a_reordering.</para>
+    ///
+    /// <para>Three spellings per member for the reason PageIdPairedMembers documents: BC backs
+    /// each collection with a field and the differ walks both, so a signature listed only in
+    /// its plain form leaves the field-backed path positionally paired.</para>
+    /// </summary>
+    private static readonly MetadataObjectDiffOptions QueryDiffOptions = new()
+    {
+        PairByIdMembers = QueryIdPairedMembers(),
+    };
+
+    private static IReadOnlySet<string> QueryIdPairedMembers()
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal) { "MetaTable.Fields" };
+        void Add(string declaringType, string member, string field)
+        {
+            set.Add($"{declaringType}.{member}");
+            set.Add($"{declaringType}.{field}");
+        }
+
+        Add("MetaQuery", "DataItems", "#dataItemsField");
+        Add("MetaQueryDataItem", "Columns", "#columnsField");
+        Add("MetaQueryDataItem", "Filters", "#filtersField");
+        return set;
     }
 
     /// <summary>
