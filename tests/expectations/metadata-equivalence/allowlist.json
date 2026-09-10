@@ -959,11 +959,6 @@
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
     {
-      "member": "SourceObjectDefinition.MultipleNewLinesSpecified",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 4 pages declare MultipleNewLines; BC marks the value explicitly specified and the runner writes the attribute only inside the SourceTable branch. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 3784
-    },
-    {
       "member": "MetaCodeunit.ALNamespace",
       "reason": "BC states the codeunit's AL namespace; the runner states null for every codeunit in a precompiled dependency. NOT a limit of the symbol file: SymbolReference.json carries objects in a nested Namespaces tree rather than the flat top-level Codeunits list, and the tree path a codeunit is reached through equals BC's ALNamespace attribute for 533 of 533 System Application codeunits (measured on BC 28.1.49838.53910 by unwrapping the nested .app and walking the tree). BcAppSymbolCache reads the objects out of that tree but does not retain the path it walked, so the value is derivable and simply not derived yet. Entry goes away when the derivation lands. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): every codeunit document carries ALNamespace on all three -- System Application 506/506, 533/533, 534/534. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that.",
       "issue": 3788,
