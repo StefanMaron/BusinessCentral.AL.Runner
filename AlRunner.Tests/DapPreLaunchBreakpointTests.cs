@@ -178,7 +178,9 @@ public class DapPreLaunchBreakpointTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var dir = Path.Combine(Path.GetTempPath(), "al-runner-dap-3821-" + Guid.NewGuid().ToString("N"));
+        // TestScratch, not Path.GetTempPath(): an unowned temp path is leaked permanently by a
+        // killed test host, and ScratchDirOwnershipGuardTests fails the build over one.
+        var dir = TestScratch.Dir("al-runner-dap-uncompilable");
         Directory.CreateDirectory(dir);
         try
         {
