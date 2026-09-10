@@ -137,6 +137,13 @@ NOT_A_MATRIX_CLAIM = [
     ("docs/limitations.md", "27.0 27.3 27.5 28.1 28.2 28.4",
      "the BC artifacts that happened to be cached on the machine that measured the "
      "install-seeding column check -- a historical observation, not the matrix"),
+    (".claude/rules/precompiled-dll-respect.md", "27.0 27.5 28.1 28.4",
+     "the artifact directories that happened to be provisioned on the machine that "
+     "checked whether TestPageClient.dll ships -- a historical observation of where the "
+     "DLL was found, not a claim that those are the matrix legs (#3799)"),
+    ("docs/incidents/precompiled-dll-respect.md", "27.0 27.5 28.1 28.4",
+     "the same historical observation as the rule it documents -- which artifact "
+     "directories were checked for TestPageClient.dll and Framework.UI.dll (#3799)"),
     ("docs/upstream-corpus-workflow.md", "27.1 27.2 27.4",
      "the 27 minors the corpus does NOT run; naming the gap is the point of the sentence"),
     ("docs/virtual-tables-allobj.md", "27.0 27.3 27.5 28.2 28.3",
