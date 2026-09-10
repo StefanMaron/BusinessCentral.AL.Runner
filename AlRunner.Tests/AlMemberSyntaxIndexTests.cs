@@ -391,7 +391,7 @@ table 60302 "Loop Trigger Fixture"
     {
         RequireEngine();
         var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo").Sites;
-        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredForTo).Sites);
+        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredForTo, instrumented: null, lineOffset: 0).Sites);
         Assert.Equal(new[] { 1 }, t.HeaderIds.Order().ToArray());
         Assert.Equal(new[] { 2 }, t.BodyIds.Order().ToArray());
         Assert.Equal(2, t.MarkerStatementId);
@@ -408,7 +408,7 @@ table 60302 "Loop Trigger Fixture"
     {
         RequireEngine();
         var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "WhileDo").Sites;
-        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredWhileDo).Sites);
+        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredWhileDo, instrumented: null, lineOffset: 0).Sites);
         Assert.Equal(new[] { 1 }, t.HeaderIds.Order().ToArray());
         Assert.Equal(new[] { 2 }, t.BodyIds.Order().ToArray());
         Assert.Equal(2, t.MarkerStatementId);
@@ -421,7 +421,7 @@ table 60302 "Loop Trigger Fixture"
     {
         RequireEngine();
         var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "RepeatUntil").Sites;
-        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredRepeatUntil).Sites);
+        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredRepeatUntil, instrumented: null, lineOffset: 0).Sites);
         Assert.Equal(new[] { 2 }, t.HeaderIds.Order().ToArray());
         Assert.Equal(new[] { 1 }, t.BodyIds.Order().ToArray());
         Assert.Equal(1, t.MarkerStatementId);
@@ -432,7 +432,7 @@ table 60302 "Loop Trigger Fixture"
     {
         RequireEngine();
         var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "Nested").Sites;
-        var table = AlLoopScopeTable.Build(sites, MeasuredNested);
+        var table = AlLoopScopeTable.Build(sites, MeasuredNested, instrumented: null, lineOffset: 0);
         Assert.Equal(2, table.Sites.Count);
         var outer = table.Sites[0];
         var inner = table.Sites[1];
@@ -453,7 +453,7 @@ table 60302 "Loop Trigger Fixture"
     {
         RequireEngine();
         var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapes2Source, "LoopShapes2.al"), "WhileFirst").Sites;
-        var table = AlLoopScopeTable.Build(sites, MeasuredWhileFirst);
+        var table = AlLoopScopeTable.Build(sites, MeasuredWhileFirst, instrumented: null, lineOffset: 0);
         var outer = table.Sites[0];
         Assert.Null(outer.MarkerStatementId);
         Assert.Equal(1, outer.MarkerNestedSiteIndex);
@@ -468,7 +468,7 @@ table 60302 "Loop Trigger Fixture"
     {
         RequireEngine();
         var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapes2Source, "LoopShapes2.al"), "IfFirst").Sites;
-        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredIfFirst).Sites);
+        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredIfFirst, instrumented: null, lineOffset: 0).Sites);
         Assert.Equal(new[] { 0 }, t.HeaderIds.Order().ToArray());
         Assert.Equal(new[] { 1, 2, 3 }, t.BodyIds.Order().ToArray());
         Assert.Equal(1, t.MarkerStatementId); // the `if` condition: fires once per iteration
@@ -480,7 +480,7 @@ table 60302 "Loop Trigger Fixture"
     {
         RequireEngine();
         var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapes2Source, "LoopShapes2.al"), "ForEachList").Sites;
-        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredForEachList).Sites);
+        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredForEachList, instrumented: null, lineOffset: 0).Sites);
         Assert.Equal(new[] { 2 }, t.HeaderIds.Order().ToArray());
         Assert.Equal(new[] { 3 }, t.BodyIds.Order().ToArray());
         Assert.Equal(3, t.MarkerStatementId);
@@ -492,7 +492,7 @@ table 60302 "Loop Trigger Fixture"
     {
         RequireEngine();
         var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ZeroIter").Sites;
-        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredZeroIter).Sites);
+        var t = Assert.Single(AlLoopScopeTable.Build(sites, MeasuredZeroIter, instrumented: null, lineOffset: 0).Sites);
         Assert.Equal(new[] { 0 }, t.HeaderIds.Order().ToArray());
         Assert.Equal(new[] { 1 }, t.BodyIds.Order().ToArray());
         Assert.Equal(1, t.MarkerStatementId);
@@ -607,7 +607,7 @@ codeunit 60315 WriteShapes
     {
         RequireEngine();
         var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo").Sites;
-        var table = AlLoopScopeTable.Build(sites, MeasuredForTo);
+        var table = AlLoopScopeTable.Build(sites, MeasuredForTo, instrumented: null, lineOffset: 0);
         // ids: 0 t := 0 | 1 for (header) | 2 body | 3 after
         Assert.Empty(table.LoopVariablesAssignedBefore(current: 2, previous: 1)); // first pass: header just ran
         Assert.Equal(new[] { "i" }, table.LoopVariablesAssignedBefore(current: 2, previous: 2).ToArray()); // pass 2+
@@ -620,7 +620,7 @@ codeunit 60315 WriteShapes
     {
         RequireEngine();
         var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapes2Source, "LoopShapes2.al"), "WhileFirst").Sites;
-        var table = AlLoopScopeTable.Build(sites, MeasuredWhileFirst);
+        var table = AlLoopScopeTable.Build(sites, MeasuredWhileFirst, instrumented: null, lineOffset: 0);
         // ids: 0 outer for | 1 while cond (inner header) | 2 inner body | 3 | 4 | 5 end
         // Outer pass 2 opens at the inner while's condition, previous = `s := s + 1` (4).
         Assert.Equal(new[] { "i" }, table.LoopVariablesAssignedBefore(current: 1, previous: 4).ToArray());
@@ -634,7 +634,7 @@ codeunit 60315 WriteShapes
     {
         RequireEngine();
         var m = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo");
-        var table = AlWriteSetTable.Build(m.Writes, MeasuredForTo);
+        var table = AlWriteSetTable.Build(m.Writes, MeasuredForTo, instrumented: null, lineOffset: 0);
         Assert.Equal(new[] { "t" }, table.TargetsOf(0).Order().ToArray()); // t := 0
         Assert.Empty(table.TargetsOf(1));                                   // for i := 1 to 3 do (see LoopVariablesAssignedBefore)
         Assert.Equal(new[] { "t" }, table.TargetsOf(2).Order().ToArray()); // t := t + i
@@ -648,7 +648,7 @@ codeunit 60315 WriteShapes
         RequireEngine();
         // WhileDo: id 1 is the condition `n > 0` (starts mid-line); no statement starts there.
         var m = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "WhileDo");
-        var table = AlWriteSetTable.Build(m.Writes, MeasuredWhileDo);
+        var table = AlWriteSetTable.Build(m.Writes, MeasuredWhileDo, instrumented: null, lineOffset: 0);
         Assert.Equal(new[] { "n" }, table.TargetsOf(0).Order().ToArray()); // n := 3
         Assert.Empty(table.TargetsOf(1));                                   // the condition
         Assert.Equal(new[] { "n" }, table.TargetsOf(2).Order().ToArray()); // n := n - 1
@@ -664,21 +664,32 @@ codeunit 60315 WriteShapes
     // AlSourceLocationMap.LineOffset, which AlCoverageTracker.TryResolveScope already hands
     // back and AlScopeSyntaxResolver dropped on the floor.
     //
-    // These pass the SAME member the facts above use, with the spans shifted down as BC
-    // would emit them for an object that does not start the file, plus the matching offset.
-    // Without it nothing matches: every id resolves to no targets and no loop site, and the
-    // run stays green while its iteration and write tables are empty.
+    // These pass the SAME member the facts above use, with the spans expressed in that
+    // object's own coordinates, plus the matching offset. Without it nothing matches: every
+    // id resolves to no targets and no loop site, and the run stays green while its
+    // iteration and write tables are empty.
+    //
+    // WHAT THEY PROVE, AND WHAT THEY DO NOT. The fixture computes `span - offset` and the
+    // code adds `offset` back, so these are unit tests of the CONVERSION: that the parameter
+    // is applied, that the sign is addition, and that omitting it matches nothing. They are
+    // circular as evidence about BC — they cannot show that BC emits a later object's spans
+    // with exactly this relationship, nor that AlSourceLocationMap.LineOffset is the right
+    // number. That evidence is the real-compiler end-to-end facts in
+    // ServerExecuteIterationsTests, which read file lines off the wire and never state a
+    // span at all. Both layers are needed and neither substitutes for the other.
     //
     // Deliberately NOT written by prepending an object to LoopShapesSource and reusing the
     // measured constants: BC's object text begins at the blank line before the declaration
     // once anything precedes it (#3822), so the real spans shift too and the reused numbers
     // would encode a fiction that passes against a wrong implementation.
 
-    /// <summary>Every measured span moved down by <paramref name="offset"/> lines, which is
-    /// what BC emits for the same member in an object that starts <paramref name="offset"/>
-    /// lines into its file. The parser's own positions do not move, because the source it
-    /// parses is unchanged.</summary>
-    private static long[] ShiftedBy(long[] spans, int offset) =>
+    /// <summary>
+    /// The same spans expressed in OBJECT-relative coordinates for an object whose text
+    /// begins <paramref name="offset"/> lines into its file — so the encoded line numbers go
+    /// DOWN by that much, even though the object itself sits further down the file. The
+    /// parser's own positions do not move, because the source it parses is unchanged.
+    /// </summary>
+    private static long[] ToObjectRelativeBySubtracting(long[] spans, int offset) =>
         spans.Select(x =>
         {
             var (l1, c1, l2, c2) = AlSourceSpanCodec.Decode(x);
@@ -691,7 +702,7 @@ codeunit 60315 WriteShapes
         RequireEngine();
         const int offset = 17;
         var m = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo");
-        var spans = ShiftedBy(MeasuredForTo, offset);
+        var spans = ToObjectRelativeBySubtracting(MeasuredForTo, offset);
 
         var table = AlWriteSetTable.Build(m.Writes, spans, instrumented: null, lineOffset: offset);
 
@@ -709,9 +720,9 @@ codeunit 60315 WriteShapes
     {
         RequireEngine();
         var m = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo");
-        var spans = ShiftedBy(MeasuredForTo, 17);
+        var spans = ToObjectRelativeBySubtracting(MeasuredForTo, 17);
 
-        var table = AlWriteSetTable.Build(m.Writes, spans);
+        var table = AlWriteSetTable.Build(m.Writes, spans, instrumented: null, lineOffset: 0);
 
         Assert.Empty(table.TargetsOf(0));
         Assert.Empty(table.TargetsOf(2));
@@ -724,11 +735,18 @@ codeunit 60315 WriteShapes
         RequireEngine();
         const int offset = 17;
         var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo").Sites;
-        var spans = ShiftedBy(MeasuredForTo, offset);
+        var spans = ToObjectRelativeBySubtracting(MeasuredForTo, offset);
 
         var table = AlLoopScopeTable.Build(sites, spans, instrumented: null, lineOffset: offset);
 
-        // The same ids the unshifted fact above asserts: 1 is the for header, 2 the body.
+        // The EXACT sets, not a derived answer. #3834 was a defect in which ids land where,
+        // and LoopVariablesAssignedBefore alone would have been satisfied by several wrong
+        // classifications. Identical to what the unshifted fixture produces at offset 0.
+        var site = Assert.Single(table.Sites);
+        Assert.Equal(new[] { 1 }, site.HeaderIds.OrderBy(x => x).ToArray());
+        Assert.Equal(new[] { 2 }, site.BodyIds.OrderBy(x => x).ToArray());
+        Assert.Equal(2, site.MarkerStatementId);
+        Assert.Null(site.Unsegmentable);
         Assert.Equal(new[] { "i" }, table.LoopVariablesAssignedBefore(current: 2, previous: 2).ToArray());
         Assert.Empty(table.LoopVariablesAssignedBefore(current: 2, previous: 1));
     }
@@ -740,9 +758,9 @@ codeunit 60315 WriteShapes
     {
         RequireEngine();
         var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo").Sites;
-        var spans = ShiftedBy(MeasuredForTo, 17);
+        var spans = ToObjectRelativeBySubtracting(MeasuredForTo, 17);
 
-        var table = AlLoopScopeTable.Build(sites, spans);
+        var table = AlLoopScopeTable.Build(sites, spans, instrumented: null, lineOffset: 0);
 
         Assert.Empty(table.LoopVariablesAssignedBefore(current: 2, previous: 2));
     }
@@ -759,7 +777,7 @@ codeunit 60315 WriteShapes
             Array.Empty<AlLoopBodyStatement>(), null, false);
         var spans = new[] { AlSourceSpanCodec.Encode(8, 8, 8, 27), AlSourceSpanCodec.Encode(9, 8, 9, 14) };
 
-        var t = Assert.Single(AlLoopScopeTable.Build(new[] { site }, spans).Sites);
+        var t = Assert.Single(AlLoopScopeTable.Build(new[] { site }, spans, instrumented: null, lineOffset: 0).Sites);
         Assert.Equal(new[] { 0 }, t.HeaderIds.Order().ToArray());
         Assert.Empty(t.BodyIds);
         Assert.Null(t.MarkerStatementId);
@@ -782,7 +800,7 @@ codeunit 60315 WriteShapes
             AlSourceSpanCodec.Encode(6, 12, 6, 20), // 1: body
             AlSourceSpanCodec.Encode(6, 12, 6, 20), // 2: a sentinel that happens to share the body's span
         };
-        var t = Assert.Single(AlLoopScopeTable.Build(new[] { site }, spans, instrumented: new[] { 0, 1 }).Sites);
+        var t = Assert.Single(AlLoopScopeTable.Build(new[] { site }, spans, instrumented: new[] { 0, 1 }, lineOffset: 0).Sites);
         Assert.Equal(new[] { 1 }, t.BodyIds.Order().ToArray());
         Assert.False(t.Owns(2));
     }
@@ -871,7 +889,7 @@ codeunit 60322 SoleBody
     {
         RequireEngine();
         var sites = Member(AlMemberSyntaxIndex.Parse(SoleBodySource, "SoleBody.al"), "ForRepeat").Sites;
-        var table = AlLoopScopeTable.Build(sites, SoleForRepeat);
+        var table = AlLoopScopeTable.Build(sites, SoleForRepeat, instrumented: null, lineOffset: 0);
         Assert.Equal(AlLoopUnsegmentable.SoleNestedRepeat, table.Sites[0].Unsegmentable);
         Assert.Null(table.Sites[1].Unsegmentable);
         Assert.Equal(1, table.Sites[1].MarkerStatementId);
@@ -882,7 +900,7 @@ codeunit 60322 SoleBody
     {
         RequireEngine();
         var sites = Member(AlMemberSyntaxIndex.Parse(SoleBodySource, "SoleBody.al"), "ForWhileBreak").Sites;
-        var table = AlLoopScopeTable.Build(sites, SoleForWhileBreak);
+        var table = AlLoopScopeTable.Build(sites, SoleForWhileBreak, instrumented: null, lineOffset: 0);
         Assert.Equal(AlLoopUnsegmentable.SoleNestedWhileWithBreak, table.Sites[0].Unsegmentable);
         Assert.Null(table.Sites[1].Unsegmentable);
     }
@@ -892,7 +910,7 @@ codeunit 60322 SoleBody
     {
         RequireEngine();
         var sites = Member(AlMemberSyntaxIndex.Parse(SoleBodySource, "SoleBody.al"), "ForWhile").Sites;
-        var table = AlLoopScopeTable.Build(sites, SoleForWhile);
+        var table = AlLoopScopeTable.Build(sites, SoleForWhile, instrumented: null, lineOffset: 0);
         Assert.Null(table.Sites[0].Unsegmentable);
         Assert.Equal(1, table.Sites[0].MarkerNestedSiteIndex);
     }
@@ -902,7 +920,7 @@ codeunit 60322 SoleBody
     {
         RequireEngine();
         var sites = Member(AlMemberSyntaxIndex.Parse(SoleBodySource, "SoleBody.al"), "ForEmptyWhile").Sites;
-        var table = AlLoopScopeTable.Build(sites, SoleForEmptyWhile);
+        var table = AlLoopScopeTable.Build(sites, SoleForEmptyWhile, instrumented: null, lineOffset: 0);
         Assert.Equal(AlLoopUnsegmentable.EmptyBody, table.Sites[1].Unsegmentable);
         Assert.Equal(AlLoopUnsegmentable.SoleNestedUnsegmentable, table.Sites[0].Unsegmentable);
         // Repeated inner condition hits (previous == current == 1) must not claim `i` was assigned.
@@ -913,13 +931,13 @@ codeunit 60322 SoleBody
     public void LoopVariableOfHeader_ForHeadersOnly_AForEachAssignsAfterItsHeader()
     {
         RequireEngine();
-        var forTo = AlLoopScopeTable.Build(Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo").Sites, MeasuredForTo);
+        var forTo = AlLoopScopeTable.Build(Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo").Sites, MeasuredForTo, instrumented: null, lineOffset: 0);
         Assert.Equal("i", forTo.LoopVariableOfHeader(1));
         Assert.Null(forTo.LoopVariableOfHeader(0));
         Assert.Null(forTo.LoopVariableOfHeader(2));
-        var whileDo = AlLoopScopeTable.Build(Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "WhileDo").Sites, MeasuredWhileDo);
+        var whileDo = AlLoopScopeTable.Build(Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "WhileDo").Sites, MeasuredWhileDo, instrumented: null, lineOffset: 0);
         Assert.Null(whileDo.LoopVariableOfHeader(1));
-        var fe = AlLoopScopeTable.Build(Member(AlMemberSyntaxIndex.Parse(LoopShapes2Source, "LoopShapes2.al"), "ForEachList").Sites, MeasuredForEachList);
+        var fe = AlLoopScopeTable.Build(Member(AlMemberSyntaxIndex.Parse(LoopShapes2Source, "LoopShapes2.al"), "ForEachList").Sites, MeasuredForEachList, instrumented: null, lineOffset: 0);
         Assert.Null(fe.LoopVariableOfHeader(2));
         // ...so a foreach's FIRST pass is where its variable is claimed (previous = its header).
         Assert.Equal(new[] { "v" }, fe.LoopVariablesAssignedBefore(current: 3, previous: 2).ToArray());
@@ -930,7 +948,7 @@ codeunit 60322 SoleBody
     public void Build_CarriesColumns_ForTheLoopStatement()
     {
         RequireEngine();
-        var t = Assert.Single(AlLoopScopeTable.Build(Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo").Sites, MeasuredForTo).Sites);
+        var t = Assert.Single(AlLoopScopeTable.Build(Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo").Sites, MeasuredForTo, instrumented: null, lineOffset: 0).Sites);
         Assert.Equal(22, t.StartLine);
         Assert.Equal(9, t.StartColumn);   // `for` at column 9 (1-based)
         Assert.Equal(23, t.EndLine);

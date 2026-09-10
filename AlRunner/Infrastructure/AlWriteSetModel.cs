@@ -36,11 +36,13 @@ public sealed class AlWriteSetTable
     /// the first object in a file, so for any later one this comparison matched nothing at
     /// all — an empty table, indistinguishable downstream from "this member writes nothing".
     /// The value is AlSourceLocationMap.LineOffset for the owning object;
-    /// AlCoverageTracker.TryResolveScope already returns it.
+    /// AlCoverageTracker.TryResolveScope already returns it. REQUIRED rather than defaulted:
+    /// a default of 0 is the exact silent-failure this fixed, so a future caller has to
+    /// choose a coordinate space instead of getting the wrong one by omission.
     /// </param>
     public static AlWriteSetTable Build(
         IReadOnlyList<AlStatementWrites> writes, long[] spans,
-        IEnumerable<int>? instrumented = null, int lineOffset = 0)
+        IEnumerable<int>? instrumented, int lineOffset)
     {
         var byStart = new Dictionary<AlTextPosition, IReadOnlySet<string>>();
         foreach (var w in writes)

@@ -27,7 +27,13 @@ public static class AlLoopUnsegmentable
     public const string SoleNestedUnsegmentable = "soleNestedUnsegmentable";
 }
 
-/// <summary>0-based (line, column): the coordinate space both [SourceSpans] and the syntax tree use.</summary>
+/// <summary>
+/// A 0-based line and column. COORDINATE-AGNOSTIC on purpose: the same type carries both
+/// parser positions, which are file-relative, and decoded [SourceSpans] positions, which are
+/// relative to the owning object's text. Those two are the same numbering only for the first
+/// object in a file, and comparing them directly is #3832. Normalise before you compare —
+/// AlSourceLocationMap.LineOffset is the conversion.
+/// </summary>
 public readonly record struct AlTextPosition(int Line, int Column) : IComparable<AlTextPosition>
 {
     public int CompareTo(AlTextPosition other) =>
@@ -244,13 +250,16 @@ public sealed class AlLoopScopeTable
     /// </summary>
     /// <param name="lineOffset">
     /// Lines to add to a decoded span line to reach the FILE line <paramref name="sites"/>
-    /// carries (#3832) — see AlWriteSetTable.Build's parameter of the same name for the two
+    /// carries (#3832). REQUIRED rather than defaulted: a default of 0 is the exact
+    /// silent-failure this fixed, so a future caller has to choose a coordinate space
+    /// instead of getting the wrong one by omission. Pass 0 explicitly for first-object or
+    /// synthetic data — see AlWriteSetTable.Build's parameter of the same name for the two
     /// coordinate spaces. Without it, an object after the first in its file recognises none
     /// of its own loop ids and iteration segmentation goes quiet.
     /// </param>
     public static AlLoopScopeTable Build(
         IReadOnlyList<AlLoopSite> sites, long[] spans,
-        IEnumerable<int>? instrumented = null, int lineOffset = 0)
+        IEnumerable<int>? instrumented, int lineOffset)
     {
         var ids = instrumented?.ToArray() ?? Enumerable.Range(0, spans.Length).ToArray();
         var starts = new Dictionary<int, AlTextPosition>(ids.Length);
