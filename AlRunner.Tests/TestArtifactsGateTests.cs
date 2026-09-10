@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -460,153 +461,88 @@ public class TestArtifactsGateTests
     }
 
     /// <summary>
-    /// <paramref name="sourceText"/> with every comment AND every string/char literal's contents
-    /// blanked to spaces, and every newline kept, so line N of the result is line N of the
-    /// input. Characters become spaces rather than being deleted, which keeps the code that
-    /// shares a line with a comment.
+    /// <paramref name="sourceText"/> with every comment blanked to spaces and every newline
+    /// kept, so line N of the result is line N of the input — attribution in the scans below
+    /// depends on that alignment. Optionally the contents of string and char literals go the
+    /// same way.
     ///
-    /// <para>Literals go for the same reason comments do: neither calls anything, so a skip
-    /// spelling in either is not a skip. Tracking them is also what makes the comment half
-    /// correct, because a <c>//</c> inside a literal opens no comment — 116 lines in this suite
-    /// carry that shape (URLs in XML manifests, AlSourceParserCommentTests' AL fixtures), and
-    /// cutting at the first <c>//</c> would truncate real code on every one of them. The three
-    /// string forms differ only in how they END — <c>\</c> escapes in a regular literal,
-    /// <c>""</c> in a verbatim one, the fence itself in a raw one.</para>
+    /// <para>Roslyn draws the line rather than a hand-rolled scanner. <c>DescendantTokens()</c>
+    /// does not descend into trivia, so comments — <c>//</c>, <c>/* */</c>, XML doc comments and
+    /// disabled <c>#if</c> regions alike — contribute no tokens at all, and a <c>//</c> inside a
+    /// literal is not one either. That last case is not hypothetical: 116 lines in this suite
+    /// carry a <c>//</c> inside a string (URLs in XML manifests, AlSourceParserCommentTests' AL
+    /// fixtures), and a scanner cutting at the first <c>//</c> would truncate real code on every
+    /// one of them.</para>
     ///
-    /// <para>Deliberately not a Roslyn parse: the input is one file's text at a time with no
-    /// compilation behind it, and a parser would answer the same question at the cost of a
-    /// syntax tree per file. An unterminated construct swallows the rest of the text, which is
-    /// what the compiler does with it too.</para>
+    /// <para>This is the third guard in the project to need the distinction —
+    /// <c>BaseAppFloorFixtureGuardTests.CSharpWritesFloor</c> is the model, and its doc comment
+    /// names by hand exactly the trailing-comment and block-comment holes this replaces (#3153,
+    /// #3527: do not add a fourth handwritten C# lexer).</para>
     /// </summary>
     internal static string StripCommentsPreservingLines(string sourceText) =>
         StripCommentsPreservingLines(sourceText, blankStringContents: true);
 
     /// <summary>
-    /// The same pass, with a choice about string literals, because the two guards in this file
+    /// The same pass, with a choice about string literals, because the two scans in this file
     /// need opposite answers about them and both are right.
     ///
     /// <para><paramref name="blankStringContents"/> true — the skippable-attribute scan: a
     /// literal calls nothing, so a skip spelling inside one is not a skip. False — the
-    /// artifact-path scan, whose entire subject is a path spelled as a literal, and for which
-    /// blanking them would remove the thing being looked for.</para>
-    ///
-    /// <para>Literals are tracked either way: that is what makes the COMMENT half correct, since
-    /// a <c>//</c> inside a literal opens no comment.</para>
+    /// artifact-path scan, whose whole subject is a path spelled as a literal, and for which
+    /// blanking literals would remove the thing being looked for.</para>
     /// </summary>
     internal static string StripCommentsPreservingLines(string sourceText, bool blankStringContents)
     {
-        var outp = new System.Text.StringBuilder(sourceText.Length);
-        var i = 0;
-        while (i < sourceText.Length)
+        var kept = new System.Text.StringBuilder(sourceText);
+        // Blank by SPAN rather than rebuilding the text, so anything not explicitly blanked --
+        // code, and the literals the artifact-path scan needs -- is preserved byte for byte.
+        void Blank(Microsoft.CodeAnalysis.Text.TextSpan span)
         {
-            var c = sourceText[i];
-
-            if (c == '/' && i + 1 < sourceText.Length && sourceText[i + 1] == '/')
-            {
-                while (i < sourceText.Length && sourceText[i] != '\n') { outp.Append(' '); i++; }
-                continue;
-            }
-
-            if (c == '/' && i + 1 < sourceText.Length && sourceText[i + 1] == '*')
-            {
-                outp.Append("  ");
-                i += 2;
-                while (i < sourceText.Length
-                       && !(sourceText[i] == '*' && i + 1 < sourceText.Length && sourceText[i + 1] == '/'))
-                {
-                    // Newlines are copied through so the line count survives an unterminated or
-                    // multi-line comment; everything else becomes a space.
-                    outp.Append(sourceText[i] == '\n' ? '\n' : ' ');
-                    i++;
-                }
-                if (i < sourceText.Length) { outp.Append("  "); i += 2; }
-                continue;
-            }
-
-            if (c == '"' || c == '\'')
-            {
-                i = CopyLiteral(sourceText, i, outp, blankStringContents);
-                continue;
-            }
-
-            outp.Append(c);
-            i++;
+            for (var i = span.Start; i < span.End && i < kept.Length; i++)
+                if (kept[i] != '\n' && kept[i] != '\r') kept[i] = ' ';
         }
 
-        return outp.ToString();
+        var root = CSharpSyntaxTree.ParseText(sourceText).GetRoot();
+
+        foreach (var trivia in root.DescendantTrivia(descendIntoTrivia: true))
+            if (IsCommentOrDisabledCode(trivia.Kind()))
+                Blank(trivia.Span);
+
+        if (blankStringContents)
+            foreach (var token in root.DescendantTokens(descendIntoTrivia: true))
+                if (IsLiteralContent(token.Kind()))
+                    Blank(token.Span);
+
+        return kept.ToString();
     }
 
     /// <summary>
-    /// Blanks the string or char literal starting at <paramref name="start"/> — quotes kept,
-    /// contents replaced by spaces, newlines kept — and answers the index just past it.
-    ///
-    /// <para>Contents go for the same reason comments do: a literal calls nothing, so a skip
-    /// spelling inside one is not a skip. The quotes stay so the result still reads as C#
-    /// rather than as a line whose structure has changed.</para>
+    /// Trivia that is not code. Disabled <c>#if</c> regions are included because the compiler
+    /// does not build them either, so a call spelled there is not a call this suite can make.
     /// </summary>
-    private static int CopyLiteral(string text, int start, System.Text.StringBuilder outp, bool blank)
-    {
-        // `blank` false keeps the literal verbatim; the newline-preserving replacement only
-        // applies when the caller asked for contents to go.
-        void Blank(int from, int count)
-        {
-            for (var n = 0; n < count; n++)
-                outp.Append(!blank ? text[from + n] : text[from + n] == '\n' ? '\n' : ' ');
-        }
+    private static bool IsCommentOrDisabledCode(SyntaxKind kind) => kind
+        is SyntaxKind.SingleLineCommentTrivia
+        or SyntaxKind.MultiLineCommentTrivia
+        or SyntaxKind.SingleLineDocumentationCommentTrivia
+        or SyntaxKind.MultiLineDocumentationCommentTrivia
+        or SyntaxKind.DocumentationCommentExteriorTrivia
+        or SyntaxKind.DisabledTextTrivia;
 
-        // A raw string literal: three or more quotes, closed by a run of at least that many.
-        if (text[start] == '"' && start + 2 < text.Length && text[start + 1] == '"' && text[start + 2] == '"')
-        {
-            var fence = 0;
-            while (start + fence < text.Length && text[start + fence] == '"') fence++;
-            outp.Append(text, start, fence);
-            var j = start + fence;
-            while (j < text.Length)
-            {
-                if (text[j] != '"') { Blank(j, 1); j++; continue; }
-                var run = 0;
-                while (j + run < text.Length && text[j + run] == '"') run++;
-                if (run >= fence) { outp.Append(text, j, run); return j + run; }
-                Blank(j, run);
-                j += run;
-            }
-            return j;
-        }
-
-        var quote = text[start];
-        // `@"…"` — no backslash escapes, and `""` is one embedded quote.
-        var verbatim = quote == '"' && start > 0 && text[start - 1] == '@';
-        outp.Append(quote);
-        var k = start + 1;
-        while (k < text.Length)
-        {
-            var ch = text[k];
-            if (!verbatim && ch == '\\' && k + 1 < text.Length)
-            {
-                Blank(k, 2);
-                k += 2;
-                continue;
-            }
-            if (ch == quote)
-            {
-                if (verbatim && k + 1 < text.Length && text[k + 1] == '"')
-                {
-                    Blank(k, 2);
-                    k += 2;
-                    continue;
-                }
-                outp.Append(ch);
-                return k + 1;
-            }
-            // An unterminated literal ends at the newline rather than swallowing the file: a
-            // stray quote in ordinary code would otherwise hide every line below it, which is
-            // the direction that turns the guard silent (guards-need-a-third-state.md).
-            if (ch == '\n' && !verbatim) return k;
-            Blank(k, 1);
-            k++;
-        }
-        return k;
-    }
+    /// <summary>
+    /// Every token kind whose text is literal CONTENT rather than code. The interpolated-string
+    /// TEXT token is content; the expressions inside <c>{…}</c> holes are separate tokens and are
+    /// deliberately left alone, because an interpolation hole really can call something —
+    /// the blind spot #3527 names.
+    /// </summary>
+    private static bool IsLiteralContent(SyntaxKind kind) => kind
+        is SyntaxKind.StringLiteralToken
+        or SyntaxKind.Utf8StringLiteralToken
+        or SyntaxKind.SingleLineRawStringLiteralToken
+        or SyntaxKind.MultiLineRawStringLiteralToken
+        or SyntaxKind.Utf8SingleLineRawStringLiteralToken
+        or SyntaxKind.Utf8MultiLineRawStringLiteralToken
+        or SyntaxKind.InterpolatedStringTextToken
+        or SyntaxKind.CharacterLiteralToken;
 
     internal static int CountTestDeclarations() =>
         TestSourcePaths().Sum(f => CountTestDeclarationsIn(File.ReadAllText(f)));
