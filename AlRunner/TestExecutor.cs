@@ -1148,12 +1148,6 @@ public sealed class TestExecutor
         new(@"^_Scope_+\d+$", System.Text.RegularExpressions.RegexOptions.Compiled);
 
     /// <summary>
-    /// Returns <paramref name="t"/>'s public instance methods ordered by AL source
-    /// declaration line where resolvable. Falls back to reflection order for any method
-    /// whose scope type or span attribute can't be found — never worse than the previous
-    /// (pure-reflection) behaviour, only ever more faithful to real BC.
-    /// </summary>
-    /// <summary>
     /// Order a freshly-loaded test assembly's types by ascending AL object ID — the order a
     /// real BC test suite runs its codeunits in (#2801).
     ///
@@ -1254,6 +1248,12 @@ public sealed class TestExecutor
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, bool>
         _orderWarningIssued = new();
 
+    /// <summary>
+    /// Returns <paramref name="t"/>'s public instance methods ordered by AL source
+    /// declaration line where resolvable. Falls back to reflection order for any method
+    /// whose scope type or span attribute can't be found — never worse than the previous
+    /// (pure-reflection) behaviour, only ever more faithful to real BC.
+    /// </summary>
     private static MethodInfo[] OrderTestMethodsBySourceDeclaration(Type t)
     {
         if (_sourceOrderCache.TryGetValue(t, out var cached)) return cached;

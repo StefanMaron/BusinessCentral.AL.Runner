@@ -88,13 +88,6 @@ public static partial class BcRuntime
     }
 
     /// <summary>
-    /// Called by TestExecutor after a test method returns/throws/times out. Mirrors real BC's
-    /// NavTestExecution.LeaveTestCodeunit: clears `executingTestCodeUnit` back to null so `InTest`
-    /// (and therefore IsSandbox()'s test-harness branch) is false again outside test execution —
-    /// only the per-test flag is undone; the process-lifetime SetTestTenantEnvironmentType(true)
-    /// tuple set by EnterTestExecutionScope's first call is intentionally left in place.
-    /// </summary>
-    /// <summary>
     /// True while a <c>[Test]</c> method is executing — the runner's answer to BC's own
     /// <c>session.TestExecution != null</c>.
     ///
@@ -158,6 +151,13 @@ public static partial class BcRuntime
         }
     }
 
+    /// <summary>
+    /// Called by TestExecutor after a test method returns/throws/times out. Mirrors real BC's
+    /// NavTestExecution.LeaveTestCodeunit: clears `executingTestCodeUnit` back to null so `InTest`
+    /// (and therefore IsSandbox()'s test-harness branch) is false again outside test execution —
+    /// only the per-test flag is undone; the process-lifetime SetTestTenantEnvironmentType(true)
+    /// tuple set by EnterTestExecutionScope's first call is intentionally left in place.
+    /// </summary>
     public static void LeaveTestExecutionScope()
     {
         if (_testExecutionInstance == null || _fExecutingTestCodeUnit == null) return;

@@ -41,15 +41,6 @@ public static partial class BcRuntime
     // ── (A) ALFieldCaptionAsync entry-point hook ────────────────────────────
 
     /// <summary>
-    /// Hooks NavRecord.ALFieldCaptionAsync(int) to return an already-completed
-    /// ValueTask&lt;string&gt; with an empty string, bypassing the full field-caption
-    /// metadata lookup that NREs on the skeleton session.
-    ///
-    /// Replacement signature: ValueTask&lt;string&gt;(object self, int fieldNo)
-    /// — matches the instance-method ABI: first arg = receiver (NavRecord as object),
-    ///   second arg = the int parameter.
-    /// </summary>
-    /// <summary>
     /// Replacement for NavRecord.ALFieldCaptionAsync(int).
     /// Returns an already-completed ValueTask&lt;string&gt; with an empty string,
     /// bypassing the full field-caption metadata lookup that NREs on the skeleton.
@@ -58,6 +49,15 @@ public static partial class BcRuntime
     public static ValueTask<string> NavRecord_ALFieldCaptionAsync(object self, int fieldNo)
         => ValueTask.FromResult(string.Empty);
 
+    /// <summary>
+    /// Hooks NavRecord.ALFieldCaptionAsync(int) to return an already-completed
+    /// ValueTask&lt;string&gt; with an empty string, bypassing the full field-caption
+    /// metadata lookup that NREs on the skeleton session.
+    ///
+    /// Replacement signature: ValueTask&lt;string&gt;(object self, int fieldNo)
+    /// — matches the instance-method ABI: first arg = receiver (NavRecord as object),
+    ///   second arg = the int parameter.
+    /// </summary>
     internal static void ApplyALFieldCaptionAsyncHook(Assembly navNcl)
     {
         var navRecordType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord");

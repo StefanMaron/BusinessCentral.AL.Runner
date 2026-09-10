@@ -277,11 +277,6 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// The ordering itself, with the one BC-specific step (constructing the temp DataAccess)
-    /// behind <paramref name="createStorage"/> so the ordering can be driven — and raced —
-    /// without a booted engine. See AlRunner.Tests/TableMaterialisationOrderingTests.cs.
-    /// </summary>
-    /// <summary>
     /// Test-only overload: no emptiness probe, because the caller stages the storage itself and
     /// nothing else writes to it. Production never takes this route — see
     /// <see cref="GetOrCreateHydratedDataAccess"/>, which always passes
@@ -291,6 +286,11 @@ public static partial class RecordPatches
         object self, ConcurrentDictionary<int, object> perTable, int tableId, Func<object> createStorage)
         => GetOrCreateHydratedDataAccessCore(self, perTable, tableId, createStorage, storeHasAnyRow: null);
 
+    /// <summary>
+    /// The ordering itself, with the one BC-specific step (constructing the temp DataAccess)
+    /// behind <paramref name="createStorage"/> so the ordering can be driven — and raced —
+    /// without a booted engine. See AlRunner.Tests/TableMaterialisationOrderingTests.cs.
+    /// </summary>
     /// <param name="storeHasAnyRow">Answers "does this storage already hold a row" — true /
     /// false / null for cannot-tell — and is consulted only when a deferred load (#2877) is
     /// owed, to decide whether paying it would mix rows.</param>

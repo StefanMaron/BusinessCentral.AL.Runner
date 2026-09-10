@@ -83,12 +83,16 @@ public static partial class RecordPatches
 
     private const int FieldFindTableId = FieldVirtualTableId; // 2000000041
 
-    /// <summary>
-    /// Replacement for DataAccess.FindAsync(FindCacheRequest, Func&lt;bool&gt;).
-    /// Returns a boxed ValueTask&lt;ResultSetEnumerator&gt; (the Cecil rewrite unbox.any's it
-    /// back to the declared return type). For 2000000041 → managed bypass; else → original
-    /// InnerFindAsync(request, fromPosition:false, onlyKeyNeeded).
-    /// </summary>
+    /// <remarks>
+    /// The entry-point contract this implements, kept because it is the shape a caller
+    /// sees: a replacement for DataAccess.FindAsync(FindCacheRequest, Func&lt;bool&gt;)
+    /// returning a boxed ValueTask&lt;ResultSetEnumerator&gt; (the Cecil rewrite unbox.any's
+    /// it back to the declared return type). For 2000000041 → managed bypass; else →
+    /// original InnerFindAsync(request, fromPosition:false, onlyKeyNeeded). No
+    /// <c>DataAccess_FindAsync</c> member exists to carry it: the summary arrived with the
+    /// v2 cutover (#1654) already describing a method this repository never had, so it is
+    /// attached here as a remark rather than left as a second summary (#3827).
+    /// </remarks>
     /// <summary>
     /// Field-table (2000000041) managed find. Called from a branch PREPENDED to
     /// DataAccess.InnerFindAsync (see NclCecilRewrite) that fires ONLY when

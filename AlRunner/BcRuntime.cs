@@ -141,19 +141,6 @@ public static partial class BcRuntime
         => _currentBundleInfo;
 
     /// <summary>
-    /// Every AL module the runner has loaded — one entry per distinct app id, across the
-    /// registered dependency assemblies and the bundle under test. This is the manifest data
-    /// a real BC service tier would have written into the Published Application table at
-    /// publish time, and it is what
-    /// <c>RecordPatches.EnsurePublishedApplicationRowsSeeded</c> seeds from (#2963).
-    ///
-    /// Deduplicated by app id on purpose: one app can be loaded as several assemblies (Base
-    /// Application ships as multiple chunk DLLs), and a service tier lists an app once.
-    /// The bundle under test is included — it is a published app as far as any AL code that
-    /// calls NavApp.GetCallerModuleInfo and then looks itself up is concerned, which is
-    /// exactly the shape System Application ownership checks use.
-    /// </summary>
-    /// <summary>
     /// Every registered AL assembly with the app id it belongs to. Where
     /// <see cref="RegisteredModules"/> answers "which apps are loaded", this answers "which
     /// assembly is whose", which is what an object-to-owner index needs: an AL object's owner
@@ -166,6 +153,19 @@ public static partial class BcRuntime
             .Select(kv => (kv.Key, kv.Value.AppId))
             .ToList();
 
+    /// <summary>
+    /// Every AL module the runner has loaded — one entry per distinct app id, across the
+    /// registered dependency assemblies and the bundle under test. This is the manifest data
+    /// a real BC service tier would have written into the Published Application table at
+    /// publish time, and it is what
+    /// <c>RecordPatches.EnsurePublishedApplicationRowsSeeded</c> seeds from (#2963).
+    ///
+    /// Deduplicated by app id on purpose: one app can be loaded as several assemblies (Base
+    /// Application ships as multiple chunk DLLs), and a service tier lists an app once.
+    /// The bundle under test is included — it is a published app as far as any AL code that
+    /// calls NavApp.GetCallerModuleInfo and then looks itself up is concerned, which is
+    /// exactly the shape System Application ownership checks use.
+    /// </summary>
     public static IReadOnlyList<(Guid AppId, string Name, string Publisher, string Version)> RegisteredModules()
     {
         var byId = new Dictionary<Guid, (Guid AppId, string Name, string Publisher, string Version)>();

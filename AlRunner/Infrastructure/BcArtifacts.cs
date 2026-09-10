@@ -348,16 +348,6 @@ public static class BcArtifacts
     }
 
     /// <summary>
-    /// Startup consistency check: the engine DLL (Ncl) baked into bin/ is built for a
-    /// specific BC version. If the selected artifact/dependency version has a different
-    /// MAJOR, the dependency symbols and the engine disagree at the API level — fail loud.
-    ///
-    /// We compare MAJOR only: BC pins its assembly version at <c>MAJOR.0.0.0</c>
-    /// regardless of the product/file version (the 28.1.x artifact ships Ncl with
-    /// AssemblyName.Version = 28.0.0.0), so minor/patch skew (28.1.x build vs 28.1.y
-    /// cache, or a 28.0-stamped assembly inside a 28.1 artifact) is expected and tolerated.
-    /// </summary>
-    /// <summary>
     /// The BC MAJOR version the engine (bin Ncl.dll) was built for, or null when the
     /// engine DLL is absent / unversioned. This is the only major this binary can run
     /// (cross-major needs a matching engine build); used to default artifact selection.
@@ -569,6 +559,16 @@ public static class BcArtifacts
         return System.Reflection.AssemblyName.GetAssemblyName(path); // final attempt — let it throw if still failing
     }
 
+    /// <summary>
+    /// Startup consistency check: the engine DLL (Ncl) baked into bin/ is built for a
+    /// specific BC version. If the selected artifact/dependency version has a different
+    /// MAJOR, the dependency symbols and the engine disagree at the API level — fail loud.
+    ///
+    /// We compare MAJOR only: BC pins its assembly version at <c>MAJOR.0.0.0</c>
+    /// regardless of the product/file version (the 28.1.x artifact ships Ncl with
+    /// AssemblyName.Version = 28.0.0.0), so minor/patch skew (28.1.x build vs 28.1.y
+    /// cache, or a 28.0-stamped assembly inside a 28.1 artifact) is expected and tolerated.
+    /// </summary>
     public static void VerifyEngineConsistency(string binDir)
     {
         var ncl = Path.Combine(binDir, "Microsoft.Dynamics.Nav.Ncl.dll");

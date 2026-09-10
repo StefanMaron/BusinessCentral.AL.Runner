@@ -345,13 +345,6 @@ public static class AlEnumMetadataRegistry
         return raw.Count;
     }
 
-    /// <summary>
-    /// Replay entries from a sidecar written by <see cref="SaveSidecar"/>. Each
-    /// entry is already the merged base+extension set, so replay uses plain
-    /// <see cref="Register"/> (never <see cref="RegisterExtension"/>) — matching
-    /// how Program.cs's bundle-level sidecar replay works. Throws on corrupt JSON;
-    /// callers treat that as a cache MISS and rebuild. Returns replayed entry count.
-    /// </summary>
     /// <summary>A sidecar's optional int-array property, or null when absent/empty —
     /// "declares none" (issue #2306).</summary>
     private static int[]? ReadIdList(System.Text.Json.JsonElement parent, string name)
@@ -364,6 +357,13 @@ public static class AlEnumMetadataRegistry
         return ids.Length > 0 ? ids : null;
     }
 
+    /// <summary>
+    /// Replay entries from a sidecar written by <see cref="SaveSidecar"/>. Each
+    /// entry is already the merged base+extension set, so replay uses plain
+    /// <see cref="Register"/> (never <see cref="RegisterExtension"/>) — matching
+    /// how Program.cs's bundle-level sidecar replay works. Throws on corrupt JSON;
+    /// callers treat that as a cache MISS and rebuild. Returns replayed entry count.
+    /// </summary>
     public static int LoadSidecar(string path)
     {
         var json = File.ReadAllText(path);

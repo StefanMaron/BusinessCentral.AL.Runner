@@ -32,10 +32,6 @@ namespace AlRunner.Patches;
 public static partial class RecordPatches
 {
     /// <summary>
-    /// One <c>permissionset Id "Name" { … }</c> declaration parsed from AL source, plus the
-    /// identity of the app.json that owns the file it was declared in.
-    /// </summary>
-    /// <summary>
     /// One entry of a source-declared permission set's <c>Permissions</c> property:
     /// <c>tabledata "RSS Sample" = R</c>. The object is named, not numbered — AL has no
     /// id form — so the id is resolved later, against this run's own parsed object
@@ -43,6 +39,10 @@ public static partial class RecordPatches
     /// </summary>
     internal sealed record ParsedAlPermissionEntry(int ObjectTypeOrdinal, string ObjectName, int Mask);
 
+    /// <summary>
+    /// One <c>permissionset Id "Name" { … }</c> declaration parsed from AL source, plus the
+    /// identity of the app.json that owns the file it was declared in.
+    /// </summary>
     internal sealed record ParsedAlPermissionSet(
         int Id, string Name, string? Caption, bool Assignable, Guid AppId, string AppName,
         // #2910: the same three things BcAppSymbolCache reads out of a precompiled .app's

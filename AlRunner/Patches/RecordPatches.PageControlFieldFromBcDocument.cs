@@ -519,13 +519,6 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// The source field BC would resolve through
-    /// <c>MetadataProvider.GetTableMetadata(tableNo).GetFieldsById(fieldNo)</c>. Goes through
-    /// the runner's own NCLMetaTable rather than the parsed AL table, because that is the
-    /// object that carries tableextension-added fields and the resolved option metadata for an
-    /// Enum-typed field; the parsed table carries neither.
-    /// </summary>
-    /// <summary>
     /// The bound field's <c>Editable</c>, the value SolveEditable's null branch resolves
     /// against. Defaults to true — AL's own field default, and BC's <c>field?.Editable ?? true</c>.
     ///
@@ -656,6 +649,13 @@ public static partial class RecordPatches
     /// </summary>
     internal static void ClearBcMetaFieldEditable() => _bcMetaFieldEditable.Clear();
 
+    /// <summary>
+    /// The source field BC would resolve through
+    /// <c>MetadataProvider.GetTableMetadata(tableNo).GetFieldsById(fieldNo)</c>. Goes through
+    /// the runner's own NCLMetaTable rather than the parsed AL table, because that is the
+    /// object that carries tableextension-added fields and the resolved option metadata for an
+    /// Enum-typed field; the parsed table carries neither.
+    /// </summary>
     private static Microsoft.Dynamics.Nav.Runtime.NCLMetaField? FindMetaFieldById(int tableId, int fieldNo)
     {
         var meta = GetOrBuildNCLMetaTable(tableId);

@@ -1825,15 +1825,6 @@ internal sealed partial class RunnerPageInstance
     }
 
     /// <summary>
-    /// Run the control's OnLookup trigger.
-    ///
-    /// Like OnAction and unlike OnValidate, a missing trigger is NOT benign: the test asked
-    /// for the lookup to happen. A control with no OnLookup gets its lookup from a TableRelation
-    /// (BC opens the related table's list page), which the runner cannot stand up, so it
-    /// refuses by name — doing nothing silently is what let a test compare two empty strings
-    /// and call it a pass.
-    /// </summary>
-    /// <summary>
     /// Run the control's OnLookup trigger and return the value it selected, or null when the
     /// trigger declined (returned false) — BC's lookup contract: the text the trigger wrote
     /// back replaces the field's value only if it returned true, which is how "the user
@@ -2511,12 +2502,6 @@ internal sealed partial class RunnerPageInstance
     internal bool RaiseOnModifyRecord()
         => InvokeRecordTrigger("OnModifyRecord", Type.EmptyTypes, Array.Empty<object>()) is not false;
 
-    /// <summary>
-    /// Invoke a page record trigger by name. The AL compiler emits these as overrides of
-    /// NavForm's own protected virtuals, so reflection finds the base declaration and virtual
-    /// dispatch reaches the page's override; a page that declares none lands on NavForm's
-    /// implementation, which is the correct no-op/true.
-    /// </summary>
     /// <summary>
     /// Invoke one of the page's own record triggers (OnOpenPage, OnQueryClosePage, OnNewRecord,
     /// OnInsertRecord, …) and answer with what it produced.

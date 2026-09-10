@@ -162,13 +162,6 @@ public static class SymbolJsonWriter
 }
 
 /// <summary>
-/// Symbol-reference loader backed by <c>*.symbols.json</c> files produced by
-/// <see cref="SymbolJsonWriter"/>. Indexes a directory tree at construction. Returns
-/// in-memory <see cref="ModuleDefinition"/>s so downstream BC compilations resolve
-/// cross-app references against committed symbol artifacts (no <c>.app</c> file
-/// involvement at all).
-/// </summary>
-/// <summary>
 /// Sidecar emitted next to <c>&lt;App&gt;.symbols.json</c>. Captures the app's identity
 /// and its declared dependencies (including the platform reference) so the
 /// <see cref="JsonSymbolReferenceLoader"/> can answer
@@ -412,6 +405,13 @@ public sealed class CompositeSymbolReferenceLoader : ISymbolReferenceLoader
     }
 }
 
+/// <summary>
+/// Symbol-reference loader backed by <c>*.symbols.json</c> files produced by
+/// <see cref="SymbolJsonWriter"/>. Indexes a directory tree at construction. Returns
+/// in-memory <see cref="ModuleDefinition"/>s so downstream BC compilations resolve
+/// cross-app references against committed symbol artifacts (no <c>.app</c> file
+/// involvement at all).
+/// </summary>
 public sealed class JsonSymbolReferenceLoader : ISymbolReferenceLoader
 {
     private readonly string _rootDirectory;

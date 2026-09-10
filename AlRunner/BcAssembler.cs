@@ -32,6 +32,9 @@ public sealed class BcAssembler
     // Run the full compile pass on a thread with 64 MB stack to avoid SIGSEGV.
     private const int CompileStackSize = 64 * 1024 * 1024;
 
+    /// <summary>Test seam: the options every generated source is parsed with.</summary>
+    internal static CSharpParseOptions GeneratedParseOptionsForTests => GeneratedParseOptions;
+
     /// <summary>
     /// Parse options for BC-generated C#. <c>CSharpParseOptions.Default</c> carries
     /// <c>DocumentationMode.Parse</c>, so the lexer builds structured XML-doc trivia for every
@@ -47,9 +50,6 @@ public sealed class BcAssembler
     /// version the corpus has actually been compiled under; raising it is a deliberate change that
     /// needs a corpus run behind it.
     /// </remarks>
-    /// <summary>Test seam: the options every generated source is parsed with.</summary>
-    internal static CSharpParseOptions GeneratedParseOptionsForTests => GeneratedParseOptions;
-
     private static readonly CSharpParseOptions GeneratedParseOptions =
         CSharpParseOptions.Default
             .WithDocumentationMode(DocumentationMode.None)

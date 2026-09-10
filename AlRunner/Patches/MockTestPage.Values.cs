@@ -254,31 +254,6 @@ internal static class TestPageOptionValue
 }
 
 /// <summary>
-/// Boolean values as a TestPage sees them, on either shape of control: a page-variable-bound
-/// one (<c>field(Flag; ShowFlag)</c> where <c>ShowFlag: Boolean</c>) or a Rec-bound one
-/// (<c>field(Flag; Rec.Flag)</c> where the source table field is <c>Boolean</c>) — see issue
-/// #1870, the Rec-bound half of #1837 that #1869 (the page-variable half) left open.
-///
-/// <c>NavTestField.ALSetValue</c> — the real, precompiled BC method the AL compiler emits for
-/// every <c>TestPage.&lt;field&gt;.SetValue(&lt;Boolean&gt;)</c> call — never hands a NavValue
-/// straight to <see cref="ITestField"/>. For anything that is not itself already a
-/// <c>NavStringValue</c> it round-trips through <see cref="ITestField.FieldType"/> (to pick a
-/// <c>NavValueMetadata</c>) and then <see cref="ITestField.ValueToString"/> (both OUR OWN mock
-/// methods) to turn the boolean back into a string before ever reaching <see cref="ITestField.Value"/>'s
-/// setter — see the doc comment on <see cref="PageVariableTestField.FieldType"/> for why that
-/// matters here. <see cref="LiveNavTestField.FieldType"/> is sourced from the source table
-/// field's own declared type instead, but reaches the same <c>NavType.Boolean</c> answer for a
-/// <c>Boolean</c> field, so the round trip is identical on both sides.
-///
-/// Because both ends of that round trip are code THIS runner owns (<see cref="ITestField.ValueToString"/>
-/// always answers with <c>Convert.ToString(boolValue)</c>, i.e. exactly "True" or "False"), accepting
-/// only that spelling here is not a narrowing of what <c>SetValue(&lt;Boolean&gt;)</c> can express —
-/// it is the ONLY spelling that overload ever produces. Anything else (a literal
-/// <c>SetValue('Yes')</c>, locale spellings, ...) is a genuinely separate, upstream-unvalidated
-/// question about what real BC's own text-to-Boolean evaluate accepts on this surface, so it stays
-/// out of scope here and throws loudly rather than guessing.
-/// </summary>
-/// <summary>
 /// Enforces a field's declared <c>MinValue</c>/<c>MaxValue</c> AL properties on a TestPage
 /// control write (issue #2495). Measured against real BC (28.1 / 28.4, see #2490's arm A2):
 /// a Decimal field with <c>MinValue = 0;</c> raises
@@ -482,6 +457,31 @@ internal static class TestPageBlankTemporalValue
         => value is DateTime dt && dt == default ? string.Empty : null;
 }
 
+/// <summary>
+/// Boolean values as a TestPage sees them, on either shape of control: a page-variable-bound
+/// one (<c>field(Flag; ShowFlag)</c> where <c>ShowFlag: Boolean</c>) or a Rec-bound one
+/// (<c>field(Flag; Rec.Flag)</c> where the source table field is <c>Boolean</c>) — see issue
+/// #1870, the Rec-bound half of #1837 that #1869 (the page-variable half) left open.
+///
+/// <c>NavTestField.ALSetValue</c> — the real, precompiled BC method the AL compiler emits for
+/// every <c>TestPage.&lt;field&gt;.SetValue(&lt;Boolean&gt;)</c> call — never hands a NavValue
+/// straight to <see cref="ITestField"/>. For anything that is not itself already a
+/// <c>NavStringValue</c> it round-trips through <see cref="ITestField.FieldType"/> (to pick a
+/// <c>NavValueMetadata</c>) and then <see cref="ITestField.ValueToString"/> (both OUR OWN mock
+/// methods) to turn the boolean back into a string before ever reaching <see cref="ITestField.Value"/>'s
+/// setter — see the doc comment on <see cref="PageVariableTestField.FieldType"/> for why that
+/// matters here. <see cref="LiveNavTestField.FieldType"/> is sourced from the source table
+/// field's own declared type instead, but reaches the same <c>NavType.Boolean</c> answer for a
+/// <c>Boolean</c> field, so the round trip is identical on both sides.
+///
+/// Because both ends of that round trip are code THIS runner owns (<see cref="ITestField.ValueToString"/>
+/// always answers with <c>Convert.ToString(boolValue)</c>, i.e. exactly "True" or "False"), accepting
+/// only that spelling here is not a narrowing of what <c>SetValue(&lt;Boolean&gt;)</c> can express —
+/// it is the ONLY spelling that overload ever produces. Anything else (a literal
+/// <c>SetValue('Yes')</c>, locale spellings, ...) is a genuinely separate, upstream-unvalidated
+/// question about what real BC's own text-to-Boolean evaluate accepts on this surface, so it stays
+/// out of scope here and throws loudly rather than guessing.
+/// </summary>
 internal static class TestPageBooleanValue
 {
     /// <summary>
