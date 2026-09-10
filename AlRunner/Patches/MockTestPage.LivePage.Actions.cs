@@ -275,6 +275,24 @@ internal partial class LiveNavTestPage
             // action, or a non-list's in-place switch. They differ in whether the page's
             // editability moves, which is exactly what the caller is about to read, so picking
             // one would be a silent wrong answer.
+            //
+            // NO AL IS KNOWN TO REACH THIS TODAY (#3735), and it stays as the guard that keeps it that
+            // way. THE TRAP, for whoever edits near here: two of the three routes that build a
+            // LiveNavTestPage gate on the page's shape, and the third does not.
+            // RunnerTestClientSession.GetPage — the [PageHandler]/[ModalPageHandler] route —
+            // applies no shape check at all; what keeps it out of this case is that BC picks the
+            // handler by its `TestPage "X"` parameter type, so the page must resolve in THIS
+            // bundle's compile, and every symbol source the compile has is also a registration
+            // source. The suite's own folders are that by construction since #3735
+            // (ProgramSupport.SuiteRegistrationDirs IS CollectSuitePaths); widening what the
+            // compiler can see without widening what RecordPatches registers puts this case back
+            // in reach, which is what #3611/#3714 and #3735 each shipped once.
+            // One source is still unmatched and unpinned: BcCompiler._usePackageCacheFallback
+            // (issue #3769).
+            // see docs/page-shape-inventory.md#route-3 — the routes, the two inventories, the
+            // per-bundle vs process-wide lifetimes, and the residual.
+            // Pinned by AlRunner.Tests/LiveTestPagePageTypeKnownTests.cs and
+            // AlRunner.Tests/SuiteRootAlFilesTests.cs.
             case BuiltInPageModeShape.RefuseUnknownPageType:
                 throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
                     $"TestPage.{actionName}() on page {_pageId}",

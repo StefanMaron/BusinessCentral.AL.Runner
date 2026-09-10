@@ -2667,18 +2667,10 @@ foreach (var bundle in bundles)
     {
         var dirsToRegister = new List<string>();
         foreach (var suite in suites)
-        {
-            var s = Path.Combine(suite, "src");
-            if (SuiteHasAlOutsideConventionalDirs(suite, bucketRoot))
-                // #3611/#3714: AL beside src/ (a root table, a ControlAddin/ folder) — the
-                // compile reads the whole root (CollectSuitePaths), so the table parsers must too.
-                dirsToRegister.Add(suite);
-            else if (Directory.Exists(s))
-                dirsToRegister.Add(s);
-            else if (!Directory.Exists(Path.Combine(suite, "test")))
-                // Flat bundle: register the suite root so table parsers can find .al files.
-                dirsToRegister.Add(suite);
-        }
+            // #3735: exactly what the compile reads. Deriving it a second time here is what let
+            // a page or table under test/ or app2/ compile and never be parsed — see
+            // ProgramSupport.SuiteRegistrationDirs.
+            dirsToRegister.AddRange(SuiteRegistrationDirs(suite, bucketRoot));
         AlRunner.Patches.RecordPatches.AddSourceDirs(dirsToRegister);
     }
 
@@ -5216,14 +5208,11 @@ return strictExitCode ? computedExitCode : 0;
         var dirsToRegister = new List<string>();
         foreach (var suite in suites)
         {
-            var s = Path.Combine(suite, "src");
-            // #3611/#3714: same decision as the CLI loop above — AL beside src/ means the
-            // table parsers read the whole root, as the compile does.
-            if (SuiteHasAlOutsideConventionalDirs(suite, bucketRoot)) dirsToRegister.Add(suite);
-            else if (Directory.Exists(s)) dirsToRegister.Add(s);
-            else if (!Directory.Exists(Path.Combine(suite, "test")))
-                dirsToRegister.Add(suite);
-            allPaths.AddRange(CollectSuitePaths(suite, bucketRoot));
+            // #3735: same one function as the CLI loop above, computed once and used for both
+            // the compile's paths and the registration — they are the same set by construction.
+            var suitePaths = SuiteRegistrationDirs(suite, bucketRoot);
+            dirsToRegister.AddRange(suitePaths);
+            allPaths.AddRange(suitePaths);
         }
         AlRunner.Patches.RecordPatches.AddSourceDirs(dirsToRegister);
         allPaths = allPaths.Distinct().ToList();
