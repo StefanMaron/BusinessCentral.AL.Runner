@@ -30,6 +30,9 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
+// Reaches the RecordPatches AL parse statics, which are process-wide and which xunit's
+// parallel collections can clear or repopulate between a write and a read (#1696, #1712).
+[Collection(RecordPatchesSerialCollection.Name)]
 public sealed class CodeunitSymbolSingleInstanceSpellingTests : IDisposable
 {
     private const int SingleInstanceNumeric = 61041;
