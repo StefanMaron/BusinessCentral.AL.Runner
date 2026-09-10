@@ -79,7 +79,7 @@ Each sibling answers the cacheability question for itself, and the answers diffe
 | seed | inside the window? | why |
 |---|---|---|
 | `EnsureCompanySystemTableRowSeeded` (2000000006) | **yes**, and again after | the row is process-invariant, so seeding it inside the window is safe; the snapshot does not carry it — the after-window call writes it on every HIT (measured: `seeded` after `Restore`) |
-| `EnsureAccessControlSuperRowSeeded` (2000000053) | **yes**, and again after | same, plus the second call re-decides after an adoption |
+| `EnsureAccessControlSuperRowSeeded` (2000000053) | **yes**, and again after | process-invariant too, and this one the snapshot **does** carry (measured: `AlreadyPresent` after `Restore`); the second call re-decides after an adoption |
 | `EnsurePublishedApplicationBundleRowSeeded` (2000000206 / 2000000153 / 2000000212) | **no** — after the window, before the bundle's own triggers | the row identifies the bundle, and the snapshot key does not |
 
 **The Company row is process-invariant, so seeding it inside the window is safe**: `BcRuntime`
