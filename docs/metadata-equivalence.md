@@ -554,6 +554,46 @@ what BC emits: **5,001 of 5,001 exact** on 28.1.49838.53910 and 5,035 of 5,035 o
 So these are **cost and scope decisions with a proof path**, tracked on #2460 for actions. What the
 entries record is that the work has not been done — never that it could not be.
 
+<a id="one-build-measured-three-evaluated"></a>
+### The allowlist is measured on ONE build and evaluated on THREE
+
+This property is easy to miss and it is load-bearing for every kind #3782 adds. An agent
+generates the allowlist from the bundles on one machine — one BC build. CI then evaluates that
+same file on **three** BC versions per pull request (27.0, 27.5, 28.4) and **eight** on `main`.
+
+A difference exists only if the object carrying it exists on that version **and** declares the
+property shape that produces it, and BC moves both between minors. So an entry can be correct on
+two legs and match nothing on a third — which `No_allowlist_entry_has_gone_stale` reports as a
+stale entry, because from its side "nothing matched" is exactly what a landed fix looks like.
+
+That fired on the first kind added after tables (#3782). Four `InfopartPageDefinition` entries
+passed on 27.0 and 28.4 and failed on 27.5:
+
+| | 27.5 | 28.1 / 28.4 |
+|---|---|---|
+| the only page with a part-control `ProviderID` | 4306 "Agent Tasks" | 8705 "Table Information Card" |
+| does that part declare `Editable`? | **yes**, so the runner matches BC and there is no difference | no, so there is one |
+
+**Deleting the four entries was not the fix** — the differences are real on the other two legs,
+where the harness requires an entry. The allowlist had no way to say "this difference exists on
+some versions and not others".
+
+`versionContingent: true` says it. An entry carrying it is exempt from the **unused** check and
+from nothing else: it is still matched, so it can never hide a difference — a difference it does
+not cover still fails, on every version. It requires a `Doc` pointer for the same reason
+`outOfScope` does, since exempting an entry removes the signal that a landed fix must shrink this
+file.
+
+**It is deliberately not a list of BC versions.** A list has to be edited whenever the matrix
+moves and goes stale silently when it is not — the same defect as the build-keyed count pin that
+went inert in `The_current_reader_reproduces_the_known_defect_shapes`. What the flag declares is a
+*property* of the difference: its population is version-contingent.
+
+**Applied to the population, not to the failure.** 15 of the 117 page entries have a whole
+population of one or two occurrences on the measured build, resting on one or two objects with one
+property shape. The four that failed on 27.5 are the ones that version happened to hit; all 15 are
+marked, so the next six kinds do not rediscover this one leg at a time.
+
 <a id="what-the-page-measurement-does-not-cover"></a>
 ### What the page measurement does not cover
 

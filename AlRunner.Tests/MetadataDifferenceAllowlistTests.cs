@@ -287,6 +287,91 @@ public sealed class MetadataDifferenceAllowlistTests
         Assert.Empty(verdict.UnusedEntries);
     }
 
+    // ---- versionContingent: the allowlist is measured on ONE build, evaluated on THREE -----
+
+    // #3782. Four page entries correct on 27.0 and 28.4 matched nothing on 27.5 and reddened an
+    // approved PR, because the only System Application page carrying a part-control ProviderID is
+    // 4306 "Agent Tasks" on 27.5 and 8705 "Table Information Card" on 28.x — and 27.5's part
+    // declares Editable while 28.x's does not. Deleting the entries would have broken the two legs
+    // where the differences are real.
+
+    private static MetadataAllowlistEntry Contingent(string member)
+        => new()
+        {
+            Member = member, Reason = "population moves with the BC version", VersionContingent = true,
+            OutOfScope = true, Doc = "docs/metadata-equivalence.md#the-allowlist",
+        };
+
+    [Fact]
+    public void A_version_contingent_entry_matching_nothing_is_NOT_reported_as_stale()
+    {
+        var list = new MetadataDifferenceAllowlist(new[] { Contingent("InfopartPageDefinition.ProviderID") });
+
+        var verdict = list.Classify(Array.Empty<MetadataDifference>());
+
+        Assert.Empty(verdict.UnusedEntries);
+        Assert.True(verdict.Ok);
+    }
+
+    [Fact]
+    public void An_ORDINARY_entry_matching_nothing_is_still_reported_as_stale()
+    {
+        // The half that keeps the flag from being a blanket licence. Without this the two
+        // branches would be indistinguishable and the exemption could be applied to everything.
+        var list = new MetadataDifferenceAllowlist(new[] { Entry("MetaField.Editable") });
+
+        var verdict = list.Classify(Array.Empty<MetadataDifference>());
+
+        Assert.Equal("MetaField.Editable", Assert.Single(verdict.UnusedEntries));
+        Assert.False(verdict.Ok);
+    }
+
+    [Fact]
+    public void A_version_contingent_entry_still_COVERS_its_difference_where_one_exists()
+    {
+        // It relaxes the unused check and nothing else: on a version where the difference does
+        // occur, the entry must still declare it rather than leaving it undeclared.
+        var list = new MetadataDifferenceAllowlist(new[] { Contingent("InfopartPageDefinition.ProviderID") });
+
+        var verdict = list.Classify(new[] { Diff("InfopartPageDefinition", "ProviderID", "Page 8705") });
+
+        Assert.Empty(verdict.Undeclared);
+        Assert.Equal(1, verdict.OccurrencesByEntry["InfopartPageDefinition.ProviderID (version-contingent)"]);
+        Assert.True(verdict.Ok);
+    }
+
+    [Fact]
+    public void A_version_contingent_entry_can_NEVER_hide_an_undeclared_difference()
+    {
+        // The property that makes the flag safe to grant: it exempts an entry from being
+        // REQUIRED, never a difference from being DECLARED. A difference the entry does not
+        // cover still fails, on every version.
+        var list = new MetadataDifferenceAllowlist(new[] { Contingent("InfopartPageDefinition.ProviderID") });
+
+        var verdict = list.Classify(new[] { Diff("InfopartPageDefinition", "Editable", "Page 4306") });
+
+        var undeclared = Assert.Single(verdict.Undeclared);
+        Assert.Equal("InfopartPageDefinition.Editable", undeclared.Signature);
+        Assert.False(verdict.Ok);
+    }
+
+    [Fact]
+    public void A_version_contingent_entry_with_no_Doc_pointer_is_refused()
+    {
+        // Exempting an entry from the unused check removes the signal that a landed fix must
+        // shrink this file, so the reason has to be written down. Same bar as outOfScope.
+        var ex = Assert.Throws<InvalidDataException>(() => new MetadataDifferenceAllowlist(new[]
+        {
+            new MetadataAllowlistEntry
+            {
+                Member = "InfopartPageDefinition.ProviderID", Reason = "moves with the version",
+                VersionContingent = true, OutOfScope = true,
+            },
+        }));
+
+        Assert.Contains("versionContingent", ex.Message, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void The_checked_in_allowlist_loads_and_every_entry_is_well_formed()
     {

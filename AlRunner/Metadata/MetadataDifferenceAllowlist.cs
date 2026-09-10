@@ -84,6 +84,34 @@ public sealed class MetadataAllowlistEntry
     /// </summary>
     [JsonPropertyName("direction")] public string? Direction { get; init; }
 
+    /// <summary>
+    /// This entry is allowed to match NOTHING on some BC versions, so an unused-entry report is
+    /// not raised for it. It still covers what it covers; it is only exempt from being REQUIRED.
+    ///
+    /// The allowlist is measured on ONE BC build and evaluated on THREE (the pull-request legs;
+    /// eight on main). A difference exists only if the object carrying it exists on that version
+    /// AND declares the property shape that produces it — and BC moves both. Measured while
+    /// adding pages (#3782): the only System Application page carrying a part-control
+    /// <c>ProviderID</c> is 4306 "Agent Tasks" on 27.5 and 8705 "Table Information Card" on 28.x,
+    /// and 27.5's part additionally declares <c>Editable</c> while 28.x's does not — so four
+    /// entries correct on 27.0 and 28.4 matched nothing on 27.5 and reddened an approved PR.
+    ///
+    /// Deleting them was not the fix: the differences are real on the other two legs, where the
+    /// harness requires an entry. This flag is what lets one file be true on all of them.
+    ///
+    /// It is deliberately NOT a per-version list of BC builds. A list has to be edited whenever
+    /// the matrix moves and goes stale silently when it is not, which is the same class of defect
+    /// as the build-keyed count pin that went inert in
+    /// The_current_reader_reproduces_the_known_defect_shapes. What is being declared here is a
+    /// PROPERTY of the difference — that its population is version-contingent — not an inventory
+    /// of the versions.
+    ///
+    /// The half that keeps this from becoming a blanket licence: it only relaxes the UNUSED
+    /// check. An undeclared difference still fails, on every version, so the flag can never hide
+    /// a difference — only excuse an entry for not finding one.
+    /// </summary>
+    [JsonPropertyName("versionContingent")] public bool VersionContingent { get; init; }
+
     /// <summary>Only cover differences on this object, e.g. <c>Table 2000000120</c>.</summary>
     [JsonPropertyName("objectKey")] public string? ObjectKey { get; init; }
 
@@ -112,7 +140,8 @@ public sealed class MetadataAllowlistEntry
 
     public string Describe()
         => Member + (Direction is null ? "" : $" [{Direction}]")
-           + (ObjectKey is null ? "" : $" @{ObjectKey}") + (PathPrefix is null ? "" : $" ~{PathPrefix}");
+           + (ObjectKey is null ? "" : $" @{ObjectKey}") + (PathPrefix is null ? "" : $" ~{PathPrefix}")
+           + (VersionContingent ? " (version-contingent)" : "");
 }
 
 /// <summary>What the allowlist made of one comparison.</summary>
@@ -161,6 +190,12 @@ public sealed class MetadataDifferenceAllowlist
                     $"metadata allowlist: entry '{e.Member}' has direction '{e.Direction}'. " +
                     $"Use '{MetadataAllowlistEntry.RunnerOnly}' or '{MetadataAllowlistEntry.BcOnly}', " +
                     "or omit it to cover both.");
+            if (e.VersionContingent && string.IsNullOrWhiteSpace(e.Doc))
+                throw new InvalidDataException(
+                    $"metadata allowlist: entry '{e.Member}' is versionContingent with no 'Doc' " +
+                    "pointer. Exempting an entry from the unused check removes the signal that a " +
+                    "landed fix must shrink this file, so the reason the population moves with the " +
+                    "BC version has to be written down where a reviewer can disagree with it.");
             if ((e.OutOfScope || e.OracleLimitation) && string.IsNullOrWhiteSpace(e.Doc))
                 throw new InvalidDataException(
                     $"metadata allowlist: entry '{e.Member}' declares a scope or oracle boundary " +
@@ -200,7 +235,9 @@ public sealed class MetadataDifferenceAllowlist
             counts[hit.Describe()]++;
         }
 
-        var unused = Entries.Where(e => counts[e.Describe()] == 0)
+        // A version-contingent entry is exempt from the unused check and ONLY from that: it is
+        // still matched above, so it cannot hide an undeclared difference.
+        var unused = Entries.Where(e => !e.VersionContingent && counts[e.Describe()] == 0)
             .Select(e => e.Describe()).ToArray();
 
         return new MetadataAllowlistVerdict(undeclared, unused, counts);
