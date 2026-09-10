@@ -506,4 +506,291 @@ public sealed class SuiteRootAlFilesTests : IDisposable
         AssertPassed(output, "RootTableRoundTrips");
         Assert.Equal(0, exit);
     }
+
+    // -- #3735: registration mirrors the compile, folder for folder ----------------------
+
+    /// <summary>
+    /// The unit half. <c>SuiteRegistrationDirs</c> is what Program.cs's two register-source-dirs
+    /// loops hand <c>RecordPatches.AddSourceDirs</c>, and it must be the folder set the compile
+    /// reads - not a second derivation of it. Concrete list, in order, for the layout that used
+    /// to break: the old loops answered <c>[src]</c> here and dropped <c>app/</c>,
+    /// <c>app2/</c> and <c>test/</c> on the floor.
+    /// </summary>
+    [Fact]
+    public void SuiteRegistrationDirs_CoversEveryConventionalFolder_NotJustSrc()
+    {
+        Touch(Path.Combine(_root, "app.json"), "{}");
+        Touch(Path.Combine(_root, "src", "A.al"));
+        Touch(Path.Combine(_root, "app", "B.al"));
+        Touch(Path.Combine(_root, "app2", "C.al"));
+        Touch(Path.Combine(_root, "test", "D.al"));
+
+        Assert.Equal(
+            new[]
+            {
+                Path.Combine(_root, "src"), Path.Combine(_root, "app"),
+                Path.Combine(_root, "app2"), Path.Combine(_root, "test"),
+            },
+            ProgramSupport.SuiteRegistrationDirs(_root));
+    }
+
+    /// <summary>
+    /// A <c>test/</c>-only suite registered NOTHING before - the branch that fell through both
+    /// the src/ arm and the flat-bundle arm - while the compile returned <c>[test]</c>.
+    /// </summary>
+    [Fact]
+    public void SuiteRegistrationDirs_TestOnlySuite_RegistersTest()
+    {
+        Touch(Path.Combine(_root, "test", "A.al"));
+
+        Assert.Equal(new[] { Path.Combine(_root, "test") },
+            ProgramSupport.SuiteRegistrationDirs(_root));
+    }
+
+    /// <summary>
+    /// The drift pin itself: over every layout this file exercises, the registered set IS the
+    /// compiled set. A future editor who widens one and not the other fails here - which is the
+    /// failure #3611/#3714 and #3735 each shipped once.
+    /// </summary>
+    [Theory]
+    [InlineData("src")]
+    [InlineData("test")]
+    [InlineData("src+test")]
+    [InlineData("src+app+app2+test")]
+    [InlineData("flat")]
+    [InlineData("root-al-beside-src")]
+    [InlineData("sibling-dir-beside-src")]
+    [InlineData("shared")]
+    public void RegisteredDirs_AreExactlyTheCompiledDirs(string layout)
+    {
+        Touch(Path.Combine(_root, "app.json"), "{}");
+        switch (layout)
+        {
+            case "src": Touch(Path.Combine(_root, "src", "A.al")); break;
+            case "test": Touch(Path.Combine(_root, "test", "A.al")); break;
+            case "src+test":
+                Touch(Path.Combine(_root, "src", "A.al"));
+                Touch(Path.Combine(_root, "test", "B.al"));
+                break;
+            case "src+app+app2+test":
+                Touch(Path.Combine(_root, "src", "A.al"));
+                Touch(Path.Combine(_root, "app", "B.al"));
+                Touch(Path.Combine(_root, "app2", "C.al"));
+                Touch(Path.Combine(_root, "test", "D.al"));
+                break;
+            case "flat": Touch(Path.Combine(_root, "A.al")); break;
+            case "root-al-beside-src":
+                Touch(Path.Combine(_root, "src", "A.al"));
+                Touch(Path.Combine(_root, "B.al"));
+                break;
+            case "sibling-dir-beside-src":
+                Touch(Path.Combine(_root, "src", "A.al"));
+                Touch(Path.Combine(_root, "ControlAddin", "B.al"));
+                break;
+            case "shared":
+                Touch(Path.Combine(_root, "src", "A.al"));
+                Touch(Path.Combine(_root, "_shared", "Assert.al"));
+                break;
+            default: throw new ArgumentOutOfRangeException(nameof(layout), layout, null);
+        }
+
+        var bucketRoot = layout == "shared" ? _root : null;
+        var compiled = ProgramSupport.CollectSuitePaths(_root, bucketRoot);
+
+        Assert.NotEmpty(compiled);
+        Assert.Equal(compiled, ProgramSupport.SuiteRegistrationDirs(_root, bucketRoot));
+    }
+
+    /// <summary>
+    /// The end-to-end shape #3735 turned on: a PAGE declared under <c>test/</c> in a suite with
+    /// no <c>src/</c>. It compiled, but nothing registered <c>test/</c>, so the page was absent
+    /// from the runner's object inventory and <c>Page.RunModal</c> answered
+    /// "An object with that ID does not exist in the current application" (measured on
+    /// ea27ed9f). Past that, the third LiveNavTestPage route - RunnerTestClientSession.GetPage,
+    /// via [ModalPageHandler], which applies no shape gate - would have reached
+    /// BuiltInPageModeActionRule.RefuseUnknownPageType.
+    /// <para>The assertion is the mode switch itself, before and after, not "did not throw":
+    /// a Card opened modally starts editable, and its built-in View action makes the page
+    /// already on screen read-only (corpus codeunit 60479 "TPMS Tests" measures that shape on a
+    /// real service tier). An implementation that answered a default for either boolean fails.
+    /// </para>
+    /// </summary>
+    [SkippableFact]
+    public void PageUnderTestDir_IsDrivenLiveByAModalPageHandler()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        WriteManifest(_root, "7c1a0b22-3735-4b01-9001-000000003735", 63340, "SRAF Test Only");
+        Touch(Path.Combine(_root, "test", "Objects.al"), ModeProbeObjects("H", 63341, 63342));
+        Touch(Path.Combine(_root, "test", "Tests.al"), ModeProbeTests("H", 63343));
+
+        var (output, exit) = RunRunner(_root);
+
+        Assert.DoesNotContain("does not exist in the current application", output);
+        Assert.Equal(1, TestCount(output));
+        AssertPassed(output, "ModeActionResolvesForAPageDeclaredOutsideSrc");
+        Assert.Equal(0, exit);
+    }
+
+    /// <summary>
+    /// The same, one folder over: the page under <c>app2/</c> beside a <c>src/</c> that does
+    /// exist - so the old loops registered <c>[src]</c> and dropped the page anyway.
+    /// </summary>
+    [SkippableFact]
+    public void PageUnderAppDir_BesideSrc_IsDrivenLiveByAModalPageHandler()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        WriteManifest(_root, "7c1a0b22-3735-4b02-9002-000000003735", 63360, "SRAF App2 Page");
+        Touch(Path.Combine(_root, "app2", "Objects.al"), ModeProbeObjects("A", 63361, 63362));
+        Touch(Path.Combine(_root, "src", "Tests.al"), ModeProbeTests("A", 63363));
+
+        var (output, exit) = RunRunner(_root);
+
+        Assert.DoesNotContain("does not exist in the current application", output);
+        Assert.Equal(1, TestCount(output));
+        AssertPassed(output, "ModeActionResolvesForAPageDeclaredOutsideSrc");
+        Assert.Equal(0, exit);
+    }
+
+    /// <summary>
+    /// The table half of the same branch - the sibling of
+    /// <see cref="TableAtRoot_UsedFromSrcTest_IsRegisteredForRecords"/> for a suite whose only
+    /// folder is <c>test/</c>. Insert-then-Get of a non-default value, so a provider that
+    /// answered zero rows or a defaulted field fails.
+    /// </summary>
+    [SkippableFact]
+    public void TableUnderTestDir_IsRegisteredForRecords()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        WriteManifest(_root, "7c1a0b22-3735-4b03-9003-000000003735", 63370, "SRAF Test Table");
+        Touch(Path.Combine(_root, "test", "Probe.Table.al"), """
+        table 63370 "SRAF Test Probe"
+        {
+            DataClassification = SystemMetadata;
+            fields
+            {
+                field(1; "Code"; Code[20]) { }
+                field(2; "Value"; Integer) { }
+            }
+            keys { key(PK; "Code") { Clustered = true; } }
+        }
+        """);
+        Touch(Path.Combine(_root, "test", "Tests.al"), """
+        codeunit 63371 "SRAF Test Table Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure TestDirTableRoundTrips()
+            var
+                Probe: Record "SRAF Test Probe";
+            begin
+                Probe.Init();
+                Probe.Code := 'X';
+                Probe.Value := 42;
+                Probe.Insert();
+                Clear(Probe);
+                if not Probe.Get('X') then
+                    Error('row X not found after Insert');
+                if Probe.Value <> 42 then
+                    Error('Value was %1, expected 42', Probe.Value);
+            end;
+        }
+        """);
+
+        var (output, exit) = RunRunner(_root);
+
+        Assert.Equal(1, TestCount(output));
+        AssertPassed(output, "TestDirTableRoundTrips");
+        Assert.Equal(0, exit);
+    }
+
+    // A SingleInstance probe plus a sourceless Card page. The probe is how a [ModalPageHandler]
+    // reports what it saw: the handler is gone by the time the test resumes (corpus codeunit
+    // 60473 "TPMS Open Probe" makes the same move). Raw Error(), never Codeunit Assert - the
+    // toolkit would pull a Base Application floor (.claude/rules/no-base-app-in-csharp-tests.md).
+    private static string ModeProbeObjects(string tag, int probeId, int pageId) => $$"""
+        codeunit {{probeId}} "SRAF Probe {{tag}}"
+        {
+            SingleInstance = true;
+
+            var
+                Runs: Integer;
+                Before: Boolean;
+                After: Boolean;
+
+            procedure Reset()
+            begin
+                Runs := 0;
+                Before := false;
+                After := false;
+            end;
+
+            procedure Note(EditableBefore: Boolean; EditableAfter: Boolean)
+            begin
+                Runs += 1;
+                Before := EditableBefore;
+                After := EditableAfter;
+            end;
+
+            procedure GetRuns(): Integer
+            begin
+                exit(Runs);
+            end;
+
+            procedure GetBefore(): Boolean
+            begin
+                exit(Before);
+            end;
+
+            procedure GetAfter(): Boolean
+            begin
+                exit(After);
+            end;
+        }
+
+        page {{pageId}} "SRAF Mode Card {{tag}}"
+        {
+            PageType = Card;
+            ApplicationArea = All;
+        }
+        """;
+
+    private static string ModeProbeTests(string tag, int codeunitId) => $$"""
+        codeunit {{codeunitId}} "SRAF Mode Tests {{tag}}"
+        {
+            Subtype = Test;
+
+            [Test]
+            [HandlerFunctions('ModeHandler')]
+            procedure ModeActionResolvesForAPageDeclaredOutsideSrc()
+            var
+                Probe: Codeunit "SRAF Probe {{tag}}";
+            begin
+                Probe.Reset();
+                Page.RunModal(Page::"SRAF Mode Card {{tag}}");
+                if Probe.GetRuns() <> 1 then
+                    Error('handler ran %1 time(s), expected 1', Probe.GetRuns());
+                if not Probe.GetBefore() then
+                    Error('a Card opened modally must start out editable');
+                if Probe.GetAfter() then
+                    Error('the built-in View action must make the open page read-only');
+            end;
+
+            [ModalPageHandler]
+            procedure ModeHandler(var Card: TestPage "SRAF Mode Card {{tag}}")
+            var
+                Probe: Codeunit "SRAF Probe {{tag}}";
+                EditableBefore: Boolean;
+            begin
+                EditableBefore := Card.Editable();
+                // Before #3735 this raised RunnerOutOfScopeException - the page's PageType was
+                // unknown, because nothing had parsed the folder it is declared in.
+                Card.View().Invoke();
+                Probe.Note(EditableBefore, Card.Editable());
+            end;
+        }
+        """;
 }

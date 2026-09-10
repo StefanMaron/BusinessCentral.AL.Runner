@@ -346,6 +346,24 @@ internal static partial class ProgramSupport
         return groups;
     }
 
+    /// <summary>
+    /// The folders <see cref="AlRunner.Patches.RecordPatches.AddSourceDirs"/> must be given for
+    /// one suite: exactly the folders <see cref="CollectSuitePaths"/> compiles.
+    /// <para>
+    /// It delegates rather than deciding anything, and that is the point (#3735). The two
+    /// register-source-dirs loops in Program.cs used to re-derive the set — <c>src/</c> when it
+    /// exists, else the suite root when no <c>test/</c> exists — so a page or a table declared
+    /// under <c>test/</c> or <c>app2/</c> compiled but was never parsed: a <c>test/</c>-only
+    /// suite registered NOTHING, and <c>Page.RunModal</c> on a page declared there answered
+    /// "An object with that ID does not exist in the current application". #3611/#3714 are the
+    /// record of the same two sets drifting apart once before, which is why this is now one
+    /// function instead of a rule.
+    /// </para>
+    /// <para>Pinned by AlRunner.Tests/SuiteRootAlFilesTests.cs.</para>
+    /// </summary>
+    internal static List<string> SuiteRegistrationDirs(string suite, string? bucketRoot = null)
+        => CollectSuitePaths(suite, bucketRoot);
+
     internal static List<string> CollectSuitePaths(string suite, string? bucketRoot = null)
     {
         var all = ConventionalSourceDirs(suite);
