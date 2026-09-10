@@ -188,8 +188,11 @@ public static class AlCoverageSourceMap
     }
 
     // The coverable object kinds, labelled the way AlCallStackCapture.ParseObjectTypeAndId
-    // labels the emitted scope classes. The same seven kinds the header regex accepted before
-    // #3713; extensions and the id-less kinds are not registered, as before.
+    // labels the emitted scope classes: the seven the header regex accepted before #3713,
+    // plus the three code-bearing extension kinds since #3833. What stays unregistered is
+    // the kinds that carry no executable code — an interface, a controladdin, a
+    // permissionset, an enum extension — for which BC emits no scope class at all, so a map
+    // entry would have nothing to join to.
     private static string? LabelOf(NavCA.SyntaxNode obj) => obj switch
     {
         NavSyntax.CodeunitSyntax => "CodeUnit",
@@ -202,11 +205,16 @@ public static class AlCoverageSourceMap
         // #3833: extension objects carry executable procedures and triggers, and BC emits
         // scope classes for them — so without these their statements had a runtime identity
         // and no file, and were dropped. The label must match AlCallStackCapture's prefix map,
-        // and both match the spelling RecordPatches.AlSourceParser already uses. An extension
-        // has its own object id, so it occupies its own map entry rather than sharing the base
-        // object's. Enum extensions are deliberately absent: they declare values, not code,
-        // and BC emits no scope class for one (measured — nothing for `enumextension` appears
-        // among the [SourceSpans]-carrying types of a bundle that declares one).
+        // and both match the spelling RecordPatches.AlSourceParser already uses.
+        //
+        // An extension is keyed by its OWN id, not the base object's — measured, BC emits
+        // TableExtension63701 for an extension of table 63700. What keeps entries apart is
+        // the (label, id) PAIR rather than the id alone: a tableextension and a pageextension
+        // may legally share a number, so it is the distinct label that separates them.
+        //
+        // Enum extensions are deliberately absent: they declare values, not code, and BC
+        // emits no scope class for one (measured — nothing for `enumextension` appears among
+        // the [SourceSpans]-carrying types of a bundle that declares one).
         NavSyntax.TableExtensionSyntax => "TableExtension",
         NavSyntax.PageExtensionSyntax => "PageExtension",
         NavSyntax.ReportExtensionSyntax => "ReportExtension",
