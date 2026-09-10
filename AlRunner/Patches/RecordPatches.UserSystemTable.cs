@@ -81,8 +81,7 @@
 //   `false` return rather than an exception. Discarding that bool made "the row is now there"
 //   and "the insert was refused and there is no row" indistinguishable, logged neither, and
 //   marked the bundle seeded either way. The three outcomes are now separated
-//   (UserRowSeedOutcome), a refusal is reported loudly with the colliding row named, and
-//   _userRowSeededForThisBundle stays false when no row was written.
+//   (UserRowSeedOutcome), and a refusal is reported loudly with the colliding row named.
 //
 //   WHICH REFUSALS ARE REACHABLE, MEASURED. The review that found this predicted the bite would
 //   be a UNIQUE KEY on "User Name": a --test-data backup carrying its own TESTUSER would refuse
@@ -211,7 +210,6 @@ public static partial class RecordPatches
         Refused,
     }
 
-    private static bool _userRowSeededForThisBundle;
     private static bool _userRowSeedInProgress;
 
     /// <summary>
@@ -231,8 +229,6 @@ public static partial class RecordPatches
 
     internal static void ResetUserSystemTableForNewBundle()
     {
-        _userRowSeededForThisBundle = false;
-
         // Put the generated identity back before the next bundle seeds, so each bundle decides
         // adoption against its OWN data from the same starting point. Idempotent and free when
         // nothing was ever adopted.
@@ -245,13 +241,6 @@ public static partial class RecordPatches
             _generatedSessionUserSid = null;
         }
     }
-
-    /// <summary>
-    /// True only when the User table actually holds a row for the session user's security id.
-    /// Deliberately NOT set by a refusal: a flag that reads "seeded" over an empty table is the
-    /// silent-wrong-answer this file's own loud-failures obligation forbids.
-    /// </summary>
-    internal static bool UserRowSeededForThisBundle => _userRowSeededForThisBundle;
 
     /// <summary>
     /// Insert the runner's own session user into the User system table (2000000120), once per
@@ -271,7 +260,7 @@ public static partial class RecordPatches
     /// </returns>
     internal static UserRowSeedOutcome EnsureUserSystemTableRowSeeded()
     {
-        // #3698: NO short-circuit on _userRowSeededForThisBundle. TestExecutor calls this twice
+        // #3698: NO already-seeded short-circuit. TestExecutor calls this twice
         // per app group — once inside the dep-company window for the row, once after it for the
         // identity decision — and between the two, install code and a --test-data load can both
         // change what the User table holds. A latch would answer from the first call's state and
@@ -344,15 +333,11 @@ public static partial class RecordPatches
             if (inner.GetType().Name == "NavRecordAlreadyExistsException")
             {
                 // Confirmed by the SAME Get the non-exception path uses, rather than inferred
-                // from the exception's type name. This method's stated invariant is that
-                // _userRowSeededForThisBundle is true only when a row for THIS security id is
-                // actually present, and "something already existed" is not evidence of that —
-                // it is evidence that something clashed. Setting the flag off the type name
-                // alone would be the same shape of unchecked claim the discarded ALInsert bool
-                // was, in the one branch that still made it.
+                // from the exception's type name: "something already existed" is evidence that
+                // something clashed, not that a row for THIS security id is present, and only
+                // the second answers the question this outcome reports.
                 if (SessionUserRowExists(session, userSid))
                 {
-                    _userRowSeededForThisBundle = true;
                     PerfTrace.Log($"UserSystemTable: User row '{userName}' was already present");
                     return UserRowSeedOutcome.AlreadyPresent;
                 }
@@ -399,19 +384,14 @@ public static partial class RecordPatches
         switch (outcome)
         {
             case UserRowSeedOutcome.Inserted:
-                _userRowSeededForThisBundle = true;
                 PerfTrace.Log($"UserSystemTable: seeded User row '{userName}'");
                 break;
             case UserRowSeedOutcome.AdoptedExistingRow:
-                // The flag's stated invariant — "the User table holds a row for the session
-                // user's security id" — is satisfied, and satisfied more directly than by the
-                // insert: the session user's security id IS that row's, because the session was
-                // moved onto it. Nothing was written.
-                _userRowSeededForThisBundle = true;
+                // Nothing was written: the session user's security id IS that row's, because the
+                // session was moved onto it.
                 PerfTrace.Log($"UserSystemTable: adopted the existing User row for '{userName}'");
                 break;
             case UserRowSeedOutcome.AlreadyPresent:
-                _userRowSeededForThisBundle = true;
                 PerfTrace.Log($"UserSystemTable: User row '{userName}' was already present");
                 break;
             default:
@@ -432,13 +412,6 @@ public static partial class RecordPatches
                 //     test green — so loud-failures.md's "a green test would lie" hazard is not
                 //     in play — and this line is what tells the reader why that exception is
                 //     about to appear.
-                //
-                // _userRowSeededForThisBundle is CLEARED here, not merely left unset. Since #3698
-                // this method runs twice per app group, so an earlier call can have set it true
-                // over a row that install code has since deleted — and the flag's stated
-                // invariant is that it is true only while the table holds a row for the session
-                // user's security id. AccessControlSeed reads it.
-                _userRowSeededForThisBundle = false;
                 Console.Error.WriteLine(
                     $"[warn] UserSystemTable: the User row (2000000120) for the session user "
                     + $"'{userName}' ({userSid}) was REFUSED and is NOT present — {refusalDetail}. "

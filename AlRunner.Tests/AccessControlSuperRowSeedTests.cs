@@ -27,9 +27,11 @@
 //
 //   HOW STRONG THESE ARE, EXACTLY. The tests below read TestExecutor.cs as TEXT and compare
 //   `IndexOf` offsets. That is a claim about where the calls sit in one source file, which is a
-//   PROXY for the call sequence and not the call sequence itself: it happens to be sound today
-//   because all three calls are unconditional straight-line statements inside TestExecutor.Run,
-//   but it would keep passing if a call moved into another method that runs later, and it would
+//   PROXY for the call sequence and not the call sequence itself: the calls are straight-line
+//   statements inside TestExecutor.Run — since #3757 one of the two Access Control calls sits
+//   inside the dep-company cache MISS branch, which runs before the dependency triggers on that
+//   path and not at all on a HIT — but a source check would keep passing if a call moved into
+//   another method that runs later, and it would
 //   start failing if a method were reordered in the file without any behaviour changing. So they
 //   are cheap regression guards on the call sites — they cost no runner spawn (~6-70s per
 //   invocation, see .claude/rules/no-base-app-in-csharp-tests.md) — and they are deliberately
@@ -58,19 +60,57 @@ public sealed class AccessControlSuperRowSeedTests
     }
 
     /// <summary>
-    /// The seed is called at all, and exactly once. A second call site would re-run the insert
-    /// against a store the first call already wrote — benign today only because the latch short
-    /// -circuits it, which is not a property to depend on silently.
+    /// The seed is called at all, and — since #3757 — exactly twice: once INSIDE the #1867
+    /// dependency+company baseline window, so a dependency's install code finds the SUPER row,
+    /// and once after it on every path, because a cache HIT skips the window entirely and because
+    /// an adoption between the two calls moves the id the row must name. A third call site would
+    /// be a re-run nobody had reasoned about; one call site again would put the seed back after
+    /// install code that reads it.
     /// </summary>
     [Fact]
-    public void AccessControlSeed_IsCalledExactlyOnce_FromTestExecutor()
+    public void AccessControlSeed_IsCalledExactlyTwice_FromTestExecutor()
     {
         var src = TestExecutorSource();
         var calls = CountOccurrences(src, "EnsureAccessControlSuperRowSeeded()");
         Assert.True(
-            calls == 1,
-            $"expected exactly one call to EnsureAccessControlSuperRowSeeded() in TestExecutor.cs, found {calls}. "
-            + "See AlRunner#3176.");
+            calls == 2,
+            $"expected exactly two calls to EnsureAccessControlSuperRowSeeded() in TestExecutor.cs, found {calls}. "
+            + "See AlRunner#3176 and AlRunner#3757.");
+    }
+
+    /// <summary>
+    /// ORDERING, EDGE 3 (#3757): both call sites sit ahead of the install triggers that read the
+    /// table — the first before the DEPENDENCY triggers inside the baseline window, the second
+    /// before the bundle's OWN. Install code that asks whether the session user is SUPER used to
+    /// read an empty table on both paths.
+    /// <para>
+    /// Checks SOURCE POSITION in TestExecutor.cs, not the executed order — see the file header.
+    /// </para>
+    /// </summary>
+    [Fact]
+    public void AccessControlSeed_RunsBeforeBothSetsOfInstallTriggers()
+    {
+        var src = TestExecutorSource();
+        var firstSeed = src.IndexOf("EnsureAccessControlSuperRowSeeded()", StringComparison.Ordinal);
+        var secondSeed = src.IndexOf("EnsureAccessControlSuperRowSeeded()", firstSeed + 1, StringComparison.Ordinal);
+        var depTriggers = src.IndexOf("InstallTriggerRunner.RunDependenciesOnly();", StringComparison.Ordinal);
+        var ownTriggers = src.IndexOf("InstallTriggerRunner.RunTestAssemblyOnly();", StringComparison.Ordinal);
+
+        Assert.True(secondSeed > 0, "expected two EnsureAccessControlSuperRowSeeded() call sites in TestExecutor.cs");
+        Assert.True(depTriggers > 0, "InstallTriggerRunner.RunDependenciesOnly(); call not found in TestExecutor.cs");
+        Assert.True(ownTriggers > 0, "InstallTriggerRunner.RunTestAssemblyOnly(); call not found in TestExecutor.cs");
+        Assert.True(
+            firstSeed < depTriggers,
+            "the first Access Control seed must run BEFORE InstallTriggerRunner.RunDependenciesOnly(): a "
+            + "dependency's install code that reads Access Control (2000000053) otherwise finds no SUPER "
+            + $"row for the session user. Found the seed at {firstSeed} and the dependency triggers at "
+            + $"{depTriggers}. See AlRunner#3757.");
+        Assert.True(
+            secondSeed < ownTriggers,
+            "the second Access Control seed must run BEFORE InstallTriggerRunner.RunTestAssemblyOnly(): on a "
+            + "dep-company cache HIT it is the only one that runs, and the bundle's own install code reads "
+            + $"the same table. Found the seed at {secondSeed} and the bundle triggers at {ownTriggers}. "
+            + "See AlRunner#3757.");
     }
 
     /// <summary>

@@ -4,6 +4,7 @@ codeunit 70782 "ITSI Tests"
     TestPermissions = Disabled;
 
     var
+        SuperTok: Label 'SUPER', Locked = true;
         // The security id the DEPENDENCY's install trigger put on the stand-in row, and
         // therefore the id the session adopts.
         AdoptedSidTok: Label '{D41F7A96-2C58-4E13-8B0A-7F5C9E62D3A4}', Locked = true;
@@ -104,5 +105,27 @@ codeunit 70782 "ITSI Tests"
         if Setup."Owner User Name" <> UserId() then
             Error('install code stored the user name "%1", but UserId() is now "%2"',
               Setup."Owner User Name", UserId());
+    end;
+
+    [Test]
+    procedure ItsiExactlyOneSuperRowAndItNamesTheAdoptedId()
+    var
+        AccessCtrl: Record "Access Control";
+    begin
+        // #3757. The Access Control SUPER row is seeded on BOTH sides of the identity decision
+        // now, and this bundle is the one that MOVES that identity: the dependency replaces the
+        // seeded User row, so the session adopts a security id it did not start with. A grant
+        // written for the id the session had before the adoption names a user that no longer
+        // exists - so there must be exactly one SUPER row in the table, and it must be for the
+        // id UserSecurityId() answers now.
+        AccessCtrl.SetRange("Role ID", SuperTok);
+        if AccessCtrl.Count() <> 1 then
+            Error('expected exactly 1 SUPER row in Access Control (2000000053) but found %1 - a row '
+              + 'seeded for the pre-adoption security id was left behind (AlRunner#3757)',
+              AccessCtrl.Count());
+        AccessCtrl.FindFirst();
+        if AccessCtrl."User Security ID" <> UserSecurityId() then
+            Error('the one SUPER row names %1, but UserSecurityId() is %2',
+              Format(AccessCtrl."User Security ID"), Format(UserSecurityId()));
     end;
 }

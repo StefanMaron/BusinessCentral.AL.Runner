@@ -18,6 +18,16 @@
 //   4P/1F cold and 4P/1F warm.
 //     FAIL Codeunit70820.DisiDependencyInstallCodeSawTheSessionUsersOwnRow — "dependency install
 //          code looked up UserSecurityId() in User (2000000120) and found no row"
+//   #3757 added four more, of which two are RED against the pre-#3757 runner in both arms:
+//     FAIL Codeunit70820.DisiDependencyInstallCodeSawTheCompanyRow — "dependency install code
+//          called Company.Get(CompanyName()) and found no row"
+//     FAIL Codeunit70820.DisiDependencyInstallCodeSawTheSuperGrant — "dependency install code
+//          found no SUPER row in Access Control (2000000053) for UserSecurityId()"
+//   The other two are the controls that keep those two honest: the key-consulting negative for
+//   Company, and the registry pair — the dependency's OWN row present, the BUNDLE's absent —
+//   which is the invariant the fix must NOT break, since the bundle's Published Application row
+//   is deliberately seeded outside the shared dependency snapshot.
+//
 //   DisiTheSeedWroteExactlyOneRowForTheSessionUser passes in both arms before AND after: it is
 //   here because the FIX introduces a second seed call, and a second INSERT is the way that fix
 //   goes wrong.
@@ -93,6 +103,11 @@ public sealed class DepInstallTriggerSessionIdentityTests
         Assert.Contains("PASS  Codeunit70820.DisiTheDependencySawTheIdentityTheTestsSee", stdout);
         Assert.Contains("PASS  Codeunit70820.DisiTheDependencysLookupConsultedTheKey", stdout);
         Assert.Contains("PASS  Codeunit70820.DisiTheSeedWroteExactlyOneRowForTheSessionUser", stdout);
+        // #3757 — the three sibling seeds, measured from the same observation row.
+        Assert.Contains("PASS  Codeunit70820.DisiDependencyInstallCodeSawTheCompanyRow", stdout);
+        Assert.Contains("PASS  Codeunit70820.DisiTheDependencysCompanyLookupConsultedTheKey", stdout);
+        Assert.Contains("PASS  Codeunit70820.DisiDependencyInstallCodeSawTheSuperGrant", stdout);
+        Assert.Contains("PASS  Codeunit70820.DisiTheDependencySawItsOwnAppInstalledAndNotTheBundle", stdout);
         Assert.DoesNotContain("FAIL", stdout);
         Assert.True(exit == 0,
             $"{arm}: expected a clean run. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");

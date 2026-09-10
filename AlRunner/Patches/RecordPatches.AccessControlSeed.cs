@@ -92,19 +92,26 @@ public static partial class RecordPatches
         Refused,
     }
 
-    private static bool _accessControlRowSeededForThisBundle;
+    /// <summary>
+    /// The security id this bundle's SUPER row was written FOR, or null when no row is in the
+    /// table. A plain bool cannot answer the question the seed is now asked twice per app group
+    /// (#3757): the session can be moved onto an ADOPTED row between the two calls, and a latch
+    /// that only remembers "a row exists" would leave the SUPER grant naming the id the session
+    /// no longer has. See docs/session-user-seed-ordering.md.
+    /// </summary>
+    private static NavGuid? _accessControlSuperRowSeededFor;
     private static bool _accessControlRowSeedInProgress;
 
     internal static void ResetAccessControlSeedForNewBundle()
-        => _accessControlRowSeededForThisBundle = false;
+        => _accessControlSuperRowSeededFor = null;
 
     /// <summary>
     /// True only when Access Control actually holds a SUPER row for the session user. Not set by
     /// a refusal — a flag reading "seeded" over a table with no such row is the silent-wrong
     /// answer this file's loud-failures obligation forbids, the same discipline
-    /// <see cref="UserRowSeededForThisBundle"/> follows.
+    /// <see cref="EnsureUserSystemTableRowSeeded"/> follows.
     /// </summary>
-    internal static bool AccessControlRowSeededForThisBundle => _accessControlRowSeededForThisBundle;
+    internal static bool AccessControlRowSeededForThisBundle => _accessControlSuperRowSeededFor != null;
 
     /// <summary>
     /// Insert the Access Control row that backs the session user's SUPER status, once per bundle.
@@ -114,7 +121,10 @@ public static partial class RecordPatches
     /// </summary>
     internal static AccessControlSeedOutcome EnsureAccessControlSuperRowSeeded()
     {
-        if (_accessControlRowSeededForThisBundle) return AccessControlSeedOutcome.AlreadySeededThisBundle;
+        // NO short-circuit before the session identity is read: which id the row must name is
+        // exactly what can have changed since the previous call (#3757). The settled-for-this-id
+        // early return lives in the core below, after ReadSkeletonUserIdentity.
+        //
         // Same re-entry guard as the User seed next door: the insert re-enters NavRecord, so the
         // window is closed explicitly rather than on there being no such path today.
         if (_accessControlRowSeedInProgress) return AccessControlSeedOutcome.AlreadySeededThisBundle;
@@ -144,6 +154,24 @@ public static partial class RecordPatches
         if (session == null) return AccessControlSeedOutcome.NoSessionIdentity;
 
         var (_, _, userSid) = ReadSkeletonUserIdentity(session);
+        if (userSid != null && _accessControlSuperRowSeededFor is { } seededFor)
+        {
+            if (string.Equals(seededFor.ToString(), userSid.ToString(), StringComparison.OrdinalIgnoreCase))
+                return AccessControlSeedOutcome.AlreadySeededThisBundle;
+
+            // The session moved onto an ADOPTED User row after this bundle's row was written
+            // (#2983), so the grant names a security id the session no longer has — and, in the
+            // adoption case, one whose User row the adopting data replaced. Withdraw the row this
+            // seeder wrote before writing the new one: leaving it is a SUPER assignment for a user
+            // that does not exist, which is the silent-wrong shape .claude/rules/loud-failures.md
+            // forbids. Only ever the row this seeder wrote, never one install code contributed.
+            var withdrawn = TryDeleteAccessControlSuperRow(session, meta, seededFor);
+            PerfTrace.Log(
+                $"AccessControlSeed: the session identity moved to {userSid}; the SUPER row for "
+                + $"{seededFor} was {(withdrawn ? "withdrawn" : "already gone")}");
+            _accessControlSuperRowSeededFor = null;
+        }
+
         if (userSid == null)
         {
             // Loud, never silent — the same obligation the User seed carries. Without this row
@@ -162,7 +190,7 @@ public static partial class RecordPatches
             var outcome = InsertAccessControlSuperRow(session, meta, userSid);
             if (outcome is AccessControlSeedOutcome.Inserted or AccessControlSeedOutcome.AlreadyPresent)
             {
-                _accessControlRowSeededForThisBundle = true;
+                _accessControlSuperRowSeededFor = userSid;
                 PerfTrace.Log($"AccessControlSeed: SUPER row {outcome}");
                 return outcome;
             }
@@ -244,5 +272,38 @@ public static partial class RecordPatches
 #pragma warning disable CS0618
         return probe.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult();
 #pragma warning restore CS0618
+    }
+
+    /// <summary>
+    /// Delete the all-companies SUPER row for <paramref name="userSid"/>, if one is there.
+    /// Narrow on purpose: the same filter the seed's own insert and probe use, so the only row
+    /// this can remove is the shape this seeder writes. Returns whether a row was deleted.
+    /// </summary>
+    private static bool TryDeleteAccessControlSuperRow(object session, NCLMetaTable meta, NavGuid userSid)
+    {
+        try
+        {
+            using var stale = new NavRecord((NavSession)session, AccessControlTableId, SecurityFiltering.Ignored);
+            var acMeta = stale.MetaTable ?? meta;
+            var userField = FieldByNameOnAccessControl(acMeta, AcUserSecurityIdFieldName);
+            var roleField = FieldByNameOnAccessControl(acMeta, AcRoleIdFieldName);
+
+            stale.ALSetRange(userField.FieldNo, userSid);
+            stale.ALSetRange(roleField.FieldNo, NavValue.CreateNavValueFromObject(roleField, SuperRoleId));
+#pragma warning disable CS0618
+            if (!stale.ALFindFirstAsync(DataError.TrapError).GetAwaiter().GetResult()) return false;
+            return stale.ALDelete(DataError.TrapError, runApplicationTrigger: false);
+#pragma warning restore CS0618
+        }
+        catch (Exception ex)
+        {
+            // Never take the run down for a withdrawal: the new row is still written below, so
+            // the worst outcome is the stale grant the message names.
+            Console.Error.WriteLine(
+                $"[warn] AccessControlSeed: withdrawing the SUPER row for {userSid} raised "
+                + $"{ex.GetType().Name}: {ex.Message}. Access Control may still hold a SUPER "
+                + "assignment for a user security id the session no longer has. See AlRunner#3757.");
+            return false;
+        }
     }
 }
