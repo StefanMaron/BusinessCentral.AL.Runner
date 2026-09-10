@@ -15,9 +15,25 @@ namespace AlRunner.Infrastructure;
 /// <c>IReadOnlyDictionary&lt;(Label, Id), string&gt;</c> the older consumers take, plus
 /// <see cref="LineOffset"/>, the number of lines to add to a decoded [SourceSpans] line to
 /// get the file line. BC's [SourceSpans] lines are relative to the object's own text with
-/// the file's preamble (anything before the first object) counted in, so the offset is the
-/// object's FullSpan start minus the first object's — 0 for the first object in a file
-/// (#3713; CoverageMultiObjectFileTests pins the four header shapes that settled it).
+/// the file's PREAMBLE counted in, so the offset is the object's FullSpan start minus the
+/// preamble's length — 0 for the first object in a file.
+/// <para>
+/// The preamble is <b>the number of complete source lines before the earliest top-level
+/// object's FullSpan</b>, which is not the same as "everything before the first
+/// declaration keyword" (#3822). A FullSpan owns its own leading trivia, so a comment or a
+/// blank line immediately in front of a declaration belongs to that object and is NOT
+/// preamble; a <c>namespace</c> or <c>using</c> is a sibling syntax node, so it is. That is
+/// why the first object of a file with a header measures 1 and 5 in the fixtures rather
+/// than 0.
+/// </para>
+/// <para>
+/// "Earliest top-level object" means every entry in <c>root.Objects</c>, including the
+/// kinds <see cref="AlCoverageSourceMap"/> cannot map — an interface, a controladdin, a
+/// permissionset, any extension. Those are objects, not preamble, and measuring the origin
+/// over the mapped subset instead subtracted them as though they were, putting every later
+/// object's lines exactly that far too low (#3822).
+/// </para>
+/// (#3713; CoverageMultiObjectFileTests pins the header shapes that settled both.)
 /// </summary>
 public sealed class AlSourceLocationMap : IReadOnlyDictionary<(string Label, int Id), string>
 {

@@ -403,6 +403,40 @@ public sealed class CoverageMultiObjectFileTests : IDisposable
     }
 
     /// <summary>
+    /// #3822 review: the two end-to-end probes both use an `interface`, so an implementation
+    /// that special-cased interfaces — or grew an "origin-capable kinds" allowlist — would
+    /// pass them and still be wrong for every other unmapped kind. The invariant is that
+    /// EVERY entry in <c>root.Objects</c> participates in the origin regardless of whether it
+    /// can become a map entry, and this pins it across kinds rather than for one.
+    ///
+    /// Map-level rather than end-to-end on purpose: it costs a parse instead of a runner
+    /// spawn, so covering several kinds is cheap. The end-to-end facts above are what prove
+    /// the offset is the one BC's spans actually need.
+    ///
+    /// Each case is the same file with a different leading unmapped object, sized so the
+    /// mapped codeunit's FullSpan begins on 0-based line 6 — the blank line before its
+    /// declaration, which is its own leading trivia.
+    /// </summary>
+    [SkippableTheory]
+    [InlineData("interface \"Probe Iface\"\n{\n    procedure Ping(): Integer;\n}")]
+    [InlineData("controladdin \"Probe Addin\"\n{\n    StartupScript = 'a.js';\n}")]
+    [InlineData("permissionset 63699 \"Probe Perms\"\n{\n    Assignable = true;\n}")]
+    public void Build_AnyUnmappedLeadingObject_CountsTowardTheOrigin(string leading)
+    {
+        RequireEngine();
+        var text = leading + "\n\ncodeunit 63690 \"Probe After\"\n{\n    procedure P(): Integer\n"
+                 + "    begin\n        exit(1);\n    end;\n}\n";
+        File.WriteAllText(Path.Combine(_root, "Lead.Codeunit.al"), text);
+
+        var map = AlCoverageSourceMap.Build(new[] { _root }, relativeTo: _root);
+
+        // The leading object occupies four lines, so the codeunit's FullSpan starts on the
+        // blank 0-based line 4 and the preamble is empty: offset 4. Under the pre-fix rule
+        // the codeunit was its own origin and this was 0, whatever the leading kind.
+        Assert.Equal(4, map.LineOffset("CodeUnit", 63690));
+    }
+
+    /// <summary>
     /// #3822, the shape that stresses both halves of the origin rule at once: a REAL preamble
     /// (header comment, namespace, using) AND an unmapped object in front of the mapped one.
     ///
