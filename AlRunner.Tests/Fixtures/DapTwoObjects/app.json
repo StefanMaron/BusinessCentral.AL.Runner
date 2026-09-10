@@ -1,0 +1,23 @@
+{
+  "id": "c3d4e5f6-a7b8-490a-9c3d-4e5f6a7b8093",
+  "name": "Runner Tests Fixture - DAP Two Objects",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Fixture for #3786: two codeunits in ONE .al file, so the test codeunit's [SourceSpans] lines are relative to a text that does not start at line 1.",
+  "description": "Used by AlRunner.Tests' DapMultiObjectFileTests. No application/platform floor - see .claude/rules/no-base-app-in-csharp-tests.md.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 60260,
+      "to": 60299
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}

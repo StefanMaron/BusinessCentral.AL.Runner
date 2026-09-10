@@ -34,12 +34,15 @@ public static class AlDapStackWalker
     /// (e.g. a dependency app's procedure) still appears, with SourcePath null rather
     /// than the frame being dropped — a debugger UI can show "no source" for it,
     /// matching how ServerProtocol already treats a stack frame with no known file
-    /// (loud-failures.md: never silently omit a frame the caller could act on).
+    /// (loud-failures.md: never silently omit a frame the caller could act on). It also
+    /// carries each object's line offset (#3786), which is what turns the object-relative
+    /// line BC records into the file line a DAP client expects beside that path; an object
+    /// the map does not know offsets by 0, so it keeps its previous line unchanged.
     /// </summary>
     public static List<AlDapFrame> Walk(
         Microsoft.Dynamics.Nav.Runtime.NavMethodScope pausedScope,
         int pausedStatementIndex,
-        IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
+        AlSourceLocationMap sourceMap)
     {
         var frames = new List<AlDapFrame>();
         Microsoft.Dynamics.Nav.Runtime.NavMethodScope? cur = pausedScope;
@@ -48,7 +51,16 @@ public static class AlDapStackWalker
         {
             var (label, objId) = AlCallStackCapture.ParseObjectTypeAndId(cur.GetType());
             sourceMap.TryGetValue((label, objId), out var path);
-            var line = id == 0 ? ResolveLine(cur, pausedStatementIndex) : ResolveCurrentLine(cur);
+            // #3786: ResolveLine answers the line within the OWNING OBJECT's text, which is
+            // a file line only for the first object in a file. The frame's SourcePath and
+            // its Line have to agree about which numbering they use, and a DAP client reads
+            // both together, so the offset is added here where the pair is assembled rather
+            // than inside ResolveLine — whose contract stays "object-relative", the number
+            // BC actually recorded.
+            var raw = id == 0 ? ResolveLine(cur, pausedStatementIndex) : ResolveCurrentLine(cur);
+            // A frame that resolved no line at all stays 0; shifting that by an offset would
+            // invent a line for a frame whose object carries no spans.
+            var line = raw == 0 ? 0 : raw + sourceMap.LineOffset(label, objId);
             frames.Add(new AlDapFrame(id, cur.ScopeName ?? "?", path, line, cur));
             id++;
             cur = cur.ParentScope;
@@ -56,10 +68,14 @@ public static class AlDapStackWalker
         return frames;
     }
 
-    /// <summary>The absolute AL source line <paramref name="scope"/> is currently
-    /// stopped at, per its OWN live StatementNumber — correct for any ANCESTOR frame,
-    /// but NOT for the paused (topmost) frame itself; see <see cref="Walk"/>'s doc
-    /// comment for why.</summary>
+    /// <summary>The AL source line <paramref name="scope"/> is currently stopped at, per its
+    /// OWN live StatementNumber — correct for any ANCESTOR frame, but NOT for the paused
+    /// (topmost) frame itself; see <see cref="Walk"/>'s doc comment for why.
+    /// <para>
+    /// The line is relative to the owning OBJECT's text, which is the file line only for the
+    /// first object in a file (#3786). <see cref="Walk"/> adds the object's offset; a direct
+    /// caller of this method gets the raw number BC recorded and must add its own.
+    /// </para></summary>
     public static int ResolveCurrentLine(Microsoft.Dynamics.Nav.Runtime.NavMethodScope scope)
         => ResolveLine(scope, scope.StatementNumber);
 
