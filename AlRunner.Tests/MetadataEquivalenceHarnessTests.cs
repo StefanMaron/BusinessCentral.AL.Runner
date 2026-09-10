@@ -240,6 +240,54 @@ public sealed class MetadataEquivalenceHarnessTests
     }
 
     [SkippableFact]
+    public void The_new_kinds_reader_answers_the_constant_that_IS_the_defect()
+    {
+        // Found by mutation-checking this PR's own work, and it is the #3802 shape exactly.
+        //
+        // Writing BC's own Extensible value into the enum render — manufacturing agreement, the
+        // one thing this harness exists to catch — left all 26 tests GREEN. The allowlist could
+        // not see it because the mutation does not REMOVE the differences, it INVERTS them: 31
+        // (BC True, runner False) became 111 (BC False, runner True), the entry still matched
+        // every one, and No_allowlist_entry_has_gone_stale therefore had nothing to report.
+        //
+        // `direction` is the usual narrowing tool and it cannot help here: it keys on the value
+        // being absent-or-null, and both sides of Extensible are False/True. What does work is
+        // the same claim the table-side members already make — the runner answers a CONSTANT,
+        // and that constant IS the defect. A reader that started answering BC's real value
+        // breaks this, in either direction, which is what the allowlist alone cannot do.
+        foreach (var report in RunAll())
+        {
+            MetadataDifference[] On(string signature, string objectPrefix) => report.Differences
+                .Where(d => d.Signature == signature
+                            && d.ObjectKey.StartsWith(objectPrefix, StringComparison.Ordinal))
+                .ToArray();
+
+            // EnumSymbol carries no Extensible at all, so the render states none and BC's own
+            // default of false stands on the runner's side — on every enum, including the 111
+            // where false is also BC's answer and no difference is reported.
+            AssertConstantAnswer(report, On("MetaEnum.Extensible", "Enum "),
+                "MetaEnum.Extensible", bc: "True", runner: "False");
+
+            // ALNamespace is stated by SymbolReference.json for all three kinds and carried by
+            // none of the three symbol records, so the runner answers null everywhere. Asserted
+            // per kind rather than once, because they are three separate records and three
+            // separate fixes (#3806, #3807, #3808).
+            AssertConstantAnswer(report, On("MetaEnum.ALNamespace", "Enum "),
+                "MetaEnum.ALNamespace", bc: null, runner: MetadataObjectDiff.Null);
+            AssertConstantAnswer(report, On("MetaPermissionSet.ALNamespace", "PermissionSet "),
+                "MetaPermissionSet.ALNamespace", bc: null, runner: MetadataObjectDiff.Null);
+
+            // The metadata-format version BC writes into every emitted document and the runner
+            // states nowhere. Constant on BOTH sides, which is what makes it a property of the
+            // document format rather than of any object's declaration.
+            AssertConstantAnswer(report, On("MetaEnum.MetadataToken", "Enum "),
+                "MetaEnum.MetadataToken", bc: "130000", runner: "0");
+            AssertConstantAnswer(report, On("MetaPermissionSet.MetadataToken", "PermissionSet "),
+                "MetaPermissionSet.MetadataToken", bc: "130000", runner: "0");
+        }
+    }
+
+    [SkippableFact]
     public void Codeunits_are_compared_in_the_numbers_the_bundle_declares()
     {
         // The step-2 counterpart of the page claim below, and it is needed for the same reason:

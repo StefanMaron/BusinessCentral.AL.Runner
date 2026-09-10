@@ -185,6 +185,59 @@ public sealed class MetadataEquivalenceReportEnumPermissionSetOracleTests
     }
 
     [SkippableFact]
+    public void Enum_values_are_paired_by_ordinal_and_not_by_position()
+    {
+        // Found by mutation-checking this PR's own work: deleting EnumDiffOptions from the
+        // comparison changes NOT ONE difference count, so every other test in this file and in
+        // MetadataEquivalenceHarnessTests stays green without the pairing. The allowlist is
+        // keyed on DeclaringType.Member, and positional pairing reports the same MEMBERS — it
+        // moves the PATHS. So the allowlist structurally cannot see this, and without this test
+        // the option would be inert cover of exactly the kind #3802 documents.
+        //
+        // Measured on BC 28.1.49838.53910 over both bundles: with the option, 2,678 of the 3,155
+        // enum-value differences carry an `id=` path and 477 do not; without it, all 3,155 are
+        // positional. The assertion is on the SHAPE — that a substantial majority pair by
+        // ordinal — rather than on either number, so it cannot go inert when the build moves.
+        Skip.IfNot(_engine.Ready, _engine.SkipReason);
+
+        var bundles = MetadataEquivalenceHarness.LoadBundles(
+            MetadataEquivalencePaths.GroundTruthDirForThisBuild());
+        Skip.If(bundles.Count == 0, "no metadata ground-truth bundle for this BC build.");
+
+        var paired = 0;
+        var positional = 0;
+        foreach (var bundle in bundles)
+        {
+            var app = MetadataEquivalenceHarness.FindAppPackage(bundle);
+            Skip.If(app is null, $"{bundle.Label}: its .app is not on this box.");
+
+            foreach (var d in MetadataEquivalenceHarness.Compare(bundle, app!).Differences)
+            {
+                if (!d.ObjectKey.StartsWith("Enum ", StringComparison.Ordinal)) continue;
+                var at = d.Path.IndexOf("Values[", StringComparison.Ordinal);
+                if (at < 0) continue;
+                if (d.Path.AsSpan(at + "Values[".Length).StartsWith("id=")) paired++;
+                else positional++;
+            }
+        }
+
+        Assert.True(paired + positional > 0,
+            "no enum-value difference was reported at all, so this measured nothing — either the "
+            + "enum comparison stopped running or the derivation became perfect. Both need saying "
+            + "out loud rather than passing quietly.");
+
+        // The majority pair by ordinal. The positional remainder is not a gap in the option: it
+        // is enum 2616, whose runner-side ordinals contain a duplicate (#3805) so TryPairById
+        // refuses the key set and falls back — which is why the residue is asserted as a
+        // MINORITY rather than as zero, and why fixing #3805 should move it to zero.
+        Assert.True(paired > positional,
+            $"{paired} enum-value difference(s) paired by ordinal and {positional} by position. "
+            + "Ordinal pairing is what stops BC's name-ordered value list being compared against "
+            + "the runner's declaration-ordered one element by element, so a positional majority "
+            + "means EnumDiffOptions stopped being applied.");
+    }
+
+    [SkippableFact]
     public void The_harness_reads_each_document_through_a_type_that_parses()
     {
         // Ties the tests above to the thing they are about. Without this they document facts

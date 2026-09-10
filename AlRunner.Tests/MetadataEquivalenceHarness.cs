@@ -349,6 +349,13 @@ internal static class MetadataEquivalenceHarness
                     var runnerDoc = new XmlDocument();
                     runnerDoc.LoadXml(runnerXml);
                     actual = codeunitFromXml.Invoke(new object?[] { runnerDoc.DocumentElement });
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner threw — {Describe(ex)}");
+                    continue;
+                }
+            }
             else if (obj.Kind == "Report")
             {
                 objectKey = $"Report {obj.Id}";
