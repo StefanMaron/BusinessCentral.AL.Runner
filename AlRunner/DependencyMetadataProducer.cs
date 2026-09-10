@@ -101,6 +101,34 @@ internal static class DependencyMetadataProducer
             CacheKey(m) + ".object-metadata.json");
 
     /// <summary>
+    /// The container the per-compile scratch directories live under, exposed so a test can
+    /// build the same name shape without duplicating the literal.
+    /// </summary>
+    internal static string ScratchContainer => Path.Combine(Path.GetTempPath(), "al-runner-depmeta");
+
+    /// <summary>
+    /// Create the directory this app's source is written to and compiled out of, owner-marked
+    /// so a run killed mid-compile leaves something a later runner start can reclaim (#3838).
+    ///
+    /// <para><see cref="ScratchDirs.Create"/> rather than <see cref="ScratchDirs.Reserve"/>: the
+    /// caller writes the package's sources straight into this path, and Reserve deliberately
+    /// does not create the leaf. Rather than Release-only ownership, because the lifecycle here
+    /// is reserve-use-delete — <c>Ensure</c>'s <c>finally</c> releases it on every path it
+    /// reaches, and the sidecar exists for the path it does not.</para>
+    ///
+    /// <para>Nested under a container rather than flat in the temp root, matching
+    /// <see cref="AlRunner.Infrastructure.PerProcessScratch"/>: the sweep reaches a sidecar at
+    /// depth 1 as readily as at depth 0, and one container keeps a temp listing legible when a
+    /// run resolves several source-shipping dependencies. The app id stays in the leaf so a
+    /// human reading that listing can still tell which app a directory belongs to, and a GUID
+    /// separates two compiles of the SAME app — a <c>--watch</c> session re-resolving a
+    /// dependency, or two runners sharing one TMPDIR — which the app id alone would collide.</para>
+    /// </summary>
+    internal static string CreateWorkDir(Guid appId)
+        => ScratchDirs.Create(Path.Combine(
+            ScratchContainer, $"{appId:N}-{Guid.NewGuid():N}"));
+
+    /// <summary>
     /// Make BC's metadata documents for <paramref name="m"/> available in
     /// <see cref="AlObjectMetadataRegistry"/>, compiling the package's source once if no
     /// cache entry exists yet. Returns the number of documents now available for this app,
@@ -137,7 +165,7 @@ internal static class DependencyMetadataProducer
         if (sources.Count == 0) return 0;   // symbol-only: nothing to produce, not a failure
 
         var keysBefore = new HashSet<string>(AlObjectMetadataRegistry.Keys, StringComparer.Ordinal);
-        var work = Directory.CreateTempSubdirectory($"al-runner-depmeta-{m.AppId:N}-");
+        var work = CreateWorkDir(m.AppId);
         try
         {
             // Written at the package's OWN relative paths, not flattened into one directory.
@@ -149,7 +177,7 @@ internal static class DependencyMetadataProducer
             foreach (var (path, src) in sources)
             {
                 var rel = SafeRelativePath(path);
-                var dest = Path.Combine(work.FullName, rel);
+                var dest = Path.Combine(work, rel);
                 Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
                 File.WriteAllText(dest, src);
             }
@@ -160,13 +188,13 @@ internal static class DependencyMetadataProducer
             // which is not this app's configuration: `Target` in particular decides whether
             // OnPrem-scoped objects compile at all. Synthesized rather than defaulted so the
             // compile matches how Microsoft built the package.
-            WriteSynthesizedAppJson(work.FullName, m, appPath);
+            WriteSynthesizedAppJson(work, m, appPath);
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
             try
             {
                 using (BcCompiler.ScopeCurrentAppIdentity(m.AppId, m.Publisher, m.Version))
-                    compiler.Emit(new[] { work.FullName }, m.Name, work.FullName);
+                    compiler.Emit(new[] { work }, m.Name, work);
             }
             catch (Exception ex)
             {
@@ -192,7 +220,11 @@ internal static class DependencyMetadataProducer
         }
         finally
         {
-            try { work.Delete(recursive: true); } catch { /* temp cleanup is best effort */ }
+            // Kept, not replaced by the sweep. ScratchDirs.Release deletes the tree AND the
+            // sidecar and forgets the directory, so the happy path still reclaims immediately
+            // rather than leaving a full source-tree copy for the next runner start to find.
+            // The ownership record is the second net, for the run that never reaches here.
+            ScratchDirs.Release(work);
         }
     }
 
