@@ -18,6 +18,7 @@
 // truth lives".
 
 using System.Reflection;
+using Xunit;
 using System.Text.Json;
 using System.Xml;
 using AlRunner.Metadata;
@@ -96,6 +97,71 @@ internal static class MetadataEquivalencePaths
         => Path.Combine(GroundTruthRoot(),
             Path.GetFileName(Path.TrimEndingDirectorySeparator(
                 AlRunner.Infrastructure.BcArtifacts.ServiceTierDir)));
+}
+
+/// <summary>
+/// The one place "there is no ground-truth bundle" is turned into a verdict (#3789).
+///
+/// <para>Three answers, not two, per <c>.claude/rules/guards-need-a-third-state.md</c>: bundles
+/// exist, no bundle exists on a dev box (a legitimate skip — the generator is a provisioning
+/// step nobody has run), and no bundle exists ON CI, where the generator runs before
+/// <c>dotnet test</c> by construction. The third is a workflow regression and must FAIL.</para>
+///
+/// <para>Why a shared helper rather than the branch copied per class. The classes that read a
+/// bundle exist to stop the harness reporting green over an unrun measurement, and a skip reads
+/// green in the summary line — so a class missing this branch is the anti-green-over-nothing
+/// guard without the guard. That is what #3789 found in
+/// <c>MetadataEquivalencePageOracleTests</c>, and #3782 has five more object kinds to go, each
+/// of which would want the same discrimination and could reintroduce the gap by writing a bare
+/// <c>Skip.If</c>. <c>MetadataEquivalenceBundleGateTests</c> holds every reader to this
+/// helper.</para>
+/// </summary>
+internal static class MetadataEquivalenceBundleGate
+{
+    /// <summary>
+    /// The bundles for this BC build, or the right verdict when there are none. Callers must
+    /// use this rather than calling <see cref="MetadataEquivalenceHarness.LoadBundles"/> and
+    /// writing their own <c>Skip.If</c>.
+    /// </summary>
+    public static IReadOnlyList<GroundTruthBundle> RequireBundles()
+    {
+        var root = MetadataEquivalencePaths.GroundTruthDirForThisBuild();
+        var bundles = MetadataEquivalenceHarness.LoadBundles(root);
+        if (bundles.Count > 0) return bundles;
+
+        // Names the exact --artifacts to pass. A dev box holds several BC builds and the
+        // generator's own default is the NEWEST one, while this process loaded whichever build
+        // the runner was compiled against — so "just run the generator" is not actionable on its
+        // own and has already cost one round trip.
+        var reason =
+            $"no metadata ground-truth bundle under '{root}'. This test process loaded BC " +
+            $"from '{AlRunner.Infrastructure.BcArtifacts.ServiceTierDir}', so generate for " +
+            $"that build:{Environment.NewLine}" +
+            $"  tools/gen-metadata-ground-truth.sh --artifacts " +
+            $"\"{AlRunner.Infrastructure.BcArtifacts.ServiceTierDir}\"{Environment.NewLine}" +
+            "Business Foundation is ~3s and System Application ~14s. " +
+            "AL_RUNNER_METADATA_GROUND_TRUTH overrides where bundles are read from.";
+
+        if (TestArtifacts.RunningOnCi)
+            throw new MetadataGroundTruthMissingOnCiException(
+                "On a CI leg the ground truth is generated before `dotnet test` (see the " +
+                "'Generate BC metadata ground truth' step in .github/workflows/bc-tests.yml), " +
+                "so its absence is a workflow regression, not a legitimate skip. Skipping here " +
+                "would leave the metadata-equivalence gate reporting green while measuring " +
+                "nothing. " + reason);
+
+        throw new SkipException(reason);
+    }
+}
+
+/// <summary>
+/// Thrown instead of skipping when CI has no ground-truth bundle. A distinct type so
+/// <c>MetadataEquivalenceBundleGateTests</c> can assert the CI branch fires without needing the
+/// bundle directory to be absent for real.
+/// </summary>
+internal sealed class MetadataGroundTruthMissingOnCiException : Exception
+{
+    public MetadataGroundTruthMissingOnCiException(string message) : base(message) { }
 }
 
 internal static class MetadataEquivalenceHarness

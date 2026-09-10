@@ -26,12 +26,7 @@ public sealed class MetadataGroundTruthObjectIdTests
     private IReadOnlyList<GroundTruthBundle> Bundles()
     {
         Skip.IfNot(_engine.Ready, _engine.SkipReason);
-        var bundles = MetadataEquivalenceHarness.LoadBundles(
-            MetadataEquivalencePaths.GroundTruthDirForThisBuild());
-        Skip.If(bundles.Count == 0,
-            "no metadata ground-truth bundle for this BC build; " +
-            "tools/gen-metadata-ground-truth.sh --artifacts \"" +
-            AlRunner.Infrastructure.BcArtifacts.ServiceTierDir + "\"");
+        var bundles = MetadataEquivalenceBundleGate.RequireBundles();
         return bundles;
     }
 

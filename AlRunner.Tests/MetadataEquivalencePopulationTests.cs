@@ -33,7 +33,7 @@ public sealed class MetadataEquivalencePopulationTests
     private const string Ns = "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects";
 
     private static IReadOnlyList<GroundTruthBundle> Bundles()
-        => MetadataEquivalenceHarness.LoadBundles(MetadataEquivalencePaths.GroundTruthDirForThisBuild());
+        => MetadataEquivalenceBundleGate.RequireBundles();
 
     private static XmlElement Root(GroundTruthBundle b, GroundTruthObject o)
     {
@@ -57,7 +57,6 @@ public sealed class MetadataEquivalencePopulationTests
     public void A_tableextension_field_is_merged_into_the_extended_tables_emitted_document()
     {
         var bundles = Bundles();
-        Skip.If(bundles.Count == 0, "no metadata ground-truth bundle for this BC build.");
 
         // User Details 774: System Application's own extension adds 774-779. They are the six
         // that established the owner is the tableextension and not the extended table --
@@ -115,7 +114,6 @@ public sealed class MetadataEquivalencePopulationTests
     public void A_moved_field_is_absent_from_the_emitted_table_so_nothing_can_be_observed_about_it()
     {
         var bundles = Bundles();
-        Skip.If(bundles.Count == 0, "no metadata ground-truth bundle for this BC build.");
 
         var sourceCodeSetup = bundles
             .SelectMany(b => b.Objects.Where(o => o.Kind == "MetaTable" && o.Id == 242).Select(o => Root(b, o)))
@@ -142,7 +140,6 @@ public sealed class MetadataEquivalencePopulationTests
     public void A_MetadataRuntimeDeltas_document_carries_no_fields()
     {
         var bundles = Bundles();
-        Skip.If(bundles.Count == 0, "no metadata ground-truth bundle for this BC build.");
 
         var deltas = bundles
             .SelectMany(b => b.Objects.Where(o => o.Kind == "MetadataRuntimeDeltas").Select(o => (b, o)))

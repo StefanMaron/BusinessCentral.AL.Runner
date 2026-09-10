@@ -46,12 +46,7 @@ public sealed class MetadataEquivalenceQueryXmlPortOracleTests
     {
         Skip.IfNot(_engine.Ready, _engine.SkipReason);
 
-        var bundles = MetadataEquivalenceHarness.LoadBundles(
-            MetadataEquivalencePaths.GroundTruthDirForThisBuild());
-        Skip.If(bundles.Count == 0,
-            "no metadata ground-truth bundle for this BC build; " +
-            "tools/gen-metadata-ground-truth.sh --artifacts \"" +
-            AlRunner.Infrastructure.BcArtifacts.ServiceTierDir + "\"");
+        var bundles = MetadataEquivalenceBundleGate.RequireBundles();
 
         var found = new List<(XmlDocument, int, string)>();
         foreach (var bundle in bundles)
@@ -213,9 +208,7 @@ public sealed class MetadataEquivalenceQueryXmlPortOracleTests
         // identical and the kind would report objects compared with ZERO differences.
         Skip.IfNot(_engine.Ready, _engine.SkipReason);
 
-        var bundles = MetadataEquivalenceHarness.LoadBundles(
-            MetadataEquivalencePaths.GroundTruthDirForThisBuild());
-        Skip.If(bundles.Count == 0, "no metadata ground-truth bundle for this BC build.");
+        var bundles = MetadataEquivalenceBundleGate.RequireBundles();
 
         var seen = new Dictionary<string, int> { ["Query"] = 0, ["XmlPort"] = 0 };
         var differences = new Dictionary<string, int> { ["Query"] = 0, ["XmlPort"] = 0 };

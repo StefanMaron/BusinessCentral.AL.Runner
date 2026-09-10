@@ -46,40 +46,16 @@ public sealed class MetadataEquivalenceHarnessTests
     }
 
     /// <summary>
-    /// Every bundle on this box, compared. Skips locally when nothing has been generated;
-    /// FAILS on CI, where the generator runs by construction — a leg where every bundle is
-    /// absent would otherwise report green having measured nothing, which is the exact defect
-    /// this harness exists to remove (same reasoning as TestArtifacts.SkipIfMissingIn).
+    /// Every bundle on this box, compared. The skip-or-fail decision is
+    /// <see cref="MetadataEquivalenceBundleGate.RequireBundles"/>'s, which every reader of a
+    /// bundle shares (#3789) — a class with its own bare Skip.If is the anti-green-over-nothing
+    /// guard without the guard.
     /// </summary>
     private IReadOnlyList<MetadataEquivalenceReport> RunAll()
     {
         Skip.IfNot(_engine.Ready, _engine.SkipReason);
 
-        var root = MetadataEquivalencePaths.GroundTruthDirForThisBuild();
-        var bundles = MetadataEquivalenceHarness.LoadBundles(root);
-        if (bundles.Count == 0)
-        {
-            // Names the exact --artifacts to pass. A dev box holds several BC builds and the
-            // generator's own default is the NEWEST one, while this process loaded whichever
-            // build the runner was compiled against — so "just run the generator" is not
-            // actionable on its own and has already cost one round trip.
-            var reason =
-                $"no metadata ground-truth bundle under '{root}'. This test process loaded BC " +
-                $"from '{AlRunner.Infrastructure.BcArtifacts.ServiceTierDir}', so generate for " +
-                $"that build:{Environment.NewLine}" +
-                $"  tools/gen-metadata-ground-truth.sh --artifacts " +
-                $"\"{AlRunner.Infrastructure.BcArtifacts.ServiceTierDir}\"{Environment.NewLine}" +
-                "Business Foundation is ~3s and System Application ~14s. " +
-                "AL_RUNNER_METADATA_GROUND_TRUTH overrides where bundles are read from.";
-            if (TestArtifacts.RunningOnCi)
-                Assert.Fail(
-                    "On a CI leg the ground truth is generated before `dotnet test` (see the " +
-                    "'Generate BC metadata ground truth' step in .github/workflows/bc-tests.yml), " +
-                    "so its absence is a workflow regression, not a legitimate skip. Skipping here " +
-                    "would leave the metadata-equivalence gate reporting green while measuring " +
-                    "nothing. " + reason);
-            throw new SkipException(reason);
-        }
+        var bundles = MetadataEquivalenceBundleGate.RequireBundles();
 
         var reports = new List<MetadataEquivalenceReport>();
         foreach (var bundle in bundles)
@@ -539,9 +515,7 @@ public sealed class MetadataEquivalenceHarnessTests
         // stops those seven entries being re-justified as a permanent limit of the symbol file,
         // which is the wrong reason and the one that would hide them forever. Out-of-scope and
         // impossible are different claims, and only the first is true here.
-        var bundles = MetadataEquivalenceHarness.LoadBundles(
-            MetadataEquivalencePaths.GroundTruthDirForThisBuild());
-        Skip.If(bundles.Count == 0, "no metadata ground-truth bundle for this BC build.");
+        var bundles = MetadataEquivalenceBundleGate.RequireBundles();
 
         Assert.Equal(2879900210u, TranslationKeyHash("Caption"));
         Assert.Equal(1295455071u, TranslationKeyHash("ToolTip"));
