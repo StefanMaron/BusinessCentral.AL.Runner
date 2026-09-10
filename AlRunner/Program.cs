@@ -5615,12 +5615,16 @@ return strictExitCode ? computedExitCode : 0;
 // AlDapSession's file header for why pausing at StmtHit(N) — unlike
 // --capture-values, #1640 — needs no Exit()-style redesign):
 //   initialize     -> capabilities, then an `initialized` event
-//   launch/attach  -> compiles the bundle SYNCHRONOUSLY (blocks the response until
-//                     compiledTcs resolves or the whole run finishes without ever
-//                     reaching runStep, i.e. a compile failure) so setBreakpoints
-//                     right after has real statement indices to resolve against
-//   setBreakpoints -> DapBreakpointResolver against the now-loaded scope types;
-//                     REPLACES this source's previous set (DAP contract)
+//   launch/attach  -> EnsureSourceMap() (below): blocks the response until compiledTcs
+//                     resolves or the whole run finishes without ever reaching runStep,
+//                     i.e. a compile failure, which is reported on this response
+//   setBreakpoints -> EnsureSourceMap() FIRST, then DapBreakpointResolver against the
+//                     now-loaded scope types; REPLACES this source's previous set (DAP
+//                     contract). #3821: the wait is here and not only in launch because
+//                     the specification's own sequence has a client answer `initialized`
+//                     with its configuration requests, so setBreakpoints legitimately
+//                     arrives BEFORE launch — and used to resolve against an empty map
+//                     and report every breakpoint unverified.
 //   configurationDone -> releases the run-start gate; AL execution begins
 //   (AlDapSession.Stopped fires on the AL thread when a breakpoint hits; this loop
 //    pushes the "stopped" event the moment it fires — see the subscription below)
@@ -5663,6 +5667,12 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     AlRunner.Infrastructure.AlDapSession.Reset();
 
     var sourceMap = AlRunner.Infrastructure.AlSourceLocationMap.Empty;
+    // Whether EnsureSourceMap has run, and what it found. Two flags rather than testing
+    // `sourceMap` for emptiness: a bundle can legitimately produce an empty map (nothing
+    // mappable in it), and re-waiting on every request would then be indistinguishable
+    // from the first wait.
+    var sourceMapResolved = false;
+    string? compileFailure = null;
     // Which scope types this session has breakpoints registered on, per source file, so a
     // later setBreakpoints for that file can clear ALL of them (#3786 review). Clearing only
     // the scopes named by the NEW request leaves the old ones armed: an empty breakpoint
@@ -5695,6 +5705,42 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
 
     var bundleRunTask = System.Threading.Tasks.Task.Run(
         () => RunAllBundlesForServer(new[] { bundleDir }, null, dapRunStep, cts.Token, false, null));
+
+    // Builds the source map on first need, once, and reports a compile failure instead.
+    // Returns null when the map is usable and the compile diagnostic otherwise.
+    //
+    // #3821: this used to live inside `launch`, which made the ANSWER TO A CORRECT CLIENT
+    // depend on the order two of its requests happened to arrive in. Compilation does not
+    // wait for launch — bundleRunTask starts the moment this loop does, and dapRunStep
+    // publishes the assembly through compiledTcs before it blocks on configurationDoneGate
+    // — so whichever request needs the map first can simply wait for it. That is why
+    // waiting here cannot deadlock: nothing this loop has yet to receive is upstream of
+    // the compile.
+    //
+    // Deferring the `initialized` event until the map exists was the other candidate and is
+    // worse: a client that sends launch only after `initialized` would then never send it.
+    // Deferring resolution keeps both client orderings working.
+    string? EnsureSourceMap()
+    {
+        if (sourceMapResolved) return compileFailure;
+        sourceMapResolved = true;
+        var winner = System.Threading.Tasks.Task.WhenAny(compiledTcs.Task, bundleRunTask)
+            .GetAwaiter().GetResult();
+        if (!ReferenceEquals(winner, compiledTcs.Task))
+        {
+            // The run finished (or failed) before ever reaching dapRunStep — a compile
+            // failure. Kept rather than thrown so both requests report the same thing.
+            var runs = bundleRunTask.Result;
+            compileFailure = runs
+                .SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>())
+                .SelectMany(g => g.Errors)
+                .FirstOrDefault() ?? "compile failed (no diagnostic captured)";
+            return compileFailure;
+        }
+        sourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
+            new[] { bundleDir }, relativeTo: null);
+        return null;
+    }
 
     int exitCode = 0;
     bool terminatedSent = false;
@@ -5824,23 +5870,14 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                     case "launch":
                     case "attach":
                     {
-                        var winner = System.Threading.Tasks.Task.WhenAny(compiledTcs.Task, bundleRunTask)
-                            .GetAwaiter().GetResult();
-                        if (!ReferenceEquals(winner, compiledTcs.Task))
+                        // Report a compile failure on this response rather than silently
+                        // proceeding into a session that will never run anything.
+                        var launchErr = EnsureSourceMap();
+                        if (launchErr != null)
                         {
-                            // The run finished (or failed) before ever reaching dapRunStep —
-                            // a compile failure. Report it on the launch response rather than
-                            // silently proceeding into a session that will never run anything.
-                            var runs = bundleRunTask.Result;
-                            var errMsg = runs
-                                .SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>())
-                                .SelectMany(g => g.Errors)
-                                .FirstOrDefault() ?? "compile failed (no diagnostic captured)";
-                            transport.WriteResponse(msg.Seq, command, false, message: errMsg);
+                            transport.WriteResponse(msg.Seq, command, false, message: launchErr);
                             break;
                         }
-                        sourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
-                            new[] { bundleDir }, relativeTo: null);
                         transport.WriteResponse(msg.Seq, command, true);
                         break;
                     }
@@ -5860,8 +5897,22 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                         else if (args.Value.TryGetProperty("lines", out var legacyLinesEl) && legacyLinesEl.ValueKind == System.Text.Json.JsonValueKind.Array)
                             foreach (var l in legacyLinesEl.EnumerateArray()) lines.Add(l.GetInt32());
 
+                        // #3821: before resolving anything. A request arriving between
+                        // `initialized` and `launch` is the specification's own sequence,
+                        // and answering it against an empty map made every breakpoint
+                        // unverified.
+                        var bpCompileErr = EnsureSourceMap();
+
                         var requests = lines.Select(l => new AlRunner.Infrastructure.DapBreakpointRequest(srcPath, l)).ToList();
                         var resolved = AlRunner.Infrastructure.DapBreakpointResolver.Resolve(requests, sourceMap);
+
+                        // Why an unverified breakpoint is unverified. DAP's Breakpoint has a
+                        // `message` field for exactly this, and without it "nothing is
+                        // loaded" and "that line carries no statement" are the same answer —
+                        // the first is a state the client can wait out, the second is not.
+                        var unverifiedReason = bpCompileErr != null
+                            ? $"the bundle did not compile, so nothing could be bound: {bpCompileErr}"
+                            : "no executable AL statement on this line in this file";
 
                         var fullSrcPath = Path.GetFullPath(srcPath);
                         // Replace (not accumulate) — DAP's setBreakpoints contract: this
@@ -5894,6 +5945,7 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                                 id = idx,
                                 verified = rb.Verified,
                                 line = rb.Verified ? rb.ActualLine : rb.RequestedLine,
+                                message = rb.Verified ? null : unverifiedReason,
                             }),
                         });
                         break;
