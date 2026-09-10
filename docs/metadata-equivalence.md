@@ -439,17 +439,30 @@ reachable.
 <a id="what-is-compared"></a>
 ## What is compared, and what is not
 
-The harness compares `MetaTable`, `PageDefinition`, `CodeUnit`, `Query` and `XmlPort`
-documents. A bundle carries every kind BC emitted — enums, permission sets, reports, and the
-`MetadataRuntimeDeltas` documents that cover table, page and permission-set extensions — and
+**Every kind a bundle carries is compared**: `MetaTable`, `PageDefinition`, `CodeUnit`,
+`Query`, `XmlPort`, `Report`, `PermissionSet`, `Enum` and `MetadataRuntimeDeltas`.
 `MetadataEquivalenceHarnessTests` asserts the set it compares AND the set it does not, so
 covering less cannot happen quietly.
 
-**#3782 is the programme that empties the not-compared list**, one kind per pull request, in the
-order that issue records: `PageDefinition`, `CodeUnit`, `Query` and `XmlPort` (done), then
-`Report`, `PermissionSet`, `Enum`, `MetadataRuntimeDeltas`. Each step adds its kind to
-`ComparedKinds`, lands the resulting allowlist with a reason per member, and deletes its kind
-from the `stillUncompared` list in `The_harness_states_which_kinds_it_does_not_compare`.
+**#3782 was the programme that emptied the not-compared list**, one kind per pull request:
+`PageDefinition`, `CodeUnit`, `Query`, `XmlPort`, `Report`, `PermissionSet`, `Enum` and
+`MetadataRuntimeDeltas`. Each step added its kind to `ComparedKinds`, landed the resulting
+allowlist with a reason per member, and deleted its kind from the `stillUncompared` list in
+`The_harness_states_which_kinds_it_does_not_compare`. **That list is now empty**, which is the
+programme's own definition of done — and it is kept as an empty array rather than deleted, so
+the accounting around it still runs.
+
+**No kind is exempt, and the harness has no mechanism for exempting one** — deliberately, and
+as the correction of a mistake this programme made once. `MetadataRuntimeDeltas` was briefly
+recorded as *uncomparable* in a `MetadataEquivalenceHarness.UncomparableKinds` structure, with
+a passing test holding the claim in place. It was wrong (see below), and the shape of the error
+is why no such structure exists now: **a green assertion that a kind cannot be measured is
+indistinguishable from a green assertion that it was**, and it is strictly harder to dislodge,
+because the next reader finds a test telling them not to look.
+
+A kind the runner cannot build a side for is reported per object as **unbuildable**, with the
+count asserted against the census. That keeps the absence a measurement rather than a
+classification.
 
 <a id="the-page-oracle-is-pagedefinition-not-metapagedefinition"></a>
 ### The page oracle is `PageDefinition`, not `MetaPageDefinition`
@@ -986,6 +999,245 @@ which is why all 7 queries here built successfully and this measurement is not a
 issue. What it contributes is the instrument: a runner-side null now reports as
 `the runner built no MetaQuery design at all` against a named id, rather than as a stack trace
 in a corpus run.
+
+<a id="reports"></a>
+## Reports: one object, and the honesty that forces
+
+System Application ships **exactly one** report — 9810 `Change Password` — and Business
+Foundation ships none. Every number in this section is `n = 1`, and it is enough to say *that*
+the runner drops a member, never how often.
+
+The oracle is `Types.Metadata.MetaReport(XmlElement, CreateRequestForm, int, int,
+RemoveItemsOnPageBasedOnLicenseAndApplicationArea)`; both delegates are optional and null is
+what the constructor's own body expects. The runner's side is
+`RecordPatches.TryBuildDependencyReportMetadata` — the document every runner consumer of report
+metadata actually reads, since `RunnerXmlMetadataLoader` hands exactly this XML to BC — rather
+than a test-only rendering, and never `AlReportMetadataRegistry`, which holds BC's emit-captured
+output and would compare BC against BC.
+
+**5 differences**, all tracked on #3808: both `Inherent*` masks (the `"X"` spelling
+`SymbolReference.json` states and `ReportSymbol` does not carry — the same property #3788
+records for codeunits and #3798 for queries, three kinds and one unparsed value), `ALNamespace`,
+and `RequestPageDefinition` counted twice because the differ walks the property and its backing
+field independently.
+
+`RequestPageDefinition` is the one that is not merely a dropped property: BC emits a full
+`<RequestPage><PageDefinition>` subtree for report 9810 even though it declares
+`UseRequestPage = false` and `ProcessingOnly = true`. Whether BC does that for *every* report is
+**not answerable from this bundle** — one report — and Base Application, which would answer it,
+is excluded from `apps.json` because its emit needs a .NET reference no BC artifact ships
+(#3549). That question is left open on #3808 rather than closed by assumption.
+
+**What this comparison does not reach:** report 9810 has no data items and no columns, so the
+data-item and column derivation — the substantial part of `DependencyReportMetadata.cs` — is not
+exercised at all.
+
+<a id="permission-sets"></a>
+## Permission sets: object against object, and the memo that made the first answer wrong
+
+The oracle is the static factory `MetaPermissionSet.Create(XmlNode, int, int)`, not a
+constructor. The runner's side is `BuildMetaPermissionSet`, which already produces a real
+`Types.Metadata.MetaPermissionSet` from the SymbolReference-derived `PermissionSetSymbol` — the
+same object BC's `AssignFromMetaPermissionSet` consumes at runtime. No rendering step on either
+side.
+
+**Every structural member agrees on all 178** — the permission rows themselves, the include and
+exclude edges, `Access`, `Id`. **527 differences across 4 members**, tracked on #3806.
+
+<a id="the-permission-set-memo"></a>
+### `PermissionSetIdByName` is memoized and invalidated in one place only
+
+`PermissionSetIdByName()` is a memoized static dropped **only inside**
+`EnsurePermissionMetadataPopulated`. The first version of this comparison called
+`BuildMetaPermissionSet` directly and measured an **empty** name index: every include edge
+dropped, **94 fabricated differences** on `IncludedPermissionSets` that the runner does not
+actually have.
+
+That is why `RecordPatches.RunnerPermissionSetDeclarations` drives the runner's own population
+entry point before reading the inventory. A comparison that measures a memo no runner consumer
+ever sees is the "green over nothing" failure this whole harness exists to prevent — here it was
+loud rather than silent, but only by luck of which direction it went.
+
+<a id="bc-uppercases-a-permission-set-name"></a>
+### BC's reader uppercases `Name`; the document does not
+
+170 of the 178 differences on `MetaPermissionSet.Name` are this, and the runner is not obviously
+the one that is wrong. Of the 178 emitted documents, **8 state an already-uppercase `Name`**
+(`SUPER`, `SECURITY`, `LOGIN`, `TROUBLESHOOT TOOLS`, `SUPER (DATA)`, `D365 SNAPSHOT DEBUG`,
+`D365 ATTACH DEBUG`, `D365 BACKUP/RESTORE`) and 170 state mixed case — and `Create` answers all
+178 upper-cased. 178 − 8 = 170, exactly the difference count.
+
+The value is a `Code[20]`/`Code[30]` **role id**, and BC upper-cases codes. So the open question
+is *where* the upper-casing belongs, not which spelling is right, and
+`MetadataEquivalenceReportEnumPermissionSetOracleTests` asserts the reader's behaviour so the
+allowlist entry stays attributable to the reader rather than to the runner.
+
+<a id="permission-set-68-answers-2417"></a>
+### PermissionSet 68 answers #2417, empirically
+
+#2417 asks what `Assignable` resolves to for a permission set whose `SymbolReference.json` entry
+carries no `Properties` array, and says explicitly that it must be settled against BC itself
+rather than by reading the symbol file.
+
+BC's own emitted document for **PermissionSet 68 `System Execute - Basic`** is the only one of
+the 178 carrying **no `Assignable` attribute at all** — the distribution is 140 × `"0"`,
+37 × `"1"`, 1 × absent — and BC's own `MetaPermissionSet.Create` resolved that absence to
+**`Assignable = False`**.
+
+So BC's reader defaults **absent → false**, and `CollectPermissionSets`'s `absent → true` is
+wrong, exactly as #2417 predicted. This is a measurement through BC's own reader, not an
+inference from the AL. The fix lands outside this harness and is tracked on #3806, which records
+the answer and points back at #2417.
+
+<a id="enums"></a>
+## Enums: a render, because every `MetaEnum` property is get-only
+
+`MetaEnum`'s properties are **all** `{ get; }` and its only other constructors are the
+parameterless one and a 10-argument positional one over BC-internal types, so there is no route
+that sets values on an instance. `RecordPatches.TryBuildEnumMetadataEquivalenceXml` therefore
+renders the runner's registry entry as the `<Enum>` document BC's own `MetaEnum(XmlNode)`
+parses, and both sides go through that constructor.
+
+The parameterless constructor is the `MetaPageDefinition` trap in a sharper form — a second
+*constructor on the same type* rather than a second type — so
+`MetadataEquivalenceReportEnumPermissionSetOracleTests` pins that it reads nothing and that the
+harness does not use it.
+
+**Every value's `Name` and `Ordinal` agrees on 141 of 142 enums**, over 3,491 values, and every
+declared per-value `Caption` reaches BC's `CaptionML`. **4,328 differences**, of which the
+non-`TranslationKey` remainder is 6 members tracked on #3807.
+
+<a id="enum-values-pair-by-ordinal"></a>
+### Enum values pair by `Ordinal`, and the one that does not is the finding
+
+BC's emitter writes an enum's values in **name** order while the runner's registry holds them in
+declaration order, so the two lists are permutations of each other and positional pairing would
+fabricate a difference on every value after the first divergence. Enum 2616 `Printer Paper Kind`
+opens `A2=66, A3=8, A4=9, A5=11, A6=70` — plainly alphabetical, plainly not ordinal order.
+
+`Ordinal` is supplied through `IdPropertyNames` for this comparison only, because it is an
+identity for `MetaEnumValue` alone: that type has no `Id`/`ID` at all. Measured over both
+bundles, **2,678 of 3,155** enum-value differences pair by ordinal and 477 do not.
+
+**The 477 are all one enum, and that is #3805 rather than a gap in the pairing.**
+`TryPairById` refuses a duplicate key, and enum 2616 is the only one of the 142 whose
+*runner-side* ordinals contain a duplicate: `TryParseEnumSymbol` reads an absent `Ordinal` as
+"previous + 1" where `SymbolReference.json` omits it to mean **0**, so `Custom` gets 40 —
+already taken by `GermanStandardFanfold`. So the enum that cannot be paired is exactly the enum
+with the defect. Fixing #3805 should move that residue to zero, which is why
+`Enum_values_are_paired_by_ordinal_and_not_by_position` asserts the positional remainder is a
+*minority* rather than zero.
+
+<a id="the-allowlist-cannot-see-a-path-change"></a>
+### The allowlist is member-keyed, so two real defects are invisible to it
+
+Both were found by mutation-checking this work rather than by review, and both are the #3802
+shape — cover the harness cannot report on.
+
+**Removing the ordinal pairing changes not one difference count.** The allowlist keys on
+`DeclaringType.Member`; positional pairing reports the same *members* and moves the *paths*. So
+every test stayed green without the pairing, and
+`Enum_values_are_paired_by_ordinal_and_not_by_position` exists because nothing else could see it.
+
+**Manufacturing agreement on `MetaEnum.Extensible` also stayed green.** Writing BC's own value
+into the render does not remove the differences, it **inverts** them: 31 (BC `True`, runner
+`False`) becomes 111 (BC `False`, runner `True`), the entry still matches every one, and
+`No_allowlist_entry_has_gone_stale` has nothing to report. `direction` cannot narrow it either,
+because that field keys on the value being absent-or-null and both sides here are `False`/`True`.
+What does work is the claim the table-side members already make — the runner answers a
+**constant**, and that constant *is* the defect —
+`The_new_kinds_reader_answers_the_constant_that_IS_the_defect`.
+
+<a id="enum-extension-documents"></a>
+### Two `<Enum>` documents are enum EXTENSIONS, and are skipped rather than compared
+
+One `<Enum>` root covers both `Enum` and `EnumExtension` — the generator's `ClassifyDocument`
+says so deliberately — and the two are told apart by shape: a base enum wraps its values in
+`<Values>`, an extension states bare `<Value>` children. Exactly 2 of 143 are the extension
+shape (327 `No. Series Copilot Cap.`, 2015 `Entity Text Capability`, both extending
+`Copilot Capability`).
+
+There is no runner object addressable by those ids. `AlEnumMetadataRegistry` keys an
+extension's values by the id of the enum it **extends**, and for a precompiled dependency
+`RecordPatches.BcAppFallback` registers everything through `Register` rather than
+`RegisterExtension` — measured: `SnapshotRaw()` reports **0** extension entries for both
+bundles. So they are counted in `MetadataEquivalenceReport.EnumExtensionDocuments` and the
+census arithmetic in `Every_object_in_a_compared_kind_really_was_compared` asserts
+`compared == comparable − skipped`, which is what stops the skip becoming a place objects can
+quietly go.
+
+<a id="metadataruntimedeltas"></a>
+## `MetadataRuntimeDeltas`: a one-sided gap, and a census that was too narrow
+
+This kind was first written up here as **uncomparable — "BC ships no reader for the shape"** —
+and that was wrong. The correction is kept in full rather than quietly replaced, because the way
+it went wrong is more reusable than the conclusion.
+
+<a id="the-census-that-was-too-narrow"></a>
+### The census that produced the false negative
+
+The claim rested on reflecting over `Microsoft.Dynamics.Nav.Types` (2,617 types) and
+`Microsoft.Dynamics.Nav.Ncl` (8,616 types) and finding **no type with "Delta" in its name**.
+Both numbers are correct. The inference from them was not, for one reason: **every other oracle
+in this harness comes from one of those two assemblies, so those two were the ones searched** —
+and the artifact directory holds **501**.
+
+Re-measured over all of them, without loading anything (a `PEReader` metadata scan, so no
+static-init faults and no resolution failures):
+
+| | |
+|---|---:|
+| assemblies scanned | 501 |
+| types whose name contains "Delta" | **308** |
+| of those, in `Microsoft.Dynamics.Nav.Apps.dll` | **54** |
+
+`.Types` really is 0. `.Ncl` is not — it has 10, including the state machine
+`<GetRuntimeDeltas>d__15`, whose element type points straight at the reader.
+
+**The lesson generalises past this kind: a negative about BC's surface is only as wide as the
+search behind it.** "I did not find it" and "it does not exist" are different claims, and the
+second needs a search whose scope matches the claim's scope. Two assemblies cannot settle a
+question about the runtime.
+
+<a id="the-deltas-oracle"></a>
+### The oracle
+
+`Microsoft.Dynamics.Nav.Apps.MetadataDeltas.NavAppObjectMetadataRuntimeDeltas.FromXml(XDocument)`,
+with `NavAppObjectMetadataDeltaBase.MetadataRuntimeDeltasXName` resolving to
+`{urn:schemas-microsoft-com:dynamics:NAV:MetaObjects}MetadataRuntimeDeltas` — character for
+character the root element of the emitted documents.
+
+Proven to parse rather than assumed to, over **every** document rather than a sample:
+
+| | |
+|---|---:|
+| documents in the two bundles | 11 |
+| parsed, `AllDeltas` reachable | **11** |
+| yielding a non-empty `AllDeltas` | 6 (12 on page 774, 5 on 4318, 4 on 2515, 2 on 324, 1 on 9862) |
+| genuinely empty `<MetadataRuntimeDeltas/>` elements | 5 |
+
+**A bare probe of the same call parsed only 6 of 11**, the other 5 hitting a
+`WindowsLanguageHelper` static-init fault. That is an artifact of loading the assembly outside
+the harness: inside the `bc-engine-serial` collection, which already has the skeleton, it is
+11 of 11. Worth knowing before treating a partial parse as a property of the reader.
+
+<a id="the-runner-side-is-null"></a>
+### The runner's side is null, and that is the gap
+
+`RunnerXmlMetadataLoader.GetExtensionDeltasForAppObject` is the one runner member typed to
+return `NavAppObjectMetadataRuntimeDeltas`, and it returns `null!` for every object — its own
+comment records that the runner has no published-app extension pipeline, and that null is BC's
+"no deltas" value too. Measured through that member rather than read off it: null for all 11.
+
+So the honest claim is a **one-sided gap** — BC's side is real and parses; the runner's is
+absent — which is narrower and more useful than "neither side exists". Each object is reported
+as unbuildable naming #3809, and
+`Every_object_in_a_compared_kind_really_was_compared` asserts that the count of deltas
+unbuildables **equals the census**, so a deltas object that somehow did build, or any object of
+another kind that did not, still fails.
+
+**What would close it:** the runner tracking an extension's contribution addressably by the
+extension's own id — the same thing #3807 notes an enumextension `<Enum>` document would need.
 
 <a id="running-it"></a>
 ## Running it

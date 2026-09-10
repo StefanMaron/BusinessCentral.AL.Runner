@@ -171,11 +171,16 @@ internal static class Program
 
         // Every kind the harness keys by id, not MetaTable alone. Query and XmlPort joined that
         // set in #3782 and both had reported id 0 for every document until ClassifyDocument
-        // learned the child-element spelling — which a MetaTable-only guard could not see.
-        // MetadataRuntimeDeltas is deliberately excluded: one <MetadataRuntimeDeltas> root
-        // covers TableExtension, PageExtension and PermissionSetExtension, so several of them
-        // legitimately carry the id of the object they extend.
-        var idKeyedKinds = new[] { "MetaTable", "PageDefinition", "CodeUnit", "Query", "XmlPort" };
+        // learned the child-element spelling — which a MetaTable-only guard could not see; Report
+        // is the third kind with that spelling and joined in step 5.
+        //
+        // MetadataRuntimeDeltas is deliberately excluded: one <MetadataRuntimeDeltas> root covers
+        // TableExtension, PageExtension and PermissionSetExtension, so several of them
+        // legitimately carry the id of the object they extend — System Application's bundle has
+        // two on id 774. Enum is excluded for the mirror-image reason: one <Enum> root covers
+        // both Enum and EnumExtension, so an enum and an enumextension can carry the same id
+        // without either being a duplicate.
+        var idKeyedKinds = new[] { "MetaTable", "PageDefinition", "CodeUnit", "Query", "XmlPort", "Report", "PermissionSet" };
         var duplicateIds = objects
             .Where(o => idKeyedKinds.Contains(o.Kind, StringComparer.Ordinal))
             .GroupBy(o => (o.Kind, o.Id)).Where(g => g.Count() > 1)
@@ -218,7 +223,7 @@ internal static class Program
     /// it uses is a property of the kind: Query, XmlPort and Report state the id as a child
     /// element, every other kind as an attribute. Reading only the attribute reported
     /// <c>Id = 0</c> for all 12 of those documents in a System Application bundle — a value that
-    /// keys nothing, is not unique, and reads exactly like a real id (#3782, step 3/4).</para>
+    /// keys nothing, is not unique, and reads exactly like a real id (#3782, steps 3/4/5).</para>
     /// </summary>
     private static (string Kind, int Id) ClassifyDocument(string? metadata, string symbolKind)
     {

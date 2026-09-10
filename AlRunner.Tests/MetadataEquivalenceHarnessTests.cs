@@ -98,14 +98,41 @@ public sealed class MetadataEquivalenceHarnessTests
         // failure rather than a quietly smaller comparison.
         foreach (var report in RunAll())
         {
-            Assert.True(report.Unbuildable.Count == 0,
+            // MetadataRuntimeDeltas is the ONE kind where the runner has nothing to build, and
+            // it is unbuildable on every object rather than on some — a ONE-SIDED gap, not a
+            // per-object failure. BC's side parses (see the oracle test); the runner's
+            // GetExtensionDeltasForAppObject answers null because there is no published-app
+            // extension pipeline (#3809).
+            //
+            // Scoped by kind AND asserted to be TOTAL, so this cannot become a place other
+            // kinds' failures hide: a deltas object that somehow DID build, or any object of
+            // another kind that did not, still fails.
+            var deltasDeclared = report.Bundle.Census.GetValueOrDefault("MetadataRuntimeDeltas");
+            var deltasUnbuildable = report.Unbuildable
+                .Count(u => u.StartsWith("MetadataRuntimeDeltas ", StringComparison.Ordinal));
+            Assert.Equal(deltasDeclared, deltasUnbuildable);
+
+            var otherUnbuildable = report.Unbuildable
+                .Where(u => !u.StartsWith("MetadataRuntimeDeltas ", StringComparison.Ordinal))
+                .ToArray();
+            Assert.True(otherUnbuildable.Length == 0,
                 $"{report.Bundle.Label}: the runner produced no comparable metadata for " +
-                $"{report.Unbuildable.Count} object(s):{Environment.NewLine}" +
-                string.Join(Environment.NewLine, report.Unbuildable.Take(20)));
+                $"{otherUnbuildable.Length} object(s) outside MetadataRuntimeDeltas:" +
+                Environment.NewLine + string.Join(Environment.NewLine, otherUnbuildable.Take(20)));
 
             foreach (var kind in report.KindsCompared)
                 Assert.Equal(report.Bundle.Census[kind],
                     report.Bundle.Objects.Count(o => o.Kind == kind));
+
+            // Enum-extension documents are skipped rather than compared (the harness's own
+            // comment says why), so the compared total is short by exactly that many. Asserting
+            // the arithmetic is what stops the skip becoming a place objects can quietly go:
+            // a second shape that started being skipped would break this rather than shrink the
+            // comparison unnoticed.
+            var comparableTotal = report.KindsCompared.Sum(k => report.Bundle.Census[k]);
+            Assert.Equal(
+                comparableTotal - report.EnumExtensionDocuments.Count - report.Unbuildable.Count,
+                report.ObjectsCompared);
         }
     }
 
@@ -148,12 +175,12 @@ public sealed class MetadataEquivalenceHarnessTests
         //
         // Deliberately NOT `Assert.NotEmpty(KindsNotCompared)`: that would fail the day the
         // programme finishes, which is the one outcome it must not punish.
-        string[] stillUncompared =
-        {
-            // step 5..8, in the order issue #3782's comment sets. CodeUnit left this list
-            // in step 2, Query and XmlPort in steps 3 and 4.
-            "Report", "PermissionSet", "Enum", "MetadataRuntimeDeltas",
-        };
+        // EMPTY, and that is the programme's own definition of done: #3782 set out to empty
+        // this list one kind per pull request, and with steps 2-8 landed every kind a bundle
+        // carries is compared. Deliberately kept as an empty array rather than deleted, so the
+        // accounting below still runs -- it is what proves KindsNotCompared is empty because
+        // nothing is left rather than because the check stopped looking.
+        string[] stillUncompared = Array.Empty<string>();
 
         foreach (var report in RunAll())
         {
@@ -187,8 +214,65 @@ public sealed class MetadataEquivalenceHarnessTests
                 if (report.Bundle.Census.ContainsKey(kind))
                     Assert.Contains(kind, report.KindsCompared);
 
+            Assert.Contains("PermissionSet", report.KindsCompared);
+            Assert.Contains("Enum", report.KindsCompared);
+            Assert.Contains("MetadataRuntimeDeltas", report.KindsCompared);
+            // Report is asserted per-bundle for the same reason Query and XmlPort are: Business
+            // Foundation ships none, so a flat Assert.Contains would fail on a bundle that is
+            // simply reportless rather than on a comparison that stopped covering the kind.
+            if (report.Bundle.Census.ContainsKey("Report"))
+                Assert.Contains("Report", report.KindsCompared);
+
             foreach (var kind in stillUncompared.Where(k => report.Bundle.Census.ContainsKey(k)))
                 Assert.Contains(kind, report.KindsNotCompared);
+        }
+    }
+
+    [SkippableFact]
+    public void The_new_kinds_reader_answers_the_constant_that_IS_the_defect()
+    {
+        // Found by mutation-checking this PR's own work, and it is the #3802 shape exactly.
+        //
+        // Writing BC's own Extensible value into the enum render — manufacturing agreement, the
+        // one thing this harness exists to catch — left all 26 tests GREEN. The allowlist could
+        // not see it because the mutation does not REMOVE the differences, it INVERTS them: 31
+        // (BC True, runner False) became 111 (BC False, runner True), the entry still matched
+        // every one, and No_allowlist_entry_has_gone_stale therefore had nothing to report.
+        //
+        // `direction` is the usual narrowing tool and it cannot help here: it keys on the value
+        // being absent-or-null, and both sides of Extensible are False/True. What does work is
+        // the same claim the table-side members already make — the runner answers a CONSTANT,
+        // and that constant IS the defect. A reader that started answering BC's real value
+        // breaks this, in either direction, which is what the allowlist alone cannot do.
+        foreach (var report in RunAll())
+        {
+            MetadataDifference[] On(string signature, string objectPrefix) => report.Differences
+                .Where(d => d.Signature == signature
+                            && d.ObjectKey.StartsWith(objectPrefix, StringComparison.Ordinal))
+                .ToArray();
+
+            // EnumSymbol carries no Extensible at all, so the render states none and BC's own
+            // default of false stands on the runner's side — on every enum, including the 111
+            // where false is also BC's answer and no difference is reported.
+            AssertConstantAnswer(report, On("MetaEnum.Extensible", "Enum "),
+                "MetaEnum.Extensible", bc: "True", runner: "False");
+
+            // ALNamespace is stated by SymbolReference.json for all three kinds and carried by
+            // none of the three symbol records, so the runner answers null everywhere. Asserted
+            // per kind rather than once, because they are three separate records and three
+            // separate fixes (#3806, #3807, #3808).
+            AssertConstantAnswer(report, On("MetaEnum.ALNamespace", "Enum "),
+                "MetaEnum.ALNamespace", bc: null, runner: MetadataObjectDiff.Null);
+            AssertConstantAnswer(report, On("MetaPermissionSet.ALNamespace", "PermissionSet "),
+                "MetaPermissionSet.ALNamespace", bc: null, runner: MetadataObjectDiff.Null);
+
+            // The metadata-format version BC writes into every emitted document and the runner
+            // states nowhere. Constant on BOTH sides, which is what makes it a property of the
+            // document format rather than of any object's declaration.
+            AssertConstantAnswer(report, On("MetaEnum.MetadataToken", "Enum "),
+                "MetaEnum.MetadataToken", bc: "130000", runner: "0");
+            AssertConstantAnswer(report, On("MetaPermissionSet.MetadataToken", "PermissionSet "),
+                "MetaPermissionSet.MetadataToken", bc: "130000", runner: "0");
         }
     }
 
