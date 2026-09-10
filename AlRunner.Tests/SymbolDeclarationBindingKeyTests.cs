@@ -26,17 +26,27 @@
 //   so on a page opened with OpenEdit() it is true and the action is enabled. Refusing was
 //   neither faithful nor necessary — the binding was published all along, under its Id.
 //
-//   INavFormSourceExpression carries BOTH Id and Name, which is what makes this a translation
-//   rather than a guess.
+//   Both families carry a public Name on the concrete NavFormSourceExpression, which is what
+//   makes this a translation rather than a guess.
+//
+// WHY THE NAME IS READ BY REFLECTION
+//   BC exposes it through a type only half the matrix has. Measured against the provisioned
+//   artifacts: INavFormSourceExpression is ABSENT on 27.0 and 27.5, PRESENT on 28.1 and 28.4.
+//   Naming it fails the BUILD on 27.x -- which is how this arrived, as `error CS0234` on both
+//   27.x legs while 28.1 (the local default) compiled fine. The concrete class carries a public
+//   `Name` on every version, and RegisterSourceExpression ends in sourceExpressions.Add(id, ...)
+//   on 27.0 exactly as it does on 28.1, so the join needs no version-conditional type.
+//
+//   That makes the fake below deliberately DUCK-TYPED: it implements no BC interface, so these
+//   tests exercise the same reflection path 27.x takes. A fake implementing the 28.x interface
+//   would have passed here while the shipped code failed to compile on half the matrix.
 //
 // SCALE. 7,173 of Base Application 28.1's declarations are expression-bound (5,073 control +
 // 2,100 action) against 13,053 literal ones, so this path decides roughly a third of what the
 // fix newly honours.
 using System;
 using System.Collections;
-using System.Threading.Tasks;
 using AlRunner.Patches;
-using Microsoft.Dynamics.Nav.Runtime;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -44,32 +54,25 @@ namespace AlRunner.Tests;
 public sealed class SymbolDeclarationBindingKeyTests
 {
     /// <summary>
-    /// Stands in for one entry of NavForm.SourceExpressions. Only Id and Name are read by the
-    /// translation, but the real interface is implemented rather than a duck-typed stand-in:
-    /// the translation filters on `is INavFormSourceExpression`, so a fake that did not
-    /// implement it would be skipped and every test here would pass for the wrong reason.
+    /// Stands in for one entry of NavForm.SourceExpressions, carrying just the public Name the
+    /// translation joins on. Deliberately implements NO BC interface — see the header: the
+    /// shipped code reads Name by reflection precisely because INavFormSourceExpression does
+    /// not exist on 27.x, so a fake bound to that interface would test a path 27.x never takes.
     /// </summary>
-    private sealed class FakeExpression : INavFormSourceExpression
+    private sealed class FakeExpression
     {
         public FakeExpression(string id, string name) { Id = id; Name = name; }
-
         public string Id { get; }
         public string Name { get; }
-
-        public bool IsInRepeaterGroup { get; set; }
-        public Microsoft.Dynamics.Nav.Types.Metadata.SourceExpressionType SourceExpressionType => default;
-        public bool SkipOnSaveValues { get; set; }
-        public string AutoFormatCurrencyColumnId { get; set; } = string.Empty;
-        public Type Type => typeof(bool);
-        public bool Writable => false;
-
-        public NavValue Get() => NavBoolean.Create(true);
-        public ValueTask<NavValue> GetAsync() => new(Get());
-        public void Set(NavValue value) { }
-        public ValueTask SetAsync(NavValue value) => default;
     }
 
-    private static IDictionary Table(params INavFormSourceExpression[] expressions)
+    /// <summary>An entry that carries no Name at all — the shape that must be skipped.</summary>
+    private sealed class NamelessEntry
+    {
+        public string Id => "p1p1Nameless";
+    }
+
+    private static IDictionary Table(params FakeExpression[] expressions)
     {
         var table = new Hashtable();
         foreach (var e in expressions) table[e.Id] = e;
@@ -150,17 +153,44 @@ public sealed class SymbolDeclarationBindingKeyTests
     }
 
     [Fact]
-    public void AnEntryThatIsNotASourceExpression_IsSkippedRatherThanMatched()
+    public void AnEntryThatCarriesNoName_IsSkippedRatherThanMatched()
     {
         // NavForm.SourceExpressions is a non-generic IDictionary, so nothing guarantees every
-        // value implements the interface. A non-conforming entry must be skipped, not cast.
+        // value carries a Name — a bare string and a Name-less object both appear. Neither may
+        // be matched, and neither may stop the walk before the real entry.
         var table = new Hashtable
         {
             ["Control123_DynamicCaption"] = "not an expression",
+            ["p1p1Nameless"] = new NamelessEntry(),
             ["p790p790PageEditable"] = new FakeExpression("p790p790PageEditable", "PageEditable"),
         };
 
         Assert.Equal("p790p790PageEditable",
             RunnerPageInstance.TranslateSymbolDeclarationToBindingKey("PageEditable", table));
+    }
+
+    // ── the reflection read itself, which is what makes the join version-portable ──────────
+
+    [Fact]
+    public void SourceExpressionNameOrNull_ReadsAPublicNameProperty()
+    {
+        // The 27.x path. Nothing here implements a BC interface, so a match proves the read
+        // works by property name alone.
+        Assert.Equal("PageEditable",
+            RunnerPageInstance.SourceExpressionNameOrNull(
+                new FakeExpression("p790p790PageEditable", "PageEditable")));
+    }
+
+    [Fact]
+    public void SourceExpressionNameOrNull_AnswersNullForAnEntryWithNoName()
+    {
+        // Load-bearing, and the reason this is its own method rather than an inline cast: if a
+        // BC version renamed the property, this would answer null for EVERY entry and the join
+        // would silently become a no-op on that version — reintroducing the exact silent
+        // default this change removes, on half the matrix, with nothing to say so. Both arms
+        // are asserted so a regression cannot look like an absence.
+        Assert.Null(RunnerPageInstance.SourceExpressionNameOrNull(new NamelessEntry()));
+        Assert.Null(RunnerPageInstance.SourceExpressionNameOrNull("a bare string"));
+        Assert.Null(RunnerPageInstance.SourceExpressionNameOrNull(new object()));
     }
 }
