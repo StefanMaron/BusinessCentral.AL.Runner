@@ -67,6 +67,17 @@ public sealed class MetadataObjectDiffOptions
     /// </summary>
     public IReadOnlySet<string> PairByIdMembers { get; init; } =
         new HashSet<string>(StringComparer.Ordinal) { "MetaTable.Fields" };
+
+    /// <summary>
+    /// Property names tried, in order, as an id-paired element's identity. <c>MetaField</c>
+    /// spells it <c>Id</c>; BC's page control types spell it <c>ID</c>, and reflection's name
+    /// lookup is case-sensitive, so a single hardcoded spelling made
+    /// <see cref="MetadataObjectDiff"/> fall back to POSITIONAL pairing for every page control
+    /// — silently, because falling back is a legitimate outcome for a collection with no id
+    /// (#3782). Both spellings are listed rather than the lookup being made case-insensitive:
+    /// a type carrying both would otherwise pair on whichever reflection returned first.
+    /// </summary>
+    public IReadOnlyList<string> IdPropertyNames { get; init; } = new[] { "Id", "ID" };
 }
 
 public static class MetadataObjectDiff
@@ -214,7 +225,7 @@ public static class MetadataObjectDiff
         }
 
         if (opts.PairByIdMembers.Contains(memberSignature)
-            && TryPairById(e, a, out var byId))
+            && TryPairById(e, a, opts, out var byId))
         {
             // Ordinals are only meaningful while both sides hold the SAME set of ids. One
             // side missing an element shifts every ordinal after it, and reporting that
@@ -254,13 +265,13 @@ public static class MetadataObjectDiff
     }
 
     private static bool TryPairById(
-        IReadOnlyList<object?> e, IReadOnlyList<object?> a,
+        IReadOnlyList<object?> e, IReadOnlyList<object?> a, MetadataObjectDiffOptions opts,
         out List<(string Id, object? E, object? A, int EOrd, int AOrd)> paired)
     {
         paired = new List<(string, object?, object?, int, int)>();
         var ek = new Dictionary<string, (object Obj, int Ord)>(StringComparer.Ordinal);
         var ak = new Dictionary<string, (object Obj, int Ord)>(StringComparer.Ordinal);
-        if (!Index(e, ek) || !Index(a, ak)) return false;
+        if (!Index(e, ek, opts) || !Index(a, ak, opts)) return false;
 
         foreach (var key in ek.Keys.Concat(ak.Keys).Distinct(StringComparer.Ordinal)
                      .OrderBy(k => k, StringComparer.Ordinal))
@@ -271,14 +282,20 @@ public static class MetadataObjectDiff
         }
         return true;
 
-        static bool Index(IReadOnlyList<object?> src, Dictionary<string, (object, int)> into)
+        static bool Index(IReadOnlyList<object?> src, Dictionary<string, (object, int)> into,
+            MetadataObjectDiffOptions opts)
         {
             for (int i = 0; i < src.Count; i++)
             {
                 var o = src[i];
                 if (o is null) return false;
-                var p = o.GetType().GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
-                if (p is null || p.PropertyType != typeof(int)) return false;
+                PropertyInfo? p = null;
+                foreach (var name in opts.IdPropertyNames)
+                {
+                    var candidate = o.GetType().GetProperty(name, BindingFlags.Public | BindingFlags.Instance);
+                    if (candidate is not null && candidate.PropertyType == typeof(int)) { p = candidate; break; }
+                }
+                if (p is null) return false;
                 var key = Convert.ToString(p.GetValue(o), CultureInfo.InvariantCulture) ?? "";
                 if (!into.TryAdd(key, (o, i))) return false;   // duplicate ids: fall back to position
             }

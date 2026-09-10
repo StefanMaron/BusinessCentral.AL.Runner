@@ -161,14 +161,75 @@ public sealed class MetadataEquivalenceHarnessTests
     [SkippableFact]
     public void The_harness_states_which_kinds_it_does_not_compare()
     {
-        // Not decoration. A bundle carries every kind BC emitted; this harness compares
-        // tables. If that set silently widened or narrowed, "no differences" would mean
+        // Not decoration. A bundle carries every kind BC emitted; this harness compares a
+        // subset. If that set silently widened or narrowed, "no differences" would mean
         // something different from run to run.
+        //
+        // #3782 empties KindsNotCompared one kind per pull request, so this test names the
+        // kinds that must STILL be uncompared rather than asserting the compared set against a
+        // literal that a step would have to edit anyway. Each step deletes its kind from this
+        // list; the last one deletes the list and asserts KindsNotCompared is empty.
+        //
+        // Deliberately NOT `Assert.NotEmpty(KindsNotCompared)`: that would fail the day the
+        // programme finishes, which is the one outcome it must not punish.
+        string[] stillUncompared =
+        {
+            // step 2..8, in the order issue #3782's comment sets.
+            "CodeUnit", "Query", "XmlPort", "Report", "PermissionSet", "Enum",
+            "MetadataRuntimeDeltas",
+        };
+
         foreach (var report in RunAll())
         {
-            Assert.Equal(new[] { "MetaTable" }, report.KindsCompared);
-            Assert.NotEmpty(report.KindsNotCompared);
-            Assert.DoesNotContain("MetaTable", report.KindsNotCompared);
+            // Every kind is accounted for as exactly one of compared / not-compared: a kind
+            // that fell out of BOTH lists would be silently unmeasured, which is the defect
+            // this test exists to make visible.
+            Assert.Equal(
+                report.Bundle.Census.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray(),
+                report.KindsCompared.Concat(report.KindsNotCompared)
+                    .OrderBy(k => k, StringComparer.Ordinal).ToArray());
+
+            Assert.Empty(report.KindsCompared.Intersect(report.KindsNotCompared, StringComparer.Ordinal));
+
+            // The compared set is exactly the harness's declared set, intersected with what
+            // this bundle carries — so a kind added to ComparedKinds that never reaches the
+            // comparison loop cannot pass unnoticed.
+            Assert.Equal(
+                MetadataEquivalenceHarness.ComparedKinds
+                    .Where(k => report.Bundle.Census.ContainsKey(k))
+                    .OrderBy(k => k, StringComparer.Ordinal).ToArray(),
+                report.KindsCompared.OrderBy(k => k, StringComparer.Ordinal).ToArray());
+
+            Assert.Contains("MetaTable", report.KindsCompared);
+            Assert.Contains("PageDefinition", report.KindsCompared);
+
+            foreach (var kind in stillUncompared.Where(k => report.Bundle.Census.ContainsKey(k)))
+                Assert.Contains(kind, report.KindsNotCompared);
+        }
+    }
+
+    [SkippableFact]
+    public void Pages_are_compared_in_the_numbers_the_bundle_declares()
+    {
+        // The step-1 non-vacuity claim, and the thing a silent regression would break first:
+        // a page comparison that quietly compared nothing would leave every other test in this
+        // file green, because they all measure DIFFERENCES and zero pages produce zero of them.
+        foreach (var report in RunAll())
+        {
+            var declared = report.Bundle.Census.GetValueOrDefault("PageDefinition");
+            Assert.True(declared > 0,
+                $"{report.Bundle.Label}: the bundle declares no PageDefinition at all, so this " +
+                "test measures nothing. Regenerate the bundle.");
+
+            var pageDifferences = report.Differences
+                .Where(d => d.ObjectKey.StartsWith("Page ", StringComparison.Ordinal))
+                .Select(d => d.ObjectKey).Distinct().Count();
+
+            // Pages the runner reproduces exactly contribute no differences, so this is a
+            // floor rather than an equality — but a floor of zero would be the vacuous claim.
+            Assert.True(pageDifferences > 0 || report.ObjectsCompared >= declared,
+                $"{report.Bundle.Label}: {declared} PageDefinition(s) in the bundle and no page " +
+                "was compared. " + report.Summary);
         }
     }
 

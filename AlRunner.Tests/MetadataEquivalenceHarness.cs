@@ -107,8 +107,11 @@ internal static class MetadataEquivalenceHarness
     /// The object kinds this harness compares today. Everything else in a bundle is reported
     /// as NOT compared rather than dropped — covering less has to be visible, or the harness
     /// becomes the silent-partial-answer it was built to prevent.
+    ///
+    /// #3782 is the programme that empties the NOT-compared list, one kind per pull request.
+    /// The order and remaining kinds are on that issue.
     /// </summary>
-    private static readonly string[] ComparedKinds = { "MetaTable" };
+    internal static readonly string[] ComparedKinds = { "MetaTable", "PageDefinition" };
 
     public static IReadOnlyList<GroundTruthBundle> LoadBundles(string root)
     {
@@ -171,35 +174,109 @@ internal static class MetadataEquivalenceHarness
             ?.GetMethod("CreateMetaTableFromXml", BindingFlags.Public | BindingFlags.Static)
             ?? throw new InvalidOperationException("MetaTable.CreateMetaTableFromXml is not reachable.");
 
+        // BC's own reader for a PageDefinition document: a CONSTRUCTOR, not a factory — pages
+        // have no CreatePageDefinitionFromXml the way MetaTable has CreateMetaTableFromXml.
+        //
+        // PageDefinition, NOT MetaPageDefinition, and the difference is not cosmetic. Both
+        // types expose a public (XmlNode) constructor and both accept the document without
+        // throwing, but MetaPageDefinition's IGNORES it: measured on BC 28.1.49838.53910
+        // against the emitter's own Page 257 "Source Codes", it answers ID=0, Name=null,
+        // Properties=null, Content=null, while PageDefinition answers ID=257,
+        // Name="Source Codes" with both Properties and Content populated. Passing that empty
+        // object in as BOTH sides is a comparison of nothing against nothing: 235 pages
+        // compared, 0 differences, every other test in this file still green. See
+        // MetadataEquivalencePageOracleTests, which pins exactly that asymmetry so this cannot
+        // be silently switched back.
+        var pageType =
+            Type.GetType("Microsoft.Dynamics.Nav.Types.Metadata.PageDefinition, Microsoft.Dynamics.Nav.Types")
+            ?? throw new InvalidOperationException("PageDefinition is not reachable.");
+        var pageFromXml = pageType.GetConstructor(new[] { typeof(XmlNode) })
+            ?? throw new InvalidOperationException(
+                "PageDefinition has no (XmlNode) constructor. Without it there is no way to " +
+                "read BC's emitted PageDefinition document back into BC's own object model, and " +
+                "the comparison would become a hand-written XML walk against the runner — two " +
+                "derivations, no oracle.");
+
         var differences = new List<MetadataDifference>();
         var unbuildable = new List<string>();
         int compared = 0;
 
         foreach (var obj in bundle.Objects.Where(o => ComparedKinds.Contains(o.Kind, StringComparer.Ordinal))
-                     .OrderBy(o => o.Id))
+                     .OrderBy(o => o.Kind, StringComparer.Ordinal).ThenBy(o => o.Id))
         {
             var xmlPath = Path.Combine(bundle.Directory, obj.File);
             var document = new XmlDocument();
             document.Load(xmlPath);
 
-            var expected = fromXml.Invoke(null, new object?[] { document.DocumentElement, 0 });
-            if (expected is null)
-            {
-                unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own CreateMetaTableFromXml returned null");
-                continue;
-            }
+            object? expected;
+            object? actual;
+            string objectKey;
 
-            object? actual = null;
-            try
+            if (obj.Kind == "PageDefinition")
             {
-                var ncl = RecordPatches.GetOrBuildNCLMetaTable(obj.Id);
-                if (ncl is not null) actual = getOriginal.Invoke(ncl, null);
+                objectKey = $"Page {obj.Id}";
+                try
+                {
+                    expected = pageFromXml.Invoke(new object?[] { document.DocumentElement });
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own PageDefinition " +
+                                    $"constructor threw — {Describe(ex)}");
+                    continue;
+                }
+                if (expected is null)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own PageDefinition " +
+                                    "constructor produced null");
+                    continue;
+                }
+
+                try
+                {
+                    // The runner's page-metadata producer, and the exact document every runner
+                    // consumer of page metadata reads: RunnerXmlMetadataLoader hands this XML to
+                    // BC, which deserializes it with the same constructor used for BC's side
+                    // above. So the comparison is one type against itself, and it measures the
+                    // document the runner actually ships rather than a test-only rendering.
+                    var runnerXml = RecordPatches.TryBuildDependencyPageMetadata(obj.Id);
+                    if (runnerXml is null)
+                    {
+                        unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner built no page " +
+                                        "metadata at all");
+                        continue;
+                    }
+                    var runnerDoc = new XmlDocument();
+                    runnerDoc.LoadXml(runnerXml);
+                    actual = pageFromXml.Invoke(new object?[] { runnerDoc.DocumentElement });
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner threw — {Describe(ex)}");
+                    continue;
+                }
             }
-            catch (Exception ex)
+            else
             {
-                unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner threw — " +
-                                $"{(ex.InnerException ?? ex).GetType().Name}: {(ex.InnerException ?? ex).Message}");
-                continue;
+                objectKey = $"Table {obj.Id}";
+                expected = fromXml.Invoke(null, new object?[] { document.DocumentElement, 0 });
+                if (expected is null)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own CreateMetaTableFromXml returned null");
+                    continue;
+                }
+
+                actual = null;
+                try
+                {
+                    var ncl = RecordPatches.GetOrBuildNCLMetaTable(obj.Id);
+                    if (ncl is not null) actual = getOriginal.Invoke(ncl, null);
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner threw — {Describe(ex)}");
+                    continue;
+                }
             }
 
             if (actual is null)
@@ -209,7 +286,9 @@ internal static class MetadataEquivalenceHarness
             }
 
             compared++;
-            differences.AddRange(MetadataObjectDiff.Compare(expected, actual, $"Table {obj.Id}"));
+            differences.AddRange(obj.Kind == "PageDefinition"
+                ? MetadataObjectDiff.Compare(expected, actual, objectKey, PageDiffOptions)
+                : MetadataObjectDiff.Compare(expected, actual, objectKey));
         }
 
         var kindsPresent = bundle.Census.Keys.ToArray();
@@ -218,6 +297,55 @@ internal static class MetadataEquivalenceHarness
             kindsPresent.Where(k => ComparedKinds.Contains(k, StringComparer.Ordinal)).ToArray(),
             kindsPresent.Where(k => !ComparedKinds.Contains(k, StringComparer.Ordinal)).ToArray(),
             compared, unbuildable, differences);
+    }
+
+    /// <summary>
+    /// Page control collections pair by the control's own ID, not by position.
+    ///
+    /// Position is the differ's default because order is meaningful in AL, and for a table's
+    /// fields and keys that is the right call. It is wrong here for a structural reason: BC's
+    /// Controls list holds the page's ORDINARY field controls as well as its part controls,
+    /// and the runner reconstructs only the parts (DependencyPageMetadataXml's header says why
+    /// — a field control's value binding lives in the .app's IL, not in this XML). So the two
+    /// lists legitimately differ in length, and every element after the first divergence shifts.
+    ///
+    /// Measured on BC 28.1.49838.53910 before this option was passed: System Application
+    /// page 4312 reported its part 'InputMessagePart' as differing from 'LogsPart', page 9855
+    /// 'Permissions' from 'MetadataPermissions', and so on — 12 fabricated Name/ID/PagePartID
+    /// triples across seven pages, none of which is a disagreement about any control. Pairing
+    /// by id turns that cascade back into what it is: the runner does not build the ordinary
+    /// controls, reported once per control as a presence difference.
+    ///
+    /// #Ordinal still fires when both sides hold the same id set, so a genuine reordering is
+    /// not hidden — see MetadataObjectDiff.TryPairById and
+    /// MetadataObjectDiffTests.Id_paired_elements_still_report_a_reordering.
+    /// </summary>
+    private static readonly MetadataObjectDiffOptions PageDiffOptions = new()
+    {
+        PairByIdMembers = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "MetaTable.Fields",
+            "ContentDefinition.Containers",
+            "ControlContainerDefinition.Controls",
+            "ControlGroupDefinition.Controls",
+            "RepeaterDefinition.Controls",
+            "GridLayoutDefinition.Controls",
+            "ColumnLayoutDefinition.Controls",
+            "PageDefinition.ActionContainers",
+            "ActionContainerDefinition.Actions",
+            "ActionGroupDefinition.Actions",
+        },
+    };
+
+    /// <summary>
+    /// A reflected call reports the real fault as InnerException; the outer
+    /// TargetInvocationException says only "an exception was thrown", which turns every
+    /// unbuildable line into the same useless sentence.
+    /// </summary>
+    private static string Describe(Exception ex)
+    {
+        var real = ex.InnerException ?? ex;
+        return $"{real.GetType().Name}: {real.Message}";
     }
 
     /// <summary>

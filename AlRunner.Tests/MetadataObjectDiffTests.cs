@@ -370,4 +370,102 @@ public sealed class MetadataObjectDiffTests
     {
         public Dictionary<int, string> ById { get; } = new();
     }
+
+    // ---- id pairing works for BOTH spellings of the id property ------------------------
+
+    // BC spells it two ways, and reflection's name lookup is CASE-SENSITIVE: MetaField has
+    // `Id`, every page control type has `ID`. With only "Id" tried, TryPairById returned false
+    // for page controls and the differ fell back to POSITIONAL pairing — silently, because
+    // falling back is the correct outcome for a collection whose elements have no id at all.
+    //
+    // The cost of that silence, measured on BC 28.1.49838.53910 System Application (#3782):
+    // BC's Controls list holds ordinary field controls the runner deliberately does not
+    // reconstruct, so positional pairing shifted every part after the first and reported 12
+    // Name/ID/PagePartID triples across 7 pages as disagreements between DIFFERENT controls —
+    // e.g. page 4312 'InputMessagePart' vs 'LogsPart'. Not one was a difference about a control.
+
+    private sealed class UpperIdElement
+    {
+        public int ID { get; init; }
+        public string? Name { get; init; }
+    }
+
+    private sealed class UpperIdHolder
+    {
+        public List<UpperIdElement> Items { get; } = new();
+    }
+
+    private static MetadataObjectDiffOptions UpperOpts() => new()
+    {
+        RecurseNamespacePrefixes = new[] { Prefix },
+        PairByIdMembers = new HashSet<string>(StringComparer.Ordinal) { "UpperIdHolder.Items" },
+    };
+
+    [Fact]
+    public void Elements_whose_id_property_is_spelled_ID_still_pair_by_id()
+    {
+        // Positionally these disagree on every element: the left has an extra element FIRST,
+        // so left[0] is 'a' against right[0] 'b', and left[1] 'b' against nothing. Paired by
+        // id there is exactly one difference — the element the right side does not have.
+        var left = new UpperIdHolder
+        {
+            Items = { new UpperIdElement { ID = 1, Name = "a" }, new UpperIdElement { ID = 2, Name = "b" } },
+        };
+        var right = new UpperIdHolder { Items = { new UpperIdElement { ID = 2, Name = "b" } } };
+
+        var d = Assert.Single(MetadataObjectDiff.Compare(left, right, "Holder", UpperOpts()));
+        Assert.Equal("Items[id=1]", d.Path);
+        Assert.Equal("UpperIdHolder.Items." + MetadataObjectDiff.PresenceMember, d.Signature);
+        Assert.Equal("present", d.Expected);
+        Assert.Equal(MetadataObjectDiff.Absent, d.Actual);
+    }
+
+    [Fact]
+    public void An_ID_spelled_collection_reports_a_real_per_element_difference_not_a_shift()
+    {
+        // The other half: pairing must still report a genuine disagreement, and report it
+        // against the id rather than against a position.
+        var left = new UpperIdHolder
+        {
+            Items = { new UpperIdElement { ID = 1, Name = "a" }, new UpperIdElement { ID = 2, Name = "b" } },
+        };
+        var right = new UpperIdHolder
+        {
+            Items = { new UpperIdElement { ID = 1, Name = "a" }, new UpperIdElement { ID = 2, Name = "CHANGED" } },
+        };
+
+        var d = Assert.Single(MetadataObjectDiff.Compare(left, right, "Holder", UpperOpts()));
+        Assert.Equal("Items[id=2].Name", d.Path);
+        Assert.Equal("b", d.Expected);
+        Assert.Equal("CHANGED", d.Actual);
+    }
+
+    [Fact]
+    public void An_element_with_NEITHER_id_spelling_still_falls_back_to_position()
+    {
+        // The constraint that keeps the fix from over-reaching: a collection whose elements
+        // carry no int id at all must keep the positional behaviour, because that is the
+        // legitimate answer rather than a failure.
+        var left = new NoIdHolder { Items = { new NoId { Name = "a" }, new NoId { Name = "b" } } };
+        var right = new NoIdHolder { Items = { new NoId { Name = "a" }, new NoId { Name = "z" } } };
+
+        var d = Assert.Single(MetadataObjectDiff.Compare(left, right, "Holder", new MetadataObjectDiffOptions
+        {
+            RecurseNamespacePrefixes = new[] { Prefix },
+            PairByIdMembers = new HashSet<string>(StringComparer.Ordinal) { "NoIdHolder.Items" },
+        }));
+        Assert.Equal("Items[1].Name", d.Path);
+        Assert.Equal("b", d.Expected);
+        Assert.Equal("z", d.Actual);
+    }
+
+    private sealed class NoId
+    {
+        public string? Name { get; init; }
+    }
+
+    private sealed class NoIdHolder
+    {
+        public List<NoId> Items { get; } = new();
+    }
 }
