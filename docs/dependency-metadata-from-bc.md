@@ -84,9 +84,12 @@ failure modes and they must never be spelled the same way:
 | the package ships no source | return 0. The consumer's availability gate finds no document and keeps the derivation — the ordinary state of every symbol-only package (#3533, #3545). |
 | the package ships source and the compile or emit failed | **throw** `DependencyLoadException`. |
 
-`DependencyMetadataProducer.HasCompilableSource` answers the first question **from the package,
-before any compile is attempted**, which is what keeps "unavailable" from ever being inferred
-from a failure. #3590 is why that ordering is load-bearing rather than stylistic:
+`DependencyMetadataProducer.ReadSource` is the seam, and it separates the two by **answer
+shape**: an empty list means the package ships no AL source, while a package that cannot be
+read **throws** `METADATA-SOURCE-UNREADABLE` rather than returning empty. That is what keeps
+"unavailable" from ever being inferred from a failure — an unreadable package cannot enter
+through the absence door at all. #3590 is why that distinction is load-bearing rather than
+stylistic:
 `BuildNCLMetaTable` swallows a construction failure into a cached null with its log line
 filtered out by default, so a failure that reached the consumer would be indistinguishable from
 a document that was never produced.
