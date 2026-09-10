@@ -5673,6 +5673,23 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     // from the first wait.
     var sourceMapResolved = false;
     string? compileFailure = null;
+
+    // setBreakpoints requests that arrived before the map could be built, waiting to be
+    // answered. Answering one needs the compile, and BLOCKING this single-threaded loop for
+    // the compile makes the session deaf to `disconnect` and turns a compile that never
+    // finishes into an adapter that never exits (#3846). DAP matches a response to its
+    // request by `request_seq`, so answering later is within the protocol.
+    var deferredBreakpointRequests = new List<(int Seq, string Command, string SrcPath, List<int> Lines)>();
+
+    // A test seam, and the only way to prove the paragraph above: an organically slow bundle
+    // makes a flaky test, so this holds map preparation open for a known interval while the
+    // loop stays live. Off unless the variable is set, and read nowhere else.
+    var testMapDelayMs = int.TryParse(
+        Environment.GetEnvironmentVariable("AL_RUNNER_DAP_TEST_DELAY_MAP_MS"), out var dapTestDelay)
+        && dapTestDelay > 0 ? dapTestDelay : 0;
+    System.Threading.Tasks.Task mapGate = testMapDelayMs > 0
+        ? System.Threading.Tasks.Task.Delay(testMapDelayMs)
+        : System.Threading.Tasks.Task.CompletedTask;
     // Which scope types this session has breakpoints registered on, per source file, so a
     // later setBreakpoints for that file can clear ALL of them (#3786 review). Clearing only
     // the scopes named by the NEW request leaves the old ones armed: an empty breakpoint
@@ -5725,11 +5742,24 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     // client's WHOLE configuration sequence — breakpoints, exception filters, everything —
     // behind the compile, where deferring resolution charges that wait only to the requests
     // that actually need the map.
+    // When EnsureSourceMap could answer without blocking, as a task to race against the
+    // transport read, and as a predicate for the deferral decision. Both spell the same two
+    // conditions, so the race and the decision cannot disagree.
+    System.Threading.Tasks.Task MapAnswerReady() =>
+        System.Threading.Tasks.Task.WhenAll(
+            mapGate,
+            System.Threading.Tasks.Task.WhenAny(compiledTcs.Task, bundleRunTask));
+
+    bool MapAnswerAvailable() =>
+        sourceMapResolved
+        || (mapGate.IsCompleted && (compiledTcs.Task.IsCompleted || bundleRunTask.IsCompleted));
+
     string? EnsureSourceMap()
     {
         if (sourceMapResolved) return compileFailure;
         try
         {
+            mapGate.GetAwaiter().GetResult();
             var winner = System.Threading.Tasks.Task.WhenAny(compiledTcs.Task, bundleRunTask)
                 .GetAwaiter().GetResult();
             if (!ReferenceEquals(winner, compiledTcs.Task))
@@ -5763,6 +5793,80 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
         }
         sourceMapResolved = true;
         return compileFailure;
+    }
+
+    // The whole of what `setBreakpoints` does once the map question is settled, lifted out of
+    // the switch so a DEFERRED request is answered by exactly the same code as an immediate
+    // one — two copies of this would drift, and the deferred path is the one nobody watches.
+    void AnswerSetBreakpoints(int seq, string command, string srcPath, List<int> lines)
+    {
+        // #3821: a request arriving between `initialized` and `launch` is the specification's
+        // own sequence, and answering it against an empty map made every breakpoint
+        // unverified. An empty list needs no map (see the call site).
+        var bpCompileErr = lines.Count > 0 ? EnsureSourceMap() : null;
+
+        var requests = lines.Select(l => new AlRunner.Infrastructure.DapBreakpointRequest(srcPath, l)).ToList();
+        var resolved = AlRunner.Infrastructure.DapBreakpointResolver.Resolve(requests, sourceMap);
+
+        // Why an unverified breakpoint is unverified. DAP's Breakpoint has a
+        // `message` field for exactly this, and without it "nothing is
+        // loaded" and "that line carries no statement" are the same answer —
+        // the first is a state the client can wait out, the second is not.
+        var unverifiedReason = bpCompileErr != null
+            ? $"the bundle did not compile, so nothing could be bound: {bpCompileErr}"
+            : "no executable AL statement on this line in this file";
+
+        var fullSrcPath = Path.GetFullPath(srcPath);
+        // Replace (not accumulate) — DAP's setBreakpoints contract: this
+        // request is the COMPLETE set for `source` from now on. That means
+        // clearing what THIS FILE had registered before, not what the new
+        // request happens to name: an empty list must disarm the file, and a
+        // breakpoint moved between two objects of one file must not leave the
+        // first object armed (#3786 review). fullSrcPath was computed and
+        // never read before, which is the shape that defect left behind.
+        if (registeredScopesBySource.TryGetValue(fullSrcPath, out var previouslyRegistered))
+            foreach (var scope in previouslyRegistered)
+                AlRunner.Infrastructure.AlDapSession.ClearBreakpoints(scope);
+        var nowRegistered = new HashSet<Type>();
+        foreach (var rb in resolved)
+        {
+            if (!rb.Verified || rb.ScopeType == null) continue;
+            // A scope reached for the first time in THIS request may still
+            // carry breakpoints from a request naming a different file that
+            // declares the same object — clear before the first add, once.
+            if (nowRegistered.Add(rb.ScopeType))
+                AlRunner.Infrastructure.AlDapSession.ClearBreakpoints(rb.ScopeType);
+            AlRunner.Infrastructure.AlDapSession.SetBreakpoint(rb.ScopeType, rb.StatementIndex);
+        }
+        registeredScopesBySource[fullSrcPath] = nowRegistered;
+
+        transport.WriteResponse(seq, command, true, new
+        {
+            breakpoints = resolved.Select((rb, idx) => new
+            {
+                id = idx,
+                verified = rb.Verified,
+                line = rb.Verified ? rb.ActualLine : rb.RequestedLine,
+                message = rb.Verified ? null : unverifiedReason,
+            }),
+        });
+    }
+
+    // Answers everything deferred, in arrival order. Called only where the map question is
+    // already settled — the read race, launch, configurationDone — so it never blocks for
+    // longer than the caller was going to anyway.
+    void DrainDeferredBreakpoints()
+    {
+        if (deferredBreakpointRequests.Count == 0) return;
+        var batch = deferredBreakpointRequests.ToList();
+        deferredBreakpointRequests.Clear();
+        foreach (var (seq, cmd, path, lines) in batch)
+        {
+            // Per request, because one bad path must not swallow the answers to the others:
+            // the switch's own catch is not in scope here.
+            try { AnswerSetBreakpoints(seq, cmd, path, lines); }
+            catch (Exception ex) { transport.WriteResponse(seq, cmd, false, message: ex.Message); }
+        }
     }
 
     int exitCode = 0;
@@ -5863,12 +5967,33 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
         }
     };
 
+    System.Threading.Tasks.Task<AlRunner.Infrastructure.DapIncomingMessage?>? outstandingRead = null;
     try
     {
         while (true)
         {
             AlRunner.Infrastructure.DapIncomingMessage? msg;
-            try { msg = transport.ReadMessageAsync().GetAwaiter().GetResult(); }
+            try
+            {
+                // ONE outstanding read, held across iterations. While a breakpoint request is
+                // deferred this loop must be woken by EITHER the next message or the map
+                // becoming available, and a read started for the race must not be dropped
+                // when the map wins — the client's next message would be consumed by a read
+                // nobody is awaiting (#3846).
+                outstandingRead ??= transport.ReadMessageAsync();
+                if (deferredBreakpointRequests.Count > 0)
+                {
+                    var winner = System.Threading.Tasks.Task
+                        .WhenAny(outstandingRead, MapAnswerReady()).GetAwaiter().GetResult();
+                    if (!ReferenceEquals(winner, outstandingRead))
+                    {
+                        DrainDeferredBreakpoints();
+                        continue; // outstandingRead is still pending, and stays held
+                    }
+                }
+                msg = outstandingRead.GetAwaiter().GetResult();
+                outstandingRead = null;
+            }
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"[dap] transport error: {ex.Message}");
@@ -5896,6 +6021,9 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                         // Report a compile failure on this response rather than silently
                         // proceeding into a session that will never run anything.
                         var launchErr = EnsureSourceMap();
+                        // Before this response, so a breakpoint request the client sent
+                        // FIRST is answered first.
+                        DrainDeferredBreakpoints();
                         if (launchErr != null)
                         {
                             transport.WriteResponse(msg.Seq, command, false, message: launchErr);
@@ -5920,67 +6048,29 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                         else if (args.Value.TryGetProperty("lines", out var legacyLinesEl) && legacyLinesEl.ValueKind == System.Text.Json.JsonValueKind.Array)
                             foreach (var l in legacyLinesEl.EnumerateArray()) lines.Add(l.GetInt32());
 
-                        // #3821: before resolving anything. A request arriving between
-                        // `initialized` and `launch` is the specification's own sequence,
-                        // and answering it against an empty map made every breakpoint
-                        // unverified.
-                        //
-                        // An EMPTY list is the exception, and it is the one that matters for
-                        // responsiveness: "remove every breakpoint in this source" resolves
-                        // nothing, so it needs no map, and waiting for the compile to answer
-                        // it would block this single-threaded loop for no reason (#3845
-                        // review). The clear below runs either way.
-                        var bpCompileErr = lines.Count > 0 ? EnsureSourceMap() : null;
-
-                        var requests = lines.Select(l => new AlRunner.Infrastructure.DapBreakpointRequest(srcPath, l)).ToList();
-                        var resolved = AlRunner.Infrastructure.DapBreakpointResolver.Resolve(requests, sourceMap);
-
-                        // Why an unverified breakpoint is unverified. DAP's Breakpoint has a
-                        // `message` field for exactly this, and without it "nothing is
-                        // loaded" and "that line carries no statement" are the same answer —
-                        // the first is a state the client can wait out, the second is not.
-                        var unverifiedReason = bpCompileErr != null
-                            ? $"the bundle did not compile, so nothing could be bound: {bpCompileErr}"
-                            : "no executable AL statement on this line in this file";
-
-                        var fullSrcPath = Path.GetFullPath(srcPath);
-                        // Replace (not accumulate) — DAP's setBreakpoints contract: this
-                        // request is the COMPLETE set for `source` from now on. That means
-                        // clearing what THIS FILE had registered before, not what the new
-                        // request happens to name: an empty list must disarm the file, and a
-                        // breakpoint moved between two objects of one file must not leave the
-                        // first object armed (#3786 review). fullSrcPath was computed and
-                        // never read before, which is the shape that defect left behind.
-                        if (registeredScopesBySource.TryGetValue(fullSrcPath, out var previouslyRegistered))
-                            foreach (var scope in previouslyRegistered)
-                                AlRunner.Infrastructure.AlDapSession.ClearBreakpoints(scope);
-                        var nowRegistered = new HashSet<Type>();
-                        foreach (var rb in resolved)
+                        // An EMPTY list resolves nothing — "remove every breakpoint in this
+                        // source" needs no map — so it is answered now, whatever the compile
+                        // is doing. A non-empty one needs the map, and when the map is not
+                        // ready yet it is DEFERRED rather than waited for, so this loop stays
+                        // able to read `disconnect` (#3846). The deferred request is answered
+                        // by DrainDeferredBreakpoints, from the read race below or from
+                        // launch / configurationDone.
+                        if (lines.Count > 0 && !MapAnswerAvailable())
                         {
-                            if (!rb.Verified || rb.ScopeType == null) continue;
-                            // A scope reached for the first time in THIS request may still
-                            // carry breakpoints from a request naming a different file that
-                            // declares the same object — clear before the first add, once.
-                            if (nowRegistered.Add(rb.ScopeType))
-                                AlRunner.Infrastructure.AlDapSession.ClearBreakpoints(rb.ScopeType);
-                            AlRunner.Infrastructure.AlDapSession.SetBreakpoint(rb.ScopeType, rb.StatementIndex);
+                            deferredBreakpointRequests.Add((msg.Seq, command, srcPath, lines));
+                            break;
                         }
-                        registeredScopesBySource[fullSrcPath] = nowRegistered;
-
-                        transport.WriteResponse(msg.Seq, command, true, new
-                        {
-                            breakpoints = resolved.Select((rb, idx) => new
-                            {
-                                id = idx,
-                                verified = rb.Verified,
-                                line = rb.Verified ? rb.ActualLine : rb.RequestedLine,
-                                message = rb.Verified ? null : unverifiedReason,
-                            }),
-                        });
+                        AnswerSetBreakpoints(msg.Seq, command, srcPath, lines);
                         break;
                     }
 
                     case "configurationDone":
+                        // This releases the run-start gate, so AL execution begins right
+                        // after it. A deferred breakpoint request must be REGISTERED before
+                        // that, or the run starts with breakpoints the client believes it
+                        // set and this adapter has not armed. This is the one place the wait
+                        // is unavoidable — execution cannot begin without the map either.
+                        DrainDeferredBreakpoints();
                         transport.WriteResponse(msg.Seq, command, true);
                         AlRunner.Infrastructure.AlDapSession.Enabled = true;
                         configurationDoneGate.Release();

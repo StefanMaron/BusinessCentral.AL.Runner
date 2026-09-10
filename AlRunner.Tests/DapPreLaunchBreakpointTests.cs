@@ -34,12 +34,22 @@ public class DapPreLaunchBreakpointTests
     private const int SecondObjectSecondStatementLine = 32; // Counter := Helper.Bump(Counter);
     private const int NoStatementLine = 16;                 // the first codeunit's closing brace
 
+    /// <summary>
+    /// Holds the adapter's source-map preparation open for a known interval
+    /// (`AL_RUNNER_DAP_TEST_DELAY_MAP_MS`, honoured only by `RunDapLoop`). The two liveness
+    /// facts at the bottom of this file need "the map is not ready yet" to be a state that
+    /// lasts long enough to assert against; an organically slow bundle would make them flaky.
+    /// </summary>
+    private static IReadOnlyDictionary<string, string> HoldMapPreparation(int ms) =>
+        new Dictionary<string, string> { ["AL_RUNNER_DAP_TEST_DELAY_MAP_MS"] = ms.ToString() };
+
     /// <summary>Drives `initialize` and waits for the `initialized` event, leaving the
     /// session at exactly the point the specification says configuration requests may be
     /// sent — and BEFORE `launch`.</summary>
-    private static async Task<DapClient> StartAndInitializeAsync()
+    private static async Task<DapClient> StartAndInitializeAsync(
+        IReadOnlyDictionary<string, string>? extraEnv = null)
     {
-        var dap = await DapClient.StartAsync(FixtureSrc);
+        var dap = await DapClient.StartAsync(FixtureSrc, extraEnv: extraEnv);
         try
         {
             var initSeq = dap.SendRequest("initialize", new { adapterID = "al-runner-tests" });
@@ -250,5 +260,81 @@ public class DapPreLaunchBreakpointTests
         {
             try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
         }
+    }
+
+    /// <summary>
+    /// #3846: the request loop must stay able to read while a breakpoint request is waiting
+    /// for the source map. The fix for #3821 first made `setBreakpoints` BLOCK the loop for
+    /// the whole compile, which is worse than it sounds: nothing else is read meanwhile, so a
+    /// client that gives up and disconnects is not heard until the compile ends, and a
+    /// compile that never ends is an adapter that never exits.
+    ///
+    /// Map preparation is held open for 25 seconds and the client disconnects immediately.
+    /// The response must come back in a small fraction of that.
+    ///
+    /// Mutation that turns this red: make the `setBreakpoints` case call
+    /// AnswerSetBreakpoints unconditionally instead of deferring — the disconnect is then
+    /// answered ~25s later and the 10s read below times out.
+    /// </summary>
+    [SkippableFact]
+    public async Task DisconnectWhileABreakpointRequestWaitsForTheMap_IsAnsweredAtOnce()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        await using var dap = await StartAndInitializeAsync(HoldMapPreparation(25_000));
+
+        // Deferred by construction: the map cannot be ready for another 25 seconds.
+        dap.SendRequest("setBreakpoints", new
+        {
+            source = new { path = Path.Combine(FixtureSrc, SourceFileName) },
+            breakpoints = new[] { new { line = SecondObjectSecondStatementLine } },
+        });
+
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        var discSeq = dap.SendRequest("disconnect", new { });
+        var discResp = await dap.ReadUntilResponseAsync(discSeq, timeout: TimeSpan.FromSeconds(10));
+        started.Stop();
+
+        Assert.True(discResp.GetProperty("success").GetBoolean(), discResp.ToString());
+        // Well inside the 25s hold, so this cannot pass by the hold having elapsed. The bound
+        // is deliberately loose against a loaded CI box; the failing behaviour is 25s.
+        Assert.True(started.Elapsed < TimeSpan.FromSeconds(15),
+            $"disconnect took {started.Elapsed.TotalSeconds:F1}s while a breakpoint request was "
+            + $"waiting for the map — the loop was blocked rather than reading");
+
+        // The session really is being torn down, not merely answered.
+        await dap.ReadUntilEventAsync("terminated", TimeSpan.FromSeconds(15));
+    }
+
+    /// <summary>
+    /// The other half: a deferred request is not merely postponed, it is ANSWERED, and
+    /// without the client sending anything further. Between the request and the response the
+    /// client is silent, so the only thing that can produce it is the loop's race between the
+    /// outstanding transport read and the map becoming available.
+    ///
+    /// The answer is the real one — verified, on the file line asked for — so a version that
+    /// drained the queue by writing a placeholder would not pass.
+    /// </summary>
+    [SkippableFact]
+    public async Task ABreakpointRequestDeferredForTheMap_IsAnsweredWhenTheMapArrives()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        await using var dap = await StartAndInitializeAsync(HoldMapPreparation(4_000));
+
+        var bpSeq = dap.SendRequest("setBreakpoints", new
+        {
+            source = new { path = Path.Combine(FixtureSrc, SourceFileName) },
+            breakpoints = new[] { new { line = SecondObjectSecondStatementLine } },
+        });
+
+        // Nothing else is sent. No launch, no configurationDone.
+        var bpResp = await dap.ReadUntilResponseAsync(bpSeq, timeout: TimeSpan.FromSeconds(120));
+        Assert.True(bpResp.GetProperty("success").GetBoolean(), bpResp.ToString());
+        var bp = bpResp.GetProperty("body").GetProperty("breakpoints")[0];
+        Assert.True(bp.GetProperty("verified").GetBoolean(),
+            $"the deferred request was answered, but not resolved: {bpResp}\n"
+            + $"--- stderr ---\n{dap.StdErr}");
+        Assert.Equal(SecondObjectSecondStatementLine, bp.GetProperty("line").GetInt32());
     }
 }
