@@ -439,24 +439,30 @@ reachable.
 <a id="what-is-compared"></a>
 ## What is compared, and what is not
 
-The harness compares `MetaTable`, `PageDefinition`, `CodeUnit`, `Report`, `PermissionSet` and
-`Enum` documents. A bundle carries every kind BC emitted — including queries, xmlports and the
-`MetadataRuntimeDeltas` documents that cover table, page and permission-set extensions — and
+The harness compares `MetaTable`, `PageDefinition`, `CodeUnit`, `Report`, `PermissionSet`,
+`Enum` and `MetadataRuntimeDeltas` documents. A bundle carries every kind BC emitted, and
 `MetadataEquivalenceHarnessTests` asserts the set it compares AND the set it does not, so
 covering less cannot happen quietly.
 
 **#3782 is the programme that empties the not-compared list**, one kind per pull request, in the
 order that issue records: `PageDefinition` (done), `CodeUnit` (done), `Query` and `XmlPort` (in
-flight), then `Report` (done), `PermissionSet` (done), `Enum` (done) and
-`MetadataRuntimeDeltas` (**closed as uncomparable** — see below). Each step adds its kind to
-`ComparedKinds`, lands the resulting allowlist with a reason per member, and deletes its kind
-from the `stillUncompared` list in `The_harness_states_which_kinds_it_does_not_compare`.
+flight), then `Report`, `PermissionSet`, `Enum` and `MetadataRuntimeDeltas` (all done). Each
+step adds its kind to `ComparedKinds`, lands the resulting allowlist with a reason per member,
+and deletes its kind from the `stillUncompared` list in
+`The_harness_states_which_kinds_it_does_not_compare`.
 
-**A kind can leave that list two ways, and they are not the same.** Most leave it by being
-compared. `MetadataRuntimeDeltas` left it by being *measured uncomparable*, which is recorded in
-`MetadataEquivalenceHarness.UncomparableKinds` rather than by deletion —
-`The_harness_states_which_kinds_it_does_not_compare` holds the two structures against each
-other, so the entry cannot keep reading as "not got to yet" after the question was closed.
+**Every kind is compared. None is exempt**, and the harness has no mechanism for exempting one
+— that is deliberate, and it is the correction of a mistake this programme made once.
+`MetadataRuntimeDeltas` was briefly recorded as *uncomparable* in a
+`MetadataEquivalenceHarness.UncomparableKinds` structure, with a passing test holding the claim
+in place. It was wrong (see below), and the shape of the error is the reason no such structure
+exists now: **a green assertion that a kind cannot be measured is indistinguishable from a green
+assertion that it was**, and it is strictly harder to dislodge, because the next reader finds a
+test telling them not to look.
+
+A kind the runner cannot build a side for is reported per object as **unbuildable**, with the
+count asserted against the census. That keeps the absence a measurement rather than a
+classification.
 
 <a id="the-page-oracle-is-pagedefinition-not-metapagedefinition"></a>
 ### The page oracle is `PageDefinition`, not `MetaPageDefinition`
@@ -937,30 +943,77 @@ census arithmetic in `Every_object_in_a_compared_kind_really_was_compared` asser
 quietly go.
 
 <a id="metadataruntimedeltas"></a>
-## `MetadataRuntimeDeltas` cannot be compared non-circularly, and that is the measurement
+## `MetadataRuntimeDeltas`: a one-sided gap, and a census that was too narrow
 
-This is the one kind of the eight that #3782 closes with a **finding rather than a comparison**,
-and the precedent is step 4's treatment of `XmlPort`: when a kind genuinely has nothing
-non-circular, the right outcome is to say so with the measurement, not to manufacture a
-comparison. Tracked on #3809. Both sides are missing, which is a stronger result than
-`XmlPort`'s, where the runner at least had an id and a name.
+This kind was first written up here as **uncomparable — "BC ships no reader for the shape"** —
+and that was wrong. The correction is kept in full rather than quietly replaced, because the way
+it went wrong is more reusable than the conclusion.
 
-**There is no BC reader for the shape.** Every other kind is read back by a BC type —
-`CreateMetaTableFromXml`, `PageDefinition(XmlNode)`, `MetaQuery`, `MetaXmlPort`, `MetaReport`,
-`MetaPermissionSet.Create`, `MetaEnum`. Measured by reflecting over both assemblies on BC
-28.4.53241.54407: **no type in `Microsoft.Dynamics.Nav.Types` (2,617 types) or
-`Microsoft.Dynamics.Nav.Ncl` (8,616 types) has "Delta" in its name**, in any casing. BC applies
-these documents during metadata assembly rather than materialising them as an object.
+<a id="the-census-that-was-too-narrow"></a>
+### The census that produced the false negative
 
-**And the runner builds no extension-shaped object either.** It folds an extension's
-contribution into the object being extended at parse time and keeps nothing addressable by the
-extension's own id — table and page extensions merge into the target's parsed form, enum
-extensions key by the target enum's id. For a document keyed on extension id N there is no
-runner object with id N.
+The claim rested on reflecting over `Microsoft.Dynamics.Nav.Types` (2,617 types) and
+`Microsoft.Dynamics.Nav.Ncl` (8,616 types) and finding **no type with "Delta" in its name**.
+Both numbers are correct. The inference from them was not, for one reason: **every other oracle
+in this harness comes from one of those two assemblies, so those two were the ones searched** —
+and the artifact directory holds **501**.
 
-Either half would change the answer, and neither is small: a BC reader materialising the shape,
-or an addressable runner extension object — which #3807 notes would also be what an
-enumextension `<Enum>` document needs.
+Re-measured over all of them, without loading anything (a `PEReader` metadata scan, so no
+static-init faults and no resolution failures):
+
+| | |
+|---|---:|
+| assemblies scanned | 501 |
+| types whose name contains "Delta" | **308** |
+| of those, in `Microsoft.Dynamics.Nav.Apps.dll` | **54** |
+
+`.Types` really is 0. `.Ncl` is not — it has 10, including the state machine
+`<GetRuntimeDeltas>d__15`, whose element type points straight at the reader.
+
+**The lesson generalises past this kind: a negative about BC's surface is only as wide as the
+search behind it.** "I did not find it" and "it does not exist" are different claims, and the
+second needs a search whose scope matches the claim's scope. Two assemblies cannot settle a
+question about the runtime.
+
+<a id="the-deltas-oracle"></a>
+### The oracle
+
+`Microsoft.Dynamics.Nav.Apps.MetadataDeltas.NavAppObjectMetadataRuntimeDeltas.FromXml(XDocument)`,
+with `NavAppObjectMetadataDeltaBase.MetadataRuntimeDeltasXName` resolving to
+`{urn:schemas-microsoft-com:dynamics:NAV:MetaObjects}MetadataRuntimeDeltas` — character for
+character the root element of the emitted documents.
+
+Proven to parse rather than assumed to, over **every** document rather than a sample:
+
+| | |
+|---|---:|
+| documents in the two bundles | 11 |
+| parsed, `AllDeltas` reachable | **11** |
+| yielding a non-empty `AllDeltas` | 6 (12 on page 774, 5 on 4318, 4 on 2515, 2 on 324, 1 on 9862) |
+| genuinely empty `<MetadataRuntimeDeltas/>` elements | 5 |
+
+**A bare probe of the same call parsed only 6 of 11**, the other 5 hitting a
+`WindowsLanguageHelper` static-init fault. That is an artifact of loading the assembly outside
+the harness: inside the `bc-engine-serial` collection, which already has the skeleton, it is
+11 of 11. Worth knowing before treating a partial parse as a property of the reader.
+
+<a id="the-runner-side-is-null"></a>
+### The runner's side is null, and that is the gap
+
+`RunnerXmlMetadataLoader.GetExtensionDeltasForAppObject` is the one runner member typed to
+return `NavAppObjectMetadataRuntimeDeltas`, and it returns `null!` for every object — its own
+comment records that the runner has no published-app extension pipeline, and that null is BC's
+"no deltas" value too. Measured through that member rather than read off it: null for all 11.
+
+So the honest claim is a **one-sided gap** — BC's side is real and parses; the runner's is
+absent — which is narrower and more useful than "neither side exists". Each object is reported
+as unbuildable naming #3809, and
+`Every_object_in_a_compared_kind_really_was_compared` asserts that the count of deltas
+unbuildables **equals the census**, so a deltas object that somehow did build, or any object of
+another kind that did not, still fails.
+
+**What would close it:** the runner tracking an extension's contribution addressably by the
+extension's own id — the same thing #3807 notes an enumextension `<Enum>` document would need.
 
 <a id="running-it"></a>
 ## Running it
