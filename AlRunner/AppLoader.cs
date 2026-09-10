@@ -670,9 +670,12 @@ public static class AppLoader
     /// same way app.json inputs do. Roots are Optional (warn-not-throw if absent)
     /// and resolved by (Name, Publisher) — version is informational.
     ///
-    /// Apply ONLY to the root app being compiled, never transitively: the
-    /// dependency resolver throws on cycles, and every Microsoft app's manifest
-    /// carries these same attributes (Application → Base Application → Application …).
+    /// Applied to the root app being compiled and, since #3719, to every resolved package
+    /// that is NOT itself a Microsoft platform app (DependencyResolver.Visit): Microsoft's
+    /// test-toolkit packages declare only a Platform floor, and their source compile needs
+    /// System.app for it. The platform apps' own floors are still never followed — their
+    /// manifests reference each other (Application → Base Application → Application …) and
+    /// the resolver throws on cycles.
     /// </summary>
     public static IEnumerable<DependencyRef> ImplicitRoots(AppManifest manifest)
     {

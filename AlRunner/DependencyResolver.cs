@@ -172,6 +172,18 @@ public sealed class DependencyResolver
         stack.Push(found.Manifest.Name);
         foreach (var child in found.Manifest.Dependencies)
             Visit(child, state, output, stack);
+        // #3719: a package's own Platform/Application floors are dependencies too — the real
+        // `al` compiler injects Microsoft/System and Microsoft/Application from them, and
+        // Microsoft's test-toolkit packages declare NOTHING else (Library Assert: Platform=
+        // "28.0.0.0", empty <Dependencies />). Without this, a consumer whose app.json has no
+        // `platform` of its own resolved a closure with no System.app, and Library Assert was
+        // source-compiled without the platform symbols: EMIT-ZERO. Not followed for the Microsoft
+        // platform apps themselves, whose manifests reference each other (Application → Base
+        // Application → Application …) and would cycle — AppLoader.ImplicitRoots' trap.
+        // Optional, like the consumer-side roots: a missing System.app skips, as above.
+        if (!IsMicrosoftPlatformApp(found.Manifest.Name, found.Manifest.Publisher))
+            foreach (var floor in AppLoader.ImplicitRoots(found.Manifest))
+                Visit(floor, state, output, stack);
         stack.Pop();
         state[id] = 2;
         output.Add((found.Manifest, found.Path));

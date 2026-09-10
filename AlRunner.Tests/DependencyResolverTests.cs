@@ -611,11 +611,27 @@ public sealed class DependencyResolverTests : IDisposable
 
     private static byte[] MakeMinimalApp(string appId, string name, string publisher, string version,
         bool r2r, bool alSource)
+        => MakeMinimalApp(appId, name, publisher, version, r2r, alSource, platform: null);
+
+    /// <summary>
+    /// <paramref name="platform"/> becomes the App element's <c>Platform</c> attribute — the
+    /// floor the real `al` compiler turns into an implicit Microsoft/System dependency, and
+    /// the only dependency Microsoft's test-toolkit packages declare (Library Assert's manifest:
+    /// <c>Platform="28.0.0.0"</c>, an empty <c>&lt;Dependencies /&gt;</c>).
+    /// </summary>
+    private static byte[] MakeMinimalApp(string appId, string name, string publisher, string version,
+        bool r2r, bool alSource, string? platform)
+        => MakeMinimalApp(appId, name, publisher, version, r2r, alSource, platform, application: null);
+
+    private static byte[] MakeMinimalApp(string appId, string name, string publisher, string version,
+        bool r2r, bool alSource, string? platform, string? application)
     {
+        var platformAttr = platform == null ? "" : $" Platform=\"{platform}\"";
+        var applicationAttr = application == null ? "" : $" Application=\"{application}\"";
         var xml = $"""
             <?xml version="1.0" encoding="utf-8"?>
             <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
-              <App Id="{appId}" Name="{name}" Publisher="{publisher}" Version="{version}"/>
+              <App Id="{appId}" Name="{name}" Publisher="{publisher}" Version="{version}"{applicationAttr}{platformAttr}/>
             </Package>
             """;
 
@@ -650,6 +666,155 @@ public sealed class DependencyResolverTests : IDisposable
         BitConverter.TryWriteBytes(result.AsSpan(4, 4), (uint)8);
         zipBytes.CopyTo(result, 8);
         return result;
+    }
+
+    // ── #3719: a resolved package's OWN platform floor joins the closure ──────
+    //
+    // Library Assert's manifest declares Platform="28.0.0.0" and no <Dependencies>. A consumer
+    // whose app.json declares neither `platform` nor `application` (LethAL's sandbox-data
+    // fixture; nothing in AL requires the keys) therefore resolved a closure with no System.app
+    // in it, Library Assert was source-compiled against that closure, and BC's emitter died on
+    // `Table 'Field' is missing` / `namespace 'Reflection' is unknown` — reported as EMIT-ZERO.
+    // Adding `"platform"` to the CONSUMER made the same fixture pass, 66 tests. The resolver must
+    // follow a resolved package's own Platform/Application floors the way it follows its
+    // <Dependencies>, so the dependency compiles against what ITS manifest asks for.
+
+    [Fact]
+    public void ResolvedPackageDeclaringPlatform_PullsSystemIntoTheClosure_BeforeIt()
+    {
+        var dir = MakeDir("PlatformFloor");
+        var systemId = "00000000-0000-0000-0000-00000000c0de";
+        var assertId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
+        File.WriteAllBytes(Path.Combine(dir, "System.app"),
+            MakeMinimalApp(systemId, "System", "Microsoft", "28.0.54265.0", r2r: false, alSource: false, platform: null));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Library Assert.app"),
+            MakeMinimalApp(assertId, "Library Assert", "Microsoft", "28.1.49838.54169", r2r: false, alSource: true, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var result = resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(assertId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        var names = result.Select(r => r.Manifest.Name).ToList();
+        Assert.Equal(new[] { "System", "Library Assert" }, names); // topological: the floor first
+    }
+
+    /// <summary>
+    /// The floor is Optional, exactly like the implicit roots a consumer's app.json yields: a
+    /// cache without System.app resolves the package alone rather than throwing. (Whether the
+    /// compile then fails is the loader's business, and it does fail loudly.)
+    /// </summary>
+    [Fact]
+    public void ResolvedPackageDeclaringPlatform_SystemAbsent_ResolvesThePackageAlone()
+    {
+        var dir = MakeDir("PlatformFloorAbsent");
+        var assertId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Library Assert.app"),
+            MakeMinimalApp(assertId, "Library Assert", "Microsoft", "28.1.49838.54169", r2r: false, alSource: true, platform: "28.0.0.0"));
+
+        var result = new DependencyResolver(new[] { dir }).Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(assertId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        Assert.Equal(new[] { "Library Assert" }, result.Select(r => r.Manifest.Name).ToArray());
+    }
+
+    /// <summary>
+    /// The Application floor is followed too, not only Platform — an implementation handling
+    /// `Platform` alone passes every other fact here. Microsoft's test packages really declare
+    /// it: Tests-ERM's manifest is <c>Platform="28.0.0.0" Application="28.1.0.0"</c>.
+    /// </summary>
+    [Fact]
+    public void ResolvedPackageDeclaringApplication_PullsApplicationIntoTheClosure()
+    {
+        var dir = MakeDir("ApplicationFloor");
+        var applicationId = "00000000-0000-0000-0000-0000000a9911";
+        var ermId = "00000000-0000-0000-0000-0000000e2222";
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Application.app"),
+            MakeMinimalApp(applicationId, "Application", "Microsoft", "28.1.49838.54368", r2r: false, alSource: false, platform: null));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Tests-ERM.app"),
+            MakeMinimalApp(ermId, "Tests-ERM", "Microsoft", "28.1.49838.54169", r2r: false, alSource: true,
+                platform: null, application: "28.1.0.0"));
+
+        var result = new DependencyResolver(new[] { dir }).Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(ermId), "Tests-ERM", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        Assert.Equal(new[] { "Application", "Tests-ERM" }, result.Select(r => r.Manifest.Name).ToArray());
+    }
+
+    /// <summary>
+    /// #3719: a package this run SYNTHESIZED from source must carry its own app.json floors, or
+    /// the resolver has nothing to follow and the sibling is source-compiled without the platform
+    /// symbols it asked for — the reported bug, on a path the runner manufactures itself.
+    /// BuildNavxManifestXml filters <c>&lt;Dependencies&gt;</c> to non-Optional entries, which is
+    /// exactly where the implicit floors live, so they have to travel as App attributes.
+    /// </summary>
+    [Fact]
+    public void SynthesizedPackage_CarriesTheAppJsonFloors_SoTheResolverCanFollowThem()
+    {
+        var src = MakeDir("SynthSource");
+        File.WriteAllText(Path.Combine(src, "app.json"), """
+        {
+          "id": "00000000-0000-0000-0000-0000000b1111",
+          "name": "Synth Sibling",
+          "publisher": "Contoso",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "28.0.0.0",
+          "application": "28.1.0.0",
+          "runtime": "13.0"
+        }
+        """);
+
+        var identity = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(Path.Combine(src, "app.json"));
+        Assert.NotNull(identity);
+        Assert.Equal(new Version(28, 0, 0, 0), identity!.Platform);
+        Assert.Equal(new Version(28, 1, 0, 0), identity.Application);
+
+        // Round-trip: package it the way SiblingCompile does, read it back the way
+        // DependencyResolver does.
+        File.WriteAllText(Path.Combine(src, "Helper.Codeunit.al"), "codeunit 63900 \"Synth Helper\" { }");
+        var outDir = MakeDir("SynthOut");
+        var appPath = Path.Combine(outDir, "Contoso_Synth_Sibling.app");
+        AlRunner.Infrastructure.InProcessAppPackager.EmitAppPackageToFile(src, identity, appPath);
+
+        var manifest = AppLoader.ReadManifest(appPath);
+        Assert.NotNull(manifest);
+        Assert.Equal(new Version(28, 0, 0, 0), manifest!.Platform);
+        Assert.Equal(new Version(28, 1, 0, 0), manifest.Application);
+        Assert.Equal(
+            new[] { "Application", "System" },
+            AppLoader.ImplicitRoots(manifest).Select(r => r.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+    }
+
+    /// <summary>
+    /// The trap AppLoader.ImplicitRoots' own doc comment names: every Microsoft platform app's
+    /// manifest carries these attributes and they reference each other (Application → Base
+    /// Application → Application …), so following a PLATFORM app's floors would cycle. They
+    /// are not followed; only a non-platform package's are. Base Application declaring a
+    /// Platform floor resolves to exactly itself, no System, no cycle exception.
+    /// </summary>
+    [Fact]
+    public void MicrosoftPlatformAppDeclaringPlatform_FloorIsNotFollowed()
+    {
+        var dir = MakeDir("PlatformFloorGuard");
+        var systemId = "00000000-0000-0000-0000-00000000c0de";
+        var baseId = "437dbf0e-84ff-417a-965d-ed2bb9650972";
+        File.WriteAllBytes(Path.Combine(dir, "System.app"),
+            MakeMinimalApp(systemId, "System", "Microsoft", "28.0.54265.0", r2r: false, alSource: false, platform: "28.0.54265.0"));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Base Application.app"),
+            MakeMinimalApp(baseId, "Base Application", "Microsoft", "28.1.49838.54169", r2r: true, alSource: false, platform: "28.0.0.0"));
+
+        var result = new DependencyResolver(new[] { dir }).Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(baseId), "Base Application", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        Assert.Equal(new[] { "Base Application" }, result.Select(r => r.Manifest.Name).ToArray());
     }
 
     // ── #1689: a resolved package that NO loader tier can implement ───────────

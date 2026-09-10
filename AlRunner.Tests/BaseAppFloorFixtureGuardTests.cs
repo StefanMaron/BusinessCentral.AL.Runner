@@ -217,8 +217,8 @@ public sealed class BaseAppFloorFixtureGuardTests
     };
 
     /// <summary>
-    /// C# test sources permitted to write the floor into a manifest they generate. Both
-    /// remaining entries are legitimate: the floor itself is what they assert about. Keep the
+    /// C# test sources permitted to write the floor into a manifest they generate. Every
+    /// entry is legitimate: the floor itself is what they assert about. Keep the
     /// reasons — the rule was ignored once already because it read as advice. Paths are
     /// relative to AlRunner.Tests/ with '/' separators, exactly like
     /// <see cref="AllowedFixtures"/>; for a top-level file that is just the file name, which
@@ -239,6 +239,13 @@ public sealed class BaseAppFloorFixtureGuardTests
             "legitimate — the placeholder 1.0.0.0 floor IS the subject",
         ["ProvisionExplicitModesTests.cs"] =
             "legitimate — asserts provisioning against a bundle declaring an older major",
+        ["DependencyResolverTests.cs"] =
+            "legitimate (#3719) — the floor is the SUBJECT, not a dependency the test leans on: "
+            + "SynthesizedPackage_CarriesTheAppJsonFloors asserts that InProcessAppPackager reads "
+            + "app.json's \"application\" onto BundleIdentity and writes it back out as the "
+            + "synthesized package's App/@Application, so DependencyResolver can follow it. The "
+            + "cost this rule guards is zero here: the manifest is packaged and read back "
+            + "in-process, and no runner subprocess is ever spawned against it",
     };
 
     [Fact]
@@ -261,7 +268,7 @@ public sealed class BaseAppFloorFixtureGuardTests
     }
 
     [Fact]
-    public void NoTestSource_WritesTheBaseApplicationFloor_ExceptTheAllowlistedTwo()
+    public void NoTestSource_WritesTheBaseApplicationFloor_ExceptTheAllowlistedThree()
     {
         var offenders = new List<string>();
         foreach (var path in TestSourcePaths())

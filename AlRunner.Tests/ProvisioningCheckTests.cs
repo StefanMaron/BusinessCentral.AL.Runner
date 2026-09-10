@@ -694,6 +694,33 @@ public sealed class ProvisioningCheckTests : IDisposable
         Assert.True(needs.NeedsTestApps);
     }
 
+    /// <summary>
+    /// #3719: a bundle declaring only a test-toolkit dependency and no `platform`/`application`
+    /// of its own still needs System.app — Library Assert's own manifest declares
+    /// Platform="28.0.0.0" (and no Dependencies), and its source compile dies without the
+    /// platform symbols. ScanDependencyEdges records that floor as an edge to "System", so
+    /// once the toolkit package is on disk the ordinary walk derives the need — the same
+    /// second round that already learns Application Test Library from Tests-TestLibraries'
+    /// manifest. With no edges known (nothing downloaded yet) the answer stays "no platform
+    /// need", as every other edge-derived need does; the sibling below pins that.
+    /// </summary>
+    [Fact]
+    public void DetermineManifestNeeds_LibraryAssertDependency_WithItsPlatformFloorEdge_RequiresSystem()
+    {
+        var roots = new[]
+        {
+            new DependencyRef(Guid.Parse("dd0be2ea-f733-4d65-bb34-a28f4624fb14"), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
+        };
+        var edges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["Library Assert"] = new[] { "System" }, // what ScanDependencyEdges records from Platform="28.0.0.0"
+        };
+        var needs = ProvisioningCheck.DetermineManifestNeeds(roots, edges);
+        Assert.True(needs.NeedsTestApps);
+        Assert.True(needs.NeedsPlatformApps);
+        Assert.Equal(new[] { "System" }, needs.RequiredPlatformApps); // and nothing beyond it
+    }
+
     [Fact]
     public void DetermineManifestNeeds_ImplicitApplicationAndSystemRootsAlone_NeedNoTestApps()
     {
@@ -723,6 +750,9 @@ public sealed class ProvisioningCheckTests : IDisposable
     [Fact]
     public void DetermineManifestNeeds_LibraryAssertDependency_NeedsTestNotPlatform()
     {
+        // No edges known — nothing downloaded yet. The platform need Library Assert really has
+        // (#3719, its Platform="28.0.0.0" floor) is learned from its manifest once the test set
+        // is on disk, never invented here; see the _WithItsPlatformFloorEdge_ sibling.
         var roots = new[]
         {
             new DependencyRef(Guid.NewGuid(), "Library Assert", "Microsoft", new Version(28, 1, 0, 0)),
