@@ -403,6 +403,83 @@ public sealed class CoverageMultiObjectFileTests : IDisposable
     }
 
     /// <summary>
+    /// #3822, the shape that stresses both halves of the origin rule at once: a REAL preamble
+    /// (header comment, namespace, using) AND an unmapped object in front of the mapped one.
+    ///
+    /// The two are measured differently and must not be confused. The preamble is what BC
+    /// keeps in front of every object's text, so it is subtracted; the interface is an object,
+    /// so it is not. Getting either wrong moves the report — subtracting the interface as well
+    /// (the pre-fix behaviour) reports 6, and subtracting neither reports 20.
+    ///
+    /// The executed statement is on file line 15.
+    /// </summary>
+    [SkippableFact]
+    public void Coverage_PreambleThenAnUnmappedObject_ReportsFileLines()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Path.Combine(_root, "bundle-preamble-unmapped");
+        Directory.CreateDirectory(bundle);
+        File.WriteAllText(Path.Combine(bundle, "app.json"), """
+        {
+          "id": "5a3f0b11-3822-4a0c-800c-00000000382b",
+          "name": "CMOF Preamble Unmapped Probe",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 63670, "to": 63689 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(bundle, "Two.Codeunit.al"), string.Join("\n", new[]
+        {
+            "// header comment",               // 1  \
+            "namespace Probe.Cov3822;",        // 2   |  preamble: subtracted
+            "",                                // 3   |
+            "using System.Utilities;",         // 4   |
+            "",                                // 5  /
+            "interface \"Edge Iface\"",        // 6  \
+            "{",                               // 7   |  an OBJECT, not preamble: NOT subtracted
+            "    procedure Ping(): Integer;",  // 8   |
+            "}",                               // 9  /
+            "",                                // 10
+            "codeunit 63670 \"Edge D\"",       // 11
+            "{",                               // 12
+            "    procedure D(): Integer",      // 13
+            "    begin",                       // 14
+            "        exit(4);",                // 15  called once
+            "    end;",                        // 16
+            "}",                               // 17
+            "",
+        }));
+        File.WriteAllText(Path.Combine(bundle, "T.Codeunit.al"), """
+        codeunit 63680 "Edge Preamble Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure CallsD()
+            var
+                D: Codeunit "Edge D";
+            begin
+                if D.D() <> 4 then
+                    Error('D');
+            end;
+        }
+        """);
+
+        var coveragePath = Path.Combine(_root, "cobertura-preamble-unmapped.xml");
+        var (output, exit) = Spawn(bundle, "--coverage", $"--coverage-out \"{coveragePath}\"");
+
+        Assert.Equal(0, exit);
+        Assert.True(File.Exists(coveragePath), $"cobertura.xml was not written.\n{output}");
+        var lines = LinesOf(ClassFor(XDocument.Load(coveragePath), "Two.Codeunit.al"));
+
+        Assert.Equal(new[] { 15 }, lines.Keys.OrderBy(k => k).ToArray());
+        Assert.Equal(1, lines[15]);
+    }
+
+    /// <summary>
     /// Every shape that could move the origin, in one file: a UTF-8 BOM, CRLF line endings, two
     /// header comment lines, a file-scoped `namespace`, a `using`, a comment between objects, an
     /// indented declaration keyword, and a third object with no blank line before it. The
