@@ -6,7 +6,13 @@
 // object living in a precompiled dependency is knowable from that dependency's
 // SymbolReference.json and from its compiled type, never from AL source the runner parsed.
 // Keeping the two builders' existence checks the same shape is what stops them drifting
-// apart again — see docs/virtual-tables-allobj.md#object-existence.
+// apart again.
+//
+// That source-compiled / precompiled-dependency split is the same one every object kind's
+// virtual table already reads its properties across — see
+// docs/virtual-tables-allobj.md#what-the-runner-answers for the per-kind table. What the
+// runner still cannot derive for an xmlport once it knows the id is the node schema:
+// docs/limitations.md#precompiled-xmlport-node-schema (#3797).
 
 using System.Collections.Concurrent;
 using System.Reflection;

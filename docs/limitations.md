@@ -1729,6 +1729,41 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   field for ([#2273](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2273)) —
   none is a value type any more.
 
+<a id="precompiled-xmlport-node-schema"></a>
+
+- **An xmlport in a precompiled dependency has no node schema, so the port refuses rather than
+  exporting nothing.** The runner knows the xmlport *exists* and builds its `NCLMetaXmlPort`
+  skeleton — since
+  [#3510](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3510) that covers
+  every xmlport a registered `.app` declares or a loaded assembly carries as a compiled
+  `XmlPort{id}` type, not only ones the runner compiled from source. What it does not have is
+  the port's **node tree**, so `NavXmlPort.BeginInitialization` proceeds past the metadata
+  lookup and then asks `RunnerXmlMetadataLoader.GetMetaObjectXmlMetadata` for a document that
+  does not exist. That raises `RunnerOutOfScopeException` with the reason anchor
+  `not-yet-implemented`, naming the id — never an empty document, which would let the port
+  export nothing and report success.
+
+  **Why the schema is genuinely absent, rather than merely unread.** A shipped `.app` carries
+  `src/` and `SymbolReference.json` and no compiled metadata document of any kind, and the
+  symbol file states an xmlport's `Properties` and `Variables` but no node tree at all.
+  Measured on BC 28.1.49838.53910's Base Application: its `SymbolReference.json` has a
+  top-level `"XmlPorts": []` with all 40 of its xmlports nested under `"Namespaces"`, each
+  carrying exactly the keys `Variables`, `Methods`, `ReferenceSourceFileName`, `Properties`,
+  `Id`, `Name` — while BC's own emitted documents for four of those same xmlports carry 91
+  `<Node>` elements between them.
+
+  Measured population, on the same build against a real Base Application: **44 of 44**
+  precompiled xmlports AL can see through `AllObj` reach this refusal, with one uniform
+  surface. Before #3510 the same 44 failed earlier and less usefully, with BC's own
+  `NavMetadataNotFoundException` telling the reader to unpublish and republish an application
+  — a publishing problem that does not exist.
+
+  Deriving the schema is tracked by
+  [#3797](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3797); the shape it
+  would follow is `AlRunner/Patches/DependencyReportMetadata.cs`, which already reconstructs a
+  precompiled dependency **report's** metadata document from the `.app`. Real BC exports these
+  ports, so this is the runner failing to keep up rather than a surface BC also lacks.
+
 ---
 
 ## When to use the full BC pipeline instead
