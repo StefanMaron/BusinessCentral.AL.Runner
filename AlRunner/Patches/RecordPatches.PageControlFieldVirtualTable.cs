@@ -185,8 +185,10 @@ public static partial class RecordPatches
                 }
 
                 // #3750 — the fall-through arm: no document was available for this page, OR
-                // one was and did not parse. Those two are indistinguishable from here and
-                // from the trace (#3590); TracePageMetadataSource says so at length.
+                // one was and did not parse. Those two are indistinguishable from here and from
+                // the trace, because TryGetBcPageControlDocument memoises a null on a parse
+                // failure; TracePageMetadataSource says so at length. (The table-side swallow
+                // #3590 named is a different mechanism, narrowed by that issue's fix.)
                 TracePageMetadataSource(page.Id, "derived");
 
                 var tableId = GetSourceTableIdForPage(page.Id);

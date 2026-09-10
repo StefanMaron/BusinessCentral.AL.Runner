@@ -134,12 +134,16 @@ public static partial class RecordPatches
     /// <c>.claude/rules/loud-failures.md</c> exists to prevent.</para>
     ///
     /// <para><b>The limit this inherits, stated rather than implied away.</b> A failure here is
-    /// not loud. <see cref="TryGetBcPageControlDocument"/> memoises a null on a parse failure
-    /// and the table-side builder swallows a cold-build throw into a cached null the same way
-    /// (pre-existing, <b>#3590</b>). So a page whose document genuinely failed to load and a
-    /// page that never had one are <b>indistinguishable from this trace</b>: both show as the
-    /// derivation route. A trace implying a guarantee #3590 makes impossible would be worse
-    /// than no trace — see docs/where-metadata-comes-from.md.</para>
+    /// not loud: <see cref="TryGetBcPageControlDocument"/> memoises a null on a parse failure. So
+    /// a page whose document genuinely failed to load and a page that never had one are
+    /// <b>indistinguishable from this trace</b> — both show as the derivation route. A trace
+    /// implying a guarantee that does not exist would be worse than no trace; see
+    /// docs/where-metadata-comes-from.md.</para>
+    ///
+    /// <para>The table-side builder used to swallow a cold-build throw the same way. #3590 has
+    /// since narrowed that catch, so a REFUSAL naming what could not be read now tears through
+    /// there — but this page-side memo is a separate mechanism and is untouched, which is why
+    /// the limit above still stands.</para>
     /// </summary>
     private static void TracePageMetadataSource(int pageId, string source)
     {

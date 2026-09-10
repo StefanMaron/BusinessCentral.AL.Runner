@@ -21,13 +21,15 @@
 //   would be wrong metadata under a green build, which is what
 //   .claude/rules/loud-failures.md exists to prevent.
 //
-//   How far a failure then travels differs by call site, and only one of the two is loud:
-//   the post-emit sweep (RebuildTablesFromBcMetadataAll ← BcRuntime.SetTestAssembly) has no
-//   handler over it, so a throw there aborts bundle load naming the member; the cold build
-//   sits inside BuildNCLMetaTable's pre-existing `catch → Console.Error → return null`, which
-//   swallows it into "no metatable" exactly as it does for a derivation failure. That swallow
-//   predates this change and is #3590 — do not read the paragraph above as a claim that the
-//   cold path tears through, because it does not.
+//   How far a failure then travels differs by call site. The post-emit sweep
+//   (RebuildTablesFromBcMetadataAll ← BcRuntime.SetTestAssembly) has no handler over it, so a
+//   throw there aborts bundle load naming the member. The cold build sits inside
+//   BuildNCLMetaTable's catch, which since #3590 discriminates: a refusal naming what could not
+//   be READ — BcShapeGapException, BcAppSymbolReadException, a typed RunnerOutOfScopeException —
+//   tears through on both routes, and an ordinary construction failure is still absorbed into
+//   "no metatable" exactly as for a derivation failure. So the cold path is attributable for the
+//   refusals and still silent for the rest; do not read the paragraph above as a claim that
+//   EVERY cold-path failure tears through.
 using System.Linq;
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;

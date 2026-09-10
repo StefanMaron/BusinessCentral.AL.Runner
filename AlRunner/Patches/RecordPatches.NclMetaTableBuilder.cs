@@ -165,10 +165,10 @@ public static partial class RecordPatches
             // table (#3548), let BC construct the NCLMetaTable from it rather than deriving one
             // below. AVAILABILITY decides the route, and a failure is never re-routed to the
             // derivation: a weaker answer substituted on error is what
-            // .claude/rules/loud-failures.md exists to prevent. It is not LOUD here, though —
-            // this site is inside the catch below, which swallows any throw into `return null`
-            // for both routes alike (pre-existing, #3590). What each step supplies, and which
-            // tables are deliberately left on the derivation:
+            // .claude/rules/loud-failures.md exists to prevent. Since #3590 it is LOUD here too:
+            // the catch below still absorbs an ordinary construction failure into `return null`
+            // for both routes alike, but a refusal naming what could not be read tears through.
+            // What each step supplies, and which tables are deliberately left on the derivation:
             // docs/object-metadata-from-bc.md#the-seam.
             if (ShouldBuildTableFromBcDocument(tableId, parsed))
             {
@@ -309,18 +309,72 @@ public static partial class RecordPatches
             TraceTableMetadataSource(tableId, "derived", built);
             return built;
         }
-        catch (Exception ex)
+        // #3590 — the filter is what keeps a REFUSAL out of the cached null. Everything reaching
+        // this catch is a failure while building a table the runner already established exists:
+        // both absent-table returns are above the `try`, so "no such table" never arrives here.
+        // That makes this row 3 of guards-need-a-third-state.md, and it was spelled as row 1 —
+        // the caller is `_metaTableCache.GetOrAdd(tableId, BuildNCLMetaTable)`, so the null was
+        // CACHED and every later consumer took its own not-found branch several layers away.
+        //
+        // Narrow, not a bare rethrow: NavRecordHandle_CreateTarget, TryBuildBlankRecord and
+        // GetMetaFieldEditable all legitimately ask about tables that cannot exist, so rethrowing
+        // everything would trade a false green for a false red. Only the two types whose whole
+        // purpose is to name what could not be READ tear through, plus the typed out-of-scope
+        // refusal — exactly the filter WireFieldTriggerHandlers carries in this same file for
+        // #3026 and #3048, for the identical reason: without it this frame converts a refusal
+        // into the same silent outcome the refusal exists to stop. BcShapeGapException is
+        // contractually uncatchable at AL's two seams (BcShapeGapException.cs); this catch was a
+        // third seam nobody enumerated.
+        catch (Exception ex) when (BuildNclMetaTableCatchMayAbsorb(ex))
         {
-            var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-            // Header + top frame in ONE tagged write — a separate write for the frame has no
-            // `[Component]` tag for Log.FilteredWriter to match, so it would print at default
-            // verbosity under a header the filter had just dropped.
-            Console.Error.WriteLine(
-                $"[RecordPatches] BuildNCLMetaTable({tableId}) failed: {inner.GetType().Name}: "
-                + $"{inner.Message}"
-                + (inner.StackTrace != null ? "\n" + inner.StackTrace.Split('\n')[0] : ""));
+            Console.Error.WriteLine(BuildNclMetaTableFailureLine(tableId, ex));
             return null;
         }
+    }
+
+    /// <summary>
+    /// Whether <see cref="BuildNCLMetaTable"/>'s catch may absorb <paramref name="ex"/> into the
+    /// cached null, or must let it reach the caller so the cause is attributable (#3590).
+    ///
+    /// <para>False for the three refusals the runner raises deliberately: a
+    /// <see cref="BcShapeGapException"/> (a BC member moved — it names the member and is
+    /// contractually uncatchable at AL's seams), a <see cref="BcAppSymbolReadException"/> (a
+    /// dependency's symbols could not be read to completion), and a TYPED
+    /// <see cref="RunnerOutOfScopeException"/>. Both <c>Find</c> calls walk the inner chain
+    /// rather than testing with <c>is</c>, because every construction step here goes through
+    /// reflection and a refusal raised underneath arrives wrapped in a
+    /// <see cref="TargetInvocationException"/>.</para>
+    ///
+    /// <para>True for everything else, which is what keeps a table that cannot be built from
+    /// failing the run: the callers listed at the catch have real not-found branches, and
+    /// guards-need-a-third-state.md's constraint is that a genuinely absent thing stays a pass.
+    /// Typed only for the out-of-scope case — a BC exception whose message merely happens to
+    /// carry the convention is not one of ours (#3048).</para>
+    /// </summary>
+    private static bool BuildNclMetaTableCatchMayAbsorb(Exception ex)
+        => AlRunner.Infrastructure.BcShapeGapException.Find(ex) is null
+           && AlRunner.Infrastructure.BcAppSymbolReadException.Find(ex) is null
+           && AlRunner.Infrastructure.OutOfScopeMessage.FromException(ex) is not { Typed: true };
+
+    /// <summary>
+    /// The stderr line for a construction failure this catch DID absorb (#3590).
+    ///
+    /// <para>No leading <c>[RecordPatches]</c> tag: <c>Log.FilteredWriter</c> drops a line
+    /// starting with a bracketed component tag unless <c>--verbose</c>, so the old tagged write
+    /// made the failure invisible at default verbosity and the developer saw only whatever the
+    /// missing metatable caused several layers later. Same constraint, same reason, as
+    /// <c>BcAppSymbolReadException.BuildMessage</c>.</para>
+    ///
+    /// <para>Unwraps a <see cref="TargetInvocationException"/> so the line names the cause
+    /// rather than the reflection wrapper. Header and top frame are ONE write: a second write
+    /// would be filtered independently of the first.</para>
+    /// </summary>
+    private static string BuildNclMetaTableFailureLine(int tableId, Exception ex)
+    {
+        var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+        return $"al-runner: table {tableId} metadata could not be built: "
+               + $"{inner.GetType().Name}: {inner.Message}"
+               + (inner.StackTrace != null ? "\n" + inner.StackTrace.Split('\n')[0] : "");
     }
 
     private static object? CallMetaTableCtor(int id, string name, object[] fields, object[] allKeys,
