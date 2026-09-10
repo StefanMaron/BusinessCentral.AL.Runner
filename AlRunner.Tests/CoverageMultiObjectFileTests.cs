@@ -332,6 +332,188 @@ public sealed class CoverageMultiObjectFileTests : IDisposable
     }
 
     /// <summary>
+    /// #3822: the origin is measured from the first SUPPORTED object, and LabelOf maps only
+    /// seven top-level kinds. An `interface` is not one of them, so a file that opens with one
+    /// leaves the following codeunit as the first entry in the parsed list and gives it offset
+    /// 0 — while BC, which excludes other OBJECTS from an object's text but keeps the file
+    /// preamble, would have measured it from after the interface.
+    ///
+    /// The executed statement sits on file line 10. If the offset is wrong the report says 5.
+    /// </summary>
+    [SkippableFact]
+    public void Coverage_FileOpeningWithAnUnmappedObject_ReportsFileLines()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Path.Combine(_root, "bundle-unmapped-first");
+        Directory.CreateDirectory(bundle);
+        File.WriteAllText(Path.Combine(bundle, "app.json"), """
+        {
+          "id": "5a3f0b11-3822-4a0a-800a-000000003822",
+          "name": "CMOF Unmapped First Probe",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 63670, "to": 63689 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(bundle, "Two.Codeunit.al"), string.Join("\n", new[]
+        {
+            "interface \"Edge Iface\"",        // 1  NOT mapped by LabelOf
+            "{",                               // 2
+            "    procedure Ping(): Integer;",  // 3
+            "}",                               // 4
+            "",                                // 5
+            "codeunit 63670 \"Edge D\"",       // 6
+            "{",                               // 7
+            "    procedure D(): Integer",      // 8
+            "    begin",                       // 9
+            "        exit(4);",                // 10  called once
+            "    end;",                        // 11
+            "}",                               // 12
+            "",
+        }));
+        File.WriteAllText(Path.Combine(bundle, "T.Codeunit.al"), """
+        codeunit 63680 "Edge Unmapped Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure CallsD()
+            var
+                D: Codeunit "Edge D";
+            begin
+                if D.D() <> 4 then
+                    Error('D');
+            end;
+        }
+        """);
+
+        var coveragePath = Path.Combine(_root, "cobertura-unmapped.xml");
+        var (output, exit) = Spawn(bundle, "--coverage", $"--coverage-out \"{coveragePath}\"");
+
+        Assert.Equal(0, exit);
+        Assert.True(File.Exists(coveragePath), $"cobertura.xml was not written.\n{output}");
+        var doc = XDocument.Load(coveragePath);
+        var lines = LinesOf(ClassFor(doc, "Two.Codeunit.al"));
+
+        Assert.Equal(new[] { 10 }, lines.Keys.OrderBy(k => k).ToArray());
+        Assert.Equal(1, lines[10]);
+    }
+
+    /// <summary>
+    /// #3822 review: the two end-to-end probes both use an `interface`, so an implementation
+    /// that special-cased interfaces — or grew an "origin-capable kinds" allowlist — would
+    /// pass them and still be wrong for every other unmapped kind. The invariant is that
+    /// EVERY entry in <c>root.Objects</c> participates in the origin regardless of whether it
+    /// can become a map entry, and this pins it across kinds rather than for one.
+    ///
+    /// Map-level rather than end-to-end on purpose: it costs a parse instead of a runner
+    /// spawn, so covering several kinds is cheap. The end-to-end facts above are what prove
+    /// the offset is the one BC's spans actually need.
+    ///
+    /// Each case is the same file with a different leading unmapped object, sized so the
+    /// mapped codeunit's FullSpan begins on 0-based line 6 — the blank line before its
+    /// declaration, which is its own leading trivia.
+    /// </summary>
+    [SkippableTheory]
+    [InlineData("interface \"Probe Iface\"\n{\n    procedure Ping(): Integer;\n}")]
+    [InlineData("controladdin \"Probe Addin\"\n{\n    StartupScript = 'a.js';\n}")]
+    [InlineData("permissionset 63699 \"Probe Perms\"\n{\n    Assignable = true;\n}")]
+    public void Build_AnyUnmappedLeadingObject_CountsTowardTheOrigin(string leading)
+    {
+        RequireEngine();
+        var text = leading + "\n\ncodeunit 63690 \"Probe After\"\n{\n    procedure P(): Integer\n"
+                 + "    begin\n        exit(1);\n    end;\n}\n";
+        File.WriteAllText(Path.Combine(_root, "Lead.Codeunit.al"), text);
+
+        var map = AlCoverageSourceMap.Build(new[] { _root }, relativeTo: _root);
+
+        // The leading object occupies four lines, so the codeunit's FullSpan starts on the
+        // blank 0-based line 4 and the preamble is empty: offset 4. Under the pre-fix rule
+        // the codeunit was its own origin and this was 0, whatever the leading kind.
+        Assert.Equal(4, map.LineOffset("CodeUnit", 63690));
+    }
+
+    /// <summary>
+    /// #3822, the shape that stresses both halves of the origin rule at once: a REAL preamble
+    /// (header comment, namespace, using) AND an unmapped object in front of the mapped one.
+    ///
+    /// The two are measured differently and must not be confused. The preamble is what BC
+    /// keeps in front of every object's text, so it is subtracted; the interface is an object,
+    /// so it is not. Getting either wrong moves the report — subtracting the interface as well
+    /// (the pre-fix behaviour) reports 6, and subtracting neither reports 20.
+    ///
+    /// The executed statement is on file line 15.
+    /// </summary>
+    [SkippableFact]
+    public void Coverage_PreambleThenAnUnmappedObject_ReportsFileLines()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Path.Combine(_root, "bundle-preamble-unmapped");
+        Directory.CreateDirectory(bundle);
+        File.WriteAllText(Path.Combine(bundle, "app.json"), """
+        {
+          "id": "5a3f0b11-3822-4a0c-800c-00000000382b",
+          "name": "CMOF Preamble Unmapped Probe",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 63670, "to": 63689 } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(bundle, "Two.Codeunit.al"), string.Join("\n", new[]
+        {
+            "// header comment",               // 1  \
+            "namespace Probe.Cov3822;",        // 2   |  preamble: subtracted
+            "",                                // 3   |
+            "using System.Utilities;",         // 4   |
+            "",                                // 5  /
+            "interface \"Edge Iface\"",        // 6  \
+            "{",                               // 7   |  an OBJECT, not preamble: NOT subtracted
+            "    procedure Ping(): Integer;",  // 8   |
+            "}",                               // 9  /
+            "",                                // 10
+            "codeunit 63670 \"Edge D\"",       // 11
+            "{",                               // 12
+            "    procedure D(): Integer",      // 13
+            "    begin",                       // 14
+            "        exit(4);",                // 15  called once
+            "    end;",                        // 16
+            "}",                               // 17
+            "",
+        }));
+        File.WriteAllText(Path.Combine(bundle, "T.Codeunit.al"), """
+        codeunit 63680 "Edge Preamble Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure CallsD()
+            var
+                D: Codeunit "Edge D";
+            begin
+                if D.D() <> 4 then
+                    Error('D');
+            end;
+        }
+        """);
+
+        var coveragePath = Path.Combine(_root, "cobertura-preamble-unmapped.xml");
+        var (output, exit) = Spawn(bundle, "--coverage", $"--coverage-out \"{coveragePath}\"");
+
+        Assert.Equal(0, exit);
+        Assert.True(File.Exists(coveragePath), $"cobertura.xml was not written.\n{output}");
+        var lines = LinesOf(ClassFor(XDocument.Load(coveragePath), "Two.Codeunit.al"));
+
+        Assert.Equal(new[] { 15 }, lines.Keys.OrderBy(k => k).ToArray());
+        Assert.Equal(1, lines[15]);
+    }
+
+    /// <summary>
     /// Every shape that could move the origin, in one file: a UTF-8 BOM, CRLF line endings, two
     /// header comment lines, a file-scoped `namespace`, a `using`, a comment between objects, an
     /// indented declaration keyword, and a third object with no blank line before it. The

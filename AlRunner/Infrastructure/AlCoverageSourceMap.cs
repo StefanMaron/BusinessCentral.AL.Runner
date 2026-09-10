@@ -15,9 +15,25 @@ namespace AlRunner.Infrastructure;
 /// <c>IReadOnlyDictionary&lt;(Label, Id), string&gt;</c> the older consumers take, plus
 /// <see cref="LineOffset"/>, the number of lines to add to a decoded [SourceSpans] line to
 /// get the file line. BC's [SourceSpans] lines are relative to the object's own text with
-/// the file's preamble (anything before the first object) counted in, so the offset is the
-/// object's FullSpan start minus the first object's — 0 for the first object in a file
-/// (#3713; CoverageMultiObjectFileTests pins the four header shapes that settled it).
+/// the file's PREAMBLE counted in, so the offset is the object's FullSpan start minus the
+/// preamble's length — 0 for the first object in a file.
+/// <para>
+/// The preamble is <b>the number of complete source lines before the earliest top-level
+/// object's FullSpan</b>, which is not the same as "everything before the first
+/// declaration keyword" (#3822). A FullSpan owns its own leading trivia, so a comment or a
+/// blank line immediately in front of a declaration belongs to that object and is NOT
+/// preamble; a <c>namespace</c> or <c>using</c> is a sibling syntax node, so it is. That is
+/// why the first object of a file with a header measures 1 and 5 in the fixtures rather
+/// than 0.
+/// </para>
+/// <para>
+/// "Earliest top-level object" means every entry in <c>root.Objects</c>, including the
+/// kinds <see cref="AlCoverageSourceMap"/> cannot map — an interface, a controladdin, a
+/// permissionset, any extension. Those are objects, not preamble, and measuring the origin
+/// over the mapped subset instead subtracted them as though they were, putting every later
+/// object's lines exactly that far too low (#3822).
+/// </para>
+/// (#3713; CoverageMultiObjectFileTests pins the header shapes that settled both.)
 /// </summary>
 public sealed class AlSourceLocationMap : IReadOnlyDictionary<(string Label, int Id), string>
 {
@@ -139,8 +155,10 @@ public static class AlCoverageSourceMap
             var root = tree.GetCompilationUnitRoot();
 
             var objects = new List<(string Label, int Id, int Start)>();
+            var allStarts = new List<int>();
             foreach (var obj in root.Objects)
             {
+                allStarts.Add(tree.GetLineSpan(obj.FullSpan).StartLinePosition.Line);
                 var label = LabelOf(obj);
                 if (label == null) continue;
                 if (obj is not NavSyntax.ApplicationObjectSyntax ao || ao.ObjectId?.Value.Value is not int id) continue;
@@ -150,7 +168,12 @@ public static class AlCoverageSourceMap
             // object from its own text but keeps the file's preamble in front of each of them,
             // so a namespace/using header shifts the later objects by its length and the first
             // object by nothing (#3713, CoverageMultiObjectFileTests.Build_ObjectsAfterAFileHeader_*).
-            var firstStart = objects.Count > 0 ? objects.Min(o => o.Start) : 0;
+            // firstStart is the FILE PREAMBLE's length: BC's text for every object is
+            // [preamble][that object], while the parser's FullSpan starts after the preamble.
+            // Measured over EVERY object, not just the mapped ones (#3822) — an unmapped
+            // object in front is not preamble, and taking the first MAPPED object's start
+            // subtracts it as though it were.
+            var firstStart = allStarts.Count > 0 ? allStarts.Min() : 0;
             result = objects.Select(o => new ParsedObject(o.Label, o.Id, o.Start - firstStart)).ToList();
         }
         catch (Exception ex)
