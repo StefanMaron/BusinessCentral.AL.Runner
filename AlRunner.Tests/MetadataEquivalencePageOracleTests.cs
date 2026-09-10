@@ -43,12 +43,7 @@ public sealed class MetadataEquivalencePageOracleTests
     {
         Skip.IfNot(_engine.Ready, _engine.SkipReason);
 
-        var bundles = MetadataEquivalenceHarness.LoadBundles(
-            MetadataEquivalencePaths.GroundTruthDirForThisBuild());
-        Skip.If(bundles.Count == 0,
-            "no metadata ground-truth bundle for this BC build; " +
-            "tools/gen-metadata-ground-truth.sh --artifacts \"" +
-            AlRunner.Infrastructure.BcArtifacts.ServiceTierDir + "\"");
+        var bundles = MetadataEquivalenceBundleGate.RequireBundles();
 
         foreach (var bundle in bundles)
             foreach (var obj in bundle.Objects.Where(o => o.Kind == "PageDefinition").OrderBy(o => o.Id))
@@ -138,9 +133,7 @@ public sealed class MetadataEquivalencePageOracleTests
         // is observable from the report without naming a type at all.
         Skip.IfNot(_engine.Ready, _engine.SkipReason);
 
-        var bundles = MetadataEquivalenceHarness.LoadBundles(
-            MetadataEquivalencePaths.GroundTruthDirForThisBuild());
-        Skip.If(bundles.Count == 0, "no metadata ground-truth bundle for this BC build.");
+        var bundles = MetadataEquivalenceBundleGate.RequireBundles();
 
         var pagesSeen = 0;
         var pageDifferences = 0;

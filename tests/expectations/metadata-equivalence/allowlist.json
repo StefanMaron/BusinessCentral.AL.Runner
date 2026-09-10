@@ -26,12 +26,12 @@
     "Nine entries are DIRECTION-SCOPED. An entry covers both directions unless it says otherwise,",
     "and a reason that justifies one direction must not license the other. All three",
     "oracleLimitation entries are runner-only: they exist because the runner shows a merged",
-    "runtime view, so BC-absent / runner-present is what they justify \u2014 while the reverse, BC",
+    "runtime view, so BC-absent / runner-present is what they justify — while the reverse, BC",
     "emitting a field the runner never builds, is a hard reader defect that must still fail.",
     "",
     "There is deliberately NO occurrence cap. One was implemented and used by nothing, which made",
     "the PR claim a ratchet the code did not keep. No entry here has a bound that survives a",
-    "rebuild \u2014 the counts move with the BC build and with which apps are bundled \u2014 so any cap",
+    "rebuild — the counts move with the BC build and with which apps are bundled — so any cap",
     "would be a number nobody measured. Direction narrows categorically instead.",
     "",
     "Measured on BC 28.1.49838.53910 over Business Foundation (12 tables) and System Application",
@@ -88,11 +88,11 @@
     "",
     "CodeUnit (#3782 step 2). Measured on BC 28.1.49838.53910 over Business Foundation (25",
     "codeunits) and System Application (533): 2,220 differences across 5 members, all of them",
-    "one-directional (BC states a value, the runner states none \u2014 the runner invents nothing).",
+    "one-directional (BC states a value, the runner states none — the runner invents nothing).",
     "Five of MetaCodeunit's eleven members already agree EXACTLY across all 558 codeunits: Id,",
     "Name, SubType, TableNo and SingleInstance, including all 12 System Application codeunits",
     "that declare a TableNo. The five that differ are tracked on #3788, and none of them is a",
-    "limit of the symbol file \u2014 each was checked against SymbolReference.json directly.",
+    "limit of the symbol file — each was checked against SymbolReference.json directly.",
     "",
     "The five CodeUnit entries were AUDITED against versionContingent and none carries it. That is a",
     "measurement, not an omission: on the three ground-truth bundles present (27.5.46862.53931,",
@@ -100,7 +100,69 @@
     "ALNamespace on 506/533/534 System Application codeunits, the two Inherent masks on 455/481/482,",
     "a <Methods> subtree on 135/137/138. 27.5 is the very leg that reddened step 1, and it carries",
     "all five. Step 1's failure was a member whose whole population was ONE page; nothing here is",
-    "close. A later step adding a kind should run the same check rather than assume either way."
+    "close. A later step adding a kind should run the same check rather than assume either way.",
+    "",
+    "Query and XmlPort were added to the comparison by #3782 steps 3 and 4, and the 47 entries",
+    "below are the result. Measured on BC 28.1.49838.53910 over System Application, the only app",
+    "in the bundle set that carries either kind: 7 queries producing 616 differences and 4 xmlports",
+    "producing 322. Most of that is already declared by entries neither kind needed to add: the",
+    "seven pre-existing TranslationKey.* entries cover 553 of the query total and 24 of the xmlport",
+    "one, and step 2's two MetaRuntimeInfo entries cover the remaining 2 -- all of them match on",
+    "member SIGNATURE, and every metadata object carries the same TranslationKey and MetaRuntimeInfo",
+    "types. So the 47 new entries cover 63 query differences and 296 xmlport ones, 359 in total.",
+    "",
+    "READ THE 47 THE SAME WAY AS THE PAGE ENTRIES: 19 of them are #field / backing-field COMPANION",
+    "entries that BC populates from the same value as the member declared beside them. So there",
+    "are 28 DISTINCT members, not 47.",
+    "",
+    "  issue 3798  12 entries, Query. Nothing structural: every column id, FieldNo, ColumnType,",
+    "              MethodType, QueryColumnIndex, DataItemLinkType and DataItemTable agrees EXACTLY",
+    "              on all 7 queries, which is the strongest positive result the harness has",
+    "              produced for any kind so far. The 12 are 4 properties the symbol file states",
+    "              (both Inherent masks as 'X', Caption) plus 8 the emitter assigns.",
+    "  issue 3797  35 entries, XmlPort. 182 of the 322 differences are one finding under two",
+    "              signatures: all 91 <Node> elements absent, because the runner derives no xmlport",
+    "              structure at all. Nine further members are computed FROM the nodes and go green",
+    "              with them; two of those (Schema, SchemaTypeName) do not merely differ but THROW",
+    "              NullReferenceException on the runner's side, which is #3510's shape.",
+    "",
+    "NONE of these 47 claims a value is UNDERIVABLE, and none claims outOfScope. Four xmlport",
+    "properties are stated verbatim in SymbolReference.json and discarded by VisitSymbolContainer,",
+    "which keeps TableNo/SingleInstance/Subtype for Codeunit only -- Direction, Encoding and",
+    "PreserveWhiteSpace each agree with BC on 3 of 3 where declared. The node tree is the one place",
+    "the symbol file genuinely states nothing, and even there the entry says only that the runner",
+    "does not derive it today: whether it CAN be reconstructed is unmeasured, and 'nothing is",
+    "stored' is evidence about storage, never about derivability.",
+    "",
+    "19 OF THE 47 ARE versionContingent, and which ones is a property of the POPULATION. The 15 page",
+    "entries carrying the flag were the ones whose population was one or two occurrences; here the",
+    "WHOLE population is 7 queries and 4 xmlports, so the flag goes on every entry whose population",
+    "depends on a per-object DECLARATION -- one object gaining or losing it empties the entry, and",
+    "the stale check would report that as a landed fix. Direction, Encoding and PreserveWhiteSpace",
+    "are stated by 3 of the 4 xmlports; the Inherent masks, APIVersion and CaptionML by 4 of the 7",
+    "queries; Permissions, UseRequestForm and the Methods pair by exactly one xmlport each.",
+    "",
+    "THE OTHER 28 DELIBERATELY DO NOT CARRY IT, and that is the more important half. BC writes",
+    "those unconditionally for every object of the kind, so their population cannot shrink without",
+    "the derivation having changed -- which is exactly what the stale check should report. Applying",
+    "the flag to all 49 was tried and MEASURED WRONG: a mutation that made the xmlport projection",
+    "state BC's own Direction verbatim -- manufacturing agreement, the precise failure these",
+    "entries exist to prevent -- passed all 22 tests, and failed the stale check the moment the",
+    "flag came off those two entries. versionContingent exempts an entry from the UNUSED check, so",
+    "it cannot hide a difference that EXISTS, but it does hide one that stopped existing for the",
+    "wrong reason.",
+    "",
+    "The population stability that would have justified the blanket application is real and is not",
+    "sufficient: measured across the four bundles on the authoring box -- 27.5.46862.53931,",
+    "28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 -- both populations are IDENTICAL",
+    "(same ids, same property values, same 9/20/22/40 node counts), and the harness runs on",
+    "unit-test legs only, which are exactly 27.5 and 28.4.",
+    "",
+    "The two MetaRuntimeInfo entries this step originally carried are GONE: step 2 (#3785) merged",
+    "first and its copies survive, which is the resolution both PRs had agreed in writing. They now",
+    "cover XmlPort 9864 as well as the codeunits, and their reasons were extended to say so rather",
+    "than left stating a codeunit-only population — the xmlport occurrence is closed by #3797, not",
+    "by #3788, and the combined population (~146 objects) is why the flag stays off."
   ],
   "differences": [
     {
@@ -147,92 +209,92 @@
     },
     {
       "member": "MetaField.Caption",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.CaptionClass",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.CaptionOriginal",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.CharAllowed",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ClrType",
-      "reason": "BC states the field's real CLR type and the runner states the empty string on all 1,888 fields. ClrType is not an XML attribute at all \u2014 BC derives it itself \u2014 and it is a PURE FUNCTION of Datatype, which the symbol file does carry and the runner already reads: measured over 988 observations, all 16 Datatypes map to exactly one ClrType each (BigInteger->System.Int64, GUID->System.Guid, Code/Text/DateFormula->System.String, Option/Integer->System.Int32, BLOB/RecordID->System.Byte[], Media->NSMediaWrapper, and so on). Recoverable with no app data.",
+      "reason": "BC states the field's real CLR type and the runner states the empty string on all 1,888 fields. ClrType is not an XML attribute at all — BC derives it itself — and it is a PURE FUNCTION of Datatype, which the symbol file does carry and the runner already reads: measured over 988 observations, all 16 Datatypes map to exactly one ClrType each (BigInteger->System.Int64, GUID->System.Guid, Code/Text/DateFormula->System.String, Option/Integer->System.Int32, BLOB/RecordID->System.Byte[], Media->NSMediaWrapper, and so on). Recoverable with no app data.",
       "issue": 3568
     },
     {
       "member": "MetaField.EnumTypeName",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ExternalName",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ExternalType",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ObsoleteReason",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.OptionCaption",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.OptionCaptionOriginal",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ToolTip",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ToolTipOriginal",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ValuesAllowed",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.MaxValue",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.MinValue",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.OptionString",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.InitValue",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
@@ -242,7 +304,7 @@
     },
     {
       "member": "MetaField.CaptionML.<presence>",
-      "reason": "BC builds a MultiLanguage caption for the field; the runner builds none. The symbol file carries Caption (2,743 occurrences in System Application) \u2014 the MultiLanguage object is its runtime form. Direction-scoped to BC-present / runner-absent; the runner inventing a caption BC does not have is a different defect.",
+      "reason": "BC builds a MultiLanguage caption for the field; the runner builds none. The symbol file carries Caption (2,743 occurrences in System Application) — the MultiLanguage object is its runtime form. Direction-scoped to BC-present / runner-absent; the runner inventing a caption BC does not have is a different defect.",
       "issue": 3568,
       "direction": "bc-only"
     },
@@ -263,7 +325,7 @@
     },
     {
       "member": "MetaField.Relations.<presence>",
-      "reason": "BC gives SystemCreatedBy and SystemModifiedBy a TableRelation to User (2000000120); the runner gives them none. This is the difference already observable from plain AL as FieldRef.Relation() answering 0 \u2014 see #3549. Direction-scoped to BC-present / runner-absent; the runner inventing a relation BC does not have would be a different defect and is not covered.",
+      "reason": "BC gives SystemCreatedBy and SystemModifiedBy a TableRelation to User (2000000120); the runner gives them none. This is the difference already observable from plain AL as FieldRef.Relation() answering 0 — see #3549. Direction-scoped to BC-present / runner-absent; the runner inventing a relation BC does not have would be a different defect and is not covered.",
       "issue": 3568,
       "direction": "bc-only"
     },
@@ -279,7 +341,7 @@
     },
     {
       "member": "MetaKey.Name",
-      "reason": "BC derives this as the POSITIONAL FIELD SPEC over field ids (\"Field1,Field2\"), not as a name anyone declared, and NCLMetaKey.CreateFromMetaKey never passes it \u2014 the declared AL name travels as MetaKey.KeyName, which the reader now states (#3568). So no AL surface can observe this member, and the runner keeps its own spelling rather than reproducing a spec BC regenerates. Superseded reason, recorded because it hid a real defect: this used to read \"two different naming schemes\", and MetaKey.KeyName was declared as \"the same disagreement on the second of the two name properties\". That was wrong \u2014 KeyName is the DECLARED name, the symbol file states it verbatim, and it reaches AL through ObsolescenceGuard.ThrowIfObsoleted.",
+      "reason": "BC derives this as the POSITIONAL FIELD SPEC over field ids (\"Field1,Field2\"), not as a name anyone declared, and NCLMetaKey.CreateFromMetaKey never passes it — the declared AL name travels as MetaKey.KeyName, which the reader now states (#3568). So no AL surface can observe this member, and the runner keeps its own spelling rather than reproducing a spec BC regenerates. Superseded reason, recorded because it hid a real defect: this used to read \"two different naming schemes\", and MetaKey.KeyName was declared as \"the same disagreement on the second of the two name properties\". That was wrong — KeyName is the DECLARED name, the symbol file states it verbatim, and it reaches AL through ObsolescenceGuard.ThrowIfObsoleted.",
       "issue": 3568
     },
     {
@@ -331,7 +393,7 @@
     },
     {
       "member": "MetaTable.Fields.<presence>",
-      "reason": "The runner models the MERGED RUNTIME state a running system has \u2014 every registered app's tableextension fields present on the base table. The ground truth is BC's BUILD-TIME per-app emit, which by construction sees only the app being compiled. Two different things, so this is a limitation of the oracle and not evidence about the runner: 115 fields on four Business Foundation tables (230, 242, 308, 6635). In BC 29 everything is merged at database level anyway, which makes the runner's merged view the forward-looking one. CONSEQUENCE: a multi-app bundle can never produce an empty diff, so a non-empty diff here is expected and must not be read as noise or as a bug. DIRECTION-SCOPED: covers only BC-absent / runner-present, which is the merged-runtime direction this reason justifies. The reverse \u2014 BC emitted a field and the runner built none \u2014 is a hard reader defect and is NOT covered.",
+      "reason": "The runner models the MERGED RUNTIME state a running system has — every registered app's tableextension fields present on the base table. The ground truth is BC's BUILD-TIME per-app emit, which by construction sees only the app being compiled. Two different things, so this is a limitation of the oracle and not evidence about the runner: 115 fields on four Business Foundation tables (230, 242, 308, 6635). In BC 29 everything is merged at database level anyway, which makes the runner's merged view the forward-looking one. CONSEQUENCE: a multi-app bundle can never produce an empty diff, so a non-empty diff here is expected and must not be read as noise or as a bug. DIRECTION-SCOPED: covers only BC-absent / runner-present, which is the merged-runtime direction this reason justifies. The reverse — BC emitted a field and the runner built none — is a hard reader defect and is NOT covered.",
       "oracleLimitation": true,
       "Doc": "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata",
       "direction": "runner-only"
@@ -467,7 +529,7 @@
     },
     {
       "member": "ControlContainerDefinition.#containerTypeField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
@@ -480,7 +542,7 @@
     },
     {
       "member": "ControlContainerDefinition.ContainerType",
-      "reason": "The container the page's controls sit in. The runner emits one ContentArea container to hold the parts it does reconstruct (EmitPartControlXml); BC states the real area for the real tree. The same control-tree boundary as the Controls entries. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The container the page's controls sit in. The runner emits one ContentArea container to hold the parts it does reconstruct (EmitPartControlXml); BC states the real area for the real tree. The same control-tree boundary as the Controls entries. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
@@ -521,7 +583,7 @@
     },
     {
       "member": "InfopartPageDefinition.#providerIDField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
@@ -596,21 +658,21 @@
     },
     {
       "member": "InfopartPageDefinition.Editable",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 113 pages declare Editable; EmitPartControlXml does not carry it onto the part control. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 113 pages declare Editable; EmitPartControlXml does not carry it onto the part control. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "issue": 3784,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
     {
       "member": "InfopartPageDefinition.ProviderID",
-      "reason": "The control that PROVIDES a part's data in the designer's provider/consumer wiring. It names a control id inside the host page's real control tree, which the runner does not reconstruct. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The control that PROVIDES a part's data in the designer's provider/consumer wiring. It names a control id inside the host page's real control tree, which the runner does not reconstruct. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
     },
     {
       "member": "InfopartPageDefinition.ProviderIDSpecified",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
@@ -756,7 +818,7 @@
     },
     {
       "member": "PageProperties.#aPIVersionField",
-      "reason": "The API version of an API page. Emitted by BC for the one API page in the bundle and absent from SymbolReference.json; API pages are a web-service publishing surface, which docs/scope.md places out of scope. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The API version of an API page. Emitted by BC for the one API page in the bundle and absent from SymbolReference.json; API pages are a web-service publishing surface, which docs/scope.md places out of scope. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
@@ -769,7 +831,7 @@
     },
     {
       "member": "PageProperties.#analysisModeEnabledField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.AnalysisModeEnabled, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.AnalysisModeEnabled, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "issue": 3784,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
@@ -803,7 +865,7 @@
     },
     {
       "member": "PageProperties.#isPreviewField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
@@ -846,7 +908,7 @@
     },
     {
       "member": "PageProperties.AnalysisModeEnabled",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 1 page declares AnalysisModeEnabled; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 1 page declares AnalysisModeEnabled; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "issue": 3784,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
@@ -903,7 +965,7 @@
     },
     {
       "member": "PageProperties.IsPreview",
-      "reason": "Marks a page shipped as preview. Not in SymbolReference.json in any form; BC's emitter derives it from a compiler-level attribute the symbol file does not carry. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "Marks a page shipped as preview. Not in SymbolReference.json in any form; BC's emitter derives it from a compiler-level attribute the symbol file does not carry. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
       "versionContingent": true
@@ -922,7 +984,7 @@
     },
     {
       "member": "SourceObjectDefinition.#delayedInsertField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.DelayedInsert, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.DelayedInsert, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "issue": 3784,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
@@ -934,14 +996,14 @@
     },
     {
       "member": "SourceObjectDefinition.#modifyAllowedField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.ModifyAllowed, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.ModifyAllowed, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "issue": 3784,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
     {
       "member": "SourceObjectDefinition.DelayedInsert",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 13 pages declare DelayedInsert, with the same SourceTable-branch condition. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 13 pages declare DelayedInsert, with the same SourceTable-branch condition. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "issue": 3784,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
@@ -953,7 +1015,7 @@
     },
     {
       "member": "SourceObjectDefinition.ModifyAllowed",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 89 pages declare ModifyAllowed, with the same SourceTable-branch condition as InsertAllowed. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape \u2014 and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 89 pages declare ModifyAllowed, with the same SourceTable-branch condition as InsertAllowed. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "issue": 3784,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
@@ -966,25 +1028,326 @@
     },
     {
       "member": "MetaCodeunit.InherentPermissions",
-      "reason": "BC states the inherent permission mask (Execute on 505 of 558); the runner leaves BC's own None default. Stated verbatim in the symbol file: codeunit 26 carries Properties [{'Name':'InherentPermissions','Value':'X'}], and presence agrees with BC's attribute for 533 of 533 System Application codeunits on BC 28.1.49838.53910. The letters are the same mask spelling RecordPatches.CodeunitMetadataFromBcDocument.cs already parses out of BC's OWN document for the CodeUnit Metadata virtual table, so the conversion exists and is merely not fed from the symbol file for a precompiled dependency. Derivable, tracked, not a limit. Deliberately NOT direction-scoped: the runner answers BC's own enum default None rather than leaving the member absent, and `bc-only` matches only a runner side that is <absent> or <null>. The narrowing that would be wanted here \u2014 'BC states a mask, the runner states None' \u2014 is not expressible as a direction, so the entry covers both and this sentence records why. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): System Application 455 / 481 / 482 codeunits state it, Business Foundation 24 on all three. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that.",
+      "reason": "BC states the inherent permission mask (Execute on 505 of 558); the runner leaves BC's own None default. Stated verbatim in the symbol file: codeunit 26 carries Properties [{'Name':'InherentPermissions','Value':'X'}], and presence agrees with BC's attribute for 533 of 533 System Application codeunits on BC 28.1.49838.53910. The letters are the same mask spelling RecordPatches.CodeunitMetadataFromBcDocument.cs already parses out of BC's OWN document for the CodeUnit Metadata virtual table, so the conversion exists and is merely not fed from the symbol file for a precompiled dependency. Derivable, tracked, not a limit. Deliberately NOT direction-scoped: the runner answers BC's own enum default None rather than leaving the member absent, and `bc-only` matches only a runner side that is <absent> or <null>. The narrowing that would be wanted here — 'BC states a mask, the runner states None' — is not expressible as a direction, so the entry covers both and this sentence records why. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): System Application 455 / 481 / 482 codeunits state it, Business Foundation 24 on all three. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that.",
       "issue": 3788
     },
     {
       "member": "MetaCodeunit.InherentEntitlements",
-      "reason": "Same shape and same evidence as MetaCodeunit.InherentPermissions, for the entitlement mask rather than the permission mask: stated in the symbol file as Properties [{'Name':'InherentEntitlements','Value':'X'}], presence agreeing for 533 of 533 on BC 28.1.49838.53910, and BC's default None answered by the runner in its place. Declared separately rather than folded in, because the two masks are independent AL properties and a fix that landed only one must still fail on the other. Deliberately NOT direction-scoped: the runner answers BC's own enum default None rather than leaving the member absent, and `bc-only` matches only a runner side that is <absent> or <null>. The narrowing that would be wanted here \u2014 'BC states a mask, the runner states None' \u2014 is not expressible as a direction, so the entry covers both and this sentence records why. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): System Application 455 / 481 / 482 codeunits state it, Business Foundation 24 on all three. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that.",
+      "reason": "Same shape and same evidence as MetaCodeunit.InherentPermissions, for the entitlement mask rather than the permission mask: stated in the symbol file as Properties [{'Name':'InherentEntitlements','Value':'X'}], presence agreeing for 533 of 533 on BC 28.1.49838.53910, and BC's default None answered by the runner in its place. Declared separately rather than folded in, because the two masks are independent AL properties and a fix that landed only one must still fail on the other. Deliberately NOT direction-scoped: the runner answers BC's own enum default None rather than leaving the member absent, and `bc-only` matches only a runner side that is <absent> or <null>. The narrowing that would be wanted here — 'BC states a mask, the runner states None' — is not expressible as a direction, so the entry covers both and this sentence records why. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): System Application 455 / 481 / 482 codeunits state it, Business Foundation 24 on all three. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that.",
       "issue": 3788
     },
     {
       "member": "MetaRuntimeInfo.Methods.<presence>",
-      "reason": "BC's document carries a <Methods> subtree for 137 of 558 codeunits and the runner's projection carries none, so every method BC states is reported absent. PARTLY derivable, and the remainder is measured rather than assumed: SymbolReference.json does state a Methods array (Id, Name, Parameters, ReturnTypeDefinition), and BC's emitted method names are a subset of the symbol file's for 64 codeunits \u2014 but for 73 they are not, because BC emits event-publisher and internal methods the symbol file omits. So this is a partial derivation with a known 73-codeunit gap, not a straight fix, which is why it is tracked rather than declared recoverable. Measured on BC 28.1.49838.53910. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): System Application 135 / 137 / 138 codeunits emit a <Methods> subtree, Business Foundation 8 on all three. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that.",
+      "reason": "BC's document carries a <Methods> subtree for 137 of 558 codeunits and the runner's projection carries none, so every method BC states is reported absent. PARTLY derivable, and the remainder is measured rather than assumed: SymbolReference.json does state a Methods array (Id, Name, Parameters, ReturnTypeDefinition), and BC's emitted method names are a subset of the symbol file's for 64 codeunits — but for 73 they are not, because BC emits event-publisher and internal methods the symbol file omits. So this is a partial derivation with a known 73-codeunit gap, not a straight fix, which is why it is tracked rather than declared recoverable. Measured on BC 28.1.49838.53910. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): System Application 135 / 137 / 138 codeunits emit a <Methods> subtree, Business Foundation 8 on all three. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that. SINCE #3782 STEP 4, THIS ENTRY ALSO COVERS XMLPORTS. The allowlist matches on signature and MetaRuntimeInfo is the same type on every kind, so XmlPort 9864 'Import Permission Sets' — the only one of System Application's four whose document carries <Methods> — lands here too. Its cause is different and worse: the codeunit projection has a PARTIAL method derivation to complete, while the runner derives no xmlport structure at all (BcAppSymbolCache.ObjectSymbol carries (Kind, Id, Name, Caption) and nothing parses an xmlport's shape), so the xmlport occurrence is closed by #3797 rather than by #3788. The versionContingent verdict is unchanged and the combined population is why: measured namespace-agnostically over the four bundles on the authoring box (27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308, 28.4.53241.54407), System Application emits <Methods> for 135/137/137/138 codeunits and 1/1/1/1 xmlports, Business Foundation for 8 codeunits on all four. One xmlport against ~146 objects cannot empty this entry, so the flag stays off and the stale check keeps its grip.",
       "issue": 3788,
       "direction": "bc-only"
     },
     {
       "member": "MetaRuntimeInfo.#methodsDictionary.<presence>",
-      "reason": "The SAME collection as MetaRuntimeInfo.Methods, reached under a second signature: MetaRuntimeInfo backs the property with a field, and the differ walks both, so one absent method subtree is reported twice. Declared separately because the allowlist matches on the signature and leaving this one off would report 326 undeclared differences for a gap already declared above. It disappears with the same fix. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): the same collection as MetaRuntimeInfo.Methods, so the same 135 / 137 / 138 and 8. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that.",
+      "reason": "The SAME collection as MetaRuntimeInfo.Methods, reached under a second signature: MetaRuntimeInfo backs the property with a field, and the differ walks both, so one absent method subtree is reported twice. Declared separately because the allowlist matches on the signature and leaving this one off would report 326 undeclared differences for a gap already declared above. It disappears with the same fix. Checked for versionContingent and deliberately NOT marked: this member's population is large and stable across every BC build a leg runs. Measured on the three ground-truth bundles present (27.5.46862.53931, 28.1.49838.53910, 28.4.53241.54407): the same collection as MetaRuntimeInfo.Methods, so the same 135 / 137 / 138 and 8. Step 1's 27.5 failure was a member whose whole population was one page; nothing here is within two orders of magnitude of that. SINCE #3782 STEP 4, THIS ENTRY ALSO COVERS XMLPORTS. The allowlist matches on signature and MetaRuntimeInfo is the same type on every kind, so XmlPort 9864 'Import Permission Sets' — the only one of System Application's four whose document carries <Methods> — lands here too. Its cause is different and worse: the codeunit projection has a PARTIAL method derivation to complete, while the runner derives no xmlport structure at all (BcAppSymbolCache.ObjectSymbol carries (Kind, Id, Name, Caption) and nothing parses an xmlport's shape), so the xmlport occurrence is closed by #3797 rather than by #3788. The versionContingent verdict is unchanged and the combined population is why: measured namespace-agnostically over the four bundles on the authoring box (27.5.46862.53931, 28.1.49838.53910, 28.1.49838.54308, 28.4.53241.54407), System Application emits <Methods> for 135/137/137/138 codeunits and 1/1/1/1 xmlports, Business Foundation for 8 codeunits on all four. One xmlport against ~146 objects cannot empty this entry, so the flag stays off and the stale check keeps its grip.",
       "issue": 3788,
       "direction": "bc-only"
+    },
+    {
+      "member": "MetaXmlPort.Nodes.<presence>",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). This member is the xmlport's node tree -- 91 of 91 nodes absent on the runner's side. This is #3510's null seen from the derivation side: BuildNCLMetaXmlPort needs _parsedXmlPorts, which RecordPatches.AlXmlPortParser fills from the CORPUS app's AL source text, and a precompiled dependency's xmlport is in neither that map nor AlXmlPortMetadataRegistry -- so both steps of that branch's fallback return null.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.#nodes.<presence>",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). This member is the field backing Nodes; BC's own object backs the property with it and the differ walks both, so this is the SAME 91 nodes under a second signature, not a second finding. This is #3510's null seen from the derivation side: BuildNCLMetaXmlPort needs _parsedXmlPorts, which RecordPatches.AlXmlPortParser fills from the CORPUS app's AL source text, and a precompiled dependency's xmlport is in neither that map nor AlXmlPortMetadataRegistry -- so both steps of that branch's fallback return null.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.Schema",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). This member is the compiled XSD, which BC builds FROM the nodes, so it follows from the node tree rather than being a separate gap -- it goes green when the tree does, and fixing it alone would be manufacturing agreement. This one does not merely differ: reading it on the runner's side THROWS NullReferenceException, which the differ records as <throw:NullReferenceException>. That is the same shape AL hits, and it is why the entry is a defect and not a scope boundary.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.SchemaSet",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). This member is the schema set, built from the nodes, so it follows from the node tree rather than being a separate gap -- it goes green when the tree does, and fixing it alone would be manufacturing agreement.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.#schemaSet",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). This member is the field backing SchemaSet, so it follows from the node tree rather than being a separate gap -- it goes green when the tree does, and fixing it alone would be manufacturing agreement.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.SchemaTypeName",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). This member is the root node's name, read off the first node, so it follows from the node tree rather than being a separate gap -- it goes green when the tree does, and fixing it alone would be manufacturing agreement. This one does not merely differ: reading it on the runner's side THROWS NullReferenceException, which the differ records as <throw:NullReferenceException>. That is the same shape AL hits, and it is why the entry is a defect and not a scope boundary.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.#typeNames",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). This member is the node type names, one per element node, so it follows from the node tree rather than being a separate gap -- it goes green when the tree does, and fixing it alone would be manufacturing agreement.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.#xsdBuilder.<presence>",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). This member is the XSD builder, constructed only when nodes exist, so it follows from the node tree rather than being a separate gap -- it goes green when the tree does, and fixing it alone would be manufacturing agreement.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.#mainPrefix",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). This member is the main namespace prefix, derived while walking the nodes, so it follows from the node tree rather than being a separate gap -- it goes green when the tree does, and fixing it alone would be manufacturing agreement.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.DefaultNamespace",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). This member is urn:microsoft-dynamics-nav/xmlports/x<id>, which BC's emitter writes, so it follows from the node tree rather than being a separate gap -- it goes green when the tree does, and fixing it alone would be manufacturing agreement.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.#defaultNamespace",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). This member is the field backing DefaultNamespace, so it follows from the node tree rather than being a separate gap -- it goes green when the tree does, and fixing it alone would be manufacturing agreement.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.FieldDelimiter",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). BC's emitter writes this format default unconditionally (it answers '\"' on all 4 xmlports) and the runner states nothing, so BC's own constructor leaves its own default behind. Not underivable -- a constant would reproduce it -- but it is written here as part of the same xmlport derivation gap rather than patched in isolation.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.#fieldDelimiter",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). BC's emitter writes this format default unconditionally (it answers '\"' on all 4 xmlports) and the runner states nothing, so BC's own constructor leaves its own default behind. Not underivable -- a constant would reproduce it -- but it is written here as part of the same xmlport derivation gap rather than patched in isolation.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.FieldSeparator",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). BC's emitter writes this format default unconditionally (it answers ',' on all 4 xmlports) and the runner states nothing, so BC's own constructor leaves its own default behind. Not underivable -- a constant would reproduce it -- but it is written here as part of the same xmlport derivation gap rather than patched in isolation.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.#fieldSeparator",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). BC's emitter writes this format default unconditionally (it answers ',' on all 4 xmlports) and the runner states nothing, so BC's own constructor leaves its own default behind. Not underivable -- a constant would reproduce it -- but it is written here as part of the same xmlport derivation gap rather than patched in isolation.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.FileName",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). BC's emitter writes this format default unconditionally (it answers '<empty>' on all 4 xmlports) and the runner states nothing, so BC's own constructor leaves its own default behind. Not underivable -- a constant would reproduce it -- but it is written here as part of the same xmlport derivation gap rather than patched in isolation.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.#fileName",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). BC's emitter writes this format default unconditionally (it answers '<empty>' on all 4 xmlports) and the runner states nothing, so BC's own constructor leaves its own default behind. Not underivable -- a constant would reproduce it -- but it is written here as part of the same xmlport derivation gap rather than patched in isolation.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.DefaultFieldsValidation",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). BC's emitter writes this format default unconditionally (it answers 'True' on all 4 xmlports) and the runner states nothing, so BC's own constructor leaves its own default behind. Not underivable -- a constant would reproduce it -- but it is written here as part of the same xmlport derivation gap rather than patched in isolation.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.#defaultFieldsValidation",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). BC's emitter writes this format default unconditionally (it answers 'True' on all 4 xmlports) and the runner states nothing, so BC's own constructor leaves its own default behind. Not underivable -- a constant would reproduce it -- but it is written here as part of the same xmlport derivation gap rather than patched in isolation.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.Direction",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json STATES this property and VisitSymbolContainer discards it: it keeps TableNo/SingleInstance/Subtype for Codeunit only, and every other kind gets new ObjectSymbol(kind, id, name, caption, TargetObjectName:) with the Properties array parsed and thrown away. A read-don't-guess fix, the same shape as Extensible in #3784. BC answers Export/Import, the runner answers the enum default Both. The symbol file states Direction for 3 of the 4 xmlports and BC agrees with it on 3 of 3; the fourth declares none, which is what Both means. NOT direction-scoped: the runner answers a real value (Both), not absent, so bc-only would not match it.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaXmlPort.#direction",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json STATES this property and VisitSymbolContainer discards it: it keeps TableNo/SingleInstance/Subtype for Codeunit only, and every other kind gets new ObjectSymbol(kind, id, name, caption, TargetObjectName:) with the Properties array parsed and thrown away. A read-don't-guess fix, the same shape as Extensible in #3784. The field backing Direction; same 3 of 3 measurement.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaXmlPort.Encoding",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json STATES this property and VisitSymbolContainer discards it: it keeps TableNo/SingleInstance/Subtype for Codeunit only, and every other kind gets new ObjectSymbol(kind, id, name, caption, TargetObjectName:) with the Properties array parsed and thrown away. A read-don't-guess fix, the same shape as Extensible in #3784. BC answers UTF8, the runner answers the enum default UTF16. The symbol file states Encoding for 3 of 4 and agrees on 3 of 3, spelled 'UTF8' against the document's 'UTF-8' -- a normalization, not a missing value. NOT direction-scoped: UTF16 is a real value.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaXmlPort.#encoding",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json STATES this property and VisitSymbolContainer discards it: it keeps TableNo/SingleInstance/Subtype for Codeunit only, and every other kind gets new ObjectSymbol(kind, id, name, caption, TargetObjectName:) with the Properties array parsed and thrown away. A read-don't-guess fix, the same shape as Extensible in #3784. The field backing Encoding; same 3 of 3 measurement.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaXmlPort.PreserveWhiteSpace",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json STATES this property and VisitSymbolContainer discards it: it keeps TableNo/SingleInstance/Subtype for Codeunit only, and every other kind gets new ObjectSymbol(kind, id, name, caption, TargetObjectName:) with the Properties array parsed and thrown away. A read-don't-guess fix, the same shape as Extensible in #3784. BC answers True, the runner answers the bool default False. The symbol file states PreserveWhiteSpace='1' for 3 of 4 and agrees on 3 of 3. NOT direction-scoped: False is a real value.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaXmlPort.#preserveWhiteSpace",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json STATES this property and VisitSymbolContainer discards it: it keeps TableNo/SingleInstance/Subtype for Codeunit only, and every other kind gets new ObjectSymbol(kind, id, name, caption, TargetObjectName:) with the Properties array parsed and thrown away. A read-don't-guess fix, the same shape as Extensible in #3784. The field backing PreserveWhiteSpace; same 3 of 3 measurement.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaXmlPort.Permissions",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json STATES this property and VisitSymbolContainer discards it: it keeps TableNo/SingleInstance/Subtype for Codeunit only, and every other kind gets new ObjectSymbol(kind, id, name, caption, TargetObjectName:) with the Properties array parsed and thrown away. A read-don't-guess fix, the same shape as Extensible in #3784. BC answers 'TableData Security Group=r' on xmlport 9001 and the runner answers null. The symbol file states Permissions='tabledata \"Security Group\" = r' -- the same content in AL's own spelling, so this needs a normalization rather than a new source. One occurrence, because one of the four declares any.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaXmlPort.#permissions",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json STATES this property and VisitSymbolContainer discards it: it keeps TableNo/SingleInstance/Subtype for Codeunit only, and every other kind gets new ObjectSymbol(kind, id, name, caption, TargetObjectName:) with the Properties array parsed and thrown away. A read-don't-guess fix, the same shape as Extensible in #3784. The field backing Permissions; same single occurrence.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaXmlPort.UseRequestForm",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json STATES this property and VisitSymbolContainer discards it: it keeps TableNo/SingleInstance/Subtype for Codeunit only, and every other kind gets new ObjectSymbol(kind, id, name, caption, TargetObjectName:) with the Properties array parsed and thrown away. A read-don't-guess fix, the same shape as Extensible in #3784. BC answers True on xmlport 9864 and the runner answers False. The symbol file states UseRequestPage='0' for the other three and states NOTHING for 9864 -- and AL's default for UseRequestPage is true, so the absent case is the one that differs. Derivable, but only by applying AL's default rather than the CLR's. NOT direction-scoped: False is a real value.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaXmlPort.#useRequestForm",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json STATES this property and VisitSymbolContainer discards it: it keeps TableNo/SingleInstance/Subtype for Codeunit only, and every other kind gets new ObjectSymbol(kind, id, name, caption, TargetObjectName:) with the Properties array parsed and thrown away. A read-don't-guess fix, the same shape as Extensible in #3784. The field backing UseRequestForm; same single occurrence.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports",
+      "versionContingent": true
+    },
+    {
+      "member": "MultiLanguage.LanguageIds",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json STATES this property and VisitSymbolContainer discards it: it keeps TableNo/SingleInstance/Subtype for Codeunit only, and every other kind gets new ObjectSymbol(kind, id, name, caption, TargetObjectName:) with the Properties array parsed and thrown away. A read-don't-guess fix, the same shape as Extensible in #3784. This member is the language ids of the caption ([1033] on all four). BC builds a MultiLanguage caption from the document's <CaptionML><Caption Id=\"1033\">, and the runner writes no CaptionML at all: ObjectSymbol.Caption is a flat string with no language id, so rendering it would require inventing the 1033. Derivable (1033 is ENU and BC states only ENU here), and deliberately not guessed. Reached through MetaXmlPort.CaptionML, which BC populates unconditionally, so the member itself is never absent on BC's side.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports",
+      "versionContingent": true
+    },
+    {
+      "member": "MultiLanguage.Texts",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json STATES this property and VisitSymbolContainer discards it: it keeps TableNo/SingleInstance/Subtype for Codeunit only, and every other kind gets new ObjectSymbol(kind, id, name, caption, TargetObjectName:) with the Properties array parsed and thrown away. A read-don't-guess fix, the same shape as Extensible in #3784. This member is the caption texts themselves. BC builds a MultiLanguage caption from the document's <CaptionML><Caption Id=\"1033\">, and the runner writes no CaptionML at all: ObjectSymbol.Caption is a flat string with no language id, so rendering it would require inventing the 1033. Derivable (1033 is ENU and BC states only ENU here), and deliberately not guessed. Reached through MetaXmlPort.CaptionML, which BC populates unconditionally, so the member itself is never absent on BC's side.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaQuery.InherentEntitlements",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3), comparing BC's own MetaQuery(XmlNode,0,0) against the runner's own MetaQuery design object -- the one NCLMetaQuery.CreateDynamicQuery consumes, so this is what AL gets. BC answers Execute, the runner answers the enum default None. SymbolReference.json states InherentEntitlements with value 'X' for 4 of the 7 queries and BC answers Execute for exactly those 4 -- presence agrees 4 of 4. The 'X' mask spelling is the one RecordPatches.CodeunitMetadataFromBcDocument.cs already parses from BC's document, and #3788 records the same finding on the codeunit side. NOT direction-scoped: None is BC's own enum default, a real value rather than absent, so bc-only would not match it.",
+      "issue": 3798,
+      "Doc": "docs/metadata-equivalence.md#queries",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaQuery.InherentPermissions",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3), comparing BC's own MetaQuery(XmlNode,0,0) against the runner's own MetaQuery design object -- the one NCLMetaQuery.CreateDynamicQuery consumes, so this is what AL gets. BC answers Execute, the runner answers None. Same measurement as InherentEntitlements: the symbol file states InherentPermissions='X' for 4 of 7 and presence agrees 4 of 4. NOT direction-scoped, for the same reason.",
+      "issue": 3798,
+      "Doc": "docs/metadata-equivalence.md#queries",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaQuery.Caption",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3), comparing BC's own MetaQuery(XmlNode,0,0) against the runner's own MetaQuery design object -- the one NCLMetaQuery.CreateDynamicQuery consumes, so this is what AL gets. Four differences and they are TWO different situations, which is why this is tracked rather than called a defect in one direction. On query 777 BC answers 'Role Center from Plans' (the object NAME) while the runner answers 'RoleCenter from Plans' -- which is what the symbol file states AND what BC's own <CaptionML> states, so the runner is reporting the declared caption and BC's Caption property is reporting the name. On 8888/8889/8890 nothing is declared, BC's document carries no <CaptionML> at all, BC falls back to Name and the runner answers null. Both are derivable; which is correct depends on what AL observes through this property, and that is worth settling before changing anything.",
+      "issue": 3798,
+      "Doc": "docs/metadata-equivalence.md#queries",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaQuery.HelpLink",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3). BC's emitter ASSIGNS this rather than copying it from AL, and SymbolReference.json states nothing for it -- checked per query, not inferred from the member's name. Not underivable: three of these are constants BC writes unconditionally and could be set without reading anything. Tracked rather than declared permanent. This member is the docs URL BC's emitter writes unconditionally -- identical on all 7 queries.",
+      "issue": 3798,
+      "Doc": "docs/metadata-equivalence.md#queries"
+    },
+    {
+      "member": "MetaQuery.APIGroup",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3). BC's emitter ASSIGNS this rather than copying it from AL, and SymbolReference.json states nothing for it -- checked per query, not inferred from the member's name. Not underivable: three of these are constants BC writes unconditionally and could be set without reading anything. Tracked rather than declared permanent. This member is BC writes <empty> and the runner leaves null; a null/empty distinction only.",
+      "issue": 3798,
+      "Doc": "docs/metadata-equivalence.md#queries"
+    },
+    {
+      "member": "MetaQuery.APIPublisher",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3). BC's emitter ASSIGNS this rather than copying it from AL, and SymbolReference.json states nothing for it -- checked per query, not inferred from the member's name. Not underivable: three of these are constants BC writes unconditionally and could be set without reading anything. Tracked rather than declared permanent. This member is BC writes <empty> and the runner leaves null.",
+      "issue": 3798,
+      "Doc": "docs/metadata-equivalence.md#queries"
+    },
+    {
+      "member": "MetaQuery.QueryCategory",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3). BC's emitter ASSIGNS this rather than copying it from AL, and SymbolReference.json states nothing for it -- checked per query, not inferred from the member's name. Not underivable: three of these are constants BC writes unconditionally and could be set without reading anything. Tracked rather than declared permanent. This member is BC writes <empty> and the runner leaves null.",
+      "issue": 3798,
+      "Doc": "docs/metadata-equivalence.md#queries"
+    },
+    {
+      "member": "MetaQuery.APIVersion",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3). BC's emitter ASSIGNS this rather than copying it from AL, and SymbolReference.json states nothing for it -- checked per query, not inferred from the member's name. Not underivable: three of these are constants BC writes unconditionally and could be set without reading anything. Tracked rather than declared permanent. This member is BC writes 'beta' on the 4 non-API queries and the runner leaves null.",
+      "issue": 3798,
+      "Doc": "docs/metadata-equivalence.md#queries",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaQuery.RuntimeInfo.<presence>",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3). BC's emitter ASSIGNS this rather than copying it from AL, and SymbolReference.json states nothing for it -- checked per query, not inferred from the member's name. Not underivable: three of these are constants BC writes unconditionally and could be set without reading anything. Tracked rather than declared permanent. This member is the MetaRuntimeInfo BC attaches to every query; the runner's design object has none.",
+      "issue": 3798,
+      "Doc": "docs/metadata-equivalence.md#queries"
+    },
+    {
+      "member": "MetaQuery.CaptionML.<presence>",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3), comparing BC's own MetaQuery(XmlNode,0,0) against the runner's own MetaQuery design object -- the one NCLMetaQuery.CreateDynamicQuery consumes, so this is what AL gets. This member is the MultiLanguage caption object. BC builds it from the document's <CaptionML>ENU=...; the runner sets the flat Caption string and no MultiLanguage, so rendering one would mean inventing the language id. Derivable (BC states only ENU/1033 across all 7) and deliberately not guessed. Four occurrences: the three queries declaring no caption have none on either side.",
+      "issue": 3798,
+      "Doc": "docs/metadata-equivalence.md#queries",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaQuery.#captionML.<presence>",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3), comparing BC's own MetaQuery(XmlNode,0,0) against the runner's own MetaQuery design object -- the one NCLMetaQuery.CreateDynamicQuery consumes, so this is what AL gets. This member is the field backing CaptionML -- the SAME object under a second signature, because BC backs the property with it and the differ walks both. BC builds it from the document's <CaptionML>ENU=...; the runner sets the flat Caption string and no MultiLanguage, so rendering one would mean inventing the language id. Derivable (BC states only ENU/1033 across all 7) and deliberately not guessed. Four occurrences: the three queries declaring no caption have none on either side.",
+      "issue": 3798,
+      "Doc": "docs/metadata-equivalence.md#queries",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaQueryDataItemLink.LinkOperator",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3), comparing BC's own MetaQuery(XmlNode,0,0) against the runner's own MetaQuery design object -- the one NCLMetaQuery.CreateDynamicQuery consumes, so this is what AL gets. BC answers '=' and the runner answers null, on all 4 dataitem links in the bundle. BC's document states it as <LinkOperator>=</LinkOperator> and ParseDataItemLink in RecordPatches.NclMetaQueryBuilder.cs does not set the property. AL has no syntax for any other operator today, so a constant would be faithful -- which is exactly why leaving it null is a defect rather than a scope boundary. The ONLY difference anywhere in the query structural tree: every column id, FieldNo, ColumnType, MethodType, QueryColumnIndex, DataItemLinkType and DataItemTable agrees exactly on all 7 queries.",
+      "issue": 3798,
+      "Doc": "docs/metadata-equivalence.md#queries",
+      "versionContingent": true
+    },
+    {
+      "member": "MetaXmlPort.RecordSeparator",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). BC's emitter writes this format default unconditionally (it answers '<NewLine>' on all 4 xmlports) and the runner states nothing, so BC's own constructor leaves its own default behind. Not underivable -- a constant would reproduce it -- but it is written here as part of the same xmlport derivation gap rather than patched in isolation. This value IS a newline, which is why it needs saying: the harness's own report is tab-separated with one record per line, so a line-based reading of it DROPS this member and the three beside it. The first draft of these entries was assembled that way and missed all four; the harness caught them, which is the check working.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.#recordSeparator",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). BC's emitter writes this format default unconditionally (it answers '<NewLine>' on all 4 xmlports) and the runner states nothing, so BC's own constructor leaves its own default behind. Not underivable -- a constant would reproduce it -- but it is written here as part of the same xmlport derivation gap rather than patched in isolation. The field backing RecordSeparator.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.TableSeparator",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). BC's emitter writes this format default unconditionally (it answers '<NewLine><NewLine>' on all 4 xmlports) and the runner states nothing, so BC's own constructor leaves its own default behind. Not underivable -- a constant would reproduce it -- but it is written here as part of the same xmlport derivation gap rather than patched in isolation. Two newlines, same reading trap.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
+    },
+    {
+      "member": "MetaXmlPort.#tableSeparator",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 4 xmlports (#3782 step 4). SymbolReference.json states an xmlport's Id, Name, Properties and Variables and NO node tree at all, while BC's emitted documents carry 91 <Node> elements across those four. NOT a claim that the tree is underivable -- nobody has measured whether it can be reconstructed, and 'the symbol file does not store it' is evidence about storage, never about derivability (the mistake step 1 made about DataColumnName). What is measured is that the runner derives no xmlport structure today: its whole knowledge of a precompiled xmlport is BcAppSymbolCache.ObjectSymbol's (Kind, Id, Name, Caption). BC's emitter writes this format default unconditionally (it answers '<NewLine><NewLine>' on all 4 xmlports) and the runner states nothing, so BC's own constructor leaves its own default behind. Not underivable -- a constant would reproduce it -- but it is written here as part of the same xmlport derivation gap rather than patched in isolation. The field backing TableSeparator.",
+      "issue": 3797,
+      "Doc": "docs/metadata-equivalence.md#xmlports"
     }
   ]
 }

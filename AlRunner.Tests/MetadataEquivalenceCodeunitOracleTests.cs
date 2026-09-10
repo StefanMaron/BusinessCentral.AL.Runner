@@ -113,9 +113,7 @@ public sealed class MetadataEquivalenceCodeunitOracleTests
     {
         Skip.IfNot(_engine.Ready, _engine.SkipReason);
 
-        var bundles = MetadataEquivalenceHarness.LoadBundles(
-            MetadataEquivalencePaths.GroundTruthDirForThisBuild());
-        Skip.If(bundles.Count == 0, "no metadata ground-truth bundle for this BC build.");
+        var bundles = MetadataEquivalenceBundleGate.RequireBundles();
 
         var bundle = bundles.First(b => b.AppName == "System Application");
         var app = MetadataEquivalenceHarness.FindAppPackage(bundle);
@@ -165,9 +163,7 @@ public sealed class MetadataEquivalenceCodeunitOracleTests
     {
         Skip.IfNot(_engine.Ready, _engine.SkipReason);
 
-        var bundles = MetadataEquivalenceHarness.LoadBundles(
-            MetadataEquivalencePaths.GroundTruthDirForThisBuild());
-        Skip.If(bundles.Count == 0, "no metadata ground-truth bundle for this BC build.");
+        var bundles = MetadataEquivalenceBundleGate.RequireBundles();
         var bundle = bundles.First(b => b.AppName == "System Application");
         var app = MetadataEquivalenceHarness.FindAppPackage(bundle);
         Skip.If(app is null, "the System Application .app for this bundle is not on this box.");

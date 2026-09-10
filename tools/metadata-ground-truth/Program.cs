@@ -169,12 +169,23 @@ internal static class Program
             objects.Add(new BundleObject(kind, id, item.Name, rel, Sha256(item.Metadata)));
         }
 
-        var duplicateTableIds = objects.Where(o => o.Kind == "MetaTable")
-            .GroupBy(o => o.Id).Where(g => g.Count() > 1).Select(g => g.Key).ToArray();
-        if (duplicateTableIds.Length > 0)
+        // Every kind the harness keys by id, not MetaTable alone. Query and XmlPort joined that
+        // set in #3782 and both had reported id 0 for every document until ClassifyDocument
+        // learned the child-element spelling — which a MetaTable-only guard could not see.
+        // MetadataRuntimeDeltas is deliberately excluded: one <MetadataRuntimeDeltas> root
+        // covers TableExtension, PageExtension and PermissionSetExtension, so several of them
+        // legitimately carry the id of the object they extend.
+        var idKeyedKinds = new[] { "MetaTable", "PageDefinition", "CodeUnit", "Query", "XmlPort" };
+        var duplicateIds = objects
+            .Where(o => idKeyedKinds.Contains(o.Kind, StringComparer.Ordinal))
+            .GroupBy(o => (o.Kind, o.Id)).Where(g => g.Count() > 1)
+            .Select(g => $"{g.Key.Kind} {g.Key.Id} x{g.Count()}").ToArray();
+        if (duplicateIds.Length > 0)
             throw new InvalidOperationException(
-                "two MetaTable documents share an id: " + string.Join(",", duplicateTableIds) +
-                ". The harness keys tables by id, so this would silently compare one and drop the other.");
+                "documents share a (kind, id): " + string.Join("; ", duplicateIds) +
+                ". The harness keys these kinds by id, so this would silently compare one and " +
+                "drop the other. An id of 0 across a whole kind means ClassifyDocument did not " +
+                "find where that kind states its id.");
 
         var manifest = new BundleManifest(
             BundleSchema,
@@ -201,6 +212,13 @@ internal static class Program
     /// They disagree: MetadataRuntimeDeltas is the root for TableExtension, PageExtension AND
     /// PermissionSetExtension, and one &lt;Enum&gt; root covers both Enum and EnumExtension.
     /// Keying on SymbolKind would split documents that BC treats as one shape.
+    ///
+    /// <para>The id is read from the root ATTRIBUTE first and from a direct child
+    /// <c>&lt;ID&gt;</c> ELEMENT second, because BC's emitter uses both spellings and which one
+    /// it uses is a property of the kind: Query, XmlPort and Report state the id as a child
+    /// element, every other kind as an attribute. Reading only the attribute reported
+    /// <c>Id = 0</c> for all 12 of those documents in a System Application bundle — a value that
+    /// keys nothing, is not unique, and reads exactly like a real id (#3782, step 3/4).</para>
     /// </summary>
     private static (string Kind, int Id) ClassifyDocument(string? metadata, string symbolKind)
     {
@@ -212,6 +230,14 @@ internal static class Program
             var root = doc.DocumentElement!;
             var idText = root.GetAttribute("ID");
             if (string.IsNullOrEmpty(idText)) idText = root.GetAttribute("Id");
+            // A DIRECT child only: <QueryColumn><ID>…</ID></QueryColumn> is a column's id, and
+            // a descendant search would return one of those for the query itself.
+            if (string.IsNullOrEmpty(idText))
+                foreach (XmlNode child in root.ChildNodes)
+                    if (child is XmlElement e
+                        && (e.Name == "ID" || e.Name == "Id")
+                        && !string.IsNullOrEmpty(e.InnerText))
+                    { idText = e.InnerText.Trim(); break; }
             int.TryParse(idText, out var id);
             return (root.Name, id);
         }
