@@ -256,7 +256,19 @@ internal static partial class BcAppSymbolCache
     // slip but a warm box replaying the wrong parse, silently, on both. Re-read this constant
     // on origin/main immediately before pushing a bump; a rebase resolves the text and cannot
     // tell you the number is already taken.
-    private const int CacheVersion = 39;
+    // v40: PageSymbol gained MemberIdToDeclaredProperties (#2460) — the Enabled / Visible an
+    // ACTION of a precompiled page declares, which CollectMemberNames walked past. The record
+    // SHAPE changed and ActionDeclaredPropertiesSymbol is reachable from CachePayload, so
+    // PayloadShape keys a fresh payload on its own; the integer is here for the PARSE half,
+    // which is the same trap as v35, v36, v38 and v39. A v39 payload deserialises the new
+    // dictionary as null, which RecordPatches.TryGetDependencyActionDeclaredProperty reads as
+    // "this action declares neither" — EvaluateProperty's AL default of true, which is exactly
+    // the pre-fix wrong answer, replayed from a warm cache rather than missing. That is 1,129
+    // Enabled and 1,101 Visible declarations across Base Application 28.1's 25,184 actions.
+    //
+    // 40 was confirmed free immediately before pushing, per v39's own warning: origin/main read
+    // 39, and no open agent branch carried a value above 38.
+    private const int CacheVersion = 40;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -506,7 +518,28 @@ internal static partial class BcAppSymbolCache
         // the same missing attribute, so absence cannot distinguish them, and silently
         // treating "I could not read this" as "the AL declares nothing" is the exact shape of
         // the defect #2860 is about, one level up.
-        List<string>? UnreadableBooleanProperties = null);
+        List<string>? UnreadableBooleanProperties = null,
+        // Member id of every action declaring Enabled and/or Visible -> what it declares,
+        // verbatim (issue #2460). The action-side twin of PageControlSymbol's EditableExpr /
+        // VisibleExpr / EnabledExpr, and read off the SAME nodes CollectMemberNames already
+        // walks for Name / TargetName / RunObject.
+        //
+        // Measured on Base Application 28.1.49838.53910: 25,184 actions over 2,610 pages, of
+        // which 1,129 declare Enabled and 1,101 declare Visible — all of them answered true,
+        // because the synthesized page metadata reconstructs no action tree for BC's own
+        // ActionDefinition lookup to find. There is no Editable: AL does not give an action one.
+        Dictionary<int, ActionDeclaredPropertiesSymbol>? MemberIdToDeclaredProperties = null);
+
+    /// <summary>
+    /// The <c>Enabled</c> / <c>Visible</c> one action DECLARES, exactly as the compiler wrote
+    /// it — a literal, or the name of an expression the page's own IL registers. Null for
+    /// either means the action declares that one not at all, which is AL's default of true.
+    ///
+    /// <para>Verbatim on purpose: resolving a page global needs live page state, which only
+    /// <c>RunnerPageInstance.EvaluateProperty</c> has, and deciding literal-vs-expression here
+    /// would fork a rule that already exists there.</para>
+    /// </summary>
+    internal sealed record ActionDeclaredPropertiesSymbol(string? Enabled, string? Visible);
 
     /// <summary>
     /// One action's <c>RunObject</c> declaration as SymbolReference.json states it.
@@ -1363,6 +1396,7 @@ internal static partial class BcAppSymbolCache
         var memberNames = new Dictionary<int, string>();
         var actionRefTargets = new Dictionary<int, string>();
         var runObjects = new Dictionary<int, ActionRunObjectSymbol>();
+        var actionDeclaredProperties = new Dictionary<int, ActionDeclaredPropertiesSymbol>();
         int seq = 0;
         if (page.TryGetProperty("Controls", out var controlsArr) && controlsArr.ValueKind == JsonValueKind.Array)
             foreach (var c in controlsArr.EnumerateArray())
@@ -1371,9 +1405,13 @@ internal static partial class BcAppSymbolCache
                 CollectPagePartSymbols(c, parts);
                 CollectMemberNames(c, "Controls", memberNames, actionRefTargets);
             }
+        // Actions only (issue #2460): a CONTROL's Enabled/Visible already travels on
+        // PageControlSymbol from CollectPageControlSymbols above, so passing the dictionary
+        // down the Controls walk too would record the same declaration in two places and give
+        // a later reader two sources that can disagree.
         if (page.TryGetProperty("Actions", out var actionsArr) && actionsArr.ValueKind == JsonValueKind.Array)
             foreach (var a in actionsArr.EnumerateArray())
-                CollectMemberNames(a, "Actions", memberNames, actionRefTargets, runObjects);
+                CollectMemberNames(a, "Actions", memberNames, actionRefTargets, runObjects, actionDeclaredProperties);
 
         props.TryGetValue("SourceTableView", out var sourceTableView);
 
@@ -1435,7 +1473,7 @@ internal static partial class BcAppSymbolCache
             isPreview,
             insertAllowedStated, modifyAllowedStated, deleteAllowedStated,
             delayedInsertStated, multipleNewLinesStated,
-            unreadableBooleans);
+            unreadableBooleans, actionDeclaredProperties);
     }
 
     /// <summary>
@@ -1520,7 +1558,8 @@ internal static partial class BcAppSymbolCache
     /// </summary>
     private static void CollectMemberNames(JsonElement node, string childKey,
         Dictionary<int, string> names, Dictionary<int, string> actionRefTargets,
-        Dictionary<int, ActionRunObjectSymbol>? runObjects = null)
+        Dictionary<int, ActionRunObjectSymbol>? runObjects = null,
+        Dictionary<int, ActionDeclaredPropertiesSymbol>? declaredProperties = null)
     {
         if (node.TryGetProperty("Id", out var idProp) && idProp.TryGetInt32(out var id) && id != 0
             && node.TryGetProperty("Name", out var nameProp) && nameProp.GetString() is { Length: > 0 } name)
@@ -1530,10 +1569,30 @@ internal static partial class BcAppSymbolCache
                 actionRefTargets.TryAdd(id, target);
             if (runObjects != null && TryReadActionRunObject(node) is { } runObject)
                 runObjects.TryAdd(id, runObject);
+            // Only recorded when the node declares at least one of the two, so the dictionary
+            // holds exactly the actions with something to say (1,129 + 1,101 of Base
+            // Application 28.1's 25,184) and a MISS keeps meaning "declares neither" —
+            // EvaluateProperty's AL default of true. An entry of two nulls would say the same
+            // thing in a second spelling, and only the miss is checked downstream.
+            if (declaredProperties != null && TryReadActionDeclaredProperties(node) is { } declared)
+                declaredProperties.TryAdd(id, declared);
         }
         if (node.TryGetProperty(childKey, out var children) && children.ValueKind == JsonValueKind.Array)
             foreach (var child in children.EnumerateArray())
-                CollectMemberNames(child, childKey, names, actionRefTargets, runObjects);
+                CollectMemberNames(child, childKey, names, actionRefTargets, runObjects, declaredProperties);
+    }
+
+    /// <summary>
+    /// The <c>Enabled</c> / <c>Visible</c> an action node declares, or null when it declares
+    /// neither (issue #2460). Verbatim — see <see cref="ActionDeclaredPropertiesSymbol"/>.
+    /// </summary>
+    private static ActionDeclaredPropertiesSymbol? TryReadActionDeclaredProperties(JsonElement node)
+    {
+        var props = SymbolProperties(node);
+        var hasEnabled = props.TryGetValue("Enabled", out var enabled) && !string.IsNullOrWhiteSpace(enabled);
+        var hasVisible = props.TryGetValue("Visible", out var visible) && !string.IsNullOrWhiteSpace(visible);
+        if (!hasEnabled && !hasVisible) return null;
+        return new ActionDeclaredPropertiesSymbol(hasEnabled ? enabled : null, hasVisible ? visible : null);
     }
 
     /// <summary>

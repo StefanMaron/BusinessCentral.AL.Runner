@@ -962,8 +962,31 @@ internal sealed partial class RunnerPageInstance
     internal static bool IsLiteralFalse(string? raw)
         => raw != null && (string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase) || raw == "0");
 
+    /// <summary>
+    /// What an action DECLARES for one of its two boolean properties, whichever metadata
+    /// states it — the merged runtime tree, or the declaring dependency's SymbolReference.json
+    /// for a page that ships precompiled (issue #2460).
+    ///
+    /// <para>The action-side twin of <see cref="DeclaredControlProperty"/>, with the same
+    /// contract: the runtime tree wins whenever it has a definition, so this can only ADD an
+    /// answer where there was none. An action has no <c>Editable</c> in AL, which is why only
+    /// two names appear here and not three.</para>
+    /// </summary>
+    private string? DeclaredActionProperty(int actionId, string propertyName)
+    {
+        if (ActionDefinition(actionId) is { } definition)
+            return propertyName switch
+            {
+                "Enabled" => definition.Enabled,
+                "Visible" => definition.Visible,
+                _ => null,
+            };
+
+        return RecordPatches.TryGetDependencyActionDeclaredProperty(_pageId, actionId, propertyName);
+    }
+
     internal bool ActionEnabled(int actionId)
-        => EvaluateProperty(ActionDefinition(actionId)?.Enabled, "Enabled", actionId, PageElementKind.Action, atOpen: false);
+        => EvaluateProperty(DeclaredActionProperty(actionId, "Enabled"), "Enabled", actionId, PageElementKind.Action, atOpen: false);
 
     /// <summary>
     /// Live, like every other property except a CONTROL's own Visible — and it follows the
@@ -983,7 +1006,7 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     internal bool ActionVisible(int actionId)
     {
-        if (!EvaluateProperty(ActionDefinition(actionId)?.Visible, "Visible", actionId, PageElementKind.Action, atOpen: false))
+        if (!EvaluateProperty(DeclaredActionProperty(actionId, "Visible"), "Visible", actionId, PageElementKind.Action, atOpen: false))
             return false;
 
         foreach (var ancestor in EnclosingActionGroups(actionId))

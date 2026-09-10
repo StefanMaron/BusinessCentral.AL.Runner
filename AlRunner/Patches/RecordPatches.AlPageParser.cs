@@ -727,6 +727,41 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The <c>Enabled</c> / <c>Visible</c> an ACTION of a PRECOMPILED dependency page
+    /// DECLARES, exactly as the compiler wrote it, or null when it declares none (issue
+    /// #2460).
+    ///
+    /// <para>The action-side twin of
+    /// <see cref="TryGetDependencyControlDeclaredProperty"/>, and the same defect one tree
+    /// over: <c>TryBuildDependencyPageMetadata</c> reconstructs no ACTION tree either, so
+    /// <c>RunnerPageInstance.ActionDefinition</c> — which resolves through BC's own
+    /// <c>TryGetCommonActionDefinitionById</c> over that empty tree — answered null for every
+    /// action and every one reported <c>Enabled = true</c> / <c>Visible = true</c>. A silent
+    /// wrong answer, so <c>Assert.IsTrue(action.Enabled())</c> passed vacuously and only
+    /// <c>Assert.IsFalse</c> caught it — six measured failures in Tests-SINGLESERVER on BC
+    /// 28.1, all on Base Application 977 "Time Sheet Setup Wizard", whose three wizard actions
+    /// declare <c>Enabled = BackActionEnabled</c> / <c>NextActionEnabled</c> /
+    /// <c>FinishActionEnabled</c>.</para>
+    ///
+    /// <para>Base Application 28.1 declares <c>Enabled</c> on 1,129 of its 25,184 actions and
+    /// <c>Visible</c> on 1,101. There is no <c>Editable</c>: AL does not give an action one, so
+    /// that name answers null here rather than being mapped onto one of the two.</para>
+    /// </summary>
+    internal static string? TryGetDependencyActionDeclaredProperty(int pageId, int actionId, string propertyName)
+    {
+        var symbol = TryGetDependencyPageSymbol(pageId);
+        if (symbol?.MemberIdToDeclaredProperties is not { } declared) return null;
+        if (!declared.TryGetValue(actionId, out var properties)) return null;
+
+        return propertyName switch
+        {
+            "Enabled" => properties.Enabled,
+            "Visible" => properties.Visible,
+            _ => null,
+        };
+    }
+
+    /// <summary>
     /// Every field control of a SOURCE-PARSED page, base plus matching pageextensions,
     /// for the "Page Control Field" (2000000192) virtual table. Same base+extension merge
     /// rule as <see cref="GetPageControlFieldMap"/> (only extensions of THIS page), same
