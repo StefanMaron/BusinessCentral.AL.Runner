@@ -304,9 +304,24 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The stderr line for a builder failure this populator's catch DID absorb (#3781). Names
+    /// the object kind, the id and the unwrapped cause, and carries no leading bracketed
+    /// component tag: <c>Log.FilteredWriter</c> (AlRunner/Log.cs) drops a line starting with one
+    /// unless <c>--verbose</c>, which is what made the old `[NclMetadataCachePopulator]` write
+    /// invisible at default verbosity. Same constraint as <see cref="MetaObjectFailureLine"/>.
+    /// </summary>
+    private static string PopulateOneObjectTypeFailureLine(string label, int id, Exception ex)
+    {
+        var inner = ex is System.Reflection.TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+        return $"al-runner: {label.ToLowerInvariant()} {id} metadata could not be built: "
+               + $"{inner.GetType().Name}: {inner.Message}";
+    }
+
+    /// <summary>
     /// Insert one cache-entry per parsed object-id into
     /// metadataCacheEntries[objectTypeIndex]. Idempotent (TryAdd via dict[]= but skipped
-    /// if the key already exists). Errors are logged + counted, never thrown.
+    /// if the key already exists). Errors are logged + counted, never thrown — except the three
+    /// deliberate refusals, which tear through so the cause is attributable (#3781).
     /// </summary>
     private static void PopulateOneObjectType(Array arr, int objectTypeIndex,
         int[] ids, Func<int, object?> buildMeta, string label)
@@ -322,11 +337,15 @@ public static partial class RecordPatches
         {
             if (dict.Contains(id)) { skipped++; continue; }
             object? meta;
+            // #3781 — the same filter every metadata-object builder's own catch carries. This
+            // frame is the caller of five of the six builders and is the startup path, so a
+            // bare catch here converts a refusal that has just correctly torn through a
+            // builder's filter straight back into `meta = null`, one frame up, and #3590/#3776
+            // buy nothing on the path that carries most of the traffic.
             try { meta = buildMeta(id); }
-            catch (Exception ex)
+            catch (Exception ex) when (MetaObjectCatchMayAbsorb(ex))
             {
-                var inner = ex is System.Reflection.TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-                Console.Error.WriteLine($"[NclMetadataCachePopulator] buildMeta({id}) threw {inner.GetType().Name}: {inner.Message}");
+                Console.Error.WriteLine(PopulateOneObjectTypeFailureLine(label, id, ex));
                 meta = null;
             }
             if (meta == null) { failed++; continue; }

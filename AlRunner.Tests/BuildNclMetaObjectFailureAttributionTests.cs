@@ -206,6 +206,15 @@ public sealed class BuildNclMetaObjectFailureAttributionTests
         var clause = clauses.First(c => c.TryOffset == tryOffset);
         var il = body.GetILAsByteArray()!;
 
+        // THE ASSERTION THAT MAKES THIS A PROVING TEST FOR THIS PR.
+        //
+        // Every offset below is byte-identical before and after this change — measured on a
+        // pre-fix build, all five try offsets are the same (79, 55, 86, 57, 436) and every other
+        // assertion in this method passes on BOTH. The one thing the fix actually alters is the
+        // clause KIND: a bare `catch (Exception)` is Clause, a `catch ... when (...)` is Filter.
+        // Without this line the method is sound but proves nothing about this PR (tdd.md).
+        Assert.Equal(ExceptionHandlingClauseOptions.Filter, clause.Flags);
+
         // The property: the try starts after the existence checks, so nothing absent reaches the
         // catch filter. A try at offset 0 means a check has moved inside it.
         Assert.True(tryOffset > 0,
@@ -310,6 +319,75 @@ public sealed class BuildNclMetaObjectFailureAttributionTests
         Assert.Equal(new[] { typeof(int), typeof(Exception) },
             line[0].GetParameters().Select(p => p.ParameterType).ToArray());
         Assert.Equal(typeof(string), line[0].ReturnType);
+    }
+
+    // ══ 5b. THE CALLER FRAME MUST NOT RE-SWALLOW IT (#3781) ══════════════════════════════
+    //
+    // A builder that correctly lets a refusal tear through buys nothing if its CALLER catches
+    // it. PopulateOneObjectType is the caller of five of the six builders (Table at line 79,
+    // Page 87, Report 109, Query 113, XmlPort 117) and it is the STARTUP path — it runs once per
+    // bundle before any AL test code, so it carries most of the traffic. Its bare catch
+    // converted every refusal straight back to `meta = null`, and its `[NclMetadataCachePopulator]`
+    // tag meant Log.cs's ^\[-anchored regex dropped the line at default verbosity too: the
+    // observable was exactly what it was before #3590 and #3776.
+    //
+    // This is the third instance of one shape in this family (#3749, #3590, #3776), each fixed
+    // correctly and each defeated by a catch one frame up that nobody had enumerated. So the
+    // structural arm here asserts the clause KIND, which is the thing that actually changed.
+
+    [Fact]
+    public void PopulateOneObjectTypesCatch_IsFiltered_SoARefusalIsNotReSwallowedOneFrameUp()
+    {
+        var m = typeof(RecordPatches).GetMethod(
+            "PopulateOneObjectType", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.True(m != null, "RecordPatches.PopulateOneObjectType not found");
+
+        var clauses = m!.GetMethodBody()!.ExceptionHandlingClauses;
+        Assert.True(clauses.Count > 0, "PopulateOneObjectType has no exception handler at all.");
+
+        // The buildMeta call is wrapped in the FIRST handler in the method. A bare
+        // `catch (Exception)` reports Clause; the `when (...)` filter reports Filter.
+        var first = clauses.OrderBy(c => c.TryOffset).First();
+        Assert.Equal(ExceptionHandlingClauseOptions.Filter, first.Flags);
+    }
+
+    [Fact]
+    public void ThePopulatorsFailureLine_NamesTheObjectKindAndId_AndSurvivesTheDefaultFilter()
+    {
+        var m = typeof(RecordPatches).GetMethod(
+            "PopulateOneObjectTypeFailureLine", BindingFlags.NonPublic | BindingFlags.Static);
+        Assert.True(m != null, "RecordPatches.PopulateOneObjectTypeFailureLine not found");
+
+        var line = (string)m!.Invoke(null, new object?[]
+        {
+            "XmlPort", 1230, new InvalidOperationException("ctor arity changed"),
+        })!;
+
+        Assert.Contains("1230", line, StringComparison.Ordinal);
+        Assert.Contains("xmlport", line, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(nameof(InvalidOperationException), line, StringComparison.Ordinal);
+        Assert.Contains("ctor arity changed", line, StringComparison.Ordinal);
+
+        // The half of #3781 that is not the catch: the old line was `[NclMetadataCachePopulator]
+        // ...`, which Log.cs drops at default verbosity, so even the absorbed case was invisible.
+        Assert.False(line.StartsWith("[", StringComparison.Ordinal),
+            "the populator's failure line starts with a component tag and is filtered out by default.");
+    }
+
+    [Fact]
+    public void ThePopulatorsFailureLine_UnwrapsAReflectionWrapper_SoTheCauseIsNamed()
+    {
+        var m = typeof(RecordPatches).GetMethod(
+            "PopulateOneObjectTypeFailureLine", BindingFlags.NonPublic | BindingFlags.Static)!;
+
+        var line = (string)m.Invoke(null, new object?[]
+        {
+            "Report", 1306, new TargetInvocationException(new ArgumentException("bad id")),
+        })!;
+
+        Assert.Contains(nameof(ArgumentException), line, StringComparison.Ordinal);
+        Assert.Contains("bad id", line, StringComparison.Ordinal);
+        Assert.DoesNotContain(nameof(TargetInvocationException), line, StringComparison.Ordinal);
     }
 
     // ══ 6. THE CACHE CANNOT HIDE A REFUSAL ═══════════════════════════════════════════════
