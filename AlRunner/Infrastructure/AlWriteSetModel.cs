@@ -25,8 +25,22 @@ public sealed class AlWriteSetTable
     public IReadOnlySet<string> TargetsOf(int statementId) =>
         _byId.TryGetValue(statementId, out var s) ? s : NoTargets;
 
-    /// <summary>Pairs each id with the statement starting exactly where its span starts. A condition's id starts mid-line, a block's `end` id at `end`; neither has a statement there.</summary>
-    public static AlWriteSetTable Build(IReadOnlyList<AlStatementWrites> writes, long[] spans, IEnumerable<int>? instrumented = null)
+    /// <summary>
+    /// Pairs each id with the statement starting exactly where its span starts. A condition's
+    /// id starts mid-line, a block's `end` id at `end`; neither has a statement there.
+    /// </summary>
+    /// <param name="lineOffset">
+    /// Lines to add to a decoded span line to reach the FILE line the parser reported
+    /// (#3832). <paramref name="writes"/> carries parser positions, which are file-relative;
+    /// a [SourceSpans] line is relative to the owning OBJECT's text. They coincide only for
+    /// the first object in a file, so for any later one this comparison matched nothing at
+    /// all — an empty table, indistinguishable downstream from "this member writes nothing".
+    /// The value is AlSourceLocationMap.LineOffset for the owning object;
+    /// AlCoverageTracker.TryResolveScope already returns it.
+    /// </param>
+    public static AlWriteSetTable Build(
+        IReadOnlyList<AlStatementWrites> writes, long[] spans,
+        IEnumerable<int>? instrumented = null, int lineOffset = 0)
     {
         var byStart = new Dictionary<AlTextPosition, IReadOnlySet<string>>();
         foreach (var w in writes)
@@ -39,7 +53,7 @@ public sealed class AlWriteSetTable
         {
             if (i < 0 || i >= spans.Length) continue; // defensive: BC shape drift
             var (fromLine, fromColumn, _, _) = AlSourceSpanCodec.Decode(spans[i]);
-            if (byStart.TryGetValue(new AlTextPosition(fromLine, fromColumn), out var targets))
+            if (byStart.TryGetValue(new AlTextPosition(fromLine + lineOffset, fromColumn), out var targets))
                 byId[i] = targets;
         }
         return new AlWriteSetTable(byId);

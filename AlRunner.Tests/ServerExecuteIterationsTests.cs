@@ -141,6 +141,72 @@ public class ServerExecuteIterationsTests : IClassFixture<SharedCliServer>
         Assert.Equal(new[] { "0", "1", "3", "6" }, flat);
     }
 
+    /// <summary>
+    /// #3832: the whole chain for an object that does NOT start its file. A parser position is
+    /// file-relative and a [SourceSpans] line is relative to the owning object's text, and
+    /// AlScopeSyntaxResolver compared them directly — so for a later object the member anchor
+    /// pointed into the previous object's range, and the loop and write tables matched nothing.
+    ///
+    /// The failure is silent, which is why this asserts the loop is REPORTED rather than that
+    /// its lines are right: unfixed, `loops` is empty and the test still passes with values
+    /// captured, so nothing downstream says iteration tracking gave up.
+    ///
+    /// The unit facts in AlMemberSyntaxIndexTests pin the two Build methods' arithmetic. This
+    /// pins the wiring — that the resolver passes scope.LineOffset at all — which those cannot,
+    /// because they call Build directly.
+    /// </summary>
+    [SkippableFact]
+    public async Task Execute_LoopInTheSecondObjectOfAFile_IsSegmentedOnItsFileLines()
+    {
+        TestArtifacts.SkipIfMissing();
+        // A helper codeunit FIRST, so the test codeunit's text starts partway down the file.
+        var code =
+            "codeunit 60399 \"Iter Lead SX\"\n" +        // 1
+            "{\n" +                                        // 2
+            "    procedure Ping(): Integer\n" +            // 3
+            "    begin\n" +                                // 4
+            "        exit(1);\n" +                         // 5
+            "    end;\n" +                                 // 6
+            "}\n" +                                        // 7
+            "\n" +                                         // 8
+            "codeunit 60304 \"Iter Second SX\"\n" +       // 9
+            "{\n" +                                        // 10
+            "    trigger OnRun()\n" +                      // 11
+            "    var\n" +                                  // 12
+            "        i: Integer;\n" +                      // 13
+            "        total: Integer;\n" +                  // 14
+            "    begin\n" +                                // 15
+            "        total := 0;\n" +                      // 16
+            "        for i := 1 to 3 do begin\n" +         // 17  the loop
+            "            total := total + i;\n" +          // 18  its body
+            "        end;\n" +                             // 19  its end
+            "        total := total * 10;\n" +             // 20  a statement AFTER the loop
+            "    end;\n" +                                 // 21
+            "}\n";                                         // 22
+
+        var d = await ExecuteAsync(code);
+        var t = SingleTest(d);
+
+        // The loop that actually ran. A non-zero offset also produces a SECOND, empty
+        // instance of the same site, which is a separate defect (#3834) and not something
+        // this fact should pretend away: before this change there were no instances at all,
+        // and asserting Single here would tie an unrelated bug to this one's proof.
+        var loop = Assert.Single(Loops(t, "OnRun").Where(l => l.GetProperty("iterationCount").GetInt32() > 0));
+        // FILE lines, not the 8-lines-lower ones the object's own text would give.
+        Assert.Equal(17, loop.GetProperty("line").GetInt32());
+        Assert.Equal(19, loop.GetProperty("endLine").GetInt32());
+        Assert.Equal(3, loop.GetProperty("iterationCount").GetInt32());
+
+        // Segmentation really ran: one step per pass, each with that pass's own values, and
+        // the body's file line. An empty or mis-keyed table gives zero steps.
+        var steps = Steps(d, t, loop);
+        Assert.Equal(new[] { 1, 2, 3 }, steps.Select(x => x.Index).ToArray());
+        Assert.Equal(new[] { "1" }, Values(steps[0], "total"));
+        Assert.Equal(new[] { "3" }, Values(steps[1], "total"));
+        Assert.Equal(new[] { "6" }, Values(steps[2], "total"));
+        Assert.All(steps, x => Assert.Equal(new[] { 18 }, Lines(x)));
+    }
+
     // --- every loop kind -------------------------------------------------------------------
 
     [SkippableFact]

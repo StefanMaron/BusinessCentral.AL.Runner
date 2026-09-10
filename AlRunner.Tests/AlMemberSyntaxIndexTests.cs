@@ -656,6 +656,97 @@ codeunit 60315 WriteShapes
         Assert.Equal(new[] { "n" }, table.TargetsOf(4).Order().ToArray()); // n := 99
     }
 
+    // --- #3832: the two coordinate spaces --------------------------------------------
+    //
+    // A parser position is FILE-relative. A [SourceSpans] line is relative to the OWNING
+    // OBJECT's text. For the first object in a file the two coincide, which is why every
+    // fact above passes without an offset; for any later object they are apart by exactly
+    // AlSourceLocationMap.LineOffset, which AlCoverageTracker.TryResolveScope already hands
+    // back and AlScopeSyntaxResolver dropped on the floor.
+    //
+    // These pass the SAME member the facts above use, with the spans shifted down as BC
+    // would emit them for an object that does not start the file, plus the matching offset.
+    // Without it nothing matches: every id resolves to no targets and no loop site, and the
+    // run stays green while its iteration and write tables are empty.
+    //
+    // Deliberately NOT written by prepending an object to LoopShapesSource and reusing the
+    // measured constants: BC's object text begins at the blank line before the declaration
+    // once anything precedes it (#3822), so the real spans shift too and the reused numbers
+    // would encode a fiction that passes against a wrong implementation.
+
+    /// <summary>Every measured span moved down by <paramref name="offset"/> lines, which is
+    /// what BC emits for the same member in an object that starts <paramref name="offset"/>
+    /// lines into its file. The parser's own positions do not move, because the source it
+    /// parses is unchanged.</summary>
+    private static long[] ShiftedBy(long[] spans, int offset) =>
+        spans.Select(x =>
+        {
+            var (l1, c1, l2, c2) = AlSourceSpanCodec.Decode(x);
+            return AlSourceSpanCodec.Encode(l1 - offset, c1, l2 - offset, c2);
+        }).ToArray();
+
+    [SkippableFact]
+    public void ResolveWrites_ObjectAfterTheFirstInItsFile_MatchesWithTheLineOffset()
+    {
+        RequireEngine();
+        const int offset = 17;
+        var m = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo");
+        var spans = ShiftedBy(MeasuredForTo, offset);
+
+        var table = AlWriteSetTable.Build(m.Writes, spans, instrumented: null, lineOffset: offset);
+
+        Assert.Equal(new[] { "t" }, table.TargetsOf(0).Order().ToArray()); // t := 0
+        Assert.Empty(table.TargetsOf(1));                                   // the for header
+        Assert.Equal(new[] { "t" }, table.TargetsOf(2).Order().ToArray()); // t := t + i
+        Assert.Equal(new[] { "t" }, table.TargetsOf(3).Order().ToArray()); // t := t * 10
+    }
+
+    /// <summary>The negative direction, and the failure this defect actually produces: the
+    /// same shifted spans with no offset match nothing at all. Not a throw, not a wrong
+    /// target — an empty table, which reads downstream as "this member writes nothing".</summary>
+    [SkippableFact]
+    public void ResolveWrites_ShiftedSpansWithoutTheOffset_MatchNothing()
+    {
+        RequireEngine();
+        var m = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo");
+        var spans = ShiftedBy(MeasuredForTo, 17);
+
+        var table = AlWriteSetTable.Build(m.Writes, spans);
+
+        Assert.Empty(table.TargetsOf(0));
+        Assert.Empty(table.TargetsOf(2));
+        Assert.Empty(table.TargetsOf(3));
+    }
+
+    [SkippableFact]
+    public void ResolveLoops_ObjectAfterTheFirstInItsFile_MatchesWithTheLineOffset()
+    {
+        RequireEngine();
+        const int offset = 17;
+        var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo").Sites;
+        var spans = ShiftedBy(MeasuredForTo, offset);
+
+        var table = AlLoopScopeTable.Build(sites, spans, instrumented: null, lineOffset: offset);
+
+        // The same ids the unshifted fact above asserts: 1 is the for header, 2 the body.
+        Assert.Equal(new[] { "i" }, table.LoopVariablesAssignedBefore(current: 2, previous: 2).ToArray());
+        Assert.Empty(table.LoopVariablesAssignedBefore(current: 2, previous: 1));
+    }
+
+    /// <summary>Same shape, no offset: the loop's own ids are not recognised, so the table
+    /// reports no loop-variable assignment at all and iteration segmentation goes quiet.</summary>
+    [SkippableFact]
+    public void ResolveLoops_ShiftedSpansWithoutTheOffset_RecogniseNoLoopIds()
+    {
+        RequireEngine();
+        var sites = Member(AlMemberSyntaxIndex.Parse(LoopShapesSource, "LoopShapes.al"), "ForTo").Sites;
+        var spans = ShiftedBy(MeasuredForTo, 17);
+
+        var table = AlLoopScopeTable.Build(sites, spans);
+
+        Assert.Empty(table.LoopVariablesAssignedBefore(current: 2, previous: 2));
+    }
+
     // --- Build: negative direction, no engine needed ----------------------------------
 
     [Fact]
