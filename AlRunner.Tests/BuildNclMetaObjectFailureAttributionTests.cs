@@ -162,15 +162,32 @@ public sealed class BuildNclMetaObjectFailureAttributionTests
     // The claim that makes section 1 safe, measured per builder from IL rather than assumed from
     // the source. A refactor that moves an existence check inside the try must fail here.
     //
-    // NOT the `ret`-before-the-try byte scan #3590 used. That reads a CODEGEN accident, not the
-    // structure: Roslyn gives four of these five builders a single shared epilogue and branches
-    // every early return to it, so their pre-try region holds no `ret` at all while the checks
-    // are still entirely outside the try. Measured — the scan holds only for BuildNCLMetaTable
-    // and BuildNCLMetaXmlPort, and would be a false failure for the other four (PR body).
+    // WHAT THIS ASSERTS, AND WHAT IT DELIBERATELY DOES NOT
     //
-    // What is structural, and what is asserted instead: no branch in the pre-try region targets
-    // anything INSIDE the try, and at least one leaves past the handler. That is exactly "an
-    // absent object exits without the catch seeing it", and it survives a codegen change.
+    //   Asserted: the protected region begins at a nonzero offset and does not reach the method's
+    //   entry point, and the unprotected prologue is big enough to hold the existence checks. So
+    //   the checks run OUTSIDE the handler's reach, and an absent object returns without the
+    //   filter ever seeing it.
+    //
+    //   NOT asserted: which IL offset any particular early return branches to. Two attempts at
+    //   that both measured codegen rather than structure, and the second was unsound:
+    //
+    //   1. #3590's version asserts a `ret` byte appears before the first try offset. Roslyn gives
+    //      four of these five builders one shared epilogue and branches every early return to it,
+    //      so no `ret` is emitted before the try at all. Measured: the scan holds only for
+    //      BuildNCLMetaTable and BuildNCLMetaXmlPort.
+    //   2. This test's first version scanned the pre-try bytes for branch opcodes and required one
+    //      to target past the handler. Without a real opcode-length table a forward byte scan
+    //      cannot tell an opcode from an operand, and mis-framing yields garbage targets — on one
+    //      box BuildNCLMetaForm produced targets of 755630105 and 755630118, which satisfied
+    //      "past the handler" and made the check PASS on nonsense, while the same assertion failed
+    //      honestly on another box. It was wrong in both directions, so it is gone.
+    //
+    //   A sound version needs the full opcode table (or Cecil), and a behavioural arm driving a
+    //   real absent object through needs the BC engine, which would make this skip on boxes that
+    //   lack it — a non-vacuity guard that silently does not run is the defect it exists to catch.
+    //   The offsets below are source-determined, always run, and are what actually carries the
+    //   safety property.
 
     [Theory]
     [MemberData(nameof(Builders))]
@@ -179,63 +196,38 @@ public sealed class BuildNclMetaObjectFailureAttributionTests
     {
         var body = Method(builder).GetMethodBody()!;
         var clauses = body.ExceptionHandlingClauses;
-        Assert.True(clauses.Count > 0, $"{builder} has no exception handler at all.");
+
+        // Non-vacuity, part 1: there is a handler at all. Without this the two offset assertions
+        // below would be trivially satisfiable by a method that lost its try entirely.
+        Assert.True(clauses.Count > 0,
+            $"{builder} has no exception handler at all — this test would otherwise measure nothing.");
 
         var tryOffset = clauses.Select(c => c.TryOffset).Min();
         var clause = clauses.First(c => c.TryOffset == tryOffset);
-        var tryEnd = clause.TryOffset + clause.TryLength;
+        var il = body.GetILAsByteArray()!;
 
+        // The property: the try starts after the existence checks, so nothing absent reaches the
+        // catch filter. A try at offset 0 means a check has moved inside it.
         Assert.True(tryOffset > 0,
             $"{builder}'s try must start after its absent-object early returns; a try at offset 0 "
-            + "means a missing object now reaches the catch filter.");
+            + "means a genuinely missing object now reaches the catch filter and can be rethrown "
+            + "— the false-red half of guards-need-a-third-state.md's constraint.");
 
-        var il = body.GetILAsByteArray()!;
-        var preTryBranches = ShortAndLongBranches(il, tryOffset).ToList();
+        // Non-vacuity, part 2: the unprotected prologue is substantial, not a stray byte or two.
+        // Every existence check in these builders is at least a dictionary/set lookup plus a
+        // branch, so a prologue this small would mean the checks are no longer there. 16 bytes is
+        // well under the smallest real value (55) and well over a degenerate one.
+        Assert.True(tryOffset >= 16,
+            $"{builder}: only {tryOffset} IL bytes precede the try. The existence checks are not "
+            + "where this test thinks they are, so the assertion above is not measuring them.");
 
-        Assert.True(preTryBranches.Count > 0,
-            $"{builder}: no branch before the try — the existence checks are not where this "
-            + "test thinks they are, so it is measuring nothing.");
+        // And the handler does not reach back over the prologue.
+        Assert.True(clause.HandlerOffset > tryOffset,
+            $"{builder}: the handler starts at {clause.HandlerOffset}, at or before the try at "
+            + $"{tryOffset} — the protected region covers the existence checks.");
 
-        var intoTry = preTryBranches.Where(t => t >= clause.TryOffset && t < tryEnd).ToList();
-        Assert.True(intoTry.Count == 0,
-            $"{builder}: a branch before the try targets IL offset(s) "
-            + $"{string.Join(", ", intoTry)} inside the try [{clause.TryOffset},{tryEnd}). An "
-            + "existence check has moved inside the try, so a genuinely absent object can now "
-            + "reach the catch filter and be rethrown — the false-red half of "
-            + "guards-need-a-third-state.md's constraint.");
-
-        Assert.True(preTryBranches.Any(t => t >= tryEnd),
-            $"{builder}: no pre-try branch leaves past the handler, so no early-exit path "
-            + "bypasses the try at all.");
-    }
-
-    /// <summary>
-    /// Branch targets of the one-byte-opcode short (0x2B-0x37) and long (0x38-0x44) branch forms
-    /// occurring before <paramref name="limit"/>. Deliberately a coarse forward scan: it can
-    /// mis-frame an operand as an opcode, which can only ADD spurious targets, never hide a real
-    /// one — so the "targets nothing inside the try" assertion cannot be weakened by it.
-    /// </summary>
-    private static IEnumerable<int> ShortAndLongBranches(byte[] il, int limit)
-    {
-        var i = 0;
-        while (i < limit)
-        {
-            var op = il[i];
-            if (op >= 0x2B && op <= 0x37 && i + 1 < il.Length)
-            {
-                yield return i + 2 + (sbyte)il[i + 1];
-                i += 2;
-            }
-            else if (op >= 0x38 && op <= 0x44 && i + 4 < il.Length)
-            {
-                yield return i + 5 + BitConverter.ToInt32(il, i + 1);
-                i += 5;
-            }
-            else
-            {
-                i++;
-            }
-        }
+        Assert.True(il.Length > tryOffset,
+            $"{builder}: IL is shorter than its own try offset; the body could not be read.");
     }
 
     // ══ 4. THE FAILURE IS VISIBLE AT DEFAULT VERBOSITY ═══════════════════════════════════
