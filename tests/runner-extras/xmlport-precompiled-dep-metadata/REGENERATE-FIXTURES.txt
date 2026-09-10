@@ -1,0 +1,93 @@
+How .alpackages/*.app and .deps-bin/*.dll in this folder were produced
+=====================================================================
+
+These two binary fixtures make "XPD Precompiled XmlPort Dep" (table 61600,
+xmlport 61602) load as a genuinely Tier-1 precompiled dependency — a compiled
+DLL under .deps-bin/<Publisher>_<Name>_<Version>.dll plus a symbol package
+under .alpackages/ — with NO AL source reachable at metadata time. That is the
+shape a real Microsoft Base Application xmlport has, without this suite needing
+an externally provisioned Base Application.
+
+WHY THE PRECOMPILED SHAPE IS THE POINT
+--------------------------------------
+#3510: BuildNCLMetaXmlPort's existence check read _parsedXmlPorts, which
+RecordPatches.AlXmlPortParser fills from AL SOURCE THE RUNNER ITSELF PARSES.
+An xmlport the runner source-compiles is in that dictionary and never
+reproduced the defect; only one it does not can. A source-compiled fixture
+would therefore have been green before the fix and proved nothing.
+
+IMPORTANT: the dep's AL source must NEVER live inside this suite folder (or any
+other runner-extras suite folder) — a flat-bundle suite's compile step scans
+*.al recursively under its own root, so source sitting next to these fixtures
+would be swept into the MAIN app's own compile, the xmlport would be emitted
+here, and _parsedXmlPorts would contain it: the test would pass without the fix.
+Keep the dep source external (a scratch dir, NOT under tests/), regenerate
+there, copy only the two binary artifacts back.
+
+THE SYMBOL PACKAGE MIRRORS WHAT MICROSOFT'S OWN .app CARRIES
+-------------------------------------------------------------
+build_symbol_app.py.txt writes an XmlPorts entry with Id, Name and Properties
+and NO node schema, because that is what a real Base Application states.
+Measured on BC 28.1.49838.53910: its SymbolReference.json has a top-level
+"XmlPorts": [] with all 40 of its xmlports nested under "Namespaces", each
+carrying exactly the keys ['Variables', 'Methods', 'ReferenceSourceFileName',
+'Properties', 'Id', 'Name']. If you regenerate against a newer BC, re-read that
+file rather than inventing fields — a schema Microsoft does not emit would let
+the test pass on a shape that does not occur.
+
+Dep AL source (place in a scratch dir, e.g. /tmp/xpd-dep/):
+
+  app.json
+  {
+    "id": "d5e6f7a8-9b0c-4d1e-8f2a-3b4c5d6e7f92",
+    "name": "XPD Precompiled XmlPort Dep",
+    "publisher": "AL Runner Fixtures",
+    "version": "1.0.0.0",
+    "dependencies": [],
+    "idRanges": [ { "from": 61600, "to": 61699 } ],
+    "runtime": "17.0",
+    "target": "Cloud",
+    "features": []
+  }
+
+  - table 61600 "XPDDep Header" (fields: "No." Code[20], Description Text[100])
+  - xmlport 61602 "XPDDep Export Port": Format = Xml, Direction = Export,
+    schema { textelement(Root) { tableelement(Header; "XPDDep Header") {
+      XmlName = 'Header'; fieldelement(No; Header."No.");
+      fieldelement(Description; Header.Description) } } }
+  - a throwaway [Test] codeunit, so the bundle compiles and the AL-output cache
+    writes a DLL (step 2 below); it is NOT copied back here.
+
+Regenerate, from the repo root (AlRunner already built, -c Release):
+
+  # 1. The symbol package. Written by hand rather than by --emit-app: --emit-app
+  #    produces a NavxManifest plus embedded src/ and NO SymbolReference.json, and
+  #    without one the AL compiler cannot bind `XmlPort "XPDDep Export Port"` by
+  #    name (error AL0185, measured).
+  python3 tests/runner-extras/xmlport-precompiled-dep-metadata/build_symbol_app.py.txt \
+      tests/runner-extras/xmlport-precompiled-dep-metadata/.alpackages/AL_Runner_Fixtures_XPD_Precompiled_XmlPort_Dep_1.0.0.0.app
+
+  # 2. The raw compiled DLL (the Tier-1 target), by running the dep as a normal
+  #    bundle once and copying the cached DLL out.
+  dotnet run --project AlRunner -c Release -- --bc-version 28.1 --verbose /tmp/xpd-dep
+  # → prints "[cache] WROTE key=<KEY> path=~/.cache/al-runner/al-out/<KEY>.dll"
+  #   NOTE: al-out lives under ~/.cache/al-runner/ even when --cache points elsewhere.
+
+  # 3. Copy into place (filenames MUST match DependencyLoader.SanitizeFileName:
+  #    spaces -> underscores, "<Publisher>_<Name>_<Version>.<ext>"):
+  cp ~/.cache/al-runner/al-out/<KEY>.dll \
+     "tests/runner-extras/xmlport-precompiled-dep-metadata/.deps-bin/AL_Runner_Fixtures_XPD_Precompiled_XmlPort_Dep_1.0.0.0.dll"
+
+  # Both files are covered by .gitignore's `*.app` / build patterns — commit with
+  # `git add -f`, as the sibling precompiled-dep suites do.
+
+Verify (RED without the RecordPatches.KnownXmlPortIds.cs fix, GREEN with it —
+no --package-cache needed, fully hermetic):
+
+  dotnet run --project AlRunner -c Release -- --bc-version 28.1 --strict \
+      tests/runner-extras/xmlport-precompiled-dep-metadata
+
+  RED:   FAIL, NavMetadataNotFoundException from inside XmlPort61602..ctor
+  GREEN: exit 0, "PASS (oos)" on the positive test — the metadata object builds
+         and the still-open node-schema gap (#3797) is what refuses, declared in
+         tests/expectations/oos-xmlport-precompiled.json

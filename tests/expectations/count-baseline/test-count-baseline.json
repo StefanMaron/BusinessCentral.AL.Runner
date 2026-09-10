@@ -74,7 +74,8 @@
         "user-table-baseapp-subscriber": { "tests": 5 },
         "windows-language-license-stub": { "tests": 4 },
         "xasm-event-dispatch-dep": { "tests": 1 },
-        "xasm-event-dispatch-main": { "tests": 1 }
+        "xasm-event-dispatch-main": { "tests": 1 },
+        "xmlport-precompiled-dep-metadata": { "tests": 2 }
       }
     }
   }
