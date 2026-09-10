@@ -29,7 +29,7 @@ public sealed class DependencyMetadataProducerScratchOwnershipTests
     /// directory, writes the package's sources into it, fails the emit, and deletes it in a
     /// `finally`. So the sidecar cannot be read after <c>Ensure</c> returns — this drives the
     /// path-choosing seam directly and then proves, in
-    /// <see cref="Ensure_CompilesOutOfAnOwnedScratchDirectory_NotABareTempSubdirectory"/>, that
+    /// <see cref="Ensure_ReleasesTheOwnedScratchDirectoryOnTheFailurePath"/>, that
     /// the seam is the one <c>Ensure</c> actually uses.
     ///
     /// Positive: the sidecar exists, parses, and names this process. Negative: it names the
@@ -127,43 +127,54 @@ public sealed class DependencyMetadataProducerScratchOwnershipTests
     }
 
     /// <summary>
-    /// <c>Ensure</c> really compiles out of that seam, so the two facts above are about the
-    /// production path rather than about a helper nothing calls.
+    /// <c>Ensure</c> really compiles out of that seam and RELEASES it, so the facts above are
+    /// about the production path rather than about a helper nothing calls.
     ///
-    /// Positive: driving <c>Ensure</c> on a source-shipping package leaves no
-    /// <c>al-runner-depmeta*</c> entry behind under a redirected temp root — neither directory
-    /// nor orphan sidecar — which is only true if the path it chose was under that root and its
-    /// cleanup released both. Negative: a bare <c>Directory.CreateTempSubdirectory</c> ignores
-    /// TMPDIR on no platform, but it leaves the sidecar question unanswerable, so the fact is
-    /// paired with the source scan below rather than resting on the residue alone.
+    /// <para>Positive: driving <c>Ensure</c> on a source-shipping package — a null compiler
+    /// fails the emit after the sources are written, which is the shape that exercises creation
+    /// AND the <c>finally</c> in one call — leaves no <c>al-runner-depmeta</c> directory and no
+    /// orphan sidecar behind. Negative: the container is not left holding this app's leaf, and
+    /// the process no longer claims ownership of anything under it, so a <c>finally</c> weakened
+    /// to delete the tree while leaking the sidecar or the registration is caught.</para>
+    ///
+    /// <para>Deliberately NOT by redirecting <c>TMPDIR</c>. <c>Path.GetTempPath()</c> re-reads
+    /// that variable on every call on Linux and the environment is process-global, so a test
+    /// that sets it redirects the temp root for every OTHER test xUnit is running in parallel.
+    /// Measured while writing this file: doing so produced a 1-in-6 failure in
+    /// <c>CacheRootStartupFailureTests</c> and <c>PkgDedupStaleStageReuseTests</c>, two classes
+    /// this change does not touch, and the failing test differed between runs.</para>
     /// </summary>
     [Fact]
-    public void Ensure_CompilesOutOfAnOwnedScratchDirectory_NotABareTempSubdirectory()
+    public void Ensure_ReleasesTheOwnedScratchDirectoryOnTheFailurePath()
     {
+        var appId = Guid.Parse("99999999-8888-7777-6666-555555555555");
         var pkg = WriteSourcePackage();
-        var probe = TestScratch.Dir("depmeta-probe");
-        Directory.CreateDirectory(probe);
 
-        var oldTmp = Environment.GetEnvironmentVariable("TMPDIR");
-        try
-        {
-            Environment.SetEnvironmentVariable("TMPDIR", probe);
+        var before = Directory.Exists(DependencyMetadataProducer.ScratchContainer)
+            ? Directory.GetFileSystemEntries(DependencyMetadataProducer.ScratchContainer)
+            : Array.Empty<string>();
 
-            // A null compiler makes the emit fail after the sources are written, which is the
-            // shape that exercises creation AND the finally in one call.
-            Assert.Throws<DependencyLoadException>(() => DependencyMetadataProducer.Ensure(
-                new AppManifest(
-                    Publisher: "Microsoft", Name: "Business Foundation",
-                    Version: new Version(1, 0, 0, 0),
-                    AppId: Guid.Parse("99999999-8888-7777-6666-555555555555"),
-                    Dependencies: Array.Empty<DependencyRef>()),
-                pkg, compiler: null!));
-        }
-        finally
-        {
-            Environment.SetEnvironmentVariable("TMPDIR", oldTmp);
-            ScratchDirs.Release(probe);
-        }
+        Assert.Throws<DependencyLoadException>(() => DependencyMetadataProducer.Ensure(
+            new AppManifest(
+                Publisher: "Microsoft", Name: "Business Foundation",
+                Version: new Version(1, 0, 0, 0),
+                AppId: appId,
+                Dependencies: Array.Empty<DependencyRef>()),
+            pkg, compiler: null!));
+
+        var after = Directory.Exists(DependencyMetadataProducer.ScratchContainer)
+            ? Directory.GetFileSystemEntries(DependencyMetadataProducer.ScratchContainer)
+            : Array.Empty<string>();
+
+        // Compared as a SET DIFFERENCE against this app id, so a directory another test (or
+        // another runner sharing this TMPDIR) put in the container cannot fail this.
+        var leaked = after.Except(before, StringComparer.Ordinal)
+            .Where(e => Path.GetFileName(e).StartsWith($"{appId:N}", StringComparison.Ordinal))
+            .ToList();
+
+        Assert.True(leaked.Count == 0,
+            "Ensure's finally must release the scratch directory AND its sidecar; these entries "
+            + "for this app id survived the call:\n  " + string.Join("\n  ", leaked));
     }
 
     /// <summary>
