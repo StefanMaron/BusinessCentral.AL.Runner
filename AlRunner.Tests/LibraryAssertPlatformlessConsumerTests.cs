@@ -20,6 +20,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using Xunit;
+using AlRunner;
 
 namespace AlRunner.Tests;
 
@@ -42,14 +43,25 @@ public sealed class LibraryAssertPlatformlessConsumerTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { }
     }
 
+    /// <summary>What one provisioned location supplies: both directories, and the Library
+    /// Assert package's OWN manifest, which is what the consumer must ask for.</summary>
+    private sealed record Provisioned(string TestApps, string PlatformApps, AppManifest LibraryAssert);
+
     /// <summary>
     /// A test-apps directory holding Microsoft_Library Assert.app together with a platform-apps
     /// directory holding System.app. Both come from ONE candidate location — the legacy
     /// <c>~/.al-runner</c> layout CI populates, or one version directory under the artifacts
     /// root — never mixed across versions, which would measure a pairing no real run produces.
-    /// Null when no single location has both.
+    /// Null when no single location has both, or when the package's manifest will not parse.
+    ///
+    /// The manifest comes back with it because the toolkit's version tracks the BC leg: the
+    /// 27.5 leg provisions Library Assert v27.x, the 28.4 leg v28.x. A consumer asking for a
+    /// hardcoded minimum resolves nothing on the lower leg (DependencyResolver skips a
+    /// candidate whose version is below the request), so the bundle fails to compile for a
+    /// reason that has nothing to do with #3719 — measured as a red 27.5 leg on PR #3793,
+    /// reported as the bundle's own EMIT-ZERO rather than the dependency's.
     /// </summary>
-    private static (string TestApps, string PlatformApps)? FindProvisionedDirs()
+    private static Provisioned? FindProvisionedDirs()
     {
         var home = TestArtifacts.HomeDir();
         var candidates = new List<(string TestApps, string PlatformApps)>();
@@ -61,13 +73,16 @@ public sealed class LibraryAssertPlatformlessConsumerTests : IDisposable
                 candidates.Add((Path.Combine(ver, "test-apps"), Path.Combine(ver, "platform-apps")));
 
         foreach (var c in candidates)
-            if (File.Exists(Path.Combine(c.TestApps, "Microsoft_Library Assert.app"))
-                && File.Exists(Path.Combine(c.PlatformApps, "System.app")))
-                return c;
+        {
+            var assertPath = Path.Combine(c.TestApps, "Microsoft_Library Assert.app");
+            if (!File.Exists(assertPath) || !File.Exists(Path.Combine(c.PlatformApps, "System.app"))) continue;
+            var manifest = AppLoader.ReadManifest(assertPath);
+            if (manifest != null) return new Provisioned(c.TestApps, c.PlatformApps, manifest);
+        }
         return null;
     }
 
-    private void WriteBundles(out string app, out string tests)
+    private void WriteBundles(AppManifest libraryAssert, out string app, out string tests)
     {
         app = Path.Combine(_root, "app");
         tests = Path.Combine(_root, "tests");
@@ -94,14 +109,17 @@ public sealed class LibraryAssertPlatformlessConsumerTests : IDisposable
             end;
         }
         """);
-        File.WriteAllText(Path.Combine(tests, "app.json"), """
+        // The Library Assert dependency is written at the version this box actually has, read
+        // from the package's own manifest — see FindProvisionedDirs. `al` generates the entry
+        // the same way, from the package it compiled against.
+        File.WriteAllText(Path.Combine(tests, "app.json"), $$"""
         {
           "id": "5a3f0b11-3719-4a11-8011-000000003719",
           "name": "LAPC Tests",
           "publisher": "AL Runner",
           "version": "1.0.0.0",
           "dependencies": [
-            { "id": "dd0be2ea-f733-4d65-bb34-a28f4624fb14", "name": "Library Assert", "publisher": "Microsoft", "version": "28.0.0.0" },
+            { "id": "{{libraryAssert.AppId}}", "name": "{{libraryAssert.Name}}", "publisher": "{{libraryAssert.Publisher}}", "version": "{{libraryAssert.Version}}" },
             { "id": "5a3f0b11-3719-4a10-8010-000000003719", "name": "LAPC App", "publisher": "AL Runner", "version": "1.0.0.0" }
           ],
           "idRanges": [ { "from": 63710, "to": 63719 } ],
@@ -169,12 +187,17 @@ public sealed class LibraryAssertPlatformlessConsumerTests : IDisposable
                 + "CI provisions both (al-runner provision --test-apps --platform-apps).");
         TestArtifacts.SkipIf(dirs == null,
             "no Microsoft_Library Assert.app + System.app pair in one provisioned location on this box.");
-        WriteBundles(out var app, out var tests);
+        WriteBundles(dirs!.LibraryAssert, out var app, out var tests);
 
-        var (output, exit) = RunRunner(app, tests, dirs!.Value.TestApps, dirs.Value.PlatformApps);
+        var (output, exit) = RunRunner(app, tests, dirs.TestApps, dirs.PlatformApps);
 
-        Assert.DoesNotContain("EMIT-ZERO", output);
-        Assert.DoesNotContain("dep-load-fail", output);
+        // Each of these prints the whole run. A bare Assert.DoesNotContain reports only the
+        // ~40 characters around the hit, which on the red 27.5 leg of PR #3793 named the
+        // symptom and hid the AL errors underneath it.
+        Assert.False(output.Contains("EMIT-ZERO", StringComparison.Ordinal),
+            $"EMIT-ZERO in the run against Library Assert v{dirs.LibraryAssert.Version}. Output:\n{output}");
+        Assert.False(output.Contains("dep-load-fail", StringComparison.Ordinal),
+            $"a dependency failed to load. Output:\n{output}");
         Assert.True(Regex.IsMatch(output, @"PASS\s+\S*\bHelperAnswersThroughLibraryAssert\b"),
             $"no PASS line for HelperAnswersThroughLibraryAssert. Output:\n{output}");
         Assert.Equal(0, exit);
