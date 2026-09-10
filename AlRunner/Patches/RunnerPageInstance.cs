@@ -804,93 +804,8 @@ internal sealed partial class RunnerPageInstance
                 _ => null,
             };
 
-        return TranslateSymbolDeclarationToBindingKey(
-            RecordPatches.TryGetDependencyControlDeclaredProperty(_pageId, controlId, propertyName),
-            _sourceExpressions);
+        return RecordPatches.TryGetDependencyControlDeclaredProperty(_pageId, controlId, propertyName);
     }
-
-    /// <summary>
-    /// Turn a declaration read from SymbolReference.json into the spelling
-    /// <see cref="EvaluateProperty"/> resolves against, or leave it alone when it is a literal.
-    ///
-    /// <para>THE TWO SPELLINGS. The compiled page metadata names an expression by its
-    /// <c>Id</c> — <c>p790p790PageEditable</c> — and BC keys the live binding table on exactly
-    /// that: <c>NavForm.RegisterSourceExpression</c> ends in
-    /// <c>sourceExpressions.Add(expression.Id, expression)</c>. The SYMBOL FILE states the raw
-    /// AL identifier instead — <c>PageEditable</c> — which is a different string and matches no
-    /// key. Feeding it straight through made a resolvable property refuse: Base Application 790
-    /// "G/L Account Categories" declares <c>Enabled = PageEditable</c> on five actions, and
-    /// invoking one raised "'PageEditable' is not a name the page publishes a binding for"
-    /// where BC evaluates the page global (assigned <c>PageEditable := CurrPage.Editable</c> in
-    /// that page's own OnOpenPage) and runs the OnAction.</para>
-    ///
-    /// <para>So the raw name is matched against each registered expression's <c>Name</c>, and
-    /// the dictionary KEY — which is the <c>Id</c> — is handed on. A name nothing published is
-    /// returned UNCHANGED, so the refusal it then earns is the honest one about a binding the
-    /// page really does not have, not an artefact of the spelling.</para>
-    ///
-    /// <para>THE NAME IS READ BY REFLECTION, and that is not incidental. BC exposes it through
-    /// a type that only half the supported matrix has: <c>INavFormSourceExpression</c> is
-    /// absent on 27.0 and 27.5 and present on 28.1 and 28.4 (measured against the provisioned
-    /// artifacts), so naming it fails the BUILD on 27.x — which is exactly how this arrived.
-    /// What both families do carry is a public <c>Name</c> property on the concrete
-    /// <c>NavFormSourceExpression</c>, and both register with
-    /// <c>sourceExpressions.Add(id, …)</c>, so the join holds on every version without a
-    /// version-conditional type reference.</para>
-    ///
-    /// <para>Trap: this must never silently answer "no match" because the property was not
-    /// found. <see cref="ReadProperty"/> returning null for an entry that HAS a name would
-    /// turn the join into a no-op on one BC family and reintroduce the silent default this
-    /// whole change removes — on half the matrix, where nothing would say so. A value that is
-    /// present but unreadable is therefore not a miss:
-    /// <c>SourceExpressionNameOrNull</c> answers null only for an entry with no such property
-    /// at all, and <c>SymbolDeclarationBindingKeyTests</c> pins both arms.</para>
-    ///
-    /// <para>Literals never reach the lookup: <c>EvaluateProperty</c> decides
-    /// literal-vs-expression itself, and 13,053 of Base Application 28.1's 20,452 declarations
-    /// are literals, so short-circuiting them keeps the common case free of a dictionary walk.</para>
-    ///
-    /// <para>Static and internal so <c>AlRunner.Tests</c> can pin the translation directly: the
-    /// live route needs a NavForm whose own compiled IL has run its
-    /// <c>RegisterSourceExpression</c> calls, which only the page-build pipeline produces.</para>
-    /// </summary>
-    internal static string? TranslateSymbolDeclarationToBindingKey(
-        string? declared, System.Collections.IDictionary sourceExpressions)
-    {
-        if (string.IsNullOrEmpty(declared)) return declared;
-        if (string.Equals(declared, "true", StringComparison.OrdinalIgnoreCase) || declared == "1") return declared;
-        if (string.Equals(declared, "false", StringComparison.OrdinalIgnoreCase) || declared == "0") return declared;
-
-        // Already an Id (the page registered this very key) — nothing to translate.
-        if (sourceExpressions[declared] != null) return declared;
-
-        foreach (System.Collections.DictionaryEntry entry in sourceExpressions)
-        {
-            if (entry.Value is null) continue;
-            if (SourceExpressionNameOrNull(entry.Value) is not { } name) continue;
-            if (!string.Equals(name, declared, StringComparison.OrdinalIgnoreCase)) continue;
-            return entry.Key as string ?? declared;
-        }
-
-        return declared;
-    }
-
-    /// <summary>
-    /// The declared AL name of one registered source expression, or null when the entry does
-    /// not carry one at all.
-    ///
-    /// <para>Reflection rather than a cast, because the interface that declares it
-    /// (<c>INavFormSourceExpression</c>) exists only on BC 28.x. The concrete
-    /// <c>NavFormSourceExpression</c> carries a public <c>Name</c> on 27.x AND 28.x, so
-    /// reading the property by name is the one spelling that compiles and works on both —
-    /// see <see cref="TranslateSymbolDeclarationToBindingKey"/> for the measurement.</para>
-    ///
-    /// <para>A non-string value answers null the same way an absent property does: both mean
-    /// "this entry does not state a name I can join on", and neither may be reported as a
-    /// match. Internal so AlRunner.Tests can pin it directly.</para>
-    /// </summary>
-    internal static string? SourceExpressionNameOrNull(object entry)
-        => ReadProperty(entry, "Name") as string;
 
     /// <summary>Editable for a data-bound control, combined with the page's own state.</summary>
     internal bool ControlEditable(int controlId)
@@ -1067,11 +982,7 @@ internal sealed partial class RunnerPageInstance
                 _ => null,
             };
 
-        // Same two-spelling translation as the control path — the shape #2460's own page 790
-        // is made of, five actions declaring Enabled = PageEditable.
-        return TranslateSymbolDeclarationToBindingKey(
-            RecordPatches.TryGetDependencyActionDeclaredProperty(_pageId, actionId, propertyName),
-            _sourceExpressions);
+        return RecordPatches.TryGetDependencyActionDeclaredProperty(_pageId, actionId, propertyName);
     }
 
     internal bool ActionEnabled(int actionId)

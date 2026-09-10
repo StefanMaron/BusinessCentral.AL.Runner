@@ -52,18 +52,24 @@ Committed here (end-to-end, through a real `TestPage`):
 - a non-editable control is still **readable**, because this fix answers a property and
   deliberately does not change reachability.
 
-**Not here: the expression arm.** Driving `Editable = SomePageVariable` end-to-end needs a
-precompiled dependency whose page both declares the variable *and* registers it through its own
-compiled `RegisterSourceExpression` IL. The committed fixture is reused from
-`testpage-precompiled-dep-control`, whose page 65601 has no page variables, so that arm is
-pinned directly against the resolver in
-`AlRunner.Tests/DependencyControlDeclaredPropertyTests.cs`, where the symbol shape is modelled
-attribute-for-attribute on page 46's real declaration.
+**Not here, and not anywhere yet: resolving an expression-bound property.** That arm IS
+exercised — `ExpressionBoundProperty_RefusesLoudlyRatherThanGuessing` drives a control declaring
+`Visible = SomeUnpublishedGlobal` — but what it pins is the **refusal**, not a resolution.
 
-That the registered expression is *available* on a precompiled page was verified by execution
-while diagnosing this: a page declaring `Editable = FreeTextEditable` registered the key
-`p65701p65701FreeTextEditable` in `NavForm.SourceExpressions` at run time, which is exactly what
-`EvaluateProperty` resolves. The expression was never the missing piece — the definition was.
+Measured over the 92 `<Expression>` entries in this machine's 2,272 captured page-metadata
+documents (written by the real AL compiler): the binding key lives in the element's `Name`, the
+raw AL identifier in its `SourceExpression`, and the two **differ on 59 of the 92**. So the
+mapping is a stored pair, not a transformation of the name — and one identifier can carry
+several keys (page 60265 has both `Control144826568` and `p60265p60265HideIt` for `HideIt`).
+
+For a precompiled page that pair is absent: `DependencyPageMetadataXml` synthesizes
+`<Expressions>` present-but-empty on purpose. So the runner refuses, naming the expression.
+**#3825 tracks resolving it for real.**
+
+That literal-only coverage is not a detail. An earlier revision of this fix shipped a
+name-based join that matched nothing, and every unit test passed because the fixture asserted
+the relationship instead of measuring it — while every AL test declared a literal and
+short-circuited before the lookup. This arm is what closes that hole.
 
 ## Why this is not a corpus test
 

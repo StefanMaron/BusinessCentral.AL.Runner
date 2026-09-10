@@ -113,6 +113,38 @@ codeunit 65921 "TPDE Declared Editable Tests"
     end;
 
     [Test]
+    procedure ExpressionBoundProperty_RefusesLoudlyRatherThanGuessing()
+    var
+        DepRow: Record "TPCD Dep Table";
+        DepPage: TestPage "TPCD Dep Page";
+        Ignored: Boolean;
+    begin
+        // THE ARM THAT WAS MISSING, and its absence is why a no-op passed review once.
+        // Every other test here declares a LITERAL, which EvaluateProperty answers before it
+        // ever consults the page's binding table -- so none of them exercises the expression
+        // path at all, and a change that resolved nothing looked identical to one that worked.
+        //
+        // "Additional Information" declares Visible = SomeUnpublishedGlobal: a raw AL
+        // identifier this precompiled page publishes no binding for, because
+        // DependencyPageMetadataXml synthesizes an EMPTY <Expressions> element (its own
+        // comment says so) and the compiler-assigned binding key is not derivable from the
+        // symbol file's spelling. Measured over the 92 <Expression> entries in this machine's
+        // 2,272 captured page-metadata documents: the key lives in the element's Name and the
+        // raw identifier in its SourceExpression, and the two DIFFER on 59 of the 92 -- so the
+        // mapping is a read of data this page does not have, not a transformation of the name.
+        //
+        // So the honest answer is a refusal naming the expression, NOT a guess in either
+        // direction (.claude/rules/loud-failures.md). #3825 tracks resolving it for real.
+        Seed(DepRow, 5);
+
+        DepPage.OpenView();
+        DepPage.GotoRecord(DepRow);
+
+        asserterror Ignored := DepPage."Additional Information".Visible();
+        Assert.ExpectedError('SomeUnpublishedGlobal');
+    end;
+
+    [Test]
     procedure ADeclaredNonEditableControl_StillReadsItsValue()
     var
         DepRow: Record "TPCD Dep Table";
