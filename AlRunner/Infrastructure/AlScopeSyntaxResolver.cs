@@ -54,13 +54,18 @@ public static class AlScopeSyntaxResolver
 
         var instrumented = AlCoverageInstrumentedStatements.Find(scopeType);
         if (instrumented.Count == 0) return null;
-        // The first statement's position tells same-named triggers apart.
+        // The first statement's position tells same-named triggers apart — and it has to be
+        // stated in the FILE's coordinates, because that is what the index holds. A decoded
+        // span is relative to the owning object's text, so an object after the first in its
+        // file anchored into the previous object's range and could select a same-named member
+        // there (#3832). scope.LineOffset is the conversion, and TryResolveScope has always
+        // returned it; this is the caller that dropped it.
         int first = instrumented.Min();
         AlTextPosition? anchor = null;
         if (first >= 0 && first < scope.Spans.Length)
         {
             var (fromLine, fromColumn, _, _) = AlSourceSpanCodec.Decode(scope.Spans[first]);
-            anchor = new AlTextPosition(fromLine, fromColumn);
+            anchor = new AlTextPosition(fromLine + scope.LineOffset, fromColumn);
         }
         var member = index.FindMember(scope.FilePath, scope.ScopeName, anchor);
         if (member == null)
@@ -71,8 +76,8 @@ public static class AlScopeSyntaxResolver
         }
 
         return new AlScopeSyntax(
-            AlLoopScopeTable.Build(member.Sites, scope.Spans, instrumented),
-            AlWriteSetTable.Build(member.Writes, scope.Spans, instrumented),
+            AlLoopScopeTable.Build(member.Sites, scope.Spans, instrumented, scope.LineOffset),
+            AlWriteSetTable.Build(member.Writes, scope.Spans, instrumented, scope.LineOffset),
             scope.FilePath,
             scope.ScopeName);
     }

@@ -27,7 +27,13 @@ public static class AlLoopUnsegmentable
     public const string SoleNestedUnsegmentable = "soleNestedUnsegmentable";
 }
 
-/// <summary>0-based (line, column): the coordinate space both [SourceSpans] and the syntax tree use.</summary>
+/// <summary>
+/// A 0-based line and column. COORDINATE-AGNOSTIC on purpose: the same type carries both
+/// parser positions, which are file-relative, and decoded [SourceSpans] positions, which are
+/// relative to the owning object's text. Those two are the same numbering only for the first
+/// object in a file, and comparing them directly is #3832. Normalise before you compare —
+/// AlSourceLocationMap.LineOffset is the conversion.
+/// </summary>
 public readonly record struct AlTextPosition(int Line, int Column) : IComparable<AlTextPosition>
 {
     public int CompareTo(AlTextPosition other) =>
@@ -125,10 +131,11 @@ public sealed class AlLoopScopeTable
 {
     private readonly Dictionary<int, AlLoopSiteTable> _innermostOwner = new();
 
-    public AlLoopScopeTable(IReadOnlyList<AlLoopSiteTable> sites, long[] spans)
+    public AlLoopScopeTable(IReadOnlyList<AlLoopSiteTable> sites, long[] spans, int lineOffset = 0)
     {
         Sites = sites;
         Spans = spans;
+        LineOffset = lineOffset;
         var roots = new List<AlLoopSiteTable>();
         foreach (var s in sites)
         {
@@ -218,11 +225,22 @@ public sealed class AlLoopScopeTable
         return false;
     }
 
-    /// <summary>1-based line of a statement id; null when the id is outside the span table.</summary>
+    /// <summary>
+    /// Lines to add to a decoded span line to reach the FILE line (#3832) —
+    /// AlSourceLocationMap.LineOffset for the owning object, 0 for the first object in a
+    /// file. Held here because <see cref="LineOf"/> is the one place a line LEAVES this
+    /// table, and AlIterationTracker publishes it straight onto the wire.
+    /// </summary>
+    public int LineOffset { get; }
+
+    /// <summary>1-based FILE line of a statement id; null when the id is outside the span
+    /// table. File, not object-relative: an iteration's lines reach a caller as source
+    /// positions and are compared against nothing else, so a raw span line here is a wrong
+    /// number nobody can detect (#3832).</summary>
     public int? LineOf(int statementId)
     {
         if (statementId < 0 || statementId >= Spans.Length) return null;
-        return AlSourceSpanCodec.Decode(Spans[statementId]).FromLine + 1;
+        return AlSourceSpanCodec.Decode(Spans[statementId]).FromLine + 1 + LineOffset;
     }
 
     /// <summary>
@@ -230,7 +248,18 @@ public sealed class AlLoopScopeTable
     /// starts in a header range, a body id when it starts in a body statement. <paramref
     /// name="instrumented"/> excludes BC's trailing never-instrumented sentinel entry.
     /// </summary>
-    public static AlLoopScopeTable Build(IReadOnlyList<AlLoopSite> sites, long[] spans, IEnumerable<int>? instrumented = null)
+    /// <param name="lineOffset">
+    /// Lines to add to a decoded span line to reach the FILE line <paramref name="sites"/>
+    /// carries (#3832). REQUIRED rather than defaulted: a default of 0 is the exact
+    /// silent-failure this fixed, so a future caller has to choose a coordinate space
+    /// instead of getting the wrong one by omission. Pass 0 explicitly for first-object or
+    /// synthetic data — see AlWriteSetTable.Build's parameter of the same name for the two
+    /// coordinate spaces. Without it, an object after the first in its file recognises none
+    /// of its own loop ids and iteration segmentation goes quiet.
+    /// </param>
+    public static AlLoopScopeTable Build(
+        IReadOnlyList<AlLoopSite> sites, long[] spans,
+        IEnumerable<int>? instrumented, int lineOffset)
     {
         var ids = instrumented?.ToArray() ?? Enumerable.Range(0, spans.Length).ToArray();
         var starts = new Dictionary<int, AlTextPosition>(ids.Length);
@@ -238,7 +267,7 @@ public sealed class AlLoopScopeTable
         {
             if (i < 0 || i >= spans.Length) continue; // defensive: BC shape drift
             var (fromLine, fromColumn, _, _) = AlSourceSpanCodec.Decode(spans[i]);
-            starts[i] = new AlTextPosition(fromLine, fromColumn);
+            starts[i] = new AlTextPosition(fromLine + lineOffset, fromColumn);
         }
 
         var header = new HashSet<int>[sites.Count];
@@ -289,6 +318,6 @@ public sealed class AlLoopScopeTable
                 header[site.Index], body[site.Index], markerId[site.Index], markerNested[site.Index],
                 site.ParentIndex, unsegmentable[site.Index]));
         }
-        return new AlLoopScopeTable(tables, spans);
+        return new AlLoopScopeTable(tables, spans, lineOffset);
     }
 }

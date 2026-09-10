@@ -141,6 +141,143 @@ public class ServerExecuteIterationsTests : IClassFixture<SharedCliServer>
         Assert.Equal(new[] { "0", "1", "3", "6" }, flat);
     }
 
+    /// <summary>
+    /// #3832: the whole chain for an object that does NOT start its file. A parser position is
+    /// file-relative and a [SourceSpans] line is relative to the owning object's text, and
+    /// AlScopeSyntaxResolver compared them directly — so for a later object the member anchor
+    /// pointed into the previous object's range, and the loop and write tables matched nothing.
+    ///
+    /// The failure is silent, which is why this asserts the loop is REPORTED rather than that
+    /// its lines are right: unfixed, `loops` is empty and the test still passes with values
+    /// captured, so nothing downstream says iteration tracking gave up.
+    ///
+    /// The unit facts in AlMemberSyntaxIndexTests pin the two Build methods' arithmetic. This
+    /// pins the wiring — that the resolver passes scope.LineOffset at all — which those cannot,
+    /// because they call Build directly.
+    /// </summary>
+    [SkippableFact]
+    public async Task Execute_LoopInTheSecondObjectOfAFile_IsSegmentedOnItsFileLines()
+    {
+        TestArtifacts.SkipIfMissing();
+        // A helper codeunit FIRST, so the test codeunit's text starts partway down the file.
+        var code =
+            "codeunit 60399 \"Iter Lead SX\"\n" +        // 1
+            "{\n" +                                        // 2
+            "    procedure Ping(): Integer\n" +            // 3
+            "    begin\n" +                                // 4
+            "        exit(1);\n" +                         // 5
+            "    end;\n" +                                 // 6
+            "}\n" +                                        // 7
+            "\n" +                                         // 8
+            "codeunit 60304 \"Iter Second SX\"\n" +       // 9
+            "{\n" +                                        // 10
+            "    trigger OnRun()\n" +                      // 11
+            "    var\n" +                                  // 12
+            "        i: Integer;\n" +                      // 13
+            "        total: Integer;\n" +                  // 14
+            "    begin\n" +                                // 15
+            "        total := 0;\n" +                      // 16
+            "        for i := 1 to 3 do begin\n" +         // 17  the loop
+            "            total := total + i;\n" +          // 18  its body
+            "        end;\n" +                             // 19  its end
+            "        total := total * 10;\n" +             // 20  a statement AFTER the loop
+            "    end;\n" +                                 // 21
+            "}\n";                                         // 22
+
+        var d = await ExecuteAsync(code);
+        var t = SingleTest(d);
+
+        // EXACTLY one instance. A zero-iteration entry is a legitimate value on this wire —
+        // a loop that never ran is reported that way — so a spurious empty duplicate is not
+        // something a consumer can filter out, and asserting on "the one that ran" would
+        // hide it (#3834).
+        var loop = Assert.Single(Loops(t, "OnRun"));
+        // FILE lines, not the 8-lines-lower ones the object's own text would give.
+        Assert.Equal(17, loop.GetProperty("line").GetInt32());
+        Assert.Equal(19, loop.GetProperty("endLine").GetInt32());
+        Assert.Equal(3, loop.GetProperty("iterationCount").GetInt32());
+
+        // Segmentation really ran: one step per pass, each with that pass's own values, and
+        // the body's file line. An empty or mis-keyed table gives zero steps.
+        var steps = Steps(d, t, loop);
+        Assert.Equal(new[] { 1, 2, 3 }, steps.Select(x => x.Index).ToArray());
+        Assert.Equal(new[] { "1" }, Values(steps[0], "total"));
+        Assert.Equal(new[] { "3" }, Values(steps[1], "total"));
+        Assert.Equal(new[] { "6" }, Values(steps[2], "total"));
+        Assert.All(steps, x => Assert.Equal(new[] { 18 }, Lines(x)));
+    }
+
+    /// <summary>
+    /// #3836 review: the other fact in this class proves the offsets reach the tables, but not
+    /// the member-selection ANCHOR — its file declares `OnRun` once, and FindMember returns a
+    /// sole name candidate whatever anchor it is given. Here BOTH objects declare
+    /// <c>Compute</c>, so the name is ambiguous and only the anchor can choose. The first
+    /// object's copy loops five times and is never called; the second's loops twice and is the
+    /// one that runs.
+    ///
+    /// It also covers the WRITE SET independently. `same := 5` assigns the same value on every
+    /// pass, so an ordinary value diff has nothing to report; only the write-set table can
+    /// attribute it to each iteration.
+    /// </summary>
+    [SkippableFact]
+    public async Task Execute_SameNamedMemberInAnotherObject_ResolvesByAnchorAndAttributesWrites()
+    {
+        TestArtifacts.SkipIfMissing();
+        var code =
+            "codeunit 60397 \"Anchor Lead SX\"\n" +                //  1
+            "{\n" +                                                //  2
+            "    trigger OnRun()\n" +                              //  3  the server runs THIS
+            "    var c: Codeunit \"Anchor Second SX\"; s: Integer;\n" + // 4
+            "    begin\n" +                                        //  5
+            "        s := c.Compute();\n" +                        //  6
+            "    end;\n" +                                         //  7
+            "    procedure Compute(): Integer\n" +                 //  8  same NAME, never called
+            "    var k: Integer; s: Integer;\n" +                  //  9
+            "    begin\n" +                                        // 10
+            "        for k := 1 to 5 do\n" +                       // 11  five passes
+            "            s := s + k;\n" +                          // 12
+            "        exit(s);\n" +                                 // 13
+            "    end;\n" +                                         // 14
+            "}\n" +                                                // 15
+            "\n" +                                                 // 16
+            "codeunit 60398 \"Anchor Second SX\"\n" +              // 17
+            "{\n" +                                                // 18
+            "    procedure Compute(): Integer\n" +                 // 19  the one that RUNS
+            "    var k: Integer; s: Integer; same: Integer;\n" +   // 20
+            "    begin\n" +                                        // 21
+            "        for k := 1 to 2 do begin\n" +                 // 22  two passes
+            "            s := s + k;\n" +                          // 23
+            "            same := 5;\n" +                           // 24  constant write
+            "        end;\n" +                                     // 25
+            "        exit(s);\n" +                                 // 26
+            "    end;\n" +                                         // 27
+            "}\n";                                                 // 28
+
+        var d = await ExecuteAsync(code);
+        var t = SingleTest(d);
+
+        var loop = Assert.Single(Loops(t, "Compute"));
+        // The SECOND object's Compute. An un-offset anchor points into the first object's
+        // range, which is where its five-pass loop on line 6 lives.
+        Assert.Equal(22, loop.GetProperty("line").GetInt32());
+        Assert.Equal(25, loop.GetProperty("endLine").GetInt32());
+        Assert.Equal(2, loop.GetProperty("iterationCount").GetInt32());
+
+        var steps = Steps(d, t, loop);
+        Assert.Equal(new[] { 1, 2 }, steps.Select(x => x.Index).ToArray());
+        Assert.All(steps, x => Assert.Equal(new[] { 23, 24 }, Lines(x)));
+        // The write-set half. `same := 5` assigns the SAME value on every pass, so a value
+        // diff has nothing to report and only AlWriteSetTable can attribute it to a pass.
+        // Removing scope.LineOffset from the AlWriteSetTable.Build call empties these two
+        // while every other assertion in this fact still passes.
+        Assert.Equal(new[] { "5" }, Values(steps[0], "same"));
+        Assert.Equal(new[] { "5" }, Values(steps[1], "same"));
+        // s does change, so it would survive on the value diff alone — asserted to keep the
+        // two halves distinguishable rather than as proof of the write set.
+        Assert.Equal(new[] { "1" }, Values(steps[0], "s"));
+        Assert.Equal(new[] { "3" }, Values(steps[1], "s"));
+    }
+
     // --- every loop kind -------------------------------------------------------------------
 
     [SkippableFact]
