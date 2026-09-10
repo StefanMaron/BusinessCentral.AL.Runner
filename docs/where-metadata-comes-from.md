@@ -9,12 +9,19 @@ The route a table actually took is observable:
 
 ```
 AL_RUNNER_TRACE_TABLE_METADATA_SOURCE=1    # one line per built table: [table-metadata] <id> source=<route>
+AL_RUNNER_TRACE_PAGE_METADATA_SOURCE=1     # one line per built page:  [page-metadata]  <id> source=<route>
 ```
 
-Exactly `"1"` or `"2"` — any other value, including `"true"`, is a silent no-op. There are exactly
-two route values, `bc-document` and `derived`, and **no failure route**: **availability** decides
-which route a table takes, and a failure is never *re-routed* to the derivation — substituting a
-weaker answer on error is what `loud-failures.md` exists to prevent.
+Exactly `"1"` or `"2"` for the table flag, exactly `"1"` for the page one — any other value,
+including `"true"`, is a silent no-op in both. A table has two route values, `bc-document` and
+`derived`. A page has **three**: `bc-document`, `derived` (the AL-text derivation) and `symbol` (a
+precompiled dependency's `SymbolReference.json`, the middle row of the table below). The third has no
+table-side analogue and is not folded into `derived`, because the compiled-vs-precompiled split is
+precisely what the page trace exists to measure.
+
+Neither flag has a **failure route**, and neither may grow one: **availability** decides which route
+an object takes, and a failure is never *re-routed* to a derivation — substituting a weaker answer on
+error is what `loud-failures.md` exists to prevent.
 
 **A failure there is not loud, though, and this page must not imply it is.** The site sits inside a
 catch that swallows any throw into `return null` for both routes alike — pre-existing, tracked as
@@ -22,6 +29,13 @@ catch that swallows any throw into `return null` for both routes alike — pre-e
 trace**, and a table that failed to load shows as `derived` exactly like one that never had a
 document. `RecordPatches.NclMetaTableBuilder.cs` says so at the site itself; #3590 is open precisely
 because the guarantee a reader would want here does not yet exist.
+
+**The page trace inherits exactly the same limit, and states it rather than implying it away.**
+`TryGetBcPageControlDocument` memoises a null when the document does not parse, so a page whose
+document genuinely failed to load takes the derivation arm and is traced `derived` — the same value a
+page that never had a document gets. Neither trace can tell you a document loaded *successfully*;
+both tell you only which route was taken. A trace implying the stronger guarantee would be worse than
+no trace.
 
 ## The three shapes
 
@@ -128,8 +142,19 @@ Measured, so it is not a worry anyone needs to re-raise: a source-compiled depen
 **consumed, not merely captured**. It is persisted as a sidecar, replayed by `DependencyLoader`, and
 the table takes the `bc-document` route on a cold run *and* on a cache HIT.
 
-Not measured, and stated as such rather than inferred: pages and pageextensions have **no route
-trace**, so whether their converted consumers fire is unverified in either direction.
+Measured too, since **#3750** gave pages the same instrument. On a bundle declaring the Base
+Application floor and reading the Page Control Field virtual table, one cold run traced **2,759
+pages**: **1** `bc-document` — exactly the one page the bundle source-compiles — and **2,758**
+`symbol`, every precompiled Base Application page. So the split attributes to compiled-vs-precompiled
+on the nose, and `PageControlFieldFromBcDocument` demonstrably **has a live consumer**: the one page
+that had a document took the document route rather than falling through.
+
+Two honest riders on that number. **Zero pages took `derived`** in that run — every source-compiled
+page got a document, so the AL-text arm was never taken; it is reachable and covered by
+`PageMetadataSourceTraceTests`, but this bundle does not exercise it. And per the #3590 limit above, a
+`derived` count can never be read as "no document was available" alone. **Pageextensions still have no
+route trace of their own** — their controls are merged into the base page's rows, so they are counted
+under the base page's route rather than separately.
 
 ## The sequencing, and why
 
