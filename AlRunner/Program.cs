@@ -5717,29 +5717,52 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     // waiting here cannot deadlock: nothing this loop has yet to receive is upstream of
     // the compile.
     //
-    // Deferring the `initialized` event until the map exists was the other candidate and is
-    // worse: a client that sends launch only after `initialized` would then never send it.
-    // Deferring resolution keeps both client orderings working.
+    // Deferring the `initialized` event until the map exists is the other candidate, and it
+    // would work — for the same reason this does, that compilation needs nothing from the
+    // client. (An earlier version of this comment claimed it would strand a client that waits
+    // for `initialized` before sending launch. That was wrong: such a client would still get
+    // the event.) It is rejected for what it costs, not because it breaks: it holds the
+    // client's WHOLE configuration sequence — breakpoints, exception filters, everything —
+    // behind the compile, where deferring resolution charges that wait only to the requests
+    // that actually need the map.
     string? EnsureSourceMap()
     {
         if (sourceMapResolved) return compileFailure;
-        sourceMapResolved = true;
-        var winner = System.Threading.Tasks.Task.WhenAny(compiledTcs.Task, bundleRunTask)
-            .GetAwaiter().GetResult();
-        if (!ReferenceEquals(winner, compiledTcs.Task))
+        try
         {
-            // The run finished (or failed) before ever reaching dapRunStep — a compile
-            // failure. Kept rather than thrown so both requests report the same thing.
-            var runs = bundleRunTask.Result;
-            compileFailure = runs
-                .SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>())
-                .SelectMany(g => g.Errors)
-                .FirstOrDefault() ?? "compile failed (no diagnostic captured)";
-            return compileFailure;
+            var winner = System.Threading.Tasks.Task.WhenAny(compiledTcs.Task, bundleRunTask)
+                .GetAwaiter().GetResult();
+            if (!ReferenceEquals(winner, compiledTcs.Task))
+            {
+                // The run finished before ever reaching dapRunStep — a compile failure.
+                // Kept rather than thrown so every later request reports the same thing.
+                var runs = bundleRunTask.Result;
+                compileFailure = runs
+                    .SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>())
+                    .SelectMany(g => g.Errors)
+                    .FirstOrDefault() ?? "compile failed (no diagnostic captured)";
+            }
+            else
+            {
+                sourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
+                    new[] { bundleDir }, relativeTo: null);
+            }
         }
-        sourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
-            new[] { bundleDir }, relativeTo: null);
-        return null;
+        catch (Exception ex)
+        {
+            // The run FAULTED rather than reporting compile errors (bundleRunTask.Result
+            // rethrows), or building the map threw. Recorded as the reason, because the
+            // latch below is about to make this the permanent answer: without this the
+            // exception would escape, leave compileFailure null with sourceMapResolved
+            // already true, and every later setBreakpoints would resolve against the
+            // still-empty map and report "no executable AL statement on this line" — a
+            // confident wrong verdict where the honest one is that nothing was measured
+            // (.claude/rules/guards-need-a-third-state.md).
+            compileFailure = "the run failed before a source map could be built: "
+                + ex.GetBaseException().Message;
+        }
+        sourceMapResolved = true;
+        return compileFailure;
     }
 
     int exitCode = 0;
@@ -5901,7 +5924,13 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                         // `initialized` and `launch` is the specification's own sequence,
                         // and answering it against an empty map made every breakpoint
                         // unverified.
-                        var bpCompileErr = EnsureSourceMap();
+                        //
+                        // An EMPTY list is the exception, and it is the one that matters for
+                        // responsiveness: "remove every breakpoint in this source" resolves
+                        // nothing, so it needs no map, and waiting for the compile to answer
+                        // it would block this single-threaded loop for no reason (#3845
+                        // review). The clear below runs either way.
+                        var bpCompileErr = lines.Count > 0 ? EnsureSourceMap() : null;
 
                         var requests = lines.Select(l => new AlRunner.Infrastructure.DapBreakpointRequest(srcPath, l)).ToList();
                         var resolved = AlRunner.Infrastructure.DapBreakpointResolver.Resolve(requests, sourceMap);

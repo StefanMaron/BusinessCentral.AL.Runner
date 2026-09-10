@@ -151,4 +151,94 @@ public class DapPreLaunchBreakpointTests
         Assert.True(message.Contains("no executable AL statement", StringComparison.OrdinalIgnoreCase),
             $"an unverified breakpoint must say which of the two reasons applies; got '{message}': {bpResp}");
     }
+
+    /// <summary>
+    /// The OTHER reason, and the one the fact above cannot reach: a bundle that does not
+    /// compile. Before the fix a pre-launch request answered `verified: false` here too, so
+    /// the two states were the same response — and the wrong one to act on, since "wait, it
+    /// is still loading" and "this will never bind" call for opposite client behaviour.
+    ///
+    /// The bundle is written to a temp directory rather than checked in, so the repository
+    /// does not carry a fixture that is deliberately broken.
+    /// </summary>
+    [SkippableFact]
+    public async Task SetBreakpointsBeforeLaunch_OnABundleThatDoesNotCompile_SaysSoRatherThanBlamingTheLine()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var dir = Path.Combine(Path.GetTempPath(), "al-runner-dap-3821-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            // No application/platform floor — .claude/rules/no-base-app-in-csharp-tests.md.
+            File.WriteAllText(Path.Combine(dir, "app.json"), """
+            {
+              "id": "b1f2c3d4-e5a6-4b7c-8d9e-0f1a2b3c4d5e",
+              "name": "Runner Tests Fixture - DAP Uncompilable",
+              "publisher": "AL Runner",
+              "version": "1.0.0.0",
+              "dependencies": [],
+              "idRanges": [ { "from": 60300, "to": 60309 } ],
+              "runtime": "14.0"
+            }
+            """);
+            // NoSuchType is not a type, so this bundle cannot compile.
+            File.WriteAllText(Path.Combine(dir, "Broken.Codeunit.al"), """
+            codeunit 60300 "Dap Broken"
+            {
+                procedure Nope()
+                var
+                    X: NoSuchType;
+                begin
+                    X := 1;
+                end;
+            }
+            """);
+
+            await using var dap = await DapClient.StartAsync(dir);
+
+            var initSeq = dap.SendRequest("initialize", new { adapterID = "al-runner-tests" });
+            var initEvents = new List<JsonElement>();
+            var initResp = await dap.ReadUntilResponseAsync(initSeq, initEvents);
+            Assert.True(initResp.GetProperty("success").GetBoolean(), initResp.ToString());
+
+            var bpSeq = dap.SendRequest("setBreakpoints", new
+            {
+                source = new { path = Path.Combine(dir, "Broken.Codeunit.al") },
+                breakpoints = new[] { new { line = 7 } },
+            });
+            var bpResp = await dap.ReadUntilResponseAsync(bpSeq, timeout: TimeSpan.FromSeconds(120));
+            Assert.True(bpResp.GetProperty("success").GetBoolean(), bpResp.ToString());
+
+            var bp = bpResp.GetProperty("body").GetProperty("breakpoints")[0];
+            Assert.False(bp.GetProperty("verified").GetBoolean(), bpResp.ToString());
+            var message = bp.TryGetProperty("message", out var msgEl) ? msgEl.GetString() ?? "" : "";
+            Assert.True(message.Contains("did not compile", StringComparison.OrdinalIgnoreCase),
+                $"a breakpoint in a bundle that does not compile must say so, not blame the "
+                + $"line; got '{message}': {bpResp}\n--- stderr ---\n{dap.StdErr}");
+            // And it must not be the other reason, which is what makes this fact more than
+            // an assertion that SOME message is present.
+            Assert.DoesNotContain("no executable AL statement", message, StringComparison.OrdinalIgnoreCase);
+
+            // The diagnostic is CACHED, and a later launch must report it rather than
+            // succeeding against an empty map it now believes is resolved (#3845 review).
+            // This is the assertion that pins the latch: EnsureSourceMap marks itself
+            // resolved on the way out, so a version that recorded no reason would leave a
+            // green launch behind a bundle that cannot run.
+            var launchSeq = dap.SendRequest("launch", new { });
+            var launchResp = await dap.ReadUntilResponseAsync(launchSeq, timeout: TimeSpan.FromSeconds(120));
+            Assert.False(launchResp.GetProperty("success").GetBoolean(),
+                $"launch must fail on a bundle that does not compile: {launchResp}");
+            var launchMsg = launchResp.TryGetProperty("message", out var lm) ? lm.GetString() ?? "" : "";
+            Assert.NotEqual("", launchMsg);
+            // launch reports the diagnostic bare; the breakpoint message wraps the same
+            // string. Asserting containment ties the two answers to one cached value rather
+            // than to two independently-produced ones.
+            Assert.Contains(launchMsg, message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
 }
