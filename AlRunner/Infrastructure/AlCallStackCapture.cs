@@ -300,14 +300,21 @@ public static class AlCallStackCapture
             ("NavCodeunit",   "CodeUnit"),   // generic codeunit base class
             ("NavTestCodeunit","CodeUnit"),
             ("Codeunit",      "CodeUnit"),
-            // EXTENSION objects, before their base kinds — the "longest prefixes first" note
-            // below was written for this and the entries were never added, so every extension
-            // scope parsed to ("?", 0) and was dropped before any map was consulted (#3833).
-            // Measured on BC 28.1.49838.54169: a tableextension's procedure emits
+            // EXTENSION objects (#3833). Without these every extension scope parsed to
+            // ("?", 0) and was dropped before any map was consulted, so an extension's
+            // procedures and triggers were invisible to coverage, the statement tables and
+            // DAP. Measured on BC 28.1.49838.54169: a tableextension's procedure emits
             // `TableExtension63701+Doubled_Scope_750224019`, a pageextension's
             // `PageExtension63721+Tripled_Scope_1853489953`. The id is the EXTENSION's own,
-            // not the base object's, so these cannot collide with the base or with each other.
-            // Labels match the spelling RecordPatches.AlSourceParser already uses.
+            // not the base object's, so these cannot collide with the base or with each
+            // other. Labels match the spelling RecordPatches.AlSourceParser already uses.
+            //
+            // Placed before the base kinds to read in the order the note below describes,
+            // but the ORDER IS NOT WHAT MAKES IT WORK, and it is worth saying so because the
+            // note invites the opposite conclusion: the loop returns on the first successful
+            // PARSE, not the first prefix match, and "Table" against `TableExtension63701`
+            // leaves `Extension63701`, whose leading digit run is empty. Measured by moving
+            // these three below `Enum` — the fact still passes.
             ("TableExtension",  "TableExtension"),
             ("PageExtension",   "PageExtension"),
             ("ReportExtension", "ReportExtension"),
