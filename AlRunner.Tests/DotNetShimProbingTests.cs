@@ -48,6 +48,23 @@ public sealed class DotNetShimProbingTests : IDisposable
     public void Dispose() =>
         Environment.SetEnvironmentVariable("AL_RUNNER_DOTNET_SHIMS", _savedOverride);
 
+    /// <summary>
+    /// An owned scratch directory that EXISTS.
+    ///
+    /// <para><c>TestScratch.Dir</c> reserves the path and writes the <c>.owner</c> sidecar that
+    /// lets a later runner start reclaim a killed host's leftovers, but it deliberately does NOT
+    /// create the leaf — see <c>TestScratch.cs</c>, where some callers rely on observing whether
+    /// the runner created it. These tests hand the path to <c>BuildDotNetProbingPaths</c>, which
+    /// filters on <c>Directory.Exists</c>, so the directory has to be real: hence the explicit
+    /// create here rather than an assumption that the helper did it.</para>
+    /// </summary>
+    private static string OwnedDir(string prefix)
+    {
+        var dir = TestScratch.Dir(prefix);
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
     private static IReadOnlyList<string> ShimDirs()
     {
         var m = typeof(BcCompiler).GetMethod(
@@ -132,15 +149,15 @@ public sealed class DotNetShimProbingTests : IDisposable
     [Fact]
     public void OrderPutsShimsAheadOfTheServiceTier()
     {
-        var probeDir = Directory.CreateTempSubdirectory("al-runner-shim-order-");
+        var probeDir = OwnedDir("al-runner-shim-order");
         try
         {
-            Environment.SetEnvironmentVariable("AL_RUNNER_DOTNET_SHIMS", probeDir.FullName);
+            Environment.SetEnvironmentVariable("AL_RUNNER_DOTNET_SHIMS", probeDir);
 
             var paths = InvokeProbingPaths();
             var shimIdx = paths.FindIndex(
                 p => string.Equals(Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar),
-                                   probeDir.FullName.TrimEnd(Path.DirectorySeparatorChar),
+                                   probeDir.TrimEnd(Path.DirectorySeparatorChar),
                                    StringComparison.Ordinal));
             Assert.True(shimIdx >= 0,
                 "the AL_RUNNER_DOTNET_SHIMS directory did not reach the probing paths: " +
@@ -160,7 +177,7 @@ public sealed class DotNetShimProbingTests : IDisposable
         finally
         {
             Environment.SetEnvironmentVariable("AL_RUNNER_DOTNET_SHIMS", null);
-            try { probeDir.Delete(recursive: true); } catch { /* best effort */ }
+            try { Directory.Delete(probeDir, recursive: true); } catch { /* best effort */ }
         }
     }
 
@@ -172,38 +189,42 @@ public sealed class DotNetShimProbingTests : IDisposable
     [Fact]
     public void OverrideAcceptsSeveralPathsAndUnsetContributesNone()
     {
-        var a = Directory.CreateTempSubdirectory("al-runner-shim-a-");
-        var b = Directory.CreateTempSubdirectory("al-runner-shim-b-");
+        var a = OwnedDir("al-runner-shim-a");
+        var b = OwnedDir("al-runner-shim-b");
+        // Deliberately NOT a TestScratch path, and allowlisted in ScratchDirOwnershipGuardTests
+        // for that reason: this path's whole point is that nothing is there. Reserving it would
+        // create the parent and drop a .owner sidecar beside a path the assertion below measures
+        // the ABSENCE of, which is the guard's own "a path that must NOT exist" category.
         var missing = Path.Combine(Path.GetTempPath(), "al-runner-shim-absent-" + Guid.NewGuid());
         try
         {
             Environment.SetEnvironmentVariable(
                 "AL_RUNNER_DOTNET_SHIMS",
-                string.Join(Path.PathSeparator, a.FullName, missing, b.FullName));
+                string.Join(Path.PathSeparator, a, missing, b));
 
             var yielded = ShimDirs().Select(p => p.TrimEnd(Path.DirectorySeparatorChar)).ToList();
-            Assert.Equal(a.FullName.TrimEnd(Path.DirectorySeparatorChar), yielded[0]);
+            Assert.Equal(a.TrimEnd(Path.DirectorySeparatorChar), yielded[0]);
             Assert.Equal(missing.TrimEnd(Path.DirectorySeparatorChar), yielded[1]);
-            Assert.Equal(b.FullName.TrimEnd(Path.DirectorySeparatorChar), yielded[2]);
+            Assert.Equal(b.TrimEnd(Path.DirectorySeparatorChar), yielded[2]);
 
             // The enumeration yields candidates; the caller filters. A directory that does not
             // exist must not reach the assembled probing paths.
             var paths = InvokeProbingPaths().Select(Path.GetFullPath).ToList();
-            Assert.Contains(Path.GetFullPath(a.FullName), paths);
-            Assert.Contains(Path.GetFullPath(b.FullName), paths);
+            Assert.Contains(Path.GetFullPath(a), paths);
+            Assert.Contains(Path.GetFullPath(b), paths);
             Assert.DoesNotContain(Path.GetFullPath(missing), paths);
 
             Environment.SetEnvironmentVariable("AL_RUNNER_DOTNET_SHIMS", "");
             var defaults = ShimDirs();
-            Assert.DoesNotContain(a.FullName.TrimEnd(Path.DirectorySeparatorChar),
+            Assert.DoesNotContain(a.TrimEnd(Path.DirectorySeparatorChar),
                 defaults.Select(p => p.TrimEnd(Path.DirectorySeparatorChar)));
             Assert.All(defaults, p => Assert.Equal("dotnet-shims", Path.GetFileName(p)));
         }
         finally
         {
             Environment.SetEnvironmentVariable("AL_RUNNER_DOTNET_SHIMS", null);
-            try { a.Delete(recursive: true); } catch { /* best effort */ }
-            try { b.Delete(recursive: true); } catch { /* best effort */ }
+            try { Directory.Delete(a, recursive: true); } catch { /* best effort */ }
+            try { Directory.Delete(b, recursive: true); } catch { /* best effort */ }
         }
     }
 
@@ -217,7 +238,7 @@ public sealed class DotNetShimProbingTests : IDisposable
     [Fact]
     public void DuplicateShimDirectoriesAreCollapsedInTheProbingPaths()
     {
-        var probeDir = Directory.CreateTempSubdirectory("al-runner-shim-dup-");
+        var probeDir = OwnedDir("al-runner-shim-dup");
         try
         {
             // The same directory twice, plus a trailing-separator spelling of it, which is the
@@ -225,21 +246,21 @@ public sealed class DotNetShimProbingTests : IDisposable
             Environment.SetEnvironmentVariable(
                 "AL_RUNNER_DOTNET_SHIMS",
                 string.Join(Path.PathSeparator,
-                    probeDir.FullName,
-                    probeDir.FullName,
-                    probeDir.FullName + Path.DirectorySeparatorChar));
+                    probeDir,
+                    probeDir,
+                    probeDir + Path.DirectorySeparatorChar));
 
             var paths = InvokeProbingPaths();
             var matches = paths.Count(p => string.Equals(
                 Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar),
-                probeDir.FullName.TrimEnd(Path.DirectorySeparatorChar),
+                probeDir.TrimEnd(Path.DirectorySeparatorChar),
                 StringComparison.Ordinal));
             Assert.Equal(1, matches);
         }
         finally
         {
             Environment.SetEnvironmentVariable("AL_RUNNER_DOTNET_SHIMS", null);
-            try { probeDir.Delete(recursive: true); } catch { /* best effort */ }
+            try { Directory.Delete(probeDir, recursive: true); } catch { /* best effort */ }
         }
     }
 
