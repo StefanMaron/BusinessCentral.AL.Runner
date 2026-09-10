@@ -18,9 +18,16 @@
 // Linux, where both ends already default to UTF-8, which is why none of them was ever red there.
 //
 // A [ModuleInitializer], like BcEngineBootstrap's, because it must run before any test spawns
-// anything. Failure is tolerated and reported rather than fatal: a test host whose stdout
-// handle refuses reconfiguration should still run the suite, and only the non-ASCII assertions
-// would then behave as they did before.
+// anything; neither initializer depends on the other, so their order does not matter. Failure
+// is tolerated rather than fatal — a test host whose stdout handle refuses reconfiguration
+// should still run the suite — and recorded in Problem, which the encoding facts print when
+// they fail, so a red run on such a host says why rather than looking like the runner's fault.
+//
+// This does change the test host's own console output code page on Windows, which is process-
+// global. It does NOT make the encoding facts circular: with the production block removed and
+// this initializer left installed, both facts in ConsoleOutputEncodingTests still FAIL
+// (measured for the PR #3795 review), because the child sets its own encoding rather than
+// inheriting the parent's code page.
 
 using System.Runtime.CompilerServices;
 using System.Text;

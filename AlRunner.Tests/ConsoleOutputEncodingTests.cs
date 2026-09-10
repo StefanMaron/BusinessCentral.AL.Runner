@@ -75,13 +75,15 @@ public sealed class ConsoleOutputEncodingTests : IDisposable
 
     /// <summary>Runs the runner with stdout redirected and returns the RAW bytes — never a
     /// decoded string, because the decode is the thing under test.</summary>
-    private byte[] RunAndCaptureRawStdout(params string[] extraArgs)
+    private byte[] RunAndCaptureRawStdout(params string[] extraArgs) =>
+        RunAndCaptureRawStdout(withBundle: true, extraArgs);
+
+    private byte[] RunAndCaptureRawStdout(bool withBundle, params string[] extraArgs)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
-        args.Append(TestBuildConfig.BcVersionArg);
-        args.Append(" --no-auto-provision");
+        if (withBundle) args.Append(TestBuildConfig.BcVersionArg).Append(" --no-auto-provision");
         foreach (var a in extraArgs) args.Append(' ').Append(a);
-        args.Append(" \"").Append(Path.Combine(_root, "bundle")).Append('"');
+        if (withBundle) args.Append(" \"").Append(Path.Combine(_root, "bundle")).Append('"');
         var psi = new ProcessStartInfo
         {
             FileName = "dotnet", Arguments = args.ToString(),
@@ -113,12 +115,43 @@ public sealed class ConsoleOutputEncodingTests : IDisposable
 
         var raw = RunAndCaptureRawStdout();
 
-        var text = Encoding.UTF8.GetString(raw);
-        Assert.Contains("suites", text, StringComparison.Ordinal);
+        AssertStrictUtf8NoBom(raw);
         // The exact bytes, not a decoded comparison: 0xE2 0x80 0x94 is U+2014 in UTF-8.
-        Assert.Contains("— 1 suites", text, StringComparison.Ordinal);
         Assert.True(Contains(raw, new byte[] { 0xE2, 0x80, 0x94 }),
             "no UTF-8 em dash in the runner's redirected stdout:\n" + Preview(raw));
+        Assert.Contains("— 1 suites", Encoding.UTF8.GetString(raw), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// `--help` and `--guide` return before almost everything else, and CliText opens both
+    /// with an em dash. A fix placed after those fast paths would leave exactly the output a
+    /// new user sees first still transliterated — which is where this one was until the PR
+    /// #3795 review pointed at it. Needs no BC artifacts, so it is not a SkippableFact.
+    /// </summary>
+    [Fact]
+    public void HelpAndGuide_AreAlsoUtf8_BeforeAnyFastPathReturns()
+    {
+        foreach (var flag in new[] { "--help", "--guide" })
+        {
+            var raw = RunAndCaptureRawStdout(withBundle: false, flag);
+            AssertStrictUtf8NoBom(raw);
+            Assert.True(Contains(raw, new byte[] { 0xE2, 0x80, 0x94 }),
+                $"no UTF-8 em dash in `{flag}` output:\n" + Preview(raw));
+        }
+    }
+
+    /// <summary>
+    /// Strict decode, so a malformed sequence ANYWHERE in the stream fails rather than only
+    /// at the one line an assertion happens to name; plus no BOM, which a byte-exact consumer
+    /// of `--output-json` or the NDJSON protocol would otherwise have to strip.
+    /// </summary>
+    private static void AssertStrictUtf8NoBom(byte[] raw)
+    {
+        Assert.False(raw.Length >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF,
+            "stdout begins with a UTF-8 BOM:\n" + Preview(raw));
+        var strict = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+        var ex = Record.Exception(() => strict.GetString(raw));
+        Assert.True(ex == null, $"stdout is not valid UTF-8 ({ex?.Message}):\n" + Preview(raw));
     }
 
     /// <summary>
@@ -136,8 +169,8 @@ public sealed class ConsoleOutputEncodingTests : IDisposable
 
         var raw = RunAndCaptureRawStdout($"--out \"{outPath}\"");
 
-        var text = Encoding.UTF8.GetString(raw);
-        Assert.Contains("Classification → ", text, StringComparison.Ordinal);
+        AssertStrictUtf8NoBom(raw);
+        Assert.Contains("Classification → ", Encoding.UTF8.GetString(raw), StringComparison.Ordinal);
         Assert.False(Array.IndexOf(raw, (byte)0x1A) >= 0,
             "0x1A (SUB) in stdout — a character was dropped by the console codec:\n" + Preview(raw));
     }
@@ -154,6 +187,14 @@ public sealed class ConsoleOutputEncodingTests : IDisposable
         return false;
     }
 
-    private static string Preview(byte[] raw) =>
-        Encoding.UTF8.GetString(raw, 0, Math.Min(raw.Length, 3000));
+    private static string Preview(byte[] raw)
+    {
+        var head = Encoding.UTF8.GetString(raw, 0, Math.Min(raw.Length, 3000));
+        // A host that could not reconfigure its own console is the other explanation for a red
+        // run here, and it is not the runner's fault — say so rather than leaving the reader to
+        // infer it from an output that looks fine.
+        return SpawnedRunnerEncoding.Problem is { } p
+            ? $"(the TEST HOST could not set its console encoding: {p})\n{head}"
+            : head;
+    }
 }

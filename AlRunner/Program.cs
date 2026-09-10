@@ -33,6 +33,38 @@ if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_FIRSTCHANCE") is string f
     };
 }
 
+// ── stdout and stderr speak UTF-8, on every platform and whether or not they are
+// redirected. #3738: a redirected child's console defaults to the OEM code page on Windows,
+// and .NET's encoder silently best-fits whatever that page lacks — on a cp1252 box (cp850)
+// the four non-ASCII characters this program writes become 0x2D, 0x1A, 0x2E and 0xC4. The
+// 0x1A is the one that is not cosmetic: it stands for nothing, and it lands in
+// `Classification → <path>` and `JUnit XML → <path>`, two lines a consumer reads to find an
+// output file. So the bytes a caller read were not the bytes this program wrote, and which
+// substitution it got depended on the box's code page. The measurements are in the PR for
+// #3738; ConsoleOutputEncodingTests pins the contract.
+//
+// FIRST, before PhaseLog.Install and before the --help / --guide / --version fast paths:
+// each of those writes non-ASCII (CliText's headers) and returns, so a block placed after
+// them would leave exactly the outputs a new user sees first still transliterated.
+//
+// Only OutputEncoding. Setting Console.InputEncoding would change what `--server` decodes
+// its inbound NDJSON as — an unannounced protocol change with no bearing on this defect, so
+// it stays out (PR #3795 review). `--dap stdio` is unaffected either way: it opens the raw
+// streams and DapTransport encodes its own bytes.
+//
+// A handle that refuses reconfiguration is not a reason to refuse to run: the failure is
+// named on stderr and output falls back to the platform default, transliterated as before.
+try
+{
+    Console.OutputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine(
+        $"[warn] could not set the console output encoding to UTF-8 ({ex.GetType().Name}: {ex.Message}); "
+        + "non-ASCII output may be transliterated by this console's code page (#3738).");
+}
+
 // Opt-in per-bundle / per-process cost instrumentation (issue #1825). Installed
 // before the --help / --guide / --version fast paths on purpose: those return
 // before any BC type loads, so their rows measure the bare process floor (host
@@ -96,33 +128,6 @@ if (args.Contains("--bc-version") && args.Contains("--artifact-path"))
 // it: 2076/2076 corpus fail-set unchanged, one cached test 9.50s -> 8.61s warm. See
 // AlRunner.Tests/StartupJitModeTests. Anyone needing the old behaviour can still preset
 // DOTNET_ReadyToRun=0 in the environment — the CLR honours it without our help.
-
-// ── stdout/stderr speak UTF-8, on every platform and whether or not they are redirected.
-// #3738: a redirected child's console defaults to the OEM code page on Windows (cp850 on a
-// cp1252 box), and .NET's encoder silently best-fits whatever that page lacks. Measured on
-// the four non-ASCII characters this program writes: `—` becomes 0x2D, `…` becomes 0x2E,
-// `─` survives, and `→` — which appears in `Classification → <path>` and `JUnit XML →
-// <path>`, two lines a consumer reads to find an output file — becomes 0x1A, a control
-// character standing for nothing. So the bytes a caller reads were not the bytes this
-// program wrote, and which substitution it got depended on the box's code page.
-//
-// Set before Log.Install and before any Console.Write, so every writer downstream (Log's
-// FilteredWriter, --server's captured stdout, the DAP stdio streams) inherits it. The
-// setter throws on a handle it cannot reconfigure (a closed or unusual stdout); that is not
-// a reason to refuse to run, so it degrades to the platform default and says so on stderr —
-// the output is then still readable, just transliterated as before.
-try
-{
-    var utf8NoBom = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
-    Console.OutputEncoding = utf8NoBom;
-    Console.InputEncoding = utf8NoBom;
-}
-catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or ArgumentException)
-{
-    Console.Error.WriteLine(
-        $"[warn] could not set the console encoding to UTF-8 ({ex.GetType().Name}: {ex.Message}); "
-        + "non-ASCII output may be transliterated by this console's code page (#3738).");
-}
 
 // ── --server mode: long-running JSON-RPC daemon over stdin/stdout (the VS Code
 // extension depends on this flag). The protocol requires stdout to carry ONLY the
