@@ -185,18 +185,17 @@ DEFAULT_REQUIRED_CONTEXTS = [
 # hole in the #2785 check for as long as it lasts.
 #
 # #3244 also said what refills it -- "only while a new gating job is landing" --
-# and that is the case for ALL THREE entries below. Each names a blocking job
-# that pr-gate.yml already produces and the `main` ruleset does not require yet,
-# so each is listed for exactly as long as that is true, and each comes out in
-# the same pass that adds its name to the ruleset.
+# and that is the case for every entry below. Each names a blocking job that
+# pr-gate.yml already produces and the `main` ruleset does not require yet, so
+# each is listed for exactly as long as that is true, and each comes out in the
+# same pass that adds its name to the ruleset.
 #
-# Three entries, not one, and that is deliberate: #3255, #3089 and #3288 landed
-# their gating jobs independently, and dropping any one of those names while its
-# job blocks would reopen precisely the #2785 hole this file exists to close -- a
-# context the ruleset requires that nothing here analyses. Merging these refills
-# by keeping only one side is the mistake to avoid, and it is a live one: this
-# list has now been refilled by three separate pull requests that could not see
-# each other, and each rebase presents exactly that conflict.
+# Every entry is independent, and that is the shape to preserve across a rebase:
+# each arrived with its own gating job, from a pull request that could not see
+# the others, so a rebase presents them as a conflict. Resolve it by KEEPING
+# BOTH SIDES. Dropping a name while its job blocks reopens precisely the #2785
+# hole this file exists to close -- a context the ruleset requires that nothing
+# here analyses.
 PENDING_REQUIRED_CONTEXTS: list[str] = [
     # #3255's gate. pr-gate.yml's require-corpus-linkage job produces this
     # context. Analysed here exactly like a required one -- produced by a
@@ -226,17 +225,8 @@ PENDING_REQUIRED_CONTEXTS: list[str] = [
     # block merges, and no such argument exists today -- #3674's PR body sets
     # out why, including the stale-red window when the corpus PR moves.
     "A cited corpus PR must be able to merge",
-    # #3677's gate: pr-gate.yml's reject-changelog-edits job, which fails when
-    # the PR's own diff carries CHANGELOG.md. Listed here, not promoted, for the
-    # reason the header of this list gives: the code half lands through a pull
-    # request and the ruleset is edited by hand in the GitHub UI, so a PENDING
-    # name is analysed exactly like a required one -- produced by a pull_request
-    # workflow, not cancellable on the head commit -- while the live drift
-    # comparison tolerates it in either state. Unlike the entry above it, this one
-    # is meant to be promoted: it makes no network call, so nothing about it can go
-    # red for an environmental reason. Promote it into DEFAULT_REQUIRED_CONTEXTS
-    # above and into RULESET_CONTEXTS in tools/ci-wait.py in the same pass that
-    # adds it to the ruleset.
+    # #3677's gate: pr-gate.yml's reject-changelog-edits job. Makes no network
+    # call, so it is meant to be promoted, unlike the entry above it.
     "CHANGELOG.md must not be changed in a pull request",
 ]
 

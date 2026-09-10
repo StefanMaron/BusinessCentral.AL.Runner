@@ -22,9 +22,9 @@
 #      pass: a guard handed nothing checks nothing and reports success while doing
 #      it (.claude/rules/guards-need-a-third-state.md). Not exit 1 either, because
 #      "your PR edits CHANGELOG.md" and "the diff did not get computed" need
-#      different remedies. Its siblings in this directory spell the same state 2;
-#      3 is the spelling the newer guards here use (resolve_corpus_ref.sh,
-#      check_required_contexts.py).
+#      different remedies. Most siblings in this directory spell the same state 2;
+#      resolve_corpus_ref.sh uses 3, which is the spelling
+#      .claude/rules/guards-need-a-third-state.md sets out.
 
 set -uo pipefail
 
