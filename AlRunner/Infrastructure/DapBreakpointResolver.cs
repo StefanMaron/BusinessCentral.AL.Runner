@@ -41,11 +41,13 @@ public static class DapBreakpointResolver
     /// bundle roots the run compiled, e.g. via AlCoverageSourceMap.Build) can match — a
     /// breakpoint in a file outside the debugged bundle is unverified, not a crash.
     /// <para>
-    /// "Every object" is bounded by what that map registers, and it registers seven top-level
-    /// kinds: table, page, report, codeunit, query, xmlport, enum. EXTENSION objects
-    /// (tableextension, pageextension, …) are not in it and never resolve a breakpoint, which
-    /// is a pre-existing limit of AlCoverageSourceMap.LabelOf and of the runtime identity
-    /// parsing in AlCallStackCapture, not a decision made here (#3786 review).
+    /// "Every object" is bounded by what that map registers: seven top-level kinds — table,
+    /// page, report, codeunit, query, xmlport, enum — plus tableextension, pageextension and
+    /// reportextension since #3833, which also taught AlCallStackCapture's prefix map to parse
+    /// their emitted identity. What is still outside it, and so still never resolves a
+    /// breakpoint, is the kinds that carry no executable code: an interface, a controladdin, a
+    /// permissionset, an enum extension. BC emits no scope class for those (measured for
+    /// enumextension in #3833), so there is nothing for a breakpoint to bind to.
     /// </para>
     /// <para>
     /// Takes <see cref="AlSourceLocationMap"/> rather than the dictionary interface it

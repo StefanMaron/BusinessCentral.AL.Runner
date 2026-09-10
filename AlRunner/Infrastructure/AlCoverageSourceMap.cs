@@ -29,9 +29,10 @@ namespace AlRunner.Infrastructure;
 /// <para>
 /// "Earliest top-level object" means every entry in <c>root.Objects</c>, including the
 /// kinds <see cref="AlCoverageSourceMap"/> cannot map — an interface, a controladdin, a
-/// permissionset, any extension. Those are objects, not preamble, and measuring the origin
-/// over the mapped subset instead subtracted them as though they were, putting every later
-/// object's lines exactly that far too low (#3822).
+/// permissionset, an enum extension. Those are objects, not preamble, and measuring the
+/// origin over the mapped subset instead subtracted them as though they were, putting every
+/// later object's lines exactly that far too low (#3822). Table, page and report extensions
+/// ARE mapped since #3833; see LabelOf.
 /// </para>
 /// (#3713; CoverageMultiObjectFileTests pins the header shapes that settled both.)
 /// </summary>

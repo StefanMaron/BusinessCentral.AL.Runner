@@ -437,6 +437,100 @@ public sealed class CoverageMultiObjectFileTests : IDisposable
     }
 
     /// <summary>
+    /// #3841 review: the end-to-end fact proves a JOIN — a statement landed under the right
+    /// file — and a coordinated but wrong implementation returning the same invented label
+    /// from both halves would satisfy it. This pins the map side of the contract exactly:
+    /// the KEY, label and id together, for each extension kind.
+    ///
+    /// The labels are not free. They have to equal what AlCallStackCapture's prefix map
+    /// produces from the emitted type name, and both match the spelling
+    /// RecordPatches.AlSourceParser has always used.
+    /// </summary>
+    [SkippableFact]
+    public void Build_ExtensionObjects_AreKeyedByKindAndTheirOwnId()
+    {
+        RequireEngine();
+        File.WriteAllText(Path.Combine(_root, "Exts.al"), """
+        table 63700 "P3833 Base"
+        {
+            fields { field(1; "Value"; Integer) { } }
+        }
+
+        tableextension 63701 "P3833 TExt" extends "P3833 Base"
+        {
+            procedure Doubled(): Integer
+            begin
+                exit(Value * 2);
+            end;
+        }
+
+        page 63720 "P3833 Base Page"
+        {
+            PageType = Card;
+            SourceTable = "P3833 Base";
+        }
+
+        pageextension 63721 "P3833 PExt" extends "P3833 Base Page"
+        {
+            procedure Tripled(): Integer
+            begin
+                exit(Rec.Value * 3);
+            end;
+        }
+
+        report 63740 "P3833 Base Report"
+        {
+            dataset { dataitem(Loop; Integer) { column(Number; Number) { } } }
+        }
+
+        reportextension 63741 "P3833 RExt" extends "P3833 Base Report"
+        {
+            procedure Quadrupled(X: Integer): Integer
+            begin
+                exit(X * 4);
+            end;
+        }
+        """);
+
+        var map = AlCoverageSourceMap.Build(new[] { _root }, relativeTo: _root);
+
+        // The extension's OWN id, not the base object's, and its own kind label.
+        Assert.True(map.ContainsKey(("TableExtension", 63701)));
+        Assert.True(map.ContainsKey(("PageExtension", 63721)));
+        Assert.True(map.ContainsKey(("ReportExtension", 63741)));
+        // The base objects keep their own entries; an extension does not displace them.
+        Assert.True(map.ContainsKey(("Table", 63700)));
+        Assert.True(map.ContainsKey(("Page", 63720)));
+        Assert.True(map.ContainsKey(("Report", 63740)));
+        // And an extension is NOT filed under the base object's kind or the base's id.
+        Assert.False(map.ContainsKey(("Table", 63701)));
+        Assert.False(map.ContainsKey(("TableExtension", 63700)));
+    }
+
+    /// <summary>
+    /// The parser half, against the emitted type NAMES measured on BC 28.1.49838.54169 —
+    /// `TableExtension63701+Doubled_Scope_750224019` and
+    /// `PageExtension63721+Tripled_Scope_1853489953`. Controls included: the base kinds must
+    /// still parse, `Record&lt;N&gt;` must still mean Table (it is the table-trigger wrapper),
+    /// and a versioned suffix must not defeat the digit run.
+    /// </summary>
+    [Theory]
+    [InlineData("TableExtension63701", "TableExtension", 63701)]
+    [InlineData("PageExtension63721", "PageExtension", 63721)]
+    [InlineData("ReportExtension63731_v2", "ReportExtension", 63731)]
+    [InlineData("Table63700", "Table", 63700)]
+    [InlineData("Record63700", "Table", 63700)]
+    [InlineData("Page63720", "Page", 63720)]
+    [InlineData("Codeunit63710", "CodeUnit", 63710)]
+    public void ParseObjectTypeAndId_ExtensionAndBaseNames_ParseToTheirOwnKindAndId(
+        string typeName, string expectedLabel, int expectedId)
+    {
+        var (label, id) = AlCallStackCapture.ParseObjectTypeAndIdForTests(typeName);
+        Assert.Equal(expectedLabel, label);
+        Assert.Equal(expectedId, id);
+    }
+
+    /// <summary>
     /// #3833: an EXTENSION object's executable statements were invisible. `LabelOf` maps seven
     /// top-level kinds and no extension, and AlCallStackCapture's prefix map has no extension
     /// entry either — measured, BC emits `TableExtension63701+Doubled_Scope_...`, which parsed

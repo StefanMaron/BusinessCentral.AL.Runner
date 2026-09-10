@@ -291,8 +291,16 @@ public static class AlCallStackCapture
         // Walk up to the outermost non-nested type (scope classes are nested).
         var t = type;
         while (t.DeclaringType != null) t = t.DeclaringType;
+        return ParseObjectTypeAndIdForTests(t.Name);
+    }
 
-        var name = t.Name;
+    /// <summary>
+    /// The name half of <see cref="ParseObjectTypeAndId(Type)"/>, split out so the prefix map
+    /// can be asserted against the emitted names measured from BC rather than only through a
+    /// live type (#3841 review). The caller passes an OUTERMOST type name.
+    /// </summary>
+    internal static (string, int) ParseObjectTypeAndIdForTests(string name)
+    {
         // Mapping from IL class-name prefix → BC call-stack label.
         // We try longest prefixes first so "Table" doesn't match "TableExtension".
         (string prefix, string label)[] prefixMap =
@@ -305,9 +313,15 @@ public static class AlCallStackCapture
             // procedures and triggers were invisible to coverage, the statement tables and
             // DAP. Measured on BC 28.1.49838.54169: a tableextension's procedure emits
             // `TableExtension63701+Doubled_Scope_750224019`, a pageextension's
-            // `PageExtension63721+Tripled_Scope_1853489953`. The id is the EXTENSION's own,
-            // not the base object's, so these cannot collide with the base or with each
-            // other. Labels match the spelling RecordPatches.AlSourceParser already uses.
+            // `PageExtension63721+Tripled_Scope_1853489953`, a reportextension's
+            // `ReportExtension63741+Quadrupled_Scope_2053452689`. The id is the EXTENSION's own,
+            // not the base object's. What keeps entries apart is the (label, id) PAIR, not the
+            // id alone: a tableextension and a pageextension may legally share a number, and an
+            // extension id may equal an unrelated base object's, so it is the distinct label
+            // that separates them. Labels match the spelling RecordPatches.AlSourceParser
+            // already uses. Two objects of the SAME kind and id in one map still overwrite —
+            // the AL compiler rejects that within an app, and across apps the map has no
+            // AppId dimension, which is older than this change and not altered by it.
             //
             // Placed before the base kinds to read in the order the note below describes,
             // but the ORDER IS NOT WHAT MAKES IT WORK, and it is worth saying so because the
