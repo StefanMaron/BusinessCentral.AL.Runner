@@ -35,7 +35,7 @@
 // failed this way — every one, with the identical NavMetadataNotFoundException.
 // The six ids in #3510 are the ones Microsoft's own test buckets happened to
 // reach, not a distinguishable subset.
-codeunit 65921 "XPD Tests"
+codeunit 65941 "XPD Tests"
 {
     Subtype = Test;
 
@@ -99,8 +99,8 @@ codeunit 65921 "XPD Tests"
         OutStr: OutStream;
     begin
         BlobRec."Blob Data".CreateOutStream(OutStr);
-        asserterror XmlPort.Export(65939, OutStr);
-        Assert.Contains(GetLastErrorText(), '65939',
+        asserterror XmlPort.Export(65959, OutStr);
+        Assert.Contains(GetLastErrorText(), '65959',
             'an xmlport id that no registered app declares must still raise a real error naming the id — the fix must widen the EXISTENCE set, never abolish the existence check');
     end;
 }

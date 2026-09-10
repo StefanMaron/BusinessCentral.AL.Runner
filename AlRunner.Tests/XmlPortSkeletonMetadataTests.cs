@@ -135,7 +135,7 @@ public sealed class XmlPortSkeletonMetadataTests
         // than failing hard.
         var ids = RecordPatches.KnownXmlPortIdSet();
 
-        Assert.DoesNotContain(65939, ids);
+        Assert.DoesNotContain(65959, ids);
         Assert.DoesNotContain(int.MaxValue, ids);
     }
 }

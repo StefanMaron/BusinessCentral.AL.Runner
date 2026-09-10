@@ -1,7 +1,7 @@
 /// <summary>
 /// Minimal assertion helper for this runner-extras app (own ID range).
 /// </summary>
-codeunit 65920 "XPD Assert"
+codeunit 65940 "XPD Assert"
 {
     procedure IsTrue(Condition: Boolean; Msg: Text)
     begin

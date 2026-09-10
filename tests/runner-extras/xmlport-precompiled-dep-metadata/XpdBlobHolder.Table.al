@@ -1,4 +1,4 @@
-table 65922 "XPD Blob Holder"
+table 65942 "XPD Blob Holder"
 {
     DataClassification = CustomerContent;
 
