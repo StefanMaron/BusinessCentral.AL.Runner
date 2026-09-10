@@ -85,7 +85,9 @@ public sealed class MetadataEquivalenceBundleGateTests
             "not scanning what it claims to. The detection strings are probably stale.");
     }
 
-    [Fact]
+    // SkippableFact, not Fact: BundleReaders() can raise SkipException, and a SkipException out
+    // of a plain [Fact] is reported Failed rather than Skipped (TestArtifactsGateTests).
+    [SkippableFact]
     public void No_bundle_reader_writes_its_own_empty_bundle_skip()
     {
         // The second half, because a class could hold a bundles list from RequireBundles and
@@ -111,9 +113,9 @@ public sealed class MetadataEquivalenceBundleGateTests
         // empty directory through AL_RUNNER_METADATA_GROUND_TRUTH, which is the same override
         // the skip message tells a developer about — so this exercises the real code path
         // rather than a reimplementation of it.
-        var empty = Path.Combine(Path.GetTempPath(),
-            "al-runner-bundle-gate-" + Guid.NewGuid().ToString("N")[..8]);
-        Directory.CreateDirectory(empty);
+        // Owned: this directory IS created, so a killed test host would leak it (#2743).
+        // TestScratch.FlatDir creates it and records an owner, which the sweep deletes.
+        var empty = TestScratch.FlatDir("al-runner-bundle-gate");
 
         var previousRoot = Environment.GetEnvironmentVariable("AL_RUNNER_METADATA_GROUND_TRUTH");
         var previousCi = Environment.GetEnvironmentVariable("CI");
