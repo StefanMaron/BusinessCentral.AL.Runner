@@ -23,12 +23,17 @@ Neither flag has a **failure route**, and neither may grow one: **availability**
 an object takes, and a failure is never *re-routed* to a derivation — substituting a weaker answer on
 error is what `loud-failures.md` exists to prevent.
 
-**A failure there is not loud, though, and this page must not imply it is.** The site sits inside a
-catch that swallows any throw into `return null` for both routes alike — pre-existing, tracked as
-**#3590**. So a genuine load failure and "no document was available" are **indistinguishable from the
-trace**, and a table that failed to load shows as `derived` exactly like one that never had a
-document. `RecordPatches.NclMetaTableBuilder.cs` says so at the site itself; #3590 is open precisely
-because the guarantee a reader would want here does not yet exist.
+**A failure there is only PARTLY loud, and this page must not imply otherwise.** The site sits
+inside `BuildNCLMetaTable`'s catch, which **#3590** narrowed: a refusal naming what could not be
+read — `BcShapeGapException`, `BcAppSymbolReadException`, a typed `RunnerOutOfScopeException` —
+reaches the caller and names the table. An **ordinary** construction failure is still absorbed
+into `return null` for both routes alike, because every caller has a legitimate not-found branch
+for a table that cannot exist.
+
+So for that remaining class, a genuine load failure and "no document was available" are still
+**indistinguishable from the trace**: a table that failed to build shows as `derived` exactly like
+one that never had a document. `RecordPatches.NclMetaTableBuilder.cs` states the split at the site
+itself.
 
 **The page trace inherits exactly the same limit, and states it rather than implying it away.**
 `TryGetBcPageControlDocument` memoises a null when the document does not parse, so a page whose

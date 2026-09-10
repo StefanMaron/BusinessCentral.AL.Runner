@@ -230,12 +230,18 @@ and `BlankZero` were themselves found this way — by re-measuring, not by readi
 
 Availability decides the route, and a failure is never re-routed to the derivation: a weaker
 answer substituted on error is what `.claude/rules/loud-failures.md` exists to prevent. **How
-far that failure travels differs by call site, and only one of the two is loud.** The post-emit
-sweep has no handler over it and aborts bundle load naming the member. The cold build sits
-inside `BuildNCLMetaTable`'s pre-existing `catch → Console.Error → return null`, which swallows
-it into "no metatable" exactly as it does a derivation failure — and that write is
-`[RecordPatches]`-tagged, so the default log filter drops it. That swallow predates this work
-and is tracked as **#3590**; it is not a claim this page makes about the cold path.
+far that failure travels differs by call site.** The post-emit sweep has no handler over it and
+aborts bundle load naming the member. The cold build sits inside `BuildNCLMetaTable`'s catch,
+which **#3590** narrowed: a refusal naming what could not be READ — `BcShapeGapException`,
+`BcAppSymbolReadException`, or a typed `RunnerOutOfScopeException` — now reaches the caller
+rather than becoming a cached null, and the line for a failure that IS still absorbed no longer
+carries a `[RecordPatches]` tag, so the default log filter no longer drops it.
+
+**An ordinary construction failure is still absorbed into "no metatable"**, and deliberately so:
+`NavRecordHandle_CreateTarget`, `TryBuildBlankRecord` and `GetMetaFieldEditable` all legitimately
+ask about tables that cannot exist, so rethrowing everything would trade a false green for a
+false red (`.claude/rules/guards-need-a-third-state.md`). The two absent-table returns sit
+outside the `try`, which is what makes the narrower filter safe.
 
 <a id="reading-the-values-back"></a>
 
