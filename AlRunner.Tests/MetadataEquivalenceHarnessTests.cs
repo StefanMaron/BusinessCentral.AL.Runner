@@ -174,8 +174,8 @@ public sealed class MetadataEquivalenceHarnessTests
         // programme finishes, which is the one outcome it must not punish.
         string[] stillUncompared =
         {
-            // step 2..8, in the order issue #3782's comment sets.
-            "CodeUnit", "Query", "XmlPort", "Report", "PermissionSet", "Enum",
+            // step 3..8, in the order issue #3782's comment sets.
+            "Query", "XmlPort", "Report", "PermissionSet", "Enum",
             "MetadataRuntimeDeltas",
         };
 
@@ -202,9 +202,38 @@ public sealed class MetadataEquivalenceHarnessTests
 
             Assert.Contains("MetaTable", report.KindsCompared);
             Assert.Contains("PageDefinition", report.KindsCompared);
+            Assert.Contains("CodeUnit", report.KindsCompared);
 
             foreach (var kind in stillUncompared.Where(k => report.Bundle.Census.ContainsKey(k)))
                 Assert.Contains(kind, report.KindsNotCompared);
+        }
+    }
+
+    [SkippableFact]
+    public void Codeunits_are_compared_in_the_numbers_the_bundle_declares()
+    {
+        // The step-2 counterpart of the page claim below, and it is needed for the same reason:
+        // every other test in this file measures DIFFERENCES, so a codeunit comparison that
+        // quietly compared nothing would leave all of them green. Here the risk is sharper than
+        // for pages — the runner has no MetaCodeunit and its side is a PROJECTION, so a
+        // projection that silently produced nothing would report zero differences and read as
+        // perfect agreement.
+        foreach (var report in RunAll())
+        {
+            var declared = report.Bundle.Census.GetValueOrDefault("CodeUnit");
+            Assert.True(declared > 0,
+                $"{report.Bundle.Label}: the bundle declares no CodeUnit at all, so this test " +
+                "measures nothing. Regenerate the bundle.");
+
+            var codeunitDifferences = report.Differences
+                .Where(d => d.ObjectKey.StartsWith("Codeunit ", StringComparison.Ordinal))
+                .Select(d => d.ObjectKey).Distinct().Count();
+
+            // A codeunit the runner reproduces exactly contributes no differences, so this is a
+            // floor rather than an equality — but a floor of zero would be the vacuous claim.
+            Assert.True(codeunitDifferences > 0 || report.ObjectsCompared >= declared,
+                $"{report.Bundle.Label}: {declared} CodeUnit(s) in the bundle and none was " +
+                "compared. " + report.Summary);
         }
     }
 

@@ -242,7 +242,21 @@ internal static partial class BcAppSymbolCache
     // "the AL states nothing" into "the AL states the default", and a payload written by the
     // previous parse replays that collapse from a warm cache — a wrong ANSWER (BC's emitter
     // writes the attribute precisely when the AL states the property), not a cache miss.
-    private const int CacheVersion = 38;
+    // v39: a codeunit's SingleInstance is read with SymbolBool rather than a hand-rolled match
+    // on the word "true" (#3790). Same trap as v35, v36 and v38 a fourth time — the record
+    // SHAPE is unchanged, ObjectSymbol.SingleInstance is a bool either way, so PayloadShape
+    // cannot see that 38 of System Application 28.1's 533 codeunits went from false to true.
+    // Without the bump a warm box replays the old parse and CodeUnit Metadata keeps answering
+    // SingleInstance = false for every single-instance codeunit in a precompiled dependency.
+    //
+    // This one was written as v38 first and COLLIDED: #3791 took 38 for the page payload above
+    // while #3785 was in flight, and both were correct in isolation. That is the hazard this
+    // integer carries and ordinary code does not — when the shape is unchanged the integer is
+    // the ONLY discriminator, so two payload meanings sharing one number is not a bookkeeping
+    // slip but a warm box replaying the wrong parse, silently, on both. Re-read this constant
+    // on origin/main immediately before pushing a bump; a rebase resolves the text and cannot
+    // tell you the number is already taken.
+    private const int CacheVersion = 39;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -1176,15 +1190,18 @@ internal static partial class BcAppSymbolCache
                     // The object-level properties CodeUnit Metadata reports as real columns.
                     // SymbolProperties is case-insensitive, so "TableNo"/"TableNO" both match.
                     objProps.TryGetValue("TableNo", out var cuTableNo);
-                    objProps.TryGetValue("SingleInstance", out var cuSingleInstance);
                     objProps.TryGetValue("Subtype", out var cuSubtype);
                     objects.TryAdd((kind, objId), new ObjectSymbol(kind, objId, objName, objCaption,
                         // Left as written; StripModuleQualifier is the consumer's job, the same
                         // split the query/report data-item RelatedTable reads already make.
                         TableNo: string.IsNullOrWhiteSpace(cuTableNo) ? null : cuTableNo.Trim(),
-                        // AL's default is false; only an explicit "true" sets it.
-                        SingleInstance: string.Equals(cuSingleInstance?.Trim(), "true",
-                            StringComparison.OrdinalIgnoreCase),
+                        // AL's default is false; a stated value sets it. SymbolBool, not a
+                        // hand-rolled "true" comparison: Microsoft's packages write "1", never
+                        // the word — 38 of System Application 28.1's 533 codeunits state "1" and
+                        // none states "true" — so matching only "true" answered false for every
+                        // single-instance codeunit in a precompiled dependency (#3790). Every
+                        // other boolean in this file already goes through SymbolBool.
+                        SingleInstance: SymbolBool(objProps, "SingleInstance"),
                         Subtype: string.IsNullOrWhiteSpace(cuSubtype) ? null : cuSubtype.Trim()));
                     continue;
                 }

@@ -439,14 +439,14 @@ reachable.
 <a id="what-is-compared"></a>
 ## What is compared, and what is not
 
-The harness compares `MetaTable` and `PageDefinition` documents. A bundle carries every kind BC
-emitted — codeunits, pages, enums, permission sets, queries, reports, xmlports, and the
+The harness compares `MetaTable`, `PageDefinition` and `CodeUnit` documents. A bundle carries
+every kind BC emitted — enums, permission sets, queries, reports, xmlports, and the
 `MetadataRuntimeDeltas` documents that cover table, page and permission-set extensions — and
 `MetadataEquivalenceHarnessTests` asserts the set it compares AND the set it does not, so
 covering less cannot happen quietly.
 
 **#3782 is the programme that empties the not-compared list**, one kind per pull request, in the
-order that issue records: `PageDefinition` (done), then `CodeUnit`, `Query`, `XmlPort`, `Report`,
+order that issue records: `PageDefinition` (done), `CodeUnit` (done), then `Query`, `XmlPort`, `Report`,
 `PermissionSet`, `Enum`, `MetadataRuntimeDeltas`. Each step adds its kind to `ComparedKinds`,
 lands the resulting allowlist with a reason per member, and deletes its kind from the
 `stillUncompared` list in `The_harness_states_which_kinds_it_does_not_compare`.
@@ -624,6 +624,25 @@ not cover still fails, on every version. It requires a `Doc` pointer for the sam
 `outOfScope` does, since exempting an entry removes the signal that a landed fix must shrink this
 file.
 
+**Every step should run this check before pushing, and record the answer either way.** Step 2
+(`CodeUnit`) did, and the answer was no: none of its five entries is version-contingent. The
+check is cheap because the bundles are already on the box — count each member's population per
+build rather than reasoning about it:
+
+| member | 27.5 | 28.1 | 28.4 |
+|---|---:|---:|---:|
+| System Application codeunits | 506 | 533 | 534 |
+| …carrying `ALNamespace` | 506 | 533 | 534 |
+| …stating either Inherent mask | 455 | 481 | 482 |
+| …emitting a `<Methods>` subtree | 135 | 137 | 138 |
+
+27.5 is the leg that reddened step 1, and it carries all five populations. The contrast is the
+point: step 1's failure was a member whose entire population was **one page**, so a version
+moving that page's shape took the population to zero. A population in the hundreds cannot do
+that. **The trigger is a small population, not a large difference count** — and the two are easy
+to confuse, because a member differing on 558 objects and a member differing on one both read as
+a single line in the allowlist.
+
 **It is deliberately not a list of BC versions.** A list has to be edited whenever the matrix
 moves and goes stale silently when it is not — the same defect as the build-keyed count pin that
 went inert in `The_current_reader_reproduces_the_known_defect_shapes`. What the flag declares is a
@@ -647,6 +666,75 @@ tests actually touch.
 produces zero objects for the whole app (#3549). The generator treats a zero-object emit as a
 failure rather than writing an empty bundle, and `apps.json` says why Base Application is absent
 rather than listing it and failing every leg.
+
+<a id="codeunits"></a>
+## Codeunits: the runner has no `MetaCodeunit`, so its derivation is projected into one
+
+Tables and pages each hand the harness a runner-built object. Codeunits have neither, and the
+distinction decides whether the comparison measures anything at all.
+
+**Nothing in the runner builds a `Types.Metadata.MetaCodeunit`.** `NavCodeunit.get_MetaCodeunit`
+returns an `NCLMetaCodeunit` built by `CreateEmptyNCLMetaCodeunit` and populated with the AL
+CLR type alone (`AlRunner/Patches/CodeunitPatches.MetaCodeunit.cs`) — a different type, and
+empty of the members BC's document states.
+
+**And the obvious substitute is BC's own answer.** The codeunit document in
+`AlObjectMetadataRegistry` is what BC's emitter produced, captured at compile time; it is the
+*same* document the ground truth holds. Handing it over would compare BC against BC and report
+zero differences having measured nothing — the failure step 1 of #3782 hit with
+`MetaPageDefinition`, where 235 pages compared clean against a default object.
+
+So `RecordPatches.TryBuildCodeunitMetadataEquivalenceXml` renders the runner's genuinely
+independent derivation — the `SymbolReference.json` properties `BcAppSymbolCache.ObjectSymbol`
+carries, the same values `CodeUnit Metadata` (2000000137) answers from — into BC's document
+shape, and BC's own `MetaCodeunit(XmlNode)` constructor parses both sides. One type against
+itself.
+
+**Only the five derived attributes are written**, and a value the runner does not derive is
+left off rather than defaulted, so BC's constructor applies its own default and the reported
+difference is a true statement about what the runner does not know.
+`MetadataEquivalenceCodeunitOracleTests` asserts both halves: that BC's constructor really
+parses (real values from a real document, not a default object), and that the runner's
+projection does *not* state the emitter-only members.
+
+### What the first run measured
+
+BC 28.1.49838.53910, Business Foundation (25 codeunits) and System Application (533):
+**558 codeunits, 2,220 differences across 5 members.**
+
+Five of `MetaCodeunit`'s eleven members agree **exactly**, on every codeunit: `Id`, `Name`,
+`SubType`, `TableNo` and `SingleInstance` — including all 12 System Application codeunits that
+declare a `TableNo`, which bounds #3546 to the cross-app `#<appid>#`-qualified form it names.
+
+| member | count | BC | runner |
+|---|---:|---|---|
+| `MetaCodeunit.ALNamespace` | 558 | `System.Utilities` | `<null>` |
+| `MetaCodeunit.InherentEntitlements` | 505 | `Execute` | `None` |
+| `MetaCodeunit.InherentPermissions` | 505 | `Execute` | `None` |
+| `MetaRuntimeInfo.Methods.<presence>` | 326 | `MetaMethod` | `<absent>` |
+| `MetaRuntimeInfo.#methodsDictionary.<presence>` | 326 | `MetaMethod` | `<absent>` |
+
+The last two are one collection reached under two signatures — `MetaRuntimeInfo` backs the
+property with a field and the differ walks both.
+
+**None is a limit of the symbol file**, which is why all five are tracked on #3788 rather than
+declared permanent. Checked against `SymbolReference.json` directly, on the same build:
+
+- **`ALNamespace` is fully derivable.** Objects live in a nested `Namespaces` tree rather than
+  the flat top-level `Codeunits` list, and the tree path equals BC's attribute for **533 of
+  533**. `BcAppSymbolCache` walks that tree but does not retain the path.
+- **Both Inherent masks are stated verbatim**, as `Properties` entries with value `"X"`;
+  presence agrees for **533 of 533**. The letters are the mask spelling
+  `RecordPatches.CodeunitMetadataFromBcDocument.cs` already parses from BC's document.
+- **`Methods` is partly derivable.** The file states `Methods` with `Id`, `Name`, `Parameters`
+  and `ReturnTypeDefinition`; BC's emitted names are a subset of the file's for 64 codeunits,
+  **not** for 73 (BC emits event-publisher and internal methods the file omits), and 396
+  codeunits emit no `<Method>` at all.
+
+`MetaCodeunit` exposes **no** `SingleInstance` member, so the harness cannot compare that column
+in either direction — which is how #3790 stayed hidden: the symbol file writes `"1"` and the
+codeunit parser matched only the word `"true"`, so all 38 single-instance System Application
+codeunits read as false. `CodeunitSymbolSingleInstanceSpellingTests` pins both spellings.
 
 <a id="running-it"></a>
 ## Running it
