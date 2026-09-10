@@ -535,6 +535,35 @@ public sealed class SuiteRootAlFilesTests : IDisposable
     }
 
     /// <summary>
+    /// The order is part of the answer, not an accident of the filesystem. The list is both the
+    /// compile's path list and the <c>AddSourceDirs</c> registration list, and
+    /// <c>Directory.EnumerateDirectories</c> returns <c>app*/</c> in filesystem order - NTFS
+    /// sorted, ext4 not - which is why the concrete-list assertion above passed on Windows and
+    /// failed on the BC 27.5 Linux leg. <c>app10/</c> before <c>app2/</c> is what makes this an
+    /// ordinal sort rather than a numeric one. It cannot go RED on NTFS; the Linux legs are where
+    /// it bites.
+    /// </summary>
+    [Fact]
+    public void SuiteRegistrationDirs_OrdersAppFolders_Ordinally()
+    {
+        Touch(Path.Combine(_root, "app.json"), "{}");
+        Touch(Path.Combine(_root, "src", "A.al"));
+        Touch(Path.Combine(_root, "app2", "B.al"));
+        Touch(Path.Combine(_root, "app10", "C.al"));
+        Touch(Path.Combine(_root, "app", "D.al"));
+        Touch(Path.Combine(_root, "test", "E.al"));
+
+        Assert.Equal(
+            new[]
+            {
+                Path.Combine(_root, "src"), Path.Combine(_root, "app"),
+                Path.Combine(_root, "app10"), Path.Combine(_root, "app2"),
+                Path.Combine(_root, "test"),
+            },
+            ProgramSupport.SuiteRegistrationDirs(_root));
+    }
+
+    /// <summary>
     /// A <c>test/</c>-only suite registered NOTHING before - the branch that fell through both
     /// the src/ arm and the flat-bundle arm - while the compile returned <c>[test]</c>.
     /// </summary>
@@ -551,6 +580,13 @@ public sealed class SuiteRootAlFilesTests : IDisposable
     /// The drift pin itself: over every layout this file exercises, the registered set IS the
     /// compiled set. A future editor who widens one and not the other fails here - which is the
     /// failure #3611/#3714 and #3735 each shipped once.
+    /// <para>
+    /// What it cannot catch: since the fix, <c>SuiteRegistrationDirs</c> IS
+    /// <c>CollectSuitePaths</c>, so this compares one function against itself and would stay
+    /// green through any change either makes - including the filesystem-dependent
+    /// <c>app*/</c> order that reddened the BC 27.5 and 28.4 legs. It pins that the two never
+    /// diverge again, not what either answers; the concrete-list tests above pin that.
+    /// </para>
     /// </summary>
     [Theory]
     [InlineData("src")]

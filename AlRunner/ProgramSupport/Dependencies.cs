@@ -405,7 +405,8 @@ internal static partial class ProgramSupport
 
     /// <summary>
     /// The folders the legacy bucket layout put AL in — <c>src/</c>, every <c>app*/</c>, and
-    /// <c>test/</c> — in the order <see cref="CollectSuitePaths"/> has always returned them.
+    /// <c>test/</c> — in the order <see cref="CollectSuitePaths"/> has always returned them,
+    /// with the <c>app*/</c> run ordinal-sorted so the list is the same on every platform.
     /// Empty for a flat suite.
     /// </summary>
     private static List<string> ConventionalSourceDirs(string suite)
@@ -414,7 +415,14 @@ internal static partial class ProgramSupport
         var s = Path.Combine(suite, "src");
         var t = Path.Combine(suite, "test");
         if (Directory.Exists(s)) dirs.Add(s);
-        foreach (var app in Directory.EnumerateDirectories(suite, "app*"))
+        // Ordinal-sorted: Directory.EnumerateDirectories' order is filesystem-dependent — NTFS
+        // hands back app/ then app2/, ext4 hands back whatever order the directory happens to
+        // hold. This list is the compile's path list AND the AddSourceDirs registration list, so
+        // an unsorted one made both order-dependent on the filesystem; sorting is one line and
+        // removes the question. OrdinalIgnoreCase would tie App/ with app/ on a case-sensitive
+        // filesystem and fall back to enumeration order again.
+        foreach (var app in Directory.EnumerateDirectories(suite, "app*")
+                     .OrderBy(p => p, StringComparer.Ordinal))
             dirs.Add(app);
         if (Directory.Exists(t)) dirs.Add(t);
         return dirs;
