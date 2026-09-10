@@ -11,7 +11,7 @@ public sealed record AlScopeSyntax(AlLoopScopeTable Loops, AlWriteSetTable Write
 public static class AlScopeSyntaxResolver
 {
     private static AlMemberSyntaxIndex? _index;
-    private static IReadOnlyDictionary<(string Label, int Id), string>? _sourceMap;
+    private static AlSourceLocationMap? _sourceMap;
     private static readonly ConcurrentDictionary<Type, AlScopeSyntax?> _scopes = new();
     private static readonly ConcurrentDictionary<Type, string> _unresolved = new();
 
@@ -20,7 +20,7 @@ public static class AlScopeSyntaxResolver
     public static IReadOnlyCollection<string> UnresolvedScopes => _unresolved.Values.Distinct().OrderBy(s => s, StringComparer.Ordinal).ToList();
 
     /// <summary>Installs the request's index and file map and forgets earlier resolutions.</summary>
-    public static void Configure(AlMemberSyntaxIndex index, IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
+    public static void Configure(AlMemberSyntaxIndex index, AlSourceLocationMap sourceMap)
     {
         _index = index;
         _sourceMap = sourceMap;

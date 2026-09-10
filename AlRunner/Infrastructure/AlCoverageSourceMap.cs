@@ -1,64 +1,180 @@
 // AlCoverageSourceMap — maps (AL object type label, AL object id) back to the .al file
-// that declares it, for --coverage's cobertura output. Coverage-only utility: it does
-// not touch AL parsing/compilation, just scans header lines of the same .al files the
-// bundle was already compiled from, the same way v1's SourceFileMapper did.
-using System.Text.RegularExpressions;
+// that declares it AND to the line offset BC's [SourceSpans] need to become file lines,
+// for --coverage's cobertura output, the server's statement tables and the DAP session.
+// Coverage-only utility: it does not touch AL compilation, just parses the same .al files
+// the bundle was already compiled from with BC's own parser.
+using System.Collections;
+using System.Collections.Concurrent;
+using NavCA = Microsoft.Dynamics.Nav.CodeAnalysis;
+using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
 namespace AlRunner.Infrastructure;
 
+/// <summary>
+/// (object label, object id) → the declaring file, readable as the plain
+/// <c>IReadOnlyDictionary&lt;(Label, Id), string&gt;</c> the older consumers take, plus
+/// <see cref="LineOffset"/>, the number of lines to add to a decoded [SourceSpans] line to
+/// get the file line. BC's [SourceSpans] lines are relative to the object's own text with
+/// the file's preamble (anything before the first object) counted in, so the offset is the
+/// object's FullSpan start minus the first object's — 0 for the first object in a file
+/// (#3713; CoverageMultiObjectFileTests pins the four header shapes that settled it).
+/// </summary>
+public sealed class AlSourceLocationMap : IReadOnlyDictionary<(string Label, int Id), string>
+{
+    private readonly Dictionary<(string Label, int Id), (string Path, int LineOffset)> _entries = new();
+
+    /// <summary>A map with no objects; never mutated.</summary>
+    public static AlSourceLocationMap Empty { get; } = new();
+
+    internal void Add(string label, int id, string path, int lineOffset) =>
+        _entries[(label, id)] = (path, lineOffset);
+
+    /// <summary>Lines to add to a decoded [SourceSpans] line of this object to get its file
+    /// line; 0 for the first object in a file and for an object not in the map.</summary>
+    public int LineOffset(string label, int id) =>
+        _entries.TryGetValue((label, id), out var e) ? e.LineOffset : 0;
+
+    public string this[(string Label, int Id) key] => _entries[key].Path;
+    public IEnumerable<(string Label, int Id)> Keys => _entries.Keys;
+    public IEnumerable<string> Values => _entries.Values.Select(e => e.Path);
+    public int Count => _entries.Count;
+    public bool ContainsKey((string Label, int Id) key) => _entries.ContainsKey(key);
+
+    public bool TryGetValue((string Label, int Id) key, out string value)
+    {
+        if (_entries.TryGetValue(key, out var e)) { value = e.Path; return true; }
+        value = null!;
+        return false;
+    }
+
+    public IEnumerator<KeyValuePair<(string Label, int Id), string>> GetEnumerator() =>
+        _entries.Select(kv => new KeyValuePair<(string Label, int Id), string>(kv.Key, kv.Value.Path)).GetEnumerator();
+
+    IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
+}
+
 public static class AlCoverageSourceMap
 {
-    // Matches an AL object declaration header: `<keyword> <id> <name>`. Anchored to the
-    // start of a (trimmed) line so it does not fire inside comments/strings later in the
-    // file. Only the keyword + numeric id are needed; the label mapping below must match
-    // AlCallStackCapture.ParseObjectTypeAndId's labels exactly, since that is the other
-    // half of the (label, id) key this map is looked up by.
-    private static readonly Regex ObjectHeaderPattern = new(
-        @"^\s*(codeunit|table|page|report|xmlport|query|enum)\s+(\d+)\b",
-        RegexOptions.IgnoreCase | RegexOptions.Multiline);
+    /// <summary>One object as parsed from a file: label, id, and its line offset.</summary>
+    private readonly record struct ParsedObject(string Label, int Id, int LineOffset);
 
-    private static readonly Dictionary<string, string> KeywordToLabel = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["codeunit"] = "CodeUnit",
-        ["table"] = "Table",
-        ["page"] = "Page",
-        ["report"] = "Report",
-        ["query"] = "Query",
-        ["xmlport"] = "XmlPort",
-        ["enum"] = "Enum",
-    };
+    // Parse results per file, keyed by (path, length, last write, symbols). A --server process
+    // builds this map on every coverage request over the same tree; re-parsing thousands of
+    // unchanged files per request was the review's cost finding on the #3713 PR.
+    private static readonly ConcurrentDictionary<string, IReadOnlyList<ParsedObject>> _parsed = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// Scans every *.al file under <paramref name="roots"/> (recursively) and returns a
-    /// map from (object label, object id) to the file's path, relative to
-    /// <paramref name="relativeTo"/> when given (else absolute). Only the FIRST object
-    /// header found per file is registered — AL files declare exactly one top-level
-    /// object, matching the compiler's own constraint.
+    /// Scans every *.al file under <paramref name="roots"/> (recursively) and returns a map
+    /// from (object label, object id) to the file's path — relative to
+    /// <paramref name="relativeTo"/> when given, else absolute — and the object's line
+    /// offset. EVERY coverable object declared in a file is registered: AL lets one file
+    /// declare several objects and alc compiles such a file at 0 errors; registering only the
+    /// first (#3713) dropped every later object's executed lines from the report.
+    /// <para>
+    /// Objects come from BC's own parser (<c>SyntaxTree.ParseObjectText</c>, as
+    /// <see cref="AlMemberSyntaxIndex"/> uses it), with the preprocessor symbols of the nearest
+    /// app.json above each file. A file the parser throws on is an error, not a fallback: a
+    /// map with a guessed offset reports wrong lines with exit 0, the shape this method exists
+    /// to remove (loud-failures.md).
+    /// </para>
     /// </summary>
-    public static Dictionary<(string Label, int Id), string> Build(
-        IEnumerable<string> roots, string? relativeTo = null)
+    public static AlSourceLocationMap Build(IEnumerable<string> roots, string? relativeTo = null)
     {
-        var map = new Dictionary<(string, int), string>();
+        var map = new AlSourceLocationMap();
+        var symbolsByAppJson = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        var appJsonByDir = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var root in roots)
         {
             if (!Directory.Exists(root)) continue;
-            foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(root, "*.al"))
+            foreach (var file in SafeDirectoryScan.Files(root, "*.al"))
             {
-                string content;
-                try { content = File.ReadAllText(file); }
-                catch (IOException) { continue; }
-
-                var m = ObjectHeaderPattern.Match(content);
-                if (!m.Success) continue;
-                if (!KeywordToLabel.TryGetValue(m.Groups[1].Value, out var label)) continue;
-                if (!int.TryParse(m.Groups[2].Value, out var id)) continue;
+                var appJson = NearestAppJson(Path.GetDirectoryName(file)!, appJsonByDir);
+                if (!symbolsByAppJson.TryGetValue(appJson ?? "", out var symbols))
+                    symbolsByAppJson[appJson ?? ""] = symbols = AlMemberSyntaxIndex.PreprocessorSymbols(appJson);
 
                 var path = relativeTo != null
                     ? Path.GetRelativePath(relativeTo, file).Replace('\\', '/')
                     : file.Replace('\\', '/');
-                map[(label, id)] = path;
+                foreach (var o in ParseObjects(file, symbols))
+                    map.Add(o.Label, o.Id, path, o.LineOffset);
             }
         }
         return map;
     }
+
+    /// <summary>The nearest app.json in <paramref name="dir"/> or an ancestor, or null. The
+    /// bundle root is not always the app root: a server request may name <c>app/src</c>, and a
+    /// bundle can be a parent of several apps with their own manifests and symbols.</summary>
+    private static string? NearestAppJson(string dir, Dictionary<string, string?> cache)
+    {
+        if (cache.TryGetValue(dir, out var known)) return known;
+        string? found = null;
+        for (var d = dir; d != null; d = Path.GetDirectoryName(d))
+        {
+            var candidate = Path.Combine(d, "app.json");
+            if (File.Exists(candidate)) { found = candidate; break; }
+        }
+        cache[dir] = found;
+        return found;
+    }
+
+    private static IReadOnlyList<ParsedObject> ParseObjects(string file, IReadOnlyList<string> symbols)
+    {
+        var info = new FileInfo(file);
+        var key = $"{file}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{string.Join(",", symbols)}";
+        if (_parsed.TryGetValue(key, out var cached)) return cached;
+
+        string content;
+        try { content = File.ReadAllText(file); }
+        catch (IOException) { return Array.Empty<ParsedObject>(); }
+
+        List<ParsedObject> result;
+        try
+        {
+            var parseOpts = new NavCA.ParseOptions(
+                runtimeVersion: null!,
+                preprocessorSymbols: symbols,
+                documentationMode: NavCA.DocumentationMode.None);
+            var tree = NavSyntax.SyntaxTree.ParseObjectText(content, path: file, encoding: null!, parseOpts, default);
+            var root = tree.GetCompilationUnitRoot();
+
+            var objects = new List<(string Label, int Id, int Start)>();
+            foreach (var obj in root.Objects)
+            {
+                var label = LabelOf(obj);
+                if (label == null) continue;
+                if (obj is not NavSyntax.ApplicationObjectSyntax ao || ao.ObjectId?.Value.Value is not int id) continue;
+                objects.Add((label, id, tree.GetLineSpan(obj.FullSpan).StartLinePosition.Line));
+            }
+            // Offset = this object's FullSpan start minus the FIRST object's: BC measures every
+            // object from its own text but keeps the file's preamble in front of each of them,
+            // so a namespace/using header shifts the later objects by its length and the first
+            // object by nothing (#3713, CoverageMultiObjectFileTests.Build_ObjectsAfterAFileHeader_*).
+            var firstStart = objects.Count > 0 ? objects.Min(o => o.Start) : 0;
+            result = objects.Select(o => new ParsedObject(o.Label, o.Id, o.Start - firstStart)).ToList();
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"[coverage] {file}: BC's parser failed ({ex.GetType().Name}: {ex.Message}), so the objects it declares "
+                + "cannot be placed on their lines. Refusing to write a coverage report that would put them elsewhere.", ex);
+        }
+        _parsed[key] = result;
+        return result;
+    }
+
+    // The coverable object kinds, labelled the way AlCallStackCapture.ParseObjectTypeAndId
+    // labels the emitted scope classes. The same seven kinds the header regex accepted before
+    // #3713; extensions and the id-less kinds are not registered, as before.
+    private static string? LabelOf(NavCA.SyntaxNode obj) => obj switch
+    {
+        NavSyntax.CodeunitSyntax => "CodeUnit",
+        NavSyntax.TableSyntax => "Table",
+        NavSyntax.PageSyntax => "Page",
+        NavSyntax.ReportSyntax => "Report",
+        NavSyntax.QuerySyntax => "Query",
+        NavSyntax.XmlPortSyntax => "XmlPort",
+        NavSyntax.EnumTypeSyntax => "Enum",
+        _ => null,
+    };
 }
