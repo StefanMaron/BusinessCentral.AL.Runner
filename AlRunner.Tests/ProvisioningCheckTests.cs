@@ -762,8 +762,14 @@ public sealed class ProvisioningCheckTests : IDisposable
         Assert.False(needs.NeedsPlatformApps);
     }
 
+    /// <summary>
+    /// #3794 let the reachability walk start at a non-Microsoft root, and this is the guard
+    /// on it: a third-party app that merely SHARES a Microsoft app's name is not that app.
+    /// A third-party root is followed through its recorded edges only, so one with no edges
+    /// on disk — this — requires nothing, exactly as before.
+    /// </summary>
     [Fact]
-    public void DetermineManifestNeeds_NonMicrosoftPublisher_Ignored()
+    public void DetermineManifestNeeds_NonMicrosoftPublisher_RootNameIsNotAnIdentity()
     {
         var roots = new[]
         {

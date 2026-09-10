@@ -178,6 +178,247 @@ public sealed class ManifestDependencyEdgeScanTests : IDisposable
         Assert.Equal(new[] { "System" }, needs.RequiredPlatformApps);
     }
 
+    // -- #3794: a floor is a real dependency, with a real version, on BOTH sides --
+    //
+    // #3793 taught DependencyResolver.Visit to follow a resolved package's own
+    // Platform/Application floors. Provisioning did not learn the same thing, in two
+    // separate ways, and the floor's VERSION was discarded on both sides:
+    //
+    //   1. ScanDependencyEdges dropped every non-Microsoft package before reading it, and
+    //      DetermineManifestNeeds only started its walk at Microsoft-published roots -- so a
+    //      platform-less consumer depending on a source-bearing Contoso/Library whose
+    //      manifest declares Platform="28.0.0.0" reported no platform need, downloaded
+    //      nothing, and the Tier-3 compile of that library died on the same generic
+    //      EMIT-ZERO as #3719.
+    //   2. Only the edge's NAME was recorded, never its MinVersion, and DetermineVersionFloors
+    //      read only the bundle's own roots -- so an existing but too-old app satisfied
+    //      FindMissingPlatformApps through a transitive edge. That is #2193, filed against
+    //      exactly this line and closed by the same change.
+
+    /// <summary>
+    /// A NON-Microsoft package's floor is an edge. The publisher filter belongs on the edge
+    /// TARGET (a third-party name can never collide usefully with a platform-app name), not
+    /// on the SOURCE: the resolver follows every non-platform package's floors whatever its
+    /// publisher, so a provisioning scan that reads only Microsoft sources answers a
+    /// different question from the one resolution asks.
+    /// </summary>
+    [Fact]
+    public void ScanDependencyEdges_NonMicrosoftPackageDeclaringPlatform_IsRecordedAsAnEdgeSource()
+    {
+        var dir = NewDir("floor-edge-thirdparty");
+        WriteAppWithPlatform(dir, "Library", "Contoso", "1.0.0.0", platform: "28.0.0.0");
+
+        var edges = ProvisioningCheck.ScanDependencyEdges(new[] { dir }).Edges;
+
+        Assert.Equal(new[] { "System" }, edges["Library"]);
+    }
+
+    /// <summary>
+    /// The same for an ordinary declared &lt;Dependency&gt;: a third-party package naming a
+    /// Microsoft app is an edge into the platform set. Only the TARGET stays
+    /// Microsoft-filtered -- a Contoso dependency of a Contoso package is not recorded.
+    /// </summary>
+    [Fact]
+    public void ScanDependencyEdges_NonMicrosoftSource_KeepsMicrosoftTargetsAndDropsTheRest()
+    {
+        var dir = NewDir("floor-edge-thirdparty-deps");
+        WriteApp(dir, "Library", "Contoso", "1.0.0.0",
+            ("Application", "Microsoft"), ("Other Contoso Thing", "Contoso"));
+
+        var edges = ProvisioningCheck.ScanDependencyEdges(new[] { dir }).Edges;
+
+        Assert.Equal(new[] { "Application" }, edges["Library"]);
+    }
+
+    /// <summary>
+    /// The walk must start at a non-Microsoft root too. Without this the edge recorded above
+    /// is never consulted: DetermineManifestNeeds skipped every root whose publisher was not
+    /// Microsoft before asking ReachesAnyOf anything.
+    /// </summary>
+    [Fact]
+    public void DetermineManifestNeeds_NonMicrosoftRootReachingSystem_RequiresThePlatformSet()
+    {
+        var dir = NewDir("floor-need-thirdparty");
+        WriteAppWithPlatform(dir, "Library", "Contoso", "1.0.0.0", platform: "28.0.0.0");
+        var edges = ProvisioningCheck.ScanDependencyEdges(new[] { dir }).Edges;
+
+        var needs = ProvisioningCheck.DetermineManifestNeeds(
+            new[] { Root("Library", publisher: "Contoso", version: "1.0.0.0") }, edges);
+
+        Assert.True(needs.NeedsPlatformApps);
+        Assert.Equal(new[] { "System" }, needs.RequiredPlatformApps);
+        // The platform set is not the test toolkit, and needing one must not drag the other
+        // along: that is a separate 20 MB download this root says nothing about.
+        Assert.False(needs.NeedsTestApps);
+    }
+
+    /// <summary>
+    /// A third-party root that reaches nothing Microsoft stays out of the platform set --
+    /// the negative direction, so the fix above cannot be "every root needs everything".
+    /// </summary>
+    [Fact]
+    public void DetermineManifestNeeds_NonMicrosoftRootReachingNothing_RequiresNoPlatformSet()
+    {
+        var dir = NewDir("floor-need-thirdparty-none");
+        WriteApp(dir, "Library", "Contoso", "1.0.0.0");
+        var edges = ProvisioningCheck.ScanDependencyEdges(new[] { dir }).Edges;
+
+        var needs = ProvisioningCheck.DetermineManifestNeeds(
+            new[] { Root("Library", publisher: "Contoso", version: "1.0.0.0") }, edges);
+
+        Assert.False(needs.NeedsPlatformApps);
+        Assert.Empty(needs.RequiredPlatformApps);
+    }
+
+    // -- #2193: the edge's declared MinVersion, closed over the graph --
+
+    /// <summary>
+    /// The scan records each edge's declared <c>MinVersion</c>, not just the target name.
+    /// #2193: Tests-TestLibraries' manifest declares
+    /// <c>&lt;Dependency Name="Application Test Library" MinVersion="28.1.0.0" /&gt;</c>, and
+    /// discarding that number is why a warm cache holding 28.0 satisfied a bundle that
+    /// transitively requires 28.1.
+    /// </summary>
+    [Fact]
+    public void ScanDependencyEdges_RecordsTheDeclaredMinVersionOfEachEdge()
+    {
+        var dir = NewDir("edge-minversion");
+        WriteAppWithDependencyVersions(dir, "Tests-TestLibraries", "Microsoft", "28.1.49838.54169",
+            ("Application Test Library", "Microsoft", "28.1.0.0"));
+
+        var scan = ProvisioningCheck.ScanDependencyEdges(new[] { dir });
+
+        var atl = Assert.Single(
+            scan.EdgeRequirements["Tests-TestLibraries"],
+            r => string.Equals(r.Name, "Application Test Library", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(new Version(28, 1, 0, 0), atl.Version);
+    }
+
+    /// <summary>
+    /// A floor declared on a package the bundle only reaches TRANSITIVELY is a floor. The
+    /// bundle names Tests-TestLibraries &gt;= 28.1.0.0 and nothing else; the floor for
+    /// Application Test Library has to come off that package's own manifest.
+    /// </summary>
+    [Fact]
+    public void DetermineVersionFloors_TransitiveEdge_ClosesTheFloorOverTheGraph()
+    {
+        var dir = NewDir("floor-transitive");
+        WriteAppWithDependencyVersions(dir, "Tests-TestLibraries", "Microsoft", "28.1.49838.54169",
+            ("Application Test Library", "Microsoft", "28.1.0.0"));
+        var scan = ProvisioningCheck.ScanDependencyEdges(new[] { dir });
+
+        var floors = ProvisioningCheck.DetermineVersionFloors(
+            new[] { Root("Tests-TestLibraries", version: "28.1.0.0") }, scan.EdgeRequirements);
+
+        Assert.Equal(new Version(28, 1, 0, 0), floors["Application Test Library"]);
+        Assert.Equal(new Version(28, 1, 0, 0), floors["Tests-TestLibraries"]);
+    }
+
+    /// <summary>
+    /// Where a root and a traversed edge disagree, the HIGHER floor wins -- the same rule the
+    /// root-only map already applied across bundles. Both directions, so an implementation
+    /// that simply overwrites cannot pass: the root is stricter here, the edge stricter in
+    /// the fact above.
+    /// </summary>
+    [Fact]
+    public void DetermineVersionFloors_RootStricterThanTheEdge_KeepsTheRootFloor()
+    {
+        var dir = NewDir("floor-transitive-max");
+        WriteAppWithDependencyVersions(dir, "Tests-TestLibraries", "Microsoft", "28.1.49838.54169",
+            ("Application Test Library", "Microsoft", "28.0.0.0"));
+        var scan = ProvisioningCheck.ScanDependencyEdges(new[] { dir });
+
+        var floors = ProvisioningCheck.DetermineVersionFloors(
+            new[]
+            {
+                Root("Tests-TestLibraries", version: "28.1.0.0"),
+                Root("Application Test Library", version: "28.2.0.0"),
+            },
+            scan.EdgeRequirements);
+
+        Assert.Equal(new Version(28, 2, 0, 0), floors["Application Test Library"]);
+    }
+
+    /// <summary>
+    /// A cycle in the manifest graph terminates rather than hanging, matching
+    /// <see cref="ProvisioningCheck.ReachesAnyOf"/>'s own guarantee. Real Microsoft platform
+    /// manifests reference each other, so this is the ordinary case, not an exotic one.
+    /// </summary>
+    [Fact]
+    public void DetermineVersionFloors_CyclicEdges_Terminate()
+    {
+        var dir = NewDir("floor-transitive-cycle");
+        WriteAppWithDependencyVersions(dir, "A", "Microsoft", "28.0.0.0", ("B", "Microsoft", "28.1.0.0"));
+        WriteAppWithDependencyVersions(dir, "B", "Microsoft", "28.0.0.0", ("A", "Microsoft", "28.3.0.0"));
+        var scan = ProvisioningCheck.ScanDependencyEdges(new[] { dir });
+
+        var floors = ProvisioningCheck.DetermineVersionFloors(
+            new[] { Root("A", version: "28.0.0.0") }, scan.EdgeRequirements);
+
+        Assert.Equal(new Version(28, 1, 0, 0), floors["B"]);
+        Assert.Equal(new Version(28, 3, 0, 0), floors["A"]);
+    }
+
+    /// <summary>
+    /// End to end, the shape #2193 reported: a warm cache whose Application Test Library is
+    /// 28.0 while Tests-TestLibraries transitively requires 28.1. The app is present, so a
+    /// presence-only check calls the set complete and downloads nothing; the floor makes it
+    /// missing, which is what a download can then fix.
+    /// </summary>
+    [Fact]
+    public void DecideManifestProvisioning_TransitivelyBelowFloorApp_CountsAsMissing()
+    {
+        var dir = NewDir("floor-transitive-decision");
+        WriteAppWithDependencyVersions(dir, "Tests-TestLibraries", "Microsoft", "28.1.49838.54169",
+            ("Application Test Library", "Microsoft", "28.1.0.0"));
+        WriteR2RApp(dir, "Application Test Library", "Microsoft", "28.0.46665.53459");
+        var legacy = ProvisioningCheck.CheckPlatformApps("28.1.49838.53910", new[] { dir });
+
+        var decision = ProvisioningCheck.DecideManifestProvisioning(
+            new[] { Root("Tests-TestLibraries", version: "28.1.0.0") }, legacy, new[] { dir });
+
+        Assert.Contains("Application Test Library", decision.MissingPlatformApps);
+        Assert.False(decision.PlatformComplete);
+    }
+
+    /// <summary>The same cache one build newer than the transitive floor is complete -- the
+    /// negative direction, so "missing" above is the floor talking and not the scan failing
+    /// to see the app at all.</summary>
+    [Fact]
+    public void DecideManifestProvisioning_TransitiveFloorSatisfied_CountsAsPresent()
+    {
+        var dir = NewDir("floor-transitive-decision-ok");
+        WriteAppWithDependencyVersions(dir, "Tests-TestLibraries", "Microsoft", "28.1.49838.54169",
+            ("Application Test Library", "Microsoft", "28.1.0.0"));
+        WriteR2RApp(dir, "Application Test Library", "Microsoft", "28.1.49838.54169");
+        var legacy = ProvisioningCheck.CheckPlatformApps("28.1.49838.53910", new[] { dir });
+
+        var decision = ProvisioningCheck.DecideManifestProvisioning(
+            new[] { Root("Tests-TestLibraries", version: "28.1.0.0") }, legacy, new[] { dir });
+
+        Assert.DoesNotContain("Application Test Library", decision.MissingPlatformApps);
+    }
+
+    /// <summary>As <see cref="WriteApp"/>, with a per-dependency MinVersion rather than the
+    /// package's own version -- which is what a real manifest declares, and what #2193 is
+    /// about.</summary>
+    private static void WriteAppWithDependencyVersions(
+        string dir, string name, string publisher, string version,
+        params (string Name, string Publisher, string MinVersion)[] dependencies)
+    {
+        var deps = string.Concat(dependencies.Select(d =>
+            $"""    <Dependency Id="{Guid.NewGuid()}" Name="{d.Name}" Publisher="{d.Publisher}" MinVersion="{d.MinVersion}" />{"\n"}"""));
+        var xml = $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
+              <App Id="{Guid.NewGuid()}" Name="{name}" Publisher="{publisher}" Version="{version}"/>
+              <Dependencies>
+            {deps}  </Dependencies>
+            </Package>
+            """;
+        File.WriteAllBytes(Path.Combine(dir, $"{publisher}_{name}.app"), WrapNavx(xml));
+    }
+
     /// <summary>As <see cref="WriteApp"/>, but the package carries a
     /// <c>publishedartifacts/</c> entry — i.e. an R2R runtime package rather than a
     /// symbol-only one, which is what a real provisioned platform-apps dir holds.</summary>
@@ -373,16 +614,42 @@ public sealed class ManifestDependencyEdgeScanTests : IDisposable
         Assert.True(ProvisioningCheck.TestToolkitPresent(new[] { dir }));
     }
 
+    /// <summary>
+    /// #3794 inverted the SOURCE half of this: a third-party package is now an edge source,
+    /// because DependencyResolver.Visit follows its floors and &lt;Dependencies&gt; whatever
+    /// its publisher, and a scan blind to it made provisioning answer a different question
+    /// from resolution. The TARGET half is unchanged and is what the name-keyed graph rests
+    /// on, so both directions are asserted here rather than only the one that moved.
+    /// </summary>
     [Fact]
-    public void ScanDependencyEdges_NonMicrosoftPackage_IsNotRecordedAsAnEdgeSource()
+    public void ScanDependencyEdges_NonMicrosoftPackage_IsAnEdgeSourceWithMicrosoftTargetsOnly()
     {
         var dir = NewDir("isv");
         WriteApp(dir, "Contoso Extension", "Contoso ISV", "1.0.0.0",
-            ("Application Test Library", "Microsoft"));
+            ("Application Test Library", "Microsoft"), ("Contoso Helper", "Contoso ISV"));
 
         var scan = ProvisioningCheck.ScanDependencyEdges(new[] { dir });
 
-        Assert.False(scan.Edges.ContainsKey("Contoso Extension"));
+        Assert.Equal(new[] { "Application Test Library" }, scan.Edges["Contoso Extension"].ToArray());
+    }
+
+    /// <summary>
+    /// The displacement rule the name key needs once third-party sources are admitted: a
+    /// third-party app sharing a Microsoft app's NAME must not shadow the real one's edges.
+    /// Ordinary first-wins precedence would let it, because the scan reads directories in
+    /// order and both are called "Application".
+    /// </summary>
+    [Fact]
+    public void ScanDependencyEdges_ThirdPartyAppNamedLikeAMicrosoftOne_DoesNotShadowIt()
+    {
+        var first = NewDir("shadow-first");
+        var second = NewDir("shadow-second");
+        WriteApp(first, "Application", "Contoso ISV", "1.0.0.0");
+        WriteApp(second, "Application", "Microsoft", "28.1.49838.54169", ("Base Application", "Microsoft"));
+
+        var scan = ProvisioningCheck.ScanDependencyEdges(new[] { first, second });
+
+        Assert.Equal(new[] { "Base Application" }, scan.Edges["Application"].ToArray());
     }
 
     [Fact]

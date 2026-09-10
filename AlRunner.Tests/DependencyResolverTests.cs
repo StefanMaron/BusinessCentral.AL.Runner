@@ -817,6 +817,132 @@ public sealed class DependencyResolverTests : IDisposable
         Assert.Equal(new[] { "Base Application" }, result.Select(r => r.Manifest.Name).ToArray());
     }
 
+    // -- #3794: a floor that cannot be supplied is named, not skipped in silence --
+    //
+    // #3793 made Visit follow a resolved package's floors. When the floor cannot be met,
+    // Visit reaches `if (dep.Optional || IsMicrosoftPlatformApp(...))` and returns BEFORE
+    // the nearMissVersions branch, so both "System.app absent" and "System.app present but
+    // below the declared floor" print one line -- `[deps] dependency not found in cache,
+    // skipping: Microsoft/System` -- and the run then dies in the dependent's source
+    // compile with the generic `EMIT-ZERO - BC Compilation.Emit() returned 0 sources`,
+    // naming neither the floor, nor the versions that were found, nor the repair.
+    //
+    // The skip itself stays: it is what lets the al-language corpus declare System
+    // Application >= 27.5 and still run green on the 27.0 and 27.3 legs, where no download
+    // can clear the floor (DropUnsatisfiableFloors documents the same tolerance on the
+    // provisioning side). What changes is that a floor belonging to a package this run will
+    // SOURCE-COMPILE is reported, because for that package the skip is not a tolerance --
+    // it is the EMIT-ZERO, one step earlier and still explicable.
+
+    /// <summary>
+    /// The dependent ships AL source and no R2R payload, so Tier-3 will compile it against
+    /// whatever closure resolution produced. Its Platform floor is unmet -- System.app is
+    /// present at 27.0, below the declared 28.0 -- and that must be stated, naming the
+    /// dependent, the floor, and the version that was actually found.
+    /// </summary>
+    [Fact]
+    public void SourceCompilablePackageFloor_SystemBelowFloor_IsReportedAsUnservable()
+    {
+        var dir = MakeDir("FloorBelowMinimum");
+        var systemId = "00000000-0000-0000-0000-00000000c0de";
+        var assertId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
+        File.WriteAllBytes(Path.Combine(dir, "System.app"),
+            MakeMinimalApp(systemId, "System", "Microsoft", "27.0.38460.0", r2r: false, alSource: false, platform: null));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Library Assert.app"),
+            MakeMinimalApp(assertId, "Library Assert", "Microsoft", "28.1.49838.54169", r2r: false, alSource: true, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var result = resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(assertId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        // Still resolves -- a below-floor platform app is not a hard failure, per the corpus
+        // 27.0/27.3 tolerance above.
+        Assert.Contains("Library Assert", result.Select(r => r.Manifest.Name));
+
+        var report = Assert.Single(resolver.UnservableDependencies, d => d.Contains("Library Assert", StringComparison.Ordinal));
+        Assert.Contains("Microsoft/System", report, StringComparison.Ordinal);
+        Assert.Contains("28.0.0.0", report, StringComparison.Ordinal);   // the declared floor
+        Assert.Contains("27.0.38460.0", report, StringComparison.Ordinal); // what was found instead
+        Assert.Contains(dir, report, StringComparison.Ordinal);          // where it looked
+        Assert.Contains("provision", report, StringComparison.OrdinalIgnoreCase); // how to repair it
+    }
+
+    /// <summary>
+    /// The absent case, which is #3719's own reproduction: no System.app at all. The package
+    /// still resolves alone (that behaviour is pinned by
+    /// <see cref="ResolvedPackageDeclaringPlatform_SystemAbsent_ResolvesThePackageAlone"/>),
+    /// and the run now says why the compile that follows will fail.
+    /// </summary>
+    [Fact]
+    public void SourceCompilablePackageFloor_SystemAbsent_IsReportedAsUnservable()
+    {
+        var dir = MakeDir("FloorAbsentReported");
+        var assertId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Library Assert.app"),
+            MakeMinimalApp(assertId, "Library Assert", "Microsoft", "28.1.49838.54169", r2r: false, alSource: true, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(assertId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        var report = Assert.Single(resolver.UnservableDependencies, d => d.Contains("Library Assert", StringComparison.Ordinal));
+        Assert.Contains("Microsoft/System", report, StringComparison.Ordinal);
+        Assert.Contains("28.0.0.0", report, StringComparison.Ordinal);
+        Assert.Contains("provision", report, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The negative direction, and the one that keeps this quiet on the legs that need it:
+    /// an R2R dependent is served by Tier-2 and never source-compiled, so its unmet floor is
+    /// the ordinary tolerated skip and must produce NO report. Without this the 27.0 and
+    /// 27.3 corpus legs would gain an unconditional message on every run.
+    /// </summary>
+    [Fact]
+    public void PrecompiledPackageFloor_SystemAbsent_IsNotReported()
+    {
+        var dir = MakeDir("FloorAbsentPrecompiled");
+        var depId = "00000000-0000-0000-0000-0000000c1111";
+        File.WriteAllBytes(Path.Combine(dir, "Contoso_Precompiled.app"),
+            MakeMinimalApp(depId, "Precompiled", "Contoso", "1.0.0.0", r2r: true, alSource: false, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(depId), "Precompiled", "Contoso", new Version(1, 0, 0, 0)),
+        });
+
+        Assert.DoesNotContain(resolver.UnservableDependencies, d => d.Contains("Microsoft/System", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// And the floor that IS supplied produces no report either -- so the two facts above
+    /// are the floor talking, not every source-bearing package generating a message.
+    /// </summary>
+    [Fact]
+    public void SourceCompilablePackageFloor_SystemAtTheFloor_IsNotReported()
+    {
+        var dir = MakeDir("FloorMet");
+        var systemId = "00000000-0000-0000-0000-00000000c0de";
+        var assertId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
+        File.WriteAllBytes(Path.Combine(dir, "System.app"),
+            MakeMinimalApp(systemId, "System", "Microsoft", "28.0.54265.0", r2r: false, alSource: false, platform: null));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Library Assert.app"),
+            MakeMinimalApp(assertId, "Library Assert", "Microsoft", "28.1.49838.54169", r2r: false, alSource: true, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var result = resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(assertId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        Assert.Equal(new[] { "System", "Library Assert" }, result.Select(r => r.Manifest.Name).ToArray());
+        Assert.DoesNotContain(resolver.UnservableDependencies, d => d.Contains("Microsoft/System", StringComparison.Ordinal));
+    }
+
     // ── #1689: a resolved package that NO loader tier can implement ───────────
     //
     // Reported shape: a symbols-only `Library Assert` in .alpackages satisfies resolution,

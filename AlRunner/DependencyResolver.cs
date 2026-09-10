@@ -118,7 +118,8 @@ public sealed class DependencyResolver
         DependencyRef dep,
         Dictionary<Guid, byte> state,
         List<(AppManifest, string)> output,
-        Stack<string> stack)
+        Stack<string> stack,
+        (AppManifest Manifest, string Path)? floorOwner = null)
     {
         if (!TryFind(dep, out var found, out var nearMissVersions))
         {
@@ -132,7 +133,9 @@ public sealed class DependencyResolver
                 // dependent's manifest (this branch also fires for non-Optional manifest deps).
                 Console.Error.WriteLine(
                     $"  [deps] dependency not found in cache, skipping: " +
-                    $"{dep.Publisher}/{dep.Name}");
+                    $"{dep.Publisher}/{dep.Name}"
+                    + (nearMissVersions != null ? $" (found, below the minimum: {nearMissVersions})" : ""));
+                ReportUnsuppliableFloor(dep, floorOwner, nearMissVersions);
                 return;
             }
             if (nearMissVersions != null)
@@ -183,10 +186,55 @@ public sealed class DependencyResolver
         // Optional, like the consumer-side roots: a missing System.app skips, as above.
         if (!IsMicrosoftPlatformApp(found.Manifest.Name, found.Manifest.Publisher))
             foreach (var floor in AppLoader.ImplicitRoots(found.Manifest))
-                Visit(floor, state, output, stack);
+                Visit(floor, state, output, stack, floorOwner: found);
         stack.Pop();
         state[id] = 2;
         output.Add((found.Manifest, found.Path));
+    }
+
+    /// <summary>
+    /// #3794: name a floor that cannot be supplied, when the package that declared it is one
+    /// this run will SOURCE-COMPILE.
+    ///
+    /// The skip above stays, and must: it is what lets the al-language corpus declare System
+    /// Application &gt;= 27.5 and still run green on the 27.0 and 27.3 legs, where no download
+    /// can clear the floor (ProvisioningCheck.DropUnsatisfiableFloors documents the same
+    /// tolerance on the other side). For a Tier-3 dependent the skip is not a tolerance
+    /// though — it is #3719's `EMIT-ZERO — BC Compilation.Emit() returned 0 sources`, arriving
+    /// one step later with nothing in it naming the floor, the versions found, the directories
+    /// searched, or the repair. So the report is gated on the OWNER being source-compilable
+    /// rather than on the floor being unmet, which is why an R2R dependent stays silent.
+    ///
+    /// Goes to <see cref="UnservableDependencies"/>, not <see cref="Diagnostics"/>: like
+    /// #1689's unservable packages this is a failure the developer never saw coming, and it
+    /// is printed unconditionally rather than under --verbose.
+    /// </summary>
+    private void ReportUnsuppliableFloor(
+        DependencyRef floor,
+        (AppManifest Manifest, string Path)? owner,
+        string? nearMissVersions)
+    {
+        if (owner is not { } o) return;
+        // Tier-2 serves an R2R payload and Tier-1 a committed sidecar DLL; neither compiles
+        // the package's AL, so neither needs the floor's symbols. Only a package whose ONLY
+        // implementation route is the Tier-3 source compile is affected. The same three
+        // predicates, in the same order, that SelectBestVersion's unservable check uses.
+        if (AppLoader.IsR2R(o.Path)) return;
+        if (HasPrecompiledSidecar(o.Manifest)) return;
+        if (!AppLoader.HasAlSource(o.Path)) return;
+
+        var found = nearMissVersions == null
+            ? "no copy was found in any searched directory"
+            : $"found, but below the minimum: {nearMissVersions}";
+        _unservable.Add(
+            $"[dep] {o.Manifest.Publisher}/{o.Manifest.Name} v{o.Manifest.Version} declares a floor of "
+            + $"{floor.Publisher}/{floor.Name} >= {floor.Version}, and it cannot be supplied:"
+            + $"\n      {found}"
+            + $"\n      searched: {string.Join(", ", _cacheDirs)}"
+            + $"\n      That package carries AL source and no precompiled payload, so it is compiled"
+            + $"\n      here against whatever the closure holds — without {floor.Name} its compile ends"
+            + $"\n      in \"EMIT-ZERO — 0 sources emitted\" naming nothing (#3719)."
+            + $"\n      Repair: al-runner provision --platform-apps --bc-version <a build >= {floor.Version}>");
     }
 
     /// <summary>
