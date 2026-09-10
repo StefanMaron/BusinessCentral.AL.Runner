@@ -82,7 +82,7 @@ public sealed class TestDataSymbolPackagesTests
     [Fact]
     public void SourceOnlyNavx_IsNotReaderConsumable()
     {
-        var dir = Directory.CreateTempSubdirectory("al-runner-2794-").FullName;
+        var dir = Directory.CreateDirectory(TestScratch.FlatDir("al-runner-2794-")).FullName;
         try
         {
             var p = WritePackage(dir, "Repro_ReproDepApp_1_0_0_0.app", withSymbolReference: false);
@@ -94,7 +94,7 @@ public sealed class TestDataSymbolPackagesTests
     [Fact]
     public void SymbolBearingNavx_IsReaderConsumable()
     {
-        var dir = Directory.CreateTempSubdirectory("al-runner-2794-").FullName;
+        var dir = Directory.CreateDirectory(TestScratch.FlatDir("al-runner-2794-")).FullName;
         try
         {
             var p = WritePackage(dir, "Microsoft_Something.app", withSymbolReference: true);
@@ -108,7 +108,7 @@ public sealed class TestDataSymbolPackagesTests
     [Fact]
     public void UnreadableFile_IsLeftForTheReader()
     {
-        var dir = Directory.CreateTempSubdirectory("al-runner-2794-").FullName;
+        var dir = Directory.CreateDirectory(TestScratch.FlatDir("al-runner-2794-")).FullName;
         try
         {
             var p = Path.Combine(dir, "Fake_App_1_0_0_0.app");

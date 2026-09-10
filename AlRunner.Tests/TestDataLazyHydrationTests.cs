@@ -44,7 +44,7 @@ public sealed class TestDataLazyLoadPolicyTests : IDisposable
 
     public TestDataLazyLoadPolicyTests()
     {
-        _dir = Directory.CreateTempSubdirectory("al-runner-lazy-testdata");
+        _dir = Directory.CreateDirectory(TestScratch.Dir("al-runner-lazy-testdata"));
         _log = Path.Combine(_dir.FullName, "reader-invocations.log");
         _backup = Path.Combine(_dir.FullName, "BusinessCentral-W1.bak");
         File.WriteAllBytes(_backup, new byte[256]);

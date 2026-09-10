@@ -75,7 +75,7 @@ public sealed class TestDataProvisioningTests : IDisposable
         // function whose result keys both tiers — rather than re-composing the key here. A
         // test that re-composed it would still pass if the call site stopped folding the
         // identity in, which is precisely the regression that ships a silent empty database.
-        var dir = Directory.CreateTempSubdirectory("al-runner-testdata-cachekey");
+        var dir = Directory.CreateDirectory(TestScratch.Dir("al-runner-testdata-cachekey"));
         var previousEnv = Environment.GetEnvironmentVariable(BackupReaderTool.ExecutableEnvVar);
         try
         {
@@ -128,7 +128,7 @@ public sealed class TestDataProvisioningTests : IDisposable
     [Fact]
     public void NormalizedRun_AndUnnormalizedRun_DoNotShareAnInstallBaselineCacheKey()
     {
-        var dir = Directory.CreateTempSubdirectory("al-runner-normalize-cachekey");
+        var dir = Directory.CreateDirectory(TestScratch.Dir("al-runner-normalize-cachekey"));
         var previousEnv = Environment.GetEnvironmentVariable(BackupReaderTool.ExecutableEnvVar);
         try
         {
@@ -202,7 +202,7 @@ public sealed class TestDataProvisioningTests : IDisposable
     [Fact]
     public void CacheIdentity_TracksTheBackupFilesContent_NotJustItsName()
     {
-        var dir = Directory.CreateTempSubdirectory("al-runner-testdata-key");
+        var dir = Directory.CreateDirectory(TestScratch.Dir("al-runner-testdata-key"));
         try
         {
             var bak = Path.Combine(dir.FullName, "BusinessCentral-W1.bak");
@@ -364,7 +364,7 @@ public sealed class TestDataProvisioningTests : IDisposable
         // identical between builds and only the managed .dlls change, so hashing the
         // executable alone would let a reader fix that changes decoded VALUES be masked by
         // a cached baseline keyed on an unchanged identity.
-        var dir = Directory.CreateTempSubdirectory("al-runner-bcbak-identity");
+        var dir = Directory.CreateDirectory(TestScratch.Dir("al-runner-bcbak-identity"));
         try
         {
             var exe = Path.Combine(dir.FullName, "bcbak");
