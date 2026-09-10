@@ -152,9 +152,13 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
   ~40-minute run kills it).
 - `git merge-tree --write-tree --messages origin/<base> origin/<branch>` is clean.
 - **Every `Corpus-PR:` line in the body names a merged corpus PR**; a PR touching an AL-observable path with neither a `Corpus-PR:` nor a
-  `Corpus-NA:` line is held (the linkage gate, `bc-behavior-tests-go-upstream.md`): `gh pr view <M> --repo StefanMaron/BusinessCentral.AL.Language.Tests --json
-  state,mergedAt --jq '"\(.state) \(.mergedAt)"'` prints `MERGED` and a date before the arm
-  command runs. Any other answer means reporting that corpus PR's number instead of arming.
+  `Corpus-NA:` line is held (the linkage gate, `bc-behavior-tests-go-upstream.md`). The read is
+  `PR_BODY="$(gh pr view <N> --json body --jq .body)" python3 .github/scripts/corpus_pr_state.py`,
+  which answers one of `NONE` / `MERGED` / `MERGEABLE` / `NOT-MERGEABLE` / `CLOSED-UNMERGED` /
+  `UNREADABLE` per cited corpus PR — `tools/ci-wait.py` prints the same line beside its verdict
+  (#3674). **Only `NONE` and `MERGED` arm.** `MERGEABLE` is a corpus PR still to merge: merge it
+  first, in this same step, then re-read. Anything else means reporting that corpus PR's number
+  instead of arming.
 - No *other* PR in the same batch conflicts with it. Where two do — historically two submodule pin bumps to
   different revisions, say — arm only the one that must merge first and report the ordering.
 - **The newest comment on the PR whose last line begins `Verdict:` reads `Verdict: MERGE` with a

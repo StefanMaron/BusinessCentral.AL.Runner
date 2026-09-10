@@ -43,6 +43,17 @@ reported, so move on and read again later.
 inheriting a failure it did not cause. It is a report: it never changes the exit code, and a
 read that did not happen prints `unavailable`, never a verdict.
 
+**And one line per corpus PR the body cites** — `corpus PR #226: NOT-MERGEABLE (head 321ac71a)`
+(#3674), from `.github/scripts/corpus_pr_state.py`, the same module `pr-gate.yml`'s
+`A cited corpus PR must be able to merge` job runs. Same contract as the floor line: a report,
+never an exit code, `unavailable` on a read that did not happen and `UNREADABLE` on a malformed
+declaration. **That gate is a status check, so it evaluates on push, `edited` and `labeled` and
+not when the corpus PR moves** — a corpus PR that goes green or merges later leaves a stale red
+until something re-triggers it, and editing the body or applying `status: review-ready` is the
+cheap re-trigger. It is deliberately not in the branch ruleset (it reads `api.github.com`), so
+that stale red does not block a merge; the arming list in `orchestrating-a-session` is what
+holds out for `MERGED`.
+
 `ci-wait.py` reads the required contexts from the **live branch ruleset** on each invocation
 (`GET /repos/{owner}/{repo}/rules/branches/main`, which reports only *active* rulesets),
 falling back to its built-in list and saying so loudly; `check_required_contexts.py` fails CI
