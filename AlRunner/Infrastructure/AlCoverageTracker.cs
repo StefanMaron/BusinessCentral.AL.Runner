@@ -179,11 +179,13 @@ public static class AlCoverageTracker
     /// count 0 because this is a reflection scan over the compiled shape, not a replay of
     /// what ran — the "did not execute" half of coverage is not vacuous.
     ///
-    /// <paramref name="sourceMap"/> resolves (object label, object id) to a file path
-    /// (see AlCoverageSourceMap.Build); scopes whose owning object is not in the map are
-    /// skipped, e.g. framework/library assemblies outside the bundle under test.
+    /// <paramref name="sourceMap"/> resolves (object label, object id) to a file path and the
+    /// object's start line in that file (see AlCoverageSourceMap.Build); scopes whose owning
+    /// object is not in the map are skipped, e.g. framework/library assemblies outside the
+    /// bundle under test. The decoded span line is relative to the object's text, so the
+    /// start line is added to make it a file line (#3713).
     /// </summary>
-    public static List<AlCoverageStatement> Collect(IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
+    public static List<AlCoverageStatement> Collect(AlSourceLocationMap sourceMap)
     {
         EnsureReflInit();
         var result = new List<AlCoverageStatement>();
@@ -207,11 +209,12 @@ public static class AlCoverageTracker
                 // are real, coverable statements — see AlCoverageInstrumentedStatements
                 // for why the raw SourceSpans array is not that set on its own (it
                 // carries a trailing, never-instrumented sentinel entry).
+                var lineOffset = sourceMap.LineOffset(label, id);
                 var instrumented = AlCoverageInstrumentedStatements.Find(t);
                 foreach (var i in instrumented)
                 {
                     if (i < 0 || i >= spans.Length) continue; // defensive: BC shape drift
-                    int line = AlSourceSpanCodec.AbsoluteFromLine(spans[i]);
+                    int line = AlSourceSpanCodec.AbsoluteFromLine(spans[i]) + lineOffset;
                     result.Add(new AlCoverageStatement(label, id, filePath, line, GetHitCount(t, i)));
                 }
             }
@@ -262,7 +265,7 @@ public static class AlCoverageTracker
     /// entries here with the SAME line but different id/column, which is exactly the
     /// distinction <see cref="AlCoverageReport"/>'s line-rollup necessarily discards.
     /// </summary>
-    public static List<AlStatementRecord> CollectStatementTable(IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
+    public static List<AlStatementRecord> CollectStatementTable(AlSourceLocationMap sourceMap)
     {
         EnsureReflInit();
         AlNavNameReflection.EnsureInit();
@@ -282,7 +285,7 @@ public static class AlCoverageTracker
                 var (fromLine, fromColumn, toLine, toColumn) = AlSourceSpanCodec.Decode(resolved.Spans[i]);
                 result.Add(new AlStatementRecord(
                     resolved.FilePath, resolved.ScopeName, i,
-                    fromLine + 1, fromColumn + 1, toLine + 1, toColumn + 1,
+                    fromLine + 1 + resolved.LineOffset, fromColumn + 1, toLine + 1 + resolved.LineOffset, toColumn + 1,
                     GetHitCount(t, i)));
             }
         }
@@ -299,7 +302,9 @@ public static class AlCoverageTracker
     // Null means "not a coverable, mapped AL scope" — a framework type, or an owning object
     // outside sourceMap. CollectPerTestStatementTable memoizes per scope Type, nulls included,
     // because the (Type, statementId) identity does not vary per test and only the hit count does.
-    private static (string FilePath, string ScopeName, long[] Spans)? ResolveScopeInfo(
+    // LineOffset: the owning object's 0-based start line in FilePath (#3713); 0 for the first
+    // object in a file, or when the map is not an AlSourceLocationMap.
+    private static (string FilePath, string ScopeName, long[] Spans, int LineOffset)? ResolveScopeInfo(
         Type type, IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
     {
         if (Attribute.GetCustomAttribute(type, _tSourceSpansAttr!) is not object srcAttr) return null;
@@ -308,11 +313,12 @@ public static class AlCoverageTracker
         if (id == 0) return null;
         if (!sourceMap.TryGetValue((label, id), out var filePath)) return null;
         var scopeName = AlNavNameReflection.GetAlName(type) ?? "?";
-        return (filePath, scopeName, spans);
+        var lineOffset = sourceMap is AlSourceLocationMap located ? located.LineOffset(label, id) : 0;
+        return (filePath, scopeName, spans, lineOffset);
     }
 
     /// <summary>ResolveScopeInfo with the reflection init done; null for a scope outside the bundle.</summary>
-    internal static (string FilePath, string ScopeName, long[] Spans)? TryResolveScope(
+    internal static (string FilePath, string ScopeName, long[] Spans, int LineOffset)? TryResolveScope(
         Type type, IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
     {
         EnsureReflInit();
@@ -338,12 +344,12 @@ public static class AlCoverageTracker
     /// alongside `perTestCoverage:true`.</para>
     /// </summary>
     public static Dictionary<string, List<AlStatementRecord>> CollectPerTestStatementTable(
-        IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
+        AlSourceLocationMap sourceMap)
     {
         EnsureReflInit();
         AlNavNameReflection.EnsureInit();
         var result = new Dictionary<string, List<AlStatementRecord>>();
-        var typeInfo = new Dictionary<Type, (string FilePath, string ScopeName, long[] Spans)?>();
+        var typeInfo = new Dictionary<Type, (string FilePath, string ScopeName, long[] Spans, int LineOffset)?>();
 
         foreach (var testEntry in _perTestHits)
         {
@@ -363,7 +369,7 @@ public static class AlCoverageTracker
                 var (fromLine, fromColumn, toLine, toColumn) = AlSourceSpanCodec.Decode(resolved.Spans[stmtId]);
                 (list ??= new List<AlStatementRecord>()).Add(new AlStatementRecord(
                     resolved.FilePath, resolved.ScopeName, stmtId,
-                    fromLine + 1, fromColumn + 1, toLine + 1, toColumn + 1,
+                    fromLine + 1 + resolved.LineOffset, fromColumn + 1, toLine + 1 + resolved.LineOffset, toColumn + 1,
                     stmtEntry.Value));
             }
             if (list is { Count: > 0 }) result[testEntry.Key] = list;

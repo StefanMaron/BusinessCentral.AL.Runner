@@ -5620,7 +5620,7 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     using var tcpClientDisposable = tcpClient;
     AlRunner.Infrastructure.AlDapSession.Reset();
 
-    Dictionary<(string Label, int Id), string> sourceMap = new();
+    var sourceMap = AlRunner.Infrastructure.AlSourceLocationMap.Empty;
     var lastFrames = new List<AlRunner.Infrastructure.AlDapFrame>();
 
     var compiledTcs = new System.Threading.Tasks.TaskCompletionSource<Assembly>(

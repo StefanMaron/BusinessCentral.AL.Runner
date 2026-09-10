@@ -124,7 +124,7 @@ public sealed class AlMemberSyntaxIndex
     }
 
     // Same union BcCompiler.Emit uses.
-    private static IReadOnlyList<string> PreprocessorSymbols(string? appJsonPath)
+    internal static IReadOnlyList<string> PreprocessorSymbols(string? appJsonPath)
     {
         var manifest = BcCompiler.ReadManifestCompilerInputs(appJsonPath);
         return Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}")

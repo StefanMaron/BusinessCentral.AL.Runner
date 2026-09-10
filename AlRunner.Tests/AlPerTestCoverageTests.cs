@@ -233,6 +233,81 @@ public class AlPerTestCoverageTests : IClassFixture<SharedCliServer>
             $"perTestCoverage must be absent when perTestCoverage:true wasn't requested: {string.Join(" | ", lines)}");
     }
 
+    // #3713: a file declaring TWO objects. AlCoverageSourceMap registered only the first, so the
+    // second object's scopes resolved to no file and perTestCoverage lost Two.Codeunit.al
+    // altogether (the reporter's server-mode measurement: "Two.Codeunit.al absent ENTIRELY,
+    // though SecondOnly() demonstrably ran"). And BC's [SourceSpans] lines are relative to the
+    // object's own text, so once mapped the statement must land on FILE line 13, not on line 6.
+    // Not observed red locally on this fact — the shared map fix was already in place when it
+    // was written; the RED is the reporter's log and CoverageMultiObjectFileTests' Cobertura fact.
+    [SkippableFact]
+    public async Task SecondObjectInAFile_IsAttributedUnderItsFileWithFileLines()
+    {
+        TestArtifacts.SkipIfMissing();
+        var dir = TestScratch.Dir("al-runner-per-test-coverage-multi-object");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "app.json"), """
+        {
+          "id": "9f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5c",
+          "name": "Per-Test Coverage Multi-Object Probe",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 60210, "to": 60219 } ],
+          "runtime": "14.0"
+        }
+        """);
+        // `exit(22)` is file line 13 of this file; its object's text starts on line 8.
+        File.WriteAllText(Path.Combine(dir, "Two.Codeunit.al"), """
+        codeunit 60210 "PTC MO First"
+        {
+            procedure FirstOnly(): Integer
+            begin
+                exit(11);
+            end;
+        }
+
+        codeunit 60211 "PTC MO Second"
+        {
+            procedure SecondOnly(): Integer
+            begin
+                exit(22);
+            end;
+        }
+        """);
+        File.WriteAllText(Path.Combine(dir, "T.Codeunit.al"), """
+        codeunit 60212 "PTC MO Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure CallsOnlySecond()
+            var
+                S: Codeunit "PTC MO Second";
+            begin
+                if S.SecondOnly() <> 22 then
+                    Error('expected 22');
+            end;
+        }
+        """);
+
+        var server = await _fixture.GetAsync();
+        var lines = await server.SendRequestStreamingAsync(RunTestsRequest(dir, perTestCoverage: true, testIsolation: "test"));
+        var (_, summary) = ProtocolV2Streaming.Split(lines);
+        var entries = summary.GetProperty("perTestCoverage").EnumerateArray().ToList();
+        var key = FindTestKey(entries, "CallsOnlySecond");
+        var files = entries.Single(e => e.GetProperty("test").GetString() == key)
+            .GetProperty("coverage").EnumerateArray().ToList();
+
+        var two = Assert.Single(files, f =>
+            f.GetProperty("file").GetString()!.Replace('\\', '/').EndsWith("/Two.Codeunit.al", StringComparison.Ordinal));
+        var stmt = Assert.Single(two.GetProperty("statements").EnumerateArray());
+        Assert.Equal("SecondOnly", stmt.GetProperty("scope").GetString());
+        Assert.Equal(13, stmt.GetProperty("line").GetInt32());
+        Assert.Equal(1, stmt.GetProperty("hits").GetInt32());
+    }
+
     private static string FindTestKey(List<JsonElement> entries, string methodNameSuffix)
     {
         var match = entries.Single(e => e.GetProperty("test").GetString()!.EndsWith("." + methodNameSuffix, StringComparison.Ordinal));

@@ -54,13 +54,16 @@ public static class AlScopeSyntaxResolver
 
         var instrumented = AlCoverageInstrumentedStatements.Find(scopeType);
         if (instrumented.Count == 0) return null;
-        // The first statement's position tells same-named triggers apart.
+        // The first statement's position tells same-named triggers apart. The index's
+        // positions are file positions; the span's line is relative to the owning object's
+        // text, so the object's start line is added (#3713) — for the first object in a
+        // file that is 0 and nothing changes.
         int first = instrumented.Min();
         AlTextPosition? anchor = null;
         if (first >= 0 && first < scope.Spans.Length)
         {
             var (fromLine, fromColumn, _, _) = AlSourceSpanCodec.Decode(scope.Spans[first]);
-            anchor = new AlTextPosition(fromLine, fromColumn);
+            anchor = new AlTextPosition(fromLine + scope.LineOffset, fromColumn);
         }
         var member = index.FindMember(scope.FilePath, scope.ScopeName, anchor);
         if (member == null)
