@@ -335,7 +335,15 @@ public sealed class MetadataEquivalenceHarnessTests
         //     (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue)
         // and a key is "<Kind> <hash>" components joined by " - ", ending in the property.
         //
-        // This is evidence, not an implementation. The reader fix (#3568) is where it lands.
+        // This is evidence, NOT a plan to implement it. Translations are out of scope for the
+        // runner by a decision of the repository owner (2026-09-10, relayed on #3568):
+        // translations are not relevant right now and nothing in a run has ever had to do with
+        // them. So nobody should derive these keys — and this test does not ask anyone to.
+        //
+        // It stays because it constrains the ALLOWLIST REASON rather than the reader: it is what
+        // stops those seven entries being re-justified as a permanent limit of the symbol file,
+        // which is the wrong reason and the one that would hide them forever. Out-of-scope and
+        // impossible are different claims, and only the first is true here.
         var bundles = MetadataEquivalenceHarness.LoadBundles(
             MetadataEquivalencePaths.GroundTruthDirForThisBuild());
         Skip.If(bundles.Count == 0, "no metadata ground-truth bundle for this BC build.");

@@ -117,17 +117,28 @@ observation is true. The conclusion drawn from it was wrong twice over, and both
 below. **"Nothing is stored" is evidence about storage, never about derivability.**
 
 <a id="translation-keys-are-out-of-scope"></a>
-## Translation keys are out of scope, and separately are derivable
+## Translation keys are out of scope by decision, and separately are derivable
 
-A `CaptionTranslationKey` is a lookup id into a translation file. It means something only to
-something that reads those files, and **the runner reads none**: there is no `.xlf` or
-`Translations/` handling anywhere in `AlRunner/`, and `docs/limitations.md` already records that
-the runner installs no BC translation resources. So no AL test can observe this member, and the
-honest declaration is a scope boundary. What would invalidate it is the runner gaining
-translation support — not anything about BC.
+**Translations are out of scope for the runner. This is a scope decision by the repository
+owner, made 2026-09-10** (relayed on #3568): translations are not relevant right now, and
+nothing in a run has ever had to do with them. These seven members are therefore a surface the
+runner does not need to reproduce, and **no one should spend effort deriving BC's translation
+keys or symbol kinds**. Seven members, ~25,700 differences — about a third of the total.
+
+**The runner's answers here are unmeasured, not right.** `0` and `Module` are what the
+`MetaField` ctor's own defaults leave behind. Nothing has checked them against BC, and the
+entries say so, because an out-of-scope declaration that reads as "the derivation is correct"
+would be a false claim rather than a scope boundary.
+
+Corroborating that decision rather than grounding it: a `CaptionTranslationKey` is a lookup id
+into a translation file, it means something only to something that reads those files, and **the
+runner reads none** — no `.xlf` or `Translations/` handling anywhere in `AlRunner/`, and
+`docs/limitations.md` records that it installs no BC translation resources. So no AL test could
+observe this member today even if the scope call went the other way. What invalidates these
+entries is **the owner putting translations back in scope**, not anything about BC.
 
 It is also **derivable**, which matters because it means the entry can never become a permanent
-limit. BC's own `LanguageKeyHelper.ConstructObjectHash` is
+limit — deriving it is possible and simply not wanted. BC's own `LanguageKeyHelper.ConstructObjectHash` is
 
 ```
 (uint)(FNV-1a-32 over the UTF-16LE bytes of the name + int.MaxValue)
