@@ -114,6 +114,54 @@ public sealed class CoverageMultiObjectFileTests : IDisposable
         Assert.Equal(0, map.LineOffset("CodeUnit", 99999)); // unknown object: no offset, never a throw
     }
 
+    /// <summary>
+    /// The trap the plain FullSpan model fell into. With a `namespace` line before the first
+    /// object, that object's FullSpan starts on line 1 (0-based), yet BC still reports its lines
+    /// from the file's line 1 — the preamble stays in front of every object's text. So the
+    /// offset is each object's FullSpan start MINUS the first object's: 0, 8 and 18 here, not
+    /// 1, 9 and 19. Measured through the runner on four header variants (none, comments,
+    /// namespace, using); the Cobertura fact below is the emitted-span proof for this shape.
+    /// </summary>
+    [SkippableFact]
+    public void Build_ObjectsAfterAFileHeader_OffsetRelativeToTheFirstObject()
+    {
+        RequireEngine();
+        File.WriteAllText(Path.Combine(_root, "Three.Codeunit.al"), """
+        namespace Probe.CovEdge;
+
+        codeunit 63650 "Edge A"
+        {
+            procedure A(): Integer
+            begin
+                exit(1);
+            end;
+        }
+
+        // a comment between objects
+
+          codeunit 63651 "Edge B"
+        {
+            procedure B(): Integer
+            begin
+                exit(2);
+            end;
+        }
+        codeunit 63652 "Edge C"
+        {
+            procedure C(): Integer
+            begin
+                exit(3);
+            end;
+        }
+        """);
+
+        var map = AlCoverageSourceMap.Build(new[] { _root }, relativeTo: _root);
+
+        Assert.Equal(0, map.LineOffset("CodeUnit", 63650));
+        Assert.Equal(8, map.LineOffset("CodeUnit", 63651));
+        Assert.Equal(18, map.LineOffset("CodeUnit", 63652));
+    }
+
     [SkippableFact]
     public void Build_FileWithATableAndACodeunit_MapsBothKinds()
     {
@@ -281,5 +329,94 @@ public sealed class CoverageMultiObjectFileTests : IDisposable
         var cov = doc.Root!;
         Assert.Equal("4", cov.Attribute("lines-valid")!.Value);
         Assert.Equal("2", cov.Attribute("lines-covered")!.Value);
+    }
+
+    /// <summary>
+    /// Every shape that could move the origin, in one file: a UTF-8 BOM, CRLF line endings, two
+    /// header comment lines, a file-scoped `namespace`, a `using`, a comment between objects, an
+    /// indented declaration keyword, and a third object with no blank line before it. The
+    /// executed statements sit on file lines 21 and 28, the unexecuted one on 11. RED under the
+    /// plain FullSpan model: 16, 26 and 33 (every object shifted by the five preamble lines).
+    /// </summary>
+    [SkippableFact]
+    public void Coverage_FileWithNamespaceHeaderAndThreeObjects_ReportsFileLines()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = Path.Combine(_root, "bundle-header");
+        Directory.CreateDirectory(bundle);
+        File.WriteAllText(Path.Combine(bundle, "app.json"), """
+        {
+          "id": "5a3f0b11-3713-4a09-8009-000000003713",
+          "name": "CMOF Header Probe",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 63650, "to": 63669 } ],
+          "runtime": "14.0"
+        }
+        """);
+        var three = string.Join("\r\n", new[]
+        {
+            "// header comment line 1",        // 1
+            "// header comment line 2",        // 2
+            "namespace Probe.CovEdge;",        // 3
+            "",                                // 4
+            "using System.Utilities;",         // 5
+            "",                                // 6
+            "codeunit 63650 \"Edge A\"",       // 7
+            "{",                               // 8
+            "    procedure A(): Integer",      // 9
+            "    begin",                       // 10
+            "        exit(1);",                // 11  never called
+            "    end;",                        // 12
+            "}",                               // 13
+            "",                                // 14
+            "// a comment between objects",    // 15
+            "",                                // 16
+            "  codeunit 63651 \"Edge B\"",     // 17  indented keyword
+            "{",                               // 18
+            "    procedure B(): Integer",      // 19
+            "    begin",                       // 20
+            "        exit(2);",                // 21  called
+            "    end;",                        // 22
+            "}",                               // 23
+            "codeunit 63652 \"Edge C\"",       // 24  no blank line before it
+            "{",                               // 25
+            "    procedure C(): Integer",      // 26
+            "    begin",                       // 27
+            "        exit(3);",                // 28  called
+            "    end;",                        // 29
+            "}",                               // 30
+            "",
+        });
+        File.WriteAllText(Path.Combine(bundle, "Three.Codeunit.al"), three, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        File.WriteAllText(Path.Combine(bundle, "T.Codeunit.al"), """
+        codeunit 63660 "Edge Tests"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure CallsBAndC()
+            var
+                B: Codeunit "Edge B";
+                C: Codeunit "Edge C";
+            begin
+                if B.B() + C.C() <> 5 then
+                    Error('expected 5');
+            end;
+        }
+        """);
+        var coveragePath = Path.Combine(_root, "cobertura-header.xml");
+
+        var (output, exit) = Spawn(bundle, "--coverage", $"--coverage-out \"{coveragePath}\"");
+
+        Assert.Equal(0, exit);
+        Assert.True(File.Exists(coveragePath), $"cobertura.xml was not written.\n{output}");
+        var lines = LinesOf(ClassFor(XDocument.Load(coveragePath), "Three.Codeunit.al"));
+        Assert.Equal(new[] { 11, 21, 28 }, lines.Keys.OrderBy(k => k).ToArray());
+        Assert.Equal(0, lines[11]);
+        Assert.Equal(1, lines[21]);
+        Assert.Equal(1, lines[28]);
     }
 }

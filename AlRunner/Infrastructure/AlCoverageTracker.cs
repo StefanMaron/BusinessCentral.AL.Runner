@@ -302,10 +302,10 @@ public static class AlCoverageTracker
     // Null means "not a coverable, mapped AL scope" — a framework type, or an owning object
     // outside sourceMap. CollectPerTestStatementTable memoizes per scope Type, nulls included,
     // because the (Type, statementId) identity does not vary per test and only the hit count does.
-    // LineOffset: the owning object's 0-based start line in FilePath (#3713); 0 for the first
-    // object in a file, or when the map is not an AlSourceLocationMap.
+    // LineOffset: what to add to this scope's decoded [SourceSpans] lines to get file lines
+    // (#3713, AlSourceLocationMap.LineOffset); 0 for the first object in a file.
     private static (string FilePath, string ScopeName, long[] Spans, int LineOffset)? ResolveScopeInfo(
-        Type type, IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
+        Type type, AlSourceLocationMap sourceMap)
     {
         if (Attribute.GetCustomAttribute(type, _tSourceSpansAttr!) is not object srcAttr) return null;
         if (_piEncodedSpans!.GetValue(srcAttr) is not long[] spans || spans.Length == 0) return null;
@@ -313,13 +313,12 @@ public static class AlCoverageTracker
         if (id == 0) return null;
         if (!sourceMap.TryGetValue((label, id), out var filePath)) return null;
         var scopeName = AlNavNameReflection.GetAlName(type) ?? "?";
-        var lineOffset = sourceMap is AlSourceLocationMap located ? located.LineOffset(label, id) : 0;
-        return (filePath, scopeName, spans, lineOffset);
+        return (filePath, scopeName, spans, sourceMap.LineOffset(label, id));
     }
 
     /// <summary>ResolveScopeInfo with the reflection init done; null for a scope outside the bundle.</summary>
     internal static (string FilePath, string ScopeName, long[] Spans, int LineOffset)? TryResolveScope(
-        Type type, IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
+        Type type, AlSourceLocationMap sourceMap)
     {
         EnsureReflInit();
         AlNavNameReflection.EnsureInit();

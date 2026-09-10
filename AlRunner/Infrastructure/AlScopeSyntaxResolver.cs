@@ -11,7 +11,7 @@ public sealed record AlScopeSyntax(AlLoopScopeTable Loops, AlWriteSetTable Write
 public static class AlScopeSyntaxResolver
 {
     private static AlMemberSyntaxIndex? _index;
-    private static IReadOnlyDictionary<(string Label, int Id), string>? _sourceMap;
+    private static AlSourceLocationMap? _sourceMap;
     private static readonly ConcurrentDictionary<Type, AlScopeSyntax?> _scopes = new();
     private static readonly ConcurrentDictionary<Type, string> _unresolved = new();
 
@@ -20,7 +20,7 @@ public static class AlScopeSyntaxResolver
     public static IReadOnlyCollection<string> UnresolvedScopes => _unresolved.Values.Distinct().OrderBy(s => s, StringComparer.Ordinal).ToList();
 
     /// <summary>Installs the request's index and file map and forgets earlier resolutions.</summary>
-    public static void Configure(AlMemberSyntaxIndex index, IReadOnlyDictionary<(string Label, int Id), string> sourceMap)
+    public static void Configure(AlMemberSyntaxIndex index, AlSourceLocationMap sourceMap)
     {
         _index = index;
         _sourceMap = sourceMap;
@@ -54,16 +54,13 @@ public static class AlScopeSyntaxResolver
 
         var instrumented = AlCoverageInstrumentedStatements.Find(scopeType);
         if (instrumented.Count == 0) return null;
-        // The first statement's position tells same-named triggers apart. The index's
-        // positions are file positions; the span's line is relative to the owning object's
-        // text, so the object's start line is added (#3713) — for the first object in a
-        // file that is 0 and nothing changes.
+        // The first statement's position tells same-named triggers apart.
         int first = instrumented.Min();
         AlTextPosition? anchor = null;
         if (first >= 0 && first < scope.Spans.Length)
         {
             var (fromLine, fromColumn, _, _) = AlSourceSpanCodec.Decode(scope.Spans[first]);
-            anchor = new AlTextPosition(fromLine + scope.LineOffset, fromColumn);
+            anchor = new AlTextPosition(fromLine, fromColumn);
         }
         var member = index.FindMember(scope.FilePath, scope.ScopeName, anchor);
         if (member == null)
