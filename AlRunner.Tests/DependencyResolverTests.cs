@@ -830,18 +830,21 @@ public sealed class DependencyResolverTests : IDisposable
     // The skip itself stays: it is what lets the al-language corpus declare System
     // Application >= 27.5 and still run green on the 27.0 and 27.3 legs, where no download
     // can clear the floor (DropUnsatisfiableFloors documents the same tolerance on the
-    // provisioning side). What changes is that a floor belonging to a package this run will
-    // SOURCE-COMPILE is reported, because for that package the skip is not a tolerance --
-    // it is the EMIT-ZERO, one step earlier and still explicable.
+    // provisioning side). What changes is that a floor belonging to a package this run MAY
+    // source-compile is reported, on ProvisioningGaps rather than UnservableDependencies:
+    // "no loader tier can implement this" is a certain failure and an unmet floor is not,
+    // since the dependent may still be served from the compiled-dependency cache, the
+    // service-tier DLL index, or an already-loaded assembly. Deciding it where the compile
+    // actually happens is #3812.
 
     /// <summary>
-    /// The dependent ships AL source and no R2R payload, so Tier-3 will compile it against
-    /// whatever closure resolution produced. Its Platform floor is unmet -- System.app is
-    /// present at 27.0, below the declared 28.0 -- and that must be stated, naming the
-    /// dependent, the floor, and the version that was actually found.
+    /// The dependent ships AL source and no R2R payload, so Tier-3 is the only route that can
+    /// implement it. Its Platform floor is unmet -- System.app is present at 27.0, below the
+    /// declared 28.0 -- and that must be stated, naming the dependent, the floor, and the
+    /// version that was actually found.
     /// </summary>
     [Fact]
-    public void SourceCompilablePackageFloor_SystemBelowFloor_IsReportedAsUnservable()
+    public void SourceCompilablePackageFloor_SystemBelowFloor_IsReportedAsAProvisioningGap()
     {
         var dir = MakeDir("FloorBelowMinimum");
         var systemId = "00000000-0000-0000-0000-00000000c0de";
@@ -876,7 +879,7 @@ public sealed class DependencyResolverTests : IDisposable
     /// and the run now says why the compile that follows will fail.
     /// </summary>
     [Fact]
-    public void SourceCompilablePackageFloor_SystemAbsent_IsReportedAsUnservable()
+    public void SourceCompilablePackageFloor_SystemAbsent_IsReportedAsAProvisioningGap()
     {
         var dir = MakeDir("FloorAbsentReported");
         var assertId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
