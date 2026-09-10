@@ -97,6 +97,33 @@ if (args.Contains("--bc-version") && args.Contains("--artifact-path"))
 // AlRunner.Tests/StartupJitModeTests. Anyone needing the old behaviour can still preset
 // DOTNET_ReadyToRun=0 in the environment — the CLR honours it without our help.
 
+// ── stdout/stderr speak UTF-8, on every platform and whether or not they are redirected.
+// #3738: a redirected child's console defaults to the OEM code page on Windows (cp850 on a
+// cp1252 box), and .NET's encoder silently best-fits whatever that page lacks. Measured on
+// the four non-ASCII characters this program writes: `—` becomes 0x2D, `…` becomes 0x2E,
+// `─` survives, and `→` — which appears in `Classification → <path>` and `JUnit XML →
+// <path>`, two lines a consumer reads to find an output file — becomes 0x1A, a control
+// character standing for nothing. So the bytes a caller reads were not the bytes this
+// program wrote, and which substitution it got depended on the box's code page.
+//
+// Set before Log.Install and before any Console.Write, so every writer downstream (Log's
+// FilteredWriter, --server's captured stdout, the DAP stdio streams) inherits it. The
+// setter throws on a handle it cannot reconfigure (a closed or unusual stdout); that is not
+// a reason to refuse to run, so it degrades to the platform default and says so on stderr —
+// the output is then still readable, just transliterated as before.
+try
+{
+    var utf8NoBom = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+    Console.OutputEncoding = utf8NoBom;
+    Console.InputEncoding = utf8NoBom;
+}
+catch (Exception ex) when (ex is IOException or PlatformNotSupportedException or ArgumentException)
+{
+    Console.Error.WriteLine(
+        $"[warn] could not set the console encoding to UTF-8 ({ex.GetType().Name}: {ex.Message}); "
+        + "non-ASCII output may be transliterated by this console's code page (#3738).");
+}
+
 // ── --server mode: long-running JSON-RPC daemon over stdin/stdout (the VS Code
 // extension depends on this flag). The protocol requires stdout to carry ONLY the
 // newline-delimited JSON — so capture the real stdin/stdout now and redirect ALL
