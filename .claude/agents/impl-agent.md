@@ -91,7 +91,10 @@ Before your first commit, check the directory, the branch, and who holds the bra
 git rev-parse --show-toplevel        # the worktree you meant to be in
 git rev-parse --abbrev-ref HEAD      # MUST equal agent/<AGENT-ID>/issue-<N>
 gh pr list --state open --head agent/<AGENT-ID>/issue-<N> --json number,title,isDraft --repo StefanMaron/BusinessCentral.AL.Runner
+tools/preflight.py --agent-id <AGENT-ID>   # from the worktree: its `branch-ownership` row
 ```
+
+The fourth command is the one that reads the `agent:` label rather than just the PR's existence, and it is the only place preflight's `branch-ownership` check can reach a verdict at all — from the main checkout it has nothing to compare and PASSes (#3746). `--agent-id` is not optional: with no identity a foreign claim and your own look identical, so the check WARNs instead of refusing. Pass it as an argument, never as an exported `AL_RUNNER_AGENT_ID`, because shell state does not survive between tool calls. FAIL there means the branch already heads another loop's open PR — stop, exactly as the paragraph below says.
 
 A branch naming an issue other than yours belongs to another task — stop and report, whatever the prefix says: `agent/<AGENT-ID>/` records who created a branch, and a second agent committing there is a push no check refuses.
 

@@ -22,6 +22,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -1948,6 +1949,46 @@ try:
           _res_blind.status == "WARN", _res_blind.summary)
 finally:
     shutil.rmtree(_own_tmp, ignore_errors=True)
+
+# -------------------------------------------------- BEGIN agent-id-wiring (#3746)
+# The identity the ownership check needs has to be IN the documented invocation.
+#
+# judge_branch_ownership can only reach its FAIL row when the run declared an
+# identity; a `--agent-id` nothing passes leaves the check producing the WARN row
+# from every worktree, which is the state #3742 shipped in. The identity travels
+# as an ARGUMENT rather than an exported AL_RUNNER_AGENT_ID because shell state
+# does not survive between an agent's tool calls (impl-agent.md), so an `export`
+# is gone by the next command and the check drops back to WARN without saying so.
+
+_DOCUMENTED_INVOCATION = re.compile(
+    r"tools/preflight\.py(?:\s+--\S+)*\s+--agent-id\s+<AGENT-ID>")
+
+for _doc in (".claude/skills/autonomous-cycle/SKILL.md",
+             ".claude/skills/orchestrating-a-session/SKILL.md",
+             ".claude/agents/impl-agent.md"):
+    # utf-8 explicitly: these files carry em-dashes, and the Windows default
+    # codec turns reading one into a failure that looks like a drifted document.
+    with open(os.path.join(os.path.dirname(HERE), _doc), encoding="utf-8") as _fh:
+        _text = _fh.read()
+    check(f"{_doc} documents the preflight run WITH --agent-id",
+          bool(_DOCUMENTED_INVOCATION.search(_text)),
+          "no `tools/preflight.py [flags] --agent-id <AGENT-ID>` invocation in this file")
+
+# The other direction, so a rename cannot leave three documents pointing at a
+# flag that no longer exists: ask preflight's own parser, not the source text.
+_help_out = io.StringIO()
+_help_rc = None
+_saved_stdout, sys.stdout = sys.stdout, _help_out
+try:
+    pf.main(["--help"])
+except SystemExit as _exc:
+    _help_rc = _exc.code
+finally:
+    sys.stdout = _saved_stdout
+check("...and --agent-id is still a real flag on preflight.py itself",
+      _help_rc == 0 and "--agent-id" in _help_out.getvalue(),
+      f"rc={_help_rc} help={_help_out.getvalue()[:160]!r}")
+# -------------------------------------------------- END agent-id-wiring (#3746)
 
 
 print()
