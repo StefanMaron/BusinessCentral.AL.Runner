@@ -134,6 +134,68 @@ internal static class BcEngineSkipReason
                      + "[ModuleInitializer] before the BC engine was needed.")
             : reason;
 
+    /// <summary>
+    /// Which of two kinds of "the engine did not come up" a cause is (issue #3835).
+    ///
+    /// <see cref="BcEngineSkipCause"/> mixes two things a skip cannot distinguish:
+    /// <c>ArtifactsMissing</c>/<c>ArtifactsIncomplete</c> mean this box has no BC service
+    /// tier and genuinely cannot run these tests, while every other cause means the
+    /// artifacts ARE here and only the local bootstrap is missing — the state
+    /// <see cref="BootstrapTool"/> exists to remove.
+    ///
+    /// Both skip today, which is why a post-build `dotnet test` reports
+    /// `Skipped! - Failed: 0, Passed: 0, Skipped: 5` with exit 0 and reads exactly like a
+    /// passing mutation check. `guards-need-a-third-state.md`: "could not measure" must not
+    /// be spelled as the success state, and here the recoverable half is precisely that.
+    /// </summary>
+    internal static bool IsRecoverableLocally(BcEngineSkipCause cause) => cause switch
+    {
+        // The engine-less box. Nothing on this machine can stand a service tier up, so
+        // failing here would make the suite unrunnable for a correct reason — the
+        // constraint guards-need-a-third-state.md names: a genuinely absent thing stays a
+        // pass. Mirrors TestArtifacts.SkipIfMissingIn, which skips off CI for this same
+        // condition and fails only where provisioning is guaranteed.
+        BcEngineSkipCause.ArtifactsMissing or BcEngineSkipCause.ArtifactsIncomplete => false,
+
+        // Everything else: the artifacts are present and the bootstrap is what is absent.
+        // Enumerated rather than defaulted so a cause added later must be classified here
+        // instead of inheriting whichever answer happens to be safer to write.
+        BcEngineSkipCause.NclPreloaded
+            or BcEngineSkipCause.BinRewrittenThisProcess
+            or BcEngineSkipCause.CecilCacheCold
+            or BcEngineSkipCause.BootstrapThrew
+            or BcEngineSkipCause.BootstrapDidNotRun => true,
+
+        _ => throw new ArgumentOutOfRangeException(
+                 nameof(cause), cause,
+                 $"BcEngineSkipCause '{cause}' is not classified as locally recoverable or not. "
+                 + "Every cause must be, or #3835's fail-rather-than-skip guard silently reverts "
+                 + "to skipping for it."),
+    };
+
+    /// <summary>
+    /// The cause named by a reason string, or null when the string is not one this class
+    /// produced.
+    ///
+    /// Reads back the <c>Cause (X)</c> token <see cref="Format"/> writes, because the
+    /// fixture stores the formatted reason and not the enum — and #3078 deliberately made
+    /// that string the single channel every one of the ~300 call sites in the collection
+    /// reads. Round-tripping through it keeps this guard on that same channel rather than
+    /// adding a second source of truth that could disagree with what the developer is shown.
+    /// A string that carries no recognisable token returns null and is treated as
+    /// unclassifiable — never silently as "recoverable" or "not".
+    /// </summary>
+    internal static BcEngineSkipCause? CauseOf(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason)) return null;
+
+        foreach (var cause in Enum.GetValues<BcEngineSkipCause>())
+        {
+            if (reason.Contains($"Cause ({cause})", StringComparison.Ordinal)) return cause;
+        }
+        return null;
+    }
+
     private static string Remedy(BcEngineSkipCause cause) => cause switch
     {
         BcEngineSkipCause.ArtifactsMissing or BcEngineSkipCause.ArtifactsIncomplete =>
