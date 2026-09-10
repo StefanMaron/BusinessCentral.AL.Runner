@@ -768,12 +768,51 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     internal bool PageEditable => _form is not NavForm form || form.Editable;
 
+    /// <summary>
+    /// What a control DECLARES for one of the three boolean properties, whichever metadata
+    /// states it — the merged runtime tree for a page the runner compiled, the declaring
+    /// dependency's SymbolReference.json for one that ships precompiled (issue #3504).
+    ///
+    /// <para>Both answer the same thing: the string the AL compiler wrote, which
+    /// <see cref="EvaluateProperty"/> then resolves. The second source exists because
+    /// <c>DependencyPageMetadataXml</c> reconstructs no control tree — right for a control's
+    /// VALUE BINDING, which is IL — so <see cref="ControlDefinition"/> is null for every
+    /// control of such a page and all three properties read as "declares none", the AL default
+    /// of true. Base Application 28.1 declares them on 18,222 field controls; every one of
+    /// those answered true.</para>
+    ///
+    /// <para>ORDER IS THE CONTRACT: the runtime tree wins whenever it has a definition, so this
+    /// can only ADD an answer where there was none, never override one. A page the runner
+    /// compiled itself is unaffected — <c>TryGetDependencyControlDeclaredProperty</c> is only
+    /// consulted when the definition is missing, and answers null for a page no dependency
+    /// declares.</para>
+    ///
+    /// <para>Trap: null must stay distinguishable from the empty string here. Empty is
+    /// <see cref="ClientExpressionTheCompilerDropped"/>'s "the compiler had an expression and
+    /// dropped it" (AL0573); null is "nothing was declared". Coalescing to <c>?? ""</c>
+    /// anywhere on this path would route every undeclared control of a precompiled page into
+    /// that refusal.</para>
+    /// </summary>
+    private string? DeclaredControlProperty(int controlId, string propertyName)
+    {
+        if (ControlDefinition(controlId) is { } definition)
+            return propertyName switch
+            {
+                "Editable" => definition.Editable,
+                "Visible" => definition.Visible,
+                "Enabled" => definition.Enabled,
+                _ => null,
+            };
+
+        return RecordPatches.TryGetDependencyControlDeclaredProperty(_pageId, controlId, propertyName);
+    }
+
     /// <summary>Editable for a data-bound control, combined with the page's own state.</summary>
     internal bool ControlEditable(int controlId)
-        => PageEditable && EvaluateProperty(ControlDefinition(controlId)?.Editable, "Editable", controlId, PageElementKind.Control, atOpen: false);
+        => PageEditable && EvaluateProperty(DeclaredControlProperty(controlId, "Editable"), "Editable", controlId, PageElementKind.Control, atOpen: false);
 
     internal bool ControlEnabled(int controlId)
-        => EvaluateProperty(ControlDefinition(controlId)?.Enabled, "Enabled", controlId, PageElementKind.Control, atOpen: false);
+        => EvaluateProperty(DeclaredControlProperty(controlId, "Enabled"), "Enabled", controlId, PageElementKind.Control, atOpen: false);
 
     /// <summary>
     /// A control's effective visibility is its own <c>Visible</c> combined with EVERY
@@ -795,7 +834,7 @@ internal sealed partial class RunnerPageInstance
     {
         // atOpen: the control's OWN Visible is the one property real BC does not re-evaluate
         // after the page is open. See SnapshotExpressionValues.
-        if (!EvaluateProperty(ControlDefinition(controlId)?.Visible, "Visible", controlId, PageElementKind.Control, atOpen: true))
+        if (!EvaluateProperty(DeclaredControlProperty(controlId, "Visible"), "Visible", controlId, PageElementKind.Control, atOpen: true))
             return false;
 
         if (_form is not NavForm form) return true;

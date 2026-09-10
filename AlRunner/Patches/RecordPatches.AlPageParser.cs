@@ -679,6 +679,54 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// The <c>Editable</c> / <c>Visible</c> / <c>Enabled</c> a control of a PRECOMPILED
+    /// dependency page DECLARES, exactly as the compiler wrote it, or null when it declares
+    /// none (issue #3504).
+    ///
+    /// <para>A page shipping precompiled in a dependency .app gets no control tree in its
+    /// synthesized runtime metadata — <see cref="TryBuildDependencyPageMetadata"/> omits one
+    /// because a control's VALUE BINDING lives in the .app's IL, not in any XML this could
+    /// reconstruct. These three properties are not value bindings: the compiler writes each as
+    /// a plain string that is either a literal or the name of an expression the page's own IL
+    /// registers, which is precisely what <c>RunnerPageInstance.EvaluateProperty</c> already
+    /// resolves. So the omission that is right for a binding was wrong for these, and every
+    /// control on every such page answered <c>Editable() = true</c>.</para>
+    ///
+    /// <para>Read from the SAME <c>SymbolReference.json</c> slice
+    /// <see cref="GetPageControlFieldMap"/> and the "Page Control Field" virtual table (#1779)
+    /// already trust — one dependency-control source, not a second one. Verbatim, with no
+    /// normalising: the caller owns the literal-vs-expression decision, and deciding it here
+    /// would fork that rule.</para>
+    ///
+    /// <para>Scale, measured on Base Application 28.1.49838.53910 (2,610 pages, 37,185 field
+    /// controls): <c>Editable</c> is declared on 5,920 controls, <c>Visible</c> on 11,505 and
+    /// <c>Enabled</c> on 797 — 18,222 declarations answered <c>true</c> regardless. 4,915 of
+    /// the Editable ones are the compile-time literal, so most need no page state at all.</para>
+    ///
+    /// <para>Null keeps meaning "declares none", which is the AL default of true — the
+    /// distinction #3504 is about. Only these three names resolve; anything else answers null
+    /// rather than being mapped onto one of them.</para>
+    /// </summary>
+    internal static string? TryGetDependencyControlDeclaredProperty(int pageId, int controlId, string propertyName)
+    {
+        var symbol = TryGetDependencyPageSymbol(pageId);
+        if (symbol?.Controls == null || symbol.Controls.Count == 0) return null;
+
+        foreach (var control in symbol.Controls)
+        {
+            if (control.Id != controlId) continue;
+            return propertyName switch
+            {
+                "Editable" => control.EditableExpr,
+                "Visible" => control.VisibleExpr,
+                "Enabled" => control.EnabledExpr,
+                _ => null,
+            };
+        }
+        return null;
+    }
+
+    /// <summary>
     /// Every field control of a SOURCE-PARSED page, base plus matching pageextensions,
     /// for the "Page Control Field" (2000000192) virtual table. Same base+extension merge
     /// rule as <see cref="GetPageControlFieldMap"/> (only extensions of THIS page), same
