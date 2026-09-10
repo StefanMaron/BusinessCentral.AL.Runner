@@ -305,6 +305,13 @@ internal static class ParallelFanOut
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
+                // #3738: a worker writes UTF-8, so decode UTF-8 — do not inherit whatever this
+                // parent's console happens to be. Leaving these null works only while the
+                // parent's own OutputEncoding assignment succeeded; if it took the documented
+                // degradation path while a worker's succeeded, the parent would decode a
+                // worker's UTF-8 as its old code page and reprint mojibake (PR #3795 review).
+                StandardOutputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
+                StandardErrorEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
             };
             foreach (var kv in WorkerEnvironment(
                          Environment.ProcessorCount, shards.Count,

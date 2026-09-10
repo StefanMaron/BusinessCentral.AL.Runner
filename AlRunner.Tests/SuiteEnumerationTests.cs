@@ -121,13 +121,20 @@ public sealed class SuiteEnumerationTests : IDisposable
     }
 
     /// <summary>
-    /// Reads the per-bundle "— N suites" line. This is the number under test: a
-    /// directory of suites is still ONE bundle (one "bucket"), but must enumerate
+    /// Reads the per-bundle "[i/N] &lt;path&gt; — N suites" line. This is the number under
+    /// test: a directory of suites is still ONE bundle (one "bucket"), but must enumerate
     /// every suite inside it. Asserting on the bucket count would prove nothing.
+    /// <para>
+    /// Anchored on the "N suites" tail, NOT on the em dash before it. #3738: the runner's
+    /// stdout used to be transliterated by the console's code page when redirected, so on
+    /// Windows this line arrived with a hyphen and both facts below failed while enumeration
+    /// was correct. ConsoleOutputEncodingTests pins the runner side; this reader no longer
+    /// depends on the typography either way.
+    /// </para>
     /// </summary>
     private static int SuiteCount(string output)
     {
-        var m = System.Text.RegularExpressions.Regex.Match(output, @"—\s*(\d+)\s*suites");
+        var m = System.Text.RegularExpressions.Regex.Match(output, @"\]\s+\S.*?\s(\d+)\s+suites\b");
         Assert.True(m.Success, $"run output had no suite count line. Output:\n{output}");
         return int.Parse(m.Groups[1].Value);
     }
