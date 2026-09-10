@@ -85,10 +85,7 @@ public sealed class MetadataEquivalenceBundleGateTests
             "not scanning what it claims to. The detection strings are probably stale.");
     }
 
-    // SkippableFact, not Fact, though this test cannot skip: BundleReaders() only does
-    // EnumerateFiles/ReadAllText. The attribute answers a textual scanner, not a skip path --
-    // see #3813, which is where the mechanism is stated and pinned.
-    [SkippableFact]
+    [Fact]
     public void No_bundle_reader_writes_its_own_empty_bundle_skip()
     {
         // The second half, because a class could hold a bundles list from RequireBundles and

@@ -291,20 +291,39 @@ public class TestArtifactsGateTests
         var offenders = new List<string>();
         foreach (var (rel, text) in TestSources())
         {
-            if (rel is "TestArtifacts.cs" or "TestArtifactsGateTests.cs") continue;
-            foreach (var line in text.Split('\n'))
-            {
-                var trimmed = line.TrimStart();
-                if (trimmed.StartsWith("//", StringComparison.Ordinal)) continue;
-                if (trimmed.Contains(".bcartifacts.cache", StringComparison.Ordinal)
-                    || trimmed.Contains("\"al-runner\", \"artifacts\"", StringComparison.Ordinal))
-                    offenders.Add($"{rel}: {trimmed.Trim()}");
-            }
+            if (rel is "TestArtifacts.cs" or "TestArtifactsGateTests.cs"
+                    or "SkippableAttributeDetectorTests.cs") continue;
+            offenders.AddRange(FindHardCodedArtifactPaths(rel, text));
         }
 
         Assert.True(offenders.Count == 0,
             "these lines spell an artifact cache path instead of asking TestArtifacts:\n"
             + string.Join("\n", offenders));
+    }
+
+    /// <summary>
+    /// The lines of one source that spell an artifact cache path in code.
+    ///
+    /// <para>The parenthesis in the summary above — "comments may still discuss the paths" —
+    /// used to be implemented as "skip a line whose first characters are <c>//</c>", which
+    /// caught a comment on its own line and missed a trailing one and a block one. So the same
+    /// prose-decides-the-verdict defect #3813 reports lived in the function next door, and both
+    /// now share one stripper rather than two disagreeing approximations of one.</para>
+    ///
+    /// <para>String contents are KEPT here, unlike the skippable-attribute scan: a hard-coded
+    /// path IS a string literal, so blanking literals would remove the subject.</para>
+    /// </summary>
+    internal static IEnumerable<string> FindHardCodedArtifactPaths(string rel, string sourceText)
+    {
+        var offenders = new List<string>();
+        foreach (var line in StripCommentsPreservingLines(sourceText, blankStringContents: false).Split('\n'))
+        {
+            if (line.Contains(".bcartifacts.cache", StringComparison.Ordinal)
+                || line.Contains("\"al-runner\", \"artifacts\"", StringComparison.Ordinal))
+                offenders.Add($"{rel}: {line.Trim()}");
+        }
+
+        return offenders;
     }
 
     /// <summary>
@@ -378,34 +397,220 @@ public class TestArtifactsGateTests
     [Fact]
     public void EveryTestThatCanSkipIsDeclaredSkippable()
     {
-        var factLine = new Regex(@"^\s*\[(?<attr>SkippableFact|SkippableTheory|Fact|Theory)[\](]");
-        var methodLine = new Regex(@"^\s*(?:public|private|internal|protected)[^=]*\s(?<name>\w+)\s*\(");
-        var skipCall = new Regex(@"\bTestArtifacts\.(SkipIfMissing|SkipIf|SkipIfDirectoryMissing)\b|\bSkip\.(If|IfNot|Always)\b");
-
         var offenders = new List<string>();
+        var declarations = 0;
         foreach (var file in TestSourcePaths())
         {
             var rel = Rel(file);
-            if (rel is "TestArtifacts.cs" or "TestArtifactsGateTests.cs") continue;
-            string? attr = null, method = null;
-            foreach (var line in File.ReadAllLines(file))
-            {
-                var f = factLine.Match(line);
-                if (f.Success) { attr = f.Groups["attr"].Value; method = null; continue; }
-                if (attr != null && method == null)
-                {
-                    var m = methodLine.Match(line);
-                    if (m.Success) { method = m.Groups["name"].Value; continue; }
-                }
-                if (attr is "Fact" or "Theory" && method != null && skipCall.IsMatch(line))
-                {
-                    offenders.Add($"{rel}.{method} is [{attr}] but can skip");
-                    attr = null;
-                }
-            }
+            if (rel is "TestArtifacts.cs" or "TestArtifactsGateTests.cs"
+                    or "SkippableAttributeDetectorTests.cs") continue;
+            var text = File.ReadAllText(file);
+            offenders.AddRange(FindTestsThatCanSkipButAreNotSkippable(rel, text));
+            declarations += CountTestDeclarationsIn(text);
         }
+
+        Assert.True(declarations > 100,
+            $"only {declarations} [Fact]/[Theory] declaration(s) were examined across the suite, so "
+            + "'no offenders' would be a verdict about nothing rather than a clean suite.");
 
         Assert.True(offenders.Count == 0,
             "a SkipException out of a plain [Fact] is reported Failed, not Skipped:\n" + string.Join("\n", offenders));
     }
+
+    private static readonly Regex FactLine =
+        new(@"^\s*\[(?<attr>SkippableFact|SkippableTheory|Fact|Theory)[\](]");
+
+    private static readonly Regex MethodLine =
+        new(@"^\s*(?:public|private|internal|protected)[^=]*\s(?<name>\w+)\s*\(");
+
+    private static readonly Regex SkipCall =
+        new(@"\bTestArtifacts\.(SkipIfMissing|SkipIf|SkipIfDirectoryMissing)\b|\bSkip\.(If|IfNot|Always)\b");
+
+    /// <summary>
+    /// The offenders in one source text: tests declared <c>[Fact]</c>/<c>[Theory]</c> whose body
+    /// can reach a skip. A function over TEXT so the detector is testable against synthetic
+    /// inputs — see <see cref="SkippableAttributeDetectorTests"/>. #3813: as inline logic over
+    /// raw lines it matched the skip spelling inside COMMENTS and attributed the match to
+    /// whichever declaration preceded that line, so prose and line position decided whether a
+    /// test needed the attribute, and the failure named a test unrelated to the match.
+    /// </summary>
+    internal static IEnumerable<string> FindTestsThatCanSkipButAreNotSkippable(string rel, string sourceText)
+    {
+        var offenders = new List<string>();
+        string? attr = null, method = null;
+        // Comments cannot call anything, so they are removed before the scan — line-for-line, so
+        // that a declaration and a match still line up the way they do in the file.
+        foreach (var line in StripCommentsPreservingLines(sourceText).Split('\n'))
+        {
+            var f = FactLine.Match(line);
+            if (f.Success) { attr = f.Groups["attr"].Value; method = null; continue; }
+            if (attr != null && method == null)
+            {
+                var m = MethodLine.Match(line);
+                if (m.Success) { method = m.Groups["name"].Value; continue; }
+            }
+            if (attr is "Fact" or "Theory" && method != null && SkipCall.IsMatch(line))
+            {
+                offenders.Add($"{rel}.{method} is [{attr}] but can skip");
+                attr = null;
+            }
+        }
+
+        return offenders;
+    }
+
+    /// <summary>
+    /// <paramref name="sourceText"/> with every comment AND every string/char literal's contents
+    /// blanked to spaces, and every newline kept, so line N of the result is line N of the
+    /// input. Characters become spaces rather than being deleted, which keeps the code that
+    /// shares a line with a comment.
+    ///
+    /// <para>Literals go for the same reason comments do: neither calls anything, so a skip
+    /// spelling in either is not a skip. Tracking them is also what makes the comment half
+    /// correct, because a <c>//</c> inside a literal opens no comment — 116 lines in this suite
+    /// carry that shape (URLs in XML manifests, AlSourceParserCommentTests' AL fixtures), and
+    /// cutting at the first <c>//</c> would truncate real code on every one of them. The three
+    /// string forms differ only in how they END — <c>\</c> escapes in a regular literal,
+    /// <c>""</c> in a verbatim one, the fence itself in a raw one.</para>
+    ///
+    /// <para>Deliberately not a Roslyn parse: the input is one file's text at a time with no
+    /// compilation behind it, and a parser would answer the same question at the cost of a
+    /// syntax tree per file. An unterminated construct swallows the rest of the text, which is
+    /// what the compiler does with it too.</para>
+    /// </summary>
+    internal static string StripCommentsPreservingLines(string sourceText) =>
+        StripCommentsPreservingLines(sourceText, blankStringContents: true);
+
+    /// <summary>
+    /// The same pass, with a choice about string literals, because the two guards in this file
+    /// need opposite answers about them and both are right.
+    ///
+    /// <para><paramref name="blankStringContents"/> true — the skippable-attribute scan: a
+    /// literal calls nothing, so a skip spelling inside one is not a skip. False — the
+    /// artifact-path scan, whose entire subject is a path spelled as a literal, and for which
+    /// blanking them would remove the thing being looked for.</para>
+    ///
+    /// <para>Literals are tracked either way: that is what makes the COMMENT half correct, since
+    /// a <c>//</c> inside a literal opens no comment.</para>
+    /// </summary>
+    internal static string StripCommentsPreservingLines(string sourceText, bool blankStringContents)
+    {
+        var outp = new System.Text.StringBuilder(sourceText.Length);
+        var i = 0;
+        while (i < sourceText.Length)
+        {
+            var c = sourceText[i];
+
+            if (c == '/' && i + 1 < sourceText.Length && sourceText[i + 1] == '/')
+            {
+                while (i < sourceText.Length && sourceText[i] != '\n') { outp.Append(' '); i++; }
+                continue;
+            }
+
+            if (c == '/' && i + 1 < sourceText.Length && sourceText[i + 1] == '*')
+            {
+                outp.Append("  ");
+                i += 2;
+                while (i < sourceText.Length
+                       && !(sourceText[i] == '*' && i + 1 < sourceText.Length && sourceText[i + 1] == '/'))
+                {
+                    // Newlines are copied through so the line count survives an unterminated or
+                    // multi-line comment; everything else becomes a space.
+                    outp.Append(sourceText[i] == '\n' ? '\n' : ' ');
+                    i++;
+                }
+                if (i < sourceText.Length) { outp.Append("  "); i += 2; }
+                continue;
+            }
+
+            if (c == '"' || c == '\'')
+            {
+                i = CopyLiteral(sourceText, i, outp, blankStringContents);
+                continue;
+            }
+
+            outp.Append(c);
+            i++;
+        }
+
+        return outp.ToString();
+    }
+
+    /// <summary>
+    /// Blanks the string or char literal starting at <paramref name="start"/> — quotes kept,
+    /// contents replaced by spaces, newlines kept — and answers the index just past it.
+    ///
+    /// <para>Contents go for the same reason comments do: a literal calls nothing, so a skip
+    /// spelling inside one is not a skip. The quotes stay so the result still reads as C#
+    /// rather than as a line whose structure has changed.</para>
+    /// </summary>
+    private static int CopyLiteral(string text, int start, System.Text.StringBuilder outp, bool blank)
+    {
+        // `blank` false keeps the literal verbatim; the newline-preserving replacement only
+        // applies when the caller asked for contents to go.
+        void Blank(int from, int count)
+        {
+            for (var n = 0; n < count; n++)
+                outp.Append(!blank ? text[from + n] : text[from + n] == '\n' ? '\n' : ' ');
+        }
+
+        // A raw string literal: three or more quotes, closed by a run of at least that many.
+        if (text[start] == '"' && start + 2 < text.Length && text[start + 1] == '"' && text[start + 2] == '"')
+        {
+            var fence = 0;
+            while (start + fence < text.Length && text[start + fence] == '"') fence++;
+            outp.Append(text, start, fence);
+            var j = start + fence;
+            while (j < text.Length)
+            {
+                if (text[j] != '"') { Blank(j, 1); j++; continue; }
+                var run = 0;
+                while (j + run < text.Length && text[j + run] == '"') run++;
+                if (run >= fence) { outp.Append(text, j, run); return j + run; }
+                Blank(j, run);
+                j += run;
+            }
+            return j;
+        }
+
+        var quote = text[start];
+        // `@"…"` — no backslash escapes, and `""` is one embedded quote.
+        var verbatim = quote == '"' && start > 0 && text[start - 1] == '@';
+        outp.Append(quote);
+        var k = start + 1;
+        while (k < text.Length)
+        {
+            var ch = text[k];
+            if (!verbatim && ch == '\\' && k + 1 < text.Length)
+            {
+                Blank(k, 2);
+                k += 2;
+                continue;
+            }
+            if (ch == quote)
+            {
+                if (verbatim && k + 1 < text.Length && text[k + 1] == '"')
+                {
+                    Blank(k, 2);
+                    k += 2;
+                    continue;
+                }
+                outp.Append(ch);
+                return k + 1;
+            }
+            // An unterminated literal ends at the newline rather than swallowing the file: a
+            // stray quote in ordinary code would otherwise hide every line below it, which is
+            // the direction that turns the guard silent (guards-need-a-third-state.md).
+            if (ch == '\n' && !verbatim) return k;
+            Blank(k, 1);
+            k++;
+        }
+        return k;
+    }
+
+    internal static int CountTestDeclarations() =>
+        TestSourcePaths().Sum(f => CountTestDeclarationsIn(File.ReadAllText(f)));
+
+    private static int CountTestDeclarationsIn(string sourceText) =>
+        sourceText.Split('\n').Count(line => FactLine.IsMatch(line));
 }
