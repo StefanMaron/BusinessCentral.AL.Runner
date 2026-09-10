@@ -746,26 +746,8 @@
       "versionContingent": true
     },
     {
-      "member": "PageProperties.#aboutTextMLField.<presence>",
-      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
-      "outOfScope": true,
-      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "PageProperties.#aboutTitleMLField.<presence>",
-      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
-      "outOfScope": true,
-      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
       "member": "PageProperties.#actionsV2Field",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
-      "outOfScope": true,
-      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "PageProperties.#additionalSearchTermsMLField.<presence>",
-      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
     },
@@ -793,11 +775,6 @@
       "issue": 3784
     },
     {
-      "member": "PageProperties.#extensibleField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.Extensible, declared in this file with the measurement.",
-      "issue": 3784
-    },
-    {
       "member": "PageProperties.#extensionsWithPromotedActionSyntaxField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
       "outOfScope": true,
@@ -807,22 +784,6 @@
       "member": "PageProperties.#helpLinkField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.HelpLink, declared in this file with the measurement.",
       "issue": 3784
-    },
-    {
-      "member": "PageProperties.#inherentEntitlementsField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.InherentEntitlements, declared in this file with the measurement.",
-      "issue": 3784
-    },
-    {
-      "member": "PageProperties.#inherentPermissionsField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.InherentPermissions, declared in this file with the measurement.",
-      "issue": 3784
-    },
-    {
-      "member": "PageProperties.#instructionalTextMLField.<presence>",
-      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
-      "outOfScope": true,
-      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
     },
     {
       "member": "PageProperties.#isPreviewField",
@@ -844,42 +805,10 @@
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
     },
     {
-      "member": "PageProperties.#refreshOnActivateField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.RefreshOnActivate, declared in this file with the measurement.",
-      "issue": 3784
-    },
-    {
-      "member": "PageProperties.#usageCategoryField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.UsageCategory, declared in this file with the measurement.",
-      "issue": 3784
-    },
-    {
-      "member": "PageProperties.AboutTextML.<presence>",
-      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
-      "outOfScope": true,
-      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "PageProperties.AboutTextMLString",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 21 pages declare AboutText; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 3784
-    },
-    {
       "member": "PageProperties.AboutTextTranslationKey",
       "reason": "A translation-file lookup id for a page-level property. Same boundary as the seven TranslationKey.* entries already in this file and for the same measured reason: the runner reads no .xlf or Translations/ resources anywhere, so a key it could state would address a file it never opens. Separately derivable rather than impossible -- the FNV-1a-32 construction in TranslationKeysAreDerivable_NotAPermanentLimit reproduces BC's own keys -- so this is a scope boundary that the runner gaining translation support invalidates.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
-    },
-    {
-      "member": "PageProperties.AboutTitleML.<presence>",
-      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
-      "outOfScope": true,
-      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "PageProperties.AboutTitleMLString",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 21 pages declare AboutTitle; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 3784
     },
     {
       "member": "PageProperties.AboutTitleTranslationKey",
@@ -892,17 +821,6 @@
       "reason": "Set by BC's emitter on every page it compiles, marking the modern action syntax. It describes the emitter's own output shape rather than anything the AL declares, and SymbolReference.json states nothing about it.",
       "outOfScope": true,
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "PageProperties.AdditionalSearchTermsML.<presence>",
-      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
-      "outOfScope": true,
-      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "PageProperties.AdditionalSearchTermsMLString",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 27 pages declare AdditionalSearchTerms; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 3784
     },
     {
       "member": "PageProperties.AdditionalSearchTermsTranslationKey",
@@ -951,11 +869,6 @@
       "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
     },
     {
-      "member": "PageProperties.Extensible",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 124 pages declare Extensible and the runner hardcodes the attribute to \"1\", so BC answers False on 104 of 235 pages. A wrong answer rather than a missing one. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 3784
-    },
-    {
       "member": "PageProperties.ExtensionsWithPromotedActionSyntax",
       "reason": "The set of extension app ids whose pageextensions use promoted-action syntax against this page. A property of the MERGED runtime view across installed extensions, which the build-time per-app oracle documents from the compiler's side while the runner emits a per-app document -- the same class as the merged-runtime entries the table side already declares.",
       "outOfScope": true,
@@ -964,37 +877,6 @@
     {
       "member": "PageProperties.HelpLink",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 6 pages declare HelpLink and BC states a default for the rest; the runner never writes the attribute at all. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 3784
-    },
-    {
-      "member": "PageProperties.InherentEntitlements",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 91 pages declare InherentEntitlements; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 3784
-    },
-    {
-      "member": "PageProperties.InherentEntitlementsSpecified",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.InherentEntitlements, declared in this file with the measurement.",
-      "issue": 3784
-    },
-    {
-      "member": "PageProperties.InherentPermissions",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 89 pages declare InherentPermissions; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 3784
-    },
-    {
-      "member": "PageProperties.InherentPermissionsSpecified",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.InherentPermissions, declared in this file with the measurement.",
-      "issue": 3784
-    },
-    {
-      "member": "PageProperties.InstructionalTextML.<presence>",
-      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
-      "outOfScope": true,
-      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
-    },
-    {
-      "member": "PageProperties.InstructionalTextMLString",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 6 pages declare InstructionalText; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
       "issue": 3784
     },
     {
@@ -1023,21 +905,6 @@
       "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
     },
     {
-      "member": "PageProperties.RefreshOnActivate",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 28 pages declare RefreshOnActivate; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 3784
-    },
-    {
-      "member": "PageProperties.UsageCategory",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 62 pages declare UsageCategory; the runner never writes it, so every one answers the None default. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 3784
-    },
-    {
-      "member": "PageProperties.UsageCategorySpecified",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.UsageCategory, declared in this file with the measurement.",
-      "issue": 3784
-    },
-    {
       "member": "SourceObjectDefinition.#delayedInsertField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.DelayedInsert, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
       "issue": 3784,
@@ -1045,18 +912,8 @@
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
     {
-      "member": "SourceObjectDefinition.#deleteAllowedField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.DeleteAllowed, declared in this file with the measurement.",
-      "issue": 3784
-    },
-    {
       "member": "SourceObjectDefinition.#indirectPermissionsField",
       "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.IndirectPermissions, declared in this file with the measurement.",
-      "issue": 3784
-    },
-    {
-      "member": "SourceObjectDefinition.#insertAllowedField",
-      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.InsertAllowed, declared in this file with the measurement.",
       "issue": 3784
     },
     {
@@ -1074,18 +931,8 @@
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
     },
     {
-      "member": "SourceObjectDefinition.DeleteAllowed",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 104 pages declare DeleteAllowed, with the same SourceTable-branch condition as InsertAllowed. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 3784
-    },
-    {
       "member": "SourceObjectDefinition.IndirectPermissions",
       "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 86 pages declare a Permissions property, which BC resolves into the SourceObject's IndirectPermissions vector; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 3784
-    },
-    {
-      "member": "SourceObjectDefinition.InsertAllowed",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 119 pages declare InsertAllowed. EmitPageXml writes it only inside the SourceTable branch, so a page whose symbol states InsertAllowed=0 without a source table keeps the true default. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
       "issue": 3784
     },
     {
@@ -1094,11 +941,6 @@
       "issue": 3784,
       "versionContingent": true,
       "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
-    },
-    {
-      "member": "SourceObjectDefinition.MultipleNewLinesSpecified",
-      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 4 pages declare MultipleNewLines; BC marks the value explicitly specified and the runner writes the attribute only inside the SourceTable branch. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
-      "issue": 3784
     }
   ]
 }

@@ -233,7 +233,16 @@ internal static partial class BcAppSymbolCache
     // It used to reach the builder as a bare id list under a hardcoded "PK", and now carries
     // its declared name, so a warm payload written by the previous parse replays keys that
     // are shaped identically and named wrongly — the v35 trap exactly.
-    private const int CacheVersion = 37;
+    // v38: PageSymbol gained the PageProperties the symbol file states and EmitPageXml never
+    // read (#3784) — Extensible, RefreshOnActivate, UsageCategory, HelpLink, IsPreview, the
+    // four ML strings, the two inherent masks — plus three-state forms of InsertAllowed /
+    // ModifyAllowed / DeleteAllowed. Both halves of the v32 rule are true at once. The record
+    // SHAPE changed, which PayloadShape keys on by itself; the integer is here for the PARSE
+    // change it cannot see, which is the trio: they used to arrive as `bool` collapsing
+    // "the AL states nothing" into "the AL states the default", and a payload written by the
+    // previous parse replays that collapse from a warm cache — a wrong ANSWER (BC's emitter
+    // writes the attribute precisely when the AL states the property), not a cache miss.
+    private const int CacheVersion = 38;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -437,6 +446,36 @@ internal static partial class BcAppSymbolCache
         // check. See RecordPatches.EmitSourceObjectPropertiesXml.
         bool? LinksAllowed = null, bool? ShowFilter = null, bool? SaveValues = null,
         bool? PopulateAllFields = null, string? DataCaptionFields = null,
+        // #3784's PageProperties, all read straight off the same Properties array and none of
+        // them derived. The three-state ones follow the #2860 rule above for the same reason:
+        // BC's emitter writes the attribute precisely when the AL states the property, and its
+        // reader's default differs from the value, so collapsing the two states is observable.
+        //
+        // Extensible and RefreshOnActivate are the exceptions and are BOOL, not bool?, because
+        // BC's emitter writes them on ALL 236 pages measured whether the AL states them or not:
+        // Extensible absent -> "1" (110 pages), RefreshOnActivate absent -> "0" (207). Their AL
+        // defaults are therefore the whole answer for a silent page, so a third state would
+        // encode a distinction the emitted document cannot carry.
+        //
+        // InsertAllowedStated / ModifyAllowedStated / DeleteAllowedStated sit ALONGSIDE the
+        // bool trio further up rather than replacing it: the Page Metadata (2000000138) virtual
+        // table wants the AL-defaulted answer (a page stating nothing IS insertable), while the
+        // emitter wants to know whether the AL said so. Two questions, two fields, neither one
+        // derivable from the other.
+        //
+        // InherentEntitlements / InherentPermissions are the AL permission LETTERS verbatim
+        // ("X" on all 200 pages of Base + System + Business Foundation that state either);
+        // decoding them to BC's Int32 mask is RecordPatches.EmitInherentMask's job, so nothing
+        // is interpreted at parse time.
+        bool Extensible = true, bool RefreshOnActivate = false,
+        string? UsageCategory = null, string? HelpLink = null,
+        string? AboutTitle = null, string? AboutText = null,
+        string? AdditionalSearchTerms = null, string? InstructionalText = null,
+        string? InherentEntitlements = null, string? InherentPermissions = null,
+        bool IsPreview = false,
+        bool? InsertAllowedStated = null, bool? ModifyAllowedStated = null,
+        bool? DeleteAllowedStated = null, bool? DelayedInsertStated = null,
+        bool? MultipleNewLinesStated = null,
         // Names of the booleans above the symbol file STATED but this could not read as a
         // boolean, with the value it stated ("PopulateAllFields=yes"). Null when there were
         // none, which is the case for every Microsoft-produced symbol file measured.
@@ -1331,6 +1370,37 @@ internal static partial class BcAppSymbolCache
         var populateAllFields = SymbolBoolOrNull(props, "PopulateAllFields", ref unreadableBooleans);
         props.TryGetValue("DataCaptionFields", out var dataCaptionFields);
 
+        // #3784's PageProperties. Two AL defaults BC's emitter writes unconditionally, so
+        // SymbolBool/SymbolBoolFalse (which fold absence into the default) are the right
+        // readers here — unlike the three-state group below.
+        bool extensible = !SymbolBoolFalse(props, "Extensible");
+        bool refreshOnActivate = SymbolBool(props, "RefreshOnActivate");
+        bool isPreview = SymbolBool(props, "IsPreview");
+
+        // The three-state group, for the #2860 reason: BC's emitter writes each attribute
+        // precisely when the AL states the property, whatever the value, and its reader's
+        // default (InsertAllowed/ModifyAllowed/DeleteAllowed true, the other two false)
+        // differs from at least one legal stated value in every case.
+        var insertAllowedStated = SymbolBoolOrNull(props, "InsertAllowed", ref unreadableBooleans);
+        var modifyAllowedStated = SymbolBoolOrNull(props, "ModifyAllowed", ref unreadableBooleans);
+        var deleteAllowedStated = SymbolBoolOrNull(props, "DeleteAllowed", ref unreadableBooleans);
+        var delayedInsertStated = SymbolBoolOrNull(props, "DelayedInsert", ref unreadableBooleans);
+        var multipleNewLinesStated = SymbolBoolOrNull(props, "MultipleNewLines", ref unreadableBooleans);
+
+        // Scalars, verbatim. Nothing is resolved, normalised or defaulted here: whether an
+        // absent value means "write nothing" or "write the AL default" is the emitter's
+        // question, and it differs per property (see EmitPageXml).
+        props.TryGetValue("UsageCategory", out var usageCategory);
+        props.TryGetValue("HelpLink", out var helpLink);
+        props.TryGetValue("AboutTitle", out var aboutTitle);
+        props.TryGetValue("AboutText", out var aboutText);
+        props.TryGetValue("AdditionalSearchTerms", out var additionalSearchTerms);
+        props.TryGetValue("InstructionalText", out var instructionalText);
+        props.TryGetValue("InherentEntitlements", out var inherentEntitlements);
+        props.TryGetValue("InherentPermissions", out var inherentPermissions);
+
+        static string? OrNullIfBlank(string? v) => string.IsNullOrWhiteSpace(v) ? null : v;
+
         return new PageSymbol(pageId, name!, sourceTableId, sourceTableTemporary,
             string.IsNullOrWhiteSpace(pageType) ? "Card" : pageType!, caption,
             editable, insertAllowed, modifyAllowed, deleteAllowed, controls,
@@ -1340,6 +1410,14 @@ internal static partial class BcAppSymbolCache
             ParseSourceTableView(pageId, sourceTableView), runObjects,
             linksAllowed, showFilter, saveValues, populateAllFields,
             string.IsNullOrWhiteSpace(dataCaptionFields) ? null : dataCaptionFields,
+            extensible, refreshOnActivate,
+            OrNullIfBlank(usageCategory), OrNullIfBlank(helpLink),
+            OrNullIfBlank(aboutTitle), OrNullIfBlank(aboutText),
+            OrNullIfBlank(additionalSearchTerms), OrNullIfBlank(instructionalText),
+            OrNullIfBlank(inherentEntitlements), OrNullIfBlank(inherentPermissions),
+            isPreview,
+            insertAllowedStated, modifyAllowedStated, deleteAllowedStated,
+            delayedInsertStated, multipleNewLinesStated,
             unreadableBooleans);
     }
 

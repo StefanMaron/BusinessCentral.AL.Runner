@@ -514,8 +514,48 @@ overstates the page gap.
   `Extensible` is the sharpest: the runner hardcodes `"1"`, BC answers `0` on 104 of 235 pages, and
   the symbol file states `Extensible=0` for **all 104 with zero omissions** — a pure
   read-don't-guess fix rather than merely a wrong default.
+
+  **Of those 55, thirty entries were closed by the reader fix and deleted** (#3784, step 1 of the
+  four the owner approved): `Extensible`, `RefreshOnActivate`, `UsageCategory`, the two inherent
+  permission masks, the four `…ML` strings with their `<presence>` companions, and
+  `InsertAllowed` / `DeleteAllowed` / `MultipleNewLinesSpecified`. What stayed, and why, is
+  [the read/derive split](#a-read-and-a-derivation-are-different-fixes) below.
 - **62 entries / 38 distinct members — the ordinary field-control tree the runner does not build
   today**, plus the translation keys.
+
+<a id="a-read-and-a-derivation-are-different-fixes"></a>
+### A read and a derivation are different fixes, and the difference is measurable
+
+#3784 looked like one bucket — "properties the symbol file states and the emitter drops" — and is
+two. Sorting them needs a cross-tabulation of *(symbol value → emitted attribute)* over every page,
+not a reading of the property's name, because the two look identical from the allowlist entry.
+
+Measured on **BC 28.4.53241.54407**, Business Foundation (11 pages) + System Application (225),
+symbol file against the ground truth this harness generates:
+
+| the runner must | example | what the cross-tab shows |
+|---|---|---|
+| **read** the stated value | `Extensible` | absent → BC `"1"` (110), `"0"` → `"0"` (105), `"1"` → `"1"` (21) — BC's answer is a function of the symbol value alone |
+| **derive** a value the file never states | `AnalysisModeEnabled` | 94 pages where the symbol file states **nothing** and BC writes `"1"`; it tracks `PageType` (List/Worksheet), not the file |
+
+Three traps this sorting sprang, each of which would have produced a wrong entry deletion:
+
+- **A property can be BOTH.** `HelpLink` is a read on the 6 pages that state it and a **derived
+  default on the other 230** (`https://learn.microsoft.com/dynamics365/business-central/` and
+  friends). Reading it closes a sixth of the difference and the entry stays — so "the fix reads
+  this property" does not imply "the entry goes".
+- **Two write rules, not one.** BC writes `Extensible` and `RefreshOnActivate` on all 236 pages
+  whether the AL states them or not; everything else it writes *iff* stated, because
+  `PageProperties` raises its `…Specified` bit **from the setter** and `Equals()` compares it.
+  Emitting an AL default for a silent page is a different document, not a harmless one.
+- **A fix closes entries that never cited it.** Writing the `…ML` strings materialises BC's
+  `MultiLanguage` object, so eight `…ML.<presence>` / `#…MLField.<presence>` entries filed under
+  the control-tree group went stale too.
+
+**So take the stale list from the harness, never from the fix's own account of itself.**
+`No_allowlist_entry_has_gone_stale` prints exactly which entries stopped matching; predicting them
+from the diff got `HelpLink` wrong in one direction and those eight `<presence>` entries wrong in
+the other.
 
 <a id="the-control-tree-is-a-cost-decision-not-an-unprovable-one"></a>
 ### The control tree is a cost decision, and it has a proof path
