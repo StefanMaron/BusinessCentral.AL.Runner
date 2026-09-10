@@ -9,6 +9,7 @@ codeunit 70820 "DISI Tests"
         // what UserSecurityId() must answer - asserted as a concrete constant rather than as
         // "not empty", so an implementation returning a default cannot pass.
         GeneratedSidTok: Label '{C0A1BDFA-0000-0000-0000-545553545553}', Locked = true;
+        SuperTok: Label 'SUPER', Locked = true;
 
     [Test]
     procedure DisiTheDependencyRecordedWhatItSaw()
@@ -93,5 +94,80 @@ codeunit 70820 "DISI Tests"
         UserRec.SetRange("User Name", UserId());
         if UserRec.Count() <> 1 then
             Error('expected exactly 1 User row named "%1" but found %2', UserId(), UserRec.Count());
+    end;
+
+    [Test]
+    procedure DisiDependencyInstallCodeSawTheCompanyRow()
+    var
+        Observation: Record "DISI Observation";
+    begin
+        // THE #3757 DISCRIMINATOR for the Company system table (2000000006). The Company seed
+        // used to run after BOTH sets of install triggers, so a dependency's install code
+        // resolved CompanyName() against a table with no row for the company it was
+        // initialising - Company.Get(CompanyName()) answered false for the one company every
+        // other surface reports as existing.
+        Observation.Get(ObservedCodeTok);
+        if not Observation."Company Row Existed" then
+            Error(
+              'dependency install code called Company.Get(CompanyName()) and found no row: the '
+              + 'Company seed had not run yet (AlRunner#3757)');
+        if Observation."Company Row Name" <> CompanyName() then
+            Error('the Company row the dependency found was named "%1", expected "%2"',
+              Observation."Company Row Name", CompanyName());
+    end;
+
+    [Test]
+    procedure DisiTheDependencysCompanyLookupConsultedTheKey()
+    var
+        Observation: Record "DISI Observation";
+    begin
+        // NEGATIVE CONTROL for the test above, recorded inside the same install trigger: a Get
+        // answering true for anything would make "Company Row Existed" meaningless.
+        Observation.Get(ObservedCodeTok);
+        if Observation."Other Company Row Existed" then
+            Error('Company.Get on a company that does not exist must be false, even during install');
+    end;
+
+    [Test]
+    procedure DisiDependencyInstallCodeSawTheSuperGrant()
+    var
+        Observation: Record "DISI Observation";
+        AccessCtrl: Record "Access Control";
+    begin
+        // THE #3757 DISCRIMINATOR for Access Control (2000000053). The SUPER row was seeded
+        // after both sets of install triggers, so install code reading the table found no
+        // assignment for a session user the runner reports as SUPER everywhere else.
+        Observation.Get(ObservedCodeTok);
+        if not Observation."Super Row Existed" then
+            Error(
+              'dependency install code found no SUPER row in Access Control (2000000053) for '
+              + 'UserSecurityId(): the Access Control seed had not run yet (AlRunner#3757)');
+        if Observation."Nobody Super Row Existed" then
+            Error('a SUPER row must not exist for a user security id belonging to nobody');
+        // ...and the row install code saw is still there at test time, for the SAME id: the
+        // assertion above would also pass on an implementation that seeded a row for one id and
+        // then moved the session onto another.
+        AccessCtrl.SetRange("User Security ID", UserSecurityId());
+        AccessCtrl.SetRange("Role ID", SuperTok);
+        if AccessCtrl.IsEmpty() then
+            Error('Access Control must still hold a SUPER row for UserSecurityId() at test time');
+    end;
+
+    [Test]
+    procedure DisiTheDependencySawItsOwnAppInstalledAndNotTheBundle()
+    var
+        Observation: Record "DISI Observation";
+    begin
+        // The registry half. POSITIVE: the dependency apps' rows are seeded before their install
+        // triggers (#2963), so this app's own row is there - without which the negative below
+        // would pass over an empty table and prove nothing.
+        Observation.Get(ObservedCodeTok);
+        if not Observation."Own App Installed Row Existed" then
+            Error('the dependency''s own row in NAV App Installed App (2000000153) must exist while its install code runs');
+        // NEGATIVE: the bundle under test is NOT installed yet while its dependency installs -
+        // the runner seeds the bundle's own row after this window, and a service tier installs
+        // a dependency before the app that depends on it.
+        if Observation."Bundle App Installed Row Existed" then
+            Error('the bundle under test must NOT be in NAV App Installed App while its DEPENDENCY''s install code runs');
     end;
 }

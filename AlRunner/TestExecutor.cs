@@ -598,6 +598,26 @@ public sealed class TestExecutor
                     // adoption is a poke at the skeleton session that no snapshot carries. See
                     // docs/session-user-seed-ordering.md.
                     AlRunner.Patches.RecordPatches.EnsureUserSystemTableRowSeeded();
+                    // #3757 — the Company row (2000000006) and the session user's SUPER row in
+                    // Access Control (2000000053), for the same reason and on the same terms: a
+                    // dependency's OnInstallAppPerCompany that resolves CompanyName() against
+                    // Company, or asks whether the session user is SUPER, must find what a
+                    // service tier has there long before any extension is installed.
+                    //
+                    // The CAPTURE half of each split, exactly like the User row above: both rows
+                    // are ordinary table rows, so the snapshot carries them and a later HIT
+                    // restores them. Both seeds are called AGAIN after this block on every path,
+                    // which is what a HIT needs and what makes an older on-disk snapshot written
+                    // before this change self-healing rather than a schema break.
+                    //
+                    // Cacheable across app groups and across processes, which the dep-company key
+                    // (dependency set + runner build + BC version) requires: the company is the
+                    // constant "My Company" with a fixed companyTableId poked by BcRuntime, and
+                    // the SUPER row names the session user, whose generated security id is a
+                    // constant too. Access Control after the User row — its "User Security ID"
+                    // relates to User's.
+                    AlRunner.Patches.RecordPatches.EnsureCompanySystemTableRowSeeded();
+                    AlRunner.Patches.RecordPatches.EnsureAccessControlSuperRowSeeded();
                     InstallTriggerRunner.RunDependenciesOnly();
                     CompanyInitializer.EnsureCompanyInitialized();
                     var initFailure = CompanyInitializer.LastRecordedFailure;
@@ -650,55 +670,48 @@ public sealed class TestExecutor
         // itself returns.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-user-row"))
             AlRunner.Patches.RecordPatches.EnsureUserSystemTableRowSeeded();
-        // Genuinely per-app-group — the bundle's own Install codeunits (if any) are never
-        // shared across app groups, so this always runs fresh, cache or no cache.
-        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-run-own-install-triggers"))
-            InstallTriggerRunner.RunTestAssemblyOnly();
-        // #2329 — the Company system table row. Must be seeded BEFORE the baseline capture
-        // below: the per-codeunit restore puts the store back to that baseline, so a row
-        // added after it would survive only until the first codeunit boundary.
+        // #2329 — the Company system table row (2000000006). Since #3757 it is seeded BEFORE
+        // this bundle's own install triggers below, so install code that resolves CompanyName()
+        // against Company finds a row, exactly as it would on a service tier. On a dep-company
+        // cache MISS the row is already there from the in-window call above and this one exits
+        // on the latch; on a HIT the row came from the restored snapshot and this call reports it
+        // already present; on a snapshot written before #3757 this call is what writes it.
+        //
+        // Still BEFORE CaptureInstallBaseline below, the constraint all three of these seeds have
+        // always had: the per-codeunit restore puts the store back to that baseline, so a row
+        // added after it survives only until the first codeunit boundary.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-company-row"))
             AlRunner.Patches.RecordPatches.EnsureCompanySystemTableRowSeeded();
         // #2963 — the bundle's OWN Published Application row, here rather than with the
         // dependency rows above: this one is per-app-group, and the dependency snapshot is
-        // shared across every app group with the same dependency closure.
+        // shared across every app group with the same dependency closure. That is why #3757
+        // moved it to just before the bundle's own install triggers rather than into the window
+        // — a row captured there would be restored into a different app group that shares the
+        // dependency closure, reporting an app that is not loaded as published. The position it
+        // has now is also the BC-faithful one: an app is published before its own install
+        // triggers run, and its dependencies were installed before it was published at all.
         //
         // AFTER the User row since #3268 moved that seed ahead of this bundle's install
-        // triggers. It used to run before it, DEFENSIVELY — not because anything required it,
-        // and the measurement below is what says the inversion is safe.
-        //
-        // This seed and the Company one above build their row from runner state and hand it
-        // straight to the in-memory provider's Insert: no AL runs, and neither reads User. The
-        // User row is the one that differs — #2296 routes it through NavRecord.ALInsert on
-        // purpose, to pick up the User Property companion row UserTableTriggerPatches prepends
-        // — so it does fire the User table's event subscribers.
-        //
-        // An earlier version of this comment claimed those subscribers reach a module-ownership
-        // check and therefore need this table seeded first. BC's own source says otherwise, and
-        // it was measured rather than reasoned about: across the 9,441 .al files in System
-        // Application, Base Application and Business Foundation there are 9 subscribers on
-        // Database::User and exactly ONE on insert —
-        // BaseApp/src/System/User/UserManagement.Codeunit.al:499
-        // ValidateLicenseTypeOnAfterInsertUser → ValidateLicenseTypeOnSaaS →
-        // EnvironmentInformation.IsSaaS(), which reads "Server Setting" and never Published
-        // Application. User Property has no subscribers at all, and every caller of
-        // AddAllowedTable / ModuleOwnsTable sits behind OnRefreshAllowedTables, an install
-        // codeunit, or Company-Initialize.OnBeforeOnRun — none of them reachable from a User
-        // insert.
-        //
-        // So the ordering cost nothing in either direction and is not a dependency — which is
-        // why #3268 could invert it. What genuinely constrains all three seeds is being here
-        // at all: before
-        // CaptureInstallBaseline, because the per-codeunit restore puts the store back to that
-        // baseline and a row added after it survives only until the first codeunit boundary.
+        // triggers. It used to run before it, DEFENSIVELY — not because anything required it.
+        // The measurement that says the inversion is safe — 9 subscribers on Database::User
+        // across 9,441 System Application / Base Application / Business Foundation .al files, one
+        // of them on insert, none of them reaching a module-ownership check — is in
+        // docs/session-user-seed-ordering.md#what-constrains-the-order, with the file and line.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-published-application-row"))
             AlRunner.Patches.RecordPatches.EnsurePublishedApplicationBundleRowSeeded();
         // #3176: the Access Control row that BACKS that user's SUPER status. Ordered after the
-        // User row (its "User Security ID" relates to User's) and before the baseline capture,
-        // for the same reason the User row is: a row added after the capture survives only until
-        // the first codeunit boundary restores the store.
+        // User row (its "User Security ID" relates to User's), and since #3757 before this
+        // bundle's own install triggers, so install code asking whether the session user is
+        // SUPER reads the same table the tests read. Called in the window above as well; this
+        // call is the one that re-decides after an adoption moved the session onto another id.
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-access-control-row"))
             AlRunner.Patches.RecordPatches.EnsureAccessControlSuperRowSeeded();
+        // Genuinely per-app-group — the bundle's own Install codeunits (if any) are never
+        // shared across app groups, so this always runs fresh, cache or no cache. Last of the
+        // install-seed steps since #3757: everything a service tier has in place before an
+        // extension installs is in place before this line.
+        using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-run-own-install-triggers"))
+            InstallTriggerRunner.RunTestAssemblyOnly();
         using (AlRunner.Infrastructure.PhaseLog.AppStage("install-seed-capture-baseline"))
             AlRunner.Patches.RecordPatches.CaptureInstallBaseline();
         seedSw.Stop();
