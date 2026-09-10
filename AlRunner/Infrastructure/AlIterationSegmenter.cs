@@ -84,6 +84,16 @@ internal sealed class AlIterationSegmenter
         internal Step? Open { get; private set; }
         internal bool Pending { get; private set; }
         internal bool HeaderSeen { get; set; }
+        /// <summary>
+        /// The header statement id that OPENED this instance, or null before its first header
+        /// hit. #3834: BC can emit several statement ids for one `for`, all starting at the
+        /// header's position, so all of them land in HeaderIds — and a hit on a different one
+        /// is this entry continuing, not a new one. Measured: ids 1 and 3 both at line 16
+        /// column 8 for a single `for`, with id 3 arriving after the last body pass.
+        /// </summary>
+        internal int? EntryHeaderId { get; private set; }
+
+        internal void NoteHeaderId(int statementId) => EntryHeaderId ??= statementId;
         private List<Cap>? _carry;
         private List<Cap>? _pendingCaptures;
         private List<Msg>? _pendingMessages;
@@ -261,14 +271,28 @@ internal sealed class AlIterationSegmenter
             var child = table.ChildOwning(cur.Site, statementId);
             if (child == null && cur.Site.HeaderIds.Contains(statementId))
             {
-                if (IsReentry(cur, scopeInstance))
+                if (IsReentry(cur, scopeInstance, statementId))
                 {
                     if (!consumed) { cur.Attach(observed); consumed = true; }
                     Pop(AlLoopEnd.Exit);
                     cur = TopOf(scopeInstance);
                     continue;
                 }
-                RecordHit(scopeInstance, statementId);
+                // #3834: a loop can have SEVERAL header ids — BC emits more than one
+                // statement id for one `for`, all starting at the header's position — and the
+                // ones that are not this instance's ENTRY arrive after the last body
+                // statement. That is the loop closing, not a statement of the pass that just
+                // ran, so recording it put the header's own line into that pass's `lines`.
+                //
+                // Deliberately not narrowed to for/foreach. A while's condition and a repeat's
+                // until are header ids that re-evaluate mid-pass, and their hit DOES belong to
+                // the running pass — but they are the ENTRY id, so this skips nothing for them
+                // and a kind check changes no measured behaviour. Adding one would be a branch
+                // no fact defends; WhileLoop_ConditionHitPerEvaluation_CountsBodyEntriesOnly
+                // and RepeatLoop_UntilConditionAfterBody_ThreeIterations are what hold that.
+                var closingHeader = cur.EntryHeaderId is int entryId && entryId != statementId;
+                if (!closingHeader) RecordHit(scopeInstance, statementId);
+                cur.NoteHeaderId(statementId);
                 if (consumed) cur.OnHeader(NoCaptures);
                 else { cur.OnHeader(observed); consumed = true; }
                 break;
@@ -311,14 +335,21 @@ internal sealed class AlIterationSegmenter
     // A for/foreach header fires once per entry, so a second hit on an active instance is a
     // re-entry. A while condition re-evaluates mid-pass, but then always right after one of
     // its own body statements. A repeat's until-condition is never an entry.
-    private bool IsReentry(LoopInstance cur, object scopeInstance)
+    //
+    // #3834: "the header fired again" means the id that OPENED the instance firing again, not
+    // any member of HeaderIds. BC emits more than one statement id for one `for` — measured,
+    // two ids sharing the header's exact start position — so membership alone made the second
+    // of them look like a re-entry, popping the instance that had counted the passes and
+    // pushing an empty one in its place. An empty instance is a legitimate value on the wire
+    // (a loop that never ran), so nothing downstream could tell the two apart.
+    private bool IsReentry(LoopInstance cur, object scopeInstance, int statementId)
     {
         if (!cur.HeaderSeen) return false;
         switch (cur.Site.Kind)
         {
             case AlLoopKind.For:
             case AlLoopKind.ForEach:
-                return true;
+                return cur.EntryHeaderId is not int entry || entry == statementId;
             case AlLoopKind.While:
                 return !(_lastHit.TryGetValue(scopeInstance, out var last) && cur.Site.BodyIds.Contains(last));
             default:

@@ -187,11 +187,11 @@ public class ServerExecuteIterationsTests : IClassFixture<SharedCliServer>
         var d = await ExecuteAsync(code);
         var t = SingleTest(d);
 
-        // The loop that actually ran. A non-zero offset also produces a SECOND, empty
-        // instance of the same site, which is a separate defect (#3834) and not something
-        // this fact should pretend away: before this change there were no instances at all,
-        // and asserting Single here would tie an unrelated bug to this one's proof.
-        var loop = Assert.Single(Loops(t, "OnRun").Where(l => l.GetProperty("iterationCount").GetInt32() > 0));
+        // EXACTLY one instance. A zero-iteration entry is a legitimate value on this wire —
+        // a loop that never ran is reported that way — so a spurious empty duplicate is not
+        // something a consumer can filter out, and asserting on "the one that ran" would
+        // hide it (#3834).
+        var loop = Assert.Single(Loops(t, "OnRun"));
         // FILE lines, not the 8-lines-lower ones the object's own text would give.
         Assert.Equal(17, loop.GetProperty("line").GetInt32());
         Assert.Equal(19, loop.GetProperty("endLine").GetInt32());
