@@ -756,8 +756,17 @@ namespace AlRunnerShim
             return result;
         }
 
+        // `params`, mirroring BC's own NavTextExtensions.ALSplit(string, params string[]): the
+        // compiler emits Text.Split(Sep1, Sep2, ...) as ALSplit(text, a, b, ...), one argument
+        // per separator, each a NavText (implicitly a string). Without params, two or more
+        // separators failed the dependency compile with CS1501 (#3712). Each separator is a
+        // whole-string delimiter and empty parts are kept, as in BC; corpus 60119
+        // TextSplit_TwoSeparatorLiterals_SplitsOnEither and siblings adjudicate. Trap: do not add
+        // a second params overload (e.g. NavText[]) beside this one — a zero-separator Split()
+        // then has two expanded-form candidates and is ambiguous (CS0121), and one-separator
+        // calls that bind to (string, string) today would rebind by identity.
         public static Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavText> ALSplit(
-            string text, string[] separators)
+            string text, params string[] separators)
         {
             var parts = text.Split(separators, global::System.StringSplitOptions.None);
             var result = Microsoft.Dynamics.Nav.Runtime.NavList<Microsoft.Dynamics.Nav.Runtime.NavText>.Default;
@@ -814,6 +823,7 @@ namespace AlRunnerShim
             string sep = separator == null ? global::System.String.Empty : separator.ToString();
             return ALSplit(t, sep);
         }
+
 
         // ALMaxStrLen: unlimited Text/Code returns Int32.MaxValue; bounded returns the
         // declared length. NavDefinedLengthMetadata stores 0 for unlimited and N for Text[N].
