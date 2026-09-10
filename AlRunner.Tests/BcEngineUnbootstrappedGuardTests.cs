@@ -35,9 +35,12 @@
 //      BcEngineReadinessGuardTests does for AssertReadyOnCi, and none of it reads whatever
 //      this box happens to have provisioned.
 //   2. The REAL BcEngineFixture.SkipReason property is then asserted to route through it —
-//      the wiring, without which (1) proves a function nobody calls. That one is written to
-//      hold on a box in EITHER state, and says which state it observed, so it cannot pass
-//      vacuously in one of them (see WiredInto_TheRealFixture_SkipReasonProperty).
+//      the wiring, without which (1) proves a function nobody calls. Two tests, because on a
+//      bootstrapped box (CI's state, always) "the property did not throw" is also what an
+//      unwired property does: WiredInto_TheRealFixture_SkipReasonProperty exercises the
+//      behaviour in whichever state this box is in, and TheWiring_IsPresent_InEveryState
+//      reads the emitted IL, which answers the same in every state. The mutation check
+//      measured that split rather than assuming it — see that test's own comment.
 
 using Xunit;
 
@@ -260,33 +263,8 @@ public sealed class BcEngineUnbootstrappedGuardTests
     [Fact]
     public void TheWiring_IsPresent_InEveryState()
     {
-        var getter = typeof(BcEngineFixture)
-            .GetProperty(nameof(BcEngineFixture.SkipReason))!
-            .GetGetMethod()!;
-
-        var body = getter.GetMethodBody();
-        Assert.NotNull(body);
-        var il = body!.GetILAsByteArray();
-        Assert.NotNull(il);
-
-        var guard = typeof(BcEngineUnbootstrappedGuard)
-            .GetMethod(nameof(BcEngineUnbootstrappedGuard.AssertBootstrapWasRun),
-                       System.Reflection.BindingFlags.Static
-                       | System.Reflection.BindingFlags.NonPublic
-                       | System.Reflection.BindingFlags.Public)!;
-
-        // 0x28 = call, followed by a 4-byte metadata token. Scanning for the token itself is
-        // what makes this a statement about the emitted call and not about the source text.
-        var wanted = BitConverter.GetBytes(guard.MetadataToken);
-        var found = false;
-        for (var i = 0; i + 4 < il!.Length && !found; i++)
-        {
-            if (il[i] != 0x28) continue;
-            found = il[i + 1] == wanted[0] && il[i + 2] == wanted[1]
-                 && il[i + 3] == wanted[2] && il[i + 4] == wanted[3];
-        }
-
-        Assert.True(found,
+        Assert.True(
+            Calls(SkipReasonGetter(), GuardMethod()),
             $"BcEngineFixture.SkipReason does not call {nameof(BcEngineUnbootstrappedGuard)}."
             + $"{nameof(BcEngineUnbootstrappedGuard.AssertBootstrapWasRun)}. That call is what "
             + "converts a silent skip of the entire bc-engine-serial collection into a named "
@@ -295,21 +273,91 @@ public sealed class BcEngineUnbootstrappedGuardTests
     }
 
     /// <summary>
-    /// Fixture guard for the test above: a metadata-token scan that found nothing because
-    /// the IL was empty, or because 0x28 never appears, would report the same "not found"
-    /// as a genuinely deleted call. Pinning that the scan CAN fire — on a method known to
-    /// call the guard — is what separates the two.
+    /// The scan itself, in both directions, against methods whose answer is known
+    /// independently of anything this PR changed — so that a "not found" from
+    /// <see cref="TheWiring_IsPresent_InEveryState"/> means the call is absent, and not that
+    /// <see cref="Calls"/> is broken.
+    ///
+    /// Both directions are needed and neither alone suffices: a <see cref="Calls"/> that
+    /// always answered false would pass the negative row, and one that always answered true
+    /// would pass the positive row. Only the pair pins that the four-byte token comparison
+    /// actually discriminates — which is exactly what a check for "the 0x28 opcode appears
+    /// somewhere" does not do, since 0x28 appears in almost every method body ever compiled.
     /// </summary>
     [Fact]
-    public void TheILScan_ItselfDetectsACall_SoItsNegativeIsMeaningful()
+    public void TheILScan_Discriminates_SoItsNegativeIsMeaningful()
     {
-        var body = typeof(BcEngineFixture)
-            .GetProperty(nameof(BcEngineFixture.SkipReason))!
-            .GetGetMethod()!
-            .GetMethodBody()!;
-        var il = body.GetILAsByteArray()!;
+        // Positive: a method this file controls, which calls the guard on every path.
+        var probe = typeof(BcEngineUnbootstrappedGuardTests)
+            .GetMethod(nameof(CallsTheGuardOnce),
+                       System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+        Assert.True(Calls(probe, GuardMethod()),
+            "the IL scan failed to find a call it is looking straight at, so a negative from it "
+            + "says nothing about whether BcEngineFixture.SkipReason calls the guard.");
 
-        Assert.NotEmpty(il);
-        Assert.Contains((byte)0x28, il);
+        // Negative: same shape, same file, one call — to something else. Without this row a
+        // Calls() that ignored the token and answered "yes" for any method containing a call
+        // opcode would look correct.
+        var decoy = typeof(BcEngineUnbootstrappedGuardTests)
+            .GetMethod(nameof(CallsSomethingElseOnce),
+                       System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
+        Assert.False(Calls(decoy, GuardMethod()),
+            "the IL scan reported a call to the guard from a method that does not call it, so it "
+            + "is matching the call opcode rather than the target and would report the wiring "
+            + "present after the guard call was deleted.");
     }
+
+    // ---- the scan, and the two probes that prove it discriminates -------------------
+
+    private static System.Reflection.MethodInfo SkipReasonGetter() =>
+        typeof(BcEngineFixture).GetProperty(nameof(BcEngineFixture.SkipReason))!.GetGetMethod()!;
+
+    private static System.Reflection.MethodInfo GuardMethod() =>
+        typeof(BcEngineUnbootstrappedGuard)
+            .GetMethod(nameof(BcEngineUnbootstrappedGuard.AssertBootstrapWasRun),
+                       System.Reflection.BindingFlags.Static
+                       | System.Reflection.BindingFlags.NonPublic
+                       | System.Reflection.BindingFlags.Public)!;
+
+    /// <summary>
+    /// True when <paramref name="caller"/>'s body emits a call to <paramref name="target"/>.
+    ///
+    /// One implementation, used by the production assertion AND by its own self-check, so the
+    /// two cannot drift into checking different things — the failure mode where a guard is
+    /// verified by a copy of itself that has since diverged.
+    ///
+    /// 0x28 is <c>call</c>, followed by a 4-byte metadata token. Matching the TOKEN is what
+    /// makes this a statement about the emitted call rather than about the source text: a
+    /// source scan would be cheaper and would match the name in a comment (#3813 is the live
+    /// instance of that defect in this suite, and it fired on this very file).
+    /// </summary>
+    private static bool Calls(System.Reflection.MethodInfo caller, System.Reflection.MethodInfo target)
+    {
+        var il = caller.GetMethodBody()?.GetILAsByteArray();
+        // An absent body cannot be scanned, and answering "no call here" would report that
+        // unmeasurable state as the guard being unwired (guards-need-a-third-state.md).
+        Assert.True(il is { Length: > 0 },
+            $"{caller.DeclaringType?.Name}.{caller.Name} has no readable IL body, so nothing about "
+            + "which methods it calls has been measured.");
+
+        var wanted = BitConverter.GetBytes(target.MetadataToken);
+        for (var i = 0; i + 4 < il!.Length; i++)
+        {
+            if (il[i] != 0x28) continue;
+            if (il[i + 1] == wanted[0] && il[i + 2] == wanted[1]
+                && il[i + 3] == wanted[2] && il[i + 4] == wanted[3]) return true;
+        }
+        return false;
+    }
+
+    /// <summary>Positive probe for <see cref="Calls"/>: calls the guard, and nothing else.</summary>
+    private static void CallsTheGuardOnce()
+        => BcEngineUnbootstrappedGuard.AssertBootstrapWasRun(ready: true, reason: null);
+
+    /// <summary>
+    /// Negative probe: one call, to a method that is not the guard. Deliberately still a
+    /// call, so the only thing separating it from the probe above is the token.
+    /// </summary>
+    private static void CallsSomethingElseOnce()
+        => BcEngineSkipReason.IsRecoverableLocally(BcEngineSkipCause.ArtifactsMissing);
 }
