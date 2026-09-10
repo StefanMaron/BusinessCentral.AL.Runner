@@ -212,6 +212,53 @@ jobs:
           CHANGED_FILES: ${{ steps.changed.outputs.files }}
         run: bash .github/scripts/check_corpus_linkage.sh
 
+  corpus-pr-mergeable:
+    name: A cited corpus PR must be able to merge
+    permissions:
+      contents: read
+      pull-requests: read   # gh api on the CORPUS repo, which is public
+    runs-on: ubuntu-latest
+    # #3674. The job above checks that a `Corpus-PR:` line was DECLARED, never
+    # what became of the pull request it names. Measured over the 68 post-gate
+    # declarations: four runner PRs merged while their corpus PR was still open,
+    # and four merged runner PRs (#2318, #2638, #2778, #2837) cite corpus PRs
+    # #85, #137 and #153 that closed WITHOUT merging -- so those claims have no
+    # service-tier verdict and nothing said so.
+    #
+    # What it fails on is deliberately narrower than the issue proposed: a corpus
+    # PR that CANNOT merge (a red or unreported required leg, a conflict, a
+    # draft, or closed unmerged). An open-and-green corpus PR PASSES, because
+    # since #3737 the runner PR is measured against that PR's head and the two
+    # land in the same coordinator step -- failing on merely-open would fail
+    # every well-formed PR for its whole review window, which is the
+    # paste-past-it direction check_corpus_linkage.sh's header warns about.
+    # The stricter MERGED bar belongs to arming, and lives in
+    # `orchestrating-a-session`'s arming list, read through tools/ci-wait.py.
+    #
+    # It reads api.github.com, so by the rule of thumb at the top of this file it
+    # is NOT ready to be a required context, and it is deliberately not in the
+    # branch ruleset: it is listed in PENDING_REQUIRED_CONTEXTS in
+    # check_required_contexts.py, which analyses it like a required one (produced
+    # by a pull_request workflow, not cancellable on the head commit) without
+    # gating on it. Two things would have to change before promoting it -- see
+    # that list and the PR body of #3674.
+    #
+    # `edited` and `labeled` in this workflow's trigger list are what re-evaluate
+    # it after the corpus PR moves: editing the body, or the coordinator's
+    # `status: review-ready` label, re-runs this job on the same commit. That is
+    # why no `concurrency` block may be added here (see the header).
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Check the cited corpus PR can merge
+        env:
+          # The body from the event payload, like require-corpus-linkage above:
+          # `edited` is in this workflow's trigger list, so a body changed after
+          # the last push re-runs this job with the new body.
+          PR_BODY: ${{ github.event.pull_request.body }}
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/corpus_pr_state.py
+
   verify-trigger-list:
     name: pull_request trigger lists must keep their load-bearing event types
     runs-on: ubuntu-latest

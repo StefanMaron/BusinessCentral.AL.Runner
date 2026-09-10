@@ -216,6 +216,16 @@ PENDING_REQUIRED_CONTEXTS: list[str] = [
     # workflow, not cancellable on the head commit -- which is the whole point of
     # the seam.
     "A PR closing a gap issue must not leave its known-gap entry behind",
+    # #3674's gate: pr-gate.yml's corpus-pr-mergeable job. Listed here rather
+    # than promoted, and NOT because a ruleset edit is pending -- it reads
+    # api.github.com to ask the corpus repository about a pull request, and the
+    # rule of thumb at the top of pr-gate.yml keeps a check that can go red for
+    # an environmental reason out of the ruleset. Listing it here still buys the
+    # analysis: produced by a pull_request workflow, and not cancellable on the
+    # head commit. Promoting it needs an argument that its network read cannot
+    # block merges, and no such argument exists today -- #3674's PR body sets
+    # out why, including the stale-red window when the corpus PR moves.
+    "A cited corpus PR must be able to merge",
 ]
 
 REPO = "StefanMaron/BusinessCentral.AL.Runner"

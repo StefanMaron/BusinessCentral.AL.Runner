@@ -153,6 +153,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import importlib.util
 import json
 import os
 import re
@@ -451,6 +452,92 @@ def print_floor_verdict() -> None:
         print(floor_verdict(runs, why))
     except Exception as exc:  # pragma: no cover - a report may never break a verdict
         print(f"main floor: unavailable ({type(exc).__name__} while reading main's runs)")
+
+
+# --------------------------------------------------------------------------
+# The corpus pull request this PR's body cites (#3674)
+#
+# The linkage gate checks that a `Corpus-PR:` line was declared, never what
+# became of the pull request it names -- and four merged runner PRs cite corpus
+# PRs that closed without ever merging, so those claims have no service-tier
+# verdict and nothing said so. This line is what a reviewer sees before arming
+# auto-merge; the arming list in `orchestrating-a-session` reads it.
+#
+# The state itself is NOT computed here. .github/scripts/corpus_pr_state.py is
+# the one source of truth -- pr-gate.yml runs it as a script, this imports it --
+# so the line printed beside a verdict and the check that blocks a merge cannot
+# answer differently.
+# --------------------------------------------------------------------------
+CORPUS_PR_STATE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                               "..", ".github", "scripts", "corpus_pr_state.py")
+
+_UNSET = object()
+
+
+def load_corpus_pr_state(path: str | None = None):
+    """Import .github/scripts/corpus_pr_state.py, or None. Never raises.
+
+    None is the answer for a copy of this tool sitting outside a checkout -- the
+    /tmp three-file recipe in `ci-verdicts.md` produces exactly that -- and it
+    prints as `unavailable`, never as a state.
+    """
+    target = os.path.abspath(path or CORPUS_PR_STATE)
+    try:
+        spec = importlib.util.spec_from_file_location("corpus_pr_state_for_ci_wait", target)
+        if spec is None or spec.loader is None:
+            return None
+        mod = importlib.util.module_from_spec(spec)
+        # Registered BEFORE exec_module: that module declares a @dataclass, and
+        # dataclasses resolves annotations through sys.modules[cls.__module__],
+        # which is None for an unregistered module -- the import then fails with
+        # an AttributeError inside dataclasses.py and the line prints
+        # `unavailable` for a module sitting right there.
+        sys.modules[spec.name] = mod
+        spec.loader.exec_module(mod)
+        return mod
+    except Exception:  # pragma: no cover - any import failure is "unavailable"
+        return None
+
+
+def pr_body(pr: str) -> tuple[str | None, str]:
+    """(this PR's body, reason) -- None means the read failed, not an empty body."""
+    rc, out = gh(["pr", "view", pr, "--repo", REPO, "--json", "body", "--jq", ".body"])
+    if rc != 0:
+        detail = (out or "").strip().splitlines()
+        return None, (detail[-1] if detail else f"gh pr view {pr} failed")
+    # `--jq .body` prints the four characters `null` for an empty body; no regex
+    # in check_corpus_linkage.sh matches it, but saying so here keeps the empty
+    # case identical to a body that genuinely declares nothing.
+    return ("" if out.strip() == "null" else out), ""
+
+
+def corpus_state_lines(pr: str, body_fetch=None, module=_UNSET) -> list[str]:
+    """The corpus-PR line(s) for this PR. Always at least one, never raises."""
+    if module is _UNSET:
+        module = load_corpus_pr_state()
+    if module is None:
+        return ["corpus PR: unavailable (.github/scripts/corpus_pr_state.py could not be "
+                "imported beside this copy of ci-wait.py, so the cited corpus PR was "
+                "never read)"]
+    try:
+        body, why = (body_fetch or pr_body)(pr)
+        if body is None:
+            return [f"corpus PR: unavailable ({why or 'could not read this PR body'})"]
+        entries, refusal = module.states_for_body(body)
+        if refusal:
+            return [f"corpus PR: UNREADABLE -- {refusal}"]
+        if not entries:
+            return ["corpus PR: none declared"]
+        return [module.format_line(entry) for entry in entries]
+    except Exception as exc:  # a report may never break a verdict
+        return [f"corpus PR: unavailable ({type(exc).__name__} while reading the "
+                "cited corpus PR)"]
+
+
+def print_corpus_pr_states(pr: str) -> None:
+    """Print the corpus line(s). Returns nothing, raises nothing, gates nothing."""
+    for line in corpus_state_lines(pr):
+        print(line)
 
 
 def contexts_from_branch_rules(payload) -> tuple[str, ...] | None:
@@ -1451,6 +1538,7 @@ def main() -> int:
             # Beside the PR verdict, never instead of it: a red PR branched from
             # a red `main` is often not this PR failure to own (#3679).
             print_floor_verdict()
+            print_corpus_pr_states(args.pr)
             if not args.no_log:
                 # The check-run `id` is NOT the Actions job id that `gh run view --job`
                 # wants; passing it fails with "could not find job". The job id is the
@@ -1483,6 +1571,7 @@ def main() -> int:
             for line in v.lines[1:]:
                 print(line)
             print_floor_verdict()
+            print_corpus_pr_states(args.pr)
             return 3
 
         if v.code == 4:
@@ -1490,6 +1579,7 @@ def main() -> int:
             for line in v.lines[1:]:
                 print(line)
             print_floor_verdict()
+            print_corpus_pr_states(args.pr)
             return 4
 
         if v.code == 0:
@@ -1498,6 +1588,7 @@ def main() -> int:
                 print(line)
             print("Confirm this SHA is still the PR head before reporting it.")
             print_floor_verdict()
+            print_corpus_pr_states(args.pr)
             return 0
 
         if time.time() >= deadline:
@@ -1516,6 +1607,7 @@ def main() -> int:
         print(f"\nSTILL RUNNING after {args.timeout}s ({reason}). "
               "This is NOT a verdict -- call again; do not report a result.")
     print_floor_verdict()
+    print_corpus_pr_states(args.pr)
     return 2
 
 
