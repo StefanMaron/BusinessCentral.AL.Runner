@@ -208,25 +208,47 @@ public sealed class DotNetShimProbingTests : IDisposable
     }
 
     /// <summary>
-    /// Rebuilds the probing list the same way <c>GetOrCreateDotNetFactory</c> does. That method
-    /// memoises its factory in a static, so calling it twice in one process cannot show a change
-    /// of environment — this mirrors its path instead of caching an answer the test then cannot
-    /// re-measure.
+    /// One entry per directory. The runner shadow-copies its own directory before re-exec, so
+    /// <c>AppContext.BaseDirectory</c> and the assembly's directory are then the SAME path and
+    /// the enumeration yields it twice — measured in a real run, where the probing-path dump
+    /// printed the shadow directory on two consecutive lines. Harmless to BC's locator, but a
+    /// probing list that double-counts is a list nobody can read a verdict off.
     /// </summary>
-    private static List<string> InvokeProbingPaths()
+    [Fact]
+    public void DuplicateShimDirectoriesAreCollapsedInTheProbingPaths()
     {
-        var paths = new List<string>();
-        foreach (var d in ShimDirs())
-            if (Directory.Exists(d)) paths.Add(d);
+        var probeDir = Directory.CreateTempSubdirectory("al-runner-shim-dup-");
+        try
+        {
+            // The same directory twice, plus a trailing-separator spelling of it, which is the
+            // shape the shadow-copy case actually produces.
+            Environment.SetEnvironmentVariable(
+                "AL_RUNNER_DOTNET_SHIMS",
+                string.Join(Path.PathSeparator,
+                    probeDir.FullName,
+                    probeDir.FullName,
+                    probeDir.FullName + Path.DirectorySeparatorChar));
 
-        var refDirs = (IEnumerable<string>)typeof(BcCompiler)
-            .GetMethod("EnumerateDotNetRefAssemblyDirs", BindingFlags.NonPublic | BindingFlags.Static)!
-            .Invoke(null, null)!;
-        foreach (var d in refDirs)
-            if (Directory.Exists(d)) paths.Add(d);
-
-        if (Directory.Exists(BcCompiler.DefaultServiceTierDir))
-            paths.Add(BcCompiler.DefaultServiceTierDir);
-        return paths;
+            var paths = InvokeProbingPaths();
+            var matches = paths.Count(p => string.Equals(
+                Path.GetFullPath(p).TrimEnd(Path.DirectorySeparatorChar),
+                probeDir.FullName.TrimEnd(Path.DirectorySeparatorChar),
+                StringComparison.Ordinal));
+            Assert.Equal(1, matches);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("AL_RUNNER_DOTNET_SHIMS", null);
+            try { probeDir.Delete(recursive: true); } catch { /* best effort */ }
+        }
     }
+
+    /// <summary>
+    /// The probing list PRODUCTION builds, not a reconstruction of it. This is the whole point:
+    /// an earlier version of this file rebuilt the list from the same two enumerations, and when
+    /// the production order was inverted so that shims came after the service tier, every
+    /// assertion here still passed — the test was measuring its own copy. Calling
+    /// <c>BuildDotNetProbingPaths</c> is what makes the ordering assertions mean anything.
+    /// </summary>
+    private static List<string> InvokeProbingPaths() => BcCompiler.BuildDotNetProbingPaths();
 }
