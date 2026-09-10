@@ -523,6 +523,13 @@ public sealed partial class BcCompiler
             // This is what lets the source-dependency compile of Microsoft's Tests-TestLibraries
             // (XmlDocument/XmlNode/etc. interop) emit instead of zeroing the whole module.
             var probingPaths = new List<string>();
+            // Shims staged beside the binary by AlRunner.csproj's CopyDotNetShims target, ahead
+            // of everything: a shim exists precisely because the service tier's own copy of that
+            // assembly does not bind, so probing the tier first would defeat it. See the csproj
+            // for what is in the directory and why each file is there (#3745).
+            foreach (var shimDir in EnumerateDotNetShimDirs())
+                if (Directory.Exists(shimDir))
+                    probingPaths.Add(shimDir);
             foreach (var refDir in EnumerateDotNetRefAssemblyDirs())
                 if (Directory.Exists(refDir))
                     probingPaths.Add(refDir);
@@ -547,6 +554,32 @@ public sealed partial class BcCompiler
             _dotNetResolverFactory = new NavDotNet.DotNetResolverFactory(locator);
             return _dotNetResolverFactory;
         }
+    }
+
+    /// <summary>
+    /// Directories holding .NET assemblies BC's AL binder must prefer over the service tier's
+    /// own copies. Staged next to the binary by <c>AlRunner.csproj</c>'s <c>CopyDotNetShims</c>
+    /// target, and overridable with <c>AL_RUNNER_DOTNET_SHIMS</c> (one path, or several
+    /// separated by the platform path separator) so a run can point at a different set without
+    /// a rebuild.
+    ///
+    /// <para>Yields candidates whether or not they exist; the caller filters. Both the
+    /// AppContext base directory and the assembly's own directory are probed because a
+    /// single-file or shadow-copied host makes those differ, and the shim ships beside the
+    /// assembly.</para>
+    /// </summary>
+    private static IEnumerable<string> EnumerateDotNetShimDirs()
+    {
+        var overridePaths = Environment.GetEnvironmentVariable("AL_RUNNER_DOTNET_SHIMS");
+        if (!string.IsNullOrEmpty(overridePaths))
+            foreach (var p in overridePaths.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+                yield return p;
+
+        yield return Path.Combine(AppContext.BaseDirectory, "dotnet-shims");
+
+        var asmDir = Path.GetDirectoryName(typeof(BcCompiler).Assembly.Location);
+        if (!string.IsNullOrEmpty(asmDir))
+            yield return Path.Combine(asmDir, "dotnet-shims");
     }
 
     /// <summary>
