@@ -23,7 +23,7 @@
     "reproduced), and the runner reads no translation files anyway, so it is out of scope rather",
     "than impossible. 'Nothing is stored' is evidence about storage, never about derivability.",
     "",
-    "Ten entries are DIRECTION-SCOPED. An entry covers both directions unless it says otherwise,",
+    "Nine entries are DIRECTION-SCOPED. An entry covers both directions unless it says otherwise,",
     "and a reason that justifies one direction must not license the other. All three",
     "oracleLimitation entries are runner-only: they exist because the runner shows a merged",
     "runtime view, so BC-absent / runner-present is what they justify \u2014 while the reverse, BC",
@@ -34,9 +34,11 @@
     "rebuild \u2014 the counts move with the BC build and with which apps are bundled \u2014 so any cap",
     "would be a number nobody measured. Direction narrows categorically instead.",
     "",
-    "Measured on BC 28.1.49838.54044 over Business Foundation (12 tables) and System Application",
-    "(138 tables): 70,728 differences across 74 members. Per-member counts and examples are on",
-    "issue #3568."
+    "Measured on BC 28.1.49838.53910 over Business Foundation (12 tables) and System Application",
+    "(138 tables): 67,344 differences across 65 members. #3568 removed six of them -- 688",
+    "differences on MetaKey.KeyName / Clustered / Unique / SumIndexFields, MetaKey.DebuggerDisplay",
+    "and FieldMetadataRelation.Name -- see docs/metadata-equivalence.md#keys. Per-member counts",
+    "and examples are on issue #3568."
   ],
   "differences": [
     {
