@@ -111,7 +111,7 @@ internal static class MetadataEquivalenceHarness
     /// #3782 is the programme that empties the NOT-compared list, one kind per pull request.
     /// The order and remaining kinds are on that issue.
     /// </summary>
-    internal static readonly string[] ComparedKinds = { "MetaTable", "PageDefinition" };
+    internal static readonly string[] ComparedKinds = { "CodeUnit", "MetaTable", "PageDefinition" };
 
     public static IReadOnlyList<GroundTruthBundle> LoadBundles(string root)
     {
@@ -197,6 +197,27 @@ internal static class MetadataEquivalenceHarness
                 "the comparison would become a hand-written XML walk against the runner — two " +
                 "derivations, no oracle.");
 
+        // BC's own reader for a CodeUnit document: a CONSTRUCTOR on a STRUCT, not a factory —
+        // codeunits have no CreateMetaCodeunitFromXml the way MetaTable has
+        // CreateMetaTableFromXml.
+        //
+        // Proven to parse rather than assumed to: measured on BC 28.1.49838.53910 against the
+        // emitter's own CodeUnit 26 "Confirm Management Impl.", this constructor answers
+        // Id=26, Name="Confirm Management Impl.", ALNamespace="System.Utilities",
+        // InherentPermissions=Execute and SubType=Normal. Step 1 of #3782 lost a full cycle to
+        // MetaPageDefinition, which also constructs without throwing and returns a DEFAULT
+        // object, so the comparison ran green over 235 pages having compared nothing. The
+        // discrimination is pinned in MetadataEquivalenceCodeunitOracleTests.
+        var codeunitType =
+            Type.GetType("Microsoft.Dynamics.Nav.Types.Metadata.MetaCodeunit, Microsoft.Dynamics.Nav.Types")
+            ?? throw new InvalidOperationException("MetaCodeunit is not reachable.");
+        var codeunitFromXml = codeunitType.GetConstructor(new[] { typeof(XmlNode) })
+            ?? throw new InvalidOperationException(
+                "MetaCodeunit has no (XmlNode) constructor. Without it there is no way to read " +
+                "BC's emitted CodeUnit document back into BC's own object model, and the " +
+                "comparison would become a hand-written XML walk against the runner — two " +
+                "derivations, no oracle.");
+
         var differences = new List<MetadataDifference>();
         var unbuildable = new List<string>();
         int compared = 0;
@@ -212,7 +233,44 @@ internal static class MetadataEquivalenceHarness
             object? actual;
             string objectKey;
 
-            if (obj.Kind == "PageDefinition")
+            if (obj.Kind == "CodeUnit")
+            {
+                objectKey = $"Codeunit {obj.Id}";
+                try
+                {
+                    expected = codeunitFromXml.Invoke(new object?[] { document.DocumentElement });
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own MetaCodeunit " +
+                                    $"constructor threw — {Describe(ex)}");
+                    continue;
+                }
+
+                try
+                {
+                    // The runner's own codeunit derivation, rendered as the document BC's
+                    // constructor reads — NOT the document in AlObjectMetadataRegistry, which
+                    // is BC's emitter output captured at compile and would compare BC against
+                    // BC. See RecordPatches.CodeunitMetadataEquivalence.cs.
+                    var runnerXml = RecordPatches.TryBuildCodeunitMetadataEquivalenceXml(obj.Id);
+                    if (runnerXml is null)
+                    {
+                        unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner knows no " +
+                                        "codeunit with that id");
+                        continue;
+                    }
+                    var runnerDoc = new XmlDocument();
+                    runnerDoc.LoadXml(runnerXml);
+                    actual = codeunitFromXml.Invoke(new object?[] { runnerDoc.DocumentElement });
+                }
+                catch (Exception ex)
+                {
+                    unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner threw — {Describe(ex)}");
+                    continue;
+                }
+            }
+            else if (obj.Kind == "PageDefinition")
             {
                 objectKey = $"Page {obj.Id}";
                 try
