@@ -112,8 +112,11 @@ public static partial class RecordPatches
         PopulateOneObjectType(arr, objectTypeQuery, _parsedQueries.Keys.ToArray(),
             id => _metaQueryCache.GetOrAdd(id, BuildNCLMetaQuery), "Query");
 
-        // XmlPorts — same shape, ObjectType=6, factory takes int xmlPortId.
-        PopulateOneObjectType(arr, objectTypeXmlPort, _parsedXmlPorts.Keys.ToArray(),
+        // XmlPorts — same shape, ObjectType=6, factory takes int xmlPortId. Every xmlport the
+        // runner knows exists, not just the source-parsed ones: an xmlport in a precompiled
+        // dependency reaches NCLMetadata.GetMetaApplicationObject through exactly the same AL
+        // surfaces, and reached it as a not-found throw until #3510.
+        PopulateOneObjectType(arr, objectTypeXmlPort, KnownXmlPortIdSet().ToArray(),
             id => _metaXmlPortCache.GetOrAdd(id, BuildNCLMetaXmlPort), "XmlPort");
 
         // W-8b A-prime: now that every publisher table has an NCLMetaTable with its

@@ -268,7 +268,15 @@ public static partial class RecordPatches
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static object? BuildNCLMetaXmlPort(int xmlPortId)
     {
-        if (!_parsedXmlPorts.TryGetValue(xmlPortId, out var parsed)) return null;
+        // Existence check only — nothing below reads a parsed definition, exactly as in
+        // BuildNCLMetaReport. It used to read _parsedXmlPorts, the AL-SOURCE parser's
+        // dictionary, so it returned null for every xmlport the runner did not itself compile
+        // and never reached the try block below: #3777's unfiltered catch had no exception to
+        // surface because none was ever thrown. Measured on BC 28.1.49838.53910 against a real
+        // Base Application, that was 44 of 44 precompiled xmlports — the whole population, not
+        // the six ids #3510 observed. KnownXmlPortIdSet() also counts a dependency .app's
+        // declared xmlports and compiled XmlPort{id} types; see RecordPatches.KnownXmlPortIds.cs.
+        if (!KnownXmlPortIdSet().Contains(xmlPortId)) return null;
         EnsureFormReportReflection();
         if (_mCreateEmptyNCLMetaXmlPort == null) return null;
 
@@ -292,9 +300,9 @@ public static partial class RecordPatches
 
             return meta;
         }
-        // #3776 — see BuildNclMetaFormCatchMayAbsorb. #3510 is this null's symptom end for
-        // xmlports: it surfaces as NavMetadataNotFoundException from inside the xmlport's own
-        // ctor, naming neither the failing construction step nor the cause.
+        // #3776 — see BuildNclMetaFormCatchMayAbsorb. KnownXmlPortIdSet() above is the
+        // existence check and it is outside this try, so everything here is a build failure
+        // for an xmlport that exists, not a missing xmlport.
         catch (Exception ex) when (BuildNclMetaXmlPortCatchMayAbsorb(ex))
         {
             Console.Error.WriteLine(BuildNclMetaXmlPortFailureLine(xmlPortId, ex));

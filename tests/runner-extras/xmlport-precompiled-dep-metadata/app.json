@@ -1,0 +1,31 @@
+{
+  "id": "b6c7d8e9-0f1a-4b2c-8d3e-4f5a6b7c8d93",
+  "name": "Runner Extras - XmlPort Precompiled Dep Metadata",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves an xmlport living in a precompiled dependency gets an NCLMetaXmlPort built for it, instead of NavMetadataNotFoundException from inside the xmlport's own constructor (#3510).",
+  "description": "Regression test for #3510. The dependency 'XPD Precompiled XmlPort Dep' (declared below, resolved from the committed .alpackages/*.app symbol package, loaded from the committed .deps-bin/*.dll — DependencyLoader's Tier-1 precompiled-DLL path) ships xmlport 61602 as PURE COMPILED CODE, with no AL source the runner ever parses. BuildNCLMetaXmlPort's existence check read _parsedXmlPorts — the AL-SOURCE parser's dictionary — so it returned null for every xmlport the runner did not itself compile from source, before entering its try block. That null reached NCLMetadata_GetMetaApplicationObjectByType and surfaced as NavMetadataNotFoundException from inside NavXmlPort.BeginInitialization, which is not an AL-catchable error and aborts the whole test. Measured on BC 28.1.49838.53910 against a real Microsoft Base Application: 44 of 44 precompiled xmlports failed this way — the whole population, not the six ids the issue happened to observe.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [
+    {
+      "id": "d5e6f7a8-9b0c-4d1e-8f2a-3b4c5d6e7f92",
+      "name": "XPD Precompiled XmlPort Dep",
+      "publisher": "AL Runner Fixtures",
+      "version": "1.0.0.0"
+    }
+  ],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65920,
+      "to": 65939
+    }
+  ],
+  "runtime": "17.0",
+  "target": "Cloud",
+  "features": []
+}
