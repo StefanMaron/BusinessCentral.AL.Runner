@@ -693,11 +693,6 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// Shared by both discovery paths (<see cref="CompiledReportIds"/>'s <c>GetTypes()</c>
-    /// scan and <see cref="ScanReportIdsFromPeBytes"/>'s <c>MetadataReader</c> scan) via
-    /// <see cref="TryParseReportId"/> — see that method's remarks for the shared gate.
-    /// </summary>
-    /// <summary>
     /// Name-only sibling of <see cref="ExtractReportIds"/>, applying the identical
     /// <see cref="TryParseReportId"/> gate to raw TypeDef names — used by the metadata path in
     /// <see cref="CompiledReportIds"/> and equivalent by construction to
@@ -714,6 +709,11 @@ public static partial class RecordPatches
         return ids?.ToArray() ?? Array.Empty<int>();
     }
 
+    /// <summary>
+    /// Shared by both discovery paths (<see cref="CompiledReportIds"/>'s <c>GetTypes()</c>
+    /// scan and <see cref="ScanReportIdsFromPeBytes"/>'s <c>MetadataReader</c> scan) via
+    /// <see cref="TryParseReportId"/> — see that method's remarks for the shared gate.
+    /// </summary>
     private static int[] ExtractReportIds(IEnumerable<Type?> types)
     {
         List<int>? ids = null;

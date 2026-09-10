@@ -104,20 +104,6 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// Member id → declared AL NAME for every named field control and action of one page or
-    /// pageextension, in the DECLARING object's own id space. This is the reverse index
-    /// trigger dispatch needs (issue #1968): the emitted C# trigger method carries the name
-    /// only in MANGLED form (<c>"Spaced Stamp"</c> → <c>Spaced_Stamp_a45_OnAction</c>), and
-    /// un-mangling is ambiguous — <c>Spaced_Stamp</c> reads back identically for the AL names
-    /// <c>"Spaced Stamp"</c> and <c>Spaced_Stamp</c>, which hash to DIFFERENT member ids. The
-    /// AL source is the one place the true name still exists, so the id is derived from it
-    /// here, forward, the same way BC's own IdSpace does.
-    /// <para>Unlike <see cref="ParsePageControls"/> this walk keeps every NAMED control —
-    /// non-Rec-bound and compound-expression fields included — because a trigger can hang off
-    /// any of them; the Rec.-bound scope limit over there is about field BINDING, not naming.
-    /// </para>
-    /// </summary>
-    /// <summary>
     /// The NAMES this page declares inside <c>area(SystemActions)</c> — <c>systemaction(OK)</c>,
     /// <c>systemaction(Cancel)</c>, <c>systemaction(Generate)</c> and the rest.
     ///
@@ -201,6 +187,20 @@ public static partial class RecordPatches
             ? ext.ModifiedControlNames
             : (IReadOnlySet<string>)new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Member id → declared AL NAME for every named field control and action of one page or
+    /// pageextension, in the DECLARING object's own id space. This is the reverse index
+    /// trigger dispatch needs (issue #1968): the emitted C# trigger method carries the name
+    /// only in MANGLED form (<c>"Spaced Stamp"</c> → <c>Spaced_Stamp_a45_OnAction</c>), and
+    /// un-mangling is ambiguous — <c>Spaced_Stamp</c> reads back identically for the AL names
+    /// <c>"Spaced Stamp"</c> and <c>Spaced_Stamp</c>, which hash to DIFFERENT member ids. The
+    /// AL source is the one place the true name still exists, so the id is derived from it
+    /// here, forward, the same way BC's own IdSpace does.
+    /// <para>Unlike <see cref="ParsePageControls"/> this walk keeps every NAMED control —
+    /// non-Rec-bound and compound-expression fields included — because a trigger can hang off
+    /// any of them; the Rec.-bound scope limit over there is about field BINDING, not naming.
+    /// </para>
+    /// </summary>
     private static Dictionary<int, string> ParseMemberNames(int declaringObjectId, SyntaxNode obj)
     {
         var map = new Dictionary<int, string>();

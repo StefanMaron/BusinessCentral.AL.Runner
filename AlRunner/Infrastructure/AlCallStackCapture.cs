@@ -284,8 +284,8 @@ public static class AlCallStackCapture
     /// <see cref="Type.DeclaringType"/> when needed.
     /// Returns ("CodeUnit"|"Page"|…, number) or ("?", 0) if unknown.
     /// </summary>
-    /// <summary>Internal (not private): also used by AlCoverageTracker to resolve a
-    /// scope's declaring AL object identity for the cobertura file mapping.</summary>
+    /// <remarks>Internal (not private): also used by AlCoverageTracker to resolve a
+    /// scope's declaring AL object identity for the cobertura file mapping.</remarks>
     internal static (string, int) ParseObjectTypeAndId(Type type)
     {
         // Walk up to the outermost non-nested type (scope classes are nested).

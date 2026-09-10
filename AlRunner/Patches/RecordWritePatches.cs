@@ -537,7 +537,6 @@ public static partial class BcRuntime
         => _aiFieldIds[tableId] = fieldNo;
 
     /// <summary>
-    /// <summary>
     /// Force this table's storage into existence — and therefore, if --test-data is armed,
     /// force its hydration — on <paramref name="self"/>'s own DataAccessSource, before
     /// AssignAutoIncrement is allowed to read the table's current high-water mark.

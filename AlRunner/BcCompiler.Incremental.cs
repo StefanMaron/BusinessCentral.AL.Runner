@@ -1992,6 +1992,12 @@ public sealed partial class BcCompiler
     private static readonly MethodInfo _memberwiseClone = typeof(object)
         .GetMethod("MemberwiseClone", BindingFlags.NonPublic | BindingFlags.Instance)!;
 
+    /// <summary>Test seam for <see cref="CloneContainerShallow"/> — BcCompilerIncrementalContainerCloneTests
+    /// states the "carries every property" invariant structurally, against the TYPE, rather than
+    /// through a compile that only exercises the properties one scenario happens to touch.</summary>
+    internal static NavSymRef.IObjectContainerDefinition CloneContainerShallowForTests(
+        NavSymRef.IObjectContainerDefinition container) => CloneContainerShallow(container);
+
     /// <summary>
     /// Shallow-clones a container (ModuleDefinition OR NamespaceDefinition — both implement
     /// <see cref="NavSymRef.IObjectContainerDefinition"/>) WITHOUT sharing any mutable array
@@ -2029,12 +2035,6 @@ public sealed partial class BcCompiler
     /// <c>AlRunner/Rad/ModuleDefinitionOps.ShallowCopy</c> is a generic copy rather than a per-type
     /// switch. This is that idea applied here.</para>
     /// </summary>
-    /// <summary>Test seam for <see cref="CloneContainerShallow"/> — BcCompilerIncrementalContainerCloneTests
-    /// states the "carries every property" invariant structurally, against the TYPE, rather than
-    /// through a compile that only exercises the properties one scenario happens to touch.</summary>
-    internal static NavSymRef.IObjectContainerDefinition CloneContainerShallowForTests(
-        NavSymRef.IObjectContainerDefinition container) => CloneContainerShallow(container);
-
     private static NavSymRef.IObjectContainerDefinition CloneContainerShallow(NavSymRef.IObjectContainerDefinition container)
         => container switch
         {

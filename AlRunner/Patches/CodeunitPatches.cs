@@ -393,7 +393,6 @@ public static partial class BcRuntime
     }
 
     /// <summary>
-    /// <summary>
     /// Take a session-rooted reference on a cached SingleInstance codeunit so BC's own
     /// refcount can never fall to zero and dispose it — see _singleInstanceKeepAlive.
     /// NavCodeunitHandle(ITreeObject, NavCodeunit) assigns Target, which is what calls

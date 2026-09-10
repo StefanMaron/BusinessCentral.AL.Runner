@@ -40,18 +40,6 @@ namespace AlRunner;
 public sealed record EmittedSource(string Name, string Code);
 
 /// <summary>
-/// Output of <see cref="BcCompiler.Emit"/>: emitted C# sources plus any AL-level
-/// diagnostics (parse errors, declaration errors, emit-result errors) formatted
-/// alc-style: <c>path(line,col): error ALXXXX: message</c>.
-/// </summary>
-/// <param name="ExcludedObjects">
-/// Objects the emit-retry loop dropped to get the rest of the module to compile. NON-EMPTY
-/// MEANS TESTS VANISHED: an excluded test codeunit contributes no results, so the run reports
-/// a smaller total and still exits 0. Measured on the al-language corpus — a stale System.app
-/// silently cost 7 tests (1904 -> 1897) with no output at any verbosity below --verbose.
-/// The caller MUST treat this as a hard failure (.claude/rules/loud-failures.md).
-/// </param>
-/// <summary>
 /// Per-excluded-object detail captured DURING the emit-retry loop (issue #1997 —
 /// <c>--tdd</c>), before the retry loop's compilation/emitResult variables get
 /// reassigned to the next round's smaller retry compile and the diagnostics that
@@ -74,6 +62,18 @@ public sealed record TddExcludedObjectDetail(
     string ObjectDisplayName,
     IReadOnlyList<string> Diagnostics);
 
+/// <summary>
+/// Output of <see cref="BcCompiler.Emit"/>: emitted C# sources plus any AL-level
+/// diagnostics (parse errors, declaration errors, emit-result errors) formatted
+/// alc-style: <c>path(line,col): error ALXXXX: message</c>.
+/// </summary>
+/// <param name="ExcludedObjects">
+/// Objects the emit-retry loop dropped to get the rest of the module to compile. NON-EMPTY
+/// MEANS TESTS VANISHED: an excluded test codeunit contributes no results, so the run reports
+/// a smaller total and still exits 0. Measured on the al-language corpus — a stale System.app
+/// silently cost 7 tests (1904 -> 1897) with no output at any verbosity below --verbose.
+/// The caller MUST treat this as a hard failure (.claude/rules/loud-failures.md).
+/// </param>
 public sealed record BcEmitOutput(
     IReadOnlyList<EmittedSource> Sources,
     IReadOnlyList<string> Diagnostics,
@@ -3257,20 +3257,6 @@ public sealed partial class BcCompiler
         }
 
         /// <summary>
-        /// Read the resolved implementation-codeunit ids for one AL enum value's
-        /// interface implementations, ordered by interface-declaration index.
-        ///
-        /// The compiler resolves the value's <c>Implementation</c> property to a
-        /// comma-separated list of codeunit ids (e.g. <c>"60201"</c>, or
-        /// <c>"60201,60202"</c> for an enum implementing two interfaces) — the
-        /// same shape the prebuilt SymbolReference JSON carries, which
-        /// <see cref="AlRunner.Patches.BcAppSymbolCache"/> already parses. Capturing it
-        /// here lets enum→interface casts (<c>ALCompiler.ToInterface(NavOption,index)</c>)
-        /// resolve the implementing codeunit for enums compiled from source, not
-        /// just for prebuilt MS/ISV apps. Without this the runner returned -1 and
-        /// threw "Unable to cast enum '…' to interface at index N".
-        /// </summary>
-        /// <summary>
         /// Read an AL enum's own <c>DefaultImplementation</c> / <c>UnknownImplementation</c>
         /// property, in the same comma-separated codeunit-id shape as a value's
         /// <c>Implementation</c> (issue #2306). These are the enum-level fallbacks BC's
@@ -3298,6 +3284,20 @@ public sealed partial class BcCompiler
             }
         }
 
+        /// <summary>
+        /// Read the resolved implementation-codeunit ids for one AL enum value's
+        /// interface implementations, ordered by interface-declaration index.
+        ///
+        /// The compiler resolves the value's <c>Implementation</c> property to a
+        /// comma-separated list of codeunit ids (e.g. <c>"60201"</c>, or
+        /// <c>"60201,60202"</c> for an enum implementing two interfaces) — the
+        /// same shape the prebuilt SymbolReference JSON carries, which
+        /// <see cref="AlRunner.Patches.BcAppSymbolCache"/> already parses. Capturing it
+        /// here lets enum→interface casts (<c>ALCompiler.ToInterface(NavOption,index)</c>)
+        /// resolve the implementing codeunit for enums compiled from source, not
+        /// just for prebuilt MS/ISV apps. Without this the runner returned -1 and
+        /// threw "Unable to cast enum '…' to interface at index N".
+        /// </summary>
         private static int[] ReadEnumValueImplementations(NavCA.IEnumValueSymbol value)
         {
             try

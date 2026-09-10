@@ -411,11 +411,11 @@ public static partial class RecordPatches
     /// about which codeunits a dependency contains. The codeunit-only properties ride on
     /// <see cref="BcAppSymbolCache.ObjectSymbol"/>; see its doc comment.
     /// </summary>
-    /// <summary>
+    /// <remarks>
     /// #3143: NOT swallowed — see RecordPatches.DependencyAppSymbolWalk.cs. Reads the SAME
     /// surface AllObj does, through the same walk, so the two tables cannot now disagree
     /// about which dependency contributed codeunits either.
-    /// </summary>
+    /// </remarks>
     private static IEnumerable<BcAppSymbolCache.ObjectSymbol> EnumerateBcAppCodeunitSymbols()
     {
         foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("objects (CodeUnit Metadata)"))

@@ -989,6 +989,12 @@ public static class ProvisioningCheck
         IReadOnlyList<string> UnreadablePackages,
         IReadOnlyDictionary<string, IReadOnlyList<AlRunner.DependencyRef>> EdgeRequirements);
 
+    /// <summary>&quot;No edges known&quot; — the honest default when nothing has been
+    /// downloaded yet, in place of the version-blind hand-written table issue #2103
+    /// removed.</summary>
+    private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> EmptyDependencyEdges =
+        new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>
     /// Reads the REAL direct dependency edges among Microsoft apps out of the `.app`
     /// packages present in <paramref name="searchDirs"/> — each app's own
@@ -1045,12 +1051,6 @@ public static class ProvisioningCheck
     /// part of it that decides which manifest's floors are the operative ones. Closing the
     /// remainder needs AppId-keyed identity and shared candidate selection — #3811.
     /// </summary>
-    /// <summary>&quot;No edges known&quot; — the honest default when nothing has been
-    /// downloaded yet, in place of the version-blind hand-written table issue #2103
-    /// removed.</summary>
-    private static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> EmptyDependencyEdges =
-        new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
-
     public static DependencyEdgeScan ScanDependencyEdges(IEnumerable<string> searchDirs)
     {
         var edges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);

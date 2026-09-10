@@ -189,15 +189,6 @@ public static partial class NavReportSync
     private static PropertyInfo? _ppSourceObjectProp;
 
     /// <summary>
-    /// Build an empty request-page <c>MasterPage</c> carrying a minimal,
-    /// default-constructed <c>PageProperties</c> whose <c>SourceObject</c> is a
-    /// default <c>SourceObjectDefinition</c> (SourceTable=0). This is the faithful
-    /// "report has no request page" shape: NavForm.InitializeFromMetadata reads
-    /// masterPage.PageProperties.SourceObject.* on the SaveAs info-xml path, and a
-    /// bare MasterPage (null PageProperties) NREs there. Falls back to a bare
-    /// MasterPage if the metadata types cannot be resolved.
-    /// </summary>
-    /// <summary>
     /// The MasterPage to give a report whose metadata carries no request-page definition —
     /// which is every report whose metadata the runner RECONSTRUCTS from a precompiled
     /// dependency, since the reconstruction covers data items and columns but not the
@@ -251,6 +242,15 @@ public static partial class NavReportSync
         return master;
     }
 
+    /// <summary>
+    /// Build an empty request-page <c>MasterPage</c> carrying a minimal,
+    /// default-constructed <c>PageProperties</c> whose <c>SourceObject</c> is a
+    /// default <c>SourceObjectDefinition</c> (SourceTable=0). This is the faithful
+    /// "report has no request page" shape: NavForm.InitializeFromMetadata reads
+    /// masterPage.PageProperties.SourceObject.* on the SaveAs info-xml path, and a
+    /// bare MasterPage (null PageProperties) NREs there. Falls back to a bare
+    /// MasterPage if the metadata types cannot be resolved.
+    /// </summary>
     public static object BuildEmptyMasterPage(System.Reflection.Assembly typesAsm, Type masterPageType)
     {
         var master = Activator.CreateInstance(masterPageType)!;
@@ -277,10 +277,6 @@ public static partial class NavReportSync
         return master;
     }
 
-    /// <summary>
-    /// Replacement for NavReport.Run() / RunModal(). Invoked from Cecil-rewritten
-    /// IL — the instance is the same NavReport the AL code constructed and holds.
-    /// </summary>
     /// <summary>
     /// Replacement for every sync <c>NavReport.RunRequestPage</c> overload.
     ///
@@ -611,6 +607,10 @@ public static partial class NavReportSync
         }
     }
 
+    /// <summary>
+    /// Replacement for NavReport.Run() / RunModal(). Invoked from Cecil-rewritten
+    /// IL — the instance is the same NavReport the AL code constructed and holds.
+    /// </summary>
     public static void SyncRun(object navReport)
     {
         if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_IC") == "1")
@@ -906,34 +906,6 @@ public static partial class NavReportSync
         BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 
     /// <summary>
-    /// Run one report-level lifecycle trigger (<c>OnInitReport</c> / <c>OnPreReport</c> /
-    /// <c>OnPostReport</c>) the way BC's own report lifecycle does.
-    ///
-    /// BC's compiler emits each AL trigger in one of TWO flavours, and the two are
-    /// independent virtuals on <c>NavReport</c> whose base bodies are both empty and do NOT
-    /// forward to each other: a synchronous <c>OnPostReport()</c> override, or an
-    /// asynchronous <c>OnPostReportAsync()</c> override with
-    /// <c>NavApplicationObjectBase.__IsAsync</c> overridden to <c>true</c>. The Ready2Run
-    /// Base Application (and every other precompiled dependency) ships the ASYNC flavour;
-    /// the runner's own emit path produces the SYNC flavour. BC's lifecycle
-    /// (<c>RunReportInternalCoreAsync</c>) never calls either virtual directly — it goes
-    /// through <c>NavReport.On{Pre,Post}ReportInternalAsync</c>, which reads
-    /// <c>__IsAsync</c>, awaits the matching flavour, and then does the same for every
-    /// bound report extension.
-    ///
-    /// This used to invoke only the sync virtual, resolved once against the base type. For
-    /// every runner-compiled report that was the right method; for every precompiled one it
-    /// was the empty base body, so report 34 "Change Payment Tolerance" (and every other
-    /// Base Application report driven from a test) ran with EMPTY report-level triggers —
-    /// no Confirm/Message reached the test's handlers, no setup was written, no validation
-    /// error was raised — and BC's end-of-test check then reported the declared
-    /// [ConfirmHandler] as never executed (Tests-ERM, ~50 tests in codeunits 134022/134024).
-    ///
-    /// So: prefer BC's own dispatcher when the trigger has one (Pre/Post), and mirror its
-    /// <c>__IsAsync</c> rule for the one that does not (Init). Either way the AL trigger runs
-    /// exactly once, in the flavour the compiler emitted it in.
-    /// </summary>
-    /// <summary>
     /// BC's own pre-report step, whole. Issue #2526.
     ///
     /// <c>NavReport.OnPreTriggerAsync</c> does THREE things, in this order (verbatim from BC
@@ -995,6 +967,34 @@ public static partial class NavReportSync
         => navReportBase.GetMethod("OnPreTriggerAsync", LifecycleTriggerFlags,
             null, Type.EmptyTypes, null);
 
+    /// <summary>
+    /// Run one report-level lifecycle trigger (<c>OnInitReport</c> / <c>OnPreReport</c> /
+    /// <c>OnPostReport</c>) the way BC's own report lifecycle does.
+    ///
+    /// BC's compiler emits each AL trigger in one of TWO flavours, and the two are
+    /// independent virtuals on <c>NavReport</c> whose base bodies are both empty and do NOT
+    /// forward to each other: a synchronous <c>OnPostReport()</c> override, or an
+    /// asynchronous <c>OnPostReportAsync()</c> override with
+    /// <c>NavApplicationObjectBase.__IsAsync</c> overridden to <c>true</c>. The Ready2Run
+    /// Base Application (and every other precompiled dependency) ships the ASYNC flavour;
+    /// the runner's own emit path produces the SYNC flavour. BC's lifecycle
+    /// (<c>RunReportInternalCoreAsync</c>) never calls either virtual directly — it goes
+    /// through <c>NavReport.On{Pre,Post}ReportInternalAsync</c>, which reads
+    /// <c>__IsAsync</c>, awaits the matching flavour, and then does the same for every
+    /// bound report extension.
+    ///
+    /// This used to invoke only the sync virtual, resolved once against the base type. For
+    /// every runner-compiled report that was the right method; for every precompiled one it
+    /// was the empty base body, so report 34 "Change Payment Tolerance" (and every other
+    /// Base Application report driven from a test) ran with EMPTY report-level triggers —
+    /// no Confirm/Message reached the test's handlers, no setup was written, no validation
+    /// error was raised — and BC's end-of-test check then reported the declared
+    /// [ConfirmHandler] as never executed (Tests-ERM, ~50 tests in codeunits 134022/134024).
+    ///
+    /// So: prefer BC's own dispatcher when the trigger has one (Pre/Post), and mirror its
+    /// <c>__IsAsync</c> rule for the one that does not (Init). Either way the AL trigger runs
+    /// exactly once, in the flavour the compiler emitted it in.
+    /// </summary>
     internal static void RunLifecycleTrigger(object navReport, Type navReportBase, string trigger)
     {
         var bcDispatcher = navReportBase.GetMethod(trigger + "InternalAsync", LifecycleTriggerFlags,
@@ -1178,17 +1178,6 @@ public static partial class NavReportSync
     }
 
     /// <summary>
-    /// Give the data-item loop the <c>IResultSetProcessor</c> it writes rows into.
-    ///
-    /// When the run's <c>[RequestPageHandler]</c> asked for a dataset with
-    /// <c>TestRequestPage.SaveAsXml</c>, that is BC's own <c>ReportSaveAsXmlRenderer</c> —
-    /// the instance <c>ReportResultSetProcessorFactory.GetTestResultProcessor</c> builds on
-    /// a real service tier — and the rows the loop produces land in the file the test named.
-    /// Otherwise it is <c>NullResultSetProcessor</c>, BC's own discard implementation and
-    /// what its factory returns for a report with no layout, so neither is a runner stand-in.
-    /// </summary>
-    /// <returns>The dataset renderer when one was installed, else null.</returns>
-    /// <summary>
     /// The <c>DataItemIterator</c> base of a compiled report, or null when the object is not
     /// one. Both the processor install and the data-item loop need it, and since #2526 they
     /// happen at two different points in the lifecycle rather than one.
@@ -1200,6 +1189,17 @@ public static partial class NavReportSync
         return iter;
     }
 
+    /// <summary>
+    /// Give the data-item loop the <c>IResultSetProcessor</c> it writes rows into.
+    ///
+    /// When the run's <c>[RequestPageHandler]</c> asked for a dataset with
+    /// <c>TestRequestPage.SaveAsXml</c>, that is BC's own <c>ReportSaveAsXmlRenderer</c> —
+    /// the instance <c>ReportResultSetProcessorFactory.GetTestResultProcessor</c> builds on
+    /// a real service tier — and the rows the loop produces land in the file the test named.
+    /// Otherwise it is <c>NullResultSetProcessor</c>, BC's own discard implementation and
+    /// what its factory returns for a report with no layout, so neither is a runner stand-in.
+    /// </summary>
+    /// <returns>The dataset renderer when one was installed, else null.</returns>
     private static object? EnsureResultSetProcessor(object navReport, Type? dataItemIteratorType)
     {
         if (dataItemIteratorType == null) return null;

@@ -330,17 +330,6 @@ internal static partial class BcAppSymbolCache
         bool Enabled, bool Promoted);
 
     /// <summary>
-    /// One <c>permissionset</c> object a dependency .app declares, as its
-    /// SymbolReference.json states it — three of the four columns of the Metadata Permission
-    /// Set (2000000250) virtual table (issue #2313). The fourth, "App ID", comes from
-    /// <see cref="AppSymbols.AppId"/>, since every permission set in one symbol reference
-    /// belongs to the same app.
-    ///
-    /// <c>Caption</c> is null when the permission set declares no <c>Caption</c> property.
-    /// <c>Assignable</c> mirrors the declared <c>Assignable</c> property; AL's own default
-    /// for a permissionset that states none is <c>true</c>, which is what the parse applies.
-    /// </summary>
-    /// <summary>
     /// One entry of a permission set's <c>Permissions</c> array, exactly as
     /// SymbolReference.json states it: <c>{ "PermissionObject": &lt;kind&gt;, "Id": &lt;object id&gt;,
     /// "Value": &lt;mask&gt; }</c>.
@@ -362,6 +351,17 @@ internal static partial class BcAppSymbolCache
     /// </summary>
     internal sealed record PermissionSymbol(int ObjectType, int ObjectId, int Value);
 
+    /// <summary>
+    /// One <c>permissionset</c> object a dependency .app declares, as its
+    /// SymbolReference.json states it — three of the four columns of the Metadata Permission
+    /// Set (2000000250) virtual table (issue #2313). The fourth, "App ID", comes from
+    /// <see cref="AppSymbols.AppId"/>, since every permission set in one symbol reference
+    /// belongs to the same app.
+    ///
+    /// <c>Caption</c> is null when the permission set declares no <c>Caption</c> property.
+    /// <c>Assignable</c> mirrors the declared <c>Assignable</c> property; AL's own default
+    /// for a permissionset that states none is <c>true</c>, which is what the parse applies.
+    /// </summary>
     internal sealed record PermissionSetSymbol(
         int Id, string Name, string? Caption, bool Assignable,
         // #2910: the permission rows themselves, plus what the set includes and its access
@@ -762,7 +762,7 @@ internal static partial class BcAppSymbolCache
     /// consumer's job so the "not stated" and "stated as the name" cases stay distinct
     /// here.
     /// </summary>
-    /// <summary>
+    /// <remarks>
     /// <para>The three trailing properties are populated for <c>Codeunit</c> only, and feed the
     /// CodeUnit Metadata (2000000137) virtual table (issue #2544). Every other kind leaves them
     /// at their defaults — which is also what a codeunit declaring none of them means.
@@ -772,7 +772,7 @@ internal static partial class BcAppSymbolCache
     /// the extension extends, module qualifier stripped, name AS STATED. AllObjWithCaption's
     /// Object Subtype reports its ID for those kinds; see
     /// docs/virtual-tables-allobj.md#object-subtype.</para>
-    /// </summary>
+    /// </remarks>
     internal sealed record ObjectSymbol(string Kind, int Id, string Name, string? Caption = null,
         string? TableNo = null, bool SingleInstance = false, string? Subtype = null,
         string? TargetObjectName = null);

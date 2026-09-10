@@ -159,6 +159,42 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     internal bool HasLinks => AnyFieldLink(_links);
 
     /// <summary>
+    /// Whether a record's buffer holds an actual row rather than the blank one a page has
+    /// before its cursor lands anywhere (#3029).
+    ///
+    /// <para>Read off the PRIMARY KEY, because that is what a position is made of and what
+    /// distinguishes the two states here: measured while opening one card over an empty part,
+    /// the host's position reads <c>Field1=0()</c> during EagerlyBuildParts and
+    /// <c>Field1=0(H1)</c> on every call after its cursor lands. Comparing the position STRING
+    /// against a literal would be reading a display format; comparing the key VALUES against
+    /// their initialised state asks the same question of the data.</para>
+    ///
+    /// <para>A table whose whole primary key legitimately holds init values — an integer key at
+    /// 0, a singleton — answers false here and so keeps the pre-#3029 behaviour on this path,
+    /// which is the safe direction: the guard only ever SUPPRESSES a draft-line entry, so a
+    /// false negative costs nothing that was not already happening.</para>
+    /// </summary>
+    private static bool HasCurrentRow(NavRecord record)
+    {
+        var primaryKey = record.MetaTable?.PrimaryKey;
+        if (primaryKey == null || primaryKey.KeyFieldCount == 0) return true;
+        for (var i = 0; i < primaryKey.KeyFieldCount; i++)
+        {
+            var fieldNo = primaryKey.KeyFieldsList[i].FieldNo;
+            // NavValue's own "is this the type's zero" answer, so Code/Text compare against ''
+            // and Integer/Decimal against 0 without this method knowing which it has.
+            var value = record.GetFieldValue(fieldNo);
+            if (value != null && !value.IsZeroOrEmpty) return true;
+        }
+        return false;
+    }
+
+    // The parent row this part was last positioned for, as a position string, or null when it
+    // has never been positioned. Read at the top of ReloadLinkedRow to tell a re-entry for the
+    // SAME parent row from a genuine parent move — see the comment there (#3029).
+    private string? _lastReloadedForParentPosition;
+
+    /// <summary>
     /// Position this part on the row matching its SubPageLink and, if one exists, run its
     /// OnAfterGetRecord/OnAfterGetCurrRecord — the row-load a real BC FactBox/subpage part
     /// gets automatically, both when its host opens AND every time the host's own cursor
@@ -208,42 +244,6 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
     /// CardPart shape from #2195) has no cursor to position and nothing here to do — its
     /// OnOpenPage is the only trigger such a part gets.
     /// </summary>
-    /// <summary>
-    /// Whether a record's buffer holds an actual row rather than the blank one a page has
-    /// before its cursor lands anywhere (#3029).
-    ///
-    /// <para>Read off the PRIMARY KEY, because that is what a position is made of and what
-    /// distinguishes the two states here: measured while opening one card over an empty part,
-    /// the host's position reads <c>Field1=0()</c> during EagerlyBuildParts and
-    /// <c>Field1=0(H1)</c> on every call after its cursor lands. Comparing the position STRING
-    /// against a literal would be reading a display format; comparing the key VALUES against
-    /// their initialised state asks the same question of the data.</para>
-    ///
-    /// <para>A table whose whole primary key legitimately holds init values — an integer key at
-    /// 0, a singleton — answers false here and so keeps the pre-#3029 behaviour on this path,
-    /// which is the safe direction: the guard only ever SUPPRESSES a draft-line entry, so a
-    /// false negative costs nothing that was not already happening.</para>
-    /// </summary>
-    private static bool HasCurrentRow(NavRecord record)
-    {
-        var primaryKey = record.MetaTable?.PrimaryKey;
-        if (primaryKey == null || primaryKey.KeyFieldCount == 0) return true;
-        for (var i = 0; i < primaryKey.KeyFieldCount; i++)
-        {
-            var fieldNo = primaryKey.KeyFieldsList[i].FieldNo;
-            // NavValue's own "is this the type's zero" answer, so Code/Text compare against ''
-            // and Integer/Decimal against 0 without this method knowing which it has.
-            var value = record.GetFieldValue(fieldNo);
-            if (value != null && !value.IsZeroOrEmpty) return true;
-        }
-        return false;
-    }
-
-    // The parent row this part was last positioned for, as a position string, or null when it
-    // has never been positioned. Read at the top of ReloadLinkedRow to tell a re-entry for the
-    // SAME parent row from a genuine parent move — see the comment there (#3029).
-    private string? _lastReloadedForParentPosition;
-
     internal void ReloadLinkedRow()
     {
         if (Record is not { } record) return;

@@ -554,11 +554,6 @@ public static partial class NclCecilRewrite
     }
 
     /// <summary>
-    /// Overload accepting a helper on ANY class (not just BcRuntime) — e.g. the
-    /// CreateTarget helpers that live on CodeunitPatches / RecordPatches / XmlPortPatches.
-    /// Same forwarding + per-arg boxing semantics as the name-based overload.
-    /// </summary>
-    /// <summary>
     /// Refuse a helper whose parameter count does not match the number of IL arg slots the
     /// rewritten body will forward. <see cref="PrependStaticCall"/> has always thrown on
     /// exactly this mistake; <see cref="ReplaceBodyWithHelper"/> did not, and that asymmetry
@@ -595,6 +590,11 @@ public static partial class NclCecilRewrite
             + $"whose arity is {argCount}, or add one — do not force the wrong shim to fit.");
     }
 
+    /// <summary>
+    /// Overload accepting a helper on ANY class (not just BcRuntime) — e.g. the
+    /// CreateTarget helpers that live on CodeunitPatches / RecordPatches / XmlPortPatches.
+    /// Same forwarding + per-arg boxing semantics as the name-based overload.
+    /// </summary>
     private static void ReplaceBodyWithHelper(
         ModuleDefinition module, MethodDefinition target, MethodInfo helperMi)
     {
@@ -1038,27 +1038,6 @@ public static partial class NclCecilRewrite
     }
 
     /// <summary>
-    /// Rewrites Ncl from the BC artifacts dir and writes the result to the runner's
-    /// bin path (overwriting the build-time copy). Runs BEFORE the CLR's TPA probe
-    /// resolves Ncl, so when CLR loads Ncl by name it gets our rewritten bytes.
-    /// Results are cached in $HOME/.cache/al-runner/ncl-cecil/ keyed by a SHA256 of
-    /// the source Ncl bytes, the runner assembly's own CONTENT hash (issue #1871 —
-    /// previously the runner assembly's mtime, which changes on every CI rebuild even
-    /// when the runner's bytes, and therefore the rewrite it produces, are unchanged;
-    /// see RunnerFingerprint.ComputeContentHash), and CACHE_VERSION. Set
-    /// AL_RUNNER_NCL_CACHE=0 to force a fresh rewrite without reading or writing cache.
-    /// </summary>
-    /// <summary>
-    /// Returns <c>true</c> when this call performed a FRESH Cecil rewrite (cache MISS
-    /// or cache disabled). In that case the caller MUST re-exec the process before
-    /// loading Ncl: a process that runs the Cecil rewrite and then memory-maps the
-    /// byte-identical rewritten Ncl in-process intermittently fails the load with
-    /// BadImageFormatException 0x80131124 ("Index not found"), whereas a fresh process
-    /// loading the same bytes via cache HIT always succeeds. Re-execing turns every
-    /// cold run into the known-good HIT path. Returns <c>false</c> on cache HIT (the
-    /// load is safe — proceed in this process).
-    /// </summary>
-    /// <summary>
     /// Publishes <paramref name="contents"/> to <paramref name="destPath"/> by writing a
     /// sibling temp file and renaming it over the destination.
     ///
@@ -1154,6 +1133,27 @@ public static partial class NclCecilRewrite
         return File.ReadAllBytes(path); // final attempt — let it throw if still failing
     }
 
+    /// <summary>
+    /// Rewrites Ncl from the BC artifacts dir and writes the result to the runner's
+    /// bin path (overwriting the build-time copy). Runs BEFORE the CLR's TPA probe
+    /// resolves Ncl, so when CLR loads Ncl by name it gets our rewritten bytes.
+    /// Results are cached in $HOME/.cache/al-runner/ncl-cecil/ keyed by a SHA256 of
+    /// the source Ncl bytes, the runner assembly's own CONTENT hash (issue #1871 —
+    /// previously the runner assembly's mtime, which changes on every CI rebuild even
+    /// when the runner's bytes, and therefore the rewrite it produces, are unchanged;
+    /// see RunnerFingerprint.ComputeContentHash), and CACHE_VERSION. Set
+    /// AL_RUNNER_NCL_CACHE=0 to force a fresh rewrite without reading or writing cache.
+    /// </summary>
+    /// <returns>
+    /// Returns <c>true</c> when this call performed a FRESH Cecil rewrite (cache MISS
+    /// or cache disabled). In that case the caller MUST re-exec the process before
+    /// loading Ncl: a process that runs the Cecil rewrite and then memory-maps the
+    /// byte-identical rewritten Ncl in-process intermittently fails the load with
+    /// BadImageFormatException 0x80131124 ("Index not found"), whereas a fresh process
+    /// loading the same bytes via cache HIT always succeeds. Re-execing turns every
+    /// cold run into the known-good HIT path. Returns <c>false</c> on cache HIT (the
+    /// load is safe — proceed in this process).
+    /// </returns>
     public static bool RewriteInPlace(string srcDir, string binNclPath)
     {
         var alreadyLoaded = AppDomain.CurrentDomain.GetAssemblies()

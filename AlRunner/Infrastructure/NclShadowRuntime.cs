@@ -771,13 +771,6 @@ public static class NclShadowRuntime
     }
 
     /// <summary>
-    /// Symlinks <paramref name="target"/> to <paramref name="source"/> (near-zero cost —
-    /// no data copied). Windows requires admin rights or Developer Mode to create
-    /// symlinks; falls back to a real copy there (and on any other platform where link
-    /// creation is refused) so the shadow dir still comes up correctly, just slower to
-    /// build the first time.
-    /// </summary>
-    /// <summary>
     /// Mirrors every entry of <paramref name="origFull"/> into <paramref name="shadowDir"/>:
     /// the entry assembly and its deps/runtimeconfig manifests (<see cref="MustCopyNames"/>),
     /// plus any directory named in <see cref="MustCopyDirectoryNames"/> (currently just
@@ -851,6 +844,13 @@ public static class NclShadowRuntime
         }
     }
 
+    /// <summary>
+    /// Symlinks <paramref name="target"/> to <paramref name="source"/> (near-zero cost —
+    /// no data copied). Windows requires admin rights or Developer Mode to create
+    /// symlinks; falls back to a real copy there (and on any other platform where link
+    /// creation is refused) so the shadow dir still comes up correctly, just slower to
+    /// build the first time.
+    /// </summary>
     private static void LinkOrCopy(string source, string target, bool isDirectory)
     {
         try
@@ -880,6 +880,18 @@ public static class NclShadowRuntime
             CopyDirectoryRecursive(dir, Path.Combine(destDir, Path.GetFileName(dir)));
     }
 
+    /// <summary>Second guard behind the in-use lock: a directory this new is plausibly serving
+    /// a process built before the lock existed, or one between its own publish and its lock.
+    /// It is a floor on age, not on count — a dir older than this is still ordinary prune fodder.</summary>
+    internal static readonly TimeSpan MinPruneAge = TimeSpan.FromMinutes(10);
+
+    private static bool IsYoungerThan(string dir, TimeSpan age)
+    {
+        try { return DateTime.UtcNow - Directory.GetLastWriteTimeUtc(dir) < age; }
+        catch (IOException) { return true; }
+        catch (UnauthorizedAccessException) { return true; }
+    }
+
     /// <summary>Mirrors NclCecilRewrite's own cache pruning — bounds how many stale
     /// shadow dirs (one per distinct runner-build + Ncl-version + install-path
     /// combination) accumulate under ncl-shadow/ across upgrades.
@@ -895,18 +907,6 @@ public static class NclShadowRuntime
     /// <see cref="PublishShadowDir"/> for the self-heal that recovers from that state
     /// once it's already happened, but the real fix is not deleting into it in the first
     /// place.</summary>
-    /// <summary>Second guard behind the in-use lock: a directory this new is plausibly serving
-    /// a process built before the lock existed, or one between its own publish and its lock.
-    /// It is a floor on age, not on count — a dir older than this is still ordinary prune fodder.</summary>
-    internal static readonly TimeSpan MinPruneAge = TimeSpan.FromMinutes(10);
-
-    private static bool IsYoungerThan(string dir, TimeSpan age)
-    {
-        try { return DateTime.UtcNow - Directory.GetLastWriteTimeUtc(dir) < age; }
-        catch (IOException) { return true; }
-        catch (UnauthorizedAccessException) { return true; }
-    }
-
     internal static void PruneStaleShadowDirs(string shadowRoot, string protectedDir, int keepNewest)
     {
         var protectedFull = Path.GetFullPath(protectedDir);

@@ -245,6 +245,15 @@ internal partial class LiveNavTestPage
     }
 
     /// <summary>
+    /// The detail both "could not be driven live" refusals report. They are ONE shape reached
+    /// down two branches — the recordless path and the fall-through — and they carried
+    /// byte-identical reason text written out twice, so the same gap could drift into claiming
+    /// two different things depending on which branch found it (#2999).
+    /// </summary>
+    private static string PartNotLive(string? why)
+        => "the part's own page could not be driven live" + (why == null ? string.Empty : $" ({why})");
+
+    /// <summary>
     /// The SubPageLink as compiled entries. All three kinds AL can declare are applied
     /// (issue #2469): FIELD (<c>ReportId = field(ReportId)</c>) as a SetRange to the parent's
     /// current value, CONST (<c>Kind = const(Attachment)</c>) as a single-value filter on the
@@ -266,15 +275,6 @@ internal partial class LiveNavTestPage
     /// than filtering on no field: an unfiltered part shows other rows' children, which is a
     /// wrong answer, not a missing one.
     /// </summary>
-    /// <summary>
-    /// The detail both "could not be driven live" refusals report. They are ONE shape reached
-    /// down two branches — the recordless path and the fall-through — and they carried
-    /// byte-identical reason text written out twice, so the same gap could drift into claiming
-    /// two different things depending on which branch found it (#2999).
-    /// </summary>
-    private static string PartNotLive(string? why)
-        => "the part's own page could not be driven live" + (why == null ? string.Empty : $" ({why})");
-
     private static SubPageLinkEntry[] SubPageLinks(
         Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition definition, int partPageId)
     {

@@ -776,6 +776,17 @@ public static partial class RecordPatches
         }
     }
 
+    /// <summary>#2925 — true iff this query column is backed by a FlowFilter-class table field.</summary>
+    private static bool IsFlowFilterColumn(NCLMetaQueryColumn col)
+    {
+        try
+        {
+            return col.SourceTableField?.FieldClass
+                == Microsoft.Dynamics.Nav.Types.Metadata.FieldClass.FlowFilter;
+        }
+        catch { return false; } // ConstValue column — SourceTableField throws; not a flow filter.
+    }
+
     /// <summary>
     /// #2925 — if <paramref name="col"/>'s source table field is a <c>FlowFilter</c>, add its
     /// filter expression to <paramref name="flowFilterTuples"/> (retargeted to the FlowFilter
@@ -792,17 +803,6 @@ public static partial class RecordPatches
     /// source field at all); that is not a flow filter, so it answers false and the caller's
     /// existing handling stands.
     /// </summary>
-    /// <summary>#2925 — true iff this query column is backed by a FlowFilter-class table field.</summary>
-    private static bool IsFlowFilterColumn(NCLMetaQueryColumn col)
-    {
-        try
-        {
-            return col.SourceTableField?.FieldClass
-                == Microsoft.Dynamics.Nav.Types.Metadata.FieldClass.FlowFilter;
-        }
-        catch { return false; } // ConstValue column — SourceTableField throws; not a flow filter.
-    }
-
     private static bool TryTakeFlowFilter(NCLMetaQueryColumn col, object expr, List<object> flowFilterTuples)
     {
         NCLMetaField? srcField;
