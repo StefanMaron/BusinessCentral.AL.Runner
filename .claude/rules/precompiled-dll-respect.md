@@ -41,12 +41,42 @@ Consequence: if a test failure points at our own AL output, the fix is either (a
 runtime engine the output calls into, or (b) in the compile pipeline that produced it — never
 in the cached DLL itself.
 
+## Reuse before you re-implement — check whether Microsoft already ships it
+
+"Fix" means **the outcome is correct**. How we get there is not prescribed, and reusing
+something Microsoft already shipped beats writing our own — a component from MS is right by
+construction, ours is right only as long as we keep it right across every BC version.
+
+So **before adding a shim to the "New types we add" row, establish that Microsoft does not
+already ship that component in the artifacts.** That row permits new types; it is not a licence
+to re-implement one that is sitting on disk.
+
+`RunnerPageInstance` is the instance that produced this section: ~9,246 lines re-implementing
+`LogicalControl.Editable` -> `CommonDominatingValueHelper.CalculateValue`, while
+`Microsoft.Dynamics.Nav.Client.TestPageClient.dll` ships in every artifact directory (verified
+27.0, 27.5, 28.1, 28.4). It is not a wire proxy: `TestServiceConnection.CallServer<T>(f) => f()`
+calls directly and `ServiceUrl` is a deliberately fake `"localhost/bla"`.
+
+**The trap is how it happened, because it looks like nobody's mistake.** A strong-name
+`Assembly.Load` failed and was **swallowed**; a shim filled the gap; the shim's own comments
+then recorded the DLL as "not present in the runner" — false, and thereafter every reader had a
+documented reason not to look again. A silent failure became a workaround, the workaround became
+an assumption, the assumption got written down as fact.
+
+**So when a load fails, the failure is the finding.** Do not let it become a shim without
+recording why the load failed, in terms a later reader can re-test.
+
+History: docs/incidents/precompiled-dll-respect.md
+
 ## Mental model
 
 > AL business-logic semantics (as the AL author wrote them) are the contract. Everything else
 > — async wrappers, dispatcher infrastructure, framework plumbing, calling-convention
 > machinery — is implementation detail we control. If a test fails, the answer is **always**
 > "fix runtime/framework code," never "patch the AL business logic."
+>
+> And "fix" means the **outcome** is correct, not that we wrote the code that produces it:
+> reuse what Microsoft ships, and re-implement only what it does not.
 
 ## Concrete guidance for new patches
 
