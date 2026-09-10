@@ -817,6 +817,216 @@ public sealed class DependencyResolverTests : IDisposable
         Assert.Equal(new[] { "Base Application" }, result.Select(r => r.Manifest.Name).ToArray());
     }
 
+    // -- #3794: a floor that cannot be supplied is named, not skipped in silence --
+    //
+    // #3793 made Visit follow a resolved package's floors. When the floor cannot be met,
+    // Visit reaches `if (dep.Optional || IsMicrosoftPlatformApp(...))` and returns BEFORE
+    // the nearMissVersions branch, so both "System.app absent" and "System.app present but
+    // below the declared floor" print one line -- `[deps] dependency not found in cache,
+    // skipping: Microsoft/System` -- and the run then dies in the dependent's source
+    // compile with the generic `EMIT-ZERO - BC Compilation.Emit() returned 0 sources`,
+    // naming neither the floor, nor the versions that were found, nor the repair.
+    //
+    // The skip itself stays: it is what lets the al-language corpus declare System
+    // Application >= 27.5 and still run green on the 27.0 and 27.3 legs, where no download
+    // can clear the floor (DropUnsatisfiableFloors documents the same tolerance on the
+    // provisioning side). What changes is that a floor belonging to a package this run MAY
+    // source-compile is reported, on ProvisioningGaps rather than UnservableDependencies:
+    // "no loader tier can implement this" is a certain failure and an unmet floor is not,
+    // since the dependent may still be served from the compiled-dependency cache, the
+    // service-tier DLL index, or an already-loaded assembly. Deciding it where the compile
+    // actually happens is #3812.
+
+    /// <summary>
+    /// The dependent ships AL source and no R2R payload, so Tier-3 is the only route that can
+    /// implement it. Its Platform floor is unmet -- System.app is present at 27.0, below the
+    /// declared 28.0 -- and that must be stated, naming the dependent, the floor, and the
+    /// version that was actually found.
+    /// </summary>
+    [Fact]
+    public void SourceCompilablePackageFloor_SystemBelowFloor_IsReportedAsAProvisioningGap()
+    {
+        var dir = MakeDir("FloorBelowMinimum");
+        var systemId = "00000000-0000-0000-0000-00000000c0de";
+        var assertId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
+        File.WriteAllBytes(Path.Combine(dir, "System.app"),
+            MakeMinimalApp(systemId, "System", "Microsoft", "27.0.38460.0", r2r: false, alSource: false, platform: null));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Library Assert.app"),
+            MakeMinimalApp(assertId, "Library Assert", "Microsoft", "28.1.49838.54169", r2r: false, alSource: true, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var result = resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(assertId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        // Still resolves -- a below-floor platform app is not a hard failure, per the corpus
+        // 27.0/27.3 tolerance above.
+        Assert.Contains("Library Assert", result.Select(r => r.Manifest.Name));
+
+        var report = Assert.Single(resolver.ProvisioningGaps, d => d.Contains("Library Assert", StringComparison.Ordinal));
+        Assert.Contains("Microsoft/System", report, StringComparison.Ordinal);
+        Assert.Contains("28.0.0.0", report, StringComparison.Ordinal);   // the declared floor
+        Assert.Contains("27.0.38460.0", report, StringComparison.Ordinal); // what was found instead
+        Assert.Contains(dir, report, StringComparison.Ordinal);          // where it looked
+        Assert.Contains("provision", report, StringComparison.OrdinalIgnoreCase); // how to repair it
+    }
+
+    /// <summary>
+    /// The absent case, which is #3719's own reproduction: no System.app at all. The package
+    /// still resolves alone (that behaviour is pinned by
+    /// <see cref="ResolvedPackageDeclaringPlatform_SystemAbsent_ResolvesThePackageAlone"/>),
+    /// and the run now says why the compile that follows will fail.
+    /// </summary>
+    [Fact]
+    public void SourceCompilablePackageFloor_SystemAbsent_IsReportedAsAProvisioningGap()
+    {
+        var dir = MakeDir("FloorAbsentReported");
+        var assertId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Library Assert.app"),
+            MakeMinimalApp(assertId, "Library Assert", "Microsoft", "28.1.49838.54169", r2r: false, alSource: true, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(assertId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        var report = Assert.Single(resolver.ProvisioningGaps, d => d.Contains("Library Assert", StringComparison.Ordinal));
+        Assert.Contains("Microsoft/System", report, StringComparison.Ordinal);
+        Assert.Contains("28.0.0.0", report, StringComparison.Ordinal);
+        Assert.Contains("provision", report, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The negative direction, and the one that keeps this quiet on the legs that need it:
+    /// an R2R dependent is served by Tier-2 and never source-compiled, so its unmet floor is
+    /// the ordinary tolerated skip and must produce NO report. Without this the 27.0 and
+    /// 27.3 corpus legs would gain an unconditional message on every run.
+    /// </summary>
+    [Fact]
+    public void PrecompiledPackageFloor_SystemAbsent_IsNotReported()
+    {
+        var dir = MakeDir("FloorAbsentPrecompiled");
+        var depId = "00000000-0000-0000-0000-0000000c1111";
+        File.WriteAllBytes(Path.Combine(dir, "Contoso_Precompiled.app"),
+            MakeMinimalApp(depId, "Precompiled", "Contoso", "1.0.0.0", r2r: true, alSource: false, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(depId), "Precompiled", "Contoso", new Version(1, 0, 0, 0)),
+        });
+
+        Assert.DoesNotContain(resolver.ProvisioningGaps, d => d.Contains("Microsoft/System", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// And the floor that IS supplied produces no report either -- so the two facts above
+    /// are the floor talking, not every source-bearing package generating a message.
+    /// </summary>
+    [Fact]
+    public void SourceCompilablePackageFloor_SystemAtTheFloor_IsNotReported()
+    {
+        var dir = MakeDir("FloorMet");
+        var systemId = "00000000-0000-0000-0000-00000000c0de";
+        var assertId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
+        File.WriteAllBytes(Path.Combine(dir, "System.app"),
+            MakeMinimalApp(systemId, "System", "Microsoft", "28.0.54265.0", r2r: false, alSource: false, platform: null));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Library Assert.app"),
+            MakeMinimalApp(assertId, "Library Assert", "Microsoft", "28.1.49838.54169", r2r: false, alSource: true, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var result = resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(assertId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        Assert.Equal(new[] { "System", "Library Assert" }, result.Select(r => r.Manifest.Name).ToArray());
+        Assert.DoesNotContain(resolver.ProvisioningGaps, d => d.Contains("Microsoft/System", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// The gate is three predicates, and only the AL-source one had a fact of its own: the
+    /// R2R negative used a fixture with no AL source either, so a wrong gate consisting only
+    /// of `if (!HasAlSource) return` passed everything (#3810 review). This package has BOTH
+    /// an R2R payload AND AL source, so it separates them — Tier-2 serves it, and it must
+    /// stay silent.
+    /// </summary>
+    [Fact]
+    public void PackageWithBothR2RAndAlSource_FloorAbsent_IsNotReported()
+    {
+        var dir = MakeDir("FloorR2RPlusSource");
+        var depId = "00000000-0000-0000-0000-0000000c2222";
+        File.WriteAllBytes(Path.Combine(dir, "Contoso_Both.app"),
+            MakeMinimalApp(depId, "Both", "Contoso", "1.0.0.0", r2r: true, alSource: true, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(depId), "Both", "Contoso", new Version(1, 0, 0, 0)),
+        });
+
+        Assert.Empty(resolver.ProvisioningGaps);
+    }
+
+    /// <summary>
+    /// One floor unmet for two source-bearing packages is two reports, one per owner — they
+    /// name different packages and a reader needs both. The same (owner, floor) pair twice is
+    /// not, and a second Resolve on one resolver must not duplicate what the first said
+    /// (#3810 review).
+    /// </summary>
+    [Fact]
+    public void UnsuppliableFloor_IsReportedOncePerOwner_AndNotRepeatedAcrossResolves()
+    {
+        var dir = MakeDir("FloorDedup");
+        var oneId = "00000000-0000-0000-0000-0000000d1111";
+        var twoId = "00000000-0000-0000-0000-0000000d2222";
+        File.WriteAllBytes(Path.Combine(dir, "Contoso_One.app"),
+            MakeMinimalApp(oneId, "One", "Contoso", "1.0.0.0", r2r: false, alSource: true, platform: "28.0.0.0"));
+        File.WriteAllBytes(Path.Combine(dir, "Contoso_Two.app"),
+            MakeMinimalApp(twoId, "Two", "Contoso", "1.0.0.0", r2r: false, alSource: true, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        var roots = new[]
+        {
+            new DependencyRef(Guid.Parse(oneId), "One", "Contoso", new Version(1, 0, 0, 0)),
+            new DependencyRef(Guid.Parse(twoId), "Two", "Contoso", new Version(1, 0, 0, 0)),
+        };
+        resolver.Resolve(roots);
+
+        Assert.Equal(2, resolver.ProvisioningGaps.Count);
+        Assert.Single(resolver.ProvisioningGaps, g => g.Contains("Contoso/One", StringComparison.Ordinal));
+        Assert.Single(resolver.ProvisioningGaps, g => g.Contains("Contoso/Two", StringComparison.Ordinal));
+
+        resolver.Resolve(roots);
+
+        Assert.Equal(2, resolver.ProvisioningGaps.Count);
+    }
+
+    /// <summary>
+    /// An unmet floor is not an unservable package, and must not be filed as one: #1689's list
+    /// means "no loader tier can implement this", which is certain, while this package has AL
+    /// source and may well be served from a cache without compiling at all.
+    /// </summary>
+    [Fact]
+    public void UnsuppliableFloor_DoesNotEnterTheUnservableList()
+    {
+        var dir = MakeDir("FloorNotUnservable");
+        var assertId = "dd0be2ea-f733-4d65-bb34-a28f4624fb14";
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Library Assert.app"),
+            MakeMinimalApp(assertId, "Library Assert", "Microsoft", "28.1.49838.54169", r2r: false, alSource: true, platform: "28.0.0.0"));
+
+        var resolver = new DependencyResolver(new[] { dir });
+        resolver.Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(assertId), "Library Assert", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        Assert.Single(resolver.ProvisioningGaps);
+        Assert.Empty(resolver.UnservableDependencies);
+    }
+
     // ── #1689: a resolved package that NO loader tier can implement ───────────
     //
     // Reported shape: a symbols-only `Library Assert` in .alpackages satisfies resolution,

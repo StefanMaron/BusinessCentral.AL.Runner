@@ -910,6 +910,32 @@ public static class ProvisioningCheck
     private static readonly IReadOnlyList<string> PlatformNeedTargets = PlatformAppSetContents;
 
     /// <summary>
+    /// The graph's node key for one app identity. A Microsoft app is keyed by NAME, because
+    /// that is what the walk's targets and the curated download sets are written in; anything
+    /// else is keyed <c>Publisher/Name</c>.
+    ///
+    /// #3794 is why this exists. The graph used to hold Microsoft sources only, so a bare name
+    /// was unambiguous. Admitting third-party sources — which the resolver has always followed
+    /// — makes a bare name ambiguous in the one direction that matters: an unrelated
+    /// <c>Contoso ISV/Application Test Library</c> would occupy the node the real Microsoft app
+    /// needs, satisfy a target by self-membership, and lend its edges to a Microsoft root of the
+    /// same name. Qualifying the third-party key removes all three at once, and removes the need
+    /// for a publisher special case in the walk, because a qualified key can never equal one of
+    /// the Microsoft target names.
+    ///
+    /// A Microsoft app whose own name contains "/" would be keyed plainly and could in principle
+    /// be shadowed by a third-party <c>Publisher/Name</c> spelling it. No BC app name contains a
+    /// slash, and the alternative — a separator no name may contain — is not available for a
+    /// key that must also equal a plain Microsoft name.
+    /// </summary>
+    public static string EdgeKey(string publisher, string name) =>
+        string.Equals(publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)
+            ? name
+            : $"{publisher}/{name}";
+
+    private static string EdgeKey(AlRunner.DependencyRef d) => EdgeKey(d.Publisher, d.Name);
+
+    /// <summary>
     /// True iff <paramref name="appName"/> itself is in <paramref name="targets"/>, or
     /// reaches a member of it by following <paramref name="edges"/> through any number of
     /// hops. Pure graph BFS — the general closure-walk mechanism issue #2087 asked for,
@@ -947,9 +973,21 @@ public static class ProvisioningCheck
     /// is precisely the quiet wrong answer .claude/rules/loud-failures.md exists to stop —
     /// it reads downstream as "this app needs no provisioning".
     /// </summary>
+    /// <param name="EdgeRequirements">
+    /// The same graph as <paramref name="Edges"/>, carrying each edge's declared
+    /// <c>MinVersion</c> alongside its name. #2193: a manifest's
+    /// <c>&lt;Dependency Name="Application Test Library" MinVersion="28.1.0.0" /&gt;</c> is a
+    /// floor on a package the bundle reaches only transitively, and recording the name alone
+    /// is why a warm cache holding 28.0 satisfied a bundle that requires 28.1.
+    /// <see cref="DetermineVersionFloors(IEnumerable{AlRunner.DependencyRef}, IReadOnlyDictionary{string, IReadOnlyList{AlRunner.DependencyRef}}?)"/>
+    /// closes the floors over it. Kept beside <paramref name="Edges"/> rather than replacing
+    /// it: <see cref="ReachesAnyOf"/> asks a reachability question that has nothing to do
+    /// with versions, and every caller and test of it is written in names.
+    /// </param>
     public sealed record DependencyEdgeScan(
         IReadOnlyDictionary<string, IReadOnlyList<string>> Edges,
-        IReadOnlyList<string> UnreadablePackages);
+        IReadOnlyList<string> UnreadablePackages,
+        IReadOnlyDictionary<string, IReadOnlyList<AlRunner.DependencyRef>> EdgeRequirements);
 
     /// <summary>
     /// Reads the REAL direct dependency edges among Microsoft apps out of the `.app`
@@ -967,11 +1005,24 @@ public static class ProvisioningCheck
     /// instead). A table recording one of those shapes is silently wrong for the other, and
     /// the resulting failure looks like a runner capability gap rather than a stale table.
     ///
-    /// Only Microsoft-published packages become edge SOURCES, and only Microsoft-published
-    /// dependencies become edge TARGETS: the graph is keyed by app NAME (matching every
-    /// other Microsoft-app comparison in this file) and the walk's targets
-    /// (<see cref="KnownNoFallbackPlatformApps"/>) are Microsoft apps, so admitting
-    /// third-party names could only introduce name collisions, never a real path.
+    /// EVERY package is an edge source and EVERY declared dependency is an edge target,
+    /// whatever the publisher, keyed by <see cref="EdgeKey(string, string)"/> (#3794).
+    /// DependencyResolver.Visit traverses a package's dependencies and floors without
+    /// consulting the publisher, so a graph that dropped third-party nodes answered a
+    /// different question from the one resolution asks — and dropping them as INTERMEDIATE
+    /// vertices was the worse half: `Consumer -> Contoso/A -> Fabrikam/B (Platform=28.0)`
+    /// recorded B's floor and then had no path from A to B to reach it with.
+    ///
+    /// Only the WALK'S GOALS stay Microsoft-only, which is the property that actually
+    /// matters: they are the contents of the curated download sets, and a qualified
+    /// third-party key can never equal one.
+    ///
+    /// A package that ships an R2R payload contributes its declared &lt;Dependencies&gt; but
+    /// NOT its implicit Platform/Application floors. Those floors exist to be compiled
+    /// against, and Tier-2 serves an R2R package from its payload without compiling anything
+    /// — the same predicate DependencyResolver.ReportUnsuppliableFloor gates on, so the two
+    /// sides agree about which packages a floor can actually matter for. Reading it costs one
+    /// zip entry-name scan, and only for a package that declares a floor at all.
     ///
     /// Each directory is walked RECURSIVELY, matching
     /// <see cref="NoFallbackPlatformAppsPresent"/> and <see cref="TestToolkitPresent"/> —
@@ -980,9 +1031,19 @@ public static class ProvisioningCheck
     ///
     /// An app that declares NO dependencies is recorded with an EMPTY list rather than
     /// omitted — "scanned, declares nothing" is a fact, and must not be indistinguishable
-    /// from "never looked at". When the same app name appears in more than one directory,
-    /// the FIRST directory in <paramref name="searchDirs"/> wins, matching the search-order
-    /// precedence the rest of the package-cache lookups use.
+    /// from "never looked at".
+    ///
+    /// When the same key appears more than once, the HIGHEST VERSION wins, not the first
+    /// directory (#3794). Directory precedence was harmless while the graph answered only
+    /// "does this reach a platform app", because two builds of one app declare much the same
+    /// dependencies. It stopped being harmless when the edges started carrying floors: a
+    /// cache holding B v28.1 (needing Application Test Library 28.0) in the first directory
+    /// and B v28.2 (needing 28.2) in the second would record the 28.0 floor while the
+    /// RESOLVER selects v28.2 and enforces 28.2 — the stale-cache-reads-as-complete failure
+    /// #2193 is about, reintroduced one level up. Highest-version-wins is not the resolver's
+    /// full selection rule (it weighs source-built and executable candidates too); it is the
+    /// part of it that decides which manifest's floors are the operative ones. Closing the
+    /// remainder needs AppId-keyed identity and shared candidate selection — #3811.
     /// </summary>
     /// <summary>&quot;No edges known&quot; — the honest default when nothing has been
     /// downloaded yet, in place of the version-blind hand-written table issue #2103
@@ -993,6 +1054,11 @@ public static class ProvisioningCheck
     public static DependencyEdgeScan ScanDependencyEdges(IEnumerable<string> searchDirs)
     {
         var edges = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        var edgeRequirements =
+            new Dictionary<string, IReadOnlyList<AlRunner.DependencyRef>>(StringComparer.OrdinalIgnoreCase);
+        // The version of the package whose edges are currently recorded under each key —
+        // see the highest-version-wins rule below.
+        var recordedVersion = new Dictionary<string, Version>(StringComparer.OrdinalIgnoreCase);
         var unreadable = new List<string>();
         var seenDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
@@ -1036,36 +1102,75 @@ public static class ProvisioningCheck
                     unreadable.Add(file);
                     continue;
                 }
-                if (!string.Equals(manifest.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase))
+                // #3794: EVERY package is an edge source, keyed by EdgeKey — see this
+                // method's doc comment for why, and for why the goals stay Microsoft-only.
+                var key = EdgeKey(manifest.Publisher, manifest.Name);
+                // Highest version wins, not first directory: the edges now carry floors, and
+                // the operative floors are the ones on the manifest the RESOLVER will select.
+                if (recordedVersion.TryGetValue(key, out var incumbent) && incumbent >= manifest.Version)
                     continue;
-                if (edges.ContainsKey(manifest.Name)) continue;
 
                 var deps = new List<string>();
-                foreach (var d in manifest.Dependencies)
+                var reqs = new List<AlRunner.DependencyRef>();
+                void Record(AlRunner.DependencyRef d)
                 {
-                    if (!string.Equals(d.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
-                    if (string.IsNullOrWhiteSpace(d.Name)) continue;
-                    if (!deps.Any(x => string.Equals(x, d.Name, StringComparison.OrdinalIgnoreCase)))
-                        deps.Add(d.Name);
+                    if (string.IsNullOrWhiteSpace(d.Name)) return;
+                    var target = EdgeKey(d);
+                    if (!deps.Any(x => string.Equals(x, target, StringComparison.OrdinalIgnoreCase)))
+                        deps.Add(target);
+                    // #2193: keep the declared MinVersion beside the name. A repeated target is
+                    // recorded once, at the HIGHER floor, matching DetermineVersionFloors'
+                    // own rule — a looser declaration can never relax a stricter one.
+                    var i = reqs.FindIndex(x =>
+                        string.Equals(EdgeKey(x), target, StringComparison.OrdinalIgnoreCase));
+                    if (i < 0) reqs.Add(d);
+                    else if (d.Version > reqs[i].Version) reqs[i] = d;
                 }
+
+                foreach (var d in manifest.Dependencies)
+                    Record(d);
                 // #3719: a package's Platform / Application floors are dependencies the real `al`
                 // compiler injects (Microsoft/System, Microsoft/Application). Library Assert
                 // declares Platform="28.0.0.0" and an empty <Dependencies />, so without this
                 // edge a bundle naming only it never learns it needs the platform set, downloads
                 // the test set alone, and the toolkit's source compile dies (EMIT-ZERO).
-                // Trap: skipped for the Microsoft platform apps themselves, matching
-                // DependencyResolver.Visit's guard — their manifests reference each other
-                // (Application -> Base Application -> Application ...), and a graph the resolver
-                // does not walk would make provisioning fetch a set resolution never asks for.
+                //
+                // Two guards, both matching DependencyResolver's. Skipped for the Microsoft
+                // platform apps themselves, whose manifests reference each other (Application ->
+                // Base Application -> Application ...), so a graph the resolver refuses to walk
+                // cannot make provisioning fetch a set resolution never asks for. And skipped
+                // for an R2R package (#3794): a floor exists to be compiled against, Tier-2
+                // serves an R2R payload without compiling, and demanding a 116 MB platform
+                // download — or refusing the run offline — for a package nothing will compile is
+                // a cost with no failure behind it. Its declared <Dependencies> are recorded
+                // either way, because those are runtime dependencies rather than symbols.
                 if (!AlRunner.DependencyResolver.IsMicrosoftPlatformApp(manifest.Name, manifest.Publisher))
-                    foreach (var floor in AlRunner.AppLoader.ImplicitRoots(manifest))
-                        if (!deps.Any(x => string.Equals(x, floor.Name, StringComparison.OrdinalIgnoreCase)))
-                            deps.Add(floor.Name);
-                edges[manifest.Name] = deps;
+                {
+                    var floors = AlRunner.AppLoader.ImplicitRoots(manifest).ToList();
+                    if (floors.Count > 0 && !IsR2RQuietly(file))
+                        foreach (var floor in floors)
+                            Record(floor);
+                }
+                edges[key] = deps;
+                edgeRequirements[key] = reqs;
+                recordedVersion[key] = manifest.Version;
             }
         }
 
-        return new DependencyEdgeScan(edges, unreadable);
+        return new DependencyEdgeScan(edges, unreadable, edgeRequirements);
+    }
+
+    /// <summary>
+    /// <see cref="AlRunner.AppLoader.IsR2R"/>, with an unreadable package answering FALSE —
+    /// "we could not tell whether this package carries a payload" must not silently exempt it
+    /// from its own floors, because the exemption is the quiet direction: it removes a
+    /// provisioning demand rather than adding one. A package this scan could not open is
+    /// already reported through <see cref="DependencyEdgeScan.UnreadablePackages"/>.
+    /// </summary>
+    private static bool IsR2RQuietly(string appPath)
+    {
+        try { return AlRunner.AppLoader.IsR2R(appPath); }
+        catch (Exception) { return false; }
     }
 
     /// <summary>
@@ -1162,6 +1267,21 @@ public static class ProvisioningCheck
         var rootList = roots as IReadOnlyCollection<AlRunner.DependencyRef> ?? roots.ToList();
         bool needsTest = false;
 
+        // #3794: the walk starts at EVERY root, not only Microsoft-published ones. A
+        // third-party package is an edge source in the graph (ScanDependencyEdges), so a
+        // bundle whose only dependency is a Contoso library that itself declares
+        // Platform="28.0.0.0" reaches System in one hop — and used to be dropped before
+        // ReachesAnyOf was asked anything.
+        //
+        // EdgeKey is what makes that safe with no publisher special case here: a third-party
+        // root's key is qualified, so it can never equal one of the Microsoft goal names and
+        // can never satisfy a target by self-membership, and it can never pick up the edges
+        // of a Microsoft app that shares its bare name. Both hazards are pinned —
+        // DetermineManifestNeeds_NonMicrosoftPublisher_RootNameIsNotAnIdentity and its
+        // _EvenWhenThatNameIsInTheGraph sibling.
+        bool RootReaches(AlRunner.DependencyRef d, IReadOnlyList<string> targets) =>
+            !string.IsNullOrWhiteSpace(d.Name) && ReachesAnyOf(EdgeKey(d), edges, targets);
+
         // Which apps out of the curated platform-apps set (plus, for a non-w1 country, any
         // extra candidate the caller supplied) do these manifests require? Asked per-app,
         // over whatever the manifests NAME (directly, or reach through recorded edges) —
@@ -1179,8 +1299,7 @@ public static class ProvisioningCheck
             var single = new[] { candidate };
             foreach (var d in rootList)
             {
-                if (!string.Equals(d.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
-                if (!ReachesAnyOf(d.Name, edges, single)) continue;
+                if (!RootReaches(d, single)) continue;
                 requiredPlatformApps.Add(candidate);
                 break;
             }
@@ -1189,14 +1308,13 @@ public static class ProvisioningCheck
 
         foreach (var d in rootList)
         {
-            if (!string.Equals(d.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
             // Issue #2087: ONE closure walk replaces what used to be two separate checks —
             // a direct KnownNoFallbackPlatformApps membership test, and a second hardcoded
             // list of names known (by hand) to transitively reach one. ReachesAnyOf treats
             // "d.Name IS a no-fallback app" and "d.Name REACHES one through recorded edges"
             // as the same question, so a future multi-hop chain is caught the moment its own
             // edge is recorded — no new list, no per-shape entry.
-            if (ReachesAnyOf(d.Name, edges, KnownNoFallbackPlatformApps))
+            if (RootReaches(d, KnownNoFallbackPlatformApps))
             {
                 // Confirmed via a live BC 28.1 platform-apps download (issue #1996): App
                 // Test Library's OWN manifest transitively depends on the MS test toolkit
@@ -1206,7 +1324,11 @@ public static class ProvisioningCheck
                 // app therefore always implies needing the test toolkit too.
                 needsTest = true;
             }
-            if (KnownTestFrameworkAppNames.Any(n => string.Equals(n, d.Name, StringComparison.OrdinalIgnoreCase)))
+            // Still Microsoft-only, deliberately, unlike the walk above: this is a match on
+            // NAME with no edge behind it, so a third-party app that happens to be called
+            // "Any" would otherwise pull in the separate 20 MB test-apps download.
+            if (string.Equals(d.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)
+                && KnownTestFrameworkAppNames.Any(n => string.Equals(n, d.Name, StringComparison.OrdinalIgnoreCase)))
                 needsTest = true;
         }
         return new ManifestNeeds(needsPlatform, needsTest, requiredPlatformApps);
@@ -1239,14 +1361,73 @@ public static class ProvisioningCheck
     /// presence-only check.
     /// </summary>
     public static IReadOnlyDictionary<string, Version> DetermineVersionFloors(IEnumerable<AlRunner.DependencyRef> roots)
+        => DetermineVersionFloors(roots, edgeRequirements: null);
+
+    /// <summary>
+    /// As above, and additionally closes the floors over
+    /// <paramref name="edgeRequirements"/> — the per-edge <c>MinVersion</c>s
+    /// <see cref="ScanDependencyEdges"/> read out of the packages on disk.
+    ///
+    /// Issue #2193: a bundle declaring only <c>Microsoft/Tests-TestLibraries &gt;= 28.1.0.0</c>
+    /// produced exactly one floor, so <see cref="FindMissingPlatformApps"/> applied none to
+    /// <c>Application Test Library</c> even though that package's own manifest declares
+    /// <c>MinVersion="28.1.0.0"</c> for it — and a warm cache holding 28.0 read as complete.
+    /// The failure was the quiet kind: the app resolved, compilation proceeded, and the run
+    /// died later on a missing symbol pointing at the test code rather than at the stale
+    /// provisioning.
+    ///
+    /// The walk is a BFS from the roots over the same graph <see cref="ReachesAnyOf"/> uses,
+    /// visiting each app name once, so a manifest cycle terminates rather than hanging —
+    /// real Microsoft platform manifests reference each other, so that is the ordinary case.
+    /// A revisit still RAISES an already-recorded floor when the new edge declares a higher
+    /// one; only the enqueue is suppressed. Null <paramref name="edgeRequirements"/> means
+    /// "no edges known" and reduces this to the roots-only map, which is the honest answer
+    /// when nothing has been downloaded yet.
+    /// </summary>
+    public static IReadOnlyDictionary<string, Version> DetermineVersionFloors(
+        IEnumerable<AlRunner.DependencyRef> roots,
+        IReadOnlyDictionary<string, IReadOnlyList<AlRunner.DependencyRef>>? edgeRequirements)
     {
         var floors = new Dictionary<string, Version>(StringComparer.OrdinalIgnoreCase);
-        foreach (var d in roots)
+        var queue = new Queue<string>();
+        var enqueued = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Declare(AlRunner.DependencyRef d)
         {
-            if (!string.Equals(d.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
+            if (!string.Equals(d.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) return;
+            if (string.IsNullOrWhiteSpace(d.Name)) return;
             if (!floors.TryGetValue(d.Name, out var existing) || d.Version > existing)
                 floors[d.Name] = d.Version;
         }
+
+        foreach (var d in roots)
+        {
+            Declare(d);
+            // Every root is walked, whatever its publisher (#3794), by its EdgeKey — the same
+            // key ScanDependencyEdges recorded it under, so a third-party root reads its OWN
+            // edges rather than those of a Microsoft app with the same bare name. Declare
+            // above still records Microsoft floors only, keyed by plain name, because that is
+            // what FindMissingPlatformApps looks them up by.
+            if (string.IsNullOrWhiteSpace(d.Name)) continue;
+            var key = EdgeKey(d);
+            if (enqueued.Add(key)) queue.Enqueue(key);
+        }
+
+        if (edgeRequirements == null) return floors;
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            if (!edgeRequirements.TryGetValue(current, out var reqs)) continue;
+            foreach (var d in reqs)
+            {
+                Declare(d);
+                if (string.IsNullOrWhiteSpace(d.Name)) continue;
+                var next = EdgeKey(d);
+                if (enqueued.Add(next)) queue.Enqueue(next);
+            }
+        }
+
         return floors;
     }
 
@@ -1438,6 +1619,9 @@ public static class ProvisioningCheck
         var countryNormalized = NormalizeCountry(country);
         IReadOnlyList<string>? extraPlatformNeedCandidates = countryNormalized == "w1"
             ? null
+            // Microsoft-only, unlike the reachability walk in DetermineManifestNeeds (#3794):
+            // these names become DOWNLOAD candidates, and a country-selected platform-apps
+            // download can only supply Microsoft apps under Extensions/.
             : rootsList
                 .Where(d => string.Equals(d.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase))
                 .Select(d => d.Name)
@@ -1448,7 +1632,7 @@ public static class ProvisioningCheck
         // demand no download can clear — see DropUnsatisfiableFloors. The report carries
         // the selected version, which is exactly the version a download would target.
         var versionFloors = DropUnsatisfiableFloors(
-            DetermineVersionFloors(rootsList), legacySymbolOnlyReport.Version);
+            DetermineVersionFloors(rootsList, scan.EdgeRequirements), legacySymbolOnlyReport.Version);
         // Presence is asked of exactly the apps the manifests required — so an app the
         // bundle never names cannot make the set look incomplete, and an app it DOES name
         // cannot be silently exempted from the check.

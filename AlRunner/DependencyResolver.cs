@@ -31,6 +31,17 @@ public sealed class DependencyResolver
     // under --verbose: a dependency that no loader tier can implement is a certain runtime
     // failure, and the whole point of #1689 is that the developer never saw it coming.
     private readonly List<string> _unservable = new();
+    // #3794. Kept out of _unservable, which makes a stronger claim than this one can:
+    // "no loader tier can implement this package" is certain, and an unmet floor is not —
+    // the dependent may still be served from the compiled-dependency cache, from the
+    // service-tier DLL index, or from an already-loaded assembly, in which case nothing
+    // compiles and nothing fails. Always printed, like _unservable, because when it does
+    // bite it produces #3719's unattributable EMIT-ZERO.
+    private readonly List<string> _provisioningGaps = new();
+    // (owner identity, floor identity) already reported. One floor unmet for six packages
+    // in a toolkit closure is six worthwhile lines; the same one twice is noise, and
+    // Resolve can legitimately be called more than once on one resolver.
+    private readonly HashSet<string> _reportedFloorGaps = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Problems detected while resolving that are NOT fatal but almost certainly wrong —
@@ -49,6 +60,16 @@ public sealed class DependencyResolver
     /// call that will end in "The object with ID 0 does not have a member with that ID".
     /// </summary>
     public IReadOnlyList<string> UnservableDependencies => _unservable;
+
+    /// <summary>
+    /// Provisioning problems that are not certain failures but will produce an unattributable
+    /// one if they bite: currently a package that this run may source-compile, declaring a
+    /// Platform/Application floor the package caches cannot supply (#3794). Printed
+    /// unconditionally alongside <see cref="UnservableDependencies"/> and collected into the
+    /// bundle's provisioning gaps, because the failure it precedes — #3719's
+    /// <c>EMIT-ZERO — BC Compilation.Emit() returned 0 sources</c> — names nothing at all.
+    /// </summary>
+    public IReadOnlyList<string> ProvisioningGaps => _provisioningGaps;
 
     // Dirs holding packages this run built FROM SOURCE (SiblingCompile's synthesized
     // workspace dirs). A candidate under one of these outranks any packaged copy of the
@@ -118,7 +139,8 @@ public sealed class DependencyResolver
         DependencyRef dep,
         Dictionary<Guid, byte> state,
         List<(AppManifest, string)> output,
-        Stack<string> stack)
+        Stack<string> stack,
+        (AppManifest Manifest, string Path)? floorOwner = null)
     {
         if (!TryFind(dep, out var found, out var nearMissVersions))
         {
@@ -132,7 +154,9 @@ public sealed class DependencyResolver
                 // dependent's manifest (this branch also fires for non-Optional manifest deps).
                 Console.Error.WriteLine(
                     $"  [deps] dependency not found in cache, skipping: " +
-                    $"{dep.Publisher}/{dep.Name}");
+                    $"{dep.Publisher}/{dep.Name}"
+                    + (nearMissVersions != null ? $" (found, below the minimum: {nearMissVersions})" : ""));
+                ReportUnsuppliableFloor(dep, floorOwner, nearMissVersions);
                 return;
             }
             if (nearMissVersions != null)
@@ -183,10 +207,77 @@ public sealed class DependencyResolver
         // Optional, like the consumer-side roots: a missing System.app skips, as above.
         if (!IsMicrosoftPlatformApp(found.Manifest.Name, found.Manifest.Publisher))
             foreach (var floor in AppLoader.ImplicitRoots(found.Manifest))
-                Visit(floor, state, output, stack);
+                Visit(floor, state, output, stack, floorOwner: found);
         stack.Pop();
         state[id] = 2;
         output.Add((found.Manifest, found.Path));
+    }
+
+    /// <summary>
+    /// #3794: name a floor that cannot be supplied, when the package that declared it is one
+    /// this run MAY source-compile.
+    ///
+    /// The skip above stays, and must: it is what lets the al-language corpus declare System
+    /// Application &gt;= 27.5 and still run green on the 27.0 and 27.3 legs, where no download
+    /// can clear the floor (ProvisioningCheck.DropUnsatisfiableFloors documents the same
+    /// tolerance on the other side). For a package with no precompiled payload the skip is not
+    /// a tolerance though — it is #3719's `EMIT-ZERO — BC Compilation.Emit() returned 0
+    /// sources`, arriving one step later with nothing in it naming the floor, the versions
+    /// found, the directories searched, or the repair.
+    ///
+    /// MAY, not WILL, and the message says so. What is decided here is a property of the
+    /// PACKAGE — no R2R payload, no sidecar DLL, AL source present — which is a necessary
+    /// condition for the Tier-3 compile and not a sufficient one. DependencyLoader can still
+    /// serve the same package from the compiled-dependency cache, from the service-tier DLL
+    /// index when every codeunit is covered, or from an assembly already loaded in this
+    /// process, and then nothing compiles and nothing fails. Deciding it where the compile
+    /// actually happens would be exact; it would also mean re-deriving the closure inside
+    /// DependencyLoader, so the honest phrasing is here instead — #3812.
+    ///
+    /// Not <see cref="UnservableDependencies"/>: that list means "no loader tier can implement
+    /// this", which is certain, and this is not. <see cref="ProvisioningGaps"/> is printed just
+    /// as unconditionally.
+    /// </summary>
+    private void ReportUnsuppliableFloor(
+        DependencyRef floor,
+        (AppManifest Manifest, string Path)? owner,
+        string? nearMissVersions)
+    {
+        if (owner is not { } o) return;
+        // Tier-2 serves an R2R payload and Tier-1 a committed sidecar DLL; neither compiles
+        // the package's AL, so neither can need the floor's symbols. The same three
+        // predicates, in the same order, that SelectBestVersion's unservable check uses.
+        //
+        // Trap: HasPrecompiledSidecar asks only whether the file EXISTS. A corrupt sidecar
+        // silences this report and DependencyLoader then falls through to Tier-3 anyway, so a
+        // package in that state can still hit the unattributed EMIT-ZERO. Reading the sidecar
+        // to find out is DependencyLoader's job and it already reports the load failure
+        // loudly, which is the signal a reader gets instead.
+        if (AppLoader.IsR2R(o.Path)) return;
+        if (HasPrecompiledSidecar(o.Manifest)) return;
+        if (!AppLoader.HasAlSource(o.Path)) return;
+
+        if (!_reportedFloorGaps.Add(
+                $"{o.Manifest.Publisher}/{o.Manifest.Name}/{o.Manifest.Version}"
+                + $"->{floor.Publisher}/{floor.Name}/{floor.Version}"))
+            return;
+
+        var found = nearMissVersions == null
+            ? "no copy was found in any searched directory"
+            : $"found, but below the minimum: {nearMissVersions}";
+        var searched = _cacheDirs.Count > 0
+            ? string.Join(", ", _cacheDirs)
+            : "nothing — this run was given no package cache directories";
+        _provisioningGaps.Add(
+            $"[dep] {o.Manifest.Publisher}/{o.Manifest.Name} v{o.Manifest.Version} declares a floor of "
+            + $"{floor.Publisher}/{floor.Name} >= {floor.Version}, and it cannot be supplied:"
+            + $"\n      {found}"
+            + $"\n      searched: {searched}"
+            + $"\n      That package carries AL source and no precompiled payload. If this run compiles"
+            + $"\n      it — rather than serving it from the compiled-dependency cache, the service-tier"
+            + $"\n      DLLs or an already-loaded assembly — the compile has no {floor.Name} symbols and"
+            + $"\n      ends in \"EMIT-ZERO — 0 sources emitted\" naming nothing (#3719)."
+            + $"\n      Repair: al-runner provision --platform-apps --bc-version <a build >= {floor.Version}>");
     }
 
     /// <summary>
