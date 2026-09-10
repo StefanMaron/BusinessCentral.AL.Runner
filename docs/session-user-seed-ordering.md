@@ -78,18 +78,14 @@ Each sibling answers the cacheability question for itself, and the answers diffe
 
 | seed | inside the window? | why |
 |---|---|---|
-| `EnsureCompanySystemTableRowSeeded` (2000000006) | **yes**, and again after | the row is process-invariant, so the shared snapshot may carry it |
+| `EnsureCompanySystemTableRowSeeded` (2000000006) | **yes**, and again after | the row is process-invariant, so seeding it inside the window is safe; the snapshot does not carry it — the after-window call writes it on every HIT (measured: `seeded` after `Restore`) |
 | `EnsureAccessControlSuperRowSeeded` (2000000053) | **yes**, and again after | same, plus the second call re-decides after an adoption |
 | `EnsurePublishedApplicationBundleRowSeeded` (2000000206 / 2000000153 / 2000000212) | **no** — after the window, before the bundle's own triggers | the row identifies the bundle, and the snapshot key does not |
 
-**The Company row is cacheable, which the issue that asked for this doubted.** #3757 filed it as
-"per-app-group state the dep-company snapshot must not carry across app groups". Measured
-instead: `BcRuntime` pokes the skeleton `NavCompany` with the literal company name `"My Company"`
-and a fixed `companyTableId` guid, both compiled in, so every app group and every process on a
-machine builds the identical row. The snapshot key (dependency set + runner build + BC version)
-does not have to cover it, because there is nothing for it to disagree about. If the company name
-ever becomes an input — a `--company` flag, say — that stops being true and the key has to cover
-it, which is why the reasoning is written down rather than the conclusion alone.
+**The Company row is process-invariant, so seeding it inside the window is safe**: `BcRuntime`
+pokes the skeleton `NavCompany` with the literal company name `"My Company"` and a fixed
+`companyTableId` guid, both compiled in, so every app group and every process on a machine builds
+the identical row.
 
 **The Access Control latch is keyed on the security id it seeded, not on a bool.** The seed can
 now run before *and* after the identity decision, and the decision can move the session onto an

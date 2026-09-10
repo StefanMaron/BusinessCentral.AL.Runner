@@ -604,11 +604,9 @@ public sealed class TestExecutor
                     // Company, or asks whether the session user is SUPER, must find what a
                     // service tier has there long before any extension is installed.
                     //
-                    // The CAPTURE half of each split, exactly like the User row above: both rows
-                    // are ordinary table rows, so the snapshot carries them and a later HIT
-                    // restores them. Both seeds are called AGAIN after this block on every path,
-                    // which is what a HIT needs and what makes an older on-disk snapshot written
-                    // before this change self-healing rather than a schema break.
+                    // Both seeds are called AGAIN after this block on every path, which is what a
+                    // HIT needs and what makes an older on-disk snapshot written before this
+                    // change self-healing rather than a schema break.
                     //
                     // Cacheable across app groups and across processes, which the dep-company key
                     // (dependency set + runner build + BC version) requires: the company is the
@@ -674,8 +672,7 @@ public sealed class TestExecutor
         // this bundle's own install triggers below, so install code that resolves CompanyName()
         // against Company finds a row, exactly as it would on a service tier. On a dep-company
         // cache MISS the row is already there from the in-window call above and this one exits
-        // on the latch; on a HIT the row came from the restored snapshot and this call reports it
-        // already present; on a snapshot written before #3757 this call is what writes it.
+        // on the latch; on a HIT this call is what writes it (measured: `seeded` after Restore).
         //
         // Still BEFORE CaptureInstallBaseline below, the constraint all three of these seeds have
         // always had: the per-codeunit restore puts the store back to that baseline, so a row

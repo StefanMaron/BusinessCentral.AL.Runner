@@ -4,8 +4,8 @@
 // Nothing here is a claim about BC's own install order: real Business Central has no seed stage
 // at all, because the company, the app registry and the permission grants are database state
 // long before an extension is installed. What this pins is the runner's own install-seed ORDER —
-// the Company row (2000000006), the bundle's Published Application / NAV App Installed App rows
-// (2000000206 / 2000000153) and the session user's SUPER row in Access Control (2000000053) are
+// the Company row (2000000006), the bundle's Published Application row (2000000206) and
+// the session user's SUPER row in Access Control (2000000053) are
 // all in place while the bundle's OWN install triggers run.
 //
 // THE DEFECT (#3757)

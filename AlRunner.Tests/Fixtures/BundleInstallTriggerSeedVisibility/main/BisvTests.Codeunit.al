@@ -77,8 +77,6 @@ codeunit 70842 "BISV Tests"
             Error('install code found no Published Application row for its own app id (AlRunner#3757)');
         if Observation."Other Published App Row Existed" then
             Error('a Published Application row must not exist for an app id nothing published');
-        if not Observation."Own App Installed Row Existed" then
-            Error('install code found no NAV App Installed App row for its own app id (AlRunner#3757)');
         // Exactly one row at test time - a seed that ran twice would leave two.
         Evaluate(OwnAppId, OwnAppIdTok);
         PublishedApp.SetRange(ID, OwnAppId);

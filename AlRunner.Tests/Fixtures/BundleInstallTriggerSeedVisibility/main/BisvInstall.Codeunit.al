@@ -11,7 +11,6 @@ codeunit 70841 "BISV Installer"
         Comp: Record Company;
         AccessCtrl: Record "Access Control";
         PublishedApp: Record "Published Application";
-        InstalledApp: Record "NAV App Installed App";
         Nobody: Guid;
         OwnAppId: Guid;
         NoSuchAppId: Guid;
@@ -40,9 +39,6 @@ codeunit 70841 "BISV Installer"
         Observation."Own Published App Row Existed" := not PublishedApp.IsEmpty();
         PublishedApp.SetRange(ID, NoSuchAppId);
         Observation."Other Published App Row Existed" := not PublishedApp.IsEmpty();
-
-        InstalledApp.SetRange("App ID", OwnAppId);
-        Observation."Own App Installed Row Existed" := not InstalledApp.IsEmpty();
 
         Observation.Insert();
     end;

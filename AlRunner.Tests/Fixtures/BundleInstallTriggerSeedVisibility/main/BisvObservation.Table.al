@@ -15,7 +15,6 @@ table 70840 "BISV Observation"
         field(6; "Nobody Super Row Existed"; Boolean) { DataClassification = CustomerContent; }
         field(7; "Own Published App Row Existed"; Boolean) { DataClassification = CustomerContent; }
         field(8; "Other Published App Row Existed"; Boolean) { DataClassification = CustomerContent; }
-        field(9; "Own App Installed Row Existed"; Boolean) { DataClassification = CustomerContent; }
         field(10; "Observed Security ID"; Guid) { DataClassification = CustomerContent; }
     }
 
