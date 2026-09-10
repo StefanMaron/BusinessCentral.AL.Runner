@@ -161,14 +161,75 @@ public sealed class MetadataEquivalenceHarnessTests
     [SkippableFact]
     public void The_harness_states_which_kinds_it_does_not_compare()
     {
-        // Not decoration. A bundle carries every kind BC emitted; this harness compares
-        // tables. If that set silently widened or narrowed, "no differences" would mean
+        // Not decoration. A bundle carries every kind BC emitted; this harness compares a
+        // subset. If that set silently widened or narrowed, "no differences" would mean
         // something different from run to run.
+        //
+        // #3782 empties KindsNotCompared one kind per pull request, so this test names the
+        // kinds that must STILL be uncompared rather than asserting the compared set against a
+        // literal that a step would have to edit anyway. Each step deletes its kind from this
+        // list; the last one deletes the list and asserts KindsNotCompared is empty.
+        //
+        // Deliberately NOT `Assert.NotEmpty(KindsNotCompared)`: that would fail the day the
+        // programme finishes, which is the one outcome it must not punish.
+        string[] stillUncompared =
+        {
+            // step 2..8, in the order issue #3782's comment sets.
+            "CodeUnit", "Query", "XmlPort", "Report", "PermissionSet", "Enum",
+            "MetadataRuntimeDeltas",
+        };
+
         foreach (var report in RunAll())
         {
-            Assert.Equal(new[] { "MetaTable" }, report.KindsCompared);
-            Assert.NotEmpty(report.KindsNotCompared);
-            Assert.DoesNotContain("MetaTable", report.KindsNotCompared);
+            // Every kind is accounted for as exactly one of compared / not-compared: a kind
+            // that fell out of BOTH lists would be silently unmeasured, which is the defect
+            // this test exists to make visible.
+            Assert.Equal(
+                report.Bundle.Census.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray(),
+                report.KindsCompared.Concat(report.KindsNotCompared)
+                    .OrderBy(k => k, StringComparer.Ordinal).ToArray());
+
+            Assert.Empty(report.KindsCompared.Intersect(report.KindsNotCompared, StringComparer.Ordinal));
+
+            // The compared set is exactly the harness's declared set, intersected with what
+            // this bundle carries — so a kind added to ComparedKinds that never reaches the
+            // comparison loop cannot pass unnoticed.
+            Assert.Equal(
+                MetadataEquivalenceHarness.ComparedKinds
+                    .Where(k => report.Bundle.Census.ContainsKey(k))
+                    .OrderBy(k => k, StringComparer.Ordinal).ToArray(),
+                report.KindsCompared.OrderBy(k => k, StringComparer.Ordinal).ToArray());
+
+            Assert.Contains("MetaTable", report.KindsCompared);
+            Assert.Contains("PageDefinition", report.KindsCompared);
+
+            foreach (var kind in stillUncompared.Where(k => report.Bundle.Census.ContainsKey(k)))
+                Assert.Contains(kind, report.KindsNotCompared);
+        }
+    }
+
+    [SkippableFact]
+    public void Pages_are_compared_in_the_numbers_the_bundle_declares()
+    {
+        // The step-1 non-vacuity claim, and the thing a silent regression would break first:
+        // a page comparison that quietly compared nothing would leave every other test in this
+        // file green, because they all measure DIFFERENCES and zero pages produce zero of them.
+        foreach (var report in RunAll())
+        {
+            var declared = report.Bundle.Census.GetValueOrDefault("PageDefinition");
+            Assert.True(declared > 0,
+                $"{report.Bundle.Label}: the bundle declares no PageDefinition at all, so this " +
+                "test measures nothing. Regenerate the bundle.");
+
+            var pageDifferences = report.Differences
+                .Where(d => d.ObjectKey.StartsWith("Page ", StringComparison.Ordinal))
+                .Select(d => d.ObjectKey).Distinct().Count();
+
+            // Pages the runner reproduces exactly contribute no differences, so this is a
+            // floor rather than an equality — but a floor of zero would be the vacuous claim.
+            Assert.True(pageDifferences > 0 || report.ObjectsCompared >= declared,
+                $"{report.Bundle.Label}: {declared} PageDefinition(s) in the bundle and no page " +
+                "was compared. " + report.Summary);
         }
     }
 
@@ -203,18 +264,32 @@ public sealed class MetadataEquivalenceHarnessTests
         {
             int MissingRelation(int fieldId) => report.Differences
                 .Where(d => d.Member == "Relations." + MetadataObjectDiff.PresenceMember
+                            && IsTableObject(d)
                             && d.Path.StartsWith($"Fields[id={fieldId}].Relations[", StringComparison.Ordinal)
                             && d.Actual == MetadataObjectDiff.Absent)
                 .Select(d => d.ObjectKey).Distinct().Count();
 
             // BC gives both a TableRelation to User (2000000120) and the runner gives them
-            // none — on EVERY table, which is why this is against the number compared rather
-            // than a constant.
-            Assert.Equal(report.ObjectsCompared, MissingRelation(2000000002));
-            Assert.Equal(report.ObjectsCompared, MissingRelation(2000000004));
+            // none — on EVERY table, which is why this is against the number of TABLES compared
+            // rather than a constant.
+            //
+            // Tables, not ObjectsCompared: #3782 added PageDefinition to the comparison, so
+            // ObjectsCompared counts pages too and would compare a table-only defect count
+            // against a table+page total. The denominator has to be the population the claim is
+            // about, and it comes from the bundle's own census so a step that adds another kind
+            // cannot silently move it again.
+            var tablesCompared = report.Bundle.Census.GetValueOrDefault("MetaTable");
+            Assert.True(tablesCompared > 0,
+                $"{report.Bundle.Label}: no MetaTable in the bundle, so this test measures nothing.");
+            Assert.Equal(tablesCompared, MissingRelation(2000000002));
+            Assert.Equal(tablesCompared, MissingRelation(2000000004));
 
+            // Table objects only, for the same reason the denominator above is: every claim in
+            // this test is about the TABLE reader, and a page difference sharing a member name
+            // would otherwise be counted as one.
             MetadataDifference[] Declared(string signature) => report.Differences
-                .Where(d => d.Signature == signature && IsDeclaredField(d.Path)).ToArray();
+                .Where(d => d.Signature == signature && IsTableObject(d) && IsDeclaredField(d.Path))
+                .ToArray();
 
             // Still wrong, and wrong the same way on every build: the reader falls back to a
             // constant. Tracked on #3568.
@@ -277,7 +352,8 @@ public sealed class MetadataEquivalenceHarnessTests
     /// </summary>
     private static void AssertReaderAgrees(MetadataEquivalenceReport report, string signature)
     {
-        var differences = report.Differences.Where(d => d.Signature == signature).ToArray();
+        var differences = report.Differences
+            .Where(d => d.Signature == signature && IsTableObject(d)).ToArray();
         Assert.True(differences.Length == 0,
             $"{report.Bundle.Label}: {signature} was fixed by a landed reader change and its " +
             $"allowlist entry deleted with it, so any difference here is a regression. " +
@@ -418,6 +494,15 @@ public sealed class MetadataEquivalenceHarnessTests
             hash = unchecked((hash ^ b) * 16777619);
         return unchecked(hash + int.MaxValue);
     }
+
+    /// <summary>
+    /// A difference about a TABLE. Every claim in
+    /// The_current_reader_reproduces_the_known_defect_shapes is about the table reader, and
+    /// since #3782 the report also carries page differences — some on member names a page
+    /// shares with a table, which would be counted as table defects without this.
+    /// </summary>
+    private static bool IsTableObject(MetadataDifference d)
+        => d.ObjectKey.StartsWith("Table ", StringComparison.Ordinal);
 
     private static bool IsDeclaredField(string path)
     {

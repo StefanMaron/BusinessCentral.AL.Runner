@@ -439,11 +439,168 @@ reachable.
 <a id="what-is-compared"></a>
 ## What is compared, and what is not
 
-The harness compares `MetaTable` documents. A bundle carries every kind BC emitted — codeunits,
-pages, enums, permission sets, queries, reports, xmlports, and the `MetadataRuntimeDeltas`
-documents that cover table, page and permission-set extensions — and
+The harness compares `MetaTable` and `PageDefinition` documents. A bundle carries every kind BC
+emitted — codeunits, pages, enums, permission sets, queries, reports, xmlports, and the
+`MetadataRuntimeDeltas` documents that cover table, page and permission-set extensions — and
 `MetadataEquivalenceHarnessTests` asserts the set it compares AND the set it does not, so
 covering less cannot happen quietly.
+
+**#3782 is the programme that empties the not-compared list**, one kind per pull request, in the
+order that issue records: `PageDefinition` (done), then `CodeUnit`, `Query`, `XmlPort`, `Report`,
+`PermissionSet`, `Enum`, `MetadataRuntimeDeltas`. Each step adds its kind to `ComparedKinds`,
+lands the resulting allowlist with a reason per member, and deletes its kind from the
+`stillUncompared` list in `The_harness_states_which_kinds_it_does_not_compare`.
+
+<a id="the-page-oracle-is-pagedefinition-not-metapagedefinition"></a>
+### The page oracle is `PageDefinition`, not `MetaPageDefinition`
+
+Tables have a factory — `MetaTableSnapshotSerializationHelper.CreateMetaTableFromXml`. Pages have
+none; the reader is a constructor. BC's `Types` assembly ships **two** page types with the same
+public shape, both with a public `(XmlNode)` constructor, and **neither throws** on the emitter's
+own document:
+
+| type | reading the emitter's Page 257 document |
+|---|---|
+| `Microsoft.Dynamics.Nav.Types.Metadata.PageDefinition` | `ID=257`, `Name="Source Codes"`, `Properties` and `Content` populated |
+| `Microsoft.Dynamics.Nav.Types.Metadata.MetaPageDefinition` | `ID=0`, `Name=null`, `Properties=null`, `Content=null` |
+
+Measured on BC 28.1.49838.53910. `MetaPageDefinition` accepts the node and ignores it. Using it
+for both sides compares an empty object against an empty object: 235 pages "compared", **zero**
+differences, and every other test in the file still green, because they all measure
+*differences*. `MetadataEquivalencePageOracleTests` pins the asymmetry in both directions so the
+`Meta`-prefixed type cannot be reached for by analogy with `MetaTable`.
+
+<a id="page-controls-pair-by-id-in-three-spellings"></a>
+### Page control collections pair by id, in all three spellings
+
+The differ pairs collection elements by position by default, because order is meaningful in AL.
+That is wrong for page controls, for a structural reason: BC's `Controls` list holds the page's
+**ordinary field controls** as well as its part controls, and the runner reconstructs only the
+parts. The lists therefore differ in length by construction, and positional pairing shifts every
+element after the first divergence.
+
+Measured before pairing was applied: 12 fabricated `Name` / `ID` / `PagePartID` triples across 7
+System Application pages — page 4312 reporting `InputMessagePart` against `LogsPart`, page 9855
+`Permissions` against `MetadataPermissions`. Not one was a disagreement about any control.
+
+Two things had to be right for pairing to actually engage, and each failed silently on its own:
+
+1. **The id property's spelling.** `MetaField` spells it `Id`; every page control type spells it
+   `ID`, and reflection's name lookup is case-sensitive. `MetadataObjectDiffOptions.IdPropertyNames`
+   now lists both. A collection whose elements have no int id still falls back to position — that
+   is the legitimate answer, and `ControlContainerDefinition` and `ContentDefinition` genuinely
+   have no `ID`.
+2. **The member signature.** BC implements these interfaces *explicitly* and backs each collection
+   with a field, so the differ walks one collection three times and reports it under three
+   signatures — `ControlContainerDefinition.Controls`,
+   `ControlContainerDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaControlContainerDefinition.Controls`,
+   and `ControlContainerDefinition.#controlsField`. `PairByIdMembers` matches on the signature, so
+   all three must be listed; listing only the plain one leaves the other two positional.
+
+<a id="what-the-page-comparison-found"></a>
+### What the page comparison found
+
+235 pages, **32,958 differences across 124 members** on BC 28.1.49838.53910. Two groups, and they
+need different answers:
+
+**First, read the entry count correctly.** The allowlist gains 117 page entries, but **49 of them
+are `#field` / `*Specified` companions** that BC's serializer sets from the same value as the member
+beside them. There are **68 distinct members**, and comparing 117 against the table side's counts
+overstates the page gap.
+
+- **55 entries / 30 distinct members — values `SymbolReference.json` already carries and
+  `EmitPageXml` does not read.** Tracked on **#3784**. This includes the `Actions` (106 pages),
+  `Methods` (107) and `Views` (4) arrays, which are whole objects the runner emits no element for.
+  `Extensible` is the sharpest: the runner hardcodes `"1"`, BC answers `0` on 104 of 235 pages, and
+  the symbol file states `Extensible=0` for **all 104 with zero omissions** — a pure
+  read-don't-guess fix rather than merely a wrong default.
+- **62 entries / 38 distinct members — the ordinary field-control tree the runner does not build
+  today**, plus the translation keys.
+
+<a id="the-control-tree-is-a-cost-decision-not-an-unprovable-one"></a>
+### The control tree is a cost decision, and it has a proof path
+
+**No page entry in the allowlist claims a value is underivable, and that distinction is the point.**
+
+An earlier draft of this document and of the allowlist said the control tree could not be
+reconstructed faithfully, because `SymbolReference.json` stores the binding as AL text (`Rec."No."`)
+while BC's document stores the compiled `DataColumnName`. The first half is true; the conclusion
+drawn from it was wrong, and it would have recorded a live architecture question as settled.
+
+`DataColumnName` **is the field number**, resolvable through table metadata the runner already
+builds, and control ids are identical in both sources — so every derived value is independently
+checkable against the ground truth this harness now provides. Measured on BC 28.1.49838.53910:
+
+| | |
+|---|---|
+| Rec-bound controls whose source table is in the bundle | **442 of 442 exact, 0 wrong** |
+| residual category 1 | field names differing in case or spacing (`Rec."Task Id"` vs `Task ID`) |
+| residual category 2 | controls bound to a page **variable**, which BC names `"Control" + <id of the first control bound to that variable>` — a dedup rule over data the symbol file already carries |
+
+**The resolution machinery already exists and is in use.** `DependencyPageMetadataXml.cs`'s own
+header records that `SubFormLink` field names "ARE resolved (to numeric ids, off the part's own and
+the host's SourceTable — see `EmitSubFormLinkXml`)". The file cited as evidence for impossibility
+does the resolution.
+
+`ControlGUID` is the same shape — a **pure encoding**, not an opaque designer token:
+
+```
+{<pageId:08x>-<ctlId & 0xFFFF:04x>-0000-0c<(ctlId >> 24) & 0xFF:02x>-<(ctlId >> 16) & 0xFF:02x>00836bd2d2}
+```
+
+Page 257, control 791368264 gives `{00000101-5248-0000-0c2f-2b00836bd2d2}`, character for character
+what BC emits: **5,001 of 5,001 exact** on 28.1.49838.53910 and 5,035 of 5,035 on 28.4.53241.54407.
+
+So these are **cost and scope decisions with a proof path**, tracked on #2460 for actions. What the
+entries record is that the work has not been done — never that it could not be.
+
+<a id="one-build-measured-three-evaluated"></a>
+### The allowlist is measured on ONE build and evaluated on THREE
+
+This property is easy to miss and it is load-bearing for every kind #3782 adds. An agent
+generates the allowlist from the bundles on one machine — one BC build. CI then evaluates that
+same file on **three** BC versions per pull request (27.0, 27.5, 28.4) and **eight** on `main`.
+
+A difference exists only if the object carrying it exists on that version **and** declares the
+property shape that produces it, and BC moves both between minors. So an entry can be correct on
+two legs and match nothing on a third — which `No_allowlist_entry_has_gone_stale` reports as a
+stale entry, because from its side "nothing matched" is exactly what a landed fix looks like.
+
+That fired on the first kind added after tables (#3782). Four `InfopartPageDefinition` entries
+passed on 27.0 and 28.4 and failed on 27.5:
+
+| | 27.5 | 28.1 / 28.4 |
+|---|---|---|
+| the only page with a part-control `ProviderID` | 4306 "Agent Tasks" | 8705 "Table Information Card" |
+| does that part declare `Editable`? | **yes**, so the runner matches BC and there is no difference | no, so there is one |
+
+**Deleting the four entries was not the fix** — the differences are real on the other two legs,
+where the harness requires an entry. The allowlist had no way to say "this difference exists on
+some versions and not others".
+
+`versionContingent: true` says it. An entry carrying it is exempt from the **unused** check and
+from nothing else: it is still matched, so it can never hide a difference — a difference it does
+not cover still fails, on every version. It requires a `Doc` pointer for the same reason
+`outOfScope` does, since exempting an entry removes the signal that a landed fix must shrink this
+file.
+
+**It is deliberately not a list of BC versions.** A list has to be edited whenever the matrix
+moves and goes stale silently when it is not — the same defect as the build-keyed count pin that
+went inert in `The_current_reader_reproduces_the_known_defect_shapes`. What the flag declares is a
+*property* of the difference: its population is version-contingent.
+
+**Applied to the population, not to the failure.** 15 of the 117 page entries have a whole
+population of one or two occurrences on the measured build, resting on one or two objects with one
+property shape. The four that failed on 27.5 are the ones that version happened to hit; all 15 are
+marked, so the next six kinds do not rediscover this one leg at a time.
+
+<a id="what-the-page-measurement-does-not-cover"></a>
+### What the page measurement does not cover
+
+**One BC build, two apps.** Base Application's ~4,000 pages are not measured at all: `apps.json`
+excludes it because its emit needs a `PublicKeyToken=null` copy of `Microsoft.AspNetCore.StaticFiles`
+that no BC artifact ships (#3549). None of the figures above is evidence about the pages most AL
+tests actually touch.
 
 **Base Application is not covered.** Its emit needs a `PublicKeyToken=null` copy of
 `Microsoft.AspNetCore.StaticFiles` that no BC artifact ships, and without it BC's emitter

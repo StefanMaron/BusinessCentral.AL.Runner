@@ -26,19 +26,65 @@
     "Nine entries are DIRECTION-SCOPED. An entry covers both directions unless it says otherwise,",
     "and a reason that justifies one direction must not license the other. All three",
     "oracleLimitation entries are runner-only: they exist because the runner shows a merged",
-    "runtime view, so BC-absent / runner-present is what they justify \u2014 while the reverse, BC",
+    "runtime view, so BC-absent / runner-present is what they justify — while the reverse, BC",
     "emitting a field the runner never builds, is a hard reader defect that must still fail.",
     "",
     "There is deliberately NO occurrence cap. One was implemented and used by nothing, which made",
     "the PR claim a ratchet the code did not keep. No entry here has a bound that survives a",
-    "rebuild \u2014 the counts move with the BC build and with which apps are bundled \u2014 so any cap",
+    "rebuild — the counts move with the BC build and with which apps are bundled — so any cap",
     "would be a number nobody measured. Direction narrows categorically instead.",
     "",
     "Measured on BC 28.1.49838.53910 over Business Foundation (12 tables) and System Application",
     "(138 tables): 67,344 differences across 65 members. #3568 removed six of them -- 688",
     "differences on MetaKey.KeyName / Clustered / Unique / SumIndexFields, MetaKey.DebuggerDisplay",
     "and FieldMetadataRelation.Name -- see docs/metadata-equivalence.md#keys. Per-member counts",
-    "and examples are on issue #3568."
+    "and examples are on issue #3568.",
+    "",
+    "PageDefinition was added to the comparison by #3782 step 1, and the 117 entries below are the",
+    "result. Measured on BC 28.1.49838.53910 over Business Foundation and System Application (235",
+    "pages): 32,958 differences across 124 members.",
+    "",
+    "READ THE 117 CAREFULLY: 49 of them are #field / *Specified COMPANION entries, which BC's own",
+    "serializer sets from the same value as the member declared beside them. So there are 68 DISTINCT",
+    "members, not 117, and comparing the raw count against the table side's overstates the page gap.",
+    "",
+    "  issue 3784  55 entries (30 distinct members). Properties SymbolReference.json already carries",
+    "              and EmitPageXml does not read -- including the Actions (106 pages), Methods (107)",
+    "              and Views (4) arrays. Extensible is the sharpest: the runner hardcodes \"1\", BC",
+    "              answers 0 on 104 of 235 pages, and the symbol file states Extensible=0 for ALL 104",
+    "              with zero omissions, so it is a pure read-don't-guess fix.",
+    "  outOfScope  62 entries (38 distinct members). The ordinary field-control tree the runner does",
+    "              not build today, plus the translation keys.",
+    "",
+    "NONE of the outOfScope page entries claims a value is UNDERIVABLE, and that distinction is the",
+    "point. An earlier draft of this file said the control tree could not be proven faithful because",
+    "the symbol file stores AL text rather than the compiled DataColumnName. That was wrong, and it",
+    "would have recorded a live architecture question as settled: DataColumnName IS the field number,",
+    "control ids are identical in both sources, and 442 of 442 Rec-bound controls resolve exactly",
+    "against this harness's ground truth. ControlGUID is likewise a pure encoding of (page id,",
+    "control id) -- 5,001 of 5,001 exact. Both are cost/scope decisions with a proof path, which is",
+    "what these entries now say.",
+    "",
+    "MEASURED ON ONE BC BUILD, EVALUATED ON THREE (eight on main). A difference exists only if the",
+    "object carrying it exists on that version AND declares the property shape that produces it, and",
+    "BC moves both between minors -- so an entry can be correct on two legs and match nothing on a",
+    "third, which the stale-entry check reports as a landed fix. That fired on 27.5 for four",
+    "InfopartPageDefinition entries: the only page with a part-control ProviderID is 4306 'Agent",
+    "Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable",
+    "while 28.x's does not. Deleting them would have broken 27.0 and 28.4, where the differences are",
+    "real.",
+    "",
+    "'versionContingent': true exempts an entry from the UNUSED check and from nothing else -- it is",
+    "still matched, so it can never hide a difference. 15 of the 117 page entries carry it: every one",
+    "whose whole population on the measured build is one or two occurrences, not just the four that",
+    "27.5 happened to hit. See docs/metadata-equivalence.md#one-build-measured-three-evaluated.",
+    "",
+    "Measurement caveat: ONE BC build and TWO apps. Base Application's ~4,000 pages are not measured",
+    "at all -- apps.json excludes it because its emit needs a .NET reference no BC artifact ships",
+    "(#3549) -- so nothing here is evidence about the pages most AL tests actually touch.",
+    "",
+    "The seven pre-existing TranslationKey.* entries already covered the page side without being",
+    "touched: they match on member signature, and pages carry the same TranslationKey type."
   ],
   "differences": [
     {
@@ -85,92 +131,92 @@
     },
     {
       "member": "MetaField.Caption",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.CaptionClass",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.CaptionOriginal",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.CharAllowed",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ClrType",
-      "reason": "BC states the field's real CLR type and the runner states the empty string on all 1,888 fields. ClrType is not an XML attribute at all \u2014 BC derives it itself \u2014 and it is a PURE FUNCTION of Datatype, which the symbol file does carry and the runner already reads: measured over 988 observations, all 16 Datatypes map to exactly one ClrType each (BigInteger->System.Int64, GUID->System.Guid, Code/Text/DateFormula->System.String, Option/Integer->System.Int32, BLOB/RecordID->System.Byte[], Media->NSMediaWrapper, and so on). Recoverable with no app data.",
+      "reason": "BC states the field's real CLR type and the runner states the empty string on all 1,888 fields. ClrType is not an XML attribute at all — BC derives it itself — and it is a PURE FUNCTION of Datatype, which the symbol file does carry and the runner already reads: measured over 988 observations, all 16 Datatypes map to exactly one ClrType each (BigInteger->System.Int64, GUID->System.Guid, Code/Text/DateFormula->System.String, Option/Integer->System.Int32, BLOB/RecordID->System.Byte[], Media->NSMediaWrapper, and so on). Recoverable with no app data.",
       "issue": 3568
     },
     {
       "member": "MetaField.EnumTypeName",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ExternalName",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ExternalType",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ObsoleteReason",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.OptionCaption",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.OptionCaptionOriginal",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ToolTip",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ToolTipOriginal",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.ValuesAllowed",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.MaxValue",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.MinValue",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.OptionString",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
       "member": "MetaField.InitValue",
-      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done \u2014 which is why it is declared rather than dismissed.",
+      "reason": "BC leaves this null on a field that declares nothing; the runner's MetaField constructor supplies the empty string. Same value in every AL-observable sense as far as anyone has checked, and that check has not been done — which is why it is declared rather than dismissed.",
       "issue": 3568
     },
     {
@@ -180,7 +226,7 @@
     },
     {
       "member": "MetaField.CaptionML.<presence>",
-      "reason": "BC builds a MultiLanguage caption for the field; the runner builds none. The symbol file carries Caption (2,743 occurrences in System Application) \u2014 the MultiLanguage object is its runtime form. Direction-scoped to BC-present / runner-absent; the runner inventing a caption BC does not have is a different defect.",
+      "reason": "BC builds a MultiLanguage caption for the field; the runner builds none. The symbol file carries Caption (2,743 occurrences in System Application) — the MultiLanguage object is its runtime form. Direction-scoped to BC-present / runner-absent; the runner inventing a caption BC does not have is a different defect.",
       "issue": 3568,
       "direction": "bc-only"
     },
@@ -201,7 +247,7 @@
     },
     {
       "member": "MetaField.Relations.<presence>",
-      "reason": "BC gives SystemCreatedBy and SystemModifiedBy a TableRelation to User (2000000120); the runner gives them none. This is the difference already observable from plain AL as FieldRef.Relation() answering 0 \u2014 see #3549. Direction-scoped to BC-present / runner-absent; the runner inventing a relation BC does not have would be a different defect and is not covered.",
+      "reason": "BC gives SystemCreatedBy and SystemModifiedBy a TableRelation to User (2000000120); the runner gives them none. This is the difference already observable from plain AL as FieldRef.Relation() answering 0 — see #3549. Direction-scoped to BC-present / runner-absent; the runner inventing a relation BC does not have would be a different defect and is not covered.",
       "issue": 3568,
       "direction": "bc-only"
     },
@@ -217,7 +263,7 @@
     },
     {
       "member": "MetaKey.Name",
-      "reason": "BC derives this as the POSITIONAL FIELD SPEC over field ids (\"Field1,Field2\"), not as a name anyone declared, and NCLMetaKey.CreateFromMetaKey never passes it \u2014 the declared AL name travels as MetaKey.KeyName, which the reader now states (#3568). So no AL surface can observe this member, and the runner keeps its own spelling rather than reproducing a spec BC regenerates. Superseded reason, recorded because it hid a real defect: this used to read \"two different naming schemes\", and MetaKey.KeyName was declared as \"the same disagreement on the second of the two name properties\". That was wrong \u2014 KeyName is the DECLARED name, the symbol file states it verbatim, and it reaches AL through ObsolescenceGuard.ThrowIfObsoleted.",
+      "reason": "BC derives this as the POSITIONAL FIELD SPEC over field ids (\"Field1,Field2\"), not as a name anyone declared, and NCLMetaKey.CreateFromMetaKey never passes it — the declared AL name travels as MetaKey.KeyName, which the reader now states (#3568). So no AL surface can observe this member, and the runner keeps its own spelling rather than reproducing a spec BC regenerates. Superseded reason, recorded because it hid a real defect: this used to read \"two different naming schemes\", and MetaKey.KeyName was declared as \"the same disagreement on the second of the two name properties\". That was wrong — KeyName is the DECLARED name, the symbol file states it verbatim, and it reaches AL through ObsolescenceGuard.ThrowIfObsoleted.",
       "issue": 3568
     },
     {
@@ -269,7 +315,7 @@
     },
     {
       "member": "MetaTable.Fields.<presence>",
-      "reason": "The runner models the MERGED RUNTIME state a running system has \u2014 every registered app's tableextension fields present on the base table. The ground truth is BC's BUILD-TIME per-app emit, which by construction sees only the app being compiled. Two different things, so this is a limitation of the oracle and not evidence about the runner: 115 fields on four Business Foundation tables (230, 242, 308, 6635). In BC 29 everything is merged at database level anyway, which makes the runner's merged view the forward-looking one. CONSEQUENCE: a multi-app bundle can never produce an empty diff, so a non-empty diff here is expected and must not be read as noise or as a bug. DIRECTION-SCOPED: covers only BC-absent / runner-present, which is the merged-runtime direction this reason justifies. The reverse \u2014 BC emitted a field and the runner built none \u2014 is a hard reader defect and is NOT covered.",
+      "reason": "The runner models the MERGED RUNTIME state a running system has — every registered app's tableextension fields present on the base table. The ground truth is BC's BUILD-TIME per-app emit, which by construction sees only the app being compiled. Two different things, so this is a limitation of the oracle and not evidence about the runner: 115 fields on four Business Foundation tables (230, 242, 308, 6635). In BC 29 everything is merged at database level anyway, which makes the runner's merged view the forward-looking one. CONSEQUENCE: a multi-app bundle can never produce an empty diff, so a non-empty diff here is expected and must not be read as noise or as a bug. DIRECTION-SCOPED: covers only BC-absent / runner-present, which is the merged-runtime direction this reason justifies. The reverse — BC emitted a field and the runner built none — is a hard reader defect and is NOT covered.",
       "oracleLimitation": true,
       "Doc": "docs/metadata-equivalence.md#the-oracle-is-build-time-per-app-metadata",
       "direction": "runner-only"
@@ -384,6 +430,675 @@
       "member": "MetaField.BlobSubType",
       "reason": "BC states the declared BLOB subtype (Bitmap); the runner answers UserDefined.",
       "issue": 3568
+    },
+    {
+      "member": "ContentDefinition.#containersField.<presence>",
+      "reason": "The page's control tree, which the runner does not reconstruct TODAY. A cost and scope decision, not a limit of the symbol file, and deliberately not a claim that the values cannot be obtained: SymbolReference.json carries the control tree with its SourceExpression as AL text (Rec.\"No.\"), while BC's document carries the compiled DataColumnName -- which IS the field number, resolvable through table metadata the runner already builds. Measured with this harness's own ground truth on BC 28.1.49838.53910: every Rec-bound control whose source table is in the bundle resolves exactly, 442 of 442 with zero wrong numbers, the residuals being two understood normalisation categories (field names differing in case or spacing, and controls bound to a page VARIABLE, which BC names \"Control\" + the id of the first control bound to that variable). Control ids are identical in both sources, so each derived value is independently checkable against the ground truth. The resolution machinery already exists and is in use -- EmitSubFormLinkXml resolves SubFormLink field names to numeric ids off the part's and the host's SourceTable. What is missing is the work, tracked on #2460 for actions; this entry records that it has not been done, never that it could not be.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "ContentDefinition.Containers.<presence>",
+      "reason": "The page's control tree, which the runner does not reconstruct TODAY. A cost and scope decision, not a limit of the symbol file, and deliberately not a claim that the values cannot be obtained: SymbolReference.json carries the control tree with its SourceExpression as AL text (Rec.\"No.\"), while BC's document carries the compiled DataColumnName -- which IS the field number, resolvable through table metadata the runner already builds. Measured with this harness's own ground truth on BC 28.1.49838.53910: every Rec-bound control whose source table is in the bundle resolves exactly, 442 of 442 with zero wrong numbers, the residuals being two understood normalisation categories (field names differing in case or spacing, and controls bound to a page VARIABLE, which BC names \"Control\" + the id of the first control bound to that variable). Control ids are identical in both sources, so each derived value is independently checkable against the ground truth. The resolution machinery already exists and is in use -- EmitSubFormLinkXml resolves SubFormLink field names to numeric ids off the part's and the host's SourceTable. What is missing is the work, tracked on #2460 for actions; this entry records that it has not been done, never that it could not be.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "ContentDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaContentDefinition.Containers.<presence>",
+      "reason": "The page's control tree, which the runner does not reconstruct TODAY. A cost and scope decision, not a limit of the symbol file, and deliberately not a claim that the values cannot be obtained: SymbolReference.json carries the control tree with its SourceExpression as AL text (Rec.\"No.\"), while BC's document carries the compiled DataColumnName -- which IS the field number, resolvable through table metadata the runner already builds. Measured with this harness's own ground truth on BC 28.1.49838.53910: every Rec-bound control whose source table is in the bundle resolves exactly, 442 of 442 with zero wrong numbers, the residuals being two understood normalisation categories (field names differing in case or spacing, and controls bound to a page VARIABLE, which BC names \"Control\" + the id of the first control bound to that variable). Control ids are identical in both sources, so each derived value is independently checkable against the ground truth. The resolution machinery already exists and is in use -- EmitSubFormLinkXml resolves SubFormLink field names to numeric ids off the part's and the host's SourceTable. What is missing is the work, tracked on #2460 for actions; this entry records that it has not been done, never that it could not be.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "ControlContainerDefinition.#containerTypeField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
+      "versionContingent": true
+    },
+    {
+      "member": "ControlContainerDefinition.#controlsField.<presence>",
+      "reason": "The page's control tree, which the runner does not reconstruct TODAY. A cost and scope decision, not a limit of the symbol file, and deliberately not a claim that the values cannot be obtained: SymbolReference.json carries the control tree with its SourceExpression as AL text (Rec.\"No.\"), while BC's document carries the compiled DataColumnName -- which IS the field number, resolvable through table metadata the runner already builds. Measured with this harness's own ground truth on BC 28.1.49838.53910: every Rec-bound control whose source table is in the bundle resolves exactly, 442 of 442 with zero wrong numbers, the residuals being two understood normalisation categories (field names differing in case or spacing, and controls bound to a page VARIABLE, which BC names \"Control\" + the id of the first control bound to that variable). Control ids are identical in both sources, so each derived value is independently checkable against the ground truth. The resolution machinery already exists and is in use -- EmitSubFormLinkXml resolves SubFormLink field names to numeric ids off the part's and the host's SourceTable. What is missing is the work, tracked on #2460 for actions; this entry records that it has not been done, never that it could not be.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "ControlContainerDefinition.ContainerType",
+      "reason": "The container the page's controls sit in. The runner emits one ContentArea container to hold the parts it does reconstruct (EmitPartControlXml); BC states the real area for the real tree. The same control-tree boundary as the Controls entries. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
+      "versionContingent": true
+    },
+    {
+      "member": "ControlContainerDefinition.Controls.<presence>",
+      "reason": "The page's control tree, which the runner does not reconstruct TODAY. A cost and scope decision, not a limit of the symbol file, and deliberately not a claim that the values cannot be obtained: SymbolReference.json carries the control tree with its SourceExpression as AL text (Rec.\"No.\"), while BC's document carries the compiled DataColumnName -- which IS the field number, resolvable through table metadata the runner already builds. Measured with this harness's own ground truth on BC 28.1.49838.53910: every Rec-bound control whose source table is in the bundle resolves exactly, 442 of 442 with zero wrong numbers, the residuals being two understood normalisation categories (field names differing in case or spacing, and controls bound to a page VARIABLE, which BC names \"Control\" + the id of the first control bound to that variable). Control ids are identical in both sources, so each derived value is independently checkable against the ground truth. The resolution machinery already exists and is in use -- EmitSubFormLinkXml resolves SubFormLink field names to numeric ids off the part's and the host's SourceTable. What is missing is the work, tracked on #2460 for actions; this entry records that it has not been done, never that it could not be.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "ControlContainerDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaControlContainerDefinition.Controls.<presence>",
+      "reason": "The page's control tree, which the runner does not reconstruct TODAY. A cost and scope decision, not a limit of the symbol file, and deliberately not a claim that the values cannot be obtained: SymbolReference.json carries the control tree with its SourceExpression as AL text (Rec.\"No.\"), while BC's document carries the compiled DataColumnName -- which IS the field number, resolvable through table metadata the runner already builds. Measured with this harness's own ground truth on BC 28.1.49838.53910: every Rec-bound control whose source table is in the bundle resolves exactly, 442 of 442 with zero wrong numbers, the residuals being two understood normalisation categories (field names differing in case or spacing, and controls bound to a page VARIABLE, which BC names \"Control\" + the id of the first control bound to that variable). Control ids are identical in both sources, so each derived value is independently checkable against the ground truth. The resolution machinery already exists and is in use -- EmitSubFormLinkXml resolves SubFormLink field names to numeric ids off the part's and the host's SourceTable. What is missing is the work, tracked on #2460 for actions; this entry records that it has not been done, never that it could not be.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "FilterDefinition.#filterValueField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "FilterDefinition.FilterValue",
+      "reason": "A SubFormLink filter value. The runner normalises const(...)/filter(...) values to the compiler's representation (EmitSubFormLinkXml) but keeps AL's quoting, so a GUID arrives as '00000000-...' against BC's unquoted 00000000-.... The quoting sits in the emitter's normalisation, not in what the link resolves to: MockTestPage.SubPageLinks consumes the FieldID/FilterType/FilterValue triple and both forms resolve the same rows.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "InfopartPageDefinition.#applicationAreaField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies InfopartPageDefinition.ApplicationArea, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "InfopartPageDefinition.#editableField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies InfopartPageDefinition.Editable, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "InfopartPageDefinition.#providerIDField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
+      "versionContingent": true
+    },
+    {
+      "member": "InfopartPageDefinition.#runObjectSrcTableField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "InfopartPageDefinition.#showFilterField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies InfopartPageDefinition.ShowFilter, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "InfopartPageDefinition.#updatePropagationField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "InfopartPageDefinition.AboutTextML.<presence>",
+      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "InfopartPageDefinition.AboutTextMLString",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 21 pages declare AboutText, including on parts; EmitPartControlXml writes no AboutText. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "InfopartPageDefinition.AboutTextTranslationKey",
+      "reason": "A translation-file lookup id for a page-level property. Same boundary as the seven TranslationKey.* entries already in this file and for the same measured reason: the runner reads no .xlf or Translations/ resources anywhere, so a key it could state would address a file it never opens. Separately derivable rather than impossible -- the FNV-1a-32 construction in TranslationKeysAreDerivable_NotAPermanentLimit reproduces BC's own keys -- so this is a scope boundary that the runner gaining translation support invalidates.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "InfopartPageDefinition.AboutTitleML.<presence>",
+      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "InfopartPageDefinition.AboutTitleMLString",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 21 pages declare AboutTitle, including on parts; EmitPartControlXml writes no AboutTitle. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "InfopartPageDefinition.AboutTitleTranslationKey",
+      "reason": "A translation-file lookup id for a page-level property. Same boundary as the seven TranslationKey.* entries already in this file and for the same measured reason: the runner reads no .xlf or Translations/ resources anywhere, so a key it could state would address a file it never opens. Separately derivable rather than impossible -- the FNV-1a-32 construction in TranslationKeysAreDerivable_NotAPermanentLimit reproduces BC's own keys -- so this is a scope boundary that the runner gaining translation support invalidates.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "InfopartPageDefinition.ApplicationArea",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 112 pages declare ApplicationArea, including on their part controls; EmitPartControlXml writes no ApplicationArea attribute. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "InfopartPageDefinition.CaptionTranslationKey",
+      "reason": "A translation-file lookup id for a page-level property. Same boundary as the seven TranslationKey.* entries already in this file and for the same measured reason: the runner reads no .xlf or Translations/ resources anywhere, so a key it could state would address a file it never opens. Separately derivable rather than impossible -- the FNV-1a-32 construction in TranslationKeysAreDerivable_NotAPermanentLimit reproduces BC's own keys -- so this is a scope boundary that the runner gaining translation support invalidates.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "InfopartPageDefinition.ControlGUID",
+      "reason": "A deterministic ENCODING of the page id and the control id, not an opaque designer token. Verified exactly on this harness's own ground truth: 5,001 of 5,001 control GUIDs across both apps on BC 28.1.49838.53910 (and 5,035 of 5,035 on 28.4.53241.54407) are reproduced character-for-character by   {<pageId:08x>-<ctlId & 0xFFFF:04x>-0000-0c<(ctlId >> 24) & 0xFF:02x>-<(ctlId >> 16) & 0xFF:02x>00836bd2d2} -- e.g. page 257 control 791368264 gives {00000101-5248-0000-0c2f-2b00836bd2d2}. Both inputs are in SymbolReference.json, so this is computable rather than unavailable. It is declared here because the runner emits no control tree for these ids to belong to (see the Controls entries), and it becomes a gap to close the moment it does -- NOT because the value cannot be derived.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "InfopartPageDefinition.Editable",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 113 pages declare Editable; EmitPartControlXml does not carry it onto the part control. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "issue": 3784,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
+    },
+    {
+      "member": "InfopartPageDefinition.ProviderID",
+      "reason": "The control that PROVIDES a part's data in the designer's provider/consumer wiring. It names a control id inside the host page's real control tree, which the runner does not reconstruct. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
+      "versionContingent": true
+    },
+    {
+      "member": "InfopartPageDefinition.ProviderIDSpecified",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
+      "versionContingent": true
+    },
+    {
+      "member": "InfopartPageDefinition.RunObjectSrcTable",
+      "reason": "The source table of the object a part control RUNS, which BC resolves by looking the target page up. The runner emits the part's PagePartID and lets BC's own metadata merge resolve the rest; resolving it here would duplicate that resolution in the emitter.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "InfopartPageDefinition.RunObjectSrcTableSpecified",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "InfopartPageDefinition.ShowFilter",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 26 pages declare ShowFilter; EmitPartControlXml writes no ShowFilter attribute, so the part answers the type default. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "InfopartPageDefinition.UpdatePropagation",
+      "reason": "How an update on the part propagates to its host. BC states it for the parts whose AL declares it; EmitPartControlXml writes the part's link and identity only. The same control-tree boundary.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "InfopartPageDefinition.UpdatePropagationSpecified",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "InfopartPageDefinition.Visible",
+      "reason": "The part's Visible EXPRESSION. BC's emitter rewrites the AL expression into its compiled form -- p12p12HasAttachments against the runner's HasAttachments -- so both sides carry the same expression in two notations. Rewriting AL expression text into the compiler's mangled form is the re-implementation #3491 exists about; the runner passes the AL text through.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageDefinition.#actionContainersField.<presence>",
+      "reason": "Page actions. SymbolReference.json carries an Actions array on 106 of the 235 pages measured, with their properties, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ActionContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
+      "issue": 3784
+    },
+    {
+      "member": "PageDefinition.#expressionsField.<presence>",
+      "reason": "The page's control tree, which the runner does not reconstruct TODAY. A cost and scope decision, not a limit of the symbol file, and deliberately not a claim that the values cannot be obtained: SymbolReference.json carries the control tree with its SourceExpression as AL text (Rec.\"No.\"), while BC's document carries the compiled DataColumnName -- which IS the field number, resolvable through table metadata the runner already builds. Measured with this harness's own ground truth on BC 28.1.49838.53910: every Rec-bound control whose source table is in the bundle resolves exactly, 442 of 442 with zero wrong numbers, the residuals being two understood normalisation categories (field names differing in case or spacing, and controls bound to a page VARIABLE, which BC names \"Control\" + the id of the first control bound to that variable). Control ids are identical in both sources, so each derived value is independently checkable against the ground truth. The resolution machinery already exists and is in use -- EmitSubFormLinkXml resolves SubFormLink field names to numeric ids off the part's and the host's SourceTable. What is missing is the work, tracked on #2460 for actions; this entry records that it has not been done, never that it could not be.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageDefinition.#methodsField.<presence>",
+      "reason": "Page methods. SymbolReference.json carries a Methods array on 107 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <Methods> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
+      "issue": 3784
+    },
+    {
+      "member": "PageDefinition.#triggersField.<presence>",
+      "reason": "The page's control tree, which the runner does not reconstruct TODAY. A cost and scope decision, not a limit of the symbol file, and deliberately not a claim that the values cannot be obtained: SymbolReference.json carries the control tree with its SourceExpression as AL text (Rec.\"No.\"), while BC's document carries the compiled DataColumnName -- which IS the field number, resolvable through table metadata the runner already builds. Measured with this harness's own ground truth on BC 28.1.49838.53910: every Rec-bound control whose source table is in the bundle resolves exactly, 442 of 442 with zero wrong numbers, the residuals being two understood normalisation categories (field names differing in case or spacing, and controls bound to a page VARIABLE, which BC names \"Control\" + the id of the first control bound to that variable). Control ids are identical in both sources, so each derived value is independently checkable against the ground truth. The resolution machinery already exists and is in use -- EmitSubFormLinkXml resolves SubFormLink field names to numeric ids off the part's and the host's SourceTable. What is missing is the work, tracked on #2460 for actions; this entry records that it has not been done, never that it could not be.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageDefinition.#viewContainersField.<presence>",
+      "reason": "Page views. SymbolReference.json carries a Views array on 4 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ViewContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
+      "issue": 3784
+    },
+    {
+      "member": "PageDefinition.ALNamespace",
+      "reason": "The AL namespace the page is declared in. BC's emitter writes it from the compilation's own namespace tree; SymbolReference.json groups objects under Namespaces but the runner's PageSymbol slice does not carry the name back, and no AL surface the runner supports reads a page's namespace.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageDefinition.ActionContainers.<presence>",
+      "reason": "Page actions. SymbolReference.json carries an Actions array on 106 of the 235 pages measured, with their properties, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ActionContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
+      "issue": 3784
+    },
+    {
+      "member": "PageDefinition.CaptionML.<presence>",
+      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageDefinition.CaptionMLString",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 185 pages declare Caption and the runner writes CaptionML only for those, while BC's emitter states a caption on 196 -- so the gap is both the unread property and the cases where BC derives one the symbol file does not spell out. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "PageDefinition.CaptionTranslationKey",
+      "reason": "A translation-file lookup id for a page-level property. Same boundary as the seven TranslationKey.* entries already in this file and for the same measured reason: the runner reads no .xlf or Translations/ resources anywhere, so a key it could state would address a file it never opens. Separately derivable rather than impossible -- the FNV-1a-32 construction in TranslationKeysAreDerivable_NotAPermanentLimit reproduces BC's own keys -- so this is a scope boundary that the runner gaining translation support invalidates.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "PageDefinition.Expressions.<presence>",
+      "reason": "The page's control tree, which the runner does not reconstruct TODAY. A cost and scope decision, not a limit of the symbol file, and deliberately not a claim that the values cannot be obtained: SymbolReference.json carries the control tree with its SourceExpression as AL text (Rec.\"No.\"), while BC's document carries the compiled DataColumnName -- which IS the field number, resolvable through table metadata the runner already builds. Measured with this harness's own ground truth on BC 28.1.49838.53910: every Rec-bound control whose source table is in the bundle resolves exactly, 442 of 442 with zero wrong numbers, the residuals being two understood normalisation categories (field names differing in case or spacing, and controls bound to a page VARIABLE, which BC names \"Control\" + the id of the first control bound to that variable). Control ids are identical in both sources, so each derived value is independently checkable against the ground truth. The resolution machinery already exists and is in use -- EmitSubFormLinkXml resolves SubFormLink field names to numeric ids off the part's and the host's SourceTable. What is missing is the work, tracked on #2460 for actions; this entry records that it has not been done, never that it could not be.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageDefinition.Methods.<presence>",
+      "reason": "Page methods. SymbolReference.json carries a Methods array on 107 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <Methods> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
+      "issue": 3784
+    },
+    {
+      "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.ActionContainers.<presence>",
+      "reason": "Page actions. SymbolReference.json carries an Actions array on 106 of the 235 pages measured, with their properties, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ActionContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
+      "issue": 3784
+    },
+    {
+      "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.Expressions.<presence>",
+      "reason": "The page's control tree, which the runner does not reconstruct TODAY. A cost and scope decision, not a limit of the symbol file, and deliberately not a claim that the values cannot be obtained: SymbolReference.json carries the control tree with its SourceExpression as AL text (Rec.\"No.\"), while BC's document carries the compiled DataColumnName -- which IS the field number, resolvable through table metadata the runner already builds. Measured with this harness's own ground truth on BC 28.1.49838.53910: every Rec-bound control whose source table is in the bundle resolves exactly, 442 of 442 with zero wrong numbers, the residuals being two understood normalisation categories (field names differing in case or spacing, and controls bound to a page VARIABLE, which BC names \"Control\" + the id of the first control bound to that variable). Control ids are identical in both sources, so each derived value is independently checkable against the ground truth. The resolution machinery already exists and is in use -- EmitSubFormLinkXml resolves SubFormLink field names to numeric ids off the part's and the host's SourceTable. What is missing is the work, tracked on #2460 for actions; this entry records that it has not been done, never that it could not be.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.Methods.<presence>",
+      "reason": "Page methods. SymbolReference.json carries a Methods array on 107 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <Methods> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
+      "issue": 3784
+    },
+    {
+      "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.Triggers.<presence>",
+      "reason": "The page's control tree, which the runner does not reconstruct TODAY. A cost and scope decision, not a limit of the symbol file, and deliberately not a claim that the values cannot be obtained: SymbolReference.json carries the control tree with its SourceExpression as AL text (Rec.\"No.\"), while BC's document carries the compiled DataColumnName -- which IS the field number, resolvable through table metadata the runner already builds. Measured with this harness's own ground truth on BC 28.1.49838.53910: every Rec-bound control whose source table is in the bundle resolves exactly, 442 of 442 with zero wrong numbers, the residuals being two understood normalisation categories (field names differing in case or spacing, and controls bound to a page VARIABLE, which BC names \"Control\" + the id of the first control bound to that variable). Control ids are identical in both sources, so each derived value is independently checkable against the ground truth. The resolution machinery already exists and is in use -- EmitSubFormLinkXml resolves SubFormLink field names to numeric ids off the part's and the host's SourceTable. What is missing is the work, tracked on #2460 for actions; this entry records that it has not been done, never that it could not be.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageDefinition.Microsoft.Dynamics.Nav.Types.Metadata.IMetaPageDefinition.ViewContainers.<presence>",
+      "reason": "Page views. SymbolReference.json carries a Views array on 4 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ViewContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
+      "issue": 3784
+    },
+    {
+      "member": "PageDefinition.Triggers.<presence>",
+      "reason": "The page's control tree, which the runner does not reconstruct TODAY. A cost and scope decision, not a limit of the symbol file, and deliberately not a claim that the values cannot be obtained: SymbolReference.json carries the control tree with its SourceExpression as AL text (Rec.\"No.\"), while BC's document carries the compiled DataColumnName -- which IS the field number, resolvable through table metadata the runner already builds. Measured with this harness's own ground truth on BC 28.1.49838.53910: every Rec-bound control whose source table is in the bundle resolves exactly, 442 of 442 with zero wrong numbers, the residuals being two understood normalisation categories (field names differing in case or spacing, and controls bound to a page VARIABLE, which BC names \"Control\" + the id of the first control bound to that variable). Control ids are identical in both sources, so each derived value is independently checkable against the ground truth. The resolution machinery already exists and is in use -- EmitSubFormLinkXml resolves SubFormLink field names to numeric ids off the part's and the host's SourceTable. What is missing is the work, tracked on #2460 for actions; this entry records that it has not been done, never that it could not be.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageDefinition.ViewContainers.<presence>",
+      "reason": "Page views. SymbolReference.json carries a Views array on 4 of the 235 pages measured, so this is a datum the runner has and does not read. Reclassified from a scope boundary to a gap: EmitPageXml emits no <ViewContainers> element at all, and the values are present, typed and unambiguous in the symbol file the runner already parses for this page. Tracked on #3784. Distinct from the ordinary field-control tree declared beside it, whose bindings need the DataColumnName resolution step.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.#aPIVersionField",
+      "reason": "The API version of an API page. Emitted by BC for the one API page in the bundle and absent from SymbolReference.json; API pages are a web-service publishing surface, which docs/scope.md places out of scope. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
+      "versionContingent": true
+    },
+    {
+      "member": "PageProperties.#aboutTextMLField.<presence>",
+      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.#aboutTitleMLField.<presence>",
+      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.#actionsV2Field",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.#additionalSearchTermsMLField.<presence>",
+      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.#analysisModeEnabledField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.AnalysisModeEnabled, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "issue": 3784,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
+    },
+    {
+      "member": "PageProperties.#cardFormIDField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.CardFormID, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.#controlGUIDField",
+      "reason": "A deterministic ENCODING of the page id and the control id, not an opaque designer token. Verified exactly on this harness's own ground truth: 5,001 of 5,001 control GUIDs across both apps on BC 28.1.49838.53910 (and 5,035 of 5,035 on 28.4.53241.54407) are reproduced character-for-character by   {<pageId:08x>-<ctlId & 0xFFFF:04x>-0000-0c<(ctlId >> 24) & 0xFF:02x>-<(ctlId >> 16) & 0xFF:02x>00836bd2d2} -- e.g. page 257 control 791368264 gives {00000101-5248-0000-0c2f-2b00836bd2d2}. Both inputs are in SymbolReference.json, so this is computable rather than unavailable. It is declared here because the runner emits no control tree for these ids to belong to (see the Controls entries), and it becomes a gap to close the moment it does -- NOT because the value cannot be derived.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.#dataCaptionExprField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.DataCaptionExpr, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.#extensibleField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.Extensible, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.#extensionsWithPromotedActionSyntaxField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.#helpLinkField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.HelpLink, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.#inherentEntitlementsField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.InherentEntitlements, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.#inherentPermissionsField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.InherentPermissions, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.#instructionalTextMLField.<presence>",
+      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.#isPreviewField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
+      "versionContingent": true
+    },
+    {
+      "member": "PageProperties.#onAfterGetCurrentRecordEnabledField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.#queryCategoryField",
+      "reason": "BC's emitter writes QueryCategory=\"\" on every page and the runner writes no attribute, so this is <empty> against <null> on all 235. Nothing AL-observable distinguishes them: both reach AL only through a NavText, and NavText.CreateTruncated collapses null and \"\" -- the same collapse the table side measured for 18 members and 32,168 differences.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.#refreshOnActivateField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.RefreshOnActivate, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.#usageCategoryField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.UsageCategory, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.AboutTextML.<presence>",
+      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.AboutTextMLString",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 21 pages declare AboutText; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.AboutTextTranslationKey",
+      "reason": "A translation-file lookup id for a page-level property. Same boundary as the seven TranslationKey.* entries already in this file and for the same measured reason: the runner reads no .xlf or Translations/ resources anywhere, so a key it could state would address a file it never opens. Separately derivable rather than impossible -- the FNV-1a-32 construction in TranslationKeysAreDerivable_NotAPermanentLimit reproduces BC's own keys -- so this is a scope boundary that the runner gaining translation support invalidates.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "PageProperties.AboutTitleML.<presence>",
+      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.AboutTitleMLString",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 21 pages declare AboutTitle; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.AboutTitleTranslationKey",
+      "reason": "A translation-file lookup id for a page-level property. Same boundary as the seven TranslationKey.* entries already in this file and for the same measured reason: the runner reads no .xlf or Translations/ resources anywhere, so a key it could state would address a file it never opens. Separately derivable rather than impossible -- the FNV-1a-32 construction in TranslationKeysAreDerivable_NotAPermanentLimit reproduces BC's own keys -- so this is a scope boundary that the runner gaining translation support invalidates.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "PageProperties.ActionsV2",
+      "reason": "Set by BC's emitter on every page it compiles, marking the modern action syntax. It describes the emitter's own output shape rather than anything the AL declares, and SymbolReference.json states nothing about it.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.AdditionalSearchTermsML.<presence>",
+      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.AdditionalSearchTermsMLString",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 27 pages declare AdditionalSearchTerms; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.AdditionalSearchTermsTranslationKey",
+      "reason": "A translation-file lookup id for a page-level property. Same boundary as the seven TranslationKey.* entries already in this file and for the same measured reason: the runner reads no .xlf or Translations/ resources anywhere, so a key it could state would address a file it never opens. Separately derivable rather than impossible -- the FNV-1a-32 construction in TranslationKeysAreDerivable_NotAPermanentLimit reproduces BC's own keys -- so this is a scope boundary that the runner gaining translation support invalidates.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "PageProperties.AnalysisModeEnabled",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 1 page declares AnalysisModeEnabled; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "issue": 3784,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
+    },
+    {
+      "member": "PageProperties.CardFormID",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 9 pages declare CardPageId; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.CardFormIDSpecified",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.CardFormID, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.ControlGUID",
+      "reason": "A deterministic ENCODING of the page id and the control id, not an opaque designer token. Verified exactly on this harness's own ground truth: 5,001 of 5,001 control GUIDs across both apps on BC 28.1.49838.53910 (and 5,035 of 5,035 on 28.4.53241.54407) are reproduced character-for-character by   {<pageId:08x>-<ctlId & 0xFFFF:04x>-0000-0c<(ctlId >> 24) & 0xFF:02x>-<(ctlId >> 16) & 0xFF:02x>00836bd2d2} -- e.g. page 257 control 791368264 gives {00000101-5248-0000-0c2f-2b00836bd2d2}. Both inputs are in SymbolReference.json, so this is computable rather than unavailable. It is declared here because the runner emits no control tree for these ids to belong to (see the Controls entries), and it becomes a gap to close the moment it does -- NOT because the value cannot be derived.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.DataCaptionExpr",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 31 pages declare DataCaptionExpression; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.EntityCaptionTranslationKey",
+      "reason": "A translation-file lookup id for a page-level property. Same boundary as the seven TranslationKey.* entries already in this file and for the same measured reason: the runner reads no .xlf or Translations/ resources anywhere, so a key it could state would address a file it never opens. Separately derivable rather than impossible -- the FNV-1a-32 construction in TranslationKeysAreDerivable_NotAPermanentLimit reproduces BC's own keys -- so this is a scope boundary that the runner gaining translation support invalidates.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "PageProperties.EntitySetCaptionTranslationKey",
+      "reason": "A translation-file lookup id for a page-level property. Same boundary as the seven TranslationKey.* entries already in this file and for the same measured reason: the runner reads no .xlf or Translations/ resources anywhere, so a key it could state would address a file it never opens. Separately derivable rather than impossible -- the FNV-1a-32 construction in TranslationKeysAreDerivable_NotAPermanentLimit reproduces BC's own keys -- so this is a scope boundary that the runner gaining translation support invalidates.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "PageProperties.Extensible",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 124 pages declare Extensible and the runner hardcodes the attribute to \"1\", so BC answers False on 104 of 235 pages. A wrong answer rather than a missing one. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.ExtensionsWithPromotedActionSyntax",
+      "reason": "The set of extension app ids whose pageextensions use promoted-action syntax against this page. A property of the MERGED runtime view across installed extensions, which the build-time per-app oracle documents from the compiler's side while the runner emits a per-app document -- the same class as the merged-runtime entries the table side already declares.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.HelpLink",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 6 pages declare HelpLink and BC states a default for the rest; the runner never writes the attribute at all. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.InherentEntitlements",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 91 pages declare InherentEntitlements; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.InherentEntitlementsSpecified",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.InherentEntitlements, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.InherentPermissions",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 89 pages declare InherentPermissions; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.InherentPermissionsSpecified",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.InherentPermissions, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.InstructionalTextML.<presence>",
+      "reason": "A multi-language caption element the runner emits only when the symbol file states that property. BC's emitter writes the element whenever the AL declares the property, including where its resolved value is empty, so BC-present / runner-null is the same scope boundary as the *MLString member declared beside it: the runner reads no translation resources at all (docs/limitations.md), so the only language it could ever state is the one already in the symbol file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.InstructionalTextMLString",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 6 pages declare InstructionalText; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.InstructionalTextTranslationKey",
+      "reason": "A translation-file lookup id for a page-level property. Same boundary as the seven TranslationKey.* entries already in this file and for the same measured reason: the runner reads no .xlf or Translations/ resources anywhere, so a key it could state would address a file it never opens. Separately derivable rather than impossible -- the FNV-1a-32 construction in TranslationKeysAreDerivable_NotAPermanentLimit reproduces BC's own keys -- so this is a scope boundary that the runner gaining translation support invalidates.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#translation-keys-are-out-of-scope"
+    },
+    {
+      "member": "PageProperties.IsPreview",
+      "reason": "Marks a page shipped as preview. Not in SymbolReference.json in any form; BC's emitter derives it from a compiler-level attribute the symbol file does not carry. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 1 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found",
+      "versionContingent": true
+    },
+    {
+      "member": "PageProperties.OnAfterGetCurrentRecordEnabled",
+      "reason": "Set by BC's emitter when the page's AL declares an OnAfterGetCurrentRecord trigger. Derived from the TRIGGER SET, which is part of the trigger surface the runner does not reconstruct -- PageDefinition.Triggers is declared out of scope beside it.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.OnAfterGetCurrentRecordEnabledSpecified",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. The member it accompanies is declared beside it in this file.",
+      "outOfScope": true,
+      "Doc": "docs/metadata-equivalence.md#what-the-page-comparison-found"
+    },
+    {
+      "member": "PageProperties.RefreshOnActivate",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 28 pages declare RefreshOnActivate; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.UsageCategory",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 62 pages declare UsageCategory; the runner never writes it, so every one answers the None default. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "PageProperties.UsageCategorySpecified",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies PageProperties.UsageCategory, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "SourceObjectDefinition.#delayedInsertField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.DelayedInsert, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "issue": 3784,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
+    },
+    {
+      "member": "SourceObjectDefinition.#deleteAllowedField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.DeleteAllowed, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "SourceObjectDefinition.#indirectPermissionsField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.IndirectPermissions, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "SourceObjectDefinition.#insertAllowedField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.InsertAllowed, declared in this file with the measurement.",
+      "issue": 3784
+    },
+    {
+      "member": "SourceObjectDefinition.#modifyAllowedField",
+      "reason": "The Specified flag / backing field of the member declared beside it, which BC's serializer sets from the same value. One difference in the source property arrives as several members, so they share its reason and clear together when it is fixed. It accompanies SourceObjectDefinition.ModifyAllowed, declared in this file with the measurement. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "issue": 3784,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
+    },
+    {
+      "member": "SourceObjectDefinition.DelayedInsert",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 13 pages declare DelayedInsert, with the same SourceTable-branch condition. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "issue": 3784,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
+    },
+    {
+      "member": "SourceObjectDefinition.DeleteAllowed",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 104 pages declare DeleteAllowed, with the same SourceTable-branch condition as InsertAllowed. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "SourceObjectDefinition.IndirectPermissions",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 86 pages declare a Permissions property, which BC resolves into the SourceObject's IndirectPermissions vector; the runner never writes it. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "SourceObjectDefinition.InsertAllowed",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 119 pages declare InsertAllowed. EmitPageXml writes it only inside the SourceTable branch, so a page whose symbol states InsertAllowed=0 without a source table keeps the true default. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
+    },
+    {
+      "member": "SourceObjectDefinition.ModifyAllowed",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 89 pages declare ModifyAllowed, with the same SourceTable-branch condition as InsertAllowed. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page. VERSION-CONTINGENT: on the build this was measured (BC 28.1.49838.53910) the whole population of this member is 2 occurrence(s), resting on one or two System Application objects existing with one property shape — and BC moves both. Measured: the only page carrying a part-control ProviderID is 4306 'Agent Tasks' on 27.5 and 8705 'Table Information Card' on 28.x, and 27.5's part declares Editable while 28.x's does not. So this entry legitimately matches nothing on some legs; it is exempt from the stale-entry check and from nothing else, so a difference it does not cover still fails on every version.",
+      "issue": 3784,
+      "versionContingent": true,
+      "Doc": "docs/metadata-equivalence.md#one-build-measured-three-evaluated"
+    },
+    {
+      "member": "SourceObjectDefinition.MultipleNewLinesSpecified",
+      "reason": "A page property the runner's EmitPageXml does not read, although SymbolReference.json states it: measured on the shipped System Application symbol file, 4 pages declare MultipleNewLines; BC marks the value explicitly specified and the runner writes the attribute only inside the SourceTable branch. Tracked on #3784, which carries the per-property table. A defect and not a scope boundary -- the value is present, typed and unambiguous in the symbol file the runner already parses for this page.",
+      "issue": 3784
     }
   ]
 }
