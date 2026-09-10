@@ -24,10 +24,29 @@ public readonly record struct DapResolvedBreakpoint(
 public static class DapBreakpointResolver
 {
     /// <summary>
-    /// Resolves each request against every AL object type currently loaded. Only
-    /// objects present in <paramref name="sourceMap"/> (built from the SAME bundle
-    /// roots the run compiled, e.g. via AlCoverageSourceMap.Build) can match — a
+    /// How two source paths are compared. Case-insensitive on Windows and macOS, where the
+    /// filesystem is, and case-SENSITIVE elsewhere (#3786 review): on Linux <c>Foo.al</c> and
+    /// <c>foo.al</c> are two files, and folding them together merges their object lists so a
+    /// line can bind to a statement in the wrong file. That was harmless while the index held
+    /// one object per path and simply evicted; it stops being harmless once the entries merge.
+    /// Exposed so the DAP loop's own per-source breakpoint bookkeeping keys the same way —
+    /// two components disagreeing about path identity is the same bug wearing a different hat.
+    /// </summary>
+    public static StringComparer PathComparer { get; } =
+        OperatingSystem.IsLinux() ? StringComparer.Ordinal : StringComparer.OrdinalIgnoreCase;
+
+    /// <summary>
+    /// Resolves each request against every AL object type currently loaded that the source
+    /// map knows. Only objects present in <paramref name="sourceMap"/> (built from the SAME
+    /// bundle roots the run compiled, e.g. via AlCoverageSourceMap.Build) can match — a
     /// breakpoint in a file outside the debugged bundle is unverified, not a crash.
+    /// <para>
+    /// "Every object" is bounded by what that map registers, and it registers seven top-level
+    /// kinds: table, page, report, codeunit, query, xmlport, enum. EXTENSION objects
+    /// (tableextension, pageextension, …) are not in it and never resolve a breakpoint, which
+    /// is a pre-existing limit of AlCoverageSourceMap.LabelOf and of the runtime identity
+    /// parsing in AlCallStackCapture, not a decision made here (#3786 review).
+    /// </para>
     /// <para>
     /// Takes <see cref="AlSourceLocationMap"/> rather than the dictionary interface it
     /// implements because #3786 needs its <see cref="AlSourceLocationMap.LineOffset"/>: the
@@ -49,8 +68,8 @@ public static class DapBreakpointResolver
         //
         // Both sides are real filesystem paths (not bare filenames — see
         // docs/archive/dap.md's filename-only caveat, which this improves on), compared
-        // case-insensitively for cross-platform DAP clients.
-        var byPath = new Dictionary<string, List<(string Label, int Id)>>(StringComparer.OrdinalIgnoreCase);
+        // with PathComparer.
+        var byPath = new Dictionary<string, List<(string Label, int Id)>>(PathComparer);
         foreach (var kv in sourceMap)
         {
             var full = Path.GetFullPath(kv.Value);
@@ -103,9 +122,18 @@ public static class DapBreakpointResolver
             (Type Type, int Stmt, int Line)? match = null;
             if (byPath.TryGetValue(full, out var objKeys))
             {
-                // Every object the file declares, not just one. The lines are file lines on
-                // both sides now, so the first exact match is the right one whichever object
-                // owns it — two objects cannot claim the same file line.
+                // Every object the file declares, not just one.
+                //
+                // The first exact match wins, and that is a real limitation rather than a
+                // proof of uniqueness (#3786 review). AL permits two statements on one
+                // physical line — CollectStatementTable's doc comment says so explicitly, and
+                // keeps them apart by id and column precisely because a line cannot — so a
+                // requested line can have more than one executable target, in one scope or
+                // across several. Binding one of them means a breakpoint on such a line stops
+                // only if execution reaches the target that was picked. #3820 tracks
+                // registering every match behind the single DAP breakpoint the protocol
+                // returns; it needs DapResolvedBreakpoint to carry a set, so it is not a
+                // widening of this change.
                 foreach (var objKey in objKeys)
                 {
                     if (!byObject.TryGetValue(objKey, out var scopes)) continue;

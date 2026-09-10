@@ -2,23 +2,25 @@
 // line, which is only true for the first object in a .al file.
 //
 // BC records a statement's line relative to the OWNING OBJECT's text. For the first object
-// in a file the two numbering schemes coincide and nothing is visible. For a second object
-// they differ by the line its text starts on, and two things go wrong at once:
+// in a file the two numbering schemes coincide and nothing is visible; for a second object
+// they differ by the line its text starts on. #3713 fixed the coverage consumers by
+// carrying that start line in AlSourceLocationMap and adding it where a line is produced.
+// DapBreakpointResolver and AlDapStackWalker were left.
 //
-//   * a breakpoint on a line inside the second object never matches, so it comes back
-//     verified: false and never fires;
-//   * a breakpoint on a line inside the FIRST object CAN match a statement of the second
-//     whose relative line happens to equal it, so it fires in the wrong place.
+// TWO defects, and measuring is what separated them. #3786 predicted that a line inside the
+// FIRST object would falsely match a second-object statement at the same relative line. It
+// does not: it comes back unverified too, because DapBreakpointResolver's path index held
+// ONE (label,id) per path, so a file's second object evicted its first and there was nothing
+// left to falsely match against. Recorded here because the disproven prediction is the more
+// obvious story and a later reader will otherwise re-derive it.
 //
-// #3713 fixed the coverage consumers by carrying the object's start line in
-// AlSourceLocationMap and adding it where a line is produced. DapBreakpointResolver and
-// AlDapStackWalker were left, and this class is what makes that visible: it drives a real
-// DAP session against Fixtures/DapTwoObjects, whose single .al file holds a helper codeunit
-// (lines 10-16) and the test codeunit (text starting line 18).
+//   * a line inside the second object never matched      -> the missing LineOffset
+//   * a line inside the FIRST object never matched either -> the one-object-per-path index
 //
-// Both directions are here deliberately. The positive fact alone would pass an
-// implementation that verified every requested line; the first-object fact alone would pass
-// the unfixed code.
+// This class drives a real DAP session against Fixtures/DapTwoObjects, whose single .al file
+// holds a helper codeunit (lines 10-16) and the test codeunit (text starting line 18). Each
+// fact below is pinned to one of those two defects by mutation, so neither can be reverted
+// without a red test.
 
 using System.Text.Json;
 using Xunit;
@@ -135,7 +137,9 @@ public class DapMultiObjectFileTests
 
     /// <summary>
     /// The first statement of the same object, so the fact above cannot pass by an
-    /// off-by-something that happens to land on one particular line.
+    /// off-by-something that happens to land on one particular line. Counter is read as well
+    /// as the line: at the FIRST statement nothing has been assigned yet, so 0 is what proves
+    /// the pause is where the name says rather than one statement later.
     /// </summary>
     [SkippableFact]
     public async Task BreakpointOnTheSecondObjectsFirstStatement_StopsThereWithNoEffectApplied()
@@ -153,18 +157,117 @@ public class DapMultiObjectFileTests
 
         var stopped = await dap.ReadUntilEventAsync("stopped");
         Assert.Equal(SecondObjectFirstStatementLine, stopped.GetProperty("body").GetProperty("line").GetInt32());
+
+        var stSeq = dap.SendRequest("stackTrace", new { threadId = 1 });
+        var stResp = await dap.ReadUntilResponseAsync(stSeq);
+        var frameId = stResp.GetProperty("body").GetProperty("stackFrames")[0].GetProperty("id").GetInt32();
+        var scSeq = dap.SendRequest("scopes", new { frameId });
+        var scResp = await dap.ReadUntilResponseAsync(scSeq);
+        var variablesReference = scResp.GetProperty("body").GetProperty("scopes")[0]
+            .GetProperty("variablesReference").GetInt32();
+        var varSeq = dap.SendRequest("variables", new { variablesReference });
+        var varResp = await dap.ReadUntilResponseAsync(varSeq);
+        var vars = varResp.GetProperty("body").GetProperty("variables").EnumerateArray()
+            .ToDictionary(v => v.GetProperty("name").GetString()!, v => v.GetProperty("value").GetString());
+        Assert.True(vars.ContainsKey("Counter"), $"no Counter local reported: {varResp}");
+        Assert.Equal("0", vars["Counter"]);
     }
 
     /// <summary>
-    /// The false-positive direction, and the half a fix that only ADDS an offset could still
-    /// get wrong. File line 14 is <c>exit(X + 1);</c> inside the FIRST object; relative to the
-    /// second object's text, 14 is <c>Counter := 1;</c>. Unfixed, the requested line matches
-    /// the second object's statement and execution stops in the test method instead of in
-    /// <c>Bump</c> — a breakpoint that fires in the wrong function, which is worse than one
-    /// that does not fire.
+    /// DAP's setBreakpoints contract: the request is the COMPLETE set for that source from
+    /// then on. An empty list is how a client says "remove every breakpoint in this file",
+    /// and it has to disarm one that a previous request armed.
     ///
-    /// Asserted through the frame's own function rather than only its line: a stop inside
-    /// <c>Bump</c> has <c>Bump</c> on top of the stack, and the test method below it.
+    /// RED before the #3786 review's fix: the handler cleared only the scope types named by
+    /// the NEW request, so an empty request named none, cleared nothing, and execution still
+    /// stopped at a breakpoint the client had removed. It computed a full source path and
+    /// never read it, which is the shape that defect left behind.
+    /// </summary>
+    [SkippableFact]
+    public async Task SetBreakpointsWithAnEmptyList_DisarmsWhatThePreviousRequestArmed()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (dap, bpResp) = await StartAndSetBreakpointAsync(SecondObjectSecondStatementLine);
+        await using var _ = dap;
+        Assert.True(bpResp.GetProperty("body").GetProperty("breakpoints")[0].GetProperty("verified").GetBoolean(),
+            bpResp.ToString());
+
+        // The same source, now with nothing in it.
+        var clearSeq = dap.SendRequest("setBreakpoints", new
+        {
+            source = new { path = Path.Combine(FixtureSrc, SourceFileName) },
+            breakpoints = Array.Empty<object>(),
+        });
+        var clearResp = await dap.ReadUntilResponseAsync(clearSeq);
+        Assert.True(clearResp.GetProperty("success").GetBoolean(), clearResp.ToString());
+
+        var cfgSeq = dap.SendRequest("configurationDone");
+        await dap.ReadUntilResponseAsync(cfgSeq);
+
+        var events = new List<JsonElement>();
+        var exited = await dap.ReadUntilEventAsync("exited", TimeSpan.FromSeconds(60), events);
+        Assert.DoesNotContain(events, e => e.GetProperty("event").GetString() == "stopped");
+        Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
+    }
+
+    /// <summary>
+    /// The same contract for a MOVE rather than a removal, which is the case the multi-object
+    /// path index makes reachable: two objects of one file are now separately addressable, so
+    /// replacing a breakpoint in the second object with one in the first must not leave the
+    /// second armed. Both would fire otherwise, and the run would stop twice.
+    /// </summary>
+    [SkippableFact]
+    public async Task MovingABreakpointBetweenTwoObjectsOfOneFile_LeavesOnlyTheNewOneArmed()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (dap, bpResp) = await StartAndSetBreakpointAsync(SecondObjectSecondStatementLine);
+        await using var _ = dap;
+        Assert.True(bpResp.GetProperty("body").GetProperty("breakpoints")[0].GetProperty("verified").GetBoolean(),
+            bpResp.ToString());
+
+        var moveSeq = dap.SendRequest("setBreakpoints", new
+        {
+            source = new { path = Path.Combine(FixtureSrc, SourceFileName) },
+            breakpoints = new[] { new { line = FirstObjectStatementLine } },
+        });
+        var moveResp = await dap.ReadUntilResponseAsync(moveSeq);
+        Assert.True(moveResp.GetProperty("body").GetProperty("breakpoints")[0].GetProperty("verified").GetBoolean(),
+            moveResp.ToString());
+
+        var cfgSeq = dap.SendRequest("configurationDone");
+        await dap.ReadUntilResponseAsync(cfgSeq);
+
+        // Exactly one stop, and in the object the LAST request named. Bump is called once, so
+        // a second-object breakpoint left armed would add a stop at line 32 either before or
+        // after this one.
+        var stopped = await dap.ReadUntilEventAsync("stopped");
+        Assert.Equal(FirstObjectStatementLine, stopped.GetProperty("body").GetProperty("line").GetInt32());
+
+        var contSeq = dap.SendRequest("continue", new { threadId = 1 });
+        await dap.ReadUntilResponseAsync(contSeq);
+
+        var events = new List<JsonElement>();
+        var exited = await dap.ReadUntilEventAsync("exited", TimeSpan.FromSeconds(60), events);
+        Assert.DoesNotContain(events, e => e.GetProperty("event").GetString() == "stopped");
+        Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
+    }
+
+    /// <summary>
+    /// The first object must stay addressable, which is the half a fix that only ADDS an
+    /// offset does not deliver. File line 14 is <c>exit(X + 1);</c> inside the FIRST object.
+    ///
+    /// RED before the fix: <c>verified: false</c> — not the false match #3786 predicted. The
+    /// path index held one (label,id) per path, so whichever object was written last owned
+    /// the file and the other could not be reached at all. Reverting only the index (leaving
+    /// both offsets in place) turns this fact red again and leaves the other two green, which
+    /// is what separates the two defects.
+    ///
+    /// Asserted through the stack rather than the line alone: paused inside <c>Bump</c>, the
+    /// top frame is <c>Bump</c> and its CALLER is the second object's test method, whose own
+    /// frame must report the file line of the call — the ancestor path in
+    /// AlDapStackWalker.Walk, which an implementation offsetting only frame 0 would fail.
     /// </summary>
     [SkippableFact]
     public async Task BreakpointOnAFirstObjectStatement_StopsInThatObject_NotTheSecondsSameRelativeLine()
@@ -187,11 +290,25 @@ public class DapMultiObjectFileTests
         var stSeq = dap.SendRequest("stackTrace", new { threadId = 1 });
         var stResp = await dap.ReadUntilResponseAsync(stSeq);
         var frames = stResp.GetProperty("body").GetProperty("stackFrames");
+        Assert.True(frames.GetArrayLength() >= 2,
+            $"expected the caller's frame below Bump's: {stResp}");
+
         var top = frames[0];
         Assert.Equal(FirstObjectStatementLine, top.GetProperty("line").GetInt32());
         var topName = top.GetProperty("name").GetString() ?? "";
         Assert.True(topName.Contains("Bump", StringComparison.OrdinalIgnoreCase),
-            $"paused frame is '{topName}', not Bump — the requested first-object line matched a "
-            + $"statement of the SECOND object at the same relative line: {stResp}");
+            $"paused frame is '{topName}', not Bump — the requested first-object line resolved "
+            + $"to a statement of the wrong object: {stResp}");
+
+        // The ANCESTOR frame, and the reason this fact carries the stack walker's second code
+        // path: Walk offsets every frame in its loop, and an implementation that offset only
+        // frame 0 passes every other assertion in this class. The caller is the test method,
+        // paused at its call to Bump — file line 32, in the SECOND object, so its frame is
+        // where an un-offset ancestor would report 15.
+        var caller = frames[1];
+        var callerName = caller.GetProperty("name").GetString() ?? "";
+        Assert.True(callerName.Contains("SecondObjectStatements", StringComparison.OrdinalIgnoreCase),
+            $"frame below Bump is '{callerName}', not the calling test method: {stResp}");
+        Assert.Equal(SecondObjectSecondStatementLine, caller.GetProperty("line").GetInt32());
     }
 }

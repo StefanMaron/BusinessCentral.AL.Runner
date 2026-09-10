@@ -1,8 +1,12 @@
 // AlSourceSpanCodec — decodes the `long` values BC's AL compiler packs into the
 // [SourceSpans(...)] / [SignatureSpan(...)] attributes it emits on every generated
 // NavMethodScope subclass (one entry per AL statement, plus one for the method
-// signature). Two call sites need this: AlCallStackCapture (relative "line L" in AL
-// stack traces) and AlCoverageTracker (absolute AL source line for --coverage). Both
+// signature). Four consumers need this: AlCallStackCapture (relative "line L" in AL
+// stack traces), AlCoverageTracker (absolute AL source line for --coverage), and the
+// two DAP consumers, DapBreakpointResolver and AlDapStackWalker (#3786). Everything
+// except AlCallStackCapture wants a FILE line, and AbsoluteFromLine alone does not give
+// one: BC's number is relative to the owning object's text, so each of those three adds
+// AlSourceLocationMap.LineOffset for the object. All
 // used to decode the bit layout independently; this is the single place it happens now
 // — see .claude/rules — "Lift the span-decoding ... into a shared helper ... Do not
 // duplicate the bit layout."

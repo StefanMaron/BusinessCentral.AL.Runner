@@ -5663,6 +5663,15 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     AlRunner.Infrastructure.AlDapSession.Reset();
 
     var sourceMap = AlRunner.Infrastructure.AlSourceLocationMap.Empty;
+    // Which scope types this session has breakpoints registered on, per source file, so a
+    // later setBreakpoints for that file can clear ALL of them (#3786 review). Clearing only
+    // the scopes named by the NEW request leaves the old ones armed: an empty breakpoint
+    // list — the DAP spelling of "remove every breakpoint in this file" — cleared nothing at
+    // all, and once a file's objects became separately addressable, moving a breakpoint from
+    // one object to another in the same file left the first one firing. Keyed by full path
+    // with the same comparer DapBreakpointResolver uses for its own path index.
+    var registeredScopesBySource =
+        new Dictionary<string, HashSet<Type>>(AlRunner.Infrastructure.DapBreakpointResolver.PathComparer);
     var lastFrames = new List<AlRunner.Infrastructure.AlDapFrame>();
 
     var compiledTcs = new System.Threading.Tasks.TaskCompletionSource<Assembly>(
@@ -5856,12 +5865,27 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
 
                         var fullSrcPath = Path.GetFullPath(srcPath);
                         // Replace (not accumulate) — DAP's setBreakpoints contract: this
-                        // request is the COMPLETE set for `source` from now on.
+                        // request is the COMPLETE set for `source` from now on. That means
+                        // clearing what THIS FILE had registered before, not what the new
+                        // request happens to name: an empty list must disarm the file, and a
+                        // breakpoint moved between two objects of one file must not leave the
+                        // first object armed (#3786 review). fullSrcPath was computed and
+                        // never read before, which is the shape that defect left behind.
+                        if (registeredScopesBySource.TryGetValue(fullSrcPath, out var previouslyRegistered))
+                            foreach (var scope in previouslyRegistered)
+                                AlRunner.Infrastructure.AlDapSession.ClearBreakpoints(scope);
+                        var nowRegistered = new HashSet<Type>();
                         foreach (var rb in resolved)
-                            if (rb.ScopeType != null) AlRunner.Infrastructure.AlDapSession.ClearBreakpoints(rb.ScopeType);
-                        foreach (var rb in resolved)
-                            if (rb.Verified && rb.ScopeType != null)
-                                AlRunner.Infrastructure.AlDapSession.SetBreakpoint(rb.ScopeType, rb.StatementIndex);
+                        {
+                            if (!rb.Verified || rb.ScopeType == null) continue;
+                            // A scope reached for the first time in THIS request may still
+                            // carry breakpoints from a request naming a different file that
+                            // declares the same object — clear before the first add, once.
+                            if (nowRegistered.Add(rb.ScopeType))
+                                AlRunner.Infrastructure.AlDapSession.ClearBreakpoints(rb.ScopeType);
+                            AlRunner.Infrastructure.AlDapSession.SetBreakpoint(rb.ScopeType, rb.StatementIndex);
+                        }
+                        registeredScopesBySource[fullSrcPath] = nowRegistered;
 
                         transport.WriteResponse(msg.Seq, command, true, new
                         {
