@@ -72,6 +72,11 @@ public sealed class ScratchDirOwnershipGuardTests
               + "asserts on the absence itself, so creating it would destroy what it measures. "
               + "Was 2 until #3748 deleted HasCompilableSource, whose miss path was the other. "
               + "This file's real scratch packages ARE owned via TestScratch.FilePath"),
+        ["DotNetShimProbingTests.cs"] =
+            (1, "one shim directory that must not exist, proving an absent override path never "
+              + "reaches the probing paths; the assertion measures that absence, so reserving "
+              + "it would create the parent and place a sidecar beside it. This file's four "
+              + "real directories ARE owned, via TestScratch.Dir plus an explicit create"),
         ["RunnerFingerprintTests.cs"] =
             (1, "a .dll path that must not exist"),
         ["TestDataProvisioningTests.cs"] =

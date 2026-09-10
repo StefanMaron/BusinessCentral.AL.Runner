@@ -160,6 +160,42 @@
     <None Include="../CHANGELOG.md" Pack="true" PackagePath="/" />
   </ItemGroup>
 
+  <!-- .NET assemblies BC's AL BINDER must see before the service tier's own copies, staged
+       into a dotnet-shims directory that BcCompiler puts at the head of its DotNet probing
+       paths (GetOrCreateDotNetFactory). Compile-time reference resolution only: the file is
+       never loaded into the runner's own load chain, so nothing here can perturb the BC
+       engine bind.
+
+       Today that is one file, and it earns its place. System Application's
+       SamplingPerfProfilerImpl calls JsonSerializer.Deserialize(TextReader, Type). The service
+       tier ships only the net6.0 build of Newtonsoft.Json, whose TextReader parameter is typed
+       against System.Runtime 6.0.0.0; no .NET 6 reference assemblies exist on a net8 box, so
+       that parameter type never resolves and the call raises AL0133. Emit is atomic per module,
+       so that one unresolvable reference cost all 1,319 of System Application's objects (#3745).
+       The netstandard2.0 build of the SAME Newtonsoft version binds against netstandard, which
+       does resolve.
+
+       ExcludeAssets="all": referenced for its FILE, never linked. A package reference rather
+       than a path into ~/.nuget so a CI leg's success does not depend on what happened to be
+       cached on the machine — the same choice tools/metadata-ground-truth makes, and this
+       shim is the one its CopyDotNetShims target proved out. -->
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3"
+                      GeneratePathProperty="true" ExcludeAssets="all" PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Staged as CONTENT rather than by a bare <Copy>, so the shim travels with al-runner.dll
+       into every output that references this project — AlRunner.Tests' output above all, where
+       the assembly is copied and its probing paths are therefore resolved. A plain copy into
+       $(OutDir) puts the file beside the runner's OWN build only, and a referencing project
+       then loads a BcCompiler whose shim directory does not exist. -->
+  <ItemGroup Condition="'$(PkgNewtonsoft_Json)' != ''">
+    <Content Include="$(PkgNewtonsoft_Json)/lib/netstandard2.0/Newtonsoft.Json.dll"
+             Link="dotnet-shims/Newtonsoft.Json.dll"
+             CopyToOutputDirectory="PreserveNewest"
+             Pack="true" PackagePath="tools/$(TargetFramework)/any/dotnet-shims/" />
+  </ItemGroup>
+
   <!-- Per-BC-minor engine variants (#2024 item 3 / #2027). This binary is only ONE
        engine build (whichever _BCVersion it was compiled with); EngineVariants.cs +
        NclShadowRuntime pick and swap to the matching one at startup among whatever

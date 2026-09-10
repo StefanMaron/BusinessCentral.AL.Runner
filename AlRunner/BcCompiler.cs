@@ -522,22 +522,7 @@ public sealed partial class BcCompiler
             // ref pack) carry the same types as real TypeDefinitions, so probe those FIRST.
             // This is what lets the source-dependency compile of Microsoft's Tests-TestLibraries
             // (XmlDocument/XmlNode/etc. interop) emit instead of zeroing the whole module.
-            var probingPaths = new List<string>();
-            foreach (var refDir in EnumerateDotNetRefAssemblyDirs())
-                if (Directory.Exists(refDir))
-                    probingPaths.Add(refDir);
-            // BC service-tier artifacts dir (BC's own .NET deps such as Aspose, Azure SDK,
-            // BouncyCastle etc. shipped alongside Ncl.dll, plus PermissionTestHelper add-in).
-            if (Directory.Exists(DefaultServiceTierDir))
-                probingPaths.Add(DefaultServiceTierDir);
-            foreach (var addinDir in EnumerateServiceTierAddinDirs())
-                if (Directory.Exists(addinDir))
-                    probingPaths.Add(addinDir);
-            // BCL: where mscorlib / System.* lives (shared framework) — last-resort
-            // fallback for assemblies with no reference-assembly counterpart.
-            var runtimeDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
-            if (Directory.Exists(runtimeDir))
-                probingPaths.Add(runtimeDir);
+            var probingPaths = BuildDotNetProbingPaths();
 
             if (Environment.GetEnvironmentVariable("BCCOMPILER_DIAG") == "1")
                 Console.Error.WriteLine(
@@ -547,6 +532,101 @@ public sealed partial class BcCompiler
             _dotNetResolverFactory = new NavDotNet.DotNetResolverFactory(locator);
             return _dotNetResolverFactory;
         }
+    }
+
+    /// <summary>
+    /// The DotNet probing paths BC's <c>AssemblyLocator</c> is given, in priority order. BC's
+    /// DotNet metadata reader resolves a <c>DotNet "Type"</c> alias by loading the named
+    /// assembly and looking the type up as a <b>TypeDefinition</b>; it does NOT follow
+    /// type-forwarders. So the order below is the whole behaviour, and each step earns its
+    /// position:
+    ///
+    /// <list type="number">
+    /// <item>staged <b>shims</b> — an assembly whose service-tier copy is known not to bind.
+    ///   These must come first, because probing the tier ahead of them finds that copy again
+    ///   and the shim does nothing (#3745).</item>
+    /// <item>.NET <b>reference packs</b> — real TypeDefinitions rather than the forwarder
+    ///   facades the shared framework ships, so <c>DotNet "System.Xml.XmlException"</c> binds
+    ///   instead of yielding NavTypeKind.None and crashing the emit.</item>
+    /// <item>the <b>service tier</b> and its add-ins — BC's own .NET dependencies.</item>
+    /// <item>the <b>shared framework</b>, last — a fallback for assemblies with no
+    ///   reference-assembly counterpart.</item>
+    /// </list>
+    ///
+    /// <para>Extracted from <see cref="GetOrCreateDotNetFactory"/> so a test can assert the
+    /// real ordering. It previously read a list the test rebuilt itself, which passed
+    /// unchanged when the production order was inverted — a test of its own copy.</para>
+    /// </summary>
+    internal static List<string> BuildDotNetProbingPaths()
+    {
+        var probingPaths = new List<string>();
+        // Shims staged beside the binary by AlRunner.csproj's CopyDotNetShims target, ahead
+        // of everything: a shim exists precisely because the service tier's own copy of that
+        // assembly does not bind, so probing the tier first would defeat it. See the csproj
+        // for what is in the directory and why each file is there (#3745).
+        // Deduplicated: the runner shadow-copies its own directory before re-exec, so
+        // AppContext.BaseDirectory and the assembly's directory are usually the SAME path
+        // and a plain append listed it twice.
+        var seenShims = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var shimDir in EnumerateDotNetShimDirs())
+            if (Directory.Exists(shimDir) && seenShims.Add(NormalizeDir(shimDir)))
+                probingPaths.Add(shimDir);
+        foreach (var refDir in EnumerateDotNetRefAssemblyDirs())
+            if (Directory.Exists(refDir))
+                probingPaths.Add(refDir);
+        // BC service-tier artifacts dir (BC's own .NET deps such as Aspose, Azure SDK,
+        // BouncyCastle etc. shipped alongside Ncl.dll, plus PermissionTestHelper add-in).
+        if (Directory.Exists(DefaultServiceTierDir))
+            probingPaths.Add(DefaultServiceTierDir);
+        foreach (var addinDir in EnumerateServiceTierAddinDirs())
+            if (Directory.Exists(addinDir))
+                probingPaths.Add(addinDir);
+        // BCL: where mscorlib / System.* lives (shared framework) — last-resort
+        // fallback for assemblies with no reference-assembly counterpart.
+        var runtimeDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
+        if (Directory.Exists(runtimeDir))
+            probingPaths.Add(runtimeDir);
+
+        if (Environment.GetEnvironmentVariable("BCCOMPILER_DIAG") == "1")
+            Console.Error.WriteLine(
+                "[BcCompiler-diag] DotNet probing paths:\n  " + string.Join("\n  ", probingPaths));
+
+        return probingPaths;
+    }
+
+    /// <summary>
+    /// A comparison key for a directory path: absolute, with any trailing separator removed.
+    /// The trailing separator is the part that matters — the shadow-copy path and the
+    /// assembly-location path for the same directory differ by exactly that, and
+    /// <see cref="Path.GetFullPath(string)"/> preserves it, so it alone does not collapse them.
+    /// </summary>
+    private static string NormalizeDir(string path)
+        => Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+    /// <summary>
+    /// Directories holding .NET assemblies BC's AL binder must prefer over the service tier's
+    /// own copies. Staged next to the binary by <c>AlRunner.csproj</c>'s <c>CopyDotNetShims</c>
+    /// target, and overridable with <c>AL_RUNNER_DOTNET_SHIMS</c> (one path, or several
+    /// separated by the platform path separator) so a run can point at a different set without
+    /// a rebuild.
+    ///
+    /// <para>Yields candidates whether or not they exist; the caller filters. Both the
+    /// AppContext base directory and the assembly's own directory are probed because a
+    /// single-file or shadow-copied host makes those differ, and the shim ships beside the
+    /// assembly.</para>
+    /// </summary>
+    private static IEnumerable<string> EnumerateDotNetShimDirs()
+    {
+        var overridePaths = Environment.GetEnvironmentVariable("AL_RUNNER_DOTNET_SHIMS");
+        if (!string.IsNullOrEmpty(overridePaths))
+            foreach (var p in overridePaths.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+                yield return p;
+
+        yield return Path.Combine(AppContext.BaseDirectory, "dotnet-shims");
+
+        var asmDir = Path.GetDirectoryName(typeof(BcCompiler).Assembly.Location);
+        if (!string.IsNullOrEmpty(asmDir))
+            yield return Path.Combine(asmDir, "dotnet-shims");
     }
 
     /// <summary>
