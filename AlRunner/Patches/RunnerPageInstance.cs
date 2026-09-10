@@ -989,6 +989,70 @@ internal sealed partial class RunnerPageInstance
         => EvaluateProperty(DeclaredActionProperty(actionId, "Enabled"), "Enabled", actionId, PageElementKind.Action, atOpen: false);
 
     /// <summary>
+    /// <c>Enabled</c> for the INVOKE gate specifically: the same answer as
+    /// <see cref="ActionEnabled"/> wherever one can be computed, and <c>true</c> — the AL
+    /// default, and the behaviour before #3504 — where the declared expression cannot be
+    /// resolved on a precompiled page.
+    ///
+    /// <para>WHY THE TWO CALLERS DIFFER, because collapsing them is the mistake this exists to
+    /// prevent. When AL <b>reads</b> <c>action.Enabled()</c> the value IS the answer, so a
+    /// value we cannot compute must refuse (<c>loud-failures.md</c>): returning either boolean
+    /// would be a silent wrong answer to the exact question asked. When AL calls
+    /// <c>Invoke()</c> the value is only a <b>gate</b> in front of the OnAction trigger, and
+    /// refusing there converts "I cannot evaluate one property" into "this action's business
+    /// logic does not run at all" — a strictly larger loss than the one the refusal prevents,
+    /// on a path where BC itself would have run the trigger.</para>
+    ///
+    /// <para>Measured: Base Application 790 "G/L Account Categories" declares
+    /// <c>Enabled = PageEditable</c> on five actions, a page global its own
+    /// <c>OnOpenPage</c> sets to <c>CurrPage.Editable</c> — so on a page opened with
+    /// <c>OpenEdit()</c> real BC evaluates it true and runs the OnAction. Refusing the invoke
+    /// made <c>Codeunit64571.KeywordActionName_OnPrecompiledBasePage_RunsItsOnAction</c> fail
+    /// on BC 27.0 (run 34515369115) where it had passed, and that test asserts a row was
+    /// actually inserted — real business logic, not a property read.</para>
+    ///
+    /// <para>This narrows a refusal introduced by this change; it does not widen the pre-#3504
+    /// silent default. A declaration the runner CAN resolve still gates the invoke exactly as
+    /// before, including the literal <c>Enabled = false</c> that corpus codeunit 60583 pins.
+    /// #3825 removes the unresolvable case entirely, at which point this method collapses back
+    /// into <see cref="ActionEnabled"/>.</para>
+    /// </summary>
+    internal bool ActionEnabledForInvoke(int actionId)
+    {
+        try
+        {
+            return ActionEnabled(actionId);
+        }
+        catch (AlRunner.Infrastructure.RunnerOutOfScopeException)
+        {
+            // Deliberately not silent: the surface stays visible to whoever reads the run, and
+            // the message names the same issue an `Enabled()` READ would have refused with.
+            WarnOnceAboutUnresolvableInvokeGate(_pageId.ToString(), actionId);
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// Once per (page, action) for the process — a bundle invoking one action in ten tests must
+    /// not print ten copies. Returns whether this call printed, so AlRunner.Tests can pin the
+    /// "once" without a live NavForm.
+    /// </summary>
+    internal static bool WarnOnceAboutUnresolvableInvokeGate(string pageId, int actionId)
+    {
+        if (!_unresolvableInvokeGateWarned.TryAdd((pageId, actionId), true)) return false;
+
+        Console.Error.WriteLine(
+            $"[warn] TestPage: action {actionId} on page {pageId} declares an Enabled the runner "
+            + "cannot evaluate on a precompiled page, so Invoke() ran its OnAction rather than "
+            + "refusing — real BC evaluates the expression and would decide. Reading "
+            + "Enabled() still refuses rather than guessing. See issue #3825.");
+        return true;
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Page, int Action), bool>
+        _unresolvableInvokeGateWarned = new();
+
+    /// <summary>
     /// Live, like every other property except a CONTROL's own Visible — and it follows the
     /// enclosing action groups, not just the action's own declaration.
     ///
