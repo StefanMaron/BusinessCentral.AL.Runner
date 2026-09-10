@@ -142,10 +142,12 @@ public sealed class DependencyMetadataProducerTests
         var missing = Path.Combine(Path.GetTempPath(), $"no-such-package-{Guid.NewGuid():N}.app");
         Assert.False(DependencyMetadataProducer.HasCompilableSource(missing));
 
-        var notAnApp = Path.Combine(Path.GetTempPath(), $"garbage-{Guid.NewGuid():N}.app");
+        // An owned scratch file: this one IS created, so a killed test host would leak it
+        // (#2743). TestScratch.FilePath creates the owning directory, which is what the
+        // sweep deletes -- so no hand-rolled finally is needed to avoid leaking it.
+        var notAnApp = TestScratch.FilePath("dep-metadata-producer", "garbage.app");
         File.WriteAllText(notAnApp, "this is not a NAVX package");
-        try { Assert.False(DependencyMetadataProducer.HasCompilableSource(notAnApp)); }
-        finally { File.Delete(notAnApp); }
+        Assert.False(DependencyMetadataProducer.HasCompilableSource(notAnApp));
     }
 
     /// <summary>
