@@ -95,6 +95,10 @@ public sealed class InstallTriggerSessionIdentityTests
         Assert.Contains("PASS  Codeunit70782.ItsiInstallCodeSawTheIdentityTheTestsSee", stdout);
         Assert.Contains("PASS  Codeunit70782.ItsiTheStoredOwnerIsTheAdoptedIdNotTheGeneratedOne", stdout);
         Assert.Contains("PASS  Codeunit70782.ItsiTheStoredOwnerNameIsUnchangedByAdoption", stdout);
+        // #3757 — exactly one SUPER row in Access Control, naming the id the session
+        // ADOPTED. The seed now runs on both sides of the identity decision, so a grant
+        // written for the pre-adoption id is the way that goes wrong.
+        Assert.Contains("PASS  Codeunit70782.ItsiExactlyOneSuperRowAndItNamesTheAdoptedId", stdout);
         Assert.True(exit == 0,
             $"{arm}: expected a clean run. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
     }
@@ -118,6 +122,10 @@ public sealed class InstallTriggerSessionIdentityTests
             // The dependency install triggers really ran this time — the arm the warm run below
             // is being contrasted with.
             Assert.Contains("InstallBaseline.DepCompanyCache MISS", cold.StdErr);
+            // #3757 — the Access Control latch is keyed on the security id it seeded, and this
+            // fixture is the one that moves that id. Without the key the second seed call would
+            // return early on a bool latch and the grant would stay on the pre-adoption id.
+            Assert.Contains("AccessControlSeed: the session identity moved to", cold.StdErr);
 
             // The adoption is still happening; #3268 moved WHEN it is decided, not whether. If
             // this line disappeared, all five AL tests could pass with both ids equal to the
