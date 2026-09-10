@@ -405,6 +405,59 @@ public sealed class DependencyLoader
     private static readonly IReadOnlyList<Assembly> EmptyAssemblies = Array.Empty<Assembly>();
 
     /// <summary>
+    /// True when #3549's dependency metadata production is switched on at all, for any app.
+    /// <see cref="DependencyMetadataAppFilter"/> is the one that decides WHICH apps, and is
+    /// what callers should use; this exists for the "is the feature on" question alone.
+    /// </summary>
+    internal static bool DependencyMetadataEnabled()
+        => DependencyMetadataAppFilter() is not null;
+
+    /// <summary>
+    /// Which apps the producer runs for, parsed from the same variable: <c>1</c> means every
+    /// source-shipping dependency, a comma-separated list means exactly those app NAMES, and
+    /// absent/<c>0</c> means the feature is off (null).
+    ///
+    /// <para>OFF by default, and the per-app list is not a convenience — it is what makes the
+    /// feature usable at all today. <c>Compilation.Emit</c> is atomic per module, so ONE object
+    /// BC cannot emit zeroes the entire app's metadata: System Application's
+    /// <c>Business Chart.Initialize()</c> raises <c>BadExpression</c> under the runner's .NET
+    /// probing paths and takes all 1,319 files' output with it, while Business Foundation
+    /// compiles clean and yields 55 documents in ~6.2 s. So naming the app is the difference
+    /// between a dependency whose metadata is BC's own and a run that refuses to start;
+    /// #3745 tracks removing the need for it.</para>
+    ///
+    /// <para>Measurements per app, and the RED/GREEN this was proven with:
+    /// docs/dependency-metadata-from-bc.md.</para>
+    /// </summary>
+    internal static IReadOnlyCollection<string>? DependencyMetadataAppFilter()
+    {
+        var v = Environment.GetEnvironmentVariable("AL_RUNNER_DEP_METADATA_FROM_BC");
+        if (string.IsNullOrEmpty(v) || v == "0") return null;
+        if (v == "1") return Array.Empty<string>();   // empty = no filter = every app
+        var names = v.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (names.Length > 0) return names;
+        Console.Error.WriteLine(
+            $"[dep-metadata] AL_RUNNER_DEP_METADATA_FROM_BC='{v}' is not '1', '0' or an app-name " +
+            "list; treating as OFF (#3549).");
+        return null;
+    }
+
+    /// <summary>
+    /// Produce or replay BC's metadata documents for one dependency (#3549). See
+    /// <see cref="DependencyMetadataProducer"/> for the availability-vs-failure split; the
+    /// throw is deliberately NOT caught here, because a dependency whose source is present and
+    /// whose emit failed is a broken build, and continuing would answer its tables from the
+    /// weaker derivation under a green run (`.claude/rules/loud-failures.md`).
+    /// </summary>
+    private void EnsureDependencyMetadata(AppManifest m, string appPath)
+    {
+        var filter = DependencyMetadataAppFilter();
+        if (filter is null) return;
+        if (filter.Count > 0 && !filter.Contains(m.Name, StringComparer.OrdinalIgnoreCase)) return;
+        DependencyMetadataProducer.Ensure(m, appPath, _compiler);
+    }
+
+    /// <summary>
     /// Load one dependency app. <c>Assemblies</c> is EVERY assembly the app was loaded as and
     /// is non-empty only for the multi-chunk R2R tier; every other tier produces one assembly
     /// and returns it empty, which the caller reads as "just <c>Asm</c>" (#3054).
@@ -412,6 +465,20 @@ public sealed class DependencyLoader
     private (Assembly? Asm, string? Tier3CacheKey, IReadOnlyList<Assembly> Assemblies) LoadOne(
         AppManifest m, string appPath, string bucketRoot)
     {
+        // #3549 — BC's own metadata documents for this dependency, BEFORE the tier choice
+        // below. Tiers 1 and 2 return compiled code without ever running BC's emitter, and the
+        // emitter is what produces the metadata document AlObjectMetadataRegistry captures
+        // (#3548) — so on those tiers every table of this app would otherwise be described by
+        // the runner's SymbolReference hand-derivation and never by BC's own answer. Tier 3
+        // compiles anyway and registers the documents itself, which is why this is a no-op
+        // there (the sidecar is written once and hit thereafter).
+        //
+        // Deliberately ahead of the tiers rather than inside one: the document is about the
+        // app's METADATA, and which tier supplies its CODE does not change what its tables
+        // look like. DependencyMetadataProducer's header has the availability-vs-failure
+        // split this depends on.
+        EnsureDependencyMetadata(m, appPath);
+
         // Tier 1: precompiled DLL.
         var precompiled = FindPrecompiledSidecar(m, bucketRoot);
         if (precompiled != null)

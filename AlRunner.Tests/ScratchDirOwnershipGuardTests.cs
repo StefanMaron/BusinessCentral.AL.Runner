@@ -67,6 +67,11 @@ public sealed class ScratchDirOwnershipGuardTests
             (1, "a .app path that must not exist, so the loader's miss path is what runs"),
         ["AppLoaderR2rChunkCacheTests.cs"] =
             (1, "a .app path that must not exist"),
+        ["DependencyMetadataProducerTests.cs"] =
+            (2, "two .app paths that must not exist -- one proves an excluded app is never "
+              + "read, one drives HasCompilableSource's miss path; both assert on the absence "
+              + "itself, so creating them would destroy what they measure. This file's one "
+              + "real scratch file IS owned via TestScratch.FilePath"),
         ["RunnerFingerprintTests.cs"] =
             (1, "a .dll path that must not exist"),
         ["TestDataProvisioningTests.cs"] =
