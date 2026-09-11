@@ -77,6 +77,22 @@ measurement is in docs/incidents/loud-failures.md).
 3. **The trap, if there is one** — the thing a later editor would get wrong. "Re-check the call
    count if a BC version changes shape" is worth its line; the scan that produced the count is not.
 
+**Spell out a member list long enough to miscount, and never truncate one.** A comment reading
+`DataTransfer.{AddFieldValue,AddConstantValue,AddSourceFilter,AddJoin,` — running past a line
+break mid-list — generated wrong expansions in both directions: the PR body citing it, and its
+coordinator, read out **seven** members including a phantom `AddSourceValue`, when there were
+**eight** and the real member `AddSourceFilter` sat in the very line being misread (#3927). Both
+errors look entirely plausible downstream, so nothing catches them. The danger needs **both**
+properties — enough members to lose count, and truncation hiding where the list ends: measured
+over `AlRunner/**/*.cs`, 20 comments use brace shorthand and only that one had both, so short
+complete forms like `{get,set}` and `{TKey,TValue}` are fine and clearer than the expansion.
+
+**And a symbol search does not find prose describing what a symbol did.** Deleting a member and
+grepping its name to zero verifies symbol references only: `RunnerPageInstance` cited "BcRuntime's
+DataTransfer-out-of-context message", naming no symbol, and survived a sweep that correctly
+reported no references left (#3927). When you delete something a comment may *describe*, search
+for the behaviour's words too, not only its identifier.
+
 **What belongs elsewhere**, with the pointer left behind:
 
 | | goes to |
