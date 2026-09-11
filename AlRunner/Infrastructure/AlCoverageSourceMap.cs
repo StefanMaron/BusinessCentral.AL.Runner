@@ -155,9 +155,12 @@ public static class AlCoverageSourceMap
         IEnumerable<string> roots, string? relativeTo, RootScanner scan)
     {
         var map = new AlSourceLocationMap();
+        // Materialised once: `roots` may be a lazy sequence, and Warn needs the same list the
+        // scan walked in order to tell a recovery from a root it never looked at.
+        var rootList = roots as IReadOnlyList<string> ?? roots.ToList();
         var symbolsByAppJson = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
         var appJsonByDir = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
-        foreach (var root in roots)
+        foreach (var root in rootList)
         {
             if (!Directory.Exists(root))
             {
@@ -165,17 +168,31 @@ public static class AlCoverageSourceMap
                 // its absence is an unmeasured scan rather than an empty one (#3847). A path
                 // that IS there but is a file says so rather than "does not exist", which was
                 // false and sent the reader looking for the wrong thing (#3884 review).
+                // A root that IS there but is a file covers exactly one path, so it is a File
+                // failure — Root means a container, and DapUnverifiedReason applies containment
+                // to a container, which would have claimed `<that file>/Child.al` (#3884
+                // Copilot review).
+                var rootIsFile = File.Exists(root);
                 map.AddScanFailure(root,
-                    File.Exists(root)
+                    rootIsFile
                         ? "the source root is a file, and a source root must be a directory"
                         : "the source root does not exist",
-                    SourceScanFailureKind.Root);
+                    rootIsFile ? SourceScanFailureKind.File : SourceScanFailureKind.Root);
                 continue;
             }
             // SafeDirectoryScan has always been able to say which directories it could not
             // enter; this scan discarded the answer with `out _`, which is the shape #3847 is
             // about — the mechanism existed and the caller threw it away.
             var files = scan(root, out var inaccessible);
+            // The Directory.Exists above and this scan are not atomic. A root that went away
+            // in between comes back from the scanner as an ordinary empty listing with nothing
+            // inaccessible — a clean partial map, which is the very race this third state
+            // exists to expose (#3884 Copilot review). Re-checking costs one stat and only
+            // fires when the directory is gone, so a genuinely empty one stays a pass.
+            if (files.Count == 0 && inaccessible.Count == 0 && !Directory.Exists(root))
+                map.AddScanFailure(root,
+                    "the source root disappeared while it was being scanned",
+                    SourceScanFailureKind.Root);
             foreach (var dir in inaccessible)
                 map.AddScanFailure(dir, "the directory could not be read, so any AL under it was not scanned",
                     SourceScanFailureKind.Directory);
@@ -195,9 +212,13 @@ public static class AlCoverageSourceMap
                     map.AddScanFailure(file, readFailure, SourceScanFailureKind.File);
             }
         }
-        Warn(map);
+        Warn(map, rootList);
         return map;
     }
+
+    /// <summary>Paths whose failure has already been announced and has not recovered since.
+    /// Bounded by the number of CURRENTLY failing paths, not by how many a process ever saw.</summary>
+    private static readonly HashSet<string> _announced = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Says out loud that part of the scan did not happen. Here rather than at each of the five
@@ -205,21 +226,50 @@ public static class AlCoverageSourceMap
     /// consumer that forgets is the one that reports a confident negative about AL nobody read
     /// (#3847).
     ///
-    /// <para>Once per BUILD, not once per process. A process-wide memo of warned paths was the
-    /// first version and it is wrong twice over (#3884 review): under --server and --watch the
-    /// process is long-lived, so a path that failed, was repaired, and failed AGAIN is a new
-    /// event that the memo silently swallows — and the memo grows for the life of the process,
-    /// one entry per distinct path any request ever named. AddScanFailure already
-    /// de-duplicates within one map, which is the honest scope for "do not say it twice".</para>
+    /// <para>On the TRANSITION into failure, which is the only spelling two reviews could both
+    /// live with (#3884). Once per process swallows a path that failed, was repaired, and
+    /// failed again — a real event under --server and --watch, where the process outlives many
+    /// builds — and grows by every path any request ever named. Once per build re-prints a
+    /// persistent failure on every request and floods stderr. Announcing a path when it starts
+    /// failing and forgetting it when it stops does neither, and the set is bounded by what is
+    /// broken right now.</para>
+    ///
+    /// <para>Recovery is only observable for paths THIS build looked at, so the set is pruned
+    /// against the roots scanned rather than replaced wholesale: a concurrent request naming
+    /// other roots must not make their failures look repaired.</para>
     ///
     /// Console.Error, not Console.Out: under --dap stdio, stdout IS the protocol channel.
     /// </summary>
-    private static void Warn(AlSourceLocationMap map)
+    private static void Warn(AlSourceLocationMap map, IReadOnlyCollection<string> scannedRoots)
     {
-        foreach (var failure in map.ScanFailures)
+        var failing = new HashSet<string>(map.ScanFailures.Select(f => f.Path), StringComparer.Ordinal);
+        var announce = new List<SourceScanFailure>();
+        lock (_announced)
+        {
+            // Forget anything under a root this build scanned that is no longer failing — that
+            // is a recovery, and the next failure at that path is news again.
+            _announced.RemoveWhere(p => !failing.Contains(p) && WasLookedAt(p, scannedRoots));
+            foreach (var failure in map.ScanFailures)
+                if (_announced.Add(failure.Path)) announce.Add(failure);
+        }
+        foreach (var failure in announce)
             Console.Error.WriteLine(
                 $"[source-map] {failure.Path}: {failure.Reason}. Objects it declares are absent "
                 + "from the source map, so coverage and the debugger cannot attribute them.");
+    }
+
+    /// <summary>Whether this build would have noticed <paramref name="path"/> recovering —
+    /// true when it is one of the scanned roots or sits under one.</summary>
+    private static bool WasLookedAt(string path, IReadOnlyCollection<string> scannedRoots)
+    {
+        foreach (var root in scannedRoots)
+        {
+            if (string.Equals(path, root, StringComparison.Ordinal)) return true;
+            var prefix = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                         + Path.DirectorySeparatorChar;
+            if (path.StartsWith(prefix, StringComparison.Ordinal)) return true;
+        }
+        return false;
     }
 
     /// <summary>The nearest app.json in <paramref name="dir"/> or an ancestor, or null. The

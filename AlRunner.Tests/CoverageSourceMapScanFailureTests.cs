@@ -355,9 +355,15 @@ public sealed class CoverageSourceMapScanFailureTests : IDisposable
         var map = AlCoverageSourceMap.Build(new[] { asFile }, relativeTo: null);
 
         var failure = Assert.Single(map.ScanFailures);
-        Assert.Equal(SourceScanFailureKind.Root, failure.Kind);
         Assert.Contains("is a file", failure.Reason, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("does not exist", failure.Reason, StringComparison.OrdinalIgnoreCase);
+        // File, not Root: Root means a container and gets containment, so classifying a file
+        // root as one made it claim paths "under" a file (#3884 Copilot review).
+        Assert.Equal(SourceScanFailureKind.File, failure.Kind);
+        Assert.Equal("no executable AL statement on this line in this file",
+            DapUnverifiedReason.For(null, map, Path.Combine(asFile, "Child.al")));
+        Assert.Contains("is a file",
+            DapUnverifiedReason.For(null, map, asFile), StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

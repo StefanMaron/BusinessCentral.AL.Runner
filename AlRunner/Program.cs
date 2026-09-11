@@ -4594,7 +4594,11 @@ if (coverageEnabled)
     // (.claude/rules/guards-need-a-third-state.md). Same escalation the unwritable-output
     // path below uses, for the same reason: the caller asked for an artifact and did not
     // get the one they think they got.
-    if (coverageSourceMap.IsIncomplete)
+    //
+    // Gated on the write having SUCCEEDED: when it did not there is no report for this text
+    // to describe, lostOutputs is the applicable error, and saying "the report above is
+    // incomplete" would claim an artifact nobody has (#3884 Copilot review).
+    if (coverageProblem == null && coverageSourceMap.IsIncomplete)
     {
         Console.Error.WriteLine();
         Console.Error.WriteLine(
@@ -4694,11 +4698,13 @@ if (expectations != null && expectations.CompanyInitAcceptances.Count > 0)
 // REPORT is not there — so a consumer must not read it as "some tests failed", and equally
 // must not read a zero as "the file I asked for is on disk". Never RAISED above what the
 // tests earned, so a failing run still reports its own, more specific code.
-if (incompleteCoverage && computedExitCode == 0)
+var afterIncompleteCoverage = AlRunner.Infrastructure.IncompleteCoverageOutcome.Apply(
+    computedExitCode, incompleteCoverage, coverageWasProduced: true);
+if (afterIncompleteCoverage != computedExitCode)
 {
     Console.Error.WriteLine(
         "exiting 2 because the coverage report you asked for does not describe every source.");
-    computedExitCode = 2;
+    computedExitCode = afterIncompleteCoverage;
 }
 if (lostOutputs.Count > 0 && computedExitCode == 0)
 {
@@ -6931,6 +6937,12 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             if (exitCode == 0 && companyInitFailures.Any(f => f.AcceptedReason == null))
                 exitCode = 2;
 
+            // #3884 Copilot review: the field alone left a client reading `exitCode` with an
+            // ordinary success carrying a short table. Same policy as the CLI, so the three
+            // callers cannot drift again.
+            exitCode = AlRunner.Infrastructure.IncompleteCoverageOutcome.Apply(
+                exitCode, scanFailures is { Count: > 0 }, coverageWasProduced: statementTable != null);
+
             lock (outputLock)
             {
                 output.WriteLine(AlRunner.ServerProtocol.Summary(
@@ -7086,6 +7098,10 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 CompanyInitializer.DrainFailures(), expectations);
             if (exitCode == 0 && companyInitFailures.Any(f => f.AcceptedReason == null))
                 exitCode = 2;
+
+            // Same policy as runTests and the CLI (#3884 Copilot review).
+            exitCode = AlRunner.Infrastructure.IncompleteCoverageOutcome.Apply(
+                exitCode, scanFailures is { Count: > 0 }, coverageWasProduced: statementTable != null);
 
             return AlRunner.ServerProtocol.Execute(allTests, exitCode,
                 AlRunner.Infrastructure.AlMessageCapture.Snapshot(),

@@ -546,6 +546,28 @@ seen. So adding/removing/retyping a *field* (or other table-shape change) is not
 reliably picked up by a warm reload — restart the server after a schema change.
 Trigger/logic edits within an unchanged field layout are fine.
 
+## `sourceScanFailures` — the coverage table is short (#3847/#3884)
+
+Present on `summary` and on an `execute` response only when the source-map scan could not read
+something. Absent means it read everything — never an empty array, the same convention
+`coverage` uses.
+
+```json
+"sourceScanFailures":[{"path":"/src/app/gone","reason":"the source root does not exist","kind":"Root"}]
+```
+
+`kind` is `Root`, `Directory` or `File`. The first two cover every source **beneath** them; a
+`File` entry covers exactly that one path, so do not treat it as a prefix.
+
+**What it means for the tables in the same response.** `coverage` and `perTestCoverage` are
+built from that map, so they are missing whatever these paths declare. A statement absent from
+them is **unmeasured, not uncovered** — the distinction the field exists to make, because a
+coverage percentage computed over an unknown subset is not a coverage percentage.
+
+`exitCode` is `2` when this field is present and a coverage table was produced, unless the run
+earned something more specific; a run that was already failing keeps its own code. The CLI
+`--coverage` path does the same thing and names the paths on stderr.
+
 ## `companyInitFailures` — the company the tests ran against (#3561)
 
 Present on a `runTests` summary and on an `execute` response exactly when a company
