@@ -191,10 +191,11 @@ internal static class DependencyMetadataProducer
             WriteSynthesizedAppJson(work, m, appPath);
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
+            BcEmitOutput emitOutput;
             try
             {
                 using (BcCompiler.ScopeCurrentAppIdentity(m.AppId, m.Publisher, m.Version))
-                    compiler.Emit(new[] { work }, m.Name, work);
+                    emitOutput = compiler.Emit(new[] { work }, m.Name, work);
             }
             catch (Exception ex)
             {
@@ -203,6 +204,29 @@ internal static class DependencyMetadataProducer
 
             var produced = AlObjectMetadataRegistry.Keys
                 .Where(k => !keysBefore.Contains(k)).ToArray();
+
+            // #2247, the partial case of METADATA-EMIT-ZERO below. This method cannot see a
+            // shortfall by counting: it knows how many documents appeared, never how many BC
+            // should have produced, so 55 of 70 and 70 of 70 are the same observation from
+            // here — which is what #3875 measured on Business Foundation, reported as success
+            // with zero AL0185 lines at default verbosity. The emit-retry loop's exclusion
+            // list IS that missing denominator, and until this call kept the BcEmitOutput it
+            // was discarded at the call site.
+            //
+            // Caching is what makes silence permanent rather than merely quiet: Persist below
+            // writes a sidecar every later run replays without recompiling, so a partial
+            // document set would be recorded as this app's complete metadata and every table
+            // it did not cover would stay on the hand-derivation with nothing saying why —
+            // the same reasoning METADATA-EMIT-ZERO's own comment gives for throwing.
+            if (emitOutput.ExcludedObjects.Count > 0)
+                throw Loud(m, "METADATA-EMIT-EXCLUDED",
+                    DependencyLoader.BuildDependencyEmitExcludedDetail(
+                        emitOutput.ExcludedObjects, emitOutput.Sources.Count,
+                        emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>())
+                    + $" {produced.Length} metadata document(s) were produced; caching them"
+                    + " would record that as the app's complete metadata, leaving every"
+                    + " uncovered table on the hand-derivation.",
+                    null);
 
             // The Base Application shape, and the reason this is a throw rather than an empty
             // cache entry: BC's emitter can return success having produced nothing at all when

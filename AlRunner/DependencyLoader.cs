@@ -705,7 +705,7 @@ public sealed class DependencyLoader
             catch (Exception ex) { Console.Error.WriteLine($"[deps] layout stage failed for {layoutName}: {ex.Message}"); }
         }
 
-        IReadOnlyList<EmittedSource> emitted;
+        BcEmitOutput emitOutput;
         // Snapshot the report-metadata registry before this dep's emit so we can
         // persist exactly the entries THIS app contributed to its own sidecar.
         var reportIdsBeforeEmit = new HashSet<int>(AlReportMetadataRegistry.Ids);
@@ -719,7 +719,7 @@ public sealed class DependencyLoader
         // the PARENT bundle) would be both in the reference list AND in the primary AL
         // source → AL0275 "ambiguous reference". The scope is restored on dispose.
         try { using (BcCompiler.ScopeCurrentAppIdentity(m.AppId, m.Publisher, m.Version))
-                  emitted = _compiler.Emit(new[] { tempDir }, m.Name, tempDir).Sources; }
+                  emitOutput = _compiler.Emit(new[] { tempDir }, m.Name, tempDir); }
         catch (Exception ex)
         {
             // EMIT-FAIL: the BC Compilation.Emit() call threw (e.g. "Unexpected value 'None'
@@ -730,6 +730,7 @@ public sealed class DependencyLoader
             Console.Error.WriteLine($"[dep-load-fail] {m.Publisher}_{m.Name} v{m.Version}: EMIT-FAIL — {detail}");
             throw new DependencyLoadException(m.Publisher, m.Name, m.Version.ToString(), "EMIT-FAIL", detail, ex);
         }
+        var emitted = emitOutput.Sources;
         if (emitted.Count == 0)
         {
             // EMIT-ZERO: Emit returned success but produced no sources — BC's silent
@@ -740,6 +741,36 @@ public sealed class DependencyLoader
                 "Run with BCCOMPILER_DIAG=1 or --precompile for full diagnostics.";
             Console.Error.WriteLine($"[dep-load-fail] {m.Publisher}_{m.Name} v{m.Version}: EMIT-ZERO — {detail}");
             throw new DependencyLoadException(m.Publisher, m.Name, m.Version.ToString(), "EMIT-ZERO", detail);
+        }
+        // EMIT-EXCLUDED (#2247): the PARTIAL case of the EMIT-ZERO check directly above.
+        // BcCompiler's emit-retry loop drops an object that cannot bind and recompiles the
+        // survivors, so `Sources` is non-empty and every check on this path passes — while
+        // the assembly about to be loaded, cached and handed to dependent AL is missing
+        // whatever was dropped. Program.cs has treated this as a hard failure on the bundle
+        // path since #1991; this path called the same Emit and read only `.Sources`.
+        //
+        // Failing rather than warning is not a free choice between two defensible options:
+        // EMIT-ZERO above already aborts the run when ALL objects are lost, so tolerating a
+        // partial load would make losing 9 of 10 objects survivable and losing 10 of 10
+        // fatal — a discontinuity with no mechanism behind it. The one case where silence
+        // IS faithful (a Microsoft platform app whose bodies really live in the extracted
+        // service-tier DLLs) is already handled, for every stage, by LoadAll's
+        // IsServiceTierFallbackEligible catch — which this throw routes through unchanged,
+        // because "EMIT-EXCLUDED" is not a METADATA-* stage.
+        if (emitOutput.ExcludedObjects.Count > 0)
+        {
+            var detail = BuildDependencyEmitExcludedDetail(
+                emitOutput.ExcludedObjects, emitted.Count,
+                emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>());
+            // Untagged on purpose. `[deps]` is dropped by Log's component filter at default
+            // verbosity (#2750, CorruptSidecarLoudnessTests) — the same filter that made the
+            // original silence possible, and writing this line as `[deps] …` would reproduce
+            // the defect while looking like a fix. `[dep-load-fail]` is the exempt tag its
+            // three sibling failures on this path already use.
+            Console.Error.WriteLine(
+                $"[dep-load-fail] {m.Publisher}_{m.Name} v{m.Version}: EMIT-EXCLUDED — {detail}");
+            throw new DependencyLoadException(
+                m.Publisher, m.Name, m.Version.ToString(), "EMIT-EXCLUDED", detail);
         }
 
         var asmName = $"Dep_{SanitizeIdent(m.Publisher)}_{SanitizeIdent(m.Name)}_{m.Version.ToString().Replace('.', '_')}";
@@ -1050,6 +1081,38 @@ public sealed class DependencyLoader
         Func<string, bool> indexContains)
         => !IsMetadataStage(stage)
            && HasFaithfulServiceTierFallback(serviceTierIndexAvailable, codeunitTypeNames, indexContains);
+
+    /// <summary>
+    /// The EMIT-EXCLUDED detail text (#2247). Split out so the message contract can be
+    /// asserted directly, without a runner subprocess and without a dependency whose AL
+    /// happens to fail to bind on the BC version the test runs against.
+    ///
+    /// It has to state three things, because a reader who sees only "some objects were
+    /// excluded" still has to go looking: WHICH objects were dropped, HOW MANY of the
+    /// dependency's objects survived (so the loss has a denominator — the shape #3875
+    /// measured as 55 of 70), and WHY each one was dropped, which is the AL diagnostic.
+    /// The diagnostics are inlined rather than put behind --verbose: this aborts the run,
+    /// so they are the only account of the cause, the same choice the EMIT-ZERO path and
+    /// Program.cs's non-profile EMIT-EXCLUDED branch make (#2949).
+    /// </summary>
+    internal static string BuildDependencyEmitExcludedDetail(
+        IReadOnlyList<string> excludedObjects,
+        int emittedCount,
+        IReadOnlyList<string> excludedDiagnostics)
+    {
+        var names = string.Join(", ", excludedObjects);
+        var total = emittedCount + excludedObjects.Count;
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"{excludedObjects.Count} of this dependency's {total} object(s) could not be ")
+          .Append($"compiled and were dropped, so the loaded assembly provides only {emittedCount} ")
+          .Append($"of them: [{names}]. Dependent AL that touches a dropped object fails later ")
+          .Append("with a cryptic NavNCLMissingMethodException, and a test that only touches the ")
+          .Append("survivors passes while covering less than it claims.");
+        if (excludedDiagnostics.Count > 0)
+            sb.Append(" AL diagnostics that identified the dropped object(s): ")
+              .Append(string.Join(" | ", excludedDiagnostics));
+        return sb.ToString();
+    }
 
     /// <summary>
     /// True for the stages <see cref="DependencyMetadataProducer"/> raises. Matched on the
