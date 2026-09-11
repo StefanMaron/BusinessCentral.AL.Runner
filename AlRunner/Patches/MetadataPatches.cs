@@ -326,14 +326,6 @@ public static partial class BcRuntime
     public static object? SkeletonSystemTenant => _skeletonSystemTenant;
 
     /// <summary>
-    /// Called from ApplyAllPatches *after* the real NavEnvironment ctor has run successfully
-    /// (`InstantiateStandaloneNavEnvironment(true,false)`). At that point
-    /// <c>NavEnvironment.Instance.Tenants</c> is a real, non-null <c>NavTenantCollection</c> —
-    /// but its <c>systemTenant</c> field is null because <c>AddSystemTenant</c> requires a real
-    /// SQL connection. We manufacture a skeleton via <c>GetUninitializedObject</c> and write it
-    /// into the field directly.
-    /// </summary>
-    /// <summary>
     /// Assign a fresh <c>new object()</c> to every null <c>readonly</c> field of exactly type
     /// <see cref="object"/> declared on <paramref name="instance"/>'s type and its bases up to
     /// and including <paramref name="stopAfter"/>. Returns the field names that were seeded.
@@ -363,6 +355,14 @@ public static partial class BcRuntime
         return seeded;
     }
 
+    /// <summary>
+    /// Called from ApplyAllPatches *after* the real NavEnvironment ctor has run successfully
+    /// (`InstantiateStandaloneNavEnvironment(true,false)`). At that point
+    /// <c>NavEnvironment.Instance.Tenants</c> is a real, non-null <c>NavTenantCollection</c> —
+    /// but its <c>systemTenant</c> field is null because <c>AddSystemTenant</c> requires a real
+    /// SQL connection. We manufacture a skeleton via <c>GetUninitializedObject</c> and write it
+    /// into the field directly.
+    /// </summary>
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void InjectSkeletonSystemTenant(Assembly navNcl)
     {
