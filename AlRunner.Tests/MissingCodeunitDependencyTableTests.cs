@@ -9,8 +9,9 @@
 //   Every Microsoft .app in ~/.al-runner/test-apps and ~/.al-runner/platform-apps was opened
 //   (a BC .app is a NAVX-prefixed zip) and the `codeunit <id> <name>` declarations were read
 //   out of both SymbolReference.json and the AL sources — 113 app files, BC 28.1.49838.53910.
-//   Where both answer they agree exactly, on all six ids; the trap below is about making
-//   symbols answer at all.
+//   BOTH instruments answer all six ids, and they agree on every one — same name, no
+//   disagreement anywhere. The trap below is not that symbols come up short; it is that a
+//   symbols reader missing either recursion silently answers a SUBSET.
 //
 //   THE TRAP: reaching these ids needs TWO INDEPENDENT RECURSIONS, and implementing one
 //   without the other answers a strict subset while looking like a complete result. All 113
@@ -37,11 +38,15 @@
 //
 //   So neither shape is the rule, and neither axis alone is a safe default.
 //
-//   Both were implemented separately while establishing this table, and each looked right:
-//   one found three ids, the other found two, and only doing both finds six. Check the app
-//   count you scanned AND that you descended Namespaces; a zero from either is a property of
-//   the reader. Reading the `codeunit <id> <name>` declarations out of the .al sources needs
-//   neither recursion to be got right, which is why it was used as the independent check.
+//   Both single-axis readers were written while establishing this table, and each looked
+//   right: one found three ids, the other two, and only doing both finds six. So check the
+//   app count you scanned AND that you descended Namespaces — a zero from either is a
+//   property of the reader, not of the packages, and it arrives in the shape of a result.
+//
+//   WHY THE .al READ IS THE CHECK: it needs neither recursion got right. A second symbols
+//   reader would have shared both failure modes with the first, and a check that shares a
+//   failure mode with the thing it checks is not a check — it agrees for the same reason it
+//   is wrong.
 //
 //   The measured answers, and what the table used to claim:
 //
