@@ -78,4 +78,14 @@ public static class AlSourceSpanCodec
     /// value is 0-based like its line.
     /// </summary>
     public static int AbsoluteFromColumn(long statementSpan) => Decode(statementSpan).FromColumn + 1;
+
+    /// <summary>The 1-based line a statement span ENDS on — equal to the from-line for a
+    /// statement written on one line, greater for one that wraps.</summary>
+    public static int AbsoluteToLine(long statementSpan) => Decode(statementSpan).ToLine + 1;
+
+    /// <summary>The 1-based column a statement span ends at. With the three above, this is
+    /// what decides whether a requested column falls INSIDE a statement rather than at its
+    /// start — the difference between an inline breakpoint a client placed precisely and one
+    /// it placed somewhere in the middle of the statement it meant.</summary>
+    public static int AbsoluteToColumn(long statementSpan) => Decode(statementSpan).ToColumn + 1;
 }

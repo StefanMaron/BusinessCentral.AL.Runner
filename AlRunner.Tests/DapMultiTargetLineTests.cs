@@ -37,20 +37,26 @@ public class DapMultiTargetLineTests
     private const int ThreeStatementLine = 37;  // Third := 1; Third := Third + 1; Third := Third + 1;
     private const int TwoProceduresLine = 26;   // procedure Seven() ... end;  procedure Nine() ... end;
 
-    /// <summary>The 1-based column <c>First := First + Second;</c> starts at on
+    /// <summary>The 1-based column at which <c>First := First + Second;</c> starts on
     /// <see cref="SharedLine"/> — DAP's inline-breakpoint coordinate for the SECOND of that
     /// line's two statements.</summary>
     private const int SecondStatementColumn = 22;
 
+    /// <summary>A column INSIDE the second statement rather than at its start — what a client
+    /// produces when the user clicks mid-token. Column 22 is the <c>F</c> of <c>First</c>, so
+    /// 25 is within the same identifier.</summary>
+    private const int InsideSecondStatementColumn = 25;
+
     /// <summary>Drives initialize / launch / setBreakpoints / configurationDone and returns the
     /// live client together with the setBreakpoints response.</summary>
     private static async Task<(DapClient Dap, JsonElement BpResponse)> StartAndSetBreakpointAsync(
-        int line, int? column = null)
+        int line, int? column = null, bool columnsStartAt1 = true)
     {
         var dap = await DapClient.StartAsync(FixtureSrc);
         try
         {
-            var initSeq = dap.SendRequest("initialize", new { adapterID = "al-runner-tests" });
+            var initSeq = dap.SendRequest("initialize",
+                new { adapterID = "al-runner-tests", columnsStartAt1 });
             var initEvents = new List<JsonElement>();
             var initResp = await dap.ReadUntilResponseAsync(initSeq, initEvents);
             Assert.True(initResp.GetProperty("success").GetBoolean(), initResp.ToString());
@@ -96,7 +102,7 @@ public class DapMultiTargetLineTests
     }
 
     /// <summary>
-    /// RED before the fix: exactly ONE stop. Line 29 carries two assignments and both execute,
+    /// RED before the fix: exactly ONE stop. Line 36 carries two assignments and both execute,
     /// so a breakpoint there has two targets; binding one of them means the client stops once
     /// and the other statement runs past a breakpoint it was told is set.
     ///
@@ -309,10 +315,12 @@ public class DapMultiTargetLineTests
     }
 
     /// <summary>
-    /// The other direction of the column rule: a column that names no statement start must
-    /// not resolve to nothing. A client pointing mid-statement, or at whitespace, gets the
-    /// line it clicked on rather than a breakpoint that silently never fires — so both of
-    /// line 36's statements stay armed.
+    /// The widest arm of the column rule, and the last one: a column that starts no statement
+    /// AND is inside none — column 2 is in the indentation — gets the whole line rather than a
+    /// breakpoint that silently never fires. Both of line 36's statements stay armed.
+    ///
+    /// That is a relocation, so the response reports the column actually bound; the fact above
+    /// covers the middle arm, where a column inside a statement binds that statement alone.
     /// </summary>
     [SkippableFact]
     public async Task InlineBreakpointOnAColumnNoStatementStartsAt_FallsBackToTheWholeLine()
@@ -337,5 +345,91 @@ public class DapMultiTargetLineTests
         var second = await dap.ReadUntilEventAsync("stopped", TimeSpan.FromSeconds(30));
         Assert.Equal(SharedLine, second.GetProperty("body").GetProperty("line").GetInt32());
         Assert.Equal("2", (await ReadTopFrameLocalsAsync(dap))["Second"]);
+
+        // Run to completion like every other fact here: stopping at the second pause and
+        // disposing would hide an extra stop after it, or a run that cannot finish
+        // (#3879 Copilot review).
+        var contSeq2 = dap.SendRequest("continue", new { threadId = 1 });
+        await dap.ReadUntilResponseAsync(contSeq2);
+        var events = new List<JsonElement>();
+        var exited = await dap.ReadUntilEventAsync("exited", TimeSpan.FromSeconds(60), events);
+        Assert.DoesNotContain(events, e => e.GetProperty("event").GetString() == "stopped");
+        Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
+    }
+
+    /// <summary>
+    /// #3879 Copilot review: a column that names no statement START used to fall straight
+    /// through to the whole line, which turns an inline breakpoint into a gutter one. A column
+    /// INSIDE a statement is the common case — a user clicking mid-token — and it now resolves
+    /// to the statement that contains it.
+    ///
+    /// Column 25 is within <c>First</c> on line 36, so exactly one stop, at the second
+    /// statement: Second already reads 2.
+    /// </summary>
+    [SkippableFact]
+    public async Task InlineBreakpointInsideAStatement_ArmsThatStatementAlone()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (dap, bpResp) = await StartAndSetBreakpointAsync(SharedLine, InsideSecondStatementColumn);
+        await using var _ = dap;
+        var bp = bpResp.GetProperty("body").GetProperty("breakpoints")[0];
+        Assert.True(bp.GetProperty("verified").GetBoolean(), bpResp.ToString());
+        // The column actually bound is reported, and it is the statement's START, not the
+        // column asked for — so the client can see where the breakpoint went.
+        Assert.Equal(SecondStatementColumn, bp.GetProperty("column").GetInt32());
+
+        var cfgSeq = dap.SendRequest("configurationDone");
+        await dap.ReadUntilResponseAsync(cfgSeq);
+
+        var stopped = await dap.ReadUntilEventAsync("stopped");
+        Assert.Equal(SharedLine, stopped.GetProperty("body").GetProperty("line").GetInt32());
+        Assert.Equal("2", (await ReadTopFrameLocalsAsync(dap))["Second"]);
+
+        var contSeq = dap.SendRequest("continue", new { threadId = 1 });
+        await dap.ReadUntilResponseAsync(contSeq);
+        var events = new List<JsonElement>();
+        var exited = await dap.ReadUntilEventAsync("exited", TimeSpan.FromSeconds(60), events);
+        Assert.DoesNotContain(events, e => e.GetProperty("event").GetString() == "stopped");
+        Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
+    }
+
+    /// <summary>
+    /// #3879 Copilot review: DAP's `initialize` carries `columnsStartAt1`, and a client that
+    /// sets it FALSE counts columns from 0. Its numbers were compared against 1-based spans,
+    /// so its inline breakpoint landed one column left of the statement it meant — off the
+    /// start, into the containing-statement arm at best and the whole line at worst.
+    ///
+    /// The same statement, named 0-based as column 21, must bind exactly as column 22 does
+    /// 1-based — and the reported column must come back in the client's own base.
+    /// </summary>
+    [SkippableFact]
+    public async Task InlineBreakpointFromAZeroBasedClient_BindsTheSameStatement()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (dap, bpResp) = await StartAndSetBreakpointAsync(
+            SharedLine, SecondStatementColumn - 1, columnsStartAt1: false);
+        await using var _ = dap;
+        var bp = bpResp.GetProperty("body").GetProperty("breakpoints")[0];
+        Assert.True(bp.GetProperty("verified").GetBoolean(), bpResp.ToString());
+        Assert.Equal(SecondStatementColumn - 1, bp.GetProperty("column").GetInt32());
+
+        var cfgSeq = dap.SendRequest("configurationDone");
+        await dap.ReadUntilResponseAsync(cfgSeq);
+
+        // One stop, at the SECOND statement — the same binding the 1-based fact gets.
+        var stopped = await dap.ReadUntilEventAsync("stopped");
+        Assert.Equal(SharedLine, stopped.GetProperty("body").GetProperty("line").GetInt32());
+        var locals = await ReadTopFrameLocalsAsync(dap);
+        Assert.Equal("2", locals["Second"]);
+        Assert.Equal("1", locals["First"]);
+
+        var contSeq = dap.SendRequest("continue", new { threadId = 1 });
+        await dap.ReadUntilResponseAsync(contSeq);
+        var events = new List<JsonElement>();
+        var exited = await dap.ReadUntilEventAsync("exited", TimeSpan.FromSeconds(60), events);
+        Assert.DoesNotContain(events, e => e.GetProperty("event").GetString() == "stopped");
+        Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
     }
 }

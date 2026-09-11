@@ -5693,6 +5693,18 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     var sourceMapResolved = false;
     string? compileFailure = null;
 
+    // DAP's `initialize` lets the client say whether it counts columns from 1 or from 0
+    // (`columnsStartAt1`, default TRUE when absent). Everything below this line works in
+    // 1-based columns, which is what AlSourceSpanCodec.AbsoluteFromColumn produces, so a
+    // 0-based client's numbers are converted on the way in and back on the way out (#3879
+    // Copilot review). Without that, such a client's inline breakpoint lands one column left
+    // of the statement it meant.
+    //
+    // `linesStartAt1` has the identical problem and is NOT handled here: lines are reported
+    // by `stopped`, `stackTrace` and this response, so honouring it is a change across the
+    // whole surface rather than the one field this pull request adds (#3881).
+    var columnsStartAt1 = true;
+
     // setBreakpoints requests that arrived before the map could be built, waiting to be
     // answered. Answering one needs the compile, and BLOCKING this single-threaded loop for
     // the compile makes the session deaf to `disconnect` and turns a compile that never
@@ -5875,6 +5887,13 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                 id = idx,
                 verified = rb.Verified,
                 line = rb.Verified ? rb.ActualLine : rb.RequestedLine,
+                // The column actually bound — the leftmost of the armed targets. A client that
+                // asked for a column no statement starts at can see where the breakpoint went,
+                // which is what keeps the resolver's widest fallback from being a silent
+                // relocation (#3879 Copilot review). Back into the client's own base.
+                column = rb.Verified && rb.Targets.Count > 0
+                    ? rb.Targets.Min(t => t.Column) - (columnsStartAt1 ? 0 : 1)
+                    : (int?)null,
                 message = rb.Verified ? null : unverifiedReason,
             }),
         });
@@ -6036,6 +6055,10 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                 switch (command)
                 {
                     case "initialize":
+                        // Absent means true, per the specification.
+                        columnsStartAt1 = !(args != null
+                            && args.Value.TryGetProperty("columnsStartAt1", out var colBaseEl)
+                            && colBaseEl.ValueKind == System.Text.Json.JsonValueKind.False);
                         transport.WriteResponse(msg.Seq, command, true, new
                         {
                             supportsConfigurationDoneRequest = true,
@@ -6079,7 +6102,9 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                                     lines.Add((lineEl.GetInt32(),
                                         bp.TryGetProperty("column", out var colEl)
                                             && colEl.ValueKind == System.Text.Json.JsonValueKind.Number
-                                            ? colEl.GetInt32() : null));
+                                            // To 1-based, which is what the resolver compares in.
+                                            ? colEl.GetInt32() + (columnsStartAt1 ? 0 : 1)
+                                            : null));
                         else if (args.Value.TryGetProperty("lines", out var legacyLinesEl) && legacyLinesEl.ValueKind == System.Text.Json.JsonValueKind.Array)
                             foreach (var l in legacyLinesEl.EnumerateArray()) lines.Add((l.GetInt32(), null));
 

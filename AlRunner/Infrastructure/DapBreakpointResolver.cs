@@ -29,6 +29,11 @@ public readonly record struct DapBreakpointRequest(string SourcePath, int Line, 
 /// 1-based column it starts at — the only thing that tells two targets on one line apart.</summary>
 public readonly record struct DapBreakpointTarget(Type ScopeType, int StatementIndex, int Column);
 
+/// <summary>Where one instrumented statement sits in the FILE: 1-based, both ends. The end is
+/// what makes "does this column fall inside the statement" answerable, as opposed to "does it
+/// start it".</summary>
+internal readonly record struct StatementSpan(int Line, int Column, int EndLine, int EndColumn);
+
 /// <summary>
 /// The answer to one <c>setBreakpoints</c> line. <see cref="Targets"/> holds EVERY statement
 /// the line resolves to, because a source line can carry more than one (#3820) — two
@@ -106,7 +111,7 @@ public static class DapBreakpointResolver
         // (label,id) -> every loaded scope type for that object, each with its own
         // (statement index -> absolute AL line) map.
         var byObject = new Dictionary<(string, int),
-            List<(Type Type, Dictionary<int, (int Line, int Column)> LineByStmt)>>();
+            List<(Type Type, Dictionary<int, StatementSpan> LineByStmt)>>();
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             Type[] types;
@@ -130,14 +135,17 @@ public static class DapBreakpointResolver
                 // than being shifted by a guess.
                 var lineOffset = sourceMap.LineOffset(label, id);
                 var instrumented = AlCoverageInstrumentedStatements.Find(t);
-                var lineByStmt = new Dictionary<int, (int Line, int Column)>();
+                var lineByStmt = new Dictionary<int, StatementSpan>();
                 foreach (var i in instrumented)
                 {
                     if (i < 0 || i >= spans.Length) continue; // defensive: BC shape drift
-                    // The column needs no offset: AlSourceLocationMap.LineOffset moves an
-                    // object's text DOWN the file, never across it.
-                    lineByStmt[i] = (AlSourceSpanCodec.AbsoluteFromLine(spans[i]) + lineOffset,
-                                     AlSourceSpanCodec.AbsoluteFromColumn(spans[i]));
+                    // Columns need no offset: AlSourceLocationMap.LineOffset moves an object's
+                    // text DOWN the file, never across it. Both LINES do.
+                    lineByStmt[i] = new StatementSpan(
+                        AlSourceSpanCodec.AbsoluteFromLine(spans[i]) + lineOffset,
+                        AlSourceSpanCodec.AbsoluteFromColumn(spans[i]),
+                        AlSourceSpanCodec.AbsoluteToLine(spans[i]) + lineOffset,
+                        AlSourceSpanCodec.AbsoluteToColumn(spans[i]));
                 }
                 if (!byObject.TryGetValue((label, id), out var list))
                     byObject[(label, id)] = list = new();
@@ -165,27 +173,46 @@ public static class DapBreakpointResolver
                 // Enumeration order is deliberately not relied on for anything: the set is
                 // collected whole, and registering all of it is what makes the arbitrary order
                 // stop mattering.
+                var onLine = new List<(DapBreakpointTarget Target, StatementSpan Span)>();
                 foreach (var objKey in objKeys)
                 {
                     if (!byObject.TryGetValue(objKey, out var scopes)) continue;
                     foreach (var (type, lineByStmt) in scopes)
                         foreach (var entry in lineByStmt)
                             if (entry.Value.Line == req.Line)
-                                targets.Add(new DapBreakpointTarget(
-                                    type, entry.Key, entry.Value.Column));
+                                onLine.Add((
+                                    new DapBreakpointTarget(type, entry.Key, entry.Value.Column),
+                                    entry.Value));
                 }
 
-                // An INLINE breakpoint names a column, which is DAP's own way of saying
-                // "this statement, not the others on the line" — so honour it rather than
-                // arming the whole line (#3879 review). Only an EXACT start-column match
-                // narrows: a column that lands mid-statement, or on whitespace, is a client
-                // pointing somewhere no statement begins, and answering that with nothing
-                // would be worse than answering with the line the user clicked on.
-                if (req.Column is int wantColumn)
+                // An INLINE breakpoint names a column, which is DAP's own way of saying "this
+                // statement, not the others on the line" — VS Code's inline breakpoints exist
+                // for exactly the several-statements-on-one-line case. Arming the whole line
+                // for one is the gutter behaviour applied to a request that said otherwise
+                // (#3879 review).
+                //
+                // Three steps, narrowest first:
+                //   1. a statement STARTING at the column — the client placed it precisely;
+                //   2. otherwise a statement CONTAINING it — the client pointed inside the
+                //      statement it meant, which is what a mid-token click produces;
+                //   3. otherwise every statement on the line, because a column in the
+                //      indentation names no statement at all and a breakpoint that silently
+                //      never fires is worse than the line the user clicked on.
+                //
+                // Step 3 is a relocation, so it is REPORTED: the response carries the column
+                // actually bound (see the handler), which is what keeps it from being the
+                // silent widening this cascade exists to avoid.
+                if (req.Column is int wantColumn && onLine.Count > 0)
                 {
-                    var atColumn = targets.Where(t => t.Column == wantColumn).ToList();
-                    if (atColumn.Count > 0) targets = atColumn;
+                    var starting = onLine.Where(t => t.Span.Column == wantColumn).ToList();
+                    var containing = starting.Count > 0 ? starting : onLine
+                        .Where(t => wantColumn >= t.Span.Column
+                                    && (t.Span.EndLine > t.Span.Line || wantColumn <= t.Span.EndColumn))
+                        .ToList();
+                    if (containing.Count > 0) onLine = containing;
                 }
+
+                targets.AddRange(onLine.Select(t => t.Target));
             }
 
             // ActualLine is the requested line whenever anything matched, because the match is
