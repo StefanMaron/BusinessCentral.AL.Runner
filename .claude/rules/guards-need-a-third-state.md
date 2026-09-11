@@ -91,10 +91,20 @@ and conflating the two refused every CI run in the first version of that fix (#3
    never-fire path, which is the defect itself. `pr-gate.yml` discovers `test_*.sh` and
    `tools/test_*.py` siblings by glob, so a correctly-named test gates the day it lands (#3683).
 
-**A guard that is safe only by accident of a neighbour is still on this list** — #3361 part 2
-is one, where a leg summary that lost its `fail` key reads as zero failures. It is not reachable
-as a false pass today, because a `summary.get("pass") != want` comparison a few lines down fails
-loudly on a `None`; it is still written the opposite way from every neighbour in that function.
+**A guard that is safe only by accident of a neighbour is not safe** — and this rule said
+otherwise about its own outstanding instance until #3856 measured it. #3361 part 2, where
+`check_corpus`'s summary lost its `fail` key and read as zero failures, was recorded here as
+unreachable "because a `summary.get("pass") != want` comparison a few lines down fails loudly on
+a `None`". Both halves were wrong: the comparison is against `counted`, the per-bundle PASS
+lines, and on the shape that actually occurs — a summary truncated after `pass:` — `pass` is
+present **and agrees**, so both guards pass and `preflight.py` reports a reproduced baseline for
+a run that never said whether anything failed. Executed on `main`, the truncated summary returned
+PASS (#3856; derivation in the incidents file).
+
+Three independent readers checked that neighbour and all three credited it. **So a neighbour is
+evidence only when you have executed the guard on the input you are claiming it covers** — the
+backstop was real, and simply did not cover the case, which is indistinguishable from covering it
+until something runs it.
 
 ## The same shape one level down
 

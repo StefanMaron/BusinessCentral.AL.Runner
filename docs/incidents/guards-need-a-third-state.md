@@ -28,7 +28,7 @@ separately as its own defect.
 | #3351 | `ci-wait.py --timeout 0` — no poll could occur | exit 2, a verdict-shaped non-verdict | **closed**, fixed |
 | #3299 | `SUBMODULE_PATH` matches nothing | exit 0, identical output to a real forward-bump | **open**, fixed in PR #3683 |
 | #3681 | `check_count_baseline_history.sh`'s `PIN_PATH` matches nothing | exit 0, "does not move the pin", on every PR forever | fixed in PR #3683; the script itself went with the corpus pin at #3737 |
-| #3361 (part 2) | a leg summary lost its `fail` key | zero failures | **open** |
+| #3361 (part 2) | a leg summary lost its `fail` key | zero failures — a **live** false green, not the unreachable one three sources recorded | fixed in PR #3856 |
 
 **#3681 is the argument for writing this down.** `check_count_baseline_history.sh` landed on
 `main` the morning of 2026-09-09 (#3666) as a guard against a corpus pin bump that silently
@@ -37,20 +37,45 @@ day at 11:03Z. A guard authored to catch a silent omission reproduced the shape 
 catch, two days after two instances of it had been fixed. Naming the class is what makes the
 fifth instance a lookup instead of a rediscovery.
 
-**#3361 part 2 is the outstanding one**, and its own body records the honest qualifier: that
-spot is currently backstopped by a `summary.get("pass") != want` comparison a few lines down
-where a `None` fails loudly, so it is not reachable as a false pass **today**. It is still
-written the opposite way from every neighbour in that function, where an uncomputable value is
-an explicit refusal rather than a silent zero. A guard that is safe only by accident of a
-neighbour is on this list.
+**#3361 part 2 was the outstanding one, and the qualifier attached to it was false** — fixed and
+corrected by #3856.
+
+Three sources recorded it as unreachable: the issue body, the reviewer's comment on it, and this
+rule. All three credited the same neighbour, a `summary.get("pass")` comparison a few lines below
+the defect, said to fail loudly on a `None`. Two errors compounded:
+
+- the comparison is against **`counted`**, the sum of the per-bundle PASS lines — not a `want`
+  from a baseline, which is what the phrasing implied and what would have made a `None` fail;
+- it never sees a `None` in the shape that occurs. `parse_corpus_run` seeds the summary from
+  `Tests: N total` and adds a key only when its line appears, so a block truncated after
+  `pass:` yields `{"total", "pass"}`: `fail` absent, `pass` **present and agreeing**.
+
+Both guards therefore pass cleanly. Executed on `main`, in order, with the guards as written:
+
+```
+healthy run              -> PASS -- baseline reproduced
+real failures            -> FAIL: tests failed
+TRUNCATED after 'pass:'  -> PASS -- baseline reproduced      <-- the false green
+```
+
+`check_corpus` reporting `the corpus ran clean on this box: 15 tests passed across 3 app(s)` for
+a run that never said whether anything failed — in the check gating every unattended cycle. The
+issue had ranked it the lowest blast radius of six; it was a live false green.
+
+**The lesson is the one the rule already taught, sharpened.** "Safe only by accident of a
+neighbour" was recorded as a real-but-acceptable state; it is not. A neighbour that does not
+cover the case is indistinguishable from one that does, until something executes the guard on
+that input — which is the same false-zero class the rule is about, applied to a reader instead of
+a check. Three readers is the measurement: the count is what makes it a property of the reasoning
+rather than one person's slip.
 
 ## The instances (status moved from the rule, #3728 review round 2)
 
-#3361 part 2 was open when this rule was written, and its own body records the honest qualifier:
-that spot is currently backstopped by a `summary.get("pass") != want` comparison a few lines down
-where a `None` fails loudly, so it is not reachable as a false pass **today**. It is still written
-the opposite way from every neighbour in that function, where an uncomputable value is an explicit
-refusal rather than a silent zero.
+#3361 part 2 was open when this rule was written, and this section carried the same "not
+reachable as a false pass **today**" qualifier the rule did. #3856 measured it and it was false —
+the correction, the mechanism and the executed evidence are above, under the fifth instance.
+Stated once rather than twice: a claim repeated in two places is a claim that can be corrected in
+one of them.
 
 ## Counting `die_undetermined` (moved from the rule, #3728 review round 3)
 
