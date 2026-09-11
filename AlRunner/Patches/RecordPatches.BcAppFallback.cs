@@ -475,7 +475,8 @@ public static partial class RecordPatches
             // per-value Captions (#1775) and the enum-level DefaultImplementation /
             // UnknownValueImplementation fallbacks (#2306) were both being dropped,
             // which is why Base App enum 205 "Alt. Cust VAT Reg. Doc." could not be cast
-            // to its interface.
+            // to its interface. Extensible (#3807) is the same shape: 31 of 142 base enums
+            // declare it true and the registry could not state it at all.
             foreach (var enumSymbol in symbols.Enums)
                 AlRunner.AlEnumMetadataRegistry.Register(
                     enumSymbol.Id,
@@ -485,7 +486,8 @@ public static partial class RecordPatches
                     enumSymbol.Implementations.Select(i => i.ToArray()).ToArray(),
                     enumSymbol.Captions?.ToArray(),
                     enumSymbol.DefaultImplementations?.ToArray(),
-                    enumSymbol.UnknownImplementations?.ToArray());
+                    enumSymbol.UnknownImplementations?.ToArray(),
+                    enumSymbol.Extensible);
             // Invalidate the indexes so newly-added .app gets picked up on next miss.
             InvalidateBcAppIndexes();
         }

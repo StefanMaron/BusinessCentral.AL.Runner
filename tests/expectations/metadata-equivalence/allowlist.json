@@ -1402,26 +1402,6 @@
       "issue": 3806
     },
     {
-      "member": "MetaEnum.Extensible",
-      "reason": "BC answers True on 31 of 142 enums; the runner answers False on all of them, because BcAppSymbolCache.EnumSymbol does not carry Extensible at all -- the record is (Id, Name, Options, Indexes, Implementations, Captions, DefaultImplementations, UnknownImplementations) and nothing reads the property. The value IS in SymbolReference.json, in the same Properties bag TryParseEnumSymbol already reads DefaultImplementation and UnknownValueImplementation from a few lines away, so this is a dropped property rather than an underivable one. Not cosmetic: Extensible = false is what makes an enum refuse an enumextension, so the runner currently answers 'not extensible' for 31 enums that are. The other 111 agree only because the runner's constant happens to match.",
-      "issue": 3807
-    },
-    {
-      "member": "MetaEnumValue.InterfaceImplementation",
-      "reason": "BC states a value's interface-implementation codeunit ids (e.g. [306] on enum 397); the runner states []. The runner DOES parse these -- TryParseEnumSymbol reads a value's Implementation property into implementations[i] and AlEnumOptionMetadata uses them for GetImplementationCodeunitIdPublic (#2306) -- so the data is present and it is the <Value> render that has no element for it. Whether BC's <Value> shape can express it at all still needs checking before this is called a derivation gap; #3807 records that caveat rather than asserting either way.",
-      "issue": 3807
-    },
-    {
-      "member": "MetaEnum.DefaultImplementation",
-      "reason": "The enum-level interface fallback: BC states [1467] on enum 1465, the runner states []. EnumSymbol carries the list (#2306) and the <Enum> render states no element for it -- the same not-rendered-though-parsed shape as MetaEnumValue.InterfaceImplementation above, one level up.",
-      "issue": 3807
-    },
-    {
-      "member": "MetaEnum.UnknownImplementation",
-      "reason": "The other enum-level interface fallback, on the same enum 1465 and with the same cause as MetaEnum.DefaultImplementation immediately above: EnumSymbol carries it, the render does not state it.",
-      "issue": 3807
-    },
-    {
       "member": "MetaEnum.ALNamespace",
       "reason": "BC states the enum's AL namespace (System.Text on enum 59); the runner answers null on all 142 because EnumSymbol does not carry it. Derivable and simply not carried. Same member and same fix as MetaTable.ALNamespace (#3568), MetaReport.ALNamespace (#3808) and MetaPermissionSet.ALNamespace (#3806).",
       "issue": 3807

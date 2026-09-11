@@ -3103,10 +3103,15 @@ public sealed partial class BcCompiler
                 else
                 {
                     // #2306 — the enum-level fallbacks apply to the base enum only; an
-                    // enumextension declares neither, so RegisterExtension takes none.
+                    // enumextension declares neither, so RegisterExtension takes none. #3807 —
+                    // Extensible is the same: a base-enum-only property, and the DECLARED one
+                    // rather than IApplicationObjectTypeSymbol.IsExtensible, which folds AL's
+                    // default in and would lose the "declares nothing" state BC's own emitter
+                    // keeps (12 of 144 emitted enum documents state no Extensible attribute).
                     AlEnumMetadataRegistry.Register(enumSym.Id, enumSym.Name, options, indexes, implementations, captions,
                         ReadEnumImplementationFallback(enumSym, NavCA.PropertyKind.DefaultImplementation),
-                        ReadEnumImplementationFallback(enumSym, NavCA.PropertyKind.UnknownValueImplementation));
+                        ReadEnumImplementationFallback(enumSym, NavCA.PropertyKind.UnknownValueImplementation),
+                        ReadEnumExtensible(enumSym));
                 }
             }
             // Capture the per-report runtime metadata XML the emit pipeline hands us
@@ -3350,6 +3355,29 @@ public sealed partial class BcCompiler
             }
             catch { /* metadata shape drift must not break the compile */ }
             return map;
+        }
+
+        /// <summary>
+        /// The enum's DECLARED <c>Extensible</c> property (#3807), or null when it declares
+        /// none. Deliberately the property rather than
+        /// <c>IApplicationObjectTypeSymbol.IsExtensible</c>, which is
+        /// <c>GetBooleanPropertyValue(Extensible) ?? ExtensibleByDefault</c> and so cannot tell
+        /// a declared <c>false</c> from an absent one — a distinction BC's emitter preserves
+        /// and the metadata-equivalence render depends on.
+        /// </summary>
+        private static bool? ReadEnumExtensible(NavCA.IEnumBaseTypeSymbol enumSymbol)
+        {
+            try
+            {
+                var text = enumSymbol.GetProperty(NavCA.PropertyKind.Extensible)?.ValueText;
+                if (string.IsNullOrWhiteSpace(text)) return null;
+                var t = text.Trim();
+                return t == "1" || string.Equals(t, "true", StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>
