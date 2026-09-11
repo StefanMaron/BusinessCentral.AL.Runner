@@ -114,6 +114,47 @@ codeunit 64571 "PMN Precompiled Member Tests"
     end;
 
     [Test]
+    procedure ExpressionBoundEnabled_OnPrecompiledBasePage_ReadsTrueWhenTheGlobalIsTrue()
+    var
+        GLAccountCategories: TestPage "G/L Account Categories";
+    begin
+        // [GIVEN] Page 790 opened for EDIT. Its OnOpenPage assigns
+        // `PageEditable := CurrPage.Editable`, which is true on an editable page.
+        GLAccountCategories.OpenEdit();
+
+        // [THEN] Every one of the five actions declaring `Enabled = PageEditable` READS
+        // true. Reading Enabled() is the arm that refused before #3825: the declared value
+        // arrives from the symbol file as the raw AL identifier 'PageEditable' while the
+        // live binding table is keyed 'p790p790PageEditable', so the lookup missed and the
+        // runner raised RunnerOutOfScopeException rather than answering.
+        Assert.IsTrue(GLAccountCategories.New.Enabled(),
+            'action New declares Enabled = PageEditable, true on a page opened for edit');
+        Assert.IsTrue(GLAccountCategories.MoveUp.Enabled(),
+            'action MoveUp declares Enabled = PageEditable, true on a page opened for edit');
+        Assert.IsTrue(GLAccountCategories.MoveDown.Enabled(),
+            'action MoveDown declares Enabled = PageEditable, true on a page opened for edit');
+        Assert.IsTrue(GLAccountCategories.Indent.Enabled(),
+            'action Indent declares Enabled = PageEditable, true on a page opened for edit');
+        Assert.IsTrue(GLAccountCategories.Outdent.Enabled(),
+            'action Outdent declares Enabled = PageEditable, true on a page opened for edit');
+    end;
+
+    [Test]
+    procedure ExpressionBoundEnabled_OnPrecompiledBasePage_DoesNotMakeALiteralFalseAnswerTrue()
+    var
+        GLAccountCategories: TestPage "G/L Account Categories";
+    begin
+        // [GIVEN] The same page, whose GetBalance control declares a literal Editable = false.
+        GLAccountCategories.OpenEdit();
+
+        // [THEN] The join did not make everything answer true. A control the page declares
+        // non-editable still reports false, so the fix added a resolution rather than a
+        // blanket default - the failure mode #3819's removed name-join actually had.
+        Assert.IsFalse(GLAccountCategories.GetBalance.Editable(),
+            'the GetBalance control declares Editable = false and must still report false');
+    end;
+
+    [Test]
     procedure SpacedControlName_OnPrecompiledBasePage_RunsItsPageOnValidate()
     var
         PermissionSetAssignments: TestPage "Permission Set Assignments";
