@@ -22,6 +22,16 @@ per cycle (`orchestrating-a-session`, one listing per sweep) and reads the verdi
 considers arming then, and nothing is lost by reading late:
 `gh pr merge --auto` lands a reviewed PR the moment its checks go green with nobody present.
 
+**Read the tool's exit code, not a pipeline's.** Every row of the table below is worthless if
+`$?` came from the last command in a pipe: `tools/ci-wait.py <N> --timeout 0 | tail -25` leaves
+`$?` as **`tail`'s** status, which is 0 whatever the verdict was — so a FAILED or a
+still-running PR reads as green, and the printed text saying otherwise is the only thing left
+that is true. Redirect to a file and check `$?`, or use `${PIPESTATUS[0]}`. Measured twice on
+2026-09-11: an agent reported this tool "exits 0 on a non-verdict" from a piped read (it exits
+2, and did), and the coordinator made the same mistake reading a `| tail` earlier the same
+night. It is the same class as the trap below — an answer that could not have come out any
+other way.
+
 **Trap: an answer that could not have come out any other way is not evidence.** Under the
 pre-#3351 zero-timeout path a green PR, a red PR and a PR with no checks all printed `STILL
 RUNNING`, and its only tell was the empty parentheses of `STILL RUNNING after 0s ()`, where the
