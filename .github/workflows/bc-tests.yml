@@ -830,13 +830,28 @@ jobs:
           # 28.0 on) — tests/expectations/count-baseline/test-count-baseline.json
           # carries a per-BC-version expected count for exactly that reason, not a
           # single global value.
+          #
+          # The exit code is EXPLAINED here, not left bare (#3350). This is the only
+          # step in the matrix that still passes --count-baseline, so it is the only
+          # one that can exit 4 -- and a 4 arrives with every suite reporting zero
+          # failures, which reads as a mystery until someone searches the log for the
+          # [count-baseline] line. A leg must be diagnosable from its own log.
+          rc=0
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
               tests/runner-extras \
               --package-cache "$HOME/.al-runner/platform-apps" \
               --package-cache "$HOME/.al-runner/test-apps" \
               --strict \
               --count-baseline tests/expectations/count-baseline/test-count-baseline.json \
-              --out runner-extras-results.json
+              --out runner-extras-results.json || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            if [ "$rc" -eq 4 ]; then
+              echo "::error::runner-extras count-baseline mismatch (exit 4) -- a suite ran a different NUMBER of tests than tests/expectations/count-baseline/test-count-baseline.json declares. Search this log for '[count-baseline]': the DROP/GROWTH line names the suite, the expected count and the actual one. A GROWTH means the baseline needs bumping in this PR; a DROP means an app group stopped being discovered."
+            else
+              echo "::error::runner-extras run failed (exit $rc: 1=test failure, 2=exec fail, 3=compile fail, 4=count-baseline mismatch, 5=expectations entry matched no test, 134/139=crash)"
+            fi
+            exit "$rc"
+          fi
 
       - name: Run runner-extras suites that need --isolation disabled
         # A SECOND invocation because isolation is a process-global flag with no per-bundle

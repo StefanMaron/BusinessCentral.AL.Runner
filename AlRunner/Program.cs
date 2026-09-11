@@ -4402,14 +4402,33 @@ int computedExitCode = 0;
             else if (t.Outcome == TestOutcome.Error) errored++;
         }
     }
+    // The ladder is ordered by WHAT THE CODE ASSERTS, not by how alarming it sounds. Two
+    // tiers, and the boundary between them is the whole design:
+    //
+    //   3, 2, 4  — "this report cannot be trusted": the run did not measure what it claims
+    //              to, so a consumer must not read the results at face value.
+    //   1, 5, 0  — "the report is sound": these are statements ABOUT the AL it measured.
+    //
+    // A run can hold several of these at once and reports the most fundamental, so a code
+    // only ever UNDER-states how much is wrong — never over-states it.
     computedExitCode = compileFail > 0 ? 3       // compile errors
         // #2747: a carried attempt was promised and is not here, so whatever this run reports
         // omits it. Ranked above a plain test failure because it is not a statement about the
         // AL at all — it says the REPORT cannot be trusted, which a consumer must not read as
         // "some tests failed". Below a compile failure, which is the more fundamental problem.
         : (execFail > 0 || carryIncomplete) ? 2  // bucket-level execution error, or a lost attempt
-        : (failed + errored > 0 ? 1               // at least one test failed
-        : (countBaselineMismatch ? 4                    // #1880: suite's count didn't exactly match its baseline
+        // #3350: ABOVE a plain test failure, on #2747's reasoning applied consistently. "This
+        // suite ran 2 tests where 5 were declared" is not a statement about the AL either — it
+        // says a bundle or app group stopped being discovered, which is the silent shrinkage
+        // #1880 built this guard for. Ranked below 2 because a lost attempt loses results
+        // wholesale while a count mismatch still delivers the ones it ran.
+        //
+        // It was BELOW 1 until #3350: measured on BC 28.1, a fixture with one deliberate
+        // failure and a baseline of 5 against an actual 2 printed the DROP line and exited 1,
+        // so the mismatch was invisible in the exit code. A consumer told only "1" fixes the
+        // failing test, sees green, and never learns three tests' worth of coverage vanished.
+        : (countBaselineMismatch ? 4             // #1880: suite's count didn't exactly match its baseline
+        : (failed + errored > 0 ? 1              // at least one test failed
         : (expectationsMatchFailure ? 5 : 0)));  // #3123: an expectations entry matched no test
 }
 
@@ -6644,7 +6663,12 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
 
             var allTests = runs.SelectMany(r => r.Tests).ToList();
             var allCompileErrors = runs.SelectMany(r => r.CompileErrors ?? Array.Empty<CompilationErrorGroup>()).ToList();
-            // Same priority as the CLI's computedExitCode: 3 (compile) > 2 (exec) > 1 (test fail) > 0.
+            // Max() is the right aggregator ONLY because the codes a per-bundle run can carry
+            // happen to rank in numeric order: 3 (compile) > 2 (exec) > 1 (test fail) > 0. The
+            // whole-run codes do not — the CLI ranks 4 (count baseline) above 1 (#3350) — but
+            // 4 and 5 are audits over the FULL run, computed once in the CLI path, so no
+            // BundleRun ever carries one and Max() cannot meet them here. Give a bundle a code
+            // that is not in that ordered set and this silently picks the wrong one.
             var exitCode = runs.Count > 0 ? runs.Max(r => r.ExitCode) : 0;
             var cached = runs.Count > 0 && runs.All(r => r.Cached);
 

@@ -42,6 +42,8 @@ public sealed class CountBaselineIntegrationTests : IDisposable
     private readonly string _root;
     private readonly string _suiteKey;
     private readonly string _baselinePath;
+    private readonly string _failRoot;
+    private readonly string _failSuiteKey;
 
     public CountBaselineIntegrationTests()
     {
@@ -50,11 +52,21 @@ public sealed class CountBaselineIntegrationTests : IDisposable
         _suiteKey = Path.GetFileName(_root);
         _baselinePath = TestScratch.FilePath("al-runner-count-baseline", "baseline.json");
         WriteFixture(_root);
+
+        // #3350: a SECOND fixture whose second test deliberately fails, so a run can
+        // have a real test failure and a count mismatch at the same time. Separate root
+        // (not a flag on the first) because the suite key is the directory basename and
+        // the two fixtures must be independently addressable by a baseline.
+        _failRoot = TestScratch.Dir("al-runner-count-baseline-fail");
+        Directory.CreateDirectory(_failRoot);
+        _failSuiteKey = Path.GetFileName(_failRoot);
+        WriteFailingFixture(_failRoot);
     }
 
     public void Dispose()
     {
         try { Directory.Delete(_root, recursive: true); } catch { }
+        try { Directory.Delete(_failRoot, recursive: true); } catch { }
         try { File.Delete(_baselinePath); } catch { }
     }
 
@@ -100,6 +112,47 @@ public sealed class CountBaselineIntegrationTests : IDisposable
         """);
     }
 
+    /// <summary>
+    /// #3350: the same two-test shape as <see cref="WriteFixture"/>, except the second
+    /// test ERRORs. Lets one run hold BOTH a real test failure and a count-baseline
+    /// mismatch, which is the only way to observe which of the two the exit code reports.
+    /// </summary>
+    private static void WriteFailingFixture(string dir)
+    {
+        File.WriteAllText(Path.Combine(dir, "app.json"), """
+        {
+          "id": "c3d4e5f6-a7b8-4901-cdef-234567890123",
+          "name": "Count Baseline Failing Fixture",
+          "publisher": "AL Runner",
+          "version": "1.0.0.0",
+          "dependencies": [],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": 62210, "to": 62219 } ],
+          "runtime": "14.0"
+        }
+        """);
+
+        File.WriteAllText(Path.Combine(dir, "CountBaselineFailingFixtureTests.Codeunit.al"), """
+        codeunit 62210 "Count Baseline Fail Fixture"
+        {
+            Subtype = Test;
+
+            [Test]
+            procedure FailFixtureFirstPasses()
+            begin
+                if 1 <> 1 then
+                    Error('unreachable');
+            end;
+
+            [Test]
+            procedure FailFixtureSecondFailsDeliberately()
+            begin
+                Error('deliberate failure: #3350 exit-code precedence fixture');
+            end;
+        }
+        """);
+    }
+
     private void WriteBaseline(string json) => File.WriteAllText(_baselinePath, json);
 
     private string TestsBaseline(int testsDefault) =>
@@ -112,13 +165,16 @@ public sealed class CountBaselineIntegrationTests : IDisposable
         { "suites": { "{{_suiteKey}}": { "appGroups": { "default": {{appGroupsDefault}} } } } }
         """;
 
-    private (string output, int exit) RunRunner(params string[] extraArgs)
+    private (string output, int exit) RunRunner(params string[] extraArgs) =>
+        RunRunnerOn(_root, extraArgs);
+
+    private (string output, int exit) RunRunnerOn(string bundleRoot, params string[] extraArgs)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
         args.Append(" --strict");
         args.Append($" --count-baseline \"{_baselinePath}\"");
-        args.Append($" \"{_root}\"");
+        args.Append($" \"{bundleRoot}\"");
         foreach (var a in extraArgs) args.Append($" {a}");
         var psi = new ProcessStartInfo
         {
@@ -264,5 +320,77 @@ public sealed class CountBaselineIntegrationTests : IDisposable
         Assert.Contains("[count-baseline] appGroups check skipped", output);
         Assert.DoesNotContain("[count-baseline] DROP", output);
         Assert.DoesNotContain("[count-baseline] GROWTH", output);
+    }
+
+    // ── #3350: the count guard must not be masked by a concurrent test failure ──────
+    //
+    // Both of the tests below run the FAILING fixture, so `failed + errored > 0` holds.
+    // They differ only in whether the baseline also mismatches, which is what isolates
+    // the precedence question from the plain fail-count gate.
+
+    /// <summary>
+    /// #3350 RED: a run that BOTH fails a test and measured the wrong number of tests
+    /// must report the count mismatch (4), not the test failure (1).
+    ///
+    /// The two statements are different in kind. "A test failed" is a statement about the
+    /// AL under test; "this suite measured 2 tests where 5 were declared" is a statement
+    /// that the RUN DID NOT MEASURE WHAT IT CLAIMS TO — the same kind as the carried-attempt
+    /// loss the ladder already ranks ABOVE a plain test failure, for the reason its own
+    /// comment gives: a consumer must not read it as "some tests failed". A consumer told
+    /// only "1" investigates two failing tests, fixes them, sees green, and never learns
+    /// that three tests' worth of coverage stopped being discovered — the exact silent
+    /// shrinkage #1880 built this guard for.
+    ///
+    /// Before the fix this exited 1 and the DROP line was printed but unrepresented in the
+    /// exit code (measured on BC 28.1: baseline 5, actual 2, one deliberate failure → 1).
+    /// </summary>
+    [SkippableFact]
+    public void CountMismatchConcurrentWithATestFailure_ReportsTheCountMismatchNotTheFailure()
+    {
+        TestArtifacts.SkipIfMissing();
+        WriteBaseline($$"""
+        { "suites": { "{{_failSuiteKey}}": { "tests": { "default": 5 } } } }
+        """);
+
+        var (output, exit) = RunRunnerOn(_failRoot);
+
+        // Both conditions genuinely hold in this run — otherwise the assertion below is
+        // about nothing. A test really failed:
+        Assert.Contains("FailFixtureSecondFailsDeliberately", output);
+        Assert.Contains("FAIL  Codeunit", output);
+        // ...and the count really mismatched:
+        Assert.Contains("[count-baseline] DROP", output);
+        Assert.Contains($"suite '{_failSuiteKey}'", output);
+        Assert.Contains("expected 5", output);
+        Assert.Contains("actual 2", output);
+
+        // The whole point: 4, not 1.
+        Assert.Equal(4, exit);
+    }
+
+    /// <summary>
+    /// #3350, the other direction — the fix must not create the inverse defect. A run with
+    /// a real test failure and a baseline that MATCHES still reports 1: raising the count
+    /// guard above the fail-count gate must not make a plain test failure disappear behind
+    /// a guard that found nothing wrong.
+    ///
+    /// Same fixture, same failing test, only the baseline differs, so this is a true
+    /// controlled pair with the test above: whatever separates their exit codes is the
+    /// count mismatch and nothing else.
+    /// </summary>
+    [SkippableFact]
+    public void TestFailureWithAMatchingBaseline_StillReports1()
+    {
+        TestArtifacts.SkipIfMissing();
+        WriteBaseline($$"""
+        { "suites": { "{{_failSuiteKey}}": { "tests": { "default": 2 } } } }
+        """);
+
+        var (output, exit) = RunRunnerOn(_failRoot);
+
+        Assert.Contains("FAIL  Codeunit", output);
+        Assert.DoesNotContain("[count-baseline] DROP", output);
+        Assert.DoesNotContain("[count-baseline] GROWTH", output);
+        Assert.Equal(1, exit);
     }
 }
