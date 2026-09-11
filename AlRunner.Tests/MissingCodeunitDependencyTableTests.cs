@@ -7,11 +7,18 @@
 //
 // HOW THE CORRECT VALUES WERE ESTABLISHED
 //   Every Microsoft .app in ~/.al-runner/test-apps and ~/.al-runner/platform-apps was opened
-//   (a BC .app is a NAVX-prefixed zip, and the runtime packages nest a second .app carrying
-//   src/*.al), and the `codeunit <id> <name>` declarations were read out of the AL sources —
-//   113 app files, 12,540 .al sources, BC 28.1.49838.53910. SymbolReference.json alone is NOT
-//   sufficient: the runtime platform apps ship without one, which is why a symbols-only sweep
-//   returned "not found" for 310/130000/130440/131000 and would have read as a finding.
+//   (a BC .app is a NAVX-prefixed zip) and the `codeunit <id> <name>` declarations were read
+//   out of both SymbolReference.json and the AL sources — 113 app files, BC 28.1.49838.53910.
+//   The two sources agree on all six ids.
+//
+//   THE TRAP, because the first sweep here fell into it and its zero looked like a finding:
+//   the four R2R runtime packages — Application Test Library, Base Application, Business
+//   Foundation, System Application — NEST a second .app inside, and their SymbolReference.json
+//   lives in that inner one. All 113 apps carry a SymbolReference.json; none is missing it. A
+//   sweep that opens only the outer zip therefore sees 109 of 113, silently skips exactly those
+//   four, and answers "not found" for 310/130000/130440/131000 — which is precisely the set
+//   those four packages hold. The zero is a property of the sweep, not of the packages.
+//   Recurse into nested .app entries, and confirm the app count you scanned.
 //
 //   The measured answers, and what the table used to claim:
 //
@@ -27,12 +34,12 @@
 //
 //   130440 and 130500 are the pair #3399 flagged: docs/limitations.md had named them
 //   Library - Random and Any before that entry was removed, and the doc was right on both.
-//   Test Runner's codeunits are 130450-1304xx (Microsoft_Test Runner.app), not 130500.
+//   Test Runner's codeunits are 130450-130471 (Microsoft_Test Runner.app), not 130500.
 //   Library - Variable Storage is 131004 (Microsoft_Library Variable Storage.app), not 130440.
 //
-//   Cross-checked on BC 28.4.53241.54447, whose artifact set carries only test-apps: the two
-//   ids it can see, 130002 and 130500, agree. The other four are unmeasurable there — which
-//   is an absence of measurement, not a disagreement.
+//   Cross-checked on BC 28.4.53241.54447 with the same nested-aware reader: that artifact set
+//   carries only test-apps, so the two ids it can see — 130002 and 130500 — agree, and the
+//   other four are absent from it. That absence is a missing measurement, not a disagreement.
 //
 // WHY PIN IT HERE rather than re-read the packages at test time: the packages are not present
 // on every box that runs the unit suite, and a test that silently skips when they are missing
