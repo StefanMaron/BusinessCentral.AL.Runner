@@ -268,7 +268,18 @@ internal static partial class BcAppSymbolCache
     //
     // 40 was confirmed free immediately before pushing, per v39's own warning: origin/main read
     // 39, and no open agent branch carried a value above 38.
-    private const int CacheVersion = 40;
+    // v41: an enum value stating no Ordinal is read as 0 rather than the previous ordinal plus
+    // one (#3805). The same trap as v35, v36, v38, v39 and v40, and v36 is this very method:
+    // EnumSymbol.Indexes is a List<int> either way, so PayloadShape cannot see that System
+    // Application 2616 "Printer Paper Kind" went from 67 distinct ordinals across 68 values to
+    // 68. Without the bump a warm box replays the old parse and hands out a DUPLICATE ordinal —
+    // TryGet's merge dedupes on ordinal, so the collision drops a value rather than mis-numbering
+    // it. Measured on 28.1 and 28.4: 681 and 684 values state no Ordinal, and none of the 3,649
+    // (3,701) states one explicitly as zero.
+    //
+    // 41 was confirmed free immediately before pushing, per v39's own warning: origin/main read
+    // 40, and a sweep of all 252 remote branches carrying this file found none above 40.
+    private const int CacheVersion = 41;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks

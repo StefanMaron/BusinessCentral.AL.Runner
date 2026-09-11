@@ -1435,11 +1435,6 @@
       "member": "MetaEnum.MetadataToken",
       "reason": "BC's emitted document opens with MetadataVersion=\"130000\" and every one of BC's own readers copies it into MetadataToken; the runner states no metadata-format version anywhere, so BC's default of 0 stands on the runner's side. Measured on BC 28.1.49838.53910: 178 of 178 permission sets and 142 of 142 enums, i.e. EVERY object of both kinds and never a subset -- which is what shows this is a property of the document format rather than of any object's declaration. It is derivable trivially (write the same constant), and it is not stated because nothing in the runner consumes a metadata-format version. Tracked with the rest of each kind's derivation gap. NOT declared for MetaTable or PageDefinition: those two routes already agree, so this is genuinely a property of the kinds added in #3782 steps 5-7.",
       "issue": 3807
-    },
-    {
-      "member": "MetaEnumValue.Ordinal",
-      "reason": "Enum 2616 'Printer Paper Kind' only: BC answers ordinal 0 for the value 'Custom', the runner answers 40. SymbolReference.json omits Ordinal exactly when it is ZERO -- the same absent-means-default convention PermissionSymbol's own doc comment records for PermissionObject -- and TryParseEnumSymbol reads an absent Ordinal as 'previous + 1' instead, which is an AL SOURCE-order convention. Measured across three shipped apps on BC 28.1.49838.53910: 671 values carry no Ordinal and the rule is wrong on exactly one, because 2616 is the only enum BC emits in an order that is not ordinal order (its values are name-sorted: A2=66, A3=8, A4=9, ...). The consequence is worse than a wrong number: ordinal 40 ends up claimed by both GermanStandardFanfold and Custom, so the enum has 67 distinct ordinals across 68 values and two AL enum members become indistinguishable by value. Fixed by reading an absent Ordinal as 0 (#3805), one line in BcAppSymbolCache -- deliberately not folded into #3782's harness PR, which touches no parser.",
-      "issue": 3805
     }
   ]
 }
