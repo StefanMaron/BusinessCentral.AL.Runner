@@ -319,4 +319,55 @@ public sealed class ArtifactDirStateTests : IDisposable
             }
         }
     }
+
+    /// <summary>
+    /// #2226's signature, found while answering "do two code paths write the same state
+    /// with different invariants?" — and the real explanation of the second broken
+    /// directory on the reporting box. `provision`'s platform-app sub-step resolved build
+    /// 28.0.46665.54452 while its service-tier sub-step resolved 28.0.46665.54338, so one
+    /// major.minor is split across two directories, each complete for its own half:
+    ///
+    ///   28.0.46665.54338   Ncl.dll present, platform-apps/ absent
+    ///   28.0.46665.54452   Ncl.dll absent,  platform-apps/ holding all 6 apps (120 MB)
+    ///
+    /// Still Partial — it is not a usable service tier — but the message must not imply
+    /// corruption, because nothing here is corrupt and the payload is genuinely usable.
+    /// This is also why the directory survives AutoProvision's RemoveIfEmpty cleanup:
+    /// that only deletes a directory holding NOTHING, and this one holds platform-apps/.
+    /// </summary>
+    [Fact]
+    public void Classify_PayloadOnlyDir_IsPartial_ButNotDescribedAsCorrupt()
+    {
+        var dir = VersionDir("28.0.46665.54452");
+        var payload = Path.Combine(dir, "platform-apps");
+        Directory.CreateDirectory(payload);
+        File.WriteAllText(Path.Combine(payload, "Microsoft_Base Application_28.0.46665.54452.app"), "x");
+
+        var state = ArtifactDirState.Classify(dir);
+
+        Assert.Equal(ArtifactDirStatus.Partial, state.Status);
+        Assert.False(state.HasEngineEntrypoint);
+        Assert.True(state.HasSiblingProvisionPayload);
+
+        var text = state.Explain();
+        Assert.Contains("#2226", text);
+        Assert.Contains("payload here is usable", text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// The negative half: a directory with neither engine DLLs nor a payload is the plain
+    /// empty-leftover shape and must NOT claim the #2226 split, which would be a diagnosis
+    /// nothing measured.
+    /// </summary>
+    [Fact]
+    public void Classify_TrulyEmptyDir_DoesNotClaimTheSplitBuildCause()
+    {
+        var dir = VersionDir("28.0.46665.54452");
+
+        var state = ArtifactDirState.Classify(dir);
+
+        Assert.Equal(ArtifactDirStatus.Partial, state.Status);
+        Assert.False(state.HasSiblingProvisionPayload);
+        Assert.DoesNotContain("#2226", state.Explain());
+    }
 }

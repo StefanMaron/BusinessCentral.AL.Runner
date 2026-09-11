@@ -75,7 +75,8 @@ public static class ArtifactDirState
         ArtifactDirStatus Status,
         IReadOnlyList<string> MissingFiles,
         bool HasEngineEntrypoint,
-        string? UnreadableReason)
+        string? UnreadableReason,
+        bool HasSiblingProvisionPayload = false)
     {
         /// <summary>True only for <see cref="ArtifactDirStatus.Complete"/>.</summary>
         public bool IsUsable => Status == ArtifactDirStatus.Complete;
@@ -110,6 +111,15 @@ public static class ArtifactDirState
                         // The dangerous shape: it looks like a service tier, so consumers
                         // accept it and fail later, deeper and less legibly.
                         lines.Add("  It carries Microsoft.Dynamics.Nav.Ncl.dll, so it passes a presence check and fails later inside an assembly load.");
+                    else if (HasSiblingProvisionPayload)
+                        // #2226: `provision`'s platform-app and service-tier sub-steps can
+                        // resolve to DIFFERENT patch builds of one major.minor, leaving a
+                        // directory that is a complete platform-apps cache and an empty
+                        // service tier. Nothing here is corrupt, so the message must not
+                        // send the reader looking for corruption.
+                        lines.Add("  It carries no engine DLLs at all, only a platform-apps/test-apps payload — "
+                                + "the service tier for this major.minor landed under a different patch directory (#2226). "
+                                + "The payload here is usable; this directory is simply not a service tier.");
                     else
                         lines.Add("  It does not carry Microsoft.Dynamics.Nav.Ncl.dll, so it is not a usable service-tier directory at all.");
                     lines.Add("  Missing:");
@@ -128,6 +138,14 @@ public static class ArtifactDirState
     /// broken shapes stay distinguishable rather than collapsing into one "broken".
     /// </summary>
     private const string EngineEntrypoint = "Microsoft.Dynamics.Nav.Ncl.dll";
+
+    /// <summary>
+    /// The runner-owned payload subdirectories `provision` writes beside an engine closure.
+    /// Their presence in a directory with no engine DLLs is the #2226 signature: the
+    /// platform-app sub-step resolved a different patch build from the service-tier one, so
+    /// one major.minor ends up split across two directories, each complete for its own half.
+    /// </summary>
+    private static readonly string[] SiblingPayloadDirs = { "platform-apps", "test-apps" };
 
     /// <summary>
     /// Classify one artifact version directory. Never throws: an I/O failure is the
@@ -163,10 +181,13 @@ public static class ArtifactDirState
             Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         ProvisioningCheck.Report report;
         bool hasEntrypoint;
+        bool hasPayload;
         try
         {
             report = ProvisioningCheck.Check(version, versionDir);
             hasEntrypoint = exists && File.Exists(Path.Combine(versionDir, EngineEntrypoint));
+            hasPayload = exists && SiblingPayloadDirs.Any(
+                sub => Directory.Exists(Path.Combine(versionDir, sub)));
         }
         catch (Exception ex)
         {
@@ -182,8 +203,8 @@ public static class ArtifactDirState
                 report.MissingFiles, false, null);
 
         return report.Ok
-            ? new Result(versionDir, ArtifactDirStatus.Complete, report.MissingFiles, hasEntrypoint, null)
-            : new Result(versionDir, ArtifactDirStatus.Partial, report.MissingFiles, hasEntrypoint, null);
+            ? new Result(versionDir, ArtifactDirStatus.Complete, report.MissingFiles, hasEntrypoint, null, hasPayload)
+            : new Result(versionDir, ArtifactDirStatus.Partial, report.MissingFiles, hasEntrypoint, null, hasPayload);
     }
 
     /// <summary>
