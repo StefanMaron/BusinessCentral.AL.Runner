@@ -5726,17 +5726,30 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     var sourceMapResolved = false;
     string? compileFailure = null;
 
-    // DAP's `initialize` lets the client say whether it counts columns from 1 or from 0
-    // (`columnsStartAt1`, default TRUE when absent). Everything below this line works in
-    // 1-based columns, which is what AlSourceSpanCodec.AbsoluteFromColumn produces, so a
-    // 0-based client's numbers are converted on the way in and back on the way out (#3879
-    // Copilot review). Without that, such a client's inline breakpoint lands one column left
-    // of the statement it meant.
+    // DAP's `initialize` lets the client say whether it counts lines and columns from 1 or
+    // from 0 (`linesStartAt1` / `columnsStartAt1`, both default TRUE when absent). Everything
+    // below this line works in the 1-based numbering AlSourceSpanCodec.AbsoluteFromLine and
+    // AbsoluteFromColumn produce, so a 0-based client's numbers are converted on the way in
+    // and back on the way out (#3879 Copilot review for columns, #3881 for lines). Without
+    // that, such a client's breakpoint lands one line above — or one column left of — the
+    // statement it meant, and is then told about stops in a numbering it did not ask for.
     //
-    // `linesStartAt1` has the identical problem and is NOT handled here: lines are reported
-    // by `stopped`, `stackTrace` and this response, so honouring it is a change across the
-    // whole surface rather than the one field this pull request adds (#3881).
+    // Lines cross the wire at FOUR places, which is what made this bigger than the column
+    // half: the setBreakpoints request, its response, the `stopped` event and every
+    // `stackTrace` frame. One converter per direction, used at every one of them, so a
+    // surface cannot be forgotten without the others disagreeing with it.
+    var linesStartAt1 = true;
     var columnsStartAt1 = true;
+
+    // 0 is not a line: AlDapStackWalker reports it for a frame it could not map, and the
+    // `stopped` handler reports it when the walk threw. Converting that sentinel would send a
+    // 0-based client -1, so it is passed through unchanged in both converters.
+    int ToClientLine(int oneBasedLine) =>
+        linesStartAt1 || oneBasedLine <= 0 ? oneBasedLine : oneBasedLine - 1;
+    int FromClientLine(int clientLine) => linesStartAt1 ? clientLine : clientLine + 1;
+    int ToClientColumn(int oneBasedColumn) =>
+        columnsStartAt1 || oneBasedColumn <= 0 ? oneBasedColumn : oneBasedColumn - 1;
+    int FromClientColumn(int clientColumn) => columnsStartAt1 ? clientColumn : clientColumn + 1;
 
     // setBreakpoints requests that arrived before the map could be built, waiting to be
     // answered. Answering one needs the compile, and BLOCKING this single-threaded loop for
@@ -5919,13 +5932,15 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
             {
                 id = idx,
                 verified = rb.Verified,
-                line = rb.Verified ? rb.ActualLine : rb.RequestedLine,
+                // Back into the client's own base — including on the unverified path, where the
+                // number echoed is the one the client sent rather than the 1-based reading of it.
+                line = ToClientLine(rb.Verified ? rb.ActualLine : rb.RequestedLine),
                 // The column actually bound — the leftmost of the armed targets. A client that
                 // asked for a column no statement starts at can see where the breakpoint went,
                 // which is what keeps the resolver's widest fallback from being a silent
                 // relocation (#3879 Copilot review). Back into the client's own base.
                 column = rb.Verified && rb.Targets.Count > 0
-                    ? rb.Targets.Min(t => t.Column) - (columnsStartAt1 ? 0 : 1)
+                    ? ToClientColumn(rb.Targets.Min(t => t.Column))
                     : (int?)null,
                 message = rb.Verified ? null : unverifiedReason,
             }),
@@ -6025,7 +6040,9 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                 reason,
                 threadId = 1,
                 allThreadsStopped = true,
-                line,
+                // In the client's own base (#3881). A walk that threw leaves `line` at 0, the
+                // sentinel ToClientLine passes through rather than converting to -1.
+                line = ToClientLine(line),
             });
             AlRunner.Infrastructure.AlDapSession.Trace("STOPPED-HANDLER write-event(stopped) ok");
             if (walkError != null)
@@ -6088,7 +6105,10 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                 switch (command)
                 {
                     case "initialize":
-                        // Absent means true, per the specification.
+                        // Absent means true, per the specification — for both.
+                        linesStartAt1 = !(args != null
+                            && args.Value.TryGetProperty("linesStartAt1", out var lineBaseEl)
+                            && lineBaseEl.ValueKind == System.Text.Json.JsonValueKind.False);
                         columnsStartAt1 = !(args != null
                             && args.Value.TryGetProperty("columnsStartAt1", out var colBaseEl)
                             && colBaseEl.ValueKind == System.Text.Json.JsonValueKind.False);
@@ -6132,14 +6152,16 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                         if (args.Value.TryGetProperty("breakpoints", out var bpsEl) && bpsEl.ValueKind == System.Text.Json.JsonValueKind.Array)
                             foreach (var bp in bpsEl.EnumerateArray())
                                 if (bp.TryGetProperty("line", out var lineEl))
-                                    lines.Add((lineEl.GetInt32(),
+                                    // Both to 1-based, which is what the resolver compares in.
+                                    lines.Add((FromClientLine(lineEl.GetInt32()),
                                         bp.TryGetProperty("column", out var colEl)
                                             && colEl.ValueKind == System.Text.Json.JsonValueKind.Number
-                                            // To 1-based, which is what the resolver compares in.
-                                            ? colEl.GetInt32() + (columnsStartAt1 ? 0 : 1)
+                                            ? FromClientColumn(colEl.GetInt32())
                                             : null));
                         else if (args.Value.TryGetProperty("lines", out var legacyLinesEl) && legacyLinesEl.ValueKind == System.Text.Json.JsonValueKind.Array)
-                            foreach (var l in legacyLinesEl.EnumerateArray()) lines.Add((l.GetInt32(), null));
+                            // The legacy array carries no column, and its lines are in the
+                            // client's base exactly as `breakpoints[].line` is.
+                            foreach (var l in legacyLinesEl.EnumerateArray()) lines.Add((FromClientLine(l.GetInt32()), null));
 
                         // An EMPTY list resolves nothing — "remove every breakpoint in this
                         // source" needs no map — so it is answered now, whatever the compile
@@ -6189,8 +6211,12 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                                 id = f.Id,
                                 name = f.ScopeName,
                                 source = f.SourcePath != null ? new { path = f.SourcePath, name = Path.GetFileName(f.SourcePath) } : null,
-                                line = f.Line,
-                                column = 1,
+                                line = ToClientLine(f.Line),
+                                // The first column of the line. It was written as a literal 1,
+                                // so a 0-based client was told every frame starts one column
+                                // right of where it does — the same defect as the line half,
+                                // on the surface #3879 did not reach (#3881).
+                                column = ToClientColumn(1),
                             }),
                             totalFrames = lastFrames.Count,
                         });
