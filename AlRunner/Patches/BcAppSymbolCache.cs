@@ -268,7 +268,18 @@ internal static partial class BcAppSymbolCache
     //
     // 40 was confirmed free immediately before pushing, per v39's own warning: origin/main read
     // 39, and no open agent branch carried a value above 38.
-    private const int CacheVersion = 40;
+    // v41: an enum value stating no Ordinal is read as 0 rather than the previous ordinal plus
+    // one (#3805). The same trap as v35, v36, v38, v39 and v40, and v36 is this very method:
+    // EnumSymbol.Indexes is a List<int> either way, so PayloadShape cannot see that System
+    // Application 2616 "Printer Paper Kind" went from 67 distinct ordinals across 68 values to
+    // 68. Without the bump a warm box replays the old parse and hands out a DUPLICATE ordinal —
+    // TryGet's merge dedupes on ordinal, so the collision drops a value rather than mis-numbering
+    // it. Measured on 28.1 and 28.4: 681 and 684 values state no Ordinal, and none of the 3,649
+    // (3,701) states one explicitly as zero.
+    //
+    // 41 was confirmed free immediately before pushing, per v39's own warning: origin/main read
+    // 40, and a sweep of all 252 remote branches carrying this file found none above 40.
+    private const int CacheVersion = 41;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -2476,7 +2487,6 @@ internal static partial class BcAppSymbolCache
         var indexes = new List<int>();
         var implementations = new List<List<int>>();
         var captions = new List<string?>();
-        var nextOrdinal = 0;
         foreach (var value in hasValues
                      ? values.EnumerateArray().Cast<JsonElement>()
                      : Enumerable.Empty<JsonElement>())
@@ -2484,9 +2494,16 @@ internal static partial class BcAppSymbolCache
             var optionName = value.TryGetProperty("Name", out var optionNameProp)
                 ? optionNameProp.GetString() ?? string.Empty
                 : string.Empty;
+            // #3805 — absent `Ordinal` means ZERO, the symbol file's absent-means-default
+            // convention (the same one PermissionSymbol records for PermissionObject). It is
+            // NOT "the previous ordinal plus one": the values are not necessarily emitted in
+            // ordinal order, and System Application 2616 "Printer Paper Kind" emits them in
+            // NAME order with Custom (ordinal 0) last, where the source-order rule answered 40
+            // and collided with GermanStandardFanfold. Measured on 28.1 and 28.4: 681 values
+            // state no Ordinal and this rule agrees with BC's emitted metadata on all of them.
             var ordinal = value.TryGetProperty("Ordinal", out var ordinalProp) && ordinalProp.TryGetInt32(out var explicitOrdinal)
                 ? explicitOrdinal
-                : nextOrdinal;
+                : 0;
             options.Add(optionName);
             indexes.Add(ordinal);
             var implementationIds = new List<int>();
@@ -2507,7 +2524,6 @@ internal static partial class BcAppSymbolCache
             captions.Add(props.TryGetValue("Caption", out var captionText) && !string.IsNullOrEmpty(captionText)
                 ? captionText
                 : null);
-            nextOrdinal = ordinal + 1;
         }
         // Enum-level fallbacks. Both are written the same way a value's Implementation is —
         // a comma-separated list of codeunit ids, one per interface the enum implements.
