@@ -6,9 +6,9 @@
 // the built `NCLMetaFieldRelation` for a `TableRelation = <Table>.SystemRowVersion`, and that
 // it is the SAME id a relation naming no field at all produces.
 //
-// It does NOT assert what real BC does with such a relation. That is plain BC behaviour, it is
-// the actual open question in #3325, and it is asked upstream where a service tier answers it:
-// corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#324 adds
+// It does NOT assert what real BC does with such a relation. That is plain BC behaviour and it
+// is asserted upstream, where a service tier adjudicates it: corpus PR
+// StefanMaron/BusinessCentral.AL.Language.Tests#324 adds
 // `Record_Validate_TableRelationOntoSystemRowVersion` to codeunit 60818. Duplicating that
 // claim here would give it a green tick from the runner agreeing with itself, which is exactly
 // what `.claude/rules/bc-behavior-tests-go-upstream.md` exists to prevent.
@@ -25,18 +25,28 @@
 //     TableRelation = "TRSRV Row"                      -> no field,   fieldId = 0
 //
 // and from `NCLMetaFieldRelation` onward nothing can tell them apart. BC reads
-// `SourceFieldId = 0` as "relate to the related table's primary key", which is why the runner
-// today refuses a rowversion that genuinely exists on a row — the observation #3325 was filed
-// on. That collision is the runner's own structure, visible without asking a service tier
-// anything, and it is what the assertions below hold.
+// `SourceFieldId = 0` as "relate to the related table's primary key", which is why a rowversion
+// that genuinely exists on a row is refused — the observation #3325 was filed on. That
+// collision is visible in the runner's own structure without asking a service tier anything,
+// and it is what the assertions below hold; whether it MATCHES BC is the next section.
 //
-// WHY IT IS WORTH A TEST WHATEVER THE CORPUS ANSWERS
-// --------------------------------------------------
-// Both possible verdicts land here. If BC relates to the rowversion column, the runner has to
-// stop encoding this target as 0 and this test is the RED that the fix turns; if BC relates to
-// the primary key, the runner is already right and this test is what stops a later change to
-// `SystemRowVersionParsedField`'s id — a plausible edit, since 0 looks like a placeholder —
-// from silently moving the relation off the shape BC adjudicated.
+// THE VERDICT: BC DOES THE SAME, SO THE ENCODING IS CORRECT
+// ---------------------------------------------------------
+// Corpus run 34573236729 answered it on BC 27.0, 27.3 and 27.5. Real BC refuses an existing
+// line's own rowversion, with the same message the runner produces:
+//
+//     The field Line Row Version Ref of table CFSF Header contains a value (397405) that
+//     cannot be found in the related table (CFSF Line).
+//
+// So field id 0 is not a runner artefact to be fixed — it is what BC itself resolves a
+// SystemRowVersion relation target to, and the primary-key reading is BC's own. A
+// TableRelation onto SystemRowVersion compiles and then rejects every value; it is not a
+// usable foreign key, unlike the SystemId relation on the same corpus fixture.
+//
+// That makes this file a REGRESSION guard rather than a RED baseline. Changing
+// `SystemRowVersionParsedField`'s id away from 0 is a plausible edit — 0 reads like a
+// placeholder — and it would silently move the relation off the shape a service tier
+// adjudicated. These three tests are what refuse that edit.
 using AlRunner.Patches;
 using Microsoft.Dynamics.Nav.Runtime;
 using Xunit;
