@@ -76,6 +76,17 @@ green and looks like the system working.
 the `Total:` line from every run, and treat a run with no `Total:` line as *unverified* rather
 than green — the exit code cannot tell you the difference.
 
+**The harder half: a filter or a mutation target that matches the WRONG thing rather than
+nothing.** A zero is at least conspicuous; a plausible number is not. Both measured on #3923 in
+one pass: `~ExtensionRuntimeDeltasTests` returned **8** of 9, because the file declares a second
+class (`…BcReaderTests`) the filter excluded — and a mutation aimed at
+`TryBuildExtensionRuntimeDeltasXml` left every test green, because the tests call
+`TryBuildExtensionRuntimeDeltasXmlForApp`, whose name has the first as a **prefix**. Mutating the
+right one gave 7 of 9 red.
+
+So: **count the tests you expected**, and after a mutation that leaves things green, check the
+symbol you edited is the one the test path calls before concluding the test is weak.
+
 **Trap: CI catches the opposite error, never this one.** A test that fails when it should pass
 is red within minutes; one that passes when it should fail is caught only if somebody looks,
 and until then it reads as coverage while protecting nothing.
