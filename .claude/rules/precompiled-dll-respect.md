@@ -41,7 +41,7 @@ Consequence: if a test failure points at our own AL output, the fix is either (a
 runtime engine the output calls into, or (b) in the compile pipeline that produced it — never
 in the cached DLL itself.
 
-## Reuse before you re-implement — check whether Microsoft already ships it
+## Reuse before you re-implement — check whether Microsoft already ships it, or already holds it
 
 **The best code is no code written at all.** "Fix" means **the outcome is correct**, not that we
 wrote the thing producing it. Code we do not write cannot rot, cannot drift as BC moves, and
@@ -67,6 +67,27 @@ an assumption, the assumption got written down as fact.
 
 **So when a load fails, the failure is the finding.** Do not let it become a shim without
 recording why the load failed, in terms a later reader can re-test.
+
+### The same question about DATA, not just components
+
+A shipped component is the obvious form. The sharper one: **before building machinery to
+reconstruct a value, check whether the running process already holds it.** One diagnostic print
+answers it.
+
+See #3825 for the instance. The issue recorded a page's `Name`/`SourceExpression` pair as
+*unrecoverable* for a precompiled page, and the agreed answer was to compile the shipped `.app`'s
+AL source with BC's own compiler — measured at **257 s and 8.83 GiB** for Base Application. The
+pair was in `NavForm.SourceExpressions` all along, populated by the `.app`'s own IL, present at
+the moment of the failing lookup. The missing piece was a **join**, not the data.
+
+**The trap is that the reconstruction route can be entirely correct and still be the wrong
+answer.** Base Application does compile, the measurements were sound, and the capability was
+worth having for other issues — none of which is evidence that the value was unavailable. A
+route that works is not proof that no cheaper one exists.
+
+**Check the runtime first, and record what you found either way**: a `dictCount=` print beside
+the failing lookup is cheaper than any reconstruction, and its absence is what let
+*unrecoverable* stand unchallenged in an issue body.
 
 History: docs/incidents/precompiled-dll-respect.md
 
