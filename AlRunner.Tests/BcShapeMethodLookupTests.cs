@@ -312,13 +312,20 @@ public sealed class BcShapeMethodLookupTests
     // change — this one counts what REMAINS (falls), that one counts what has been CONVERTED
     // (rises, 87 -> 88 for this same site). #3581 updated one and missed the other, so check
     // both.
+    //
+    // 71 -> 70 by #3927, which DELETED rather than converted: the seven orphaned NavDataTransfer
+    // `Hook(...)` registrations went, taking the name-only `navDataTransferType.GetMethod(name, ...)`
+    // in the stub loop with them. Two GetMethod sites left the diff and the count fell by ONE —
+    // the other passes an explicit signature, which this scan never counted. A deletion moves
+    // only this counter: BcInternalsNullForgivingGuardTests' `converted` is computed from the
+    // source rather than hardcoded, so it needs no matching edit here.
 
     /// <summary>
     /// Every remaining name-only method lookup that could reach a Microsoft-shipped type. Lower
     /// it as sites are converted; it may never rise. On a mismatch the assertion prints the
     /// per-file breakdown, which is the number to put here.
     /// </summary>
-    private const int NameOnlyBcTypedMethodLookups = 71;
+    private const int NameOnlyBcTypedMethodLookups = 70;
 
     /// <summary>The floor is not cosmetic: a scan that silently narrowed to a handful of files
     /// would report a small number and read as progress. AlRunner/ holds ~195 sources.</summary>
