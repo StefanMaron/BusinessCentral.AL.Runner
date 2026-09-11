@@ -142,7 +142,8 @@
         "sourceScanFailures": {
           "type": "array",
           "items": { "$ref": "#/definitions/SourceScanFailure" },
-          "description": "Present only when the source-map scan could not read something (#3847/#3884). Absent means it read everything \u2014 never an empty array. Any `coverage`/`perTestCoverage` table in this response is SHORT by whatever these paths declare, so a statement missing from it is unmeasured rather than uncovered, and `exitCode` is 2 unless the run earned something more specific."
+          "minItems": 1,
+          "description": "Present only when a source-map scan ran AND could not read something (#3847/#3884). Absent means no scan failure is being reported \u2014 which is NOT the same as \"every source was read\": an ordinary request that builds no source map reports nothing here either. Never an empty array. Any `coverage`/`perTestCoverage` table in this response is SHORT by whatever these paths declare, so a statement missing from it is unmeasured rather than uncovered, and `exitCode` is 2 unless the run earned something more specific."
         },
         "wallSeconds": { "type": "number", "minimum": 0 },
         "protocolVersion": { "const": 2 }

@@ -76,6 +76,26 @@ public sealed class AlSourceLocationMap : IReadOnlyDictionary<(string Label, int
     internal void Add(string label, int id, string path, int lineOffset) =>
         _entries[(label, id)] = (path, lineOffset);
 
+    /// <summary>Drops every object declared by one file. Used only by the test seam in
+    /// <see cref="AlCoverageSourceMap.Build"/>, which has to reproduce what an unreadable file
+    /// DOES — its objects are absent — and not merely that it was reported (#3884).</summary>
+    internal void ForgetEntriesDeclaredBy(string path)
+    {
+        string Canonical(string p)
+        {
+            try { return Path.GetFullPath(p).Replace('\\', '/'); }
+            catch (ArgumentException) { return p.Replace('\\', '/'); }
+            catch (NotSupportedException) { return p.Replace('\\', '/'); }
+        }
+
+        var want = Canonical(path);
+        var doomed = _entries
+            .Where(kv => string.Equals(Canonical(kv.Value.Path), want, StringComparison.OrdinalIgnoreCase))
+            .Select(kv => kv.Key)
+            .ToList();
+        foreach (var key in doomed) _entries.Remove(key);
+    }
+
     internal void AddScanFailure(string path, string reason, SourceScanFailureKind kind)
     {
         // Deduplicated: one root can be named by two callers, and a locked file is reached
@@ -184,15 +204,16 @@ public static class AlCoverageSourceMap
             // enter; this scan discarded the answer with `out _`, which is the shape #3847 is
             // about — the mechanism existed and the caller threw it away.
             var files = scan(root, out var inaccessible);
-            // The Directory.Exists above and this scan are not atomic. A root that went away
-            // in between comes back from the scanner as an ordinary empty listing with nothing
-            // inaccessible — a clean partial map, which is the very race this third state
-            // exists to expose (#3884 Copilot review). Re-checking costs one stat and only
-            // fires when the directory is gone, so a genuinely empty one stays a pass.
-            if (files.Count == 0 && inaccessible.Count == 0 && !Directory.Exists(root))
-                map.AddScanFailure(root,
-                    "the source root disappeared while it was being scanned",
-                    SourceScanFailureKind.Root);
+            // A root that goes away DURING the scan is a real hole, and it is deliberately not
+            // patched here. A post-scan Directory.Exists re-check was tried and removed: it is
+            // wrong in both directions. It MISSES the case that matters — a root whose first
+            // entries were listed before it vanished returns a non-empty `files`, so the check
+            // never runs while the rest of the tree went unmeasured — and it FIRES when nothing
+            // was lost, because an empty directory deleted after a correct enumeration, or an
+            // ancestor whose traversal permission was just lost, both make that stat false. A
+            // check that manufactures a failure is the false red this rule's own constraint
+            // forbids. The distinction can only be drawn where the DirectoryNotFoundException
+            // is caught, inside SafeDirectoryScan. Tracked separately.
             foreach (var dir in inaccessible)
                 map.AddScanFailure(dir, "the directory could not be read, so any AL under it was not scanned",
                     SourceScanFailureKind.Directory);
@@ -212,13 +233,34 @@ public static class AlCoverageSourceMap
                     map.AddScanFailure(file, readFailure, SourceScanFailureKind.File);
             }
         }
-        Warn(map, rootList);
+        // A test seam, and the only way to reach the consumers of this map from outside the
+        // process (#3884). The scan failures that matter to a --server client happen BETWEEN
+        // compilation and this scan, which no test can time from the outside: locking the file
+        // earlier fails the compile instead, and the RootScanner seam above is internal.
+        //
+        // It only ever ADDS a failure. Nothing here can hide one, so a mis-set variable cannot
+        // turn a broken scan into a clean one — the direction that would matter.
+        // ONCE per process, which is what makes a two-request test possible: the first request
+        // gets a poisoned scan and the second a clean one, so what the second proves is that
+        // the FIRST invalidated its baseline rather than that it poisoned itself too.
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_TEST_FORCE_SCAN_FAILURE_ONCE") is string forced
+            && forced.Length > 0
+            && Interlocked.Exchange(ref _forcedScanFailureUsed, 1) == 0)
+        {
+            // BOTH halves, or the seam is not the thing it simulates. Recording the failure
+            // without dropping the file's objects produced a map that was still COMPLETE, so a
+            // test written against it passed with the fix reverted — it proved the plumbing and
+            // not the defect (#3884). An unreadable file's objects are absent from the map;
+            // that absence is what poisons attribution downstream.
+            map.AddScanFailure(forced,
+                "forced by AL_RUNNER_TEST_FORCE_SCAN_FAILURE_ONCE (test seam)",
+                SourceScanFailureKind.File);
+            map.ForgetEntriesDeclaredBy(forced);
+        }
+
+        Warn(map);
         return map;
     }
-
-    /// <summary>Paths whose failure has already been announced and has not recovered since.
-    /// Bounded by the number of CURRENTLY failing paths, not by how many a process ever saw.</summary>
-    private static readonly HashSet<string> _announced = new(StringComparer.Ordinal);
 
     /// <summary>
     /// Says out loud that part of the scan did not happen. Here rather than at each of the five
@@ -226,50 +268,33 @@ public static class AlCoverageSourceMap
     /// consumer that forgets is the one that reports a confident negative about AL nobody read
     /// (#3847).
     ///
-    /// <para>On the TRANSITION into failure, which is the only spelling two reviews could both
-    /// live with (#3884). Once per process swallows a path that failed, was repaired, and
-    /// failed again — a real event under --server and --watch, where the process outlives many
-    /// builds — and grows by every path any request ever named. Once per build re-prints a
-    /// persistent failure on every request and floods stderr. Announcing a path when it starts
-    /// failing and forgetting it when it stops does neither, and the set is bounded by what is
-    /// broken right now.</para>
+    /// <para><b>Once per build, with no memory between builds, and that is deliberate.</b> Two
+    /// earlier spellings were tried and both were wrong. Once per PROCESS swallows a path that
+    /// failed, was repaired, and failed again — a real event under --server and --watch — and
+    /// grows by every path any request ever named. Announcing only the TRANSITION into failure
+    /// looks like the synthesis of those two and is worse than either: it compares raw path
+    /// spellings, so one caller's trailing separator is a different key and the same failure is
+    /// announced twice or a recurrence never at all; it treats a descendant as recovered when
+    /// its parent directory becomes unreadable, which is the opposite of what happened; and two
+    /// overlapping scans can interleave so that an older clean observation erases a newer
+    /// failure's announcement. Every one of those is a wrong statement about the tree, and the
+    /// only thing the state bought was fewer repeated lines (#3884).</para>
     ///
-    /// <para>Recovery is only observable for paths THIS build looked at, so the set is pruned
-    /// against the roots scanned rather than replaced wholesale: a concurrent request naming
-    /// other roots must not make their failures look repaired.</para>
+    /// <para>So: a repeated failure prints on every build that sees it. That is noisier and it
+    /// is never false, which is the correct trade for a diagnostic whose entire job is to stop
+    /// a silent wrong answer. A caller that wants the structured form has
+    /// <see cref="AlSourceLocationMap.ScanFailures"/>.</para>
     ///
     /// Console.Error, not Console.Out: under --dap stdio, stdout IS the protocol channel.
     /// </summary>
-    private static void Warn(AlSourceLocationMap map, IReadOnlyCollection<string> scannedRoots)
+    private static int _forcedScanFailureUsed;
+
+    private static void Warn(AlSourceLocationMap map)
     {
-        var failing = new HashSet<string>(map.ScanFailures.Select(f => f.Path), StringComparer.Ordinal);
-        var announce = new List<SourceScanFailure>();
-        lock (_announced)
-        {
-            // Forget anything under a root this build scanned that is no longer failing — that
-            // is a recovery, and the next failure at that path is news again.
-            _announced.RemoveWhere(p => !failing.Contains(p) && WasLookedAt(p, scannedRoots));
-            foreach (var failure in map.ScanFailures)
-                if (_announced.Add(failure.Path)) announce.Add(failure);
-        }
-        foreach (var failure in announce)
+        foreach (var failure in map.ScanFailures)
             Console.Error.WriteLine(
                 $"[source-map] {failure.Path}: {failure.Reason}. Objects it declares are absent "
                 + "from the source map, so coverage and the debugger cannot attribute them.");
-    }
-
-    /// <summary>Whether this build would have noticed <paramref name="path"/> recovering —
-    /// true when it is one of the scanned roots or sits under one.</summary>
-    private static bool WasLookedAt(string path, IReadOnlyCollection<string> scannedRoots)
-    {
-        foreach (var root in scannedRoots)
-        {
-            if (string.Equals(path, root, StringComparison.Ordinal)) return true;
-            var prefix = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                         + Path.DirectorySeparatorChar;
-            if (path.StartsWith(prefix, StringComparison.Ordinal)) return true;
-        }
-        return false;
     }
 
     /// <summary>The nearest app.json in <paramref name="dir"/> or an ancestor, or null. The

@@ -548,9 +548,14 @@ Trigger/logic edits within an unchanged field layout are fine.
 
 ## `sourceScanFailures` — the coverage table is short (#3847/#3884)
 
-Present on `summary` and on an `execute` response only when the source-map scan could not read
-something. Absent means it read everything — never an empty array, the same convention
-`coverage` uses.
+Present on `summary` and on an `execute` response only when a source-map scan ran **and** could
+not read something. Never an empty array, the same convention `coverage` uses.
+
+**Absent does not mean "every source was read."** It means no scan failure is being reported,
+and an ordinary request that builds no source map at all — no `coverage`, no `perTestCoverage`,
+no `captureValues`, no `iterationTracking` — reports nothing here either. If you need to tell
+*not scanned* from *scanned and clean*, the request flags you sent are what distinguishes them;
+this field does not.
 
 ```json
 "sourceScanFailures":[{"path":"/src/app/gone","reason":"the source root does not exist","kind":"Root"}]
