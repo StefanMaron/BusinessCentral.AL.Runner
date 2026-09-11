@@ -65,10 +65,10 @@ public enum ArtifactDirStatus
 public static class ArtifactDirState
 {
     /// <summary>
-    /// The five core engine DLLs plus the closure sentinel — the same set
-    /// <see cref="ProvisioningCheck.Check"/> requires, read through it rather than
-    /// duplicated, so the two can never drift into disagreeing about what "complete"
-    /// means.
+    /// One directory's verdict: its <see cref="Status"/>, the closure files absent from it,
+    /// whether it carries the engine entrypoint (what makes the two broken shapes different
+    /// from each other), and — for <see cref="ArtifactDirStatus.Unreadable"/> — why the
+    /// measurement could not be made.
     /// </summary>
     public sealed record Result(
         string Directory,

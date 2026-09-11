@@ -2321,6 +2321,17 @@ check("artifacts: an unreadable root is neither PASS nor the absent case",
 check("artifacts: ...and says the measurement failed rather than that nothing is provisioned",
       _unreadable.summary != _absent.summary,
       "the unreadable and absent summaries are identical, so the third state is spelled as row 1")
+
+# An artifacts root that EXISTS but holds no version directory used to summarise as
+# "0 artifact directories, all holding a complete engine closure" -- vacuously true and
+# misleading. It is still a PASS (nothing is broken), but it must say what it found.
+_empty_root = pf.classify_artifacts(_art("ok", total=0))
+check("artifacts: an existing-but-empty root PASSes",
+      _empty_root.status == "PASS", f"got {_empty_root.status}")
+check("artifacts: ...without claiming 0 directories are 'all complete'",
+      "all holding" not in _empty_root.summary,
+      f"summary reads {_empty_root.summary!r}")
+
 # -------------------------------------------------- END artifacts probe (#3878)
 
 

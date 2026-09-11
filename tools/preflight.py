@@ -2682,6 +2682,15 @@ def classify_artifacts(reading: dict) -> CheckResult:
     status, broken = reading["status"], reading["broken"]
     root = reading.get("root", "")
     if status == "ok":
+        # A root that exists but holds no version directory is still a pass -- nothing is
+        # broken -- but "0 directories, all complete" is vacuously true and reads as a
+        # measurement of something. Say what was actually found.
+        if reading["total"] == 0:
+            return CheckResult(
+                name="artifacts", status="PASS",
+                summary="the artifacts root exists but holds no version directory yet",
+                command="ls ~/.local/share/al-runner/artifacts",
+                detail=["Not an error: a run provisions what it needs."])
         return CheckResult(
             name="artifacts", status="PASS",
             summary=f"{reading['total']} artifact director{'y' if reading['total'] == 1 else 'ies'}, "
