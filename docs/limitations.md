@@ -684,56 +684,97 @@ the exact value will see different results.
 | `Commit()` | Commits current transaction | Establishes a rollback commit-point — see "Transaction semantics" above; not a no-op |
 | `FilterGroup(n)` | Scoped filter groups | Tracked — BC's own `NavRecord` filter state runs here. Pinned upstream by `record/TestFilterContracts.al` (`FilterGroup2_CombinesWithFilterGroup0_AsAND`, `Reset_AfterFilterGroup2_ClearsBothGroups`) and measured 2026-09-07: a group-2 `SetRange` intersected with a group-0 `SetFilter` answered the intersection, and `GetFilters` reported only group 0, as on BC. This row said "no-op" until the 2026-09 audit |
 
-### `Record.AreFieldsLoaded` after a load set narrows — answered from the requested set, not the buffer in hand (service-tier measured)
+### `Record.AreFieldsLoaded` answers from what a fetch materialised (service-tier measured, and now implemented)
 
 <a id="are-fields-loaded-narrow-after-fetch"></a>
 
-`AreFieldsLoaded` reports from the load set BC maintains in `TableState.FieldLoadInfo`
-([#3358](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3358)), because the
-runner's `TempTableDataProvider` returns whole rows and the fetched buffer therefore carries the
-table's *default* load info whatever the request asked for — so reading the buffer answered
-"loaded" for every field on every table.
+`AreFieldsLoaded` answers from the fields a **fetch has actually materialised**, which is what
+real BC reports. This section used to document a divergence; it is now a description of the
+implemented behaviour, and the mechanism is worth keeping because it is not the obvious one.
 
-That leaves a divergence whenever a load set **narrows after a field is already in the buffer**:
+**What real BC does.** `RecordImplementation.AreFieldsLoaded` reads
+`mutableRecordBuffer.ReadOnlyBuffer.IsFieldUnloaded(field)` — the **materialised buffer**, not
+the requested load set. So:
 
+| shape | BC answers | why |
+|---|---|---|
+| full fetch → narrow → ask | **loaded** | the field is in the buffer; narrowing evicts nothing |
+| full fetch → narrow → **re-fetch** → ask | **loaded** | a re-fetch does not evict it either |
+| narrow fetch → **widen** → ask, no re-fetch | **unloaded** | no fetch has refilled the buffer |
+
+All three are pinned upstream by corpus codeunit **60766**
+(`record/TestRecordPartialLoadNarrowAfterFetch.al`), green on all eight cloud legs. The third
+row is the one that makes this a two-sided property rather than "the runner under-reports".
+
+**Why the runner cannot simply read the buffer.** Only `SqlTableDataProvider` and its helpers
+ever construct a `ReadOnlyRecordBuffer` carrying a real `FieldLoadInfo` — measured with
+`find_callers` over all four `ReadOnlyRecordBuffer` constructors on 27.5 and 28.4 — and the runner routes
+every table through `TempTableDataProvider`, whose buffers carry the table's **default** load
+info whatever the request asked for. Reading the buffer therefore answered "loaded" for every
+field on every table, which is the defect
+[#3358](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3358) fixed by reporting
+from `TableState.FieldLoadInfo` — the **requested** set — pinned by corpus codeunit **60775**.
+
+Neither source is right on its own: the requested set is wrong in whichever direction
+`SetLoadFields` was last moved, and the buffer is uniformly "everything is loaded". So the two
+codeunits require answers the two sources cannot both give, which is
+[#3859](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3859).
+
+**And why stamping the buffer is not the fix either.** `GetFieldValue` branches on the buffer:
+
+```csharp
+if (!IsFieldLoaded(field))                              // the buffer says absent
+    parentRecord.LoadFieldsAsync(...)                   // a genuine partial re-fetch
+else if (TableState.FieldLoadInfo.IsFieldUnloaded(field))
+    AddLoadField(field);
 ```
-full fetch  ->  SetLoadFields(narrower)  ->  AreFieldsLoaded
-```
 
-| | answers |
-|---|---|
-| real BC | from the buffer in hand — the field was fetched under the wider set, so it still reports **loaded**, and **a re-fetch does not change that** |
-| al-runner | from the narrowed request — so it reports **unloaded** |
+A buffer claiming a field is absent routes the read down `NavRecord.LoadFieldsAsync`, which the
+runner's provider has never served — and that method has **10 callers**, identical on 27.5 and 28.4, including
+`DeleteAsync`, `DeleteAllAsync`, `RenameAsync`, `InsertRecordAsync`, `TransferFieldsAsync`,
+`CalcFieldsAsync` and `NavForm.RunModalAsync`. That is the blast radius
+[#3358](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3358) weighed and
+rejected, and the measurement confirms the judgement.
 
-**Measured on a service tier**, corpus PR
-[#323](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/323), cloud legs
-27.3 and 27.5. The re-fetch case is the part worth stating, because it is the one that
-surprises: this row originally claimed a re-fetch made the narrowed set observable and **the
-tier said otherwise**, which is why corpus codeunit 60766 now asserts BC's answer instead.
+**What the runner does instead.** It keeps its own record of which fields a fetch materialised,
+so no read path changes and `GetFieldValue` keeps taking BC's `else if` arm exactly as before.
+Three Cecil registrations, and they are a set — dropping any one leaves the other two answering
+confidently and wrongly:
 
-Those two legs are **not independent confirmations of each other**: on the box where this was
-investigated, 27.0, 27.3 and 27.5 all ship a byte-identical `Ncl.dll` (sha256 `affa03c9…`,
-10716984 bytes), so the whole provisioned 27.x runtime is one binary set. What carries the claim
-is the mechanism below, which does not depend on how many legs reported.
+| registration | kind | what it records |
+|---|---|---|
+| `RecordImplementation.AreFieldsLoaded` | replace | answers from the fetched set, with **no** requested-set fallback |
+| `RecordImplementation.ClearRecord` | prepend | `Clear(Rec)` discards the row, so the record goes with it |
+| `RecordImplementation.AddLoadField` | prepend | a JIT read materialises the field, exactly as a fetch does |
 
-**What distinguishes this from corpus codeunit 60775**, whose
-`PartialLoad_SetLoadFieldsNoArgs_ResetsToFullLoad` asserts *unloaded* and is green in the same
-run: the preceding **full** fetch, not the re-fetch. 60775 fetches under an already-narrow set,
-so the field was never in the buffer. Narrowing is a hint about what to fetch next; it does not
-evict a row already materialised — `RecordImplementation.TrySetNewFieldLoadInfoAndInvalidate`
-assigns `TableState.FieldLoadInfo` and invalidates the result-set enumerator, and discards no
-materialised row.
+A fetch is identified by **buffer identity**: a fetch installs a new `MutableRecordBuffer`, and
+the requested set at that moment is what that fetch asked for. The runner's provider returns
+whole rows, so everything asked for is genuinely in hand. `ClearRecord` and `AddLoadField` each
+have a single-digit caller count on both 27.5 and 28.4 (`ClearRecord`: one, `NavRecord.Clear()`), so neither
+prepend observes anything but the AL statement it is there for.
 
-**Tracked by [#3859](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3859).**
-No `expect-divergence` entry exists yet, because that mode declares a corpus test that **fails**
-here and corpus codeunit 60766 has not merged. Once it does, its first and third arms are
-expected to fail on the runner, and will need either the fix or an entry naming that issue.
+**The call counts these decisions rest on**, from the `bc-decompiler` MCP server
+(`tools/setup-bc-decompiler.sh`; `search_members` for the id, then `find_callers`). Measured on
+**two distinct binaries** — `bc270`, `bc273` and `bc275` all report MVID
+`d11fabde0c1f45b3ae3d9e5e813929aa`, so they are one binary and agreement among them would be one
+measurement wearing three labels:
 
-Why the runner does not simply stamp the request's `FieldLoadInfo` onto the fetched buffer:
-`GetFieldValue` branches on the **buffer**, so a buffer claiming a field is absent routes the
-read down `NavRecord.LoadFieldsAsync` — a genuine partial re-fetch the runner's provider has
-never served, on the path every fetch takes. Leaving it alone keeps BC's `else if` arm, which
-calls `AddLoadField` and flips the field to loaded, which is what the JIT-load claim requires.
+| method | 27.5 (`d11fabde…`) | 28.4 (`e34004bb…`) |
+|---|---|---|
+| `RecordImplementation.LoadFieldsAsync` | 10 | 10 |
+| `RecordImplementation.IsFieldSelectedForLoad(NCLMetaField)` | 1 | 1 |
+| `RecordImplementation.ClearRecord` | 1 | 1 |
+| `RecordImplementation.AddLoadField` | 2 | 2 |
+
+Identical on both, with the same caller names. These explain why the fix is cheap; what
+establishes that it is *correct* is the seven corpus tests, which exercise the consequence
+directly. A later BC version wiring up a second `IsFieldSelectedForLoad` caller would stale this
+table and the corpus arms would still adjudicate.
+
+Each registration is pinned by `AlRunner.Tests/PartialLoadFetchedSetTests.cs`, and each was
+mutation-checked: removing the `ClearRecord` reset reds 60766 arm 3, removing the `AddLoadField`
+hook reds 60775's `PartialLoad_ReadOmittedField_JitLoadsRealValue`, and reinstating the
+requested-set fallback reds 60766 arm 2.
 
 ### `TestPage.Edit()` on a page declaring `Editable = false` — refused by name, not by NRE
 

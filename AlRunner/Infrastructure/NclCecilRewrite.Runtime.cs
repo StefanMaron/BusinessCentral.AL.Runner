@@ -1690,6 +1690,22 @@ public static partial class NclCecilRewrite
             ReplaceBodyWithHelper(nclMod,
                 ByParams(Rt + "RecordImplementation", "AreFieldsLoaded", "IEnumerable`1"),
                 H(recordPatches, "RecordImplementation_AreFieldsLoaded"));
+            // ...and its reset. ClearRecord's body is `mutableRecordBuffer = null;
+            // ResetRecord();` — the materialised row is discarded, so the helper's record of
+            // what a fetch materialised must be discarded with it. PREPEND, not replace: BC's
+            // own clear still has to happen. ClearRecord has exactly one caller in Ncl.dll
+            // (NavRecord.Clear(), find_callers on 27.5), so this observes AL's Clear only.
+            PrependStaticCall(nclMod,
+                FindNclMethod(nclMod, Rt + "RecordImplementation", "ClearRecord", 0),
+                H(recordPatches, "RecordImplementation_ClearRecord_Prologue"), 1);
+            // ...and the JIT load. GetFieldValue calls AddLoadField when AL reads a field the
+            // load set omits, and after that call the value IS in hand — so it becomes
+            // materialised exactly as a fetch materialises one (corpus 60775
+            // PartialLoad_ReadOmittedField_JitLoadsRealValue). Prepend, so BC's own
+            // TrySetNewFieldLoadInfoAndInvalidate still runs.
+            PrependStaticCall(nclMod,
+                ByParams(Rt + "RecordImplementation", "AddLoadField", "NCLMetaField"),
+                H(recordPatches, "RecordImplementation_AddLoadField_Prologue"), 2);
             // ExecutePermissionsValidatedEx get/set consult
             // session.Database.PermissionSetupMonitor (null on skeleton). Permissions are
             // static in the runner — plain backing-field semantics are equivalent.
