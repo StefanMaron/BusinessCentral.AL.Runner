@@ -828,10 +828,18 @@ internal static partial class BcAppSymbolCache
     /// the extension extends, module qualifier stripped, name AS STATED. AllObjWithCaption's
     /// Object Subtype reports its ID for those kinds; see
     /// docs/virtual-tables-allobj.md#object-subtype.</para>
+    /// <para><c>ALNamespace</c> is the dotted path of the <c>Namespaces</c> tree the object was
+    /// reached through, or null for one reached through the flat top-level array. NOT a property
+    /// the symbol file states — it is the walk itself, which is why it is passed down rather
+    /// than read out of a bag. <c>InherentEntitlements</c> / <c>InherentPermissions</c> ARE
+    /// stated, as the AL mask LETTER string; see
+    /// docs/codeunit-metadata-from-bc.md#permission-mask-spelling for the case rule, which the
+    /// consumer decodes. All three are populated for <c>Codeunit</c> only (#3788).</para>
     /// </remarks>
     internal sealed record ObjectSymbol(string Kind, int Id, string Name, string? Caption = null,
         string? TableNo = null, bool SingleInstance = false, string? Subtype = null,
-        string? TargetObjectName = null);
+        string? TargetObjectName = null, string? ALNamespace = null,
+        string? InherentEntitlements = null, string? InherentPermissions = null);
 
     // SymbolReference.json container name → the AllObj "Object Type" option name the
     // objects inside it map to. Matched against the live option string by name, so a
@@ -974,8 +982,13 @@ internal static partial class BcAppSymbolCache
     /// CachePathForVersionForTests comment already argues against, closed by construction
     /// rather than by documentation.
     /// </summary>
-    private static string BuildKey(string fullPath, string contentHash, int cacheVersion) =>
-        $"{fullPath}|hash:{contentHash}|v{cacheVersion}|shape:{PayloadShape}";
+    /// <param name="payloadShape">Defaults to the live fingerprint, which is what Get() passes.
+    /// A test overrides it to reach the path an OLDER payload SHAPE wrote to — the only way to
+    /// prove the fingerprint is load-bearing, since the key is hashed into a filename and a
+    /// shape change is otherwise invisible from outside (#3788).</param>
+    private static string BuildKey(string fullPath, string contentHash, int cacheVersion,
+                                   string? payloadShape = null) =>
+        $"{fullPath}|hash:{contentHash}|v{cacheVersion}|shape:{payloadShape ?? PayloadShape}";
 
     internal static AppSymbols Get(string appPath)
     {
@@ -1015,6 +1028,15 @@ internal static partial class BcAppSymbolCache
     // merely documented.
     internal static string CachePathForVersionForTests(string appPath, string contentHash, int cacheVersion)
         => CachePath(BuildKey(Path.GetFullPath(appPath), contentHash, cacheVersion));
+
+    /// <summary>
+    /// The same seam for the OTHER half of the key. Where a CacheVersion bump is the
+    /// discriminator for a parse-only change, the payload-shape fingerprint is the one for a
+    /// record-shape change — and a test proving a stale entry is not served needs the path that
+    /// entry actually lives at (#3788).
+    /// </summary>
+    internal static string CachePathForShapeForTests(string appPath, string contentHash, int cacheVersion, string payloadShape)
+        => CachePath(BuildKey(Path.GetFullPath(appPath), contentHash, cacheVersion, payloadShape));
 
     /// <summary>The current payload-shape fingerprint, for a test that needs to prove the key
     /// actually carries it and that it changes when the shape does.</summary>
@@ -1242,7 +1264,11 @@ internal static partial class BcAppSymbolCache
         return (string.IsNullOrWhiteSpace(id) ? null : id, string.IsNullOrWhiteSpace(name) ? null : name);
     }
 
-    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects, Dictionary<int, ReportSymbol> reports, Dictionary<int, PageSymbol> pages, Dictionary<string, ProfileSymbol> profiles, Dictionary<int, PageExtensionSymbol> pageExtensions)
+    /// <param name="alNamespace">The dotted path of the <c>Namespaces</c> tree this container was
+    /// reached through, or null at the root. It is the ONLY source for a codeunit's ALNamespace:
+    /// the symbol file states no such property, and Microsoft's own packages put every object in
+    /// the tree — System Application 28.1's top-level <c>Codeunits</c> array has length 0 (#3788).</param>
+    private static void VisitSymbolContainer(JsonElement container, Dictionary<int, ParsedTable> tables, Dictionary<int, EnumSymbol> enums, Dictionary<int, QuerySymbol> queries, Dictionary<(string, int), ObjectSymbol> objects, Dictionary<int, ReportSymbol> reports, Dictionary<int, PageSymbol> pages, Dictionary<string, ProfileSymbol> profiles, Dictionary<int, PageExtensionSymbol> pageExtensions, string? alNamespace = null)
     {
         // Flat (kind, id, name) sweep for AllObj. Independent of the typed parsing below
         // so a kind we do not model in depth still shows up as an existing object.
@@ -1264,6 +1290,15 @@ internal static partial class BcAppSymbolCache
                     // SymbolProperties is case-insensitive, so "TableNo"/"TableNO" both match.
                     objProps.TryGetValue("TableNo", out var cuTableNo);
                     objProps.TryGetValue("Subtype", out var cuSubtype);
+                    // Carried as the AL mask LETTER string, decoded by the consumer. The letters
+                    // are CASE-SIGNIFICANT — uppercase is the direct bit, lowercase the indirect
+                    // bit at n+5 (docs/codeunit-metadata-from-bc.md#permission-mask-spelling) —
+                    // so the VALUE must not be normalised here even though SymbolProperties
+                    // matches the property NAME case-insensitively. System Application 28.1
+                    // states "X" on 480 codeunits and "x" on codeunit 2516, which BC's emitter
+                    // answers as 16 and 512 (#3788).
+                    objProps.TryGetValue("InherentEntitlements", out var cuEntitlements);
+                    objProps.TryGetValue("InherentPermissions", out var cuPermissions);
                     objects.TryAdd((kind, objId), new ObjectSymbol(kind, objId, objName, objCaption,
                         // Left as written; StripModuleQualifier is the consumer's job, the same
                         // split the query/report data-item RelatedTable reads already make.
@@ -1275,7 +1310,10 @@ internal static partial class BcAppSymbolCache
                         // single-instance codeunit in a precompiled dependency (#3790). Every
                         // other boolean in this file already goes through SymbolBool.
                         SingleInstance: SymbolBool(objProps, "SingleInstance"),
-                        Subtype: string.IsNullOrWhiteSpace(cuSubtype) ? null : cuSubtype.Trim()));
+                        Subtype: string.IsNullOrWhiteSpace(cuSubtype) ? null : cuSubtype.Trim(),
+                        ALNamespace: alNamespace,
+                        InherentEntitlements: string.IsNullOrWhiteSpace(cuEntitlements) ? null : cuEntitlements.Trim(),
+                        InherentPermissions: string.IsNullOrWhiteSpace(cuPermissions) ? null : cuPermissions.Trim()));
                     continue;
                 }
                 objects.TryAdd((kind, objId), new ObjectSymbol(kind, objId, objName, objCaption,
@@ -1358,7 +1396,16 @@ internal static partial class BcAppSymbolCache
         if (container.TryGetProperty("Namespaces", out var namespaces) && namespaces.ValueKind == JsonValueKind.Array)
         {
             foreach (var ns in namespaces.EnumerateArray())
-                VisitSymbolContainer(ns, tables, enums, queries, objects, reports, pages, profiles, pageExtensions);
+            {
+                // The tree path IS the value, joined with dots at whatever depth the object sits.
+                // A namespace stating no Name cannot contribute a segment, so the path stops
+                // rather than gaining an empty one — that would spell "System..Utilities".
+                var segment = ns.TryGetProperty("Name", out var nsName) ? nsName.GetString() : null;
+                var childNamespace = string.IsNullOrWhiteSpace(segment)
+                    ? alNamespace
+                    : string.IsNullOrEmpty(alNamespace) ? segment!.Trim() : alNamespace + "." + segment!.Trim();
+                VisitSymbolContainer(ns, tables, enums, queries, objects, reports, pages, profiles, pageExtensions, childNamespace);
+            }
         }
     }
 

@@ -19,13 +19,19 @@
 //   of it is the runner's answer, arrived at without BC's emitter.
 //
 // WHAT IS AND IS NOT STATED HERE
-//   Five attributes, because five are what the runner derives: ID, Name, TableNo,
-//   SingleInstance, Subtype. Everything else BC's emitter writes — ALNamespace,
-//   InherentPermissions, InherentEntitlements, TestIsolation, EventSubscriberInstance, the
-//   whole <Methods> subtree — is deliberately ABSENT, and absent is the honest rendering: the
-//   symbol file does not state them, so the runner has no independent answer to offer. The
-//   harness reports each as a difference and the allowlist declares why, which is the point of
-//   the exercise. Writing BC's own value into any of them would manufacture agreement.
+//   Eight attributes, because eight are what the runner derives: ID, Name, TableNo,
+//   SingleInstance, Subtype, and — since #3788 — ALNamespace, InherentEntitlements and
+//   InherentPermissions. The last three come from SymbolReference.json the same way the first
+//   five do: the namespace from the Namespaces TREE PATH the object was reached through (533 of
+//   533 exact against BC's attribute on System Application 28.1.49838.53910), the two masks from
+//   the object's own Properties bag.
+//
+//   What is still ABSENT is absent honestly, because the symbol file does not state it:
+//   TestIsolation, EventSubscriberInstance, MetadataVersion, and the whole <Methods> subtree —
+//   which is only PARTLY derivable (BC emits event-publisher and internal methods the symbol
+//   file omits for 73 of 558 codeunits), so it stays tracked on #3788 rather than half-landed.
+//   The harness reports each as a difference and the allowlist declares why, which is the point
+//   of the exercise. Writing BC's own value into any of them would manufacture agreement.
 //
 // See docs/metadata-equivalence.md#codeunits and tests/expectations/metadata-equivalence/.
 
@@ -68,6 +74,63 @@ public static partial class RecordPatches
         root.SetAttribute("SingleInstance", row.SingleInstance ? "1" : "0");
         root.SetAttribute("Subtype", row.Subtype);
 
+        // Each of the three is OMITTED when the codeunit states none, the same rule TableNo
+        // follows above: BC's emitter omits the attribute rather than writing a default, and its
+        // own constructor then applies that default. Writing "" or "0" would state a value where
+        // BC states absence.
+        if (!string.IsNullOrEmpty(row.ALNamespace))
+            root.SetAttribute("ALNamespace", row.ALNamespace);
+        if (TryDecodePermissionMaskLetters(row.InherentEntitlements, out var entitlements))
+            root.SetAttribute("InherentEntitlements", entitlements.ToString(CultureInfo.InvariantCulture));
+        if (TryDecodePermissionMaskLetters(row.InherentPermissions, out var permissions))
+            root.SetAttribute("InherentPermissions", permissions.ToString(CultureInfo.InvariantCulture));
+
         return doc.OuterXml;
+    }
+
+    /// <summary>
+    /// The AL mask letter string a symbol file states (<c>"X"</c>, <c>"x"</c>, <c>"RM"</c>, …)
+    /// as the numeric <c>PermissionMask</c> BC's emitter writes — the exact inverse of
+    /// <c>ReadPermissionMaskString</c>, and it shares that method's
+    /// <c>PermissionMaskLetters</c> constant so the two cannot drift apart.
+    ///
+    /// <para><b>Case is significant and must not be normalised.</b> Uppercase is the direct bit,
+    /// lowercase the indirect bit at n+5 — so <c>"X"</c> is 16 (Execute) and <c>"x"</c> is 512
+    /// (IndirectExecute). Both occur in Microsoft's own packages: System Application
+    /// 28.1.49838.53910 states <c>"X"</c> on 480 codeunits and <c>"x"</c> on codeunit 2516
+    /// "AppSource Json Utilities", and BC's emitter answers 16 and 512 for exactly those.
+    /// See docs/codeunit-metadata-from-bc.md#permission-mask-spelling.</para>
+    ///
+    /// <para>Returns false — the attribute is then omitted — for a null, empty or whitespace
+    /// value, and for a mask that decodes to 0, because BC's emitter omits the attribute for
+    /// <c>PermissionMask.None</c> rather than writing it.</para>
+    /// </summary>
+    /// <remarks>
+    /// A letter the table does not name is a symbol file stating something this conversion
+    /// cannot read, so it raises the same shape gap the other direction raises rather than
+    /// silently contributing no bit — a mask short one letter is indistinguishable from a
+    /// narrower permission the codeunit really declared (loud-failures.md).
+    /// </remarks>
+    private static bool TryDecodePermissionMaskLetters(string? letters, out int mask)
+    {
+        mask = 0;
+        if (string.IsNullOrWhiteSpace(letters)) return false;
+
+        foreach (var c in letters.Trim())
+        {
+            var direct = PermissionMaskLetters.IndexOf(c);
+            if (direct >= 0) { mask |= 1 << direct; continue; }
+
+            var indirect = PermissionMaskLetters.IndexOf(char.ToUpperInvariant(c));
+            if (indirect >= 0 && char.IsLower(c)) { mask |= 1 << (indirect + PermissionMaskLetters.Length); continue; }
+
+            throw CodeunitMetadataShapeGap(
+                $"SymbolReference.json states an inherent mask '{letters}', whose character '{c}' is "
+                + $"not one of the permission letters '{PermissionMaskLetters}' in either case — the "
+                + "runner cannot read a mask it cannot spell, and dropping the character would answer "
+                + "a narrower permission than the codeunit declares");
+        }
+
+        return mask != 0;
     }
 }
