@@ -21,21 +21,12 @@ namespace AlRunner.Infrastructure;
 /// </summary>
 public static class ProvisioningCheck
 {
-    // The engine DLLs the runner binds directly (must be present in the artifact dir so the
-    // ALC resolver and the Cecil rewrite can load them).
-    private static readonly string[] CoreEngineDlls =
-    {
-        "Microsoft.Dynamics.Nav.Ncl.dll",
-        "Microsoft.Dynamics.Nav.Types.dll",
-        "Microsoft.Dynamics.Nav.Common.dll",
-        "Microsoft.Dynamics.Nav.Language.dll",
-        "Microsoft.Dynamics.Nav.CodeAnalysis.dll",
-    };
+    // #3893: the list and the check moved to EngineClosure, a self-contained file a
+    // standalone tool can link without referencing the runner. These aliases keep the
+    // in-file spellings; EngineClosure is the single definition.
+    private static string[] CoreEngineDlls => EngineClosure.CoreEngineDlls;
 
-    // Sentinel of the BC-app external closure that the version-agnostic engine relies on
-    // being served from the artifact dir (it was the exact DLL whose absence/skew produced
-    // FileLoadException 0x80131621). Its presence signals the full /service/ closure landed.
-    private const string ClosureSentinel = "Microsoft.Identity.ServiceEssentials.Core.dll";
+    private const string ClosureSentinel = EngineClosure.ClosureSentinel;
 
     // ── Platform-app R2R check ────────────────────────────────────────────────
     // These Microsoft apps MUST be provided as R2R (publishedartifacts/*.dll) packages.
@@ -432,6 +423,95 @@ public static class ProvisioningCheck
             }
         }
         return false;
+    }
+
+    // ── Platform-apps completeness check (#2661) ──────────────────────────────
+    // The sibling of TestToolkitPresent for `provision --platform-apps`, and a DIFFERENT
+    // question from ArtifactDirState/Check, which measure the service-tier ENGINE closure.
+    // Measured on the reporting box: one directory (28.1.49838.53910) holds a complete
+    // 501-DLL engine closure AND a platform-apps directory containing only `System.app` —
+    // so the two halves are independently complete or short, and one predicate cannot
+    // answer for both. docs/provisioning.md#platform-apps-completeness has the survey.
+
+    /// <summary>
+    /// The w1 core set every <c>provision --platform-apps</c> download lands, by manifest
+    /// <c>Name</c>. Derived from <c>ArtifactDownloader.W1PlatformAppPrefixes</c> — the list
+    /// the downloader itself filters on — so the predicate asks for exactly what the
+    /// download promises. <c>PlatformAppSetMatchesDownloaderTests</c> pins the two together;
+    /// adding a prefix there without a name here would make the guard accept a short set.
+    /// </summary>
+    public static readonly string[] W1PlatformAppNames =
+    {
+        "Base Application",
+        "System Application",
+        "Business Foundation",
+        "Application",
+        "Application Test Library",
+    };
+
+    /// <summary>
+    /// True when <paramref name="dir"/> holds the complete Microsoft platform-app core set
+    /// for the w1 channel — every name in <see cref="W1PlatformAppNames"/> present as a
+    /// Microsoft-published <c>.app</c> whose manifest parses. A real manifest parse, not
+    /// "does any <c>*.app</c> file exist": that glob is what #2661 reports, and one
+    /// directory on the reporting box (28.1.49838.53910) holds exactly one file,
+    /// <c>System.app</c>, which the glob accepts as a complete provision forever.
+    ///
+    /// <para><b>Country channel returns the third state, not a verdict</b>
+    /// (<c>.claude/rules/guards-need-a-third-state.md</c>). A country artifact is not "w1
+    /// plus extras" — <c>ArtifactDownloader.IsWantedPlatformAppEntry</c> takes EVERY
+    /// Microsoft-published app the country artifact ships, deliberately so no per-country
+    /// list has to be hand-maintained. There is therefore no set to check completeness
+    /// against, and answering <c>false</c> would re-download a complete country set on
+    /// every run while answering <c>true</c> would restore the glob's false green. So
+    /// <paramref name="country"/> other than w1 yields <c>null</c> — "could not measure" —
+    /// and the caller keeps the glob for that channel, knowingly.</para>
+    /// </summary>
+    /// <returns>
+    /// <c>true</c> complete, <c>false</c> short (with <paramref name="missing"/> naming
+    /// which), <c>null</c> when completeness is not measurable for this channel.
+    /// </returns>
+    public static bool? PlatformAppsComplete(
+        string dir, string? country, out IReadOnlyList<string> missing)
+    {
+        missing = Array.Empty<string>();
+
+        // Not w1: no curated set exists to compare against. Third state, deliberately not
+        // folded into either verdict — both would be wrong in a different direction.
+        if (!string.Equals(NormalizeCountry(country), "w1", StringComparison.Ordinal))
+            return null;
+
+        if (!Directory.Exists(dir))
+        {
+            missing = W1PlatformAppNames;
+            return false;
+        }
+
+        var present = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var appFile in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.app"))
+        {
+            var m = AlRunner.AppLoader.ReadManifest(appFile);
+            if (m == null) continue;
+            if (!string.Equals(m.Publisher, "Microsoft", StringComparison.OrdinalIgnoreCase)) continue;
+            present.Add(m.Name);
+        }
+
+        var absent = W1PlatformAppNames.Where(n => !present.Contains(n)).ToList();
+        missing = absent;
+        return absent.Count == 0;
+    }
+
+    /// <summary>
+    /// <see cref="PlatformAppsComplete"/> as the <c>isPresent</c> predicate
+    /// <c>ForceProvisionMode</c> takes. The unmeasurable (non-w1) case falls back to the
+    /// pre-#2661 glob, which is the honest answer there: it is what the download promises
+    /// for a country channel, and nothing narrower is knowable.
+    /// </summary>
+    public static bool PlatformAppsPresent(string dir, string? country = null)
+    {
+        var verdict = PlatformAppsComplete(dir, country, out _);
+        if (verdict.HasValue) return verdict.Value;
+        return Directory.Exists(dir) && Directory.EnumerateFiles(dir, "*.app").Any();
     }
 
     /// <summary>
@@ -1813,20 +1893,10 @@ public static class ProvisioningCheck
     /// </summary>
     public static Report Check(string version, string serviceTierDir)
     {
-        var missing = new List<string>();
-        if (!Directory.Exists(serviceTierDir))
-        {
-            // The whole dir is gone — report every required file as missing.
-            missing.AddRange(CoreEngineDlls);
-            missing.Add(ClosureSentinel);
-            return new Report(version, serviceTierDir, missing);
-        }
-        foreach (var dll in CoreEngineDlls)
-            if (!File.Exists(Path.Combine(serviceTierDir, dll)))
-                missing.Add(dll);
-        if (!File.Exists(Path.Combine(serviceTierDir, ClosureSentinel)))
-            missing.Add(ClosureSentinel);
-        return new Report(version, serviceTierDir, missing);
+        // #3893: one definition of "complete", shared with tools/metadata-ground-truth,
+        // which links EngineClosure.cs rather than referencing the runner.
+        return new Report(version, serviceTierDir,
+            EngineClosure.MissingFiles(serviceTierDir).ToList());
     }
 
     /// <summary>

@@ -425,18 +425,27 @@ internal static partial class ProgramSupport
         if (serviceTier)
         {
             var dir = AlRunner.Infrastructure.BcArtifacts.ArtifactDirFor(full);
+            // #2661: was `any *.dll exists`, which one directory on the reporting box
+            // (27.5.46862.48827, 82 DLLs incl. Ncl.dll but no closure sentinel) satisfies
+            // forever while failing deep inside an assembly load. ArtifactDirState reads
+            // the same engine closure the post-download re-check and the startup gate use.
             anyFailed |= ForceProvisionMode("BC service-tier engine DLLs", dir, full, force,
-                d => Directory.Exists(d) && Directory.EnumerateFiles(d, "*.dll").Any(),
+                d => AlRunner.Infrastructure.ArtifactDirState.Classify(d).IsUsable,
                 (v, d, log) => AlRunner.Provisioning.ArtifactDownloader.ServiceTier(v, d, log)) != 0;
         }
         if (platformApps)
         {
+            var country = AlRunner.Infrastructure.BcArtifacts.SelectedCountry;
             var dir = AlRunner.Infrastructure.ProvisioningCheck.PlatformAppsDirFor(
                 AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, full);
+            // #2661: was `any *.app exists` — 28.1.49838.53910's platform-apps dir holds
+            // only System.app and read as a complete provision. PlatformAppsPresent parses
+            // manifests for the downloader's own curated w1 set, and keeps the glob for a
+            // country channel, where no curated set exists to check against.
             anyFailed |= ForceProvisionMode("Microsoft platform apps", dir, full, force,
-                d => Directory.Exists(d) && Directory.EnumerateFiles(d, "*.app").Any(),
+                d => AlRunner.Infrastructure.ProvisioningCheck.PlatformAppsPresent(d, country),
                 (v, d, log) => AlRunner.Provisioning.ArtifactDownloader.PlatformApps(
-                    v, d, AlRunner.Infrastructure.BcArtifacts.SelectedCountry, log)) != 0;
+                    v, d, country, log)) != 0;
         }
         if (testApps)
         {

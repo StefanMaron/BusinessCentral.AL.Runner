@@ -24,6 +24,18 @@
     <ServiceTierPath>$(_ArtifactsRoot)$(_BCVersion)</ServiceTierPath>
   </PropertyGroup>
 
+  <!-- #3893: the engine-closure check, linked as a SOURCE file rather than through a
+       ProjectReference to AlRunner. A reference would pull the whole runner into a tool
+       deliberately kept out of AlRunner.slnx (see the header) and put a runner build on every
+       invocation. EngineClosure.cs is self-contained for exactly this reason — System.IO and
+       nothing else — so this one line shares the runner's definition of "complete" instead of
+       re-deriving it, which is how tools/preflight.py came to carry a Python copy of the same
+       list. AlRunner.Tests/EngineClosureSharingTests.cs pins the link. -->
+  <ItemGroup>
+    <Compile Include="../../AlRunner/Infrastructure/EngineClosure.cs"
+             Link="Linked/EngineClosure.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="System.Text.Json" Version="10.0.0" />
     <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="10.0.0" />

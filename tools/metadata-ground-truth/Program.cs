@@ -58,6 +58,25 @@ internal static class Program
             return 2;
         }
 
+        // #3893: check the closure before opening anything. A partially-provisioned directory
+        // used to fail deep inside an assembly load — the #3825 feasibility run contributed 0
+        // packages to every population for exactly this reason, and it read as a code fault.
+        // 27.5.46862.48827 is the live instance: it carries Ncl.dll and 82 DLLs, so every
+        // "is this a service-tier directory" check passes and only the closure sentinel says
+        // otherwise.
+        var missingClosure = AlRunner.Infrastructure.EngineClosure.MissingFiles(artifacts);
+        if (missingClosure.Count > 0)
+        {
+            Console.Error.WriteLine(
+                $"BC artifact directory {artifacts} is not a usable service tier — its engine "
+                + "closure is incomplete, so BC's compiler cannot be hosted out of it.");
+            foreach (var f in missingClosure)
+                Console.Error.WriteLine($"  missing: {Path.Combine(artifacts, f)}");
+            Console.Error.WriteLine(
+                $"  Fix: al-runner provision --service-tier --bc-version {Path.GetFileName(artifacts.TrimEnd('/'))} --force");
+            return 2;
+        }
+
         BcHost.Install(artifacts);
         try { return Generate(appPath, outDir, artifacts, declOnly, dotnetFirst); }
         catch (Exception ex)

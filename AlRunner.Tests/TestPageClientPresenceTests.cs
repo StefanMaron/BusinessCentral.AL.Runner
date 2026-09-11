@@ -34,6 +34,15 @@ public sealed class TestPageClientPresenceTests
         catch (Exception ex) { selectionError = ex.Message; }
         TestArtifacts.SkipIf(selectionError != null,
             $"no BC service-tier artifact directory could be selected: {selectionError}");
+
+        // #3893: a selected directory is not a usable one. Selection can land on a
+        // partially-provisioned directory (27.5.46862.48827 carries Ncl.dll and 82 DLLs, and
+        // is short the closure sentinel) — this suite then failed inside Assembly.Load, and
+        // #3799 traced that by hand to an absent Framework.UI.dll. This is a presence audit,
+        // so a broken artifact directory is an environment fault, not a product defect: skip
+        // with the classifier's own explanation rather than reporting a false failure.
+        var state = AlRunner.Infrastructure.ArtifactDirState.Classify(dir);
+        TestArtifacts.SkipIf(!state.IsUsable, state.Explain());
         return dir;
     }
 
