@@ -144,6 +144,21 @@ NOT_A_MATRIX_CLAIM = [
     ("docs/incidents/precompiled-dll-respect.md", "27.0 27.5 28.1 28.4",
      "the same historical observation as the rule it documents -- which artifact "
      "directories were checked for TestPageClient.dll and Framework.UI.dll (#3799)"),
+    # The two halves of one sentence enumerating the ARTIFACT DIRECTORIES provisioned on
+    # the machine that measured whether TestPageClient.dll ships (#3799). Not a leg set and
+    # not expressible as one: the same sentence counts 27.5 TWICE, because two directories
+    # of that minor were provisioned and one of them (27.5.46862.48827) is missing
+    # Framework.UI.dll -- which is the whole finding, since that is the
+    # missing-transitive-dependency case BC's `catch (FileNotFoundException)` converts into
+    # "test client not installed". Rewriting either half into a matrix set would delete the
+    # evidence the sentence exists to carry.
+    ("docs/testpageclient-reuse.md", "27.0 27.3 27.5",
+     "the 27.x artifact directories provisioned on the machine that checked whether "
+     "TestPageClient.dll ships -- a historical observation of where the DLL was found, "
+     "not a claim about which legs any workflow runs (#3799)"),
+    ("docs/testpageclient-reuse.md", "28.0 28.1 28.2 28.3 28.4",
+     "the 28.x half of the same historical observation -- which artifact directories were "
+     "present at measurement time, not the matrix (#3799)"),
     ("docs/upstream-corpus-workflow.md", "27.1 27.2 27.4",
      "the 27 minors the corpus does NOT run; naming the gap is the point of the sentence"),
     ("docs/virtual-tables-allobj.md", "27.0 27.3 27.5 28.2 28.3",

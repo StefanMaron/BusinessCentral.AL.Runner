@@ -50,6 +50,29 @@ as a diagnosis, and the diagnosis was written into the comments.
 **A strong-name mismatch, a missing transitive dependency, and a genuine absence are three
 different answers with three different remedies.** Here it was the second, never the third.
 
+### The transferable lesson: an exception's NAME is not a measurement
+
+This is the part worth carrying to other surfaces, more than anything specific to this DLL.
+Those four lines are the entire causal chain of #3799:
+
+1. a measurement **failed to happen** (the type could not be reached),
+2. the failure was **swallowed** (`catch (FileNotFoundException) { }`),
+3. what surfaced instead was a **name asserting a negative result** —
+   `NavTestTestClientNotInstalledException`,
+4. a reader took the name for a finding and **wrote it down as fact**, after which every
+   later reader had a documented reason not to look again.
+
+That is exactly the shape `.claude/rules/guards-need-a-third-state.md` governs: *I could not
+measure* was reported as *I measured, and the answer is no*. The third state was spelled as
+the negative one, and a negative is the answer that ends an investigation.
+
+The rule is written for guards this repository writes. The trap here is that the collapsing
+guard was **BC's**, in a precompiled DLL we may not rewrite
+(`.claude/rules/precompiled-dll-respect.md`) — so the third state cannot be restored at the
+source. It has to be restored by the reader: when a BC exception name asserts a negative,
+treat it as *the measurement did not complete* and go find out which of the causes it was.
+Reproducing the load in isolation (below) takes minutes and distinguishes all three.
+
 ## What was measured
 
 Driving BC's exact `Assembly.Load` string under the runner's own resolver shape
