@@ -28,7 +28,9 @@ are claiming to prove:
    silently no-ops leaves the test **green**, which reads as "my test is broken" when it means
    "I changed nothing". Force a clean rebuild when you mutated a build input (`.csproj`, an
    MSBuild target, a generator), since an incremental build may skip the compile entirely.
-3. **Rebuild and re-run. Confirm RED.** Restore.
+3. **Rebuild and re-run. Confirm RED — and that the RED is the assertion, not the build.**
+   A mutation that breaks the compile also exits non-zero, and a run with compile errors prints
+   no `Total:` line at all. Check the error text says `Assert`, not `error CS`. Restore.
 4. **Report both numbers in the PR body** — `Failed: 1, Passed: 7` → `Failed: 0, Passed: 8`.
    A mutation whose result nobody can see is the same as one nobody ran.
 
@@ -47,6 +49,13 @@ fixed before merge, which is the outcome this step exists to produce.
 two references to `METADATA-EMIT-EXCLUDED` — one asserting the naming convention, one passing it
 as routing data. Both mention the stage; neither reaches the `throw`. A grep for the symbol
 finds them and reads as coverage, which is why the mutation is the check and the grep is not.
+
+**Trap: a mutation that breaks the build proves nothing, and it fails LOUDLY.** The landing
+check above catches the silent direction; this is the other one. Mutating a call site by text
+substitution produced `exit 1` with **10 `error CS`** lines and no `Total:` — a broken build
+wearing the shape of a caught regression. Measured twice on one guard in one hour (#3900), by an
+agent and its coordinator independently. Prefer mutating a **value** the assertion reads over
+editing code structure, and read the error text before believing a red.
 
 **Trap: a failed mutation and a working guard look identical.** Measured twice in one session
 (#3895): a backslash edit that a heredoc collapsed, so the file never changed; and a
