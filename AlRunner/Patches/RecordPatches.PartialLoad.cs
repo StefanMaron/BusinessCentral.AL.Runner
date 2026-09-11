@@ -17,8 +17,21 @@
 // the data path is untouched: the read of an unloaded field still lands on BC's
 // GetFieldValue `else if` arm, which calls AddLoadField and flips the field to loaded.
 //
-// Alternatives weighed and the one divergence this leaves: PR for #3358.
+// The one divergence this leaves — narrowing the load set after a field is already in the
+// fetched buffer — is service-tier measured (corpus PR 323, cloud legs 27.3 and 27.5: BC keeps
+// the field loaded, and a re-fetch does not change that) and tracked by #3859. Write-up:
+// docs/limitations.md#are-fields-loaded-narrow-after-fetch. Alternatives weighed: PR for #3358.
 // Reference: upstream corpus codeunit 60775 "Test Record Partial Load".
+//
+// TRAP: three NEIGHBOURING partial-load rewrites cannot be turned red by any test, and the
+// reason is a dead call graph, NOT the R2R inlining the obvious hypothesis reaches for
+// (#3372). Measured with find_callers over Ncl.dll, identical on 27.0 and 28.4:
+// ALSetBaseLoadFields/0 has ZERO callers; ALSetBaseLoadFields/1's only caller is /0; and
+// RecordImplementation.SetLoadFields(FieldLoadInfo)'s only caller is
+// DataItemIterator.SetLoadFieldsBasedOnMetadata, which this runner already Cecil-no-ops.
+// AL's SetLoadFields reaches the ISet overload instead, never the FieldLoadInfo one. So a
+// test going red on those three would mean a caller appeared — which is what
+// PartialLoadDeadRewriteTests watches for.
 
 using System.Collections;
 using System.Reflection;
@@ -48,10 +61,12 @@ public static partial class RecordPatches
         // Get/Find nothing is loaded, not even the primary key.
         if (_riMutableRecordBuffer!.GetValue(self) is null) return false;
 
-        // BC's own body treats an empty field list as "all loaded" and does not null-check
-        // here — NavRecord.AreFieldsLoaded has already thrown on a null array upstream.
-        if (fields is null) return true;
-
+        // An EMPTY field list is "all loaded", which the loop below answers by not iterating —
+        // BC's own body does the same. A NULL one is refused by RequiredEnumerable rather than
+        // answered: today NavRecord.AreFieldsLoaded's ArgumentNullException.ThrowIfNull upstream
+        // makes it unreachable, but that is a property of BC's callers, not of this code,
+        // so answering the success value would be the silent default loud-failures.md forbids
+        // (#3372; the refusal is executed on a null in PartialLoadFieldListRefusalTests).
         var enumerable = BcShape.RequiredEnumerable(
             fields, "RecordImplementation.AreFieldsLoaded(fields)", PartialLoadSurface,
             "the runner cannot tell which fields were asked about");
