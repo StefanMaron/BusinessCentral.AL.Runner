@@ -167,6 +167,12 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
 - **The newest comment on the PR whose last line begins `Verdict:` reads `Verdict: MERGE` with a
   head equal to the PR's current head** (`gh pr view <N> --json headRefOid`); any other line, or none, sends the
   PR back to its reviewer naming what is missing.
+- **Every commit on the PR is authored by the pushing identity.**
+  `gh pr view <N> --json commits --jq '[.commits[].authors[].login]|unique'` — a foreign login
+  means the `main` ruleset's `require_extra_approval_for_unattributed_changes` will refuse the
+  merge until a human approves, with every check green and `mergeable: MERGEABLE`. It is not a
+  check, so `ci-wait.py` cannot see it and reports GREEN (#3942). Report it and ask the owner;
+  **never self-approve** — that rule exists to put a human in front of exactly this change.
 
 **Record the head you armed against** — it is the head in that verdict line. If the head moves
 afterwards, GitHub keeps auto-merge armed against the new head, which nobody has reviewed, and
