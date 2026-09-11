@@ -24,6 +24,15 @@
 //   AL rather than BC's emitter: a probe declaring the property gets it back on the document.
 //   See docs/permission-set-from-bc-document.md#excluded-permission-sets.
 //
+// CLAIM — an ABSENT Assignable attribute reads as FALSE, not as AL's source-language default
+//   of true (#2417, #3806). BC's own Types.Metadata.MetaPermissionSet.Create assigns the
+//   property only inside `case 10: if (name == "Assignable")`, and MetaPermissionSet()
+//   initialises only Permissions/Included/Excluded — so an absent attribute leaves
+//   default(bool). Read off Microsoft.Dynamics.Nav.Types.dll 28.1.49838.53910 (sha256
+//   c91ede8f…); #3806 measured that same reader answering False for PermissionSet 68, the one
+//   document of 178 that omits the attribute. AL's default governs what the COMPILER emits,
+//   which is a different question from what BC's reader does with a document stating nothing.
+//
 // TRAP — nothing in the derivation became dead code, so do not delete it as unreachable. The
 //   registry is keyed by id (the parser is the inventory), BC's document does not state
 //   AppId/AppName, and Emit runs only on a compile-cache MISS, leaving the derivation the live
@@ -101,10 +110,9 @@ public static partial class RecordPatches
             // rest of the runner carries is the ENU text alone, which is what the AL `Caption`
             // property stated and what "Metadata Permission Set".Name reports.
             EnuFromCaptionMl((string?)root.Attribute("CaptionML")),
-            // Assignable is emitted as "1"/"0". AL's own default when a set declares none is
-            // true, and BC states the attribute on every set the compiler emits — so an
-            // absent attribute takes AL's default rather than reading as false.
-            ParseBcBool((string?)root.Attribute("Assignable"), defaultValue: true),
+            // Assignable is emitted as "1"/"0", and an ABSENT attribute is false — the same
+            // answer BC's own reader gives this document (see the CLAIM in the header).
+            ParseBcBool((string?)root.Attribute("Assignable"), defaultValue: false),
             ReadPermissions(root),
             // The NAME list stays null on this route: BC states ids, and filling both would
             // give BuildIncludeList two sources to disagree about.

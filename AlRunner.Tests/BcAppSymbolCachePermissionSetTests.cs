@@ -14,10 +14,13 @@
 //     "PermissionSets" finds 2 entries in Base Application 28.1 and ZERO in System
 //     Application 28.1 — which is where SUPER lives. Measured against the real .app files,
 //     not assumed.
-//  2. `Assignable` is not always stated. Base Application 28.1's "D365 Basic - Edit" (208)
-//     declares no Assignable property and is assignable; "LOCAL" (1001) declares
-//     `Assignable = false`. AL's default is true, matching table 2000000250's own field 4
-//     (`InitValue = true`).
+//  2. `Assignable` is not always stated, and an absent one reads as FALSE — what BC's own
+//     reader answers, not AL's source-language default (#2417, #3806). Base Application 28.1's
+//     "D365 Basic - Edit" (208) and "D365 Basic - Read" (209) and System Application's
+//     "System Execute - Basic" (68) declare none; "LOCAL" (1001) declares `Assignable = false`.
+//     Table 2000000250's field 4 carries `InitValue = true`, which is an AL initial value for a
+//     NEW record and does not describe how BC reads an emitted document — the reading that made
+//     this wrong for four issues.
 //
 // The shapes below mirror what those real .app symbol files state, including SUPER's caption
 // and the System Application's app id. The .app shape (a plain zip holding
@@ -97,6 +100,10 @@ public class BcAppSymbolCachePermissionSetTests
                       "Properties": [
                         { "Name": "Caption", "Value": "Dynamics 365 Basic - Edit access" }
                       ]
+                    },
+                    {
+                      "Id": 68,
+                      "Name": "System Execute - Basic"
                     }
                   ]
                 }
@@ -117,8 +124,8 @@ public class BcAppSymbolCachePermissionSetTests
             var symbols = BcAppSymbolCache.Get(appPath);
 
             Assert.NotNull(symbols.PermissionSets);
-            // Both the nested three and the root-level one; a root-only read would find 1.
-            Assert.Equal(4, symbols.PermissionSets!.Count);
+            // Both the nested four and the root-level one; a root-only read would find 1.
+            Assert.Equal(5, symbols.PermissionSets!.Count);
 
             var super = Assert.Single(symbols.PermissionSets, p => p.Name == "SUPER");
             Assert.Equal(31, super.Id);
@@ -142,8 +149,26 @@ public class BcAppSymbolCachePermissionSetTests
         }
     }
 
+    /// <summary>
+    /// An ABSENT <c>Assignable</c> reads as FALSE, in both shapes the real symbol files use, and
+    /// an explicit "1" still reads as true — so a reader that simply answered false everywhere
+    /// would fail here (#2417, #3806).
+    ///
+    /// <para>CLAIM: BC's own reader never defaults this to true. <c>MetaPermissionSet.Create</c>
+    /// assigns <c>Assignable</c> only inside <c>case 10: if (name == "Assignable")</c>, and
+    /// <c>MetaPermissionSet()</c> initialises only Permissions/Included/Excluded — so an absent
+    /// attribute leaves <c>default(bool)</c>, which is false. Measured on
+    /// Microsoft.Dynamics.Nav.Types.dll 28.1.49838.53910 (sha256 c91ede8f…); #3806 measured the
+    /// same build's reader answering <c>Assignable = False</c> for set 68.</para>
+    ///
+    /// <para>TRAP: there are TWO absent shapes and a fixture with only one proves half the fix.
+    /// Base Application 208/209 state a <c>Properties</c> array with no <c>Assignable</c> key;
+    /// System Application 68 states no <c>Properties</c> key at all. Measured across the real
+    /// 28.1 .app files: 436 permission sets, 121 state "1", 312 state "0", and exactly these 3
+    /// state none.</para>
+    /// </summary>
     [Fact]
-    public void PermissionSets_AssignableDefaultsToTrue_AndAnExplicitFalseIsHonored()
+    public void PermissionSets_AbsentAssignableReadsAsFalse_AndAnExplicitTrueIsHonored()
     {
         var dir = TestScratch.Dir("al-runner-bcsym-permset-tests");
         Directory.CreateDirectory(dir);
@@ -156,10 +181,23 @@ public class BcAppSymbolCachePermissionSetTests
             var agentObjects = Assert.Single(permissionSets, p => p.Name == "Agent - Objects");
             Assert.False(agentObjects.Assignable);
 
-            // Declares no Assignable property at all — AL's default is true.
+            // Declares Assignable = 1 — the direction that fails if the fix over-corrects to
+            // "always false".
+            var super = Assert.Single(permissionSets, p => p.Name == "SUPER");
+            Assert.True(super.Assignable);
+
+            // Absent shape 1: a Properties array that carries no Assignable key (Base
+            // Application 208 "D365 Basic - Edit", verbatim).
             var basicEdit = Assert.Single(permissionSets, p => p.Name == "D365 Basic - Edit");
-            Assert.True(basicEdit.Assignable);
+            Assert.False(basicEdit.Assignable);
+            // The rest of the parse is untouched by the defaulting change.
             Assert.Equal("Dynamics 365 Basic - Edit access", basicEdit.Caption);
+
+            // Absent shape 2: no Properties key whatsoever — System Application 68
+            // "System Execute - Basic", the exact set #2417 was filed about.
+            var systemExecuteBasic = Assert.Single(permissionSets, p => p.Name == "System Execute - Basic");
+            Assert.Equal(68, systemExecuteBasic.Id);
+            Assert.False(systemExecuteBasic.Assignable);
         }
         finally
         {
