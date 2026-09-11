@@ -166,7 +166,9 @@
        never loaded into the runner's own load chain, so nothing here can perturb the BC
        engine bind.
 
-       Today that is one file, and it earns its place. System Application's
+       Two files today, one per app that would otherwise emit nothing.
+
+       Newtonsoft.Json — System Application's
        SamplingPerfProfilerImpl calls JsonSerializer.Deserialize(TextReader, Type). The service
        tier ships only the net6.0 build of Newtonsoft.Json, whose TextReader parameter is typed
        against System.Runtime 6.0.0.0; no .NET 6 reference assemblies exist on a net8 box, so
@@ -175,14 +177,57 @@
        The netstandard2.0 build of the SAME Newtonsoft version binds against netstandard, which
        does resolve.
 
+       Microsoft.AspNetCore.StaticFiles — Base Application's dotnet.al:23 declares
+       assembly(Microsoft.AspNetCore.StaticFiles) for FileExtensionContentTypeProvider, and BC
+       ships no copy in its artifacts, so the whole app emitted zero objects (#3876). Exactly
+       one file, because that line is the only AspNetCore assembly the app declares — read out
+       of the shipped package, not assumed. Staging the pack's other 137 DLLs would put them
+       ahead of the service tier for no declared reference.
+
+       The AL declaration carries NO PublicKeyToken, and that is what makes an ordinary
+       strong-named ref-pack copy bind: AssemblyLocatorBase.IsAssemblyCompatible guards its
+       token comparison on the SEARCH name having a non-empty token, so a request without one
+       is not token-checked. It is asymmetric, NOT token-blind — a request naming the wrong
+       token is still rejected, and a wrong simple name always is. The `PublicKeyToken=null` in
+       the AL0451 text is DotNetUtilities.GetPublicKeyToken's rendering of an absent token, not
+       a demand for a null-token assembly; three documents read it as the latter and recorded
+       the app as permanently unemittable (#3876 measured all of this against the real locator).
+
        ExcludeAssets="all": referenced for its FILE, never linked. A package reference rather
        than a path into ~/.nuget so a CI leg's success does not depend on what happened to be
        cached on the machine — the same choice tools/metadata-ground-truth makes, and this
-       shim is the one its CopyDotNetShims target proved out. -->
+       shim is the one its CopyDotNetShims target proved out. The AspNetCore ref pack makes
+       that reasoning load-bearing rather than decorative: unlike Microsoft.NETCore.App.Ref it
+       is NOT an SDK component — it is absent from $DOTNET_ROOT/packs on a setup-dotnet leg —
+       so a ~/.nuget path would work here and fail on CI. 8.0.30 to match the leg's 8.0.x
+       runtime; 8.0.25, 9.0.19 and 10.0.11 bind identically, so the pin is for predictability
+       rather than necessity. -->
   <ItemGroup>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3"
                       GeneratePathProperty="true" ExcludeAssets="all" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.AspNetCore.App.Ref" Version="8.0.30"
+                      GeneratePathProperty="true" ExcludeAssets="all" PrivateAssets="all" />
   </ItemGroup>
+
+  <!-- The AspNetCore ref pack ships Roslyn analyzers. ExcludeAssets does not keep them out of
+       the analyzer item group, and they then throw AD0001 on every build (882 of them) looking
+       for ASP.NET Core types nothing here references. The pack is wanted for ONE file, so
+       dropping its analyzers outright is exactly the intent. Measured: a CLEAN rebuild, because
+       an incremental one skips CoreCompile and reports 0 whatever this target does.
+
+       Replace('\','/') takes ONE backslash. MSBuild does not treat a backslash as an escape
+       here, so '\\' matches a literal two-backslash sequence, finds none in a Windows path and
+       leaves it unconverted — after which Contains('/microsoft.aspnetcore.app.ref/') is false
+       and the analyzers are NOT dropped. Measured in a standalone MSBuild project:
+       DOUBLE on a Windows path -> unchanged, contains False; SINGLE -> converted, True; both
+       True on a POSIX path, which is why every CI leg passes either way and only a Windows
+       developer build regresses. -->
+  <Target Name="DropAspNetCoreRefPackAnalyzers" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)"
+                Condition="$([System.String]::Copy('%(Analyzer.FullPath)').Replace('\','/').Contains('/microsoft.aspnetcore.app.ref/'))" />
+    </ItemGroup>
+  </Target>
 
   <!-- Staged as CONTENT rather than by a bare <Copy>, so the shim travels with al-runner.dll
        into every output that references this project — AlRunner.Tests' output above all, where
@@ -192,6 +237,13 @@
   <ItemGroup Condition="'$(PkgNewtonsoft_Json)' != ''">
     <Content Include="$(PkgNewtonsoft_Json)/lib/netstandard2.0/Newtonsoft.Json.dll"
              Link="dotnet-shims/Newtonsoft.Json.dll"
+             CopyToOutputDirectory="PreserveNewest"
+             Pack="true" PackagePath="tools/$(TargetFramework)/any/dotnet-shims/" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(PkgMicrosoft_AspNetCore_App_Ref)' != ''">
+    <Content Include="$(PkgMicrosoft_AspNetCore_App_Ref)/ref/net8.0/Microsoft.AspNetCore.StaticFiles.dll"
+             Link="dotnet-shims/Microsoft.AspNetCore.StaticFiles.dll"
              CopyToOutputDirectory="PreserveNewest"
              Pack="true" PackagePath="tools/$(TargetFramework)/any/dotnet-shims/" />
   </ItemGroup>

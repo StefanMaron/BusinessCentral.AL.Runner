@@ -69,18 +69,21 @@ measurements: loading the Base Application floor costs about **70 seconds cold a
 runner invocation**. For an app that already ships a working DLL, recompiling it would be spending a
 compile to learn what `SymbolReference.json` already states.
 
-**And for Base Application specifically it is not merely expensive — it does not work at all.** From
-`tests/expectations/metadata-equivalence/apps.json`, which is why that app is absent from the
-equivalence harness:
+**And for Base Application specifically the cost IS the reason** — which is a correction. This
+section used to say the compile "does not work at all", quoting
+`tests/expectations/metadata-equivalence/apps.json` on a `PublicKeyToken=null` copy of
+`Microsoft.AspNetCore.StaticFiles` that no BC artifact ships. **#3876 disproved that**: the
+assembly ships in the ASP.NET Core reference pack, both csprojs now stage it, and the emit is
+clean — `errors=0`, `objects=7850`, 7,842 documents.
 
-> Base Application is deliberately ABSENT. Its emit needs a `PublicKeyToken=null` copy of
-> `Microsoft.AspNetCore.StaticFiles` that no BC artifact ships, and without it the emitter produces
-> **ZERO objects** (issue #3549).
+Note what the old text did, because it is instructive: it warned against "stating the cost as the
+reason", having itself stated an incorrect blocker as the reason. The cost was the reason all
+along — **257 s and 8.83 GiB peak RSS**, against ~6 s for Business Foundation and ~13 s for
+System Application.
 
-So the symbol-file route is not a cost-saving fallback for this app. It is the only route that
-produces anything. (Compiling Base Application is separately expensive — roughly 2 minutes and ~9 GB
-peak RSS — but that is the *cost*, not the reason, and stating the cost as the reason has misled a
-reader of this repository before.)
+So the symbol-file route IS a cost-saving fallback for this app, and a compile is available when
+something needs BC's own answer. `docs/dependency-metadata-from-bc.md` §
+"Base Application: a cost question after all" has the measurement and the resolver mechanism.
 
 **So for this shape the answer is the symbol file, and the symbol file is held to a standard rather
 than treated as second-class.**

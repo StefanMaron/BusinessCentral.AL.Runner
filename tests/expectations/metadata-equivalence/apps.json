@@ -6,10 +6,20 @@
     "than it claims. Add an app only once tools/gen-metadata-ground-truth.sh produces a bundle",
     "for it on a clean box.",
     "",
-    "Base Application is deliberately ABSENT. Its emit needs a PublicKeyToken=null copy of",
-    "Microsoft.AspNetCore.StaticFiles that no BC artifact ships, and without it the emitter",
-    "produces ZERO objects (issue #3549). Listing it here would fail every leg; leaving it out",
-    "and saying so is the honest state."
+    "Base Application is still ABSENT, but NOT because its emit is impossible. This comment",
+    "used to say it needed a PublicKeyToken=null copy of Microsoft.AspNetCore.StaticFiles that",
+    "no BC artifact ships. Issue #3876 disproved that: the assembly ships in the ASP.NET Core",
+    "reference pack, both csprojs now stage it into dotnet-shims, and the emit is clean --",
+    "errors=0, objects=7850, 7,842 documents. The `PublicKeyToken=null` in the AL0451 text is",
+    "BC rendering an ABSENT token in the AL declaration, not demanding a null-token build.",
+    "",
+    "It stays absent on COST, which is a sizing decision rather than a blocked one. This file",
+    "drives tools/gen-metadata-ground-truth.sh, which runs on the UNIT-TEST legs of",
+    ".github/workflows/bc-tests.yml. Business Foundation costs ~3s there and System Application",
+    "~14s; Base Application costs 257s and 8.83 GiB peak RSS. A standard ubuntu-latest runner",
+    "has 16 GB, so it fits -- but alongside the rest of that leg the margin is thin, and an OOM",
+    "presents as a killed step with no diagnostic rather than a legible failure. Adding it is a",
+    "deliberate call for a human to make, with those numbers in hand (#3876)."
   ],
   "apps": [
     {
