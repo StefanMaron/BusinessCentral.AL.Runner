@@ -29,10 +29,22 @@ are what a review is for, and every check below exists because its absence shipp
 
 ## 1. Does the proving test prove anything?
 
-Ask the question from `.claude/rules/tdd.md` directly: **would this test still pass if the
-implementation returned a default — 0, empty string, false, null?** If yes it is noise, however
-green.
+**Run the mutation `.claude/rules/tdd.md` requires; do not re-ask its question.** Break the
+implementation — delete the guard, invert the condition, return the default — rebuild, and see
+whether the test goes red. Asking instead of running has answered wrong twice here
+(`docs/incidents/tdd.md`): #3819's fixture *constructed* the relationship it was meant to prove,
+and #3882 shipped one proven guard beside one that left all 8 tests green when mutated out.
 
+The PR should report both counts. **Re-run at least the mutation the PR's own claim rests on** —
+a reported number nobody reproduced is the same evidence as no number.
+
+- **A test that names the thing is not a test that drives it.** #3882's unproven guard had two
+  test references to its stage name — one asserting a naming convention, one passing it as
+  routing data — and neither reached the `throw`. Grepping the symbol finds them and reads as
+  coverage.
+- **A guard behind a cache needs its test run twice against one cache root.** #3882's report
+  fired cold and was silent warm, because the cache HIT returns before the guard; CI provisions
+  fresh, so the legs would have stayed green forever.
 - Was RED actually observed, or only asserted? A PR that says "RED confirmed" without the
   failure text is unverified. A compile error counts as RED only for a contract that did not
   exist yet.
