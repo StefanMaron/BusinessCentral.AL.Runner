@@ -21,6 +21,16 @@
 // re-fetching — is written up, with the BC side still awaiting a service-tier verdict, at
 // docs/limitations.md#are-fields-loaded-narrow-after-fetch. Alternatives weighed: PR for #3358.
 // Reference: upstream corpus codeunit 60775 "Test Record Partial Load".
+//
+// TRAP: three NEIGHBOURING partial-load rewrites cannot be turned red by any test, and the
+// reason is a dead call graph, NOT the R2R inlining the obvious hypothesis reaches for
+// (#3372). Measured with find_callers over Ncl.dll, identical on 27.0 and 28.4:
+// ALSetBaseLoadFields/0 has ZERO callers; ALSetBaseLoadFields/1's only caller is /0; and
+// RecordImplementation.SetLoadFields(FieldLoadInfo)'s only caller is
+// DataItemIterator.SetLoadFieldsBasedOnMetadata, which this runner already Cecil-no-ops.
+// AL's SetLoadFields reaches the ISet overload instead, never the FieldLoadInfo one. So a
+// test going red on those three would mean a caller appeared — which is what
+// PartialLoadDeadRewriteTests watches for.
 
 using System.Collections;
 using System.Reflection;
