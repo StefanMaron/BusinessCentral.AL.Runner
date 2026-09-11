@@ -1109,7 +1109,22 @@ harness does not use it.
 
 **Every value's `Name` and `Ordinal` agrees on 141 of 142 enums**, over 3,491 values, and every
 declared per-value `Caption` reaches BC's `CaptionML`. **4,328 differences**, of which the
-non-`TranslationKey` remainder is 6 members tracked on #3807.
+non-`TranslationKey` remainder was 6 members tracked on #3807.
+
+**Four of those six are closed** (#3807): `MetaEnum.Extensible`,
+`MetaEnumValue.InterfaceImplementation`, `MetaEnum.DefaultImplementation` and
+`MetaEnum.UnknownImplementation` are now derived and rendered, and the four allowlist entries
+are gone. All four were stated verbatim in `SymbolReference.json` and all four are expressible
+in the shape BC's own reader parses — the enum-level three as attributes on the `<Enum>` root,
+a value's as an `Implementation` attribute on `<Value>`, which is also the shape BC's emitter
+writes. The two that remain are `MetaEnum.ALNamespace` and the enum-level `CaptionML`, neither
+of which `EnumSymbol` carries.
+
+`Extensible` is rendered **conditionally**, and that is not a detail: of 144 emitted enum
+documents on 28.1.49838.53910 and 28.4.53241.54407, 31 state `"1"`, 99 state `"0"` and 12 base
+enums state the attribute not at all — the same 12 whose `SymbolReference.json` omits the
+property. An unconditional render would write `"0"` for those twelve and manufacture a
+difference, which is the failure mode the section below describes from the other direction.
 
 <a id="enum-values-pair-by-ordinal"></a>
 ### Enum values pair by `Ordinal`, and the one that does not is the finding
@@ -1151,6 +1166,12 @@ because that field keys on the value being absent-or-null and both sides here ar
 What does work is the claim the table-side members already make — the runner answers a
 **constant**, and that constant *is* the defect —
 `The_new_kinds_reader_answers_the_constant_that_IS_the_defect`.
+
+Since #3807 closed the `Extensible` gap, that test asserts the opposite for this member —
+`Assert.Empty` over its differences — which holds the same property from the other side: an
+unconditional render is *exactly* the manufactured agreement described above, and it now
+reports 12 differences rather than zero. The constant-answer assertions for the members still
+open are unchanged.
 
 <a id="enum-extension-documents"></a>
 ### Two `<Enum>` documents are enum EXTENSIONS, and are skipped rather than compared

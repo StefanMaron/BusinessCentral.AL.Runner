@@ -251,11 +251,15 @@ public sealed class MetadataEquivalenceHarnessTests
                             && d.ObjectKey.StartsWith(objectPrefix, StringComparison.Ordinal))
                 .ToArray();
 
-            // EnumSymbol carries no Extensible at all, so the render states none and BC's own
-            // default of false stands on the runner's side — on every enum, including the 111
-            // where false is also BC's answer and no difference is reported.
-            AssertConstantAnswer(report, On("MetaEnum.Extensible", "Enum "),
-                "MetaEnum.Extensible", bc: "True", runner: "False");
+            // #3807 FIXED this one, and the hazard above is exactly why the replacement is an
+            // assertion rather than a deletion. EnumSymbol now carries the DECLARED Extensible
+            // — nullable, so "declares false" and "declares nothing" stay apart — and the
+            // render states the attribute only when the symbol file did, which is what BC's
+            // own emitter does (12 of its 144 enum documents omit it). The manufactured-
+            // agreement mutation described above is what an unconditional render IS, so the
+            // claim worth holding now is that NO difference survives in either direction:
+            // agreement reached by deriving the value, not by writing BC's answer over ours.
+            Assert.Empty(On("MetaEnum.Extensible", "Enum "));
 
             // ALNamespace is stated by SymbolReference.json for all three kinds and carried by
             // none of the three symbol records, so the runner answers null everywhere. Asserted
