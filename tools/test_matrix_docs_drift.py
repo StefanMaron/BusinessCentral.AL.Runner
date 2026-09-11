@@ -182,16 +182,6 @@ NOT_A_MATRIX_CLAIM = [
     ("docs/runtime-packages.md", "27.5 28.1 28.4",
      "the three BC compilers that built the three genuine third-party runtime packages measured "
      "for #3537 -- a historical measurement of which builds were compared, not the matrix"),
-    # The artifact directories whose Ncl.dll was HASHED, recording that they are one binary
-    # (#3372). The sentence exists to retract a claim that two of those legs independently
-    # confirmed a corpus verdict -- they do not, because all three ship sha256 affa03c9....
-    # Not expressible as a leg set: rewriting it into one would delete the retraction, which
-    # is the only reason the sentence is there.
-    ("docs/limitations.md", "27.0 27.3 27.5",
-     "the 27.x artifact directories whose Ncl.dll was hashed while checking whether the "
-     "AreFieldsLoaded corpus verdict rested on independent binaries -- it does not, all "
-     "three are byte-identical. A historical measurement of what was compared, not the "
-     "matrix (#3372)"),
 ]
 
 
