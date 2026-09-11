@@ -6,7 +6,8 @@
 // wrong in whichever direction the request was last moved. The runner cannot simply switch to
 // reading the buffer, because only SqlTableDataProvider and its helpers ever construct a
 // ReadOnlyRecordBuffer carrying a real FieldLoadInfo — measured with find_callers over all four
-// ReadOnlyRecordBuffer constructors on 27.5 — and every table here goes through
+// ReadOnlyRecordBuffer constructors on 27.5 AND 28.4, two distinct MVIDs — and every table
+// here goes through
 // TempTableDataProvider, whose buffers carry the table's DEFAULT load info. So the runner keeps
 // its own record of what a fetch materialised, which is what these tests pin.
 //

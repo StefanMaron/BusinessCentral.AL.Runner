@@ -58,7 +58,8 @@ public static partial class RecordPatches
     /// <c>mutableRecordBuffer.ReadOnlyBuffer.FieldLoadInfo</c>, but only
     /// <c>SqlTableDataProvider</c> and its helpers ever construct a buffer carrying a real one
     /// (measured with find_callers over the four <c>ReadOnlyRecordBuffer</c> constructors on
-    /// 27.5), and the runner routes every table through <c>TempTableDataProvider</c>, whose
+    /// 27.5 and 28.4 — two distinct MVIDs, because 27.0/27.3/27.5 share one binary), and the
+    /// runner routes every table through <c>TempTableDataProvider</c>, whose
     /// buffers carry the table's DEFAULT load info. See docs/limitations.md#are-fields-loaded-narrow-after-fetch.
     /// </summary>
     private static readonly ConditionalWeakTable<object, FetchedFieldSet> _fetchedFields = new();
@@ -165,7 +166,9 @@ public static partial class RecordPatches
     /// <c>Clear(Rec)</c> dropped.
     ///
     /// <c>ClearRecord</c> has exactly one caller in Ncl.dll — <c>NavRecord.Clear()</c>,
-    /// measured with find_callers on 27.5 — so this observes AL's <c>Clear</c> and nothing else.
+    /// measured with find_callers on 27.5 and 28.4 — so this observes AL's <c>Clear</c> and
+    /// nothing else. TRAP: cite 27.5 and 28.4, never "27.0, 27.3 and 27.5": those three report
+    /// one MVID, so agreement between them is one measurement with three labels.
     /// </summary>
     public static void RecordImplementation_ClearRecord_Prologue(object self)
     {

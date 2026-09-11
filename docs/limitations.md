@@ -708,7 +708,7 @@ row is the one that makes this a two-sided property rather than "the runner unde
 
 **Why the runner cannot simply read the buffer.** Only `SqlTableDataProvider` and its helpers
 ever construct a `ReadOnlyRecordBuffer` carrying a real `FieldLoadInfo` — measured with
-`find_callers` over all four `ReadOnlyRecordBuffer` constructors on 27.5 — and the runner routes
+`find_callers` over all four `ReadOnlyRecordBuffer` constructors on 27.5 and 28.4 — and the runner routes
 every table through `TempTableDataProvider`, whose buffers carry the table's **default** load
 info whatever the request asked for. Reading the buffer therefore answered "loaded" for every
 field on every table, which is the defect
@@ -730,7 +730,7 @@ else if (TableState.FieldLoadInfo.IsFieldUnloaded(field))
 ```
 
 A buffer claiming a field is absent routes the read down `NavRecord.LoadFieldsAsync`, which the
-runner's provider has never served — and that method has **10 callers** on 27.5, including
+runner's provider has never served — and that method has **10 callers**, identical on 27.5 and 28.4, including
 `DeleteAsync`, `DeleteAllAsync`, `RenameAsync`, `InsertRecordAsync`, `TransferFieldsAsync`,
 `CalcFieldsAsync` and `NavForm.RunModalAsync`. That is the blast radius
 [#3358](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3358) weighed and
@@ -750,8 +750,26 @@ confidently and wrongly:
 A fetch is identified by **buffer identity**: a fetch installs a new `MutableRecordBuffer`, and
 the requested set at that moment is what that fetch asked for. The runner's provider returns
 whole rows, so everything asked for is genuinely in hand. `ClearRecord` and `AddLoadField` each
-have a single-digit caller count on 27.5 (`ClearRecord`: one, `NavRecord.Clear()`), so neither
+have a single-digit caller count on both 27.5 and 28.4 (`ClearRecord`: one, `NavRecord.Clear()`), so neither
 prepend observes anything but the AL statement it is there for.
+
+**The call counts these decisions rest on**, from the `bc-decompiler` MCP server
+(`tools/setup-bc-decompiler.sh`; `search_members` for the id, then `find_callers`). Measured on
+**two distinct binaries** — `bc270`, `bc273` and `bc275` all report MVID
+`d11fabde0c1f45b3ae3d9e5e813929aa`, so they are one binary and agreement among them would be one
+measurement wearing three labels:
+
+| method | 27.5 (`d11fabde…`) | 28.4 (`e34004bb…`) |
+|---|---|---|
+| `RecordImplementation.LoadFieldsAsync` | 10 | 10 |
+| `RecordImplementation.IsFieldSelectedForLoad(NCLMetaField)` | 1 | 1 |
+| `RecordImplementation.ClearRecord` | 1 | 1 |
+| `RecordImplementation.AddLoadField` | 2 | 2 |
+
+Identical on both, with the same caller names. These explain why the fix is cheap; what
+establishes that it is *correct* is the seven corpus tests, which exercise the consequence
+directly. A later BC version wiring up a second `IsFieldSelectedForLoad` caller would stale this
+table and the corpus arms would still adjudicate.
 
 Each registration is pinned by `AlRunner.Tests/PartialLoadFetchedSetTests.cs`, and each was
 mutation-checked: removing the `ClearRecord` reset reds 60766 arm 3, removing the `AddLoadField`
