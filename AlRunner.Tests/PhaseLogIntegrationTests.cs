@@ -443,7 +443,80 @@ public sealed class PhaseLogIntegrationTests : IDisposable
     /// app row this fixture produces carries the full named breakdown, and — like the
     /// bundle-level check — the sum leaves almost nothing unattributed.
     /// </summary>
-    private static void AssertAppStagesAccountForTheRunTurn(List<JsonElement> appRows)
+    /// <summary>
+    /// #3474: app stages whose PhaseLog.AppStage call site sits OUTSIDE every AddAppRun span,
+    /// so their time is not part of run_ms and must not be summed against it. Both are entered
+    /// from the AL-output cache gate in Program.cs (the `needCompile &amp;&amp; alCacheDir != null`
+    /// block), which runs in the emit/compile pass. They are AppStages rather than bundle
+    /// Stages because BeginApp is already open there — see the comment on `orderedDepIds`.
+    /// </summary>
+    private static readonly HashSet<string> CompileGateStages =
+        new(StringComparer.Ordinal) { "ordered-dep-ids", "query-decl-probe" };
+
+    /// <summary>
+    /// Run-turn app stages that must be PRESENT on every app row. Every app group walks these
+    /// whatever it declares, and they are named individually rather than counted, so deleting a
+    /// mark fails loudly instead of quietly moving its time into the unattributed remainder.
+    /// </summary>
+    private static readonly string[] RequiredAppStages =
+    {
+        "set-test-assembly", "type-discovery",
+        // The #1861 follow-up review split the single opaque "install-seed"
+        // mark (85.1% of run_ms in the original PR's own measurement) into
+        // one mark per call, so a follow-up fix knows which of the six to
+        // chase instead of re-running this whole attribution exercise.
+        // #1867 replaced "install-seed-run-install-triggers" +
+        // "install-seed-ensure-company-initialized" (together ~82.5% of
+        // run_ms, the #1861 breakdown's own finding) with a single
+        // "install-seed-dep-company-baseline" mark that is either a cache
+        // restore or a fresh compute-and-cache — see TestExecutor.Run and
+        // AlRunner.Tests.InstallSeedDepCompanyCacheTests — plus a distinct
+        // "install-seed-run-own-install-triggers" mark for the bundle's own
+        // (always fresh, never cached) Install triggers.
+        "install-seed-reset-per-test", "install-seed-reset-for-new-bundle",
+        "install-seed-set-test-assembly", "install-seed-dep-company-baseline",
+        "install-seed-run-own-install-triggers",
+        // #3176 — the Access Control SUPER row that backs the session user's
+        // IsSuper answer. Named here so deleting the mark fails, and because
+        // its position between the User row and the baseline capture is the
+        // load-bearing part: seeded after the capture it would survive only
+        // until the first codeunit boundary restored the store.
+        "install-seed-access-control-row",
+        "install-seed-capture-baseline",
+        "codeunit-scan",
+        "event-subscriber-inject", "codeunit-reset", "codeunit-instantiate",
+        "resolve-display-name", "run-test-methods", "codeunit-dispose",
+    };
+
+    /// <summary>
+    /// #3474: run-turn stages that are emitted but are NOT required to be present. They still
+    /// need classifying — an unclassified stage fails the closed-partition check in
+    /// <see cref="AssertAppStagesAccountForTheRunTurn"/> — but requiring one is a separate
+    /// claim from classifying it, and this change does not quietly turn the second into the
+    /// first. Promote an entry to <see cref="RequiredAppStages"/> only with a reason it must
+    /// appear on EVERY app row.
+    /// </summary>
+    private static readonly string[] RunTurnStagesNotRequired =
+    {
+        "install-seed-arm-event-subscribers", "install-seed-user-row", "install-seed-company-row",
+        "install-seed-published-application-row",
+    };
+
+    /// <summary>
+    /// #3474: every app stage entered inside an AddAppRun span, so run_ms is exactly what this
+    /// set decomposes. Together with <see cref="CompileGateStages"/> it partitions every
+    /// AppStage the runner emits; a name in neither is what the closed-partition check refuses.
+    /// </summary>
+    private static readonly HashSet<string> RunTurnStages =
+        new(RequiredAppStages.Concat(RunTurnStagesNotRequired), StringComparer.Ordinal);
+
+    /// <summary>
+    /// #3474: internal rather than private so PhaseLogStageAccountingTests can drive THIS
+    /// function — the one the real run uses — with synthetic app rows. A reimplementation in the
+    /// test would prove only that the copy behaves; the mutation check (a stage deliberately
+    /// counted twice must still fail) is only worth anything against the live code path.
+    /// </summary>
+    internal static void AssertAppStagesAccountForTheRunTurn(List<JsonElement> appRows)
     {
         foreach (var app in appRows)
         {
@@ -454,35 +527,7 @@ public sealed class PhaseLogIntegrationTests : IDisposable
             // Every app group walks these, whatever it declares. Named individually
             // rather than counted, so deleting a mark fails here instead of quietly
             // moving its time back into the unattributed remainder.
-            foreach (var required in new[]
-                     {
-                         "set-test-assembly", "type-discovery",
-                         // The #1861 follow-up review split the single opaque "install-seed"
-                         // mark (85.1% of run_ms in the original PR's own measurement) into
-                         // one mark per call, so a follow-up fix knows which of the six to
-                         // chase instead of re-running this whole attribution exercise.
-                         // #1867 replaced "install-seed-run-install-triggers" +
-                         // "install-seed-ensure-company-initialized" (together ~82.5% of
-                         // run_ms, the #1861 breakdown's own finding) with a single
-                         // "install-seed-dep-company-baseline" mark that is either a cache
-                         // restore or a fresh compute-and-cache — see TestExecutor.Run and
-                         // AlRunner.Tests.InstallSeedDepCompanyCacheTests — plus a distinct
-                         // "install-seed-run-own-install-triggers" mark for the bundle's own
-                         // (always fresh, never cached) Install triggers.
-                         "install-seed-reset-per-test", "install-seed-reset-for-new-bundle",
-                         "install-seed-set-test-assembly", "install-seed-dep-company-baseline",
-                         "install-seed-run-own-install-triggers",
-                         // #3176 — the Access Control SUPER row that backs the session user's
-                         // IsSuper answer. Named here so deleting the mark fails, and because
-                         // its position between the User row and the baseline capture is the
-                         // load-bearing part: seeded after the capture it would survive only
-                         // until the first codeunit boundary restored the store.
-                         "install-seed-access-control-row",
-                         "install-seed-capture-baseline",
-                         "codeunit-scan",
-                         "event-subscriber-inject", "codeunit-reset", "codeunit-instantiate",
-                         "resolve-display-name", "run-test-methods", "codeunit-dispose",
-                     })
+            foreach (var required in RequiredAppStages)
                 Assert.True(stages.ContainsKey(required),
                     $"app stage '{required}' missing: {string.Join(", ", stages.Keys)}");
 
@@ -503,20 +548,75 @@ public sealed class PhaseLogIntegrationTests : IDisposable
             AssertStageOrder(order, "install-seed-access-control-row", "install-seed-capture-baseline");
 
             var runMs = app.GetProperty("run_ms").GetInt64();
-            var staged = stages.Values.Sum();
 
-            // No stage may exceed the run turn it decomposes — that would mean a stage
-            // is double-counting time (e.g. nesting inside another mark).
-            Assert.True(staged <= runMs + 50,
-                $"app stages ({staged}ms) exceed run_ms ({runMs}ms) — a stage is double-counting: {app}");
+            // #3474: only the stages that lie INSIDE an AddAppRun span may be summed against
+            // run_ms. Two AppStage marks do not: `ordered-dep-ids` and `query-decl-probe` are
+            // entered from the AL-output cache gate (Program.cs, the `needCompile &&
+            // alCacheDir != null` block), which runs in the emit/compile pass — before, and
+            // outside, the `rt` stopwatch whose elapsed time AddAppRun banks as run_ms. They
+            // are AppStages rather than bundle Stages only because BeginApp is already open
+            // there, so a bundle stage would overlap the app group and #1828's bundle-level
+            // sum would report it as manufactured overhead.
+            //
+            // So `Σ ALL stages <= run_ms` was never true by construction, and the absolute
+            // +50ms was absorbing that structural error rather than timing jitter. It held on
+            // an idle box because the two marks cost 1-2ms there, and failed on CI twice
+            // (72/19ms on 60f7e953, 82/13ms on 3b939eb5) when a loaded runner took tens of ms
+            // over one of them while the run turn itself stayed genuinely tiny.
+            var outOfTurn = stages.Where(kv => CompileGateStages.Contains(kv.Key)).Sum(kv => kv.Value);
+            var inTurn = stages.Values.Sum() - outOfTurn;
 
-            // And the attribution is near-complete: whatever the marks miss shows up
-            // here. These fixtures run one [Test] each on a near-empty install baseline,
-            // so both run_ms and any residual are small; the allowance is absolute.
-            var unattributed = runMs - staged;
-            Assert.True(unattributed <= 250,
+            // The partition must stay closed, or this check silently stops measuring what it
+            // claims to. A new AppStage added to the cache gate would otherwise land in
+            // `inTurn`, inflate the sum against a run turn it was never part of, and reproduce
+            // exactly the #3474 false failure under a new name — passing on an idle box, so
+            // nothing would say so until CI went red. Every stage is therefore named in one of
+            // the two sets, and an unrecognised one fails here naming itself.
+            var unclassified = stages.Keys
+                .Where(k => !CompileGateStages.Contains(k) && !RunTurnStages.Contains(k))
+                .ToList();
+            Assert.True(unclassified.Count == 0,
+                $"app stage(s) {string.Join(", ", unclassified)} are in neither "
+                + $"CompileGateStages nor RunTurnStages. Classify each by whether its "
+                + $"PhaseLog.AppStage call site sits inside an AddAppRun span (run-turn) or in "
+                + $"the AL-output cache gate (compile-gate) — an unclassified stage is counted "
+                + $"against run_ms without anything having checked that it belongs there: {app}");
+
+            // The invariant #1861 actually asserts: the run turn's OWN stages decompose it, so
+            // their sum cannot exceed it. A stage nested inside another, or one mark banked
+            // twice, makes the parts sum past the whole and fails here.
+            //
+            // Bounded PROPORTIONALLY (10%) rather than by a constant, plus a 2ms floor for the
+            // integer truncation below. Each stage is truncated to whole ms by
+            // PhaseLog.AddStageTo, and run_ms by AddAppRun, so on a sub-millisecond run turn
+            // the rounding alone can put the sum one or two ms over. A proportional bound
+            // cannot get stricter as the machine slows down, which is what the absolute one
+            // did: the parts and the whole scale together under load, so the RATIO is the
+            // quantity that stays put while both grow.
+            //
+            // Why this still catches a real double-count: duplicating a stage of any
+            // significance adds ~100% of that stage's own time, not 10% of the total, so
+            // anything but a rounding-sized mark breaks it. Proven in
+            // PhaseLogStageAccountingTests, which feeds this function a row with one stage
+            // counted twice and asserts it fails.
+            Assert.True(inTurn <= runMs + Math.Max(2, runMs / 10),
+                $"run-turn app stages ({inTurn}ms) exceed run_ms ({runMs}ms) — a stage is "
+                + $"double-counting (nesting inside another mark, or banked twice). "
+                + $"Compile-gate stages excluded: {outOfTurn}ms. Row: {app}");
+
+            // And the attribution is near-complete: whatever the run-turn marks miss shows up
+            // here. Proportional for the same reason, and this direction was measured failing
+            // too — under 16x CPU oversubscription the residual reached 515ms against a 5,781ms
+            // run turn (14.6x the old absolute 250ms), because the UNMARKED work inside the run
+            // turn slows down exactly as the marked work does. 25% rather than 10%: the
+            // residual is unmarked time, so it has no upper bound from the marks themselves,
+            // and the floor is 250ms so the near-empty fixtures this suite runs — where run_ms
+            // is a few ms and one unmarked allocation dominates — keep the allowance the
+            // absolute form gave them.
+            var unattributed = runMs - inTurn;
+            Assert.True(unattributed <= Math.Max(250, runMs / 4),
                 $"{unattributed}ms of app run_ms is attributed to nothing "
-                + $"(run_ms {runMs}ms, stages {staged}ms) — add a stage mark: {app}");
+                + $"(run_ms {runMs}ms, run-turn stages {inTurn}ms) — add a stage mark: {app}");
         }
     }
 
