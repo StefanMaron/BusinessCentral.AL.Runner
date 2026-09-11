@@ -882,6 +882,160 @@ def pr_map(slug: Optional[str]) -> tuple[dict, str]:
     return out, "ok"
 
 
+
+# --------------------------------------------------------------------------
+# the retired corpus gitlink
+# --------------------------------------------------------------------------
+# #3737 deleted the tests/al-language submodule, but only on `main`. A branch cut
+# before it still carries the 160000 gitlink in its own HEAD, and nothing updates
+# that pin any more -- so `git status` prints ` M tests/al-language` for the rest
+# of the worktree's life, and the `git submodule update` that used to silence it
+# no longer exists. Measured 2026-09-11: 7 of 7 held-back worktrees on this box,
+# every one a MERGED pull request, every one with that single line and nothing
+# else. See docs/incidents/preflight-retired-corpus-gitlink.md.
+RETIRED_CORPUS_GITLINK_PATH = "tests/al-language"
+GITLINK_MODE = "160000"
+
+# ` M path`, `M  path`, `MM path` -- XY plus one space plus the path. Anything
+# else (a rename's ` -> `, an unmerged code, a line too short to carry a path)
+# is deliberately unmatched, so classify_dirt() calls it dirt.
+_STATUS_LINE = re.compile(r"^(?P<xy>[MADRCU?! ]{2}) (?P<path>[^\x00]+)$")
+
+
+def is_retired_corpus_gitlink(line: str, index_modes: dict) -> bool:
+    """True only for a MODIFIED gitlink at the retired corpus path.
+
+    The discriminator is the index mode, never the path on its own: a worktree
+    cut AFTER #3737 has an ordinary directory at tests/al-language, and files in
+    it are real work. One such worktree is on this box right now
+    (corpus-stma-auto-32-issue-2943, five untracked .rdl/.rdlc layouts), and a
+    path-only rule would have deleted them.
+
+    A deletion (` D`) is not discounted either. Dropping the gitlink is an edit
+    somebody made; drift is the index and the checkout disagreeing about which
+    commit, which only ever renders as a modification.
+
+    This decides only that the LINE has the retired-gitlink shape. It cannot
+    decide that there is no work, because the superproject's ` M <submodule>` is
+    ambiguous -- git prints exactly the same line for a moved pin and for
+    untracked files sitting inside the submodule checkout, and for both at once
+    (measured; see corpus_gitlink_is_workless()). The work question is that
+    function's, and classify_dirt() asks it.
+    """
+    m = _STATUS_LINE.match(line.rstrip("\n"))
+    if not m:
+        return False
+    xy, path = m.group("xy"), m.group("path")
+    if path.strip('"') != RETIRED_CORPUS_GITLINK_PATH:
+        return False
+    if index_modes.get(path.strip('"')) != GITLINK_MODE:
+        return False
+    return set(xy.strip()) == {"M"}
+
+
+def corpus_gitlink_is_workless(worktree: str) -> bool:
+    """True only when the corpus submodule checkout itself holds nothing.
+
+    The whole safety of this feature rests here, because the superproject line is
+    ambiguous. Measured on git 2.55: with the corpus as a submodule,
+    `git status --porcelain` in the superproject prints ` M tests/al-language`
+    for a moved pin, for an untracked file inside the checkout, and for both --
+    three states, one line. Only the submodule's OWN status separates them:
+
+        pin moved, nothing inside     superproject ` M`   submodule ``
+        untracked file inside         superproject ` M`   submodule `?? ...`
+        both                          superproject ` M`   submodule `?? ...`
+
+    So an unreadable submodule status, or a non-empty one, answers False and the
+    worktree stays. Returning False on a failed read is the safe direction: it
+    keeps a tree nobody could measure (guards-need-a-third-state.md).
+    """
+    path = os.path.join(worktree, RETIRED_CORPUS_GITLINK_PATH)
+    if not os.path.isdir(path):
+        return False
+    st = run(["git", "-C", path, "status", "--porcelain"], timeout=60)
+    if not st.ok:
+        return False
+    return not st.out.strip()
+
+
+def classify_dirt(status_porcelain: str, index_modes: dict,
+                  gitlink_workless: bool = False) -> tuple:
+    """(dirty, reason) for a `git status --porcelain` body.
+
+    `gitlink_workless` is corpus_gitlink_is_workless()'s answer. It defaults to
+    False so that a caller which forgets to measure it gets the conservative
+    answer -- the retired gitlink stays dirt until something proves the checkout
+    under it is empty.
+
+    The third state is folded into `dirty`, not out of it: a line this function
+    cannot parse leaves the tree dirty and says so, because "could not tell" must
+    never render as "safe to delete" (guards-need-a-third-state.md).
+    """
+    lines = [l for l in status_porcelain.splitlines() if l.strip()]
+    if not lines:
+        return (False, "")
+    unclassified = []
+    discounted = 0
+    for line in lines:
+        if is_retired_corpus_gitlink(line, index_modes):
+            if not gitlink_workless:
+                return (True, "the tests/al-language checkout holds files of its own")
+            discounted += 1
+            continue
+        if not _STATUS_LINE.match(line.rstrip("\n")):
+            unclassified.append(line.strip()[:60])
+            continue
+        return (True, "")
+    if unclassified:
+        return (True, f"could not classify {len(unclassified)} status line(s): "
+                      f"{', '.join(unclassified[:3])}")
+    if discounted:
+        return (False, "the retired tests/al-language gitlink only")
+    return (True, "")
+
+
+def index_gitlink_modes(worktree: str) -> dict:
+    """Index mode per path, read from `git ls-files -s`.
+
+    Returns {} when the read fails, which keeps every dirty line unexplained and
+    therefore keeps the tree dirty -- the safe direction.
+    """
+    r = run(["git", "-C", worktree, "ls-files", "-s", "--", RETIRED_CORPUS_GITLINK_PATH],
+            timeout=60)
+    if not r.ok:
+        return {}
+    out = {}
+    for line in r.out.splitlines():
+        if "\t" not in line:
+            continue
+        meta, path = line.split("\t", 1)
+        parts = meta.split()
+        if parts:
+            out[path.strip()] = parts[0]
+    return out
+
+def worktree_dirt(worktree: str) -> tuple:
+    """(dirty, note) for one worktree, discounting the retired corpus gitlink.
+
+    The single reader of `git status --porcelain` for worktree disposition. Both
+    the census and the reaper call it, because the reaper re-reads status just
+    before deleting: two readers that classify differently would clear a worktree
+    in the census and then refuse it in the reaper, which is the #3335 symptom
+    with the fix apparently applied.
+
+    A status read that FAILS returns dirty, as it did before -- an unmeasured
+    tree is never safe to delete (guards-need-a-third-state.md).
+    """
+    st = run(["git", "-C", worktree, "status", "--porcelain"], timeout=60)
+    if not st.ok:
+        return (True, "git status could not be read")
+    if not st.out.strip():
+        return (False, "")
+    return classify_dirt(st.out, index_gitlink_modes(worktree),
+                         gitlink_workless=corpus_gitlink_is_workless(worktree))
+
+
 def collect_worktrees(repo: str, prs: dict, measure: bool = True) -> list[tuple]:
     r = run(["git", "-C", repo, "worktree", "list", "--porcelain"])
     if not r.ok:
@@ -896,8 +1050,7 @@ def collect_worktrees(repo: str, prs: dict, measure: bool = True) -> list[tuple]
         dirty = False
         unpushed: Optional[int] = None
         if exists:
-            st = run(["git", "-C", wt.path, "status", "--porcelain"], timeout=60)
-            dirty = bool(st.out.strip()) if st.ok else True
+            dirty, _dirt_note = worktree_dirt(wt.path)
             up = run(["git", "-C", wt.path, "rev-list", "--count", "@{u}..HEAD"], timeout=60)
             if up.ok and up.out.strip().isdigit():
                 unpushed = int(up.out.strip())
@@ -1085,6 +1238,8 @@ def check_worktrees(rows: list[tuple], repo: str, pr_status: str) -> CheckResult
 
 def check_stale_scratch(tmp_dir: str, rows: list[tuple], stale_hours: float) -> CheckResult:
     now = dt.datetime.now().timestamp()
+    _getuid = getattr(os, "getuid", None)
+    _uid = _getuid() if _getuid is not None else None
     entries = []
     try:
         with os.scandir(tmp_dir) as it:
@@ -1093,7 +1248,15 @@ def check_stale_scratch(tmp_dir: str, rows: list[tuple], stale_hours: float) -> 
                     st = entry.stat(follow_symlinks=False)
                 except OSError:
                     continue
-                if st.st_uid != os.getuid() or not entry.is_dir(follow_symlinks=False):
+                if not entry.is_dir(follow_symlinks=False):
+                    continue
+                # os.getuid does not exist on Windows, and reaching it
+                # unconditionally lost EVERY check preflight would otherwise
+                # report on a Windows box -- branch-ownership included, the one
+                # an agent there most needs (#3759). Where there are no uids
+                # there is no foreign-owner case to exclude, so the filter is
+                # skipped rather than faked.
+                if _uid is not None and st.st_uid != _uid:
                     continue
                 size, complete = dir_size(entry.path, budget=200_000)
                 entries.append((size, complete, (now - st.st_mtime) / 3600.0, entry.path))
@@ -2610,9 +2773,10 @@ def reap(repo: str, rows: list[tuple], dry_run: bool) -> list[str]:
     for wt, pr, dirty, unpushed, d, exists in rows:
         if not d.reapable:
             continue
-        st = run(["git", "-C", wt.path, "status", "--porcelain"], timeout=60)
-        if not st.ok or st.out.strip():
-            log.append(f"SKIP  {wt.path} - it became dirty since the census")
+        still_dirty, dirt_note = worktree_dirt(wt.path)
+        if still_dirty:
+            log.append(f"SKIP  {wt.path} - it became dirty since the census"
+                       + (f" ({dirt_note})" if dirt_note else ""))
             continue
         if dry_run:
             log.append(f"WOULD REMOVE  {wt.path}  [{wt.branch}]  {d.reason}")
