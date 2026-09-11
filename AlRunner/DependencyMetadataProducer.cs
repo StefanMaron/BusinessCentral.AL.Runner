@@ -51,15 +51,25 @@
 //   netstandard2.0 build into dotnet-shims and BcCompiler probes it ahead of the tier; the app
 //   produces 1,218 documents in ~11-13 s (docs/dependency-metadata-from-bc.md).
 //
-// NOT BASE APPLICATION
-//   Base Application ships 8,025 AL files and is deliberately excluded. Its emit needs a
-//   PublicKeyToken=null copy of Microsoft.AspNetCore.StaticFiles that no BC artifact ships,
-//   and without it the emitter produces ZERO objects — a hard blocker, not a cost question.
-//   #3745's shim does NOT reach it: that is a different assembly, absent from the artifacts
-//   entirely rather than present in a build that does not bind.
-//   tests/expectations/metadata-equivalence/apps.json records the same exclusion for the same
-//   reason. EmitProducedNothing below is what turns that into a loud failure rather than an
-//   empty cache entry that would read as "this app has no metadata".
+// NOT BASE APPLICATION — a COST decision, which is a correction (#3876)
+//   Base Application ships 8,025 AL files and is excluded here. This block used to say its emit
+//   was impossible: that it needed a PublicKeyToken=null copy of Microsoft.AspNetCore.StaticFiles
+//   which no BC artifact ships, "a hard blocker, not a cost question". That was wrong, and the
+//   wrongness was self-reinforcing — two other records cited this one and this one cited them.
+//
+//   The assembly is an ordinary part of the ASP.NET Core reference pack, which both csprojs now
+//   stage into dotnet-shims; the `PublicKeyToken=null` in the AL0451 text is BC rendering an
+//   ABSENT token in the AL declaration, not demanding a null-token build. Measured through that
+//   staging: errors=0, objects=7850, 7,842 documents, 257s, peak RSS 8.83 GiB.
+//   docs/dependency-metadata-from-bc.md § "Base Application: a cost question after all" has the
+//   locator mechanism and why the pack cannot come from the SDK.
+//
+//   So the entry stays for the reason that is now MEASURED rather than inferred: 257s and
+//   8.83 GiB on the dependency-load path of every run that resolves the app, against ~6s for
+//   Business Foundation and ~13s for System Application. Removing it is a deliberate
+//   cost/sizing decision with a 16 GB CI runner in the balance, not a consequence of this fix
+//   — see #3876. EmitProducedNothing below is what turns a failed compile into a loud failure
+//   rather than an empty cache entry that would read as "this app has no metadata".
 
 using System;
 using System.Collections.Generic;
@@ -77,9 +87,10 @@ namespace AlRunner;
 internal static class DependencyMetadataProducer
 {
     /// <summary>
-    /// Apps this producer never compiles, by name. Base Application is the only entry and it
-    /// is not a cost decision — see the header. Matched on the manifest name so a differently
-    /// versioned or differently published copy is still excluded.
+    /// Apps this producer never compiles, by name. Base Application is the only entry, and it
+    /// IS a cost decision — 257s and 8.83 GiB peak RSS, measured; the "hard blocker" this used
+    /// to cite was disproved by #3876. See the header. Matched on the manifest name so a
+    /// differently versioned or differently published copy is still excluded.
     /// </summary>
     private static readonly HashSet<string> NeverCompile =
         new(StringComparer.OrdinalIgnoreCase) { "Base Application" };

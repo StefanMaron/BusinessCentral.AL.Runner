@@ -85,10 +85,15 @@ public sealed class DependencyMetadataProducerTests
     // ---- exclusions ----------------------------------------------------------------
 
     /// <summary>
-    /// Base Application is excluded because its emit produces ZERO objects without a
-    /// PublicKeyToken=null copy of Microsoft.AspNetCore.StaticFiles that no BC artifact ships —
-    /// a hard blocker, not a cost decision. tests/expectations/metadata-equivalence/apps.json
-    /// records the same exclusion for the same reason.
+    /// Base Application is excluded on COST — 257s and 8.83 GiB peak RSS on the dependency-load
+    /// path, against ~6s for Business Foundation and ~13s for System Application.
+    ///
+    /// <para>This doc comment used to say the emit was impossible without a
+    /// <c>PublicKeyToken=null</c> copy of <c>Microsoft.AspNetCore.StaticFiles</c> that no BC
+    /// artifact ships. #3876 disproved that: the assembly ships in the ASP.NET Core reference
+    /// pack, both csprojs now stage it, and the emit produces 7,842 documents with
+    /// <c>errors=0</c>. The assertion below is unchanged — only the reason behind it is — and
+    /// removing the exclusion is now a sizing decision rather than a blocked one.</para>
     /// </summary>
     [Fact]
     public void BaseApplication_IsNeverCompiled()

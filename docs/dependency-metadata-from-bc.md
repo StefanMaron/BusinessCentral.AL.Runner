@@ -88,17 +88,107 @@ cause.** With the shim in place they become 62 × AL0327 for control-add-in reso
 producer's work directory does not carry, which are non-fatal: the emit produces all 1,218
 documents anyway.
 
-Note what this does **not** fix: Base Application's blocker is a different assembly
-(`Microsoft.AspNetCore.StaticFiles` with `PublicKeyToken=null`, which no BC artifact ships at
-all — verified absent from the 28.1 artifacts) and it remains excluded.
+Base Application needed a second shim of the same shape, for a different assembly —
+`Microsoft.AspNetCore.StaticFiles`, which no BC artifact ships. See the next section; it is the
+same mechanism and the same one-file fix.
 
-### Base Application: a hard blocker, not a cost question
+### Base Application: a cost question after all (#3876)
 
-Excluded in code by name, and it is **not** about the ~9 GB peak RSS of compiling it. Its emit
-needs a `PublicKeyToken=null` copy of `Microsoft.AspNetCore.StaticFiles` that no BC artifact
-ships, and without it the emitter produces **zero objects**.
-`tests/expectations/metadata-equivalence/apps.json` records the same exclusion for the same
-reason, and attributes it to this issue.
+**This section said the opposite until #3876 measured it**, and the correction matters more
+than the fix: three places in this repository recorded Base Application's metadata emit as
+permanently impossible, each citing the other two. The narrow claim they rested on was true and
+the conclusion drawn from it was not.
+
+**What is true:** BC ships no copy of `Microsoft.AspNetCore.StaticFiles` in its artifacts, and
+without one the declaration phase raises `AL0451` + `AL0185` and the emit produces zero objects.
+
+**What does not follow:** that the assembly is unobtainable. It is an ordinary part of the
+**ASP.NET Core reference pack**, and staging that one file takes the emit from nothing to
+`errors=0`, `objects=7850`, **7,842 documents** — measured four times now, twice by the agent
+that filed #3876, once by the agent that measured the mechanism, and once through the shipped
+staging rather than a flag:
+
+```
+[decl]  15084ms  errors=0
+[emit] 227480ms  success=True objects=7850 errors=0
+[bundle] 7842 document(s)
+EXIT=0  wall=257s  peak VmHWM=9,263,480 kB = 8.83 GiB
+```
+
+`AlRunner.csproj` and `MetadataGroundTruth.csproj` now stage it into `dotnet-shims` beside the
+Newtonsoft shim above, by `PackageReference` on `Microsoft.AspNetCore.App.Ref` 8.0.30.
+
+#### Why the `PublicKeyToken=null` in the error message misled three documents
+
+`AL0451` names `'Microsoft.AspNetCore.StaticFiles, PublicKeyToken=null'`, and all three records
+read that as *"BC needs a null-token build of this assembly"*. It is not a requirement; it is
+how BC renders **the absence of a token in the AL declaration**. From
+`DotNetUtilities.GetPublicKeyToken`:
+
+```csharp
+if (publicKeyToken == null || publicKeyToken.Length == 0)
+    return "null";
+```
+
+The shipped source agrees. Base Application's `src/Modules/System/DotNetAliases/dotnet.al` has
+exactly three `assembly()` declarations and exactly one `PublicKeyToken` line — on `Ncl`, at
+line 7. Line 23 declares `assembly(Microsoft.AspNetCore.StaticFiles)` with **no** token.
+
+So the ref pack's ordinary strong-named copy (`PublicKeyToken=adb9793829ddae60`) binds. The
+mechanism is **asymmetric matching, not a token-blind resolver** — the distinction matters,
+because the token-blind reading would mean any assembly of the right name satisfies the
+reference. From the AL compiler's `AssemblyLocatorBase.IsAssemblyCompatible`:
+
+```csharp
+if (!searchName.Name.Equals(assemblyBeingEvaluated.Name))
+    return false;
+byte[] publicKeyToken = searchName.PublicKeyToken;
+if (publicKeyToken != null && publicKeyToken.Length != 0
+    && !IsPublicKeyTokenCompatible(publicKeyToken, assemblyBeingEvaluated.PublicKeyToken))
+    return false;
+```
+
+| the search name | the candidate's token | result |
+|---|---|---|
+| carries no token | anything | **not checked** |
+| carries a token | different | rejected |
+| wrong simple name | anything | rejected |
+
+A wrong token is still rejected and a wrong simple name always is; the resolver is the **AL
+compiler's** (`Microsoft.Dynamics.Nav.CodeAnalysis.dll`), not `Ncl.dll`'s. Measured directly
+against that locator across 4 distinct compiler binaries × 4 ref-pack versions, 16/16 uniform
+(#3876).
+
+#### The reference pack is not an SDK component, so it arrives as a package
+
+This is the part a future edit is most likely to get wrong. Unlike `Microsoft.NETCore.App.Ref`
+and `NETStandard.Library.Ref`, which `BcCompiler.EnumerateDotNetRefAssemblyDirs` finds under
+`$DOTNET_ROOT/packs`, **`Microsoft.AspNetCore.App.Ref` is not laid down by the .NET SDK** —
+verified absent from `$DOTNET_ROOT/packs` on a box that has four versions of it cached in
+`~/.nuget`. CI legs use `actions/setup-dotnet` with `8.0.x`, which would not produce it either.
+
+So a hardcoded `~/.nuget` path passes locally and fails on CI. The `PackageReference` +
+`GeneratePathProperty` + `ExcludeAssets="all"` pattern is what makes NuGet restore it on any
+machine, and `AlRunner.Tests/DotNetShimProbingTests` pins that the ref-pack enumeration never
+supplies this assembly, so the staged shim stays the only route.
+
+One wrinkle worth knowing: the pack ships Roslyn analyzers, and `ExcludeAssets="all"` does not
+keep them out of the `Analyzer` item group. They then throw **882 `AD0001` warnings** per build
+looking for ASP.NET Core types nothing here references. Both projects drop them in a
+`DropAspNetCoreRefPackAnalyzers` target. Measure that on a **clean** rebuild — an incremental
+one skips `CoreCompile` and reports zero whatever the target does.
+
+#### What this does not change: the app is still not in `apps.json`
+
+The compile is now possible; whether to spend it on every unit-test leg is a separate,
+deliberate decision, and #3876 does not take it. `tools/gen-metadata-ground-truth.sh` reads
+`tests/expectations/metadata-equivalence/apps.json` and runs on the unit-test legs
+(`bc-tests.yml`), where Business Foundation costs ~3 s and System Application ~14 s. Base
+Application costs **257 s and 8.83 GiB peak RSS**. A standard `ubuntu-latest` runner has 16 GB,
+so it fits — but alongside everything else on that leg the margin is thin, and an OOM there
+presents as a killed step with no diagnostic rather than a legible failure. That is a sizing
+call for a human, so `apps.json` still omits the app — now saying *why it is omitted*, rather
+than that it is impossible.
 
 ## The platform floor
 
