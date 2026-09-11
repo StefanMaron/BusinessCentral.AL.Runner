@@ -124,4 +124,58 @@ public sealed class FloorOnlyBundleEnumFieldTests
         Assert.Equal(new[] { "Draft", "Queued" }, parsedWithValues!.Options);
         Assert.Equal(new[] { 0, 5 }, parsedWithValues.Indexes);
     }
+
+    /// <summary>
+    /// #3805 — a value stating no <c>Ordinal</c> has ordinal ZERO, not "the previous ordinal
+    /// plus one". The symbol file omits the property exactly when the value is 0, the same
+    /// absent-means-default convention <c>PermissionSymbol</c> records for <c>PermissionObject</c>.
+    ///
+    /// <para>The source-order rule agrees with that on 680 of the 681 absent-Ordinal values
+    /// shipped in 28.1, which is why it survived; it disagrees on System Application enum 2616
+    /// "Printer Paper Kind", whose 68 values BC emits in NAME order with <c>Custom</c> last and
+    /// stating no <c>Ordinal</c>. Its 67 declared ordinals mirror
+    /// <c>System.Drawing.Printing.PaperKind</c> exactly, in which <c>Custom</c> is 0, and 0 is the
+    /// one ordinal no declared value claims. Measured on two independent binaries, 28.1 and 28.4.
+    /// Derivation: the PR body for #3805.</para>
+    /// </summary>
+    [Fact]
+    public void AbsentOrdinal_MeansZero_NotThePreviousOrdinalPlusOne()
+    {
+        // The shape of System Application 2616, reduced to the part that discriminates: values
+        // NOT in ordinal order, and the absent Ordinal at the END rather than at index 0.
+        var nameOrdered = System.Text.Json.JsonDocument.Parse("""
+            { "Id": 2616, "Name": "Printer Paper Kind", "Values": [
+                { "Name": "A3", "Ordinal": 8 },
+                { "Name": "A4", "Ordinal": 9 },
+                { "Name": "GermanStandardFanfold", "Ordinal": 40 },
+                { "Name": "Custom" } ] }
+            """).RootElement;
+
+        var parsed = AlRunner.Patches.BcAppSymbolCache.ParseEnumSymbolForTest(nameOrdered);
+
+        Assert.NotNull(parsed);
+        Assert.Equal(new[] { "A3", "A4", "GermanStandardFanfold", "Custom" }, parsed!.Options);
+
+        // The whole claim: Custom is 0. The source-order rule answers 41 here.
+        Assert.Equal(new[] { 8, 9, 40, 0 }, parsed.Indexes);
+
+        // ...and the consequence that makes the wrong answer more than a wrong number: an AL
+        // enum's ordinals are distinct, so a rule producing a collision is wrong by construction.
+        Assert.Equal(parsed.Indexes.Count, parsed.Indexes.Distinct().Count());
+
+        // The NEGATIVE direction, which is what stops "read 0 for everything" passing: a value
+        // that DOES state an ordinal keeps it, including a 0 stated explicitly, and a later
+        // absent one does not inherit its neighbour.
+        var mixed = System.Text.Json.JsonDocument.Parse("""
+            { "Id": 60000, "Name": "Mixed", "Values": [
+                { "Name": "Explicit", "Ordinal": 0 },
+                { "Name": "Seven", "Ordinal": 7 },
+                { "Name": "AlsoZero" } ] }
+            """).RootElement;
+
+        var parsedMixed = AlRunner.Patches.BcAppSymbolCache.ParseEnumSymbolForTest(mixed);
+
+        Assert.NotNull(parsedMixed);
+        Assert.Equal(new[] { 0, 7, 0 }, parsedMixed!.Indexes);
+    }
 }

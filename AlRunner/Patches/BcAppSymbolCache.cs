@@ -2476,7 +2476,6 @@ internal static partial class BcAppSymbolCache
         var indexes = new List<int>();
         var implementations = new List<List<int>>();
         var captions = new List<string?>();
-        var nextOrdinal = 0;
         foreach (var value in hasValues
                      ? values.EnumerateArray().Cast<JsonElement>()
                      : Enumerable.Empty<JsonElement>())
@@ -2484,9 +2483,16 @@ internal static partial class BcAppSymbolCache
             var optionName = value.TryGetProperty("Name", out var optionNameProp)
                 ? optionNameProp.GetString() ?? string.Empty
                 : string.Empty;
+            // #3805 — absent `Ordinal` means ZERO, the symbol file's absent-means-default
+            // convention (the same one PermissionSymbol records for PermissionObject). It is
+            // NOT "the previous ordinal plus one": the values are not necessarily emitted in
+            // ordinal order, and System Application 2616 "Printer Paper Kind" emits them in
+            // NAME order with Custom (ordinal 0) last, where the source-order rule answered 40
+            // and collided with GermanStandardFanfold. Measured on 28.1 and 28.4: 681 values
+            // state no Ordinal and this rule agrees with BC's emitted metadata on all of them.
             var ordinal = value.TryGetProperty("Ordinal", out var ordinalProp) && ordinalProp.TryGetInt32(out var explicitOrdinal)
                 ? explicitOrdinal
-                : nextOrdinal;
+                : 0;
             options.Add(optionName);
             indexes.Add(ordinal);
             var implementationIds = new List<int>();
@@ -2507,7 +2513,6 @@ internal static partial class BcAppSymbolCache
             captions.Add(props.TryGetValue("Caption", out var captionText) && !string.IsNullOrEmpty(captionText)
                 ? captionText
                 : null);
-            nextOrdinal = ordinal + 1;
         }
         // Enum-level fallbacks. Both are written the same way a value's Implementation is —
         // a comma-separated list of codeunit ids, one per interface the enum implements.
