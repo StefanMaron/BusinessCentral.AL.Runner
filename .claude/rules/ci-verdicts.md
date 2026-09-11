@@ -32,6 +32,15 @@ that is true. Redirect to a file and check `$?`, or use `${PIPESTATUS[0]}`. Meas
 night. It is the same class as the trap below — an answer that could not have come out any
 other way.
 
+**And when you report a surprising exit code, say how you captured it.** Reading directly
+protects you; it does nothing for a wrong number already written down. #3341 reported `rc=0`
+beside a GraphQL failure, which is impossible directly (`rc=1`) and exact under `| tail` — that
+artifact sat in the issue body for three days as an apparently-measured fact, and it was
+load-bearing: it is what made the reporter conclude the exit code was unreliable **in both
+directions**, a stronger and different claim than the true one. Anyone reading that issue
+inherited a wrong belief about the instrument, sourced to a real transcript. A number nobody can
+attribute to a capture method is not a measurement, and the reader cannot tell.
+
 **Trap: an answer that could not have come out any other way is not evidence.** Under the
 pre-#3351 zero-timeout path a green PR, a red PR and a PR with no checks all printed `STILL
 RUNNING`, and its only tell was the empty parentheses of `STILL RUNNING after 0s ()`, where the
