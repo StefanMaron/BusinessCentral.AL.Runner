@@ -10,6 +10,10 @@ using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
 namespace AlRunner.Infrastructure;
 
+/// <summary>Something the scan could not read, and why. Never a parse failure or an object
+/// kind the map does not carry — those are measurements, and this is the absence of one.</summary>
+public readonly record struct SourceScanFailure(string Path, string Reason);
+
 /// <summary>
 /// (object label, object id) → the declaring file, readable as the plain
 /// <c>IReadOnlyDictionary&lt;(Label, Id), string&gt;</c> the older consumers take, plus
@@ -36,10 +40,6 @@ namespace AlRunner.Infrastructure;
 /// </para>
 /// (#3713; CoverageMultiObjectFileTests pins the header shapes that settled both.)
 /// </summary>
-/// <summary>Something the scan could not read, and why. Never a parse failure or an object
-/// kind the map does not carry — those are measurements, and this is the absence of one.</summary>
-public readonly record struct SourceScanFailure(string Path, string Reason);
-
 public sealed class AlSourceLocationMap : IReadOnlyDictionary<(string Label, int Id), string>
 {
     private readonly Dictionary<(string Label, int Id), (string Path, int LineOffset)> _entries = new();
