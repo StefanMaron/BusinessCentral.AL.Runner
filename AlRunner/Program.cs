@@ -5842,13 +5842,13 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
             .ToList();
         var resolved = AlRunner.Infrastructure.DapBreakpointResolver.Resolve(requests, sourceMap);
 
-        // Why an unverified breakpoint is unverified. DAP's Breakpoint has a
-        // `message` field for exactly this, and without it "nothing is
-        // loaded" and "that line carries no statement" are the same answer —
-        // the first is a state the client can wait out, the second is not.
-        var unverifiedReason = bpCompileErr != null
-            ? $"the bundle did not compile, so nothing could be bound: {bpCompileErr}"
-            : "no executable AL statement on this line in this file";
+        // Why an unverified breakpoint is unverified. DAP's Breakpoint has a `message` field
+        // for exactly this, and without it the three reasons are one answer. The third of them
+        // — the source could not be READ, so nobody knows whether that line has a statement —
+        // is #3847, and the decision lives in DapUnverifiedReason so it can be tested without
+        // a live session.
+        var unverifiedReason = AlRunner.Infrastructure.DapUnverifiedReason.For(
+            bpCompileErr, sourceMap, srcPath);
 
         var fullSrcPath = Path.GetFullPath(srcPath);
         // Replace (not accumulate) — DAP's setBreakpoints contract: this

@@ -36,15 +36,49 @@ namespace AlRunner.Infrastructure;
 /// </para>
 /// (#3713; CoverageMultiObjectFileTests pins the header shapes that settled both.)
 /// </summary>
+/// <summary>Something the scan could not read, and why. Never a parse failure or an object
+/// kind the map does not carry — those are measurements, and this is the absence of one.</summary>
+public readonly record struct SourceScanFailure(string Path, string Reason);
+
 public sealed class AlSourceLocationMap : IReadOnlyDictionary<(string Label, int Id), string>
 {
     private readonly Dictionary<(string Label, int Id), (string Path, int LineOffset)> _entries = new();
+    private readonly List<SourceScanFailure> _scanFailures = new();
 
     /// <summary>A map with no objects; never mutated.</summary>
     public static AlSourceLocationMap Empty { get; } = new();
 
+    /// <summary>
+    /// What the scan could not read while building this map — a root that is not there, a
+    /// directory it could not enter, a file it could not open. Empty is the ordinary answer.
+    ///
+    /// <para>This exists because the map alone cannot express it (#3847). A missing entry means
+    /// "that object has no executable statements" to every consumer, and a bundle that
+    /// genuinely declares nothing mappable is a real state — so <see cref="Count"/> being 0
+    /// distinguishes nothing, and an unreadable source would otherwise be reported to the user
+    /// as a fact about their AL. `.claude/rules/guards-need-a-third-state.md`.</para>
+    ///
+    /// <para>It is a REPORT, not an error: the map is still returned and is still correct about
+    /// everything it did read. What a consumer owes it is to stop claiming certainty about the
+    /// parts it did not.</para>
+    /// </summary>
+    public IReadOnlyList<SourceScanFailure> ScanFailures => _scanFailures;
+
+    /// <summary>True when any source could not be read, so a missing entry may mean
+    /// "unmeasured" rather than "no statements here".</summary>
+    public bool IsIncomplete => _scanFailures.Count > 0;
+
     internal void Add(string label, int id, string path, int lineOffset) =>
         _entries[(label, id)] = (path, lineOffset);
+
+    internal void AddScanFailure(string path, string reason)
+    {
+        // Deduplicated: one root can be named by two callers, and a locked file is reached
+        // once per scan but a scan can run per bundle.
+        foreach (var existing in _scanFailures)
+            if (existing.Path == path) return;
+        _scanFailures.Add(new SourceScanFailure(path, reason));
+    }
 
     /// <summary>Lines to add to a decoded [SourceSpans] line of this object to get its file
     /// line; 0 for the first object in a file and for an object not in the map.</summary>
@@ -102,8 +136,20 @@ public static class AlCoverageSourceMap
         var appJsonByDir = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
         foreach (var root in roots)
         {
-            if (!Directory.Exists(root)) continue;
-            foreach (var file in SafeDirectoryScan.Files(root, "*.al"))
+            if (!Directory.Exists(root))
+            {
+                // Not the same as a root with nothing in it: the caller named this path, so
+                // its absence is an unmeasured scan rather than an empty one (#3847).
+                map.AddScanFailure(root, "the source root does not exist");
+                continue;
+            }
+            // SafeDirectoryScan has always been able to say which directories it could not
+            // enter; this scan discarded the answer with `out _`, which is the shape #3847 is
+            // about — the mechanism existed and the caller threw it away.
+            var files = SafeDirectoryScan.Files(root, "*.al", out var inaccessible);
+            foreach (var dir in inaccessible)
+                map.AddScanFailure(dir, "the directory could not be read, so any AL under it was not scanned");
+            foreach (var file in files)
             {
                 var appJson = NearestAppJson(Path.GetDirectoryName(file)!, appJsonByDir);
                 if (!symbolsByAppJson.TryGetValue(appJson ?? "", out var symbols))
@@ -112,11 +158,36 @@ public static class AlCoverageSourceMap
                 var path = relativeTo != null
                     ? Path.GetRelativePath(relativeTo, file).Replace('\\', '/')
                     : file.Replace('\\', '/');
-                foreach (var o in ParseObjects(file, symbols))
+                var parsed = ParseObjects(file, symbols, out var readFailure);
+                foreach (var o in parsed)
                     map.Add(o.Label, o.Id, path, o.LineOffset);
+                if (readFailure != null) map.AddScanFailure(file, readFailure);
             }
         }
+        WarnOnce(map);
         return map;
+    }
+
+    private static readonly HashSet<string> _warned = new();
+
+    /// <summary>
+    /// Says out loud, once per path per process, that part of the scan did not happen. Here
+    /// rather than at each of the five call sites, because every one of them would otherwise
+    /// have to remember — and the consumer that forgets is the one that reports a confident
+    /// negative about AL nobody read (#3847).
+    ///
+    /// Console.Error, not Console.Out: under --dap stdio, stdout IS the protocol channel.
+    /// </summary>
+    private static void WarnOnce(AlSourceLocationMap map)
+    {
+        foreach (var failure in map.ScanFailures)
+        {
+            lock (_warned)
+                if (!_warned.Add(failure.Path)) continue;
+            Console.Error.WriteLine(
+                $"[source-map] {failure.Path}: {failure.Reason}. Objects it declares are absent "
+                + "from the source map, so coverage and the debugger cannot attribute them.");
+        }
     }
 
     /// <summary>The nearest app.json in <paramref name="dir"/> or an ancestor, or null. The
@@ -135,15 +206,30 @@ public static class AlCoverageSourceMap
         return found;
     }
 
-    private static IReadOnlyList<ParsedObject> ParseObjects(string file, IReadOnlyList<string> symbols)
+    /// <summary><paramref name="readFailure"/> is non-null when the file exists and could not
+    /// be READ — which used to return an empty list, indistinguishable from a file that
+    /// declares no objects (#3847). A parse that fails is a different thing and stays where it
+    /// was: the file was measured, and what it holds is not something this map carries.</summary>
+    private static IReadOnlyList<ParsedObject> ParseObjects(
+        string file, IReadOnlyList<string> symbols, out string? readFailure)
     {
+        readFailure = null;
         var info = new FileInfo(file);
         var key = $"{file}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{string.Join(",", symbols)}";
         if (_parsed.TryGetValue(key, out var cached)) return cached;
 
         string content;
         try { content = File.ReadAllText(file); }
-        catch (IOException) { return Array.Empty<ParsedObject>(); }
+        catch (IOException ex)
+        {
+            readFailure = $"the file could not be read ({ex.GetType().Name}: {ex.Message})";
+            return Array.Empty<ParsedObject>();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            readFailure = $"the file could not be read ({ex.GetType().Name}: {ex.Message})";
+            return Array.Empty<ParsedObject>();
+        }
 
         List<ParsedObject> result;
         try
