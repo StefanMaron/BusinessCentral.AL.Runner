@@ -5955,6 +5955,19 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
         });
     }
 
+    // Two spellings of one file — "./Foo.al" from one request and an absolute path from the
+    // next — have to compare equal, or a replacement would queue behind nothing and overtake
+    // the request it replaces after all. GetFullPath is what AnswerSetBreakpoints already
+    // keys its registry by; a path it cannot resolve falls back to itself, so an unusable
+    // path is compared rather than throwing here and losing the request.
+    static string NormalizeSourcePath(string path)
+    {
+        try { return Path.GetFullPath(path); }
+        catch (ArgumentException) { return path; }
+        catch (NotSupportedException) { return path; }
+        catch (PathTooLongException) { return path; }
+    }
+
     // Answers everything deferred, in arrival order. Called only where the map question is
     // already settled — the read race, launch, configurationDone — so it never blocks for
     // longer than the caller was going to anyway.
@@ -6209,7 +6222,20 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                         // able to read `disconnect` (#3846). The deferred request is answered
                         // by DrainDeferredBreakpoints, from the read race below or from
                         // launch / configurationDone.
-                        if (lines.Count > 0 && !MapAnswerAvailable())
+                        //
+                        // ...but that fast path must not OVERTAKE a request for the same
+                        // source already in the queue (#3899 review). Each setBreakpoints is
+                        // the complete set for its source from then on, so the LAST one the
+                        // client sent has to be the one that stands: answering an empty list
+                        // immediately while a non-empty one for that file is still parked
+                        // cleared the file and then re-armed it on the drain, stopping
+                        // execution at a breakpoint the client had removed and been told was
+                        // removed. Queueing behind it costs the empty request its fast answer
+                        // and keeps arrival order, which is the thing that decides the result.
+                        var queuedForThisSource = deferredBreakpointRequests.Any(
+                            d => AlRunner.Infrastructure.DapBreakpointResolver.PathComparer
+                                .Equals(NormalizeSourcePath(d.SrcPath), NormalizeSourcePath(srcPath)));
+                        if ((lines.Count > 0 && !MapAnswerAvailable()) || queuedForThisSource)
                         {
                             deferredBreakpointRequests.Add((msg.Seq, command, srcPath, lines));
                             break;
