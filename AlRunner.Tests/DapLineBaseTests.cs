@@ -249,4 +249,60 @@ public class DapLineBaseTests
         var exited = await dap.ReadUntilEventAsync("exited", TimeSpan.FromSeconds(60));
         Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
     }
+
+    /// <summary>
+    /// A second <c>initialize</c> must be refused, so a base negotiated once cannot move under
+    /// breakpoints that were armed and acknowledged in it. DAP permits <c>initialize</c> only
+    /// as the first request and only once; nothing enforced that here, and until lines were
+    /// converted the only thing a repeat could move was a column.
+    ///
+    /// <para>RED before the guard: the second request succeeds and flips the line base, so the
+    /// <c>stopped</c> event reports 35 for the breakpoint the adapter had already acknowledged
+    /// as 34 — the client is shown two different numbers for one breakpoint it set once. GREEN:
+    /// the second request fails with a message, the negotiated base stands, and the stop is
+    /// still reported at 34.</para>
+    ///
+    /// <para>Raised by an adversarial review of PR #3899 (gpt-5.6-sol), which reached it through
+    /// the deferred-breakpoint path: a request deferred while the source map is being built
+    /// stores numbers already converted into the base in force when it arrived, so a base that
+    /// changes before <c>DrainDeferredBreakpoints</c> runs would answer in a base the request
+    /// was not written in. Refusing the repeat closes both routes at the one point they share.
+    /// </para>
+    /// </summary>
+    [SkippableFact]
+    public async Task ASecondInitialize_IsRefused_SoTheNegotiatedLineBaseCannotMove()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (dap, bpResp) = await StartAndSetBreakpointAsync(
+            SingleStatementLine - 1, linesStartAt1: false);
+        await using var _ = dap;
+        Assert.Equal(SingleStatementLine - 1,
+            bpResp.GetProperty("body").GetProperty("breakpoints")[0].GetProperty("line").GetInt32());
+
+        var reinitSeq = dap.SendRequest("initialize",
+            new { adapterID = "al-runner-tests", linesStartAt1 = true, columnsStartAt1 = true });
+        var reinitResp = await dap.ReadUntilResponseAsync(reinitSeq);
+        Assert.False(reinitResp.GetProperty("success").GetBoolean(),
+            $"a second initialize must be refused: {reinitResp}");
+        Assert.Contains("initialize", reinitResp.GetProperty("message").GetString() ?? "",
+            StringComparison.OrdinalIgnoreCase);
+
+        var cfgSeq = dap.SendRequest("configurationDone");
+        await dap.ReadUntilResponseAsync(cfgSeq);
+
+        // Still the base the session was initialized in, not the one the refused request asked for.
+        var stopped = await dap.ReadUntilEventAsync("stopped");
+        Assert.Equal(SingleStatementLine - 1, stopped.GetProperty("body").GetProperty("line").GetInt32());
+
+        var stSeq = dap.SendRequest("stackTrace", new { threadId = 1 });
+        var stResp = await dap.ReadUntilResponseAsync(stSeq);
+        Assert.Equal(SingleStatementLine - 1, stResp.GetProperty("body").GetProperty("stackFrames")[0]
+            .GetProperty("line").GetInt32());
+
+        var contSeq = dap.SendRequest("continue", new { threadId = 1 });
+        await dap.ReadUntilResponseAsync(contSeq);
+        var exited = await dap.ReadUntilEventAsync("exited", TimeSpan.FromSeconds(60));
+        Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
+    }
 }

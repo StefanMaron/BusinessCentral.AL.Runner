@@ -5740,6 +5740,14 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     // surface cannot be forgotten without the others disagreeing with it.
     var linesStartAt1 = true;
     var columnsStartAt1 = true;
+    // DAP permits `initialize` as the first request and only once, and a second one is
+    // refused rather than honoured (#3899 review): these two are negotiated ONCE and then
+    // answered against for the rest of the session, so letting a repeat move them shows the
+    // client two different numbers for one breakpoint it set once. The deferred path makes
+    // that concrete — a request parked while the source map builds carries numbers already
+    // converted in the base that was in force when it arrived, and DrainDeferredBreakpoints
+    // answers it later.
+    var initializeAnswered = false;
 
     // 0 is not a line: AlDapStackWalker reports it for a frame it could not map, and the
     // `stopped` handler reports it when the walk threw. Converting that sentinel would send a
@@ -6042,6 +6050,13 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                 allThreadsStopped = true,
                 // In the client's own base (#3881). A walk that threw leaves `line` at 0, the
                 // sentinel ToClientLine passes through rather than converting to -1.
+                //
+                // For a 0-based client that sentinel collides with a legal coordinate: the
+                // first line of a file is also 0. `line` is not a property DAP's StoppedEvent
+                // defines, and the failed walk is separately reported — an `output` event says
+                // why, and the following `stackTrace` returns no frames — so the conversation
+                // still distinguishes them; this one field does not. #3901 carries it, with
+                // the source-less-frame defect it belongs with.
                 line = ToClientLine(line),
             });
             AlRunner.Infrastructure.AlDapSession.Trace("STOPPED-HANDLER write-event(stopped) ok");
@@ -6105,6 +6120,16 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                 switch (command)
                 {
                     case "initialize":
+                        if (initializeAnswered)
+                        {
+                            transport.WriteResponse(msg.Seq, command, false,
+                                message: "initialize: this session is already initialized. DAP "
+                                    + "allows initialize only as the first request and only once; "
+                                    + "the line and column bases negotiated then are what every "
+                                    + "later response answers in.");
+                            break;
+                        }
+                        initializeAnswered = true;
                         // Absent means true, per the specification — for both.
                         linesStartAt1 = !(args != null
                             && args.Value.TryGetProperty("linesStartAt1", out var lineBaseEl)
