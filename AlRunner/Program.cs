@@ -5698,7 +5698,8 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     // the compile makes the session deaf to `disconnect` and turns a compile that never
     // finishes into an adapter that never exits (#3846). DAP matches a response to its
     // request by `request_seq`, so answering later is within the protocol.
-    var deferredBreakpointRequests = new List<(int Seq, string Command, string SrcPath, List<int> Lines)>();
+    var deferredBreakpointRequests =
+        new List<(int Seq, string Command, string SrcPath, List<(int Line, int? Column)> Lines)>();
 
     // A test seam, and the only way to prove the paragraph above: an organically slow bundle
     // makes a flaky test, so this holds map preparation open for a known interval while the
@@ -5817,14 +5818,16 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     // The whole of what `setBreakpoints` does once the map question is settled, lifted out of
     // the switch so a DEFERRED request is answered by exactly the same code as an immediate
     // one — two copies of this would drift, and the deferred path is the one nobody watches.
-    void AnswerSetBreakpoints(int seq, string command, string srcPath, List<int> lines)
+    void AnswerSetBreakpoints(int seq, string command, string srcPath, List<(int Line, int? Column)> lines)
     {
         // #3821: a request arriving between `initialized` and `launch` is the specification's
         // own sequence, and answering it against an empty map made every breakpoint
         // unverified. An empty list needs no map (see the call site).
         var bpCompileErr = lines.Count > 0 ? EnsureSourceMap() : null;
 
-        var requests = lines.Select(l => new AlRunner.Infrastructure.DapBreakpointRequest(srcPath, l)).ToList();
+        var requests = lines
+            .Select(l => new AlRunner.Infrastructure.DapBreakpointRequest(srcPath, l.Line, l.Column))
+            .ToList();
         var resolved = AlRunner.Infrastructure.DapBreakpointResolver.Resolve(requests, sourceMap);
 
         // Why an unverified breakpoint is unverified. DAP's Breakpoint has a
@@ -6066,12 +6069,19 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                             transport.WriteResponse(msg.Seq, command, false, message: "setBreakpoints: missing source.path");
                             break;
                         }
-                        var lines = new List<int>();
+                        // (line, optional column). The column is DAP's inline breakpoint —
+                        // the client naming ONE statement on a line that carries several
+                        // (#3879 review). The legacy `lines` array has no column to carry.
+                        var lines = new List<(int Line, int? Column)>();
                         if (args.Value.TryGetProperty("breakpoints", out var bpsEl) && bpsEl.ValueKind == System.Text.Json.JsonValueKind.Array)
                             foreach (var bp in bpsEl.EnumerateArray())
-                                if (bp.TryGetProperty("line", out var lineEl)) lines.Add(lineEl.GetInt32());
+                                if (bp.TryGetProperty("line", out var lineEl))
+                                    lines.Add((lineEl.GetInt32(),
+                                        bp.TryGetProperty("column", out var colEl)
+                                            && colEl.ValueKind == System.Text.Json.JsonValueKind.Number
+                                            ? colEl.GetInt32() : null));
                         else if (args.Value.TryGetProperty("lines", out var legacyLinesEl) && legacyLinesEl.ValueKind == System.Text.Json.JsonValueKind.Array)
-                            foreach (var l in legacyLinesEl.EnumerateArray()) lines.Add(l.GetInt32());
+                            foreach (var l in legacyLinesEl.EnumerateArray()) lines.Add((l.GetInt32(), null));
 
                         // An EMPTY list resolves nothing — "remove every breakpoint in this
                         // source" needs no map — so it is answered now, whatever the compile

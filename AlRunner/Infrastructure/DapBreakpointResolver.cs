@@ -16,11 +16,18 @@ using System.Reflection;
 
 namespace AlRunner.Infrastructure;
 
-public readonly record struct DapBreakpointRequest(string SourcePath, int Line);
+/// <summary>
+/// One requested breakpoint. <paramref name="Column"/> is DAP's optional
+/// <c>SourceBreakpoint.column</c> — an INLINE breakpoint, which is how a client says "this
+/// statement on the line, not the others". Null means the ordinary gutter breakpoint, which
+/// means the whole line (#3879 review).
+/// </summary>
+public readonly record struct DapBreakpointRequest(string SourcePath, int Line, int? Column = null);
 
 /// <summary>One armable statement: the emitted AL scope class and the statement's index
-/// within it, which is what <see cref="AlDapSession.SetBreakpoint"/> registers.</summary>
-public readonly record struct DapBreakpointTarget(Type ScopeType, int StatementIndex);
+/// within it, which is what <see cref="AlDapSession.SetBreakpoint"/> registers, plus the
+/// 1-based column it starts at — the only thing that tells two targets on one line apart.</summary>
+public readonly record struct DapBreakpointTarget(Type ScopeType, int StatementIndex, int Column);
 
 /// <summary>
 /// The answer to one <c>setBreakpoints</c> line. <see cref="Targets"/> holds EVERY statement
@@ -98,7 +105,8 @@ public static class DapBreakpointResolver
 
         // (label,id) -> every loaded scope type for that object, each with its own
         // (statement index -> absolute AL line) map.
-        var byObject = new Dictionary<(string, int), List<(Type Type, Dictionary<int, int> LineByStmt)>>();
+        var byObject = new Dictionary<(string, int),
+            List<(Type Type, Dictionary<int, (int Line, int Column)> LineByStmt)>>();
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             Type[] types;
@@ -122,11 +130,14 @@ public static class DapBreakpointResolver
                 // than being shifted by a guess.
                 var lineOffset = sourceMap.LineOffset(label, id);
                 var instrumented = AlCoverageInstrumentedStatements.Find(t);
-                var lineByStmt = new Dictionary<int, int>();
+                var lineByStmt = new Dictionary<int, (int Line, int Column)>();
                 foreach (var i in instrumented)
                 {
                     if (i < 0 || i >= spans.Length) continue; // defensive: BC shape drift
-                    lineByStmt[i] = AlSourceSpanCodec.AbsoluteFromLine(spans[i]) + lineOffset;
+                    // The column needs no offset: AlSourceLocationMap.LineOffset moves an
+                    // object's text DOWN the file, never across it.
+                    lineByStmt[i] = (AlSourceSpanCodec.AbsoluteFromLine(spans[i]) + lineOffset,
+                                     AlSourceSpanCodec.AbsoluteFromColumn(spans[i]));
                 }
                 if (!byObject.TryGetValue((label, id), out var list))
                     byObject[(label, id)] = list = new();
@@ -158,9 +169,22 @@ public static class DapBreakpointResolver
                 {
                     if (!byObject.TryGetValue(objKey, out var scopes)) continue;
                     foreach (var (type, lineByStmt) in scopes)
-                        foreach (var kv in lineByStmt)
-                            if (kv.Value == req.Line)
-                                targets.Add(new DapBreakpointTarget(type, kv.Key));
+                        foreach (var entry in lineByStmt)
+                            if (entry.Value.Line == req.Line)
+                                targets.Add(new DapBreakpointTarget(
+                                    type, entry.Key, entry.Value.Column));
+                }
+
+                // An INLINE breakpoint names a column, which is DAP's own way of saying
+                // "this statement, not the others on the line" — so honour it rather than
+                // arming the whole line (#3879 review). Only an EXACT start-column match
+                // narrows: a column that lands mid-statement, or on whitespace, is a client
+                // pointing somewhere no statement begins, and answering that with nothing
+                // would be worse than answering with the line the user clicked on.
+                if (req.Column is int wantColumn)
+                {
+                    var atColumn = targets.Where(t => t.Column == wantColumn).ToList();
+                    if (atColumn.Count > 0) targets = atColumn;
                 }
             }
 
