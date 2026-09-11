@@ -294,17 +294,29 @@ public sealed class ArtifactDirStateTests : IDisposable
     /// Complete for a directory without Ncl.dll would be exactly the false green this
     /// change exists to remove.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public void ScanRoot_OnTheRealArtifactsRoot_NeverReportsCompleteWithoutTheEngine()
     {
+        // A bare `return;` here would report Passed having asserted nothing — the very
+        // silent-success shape this class exists to stop, one level up. TestArtifacts
+        // SKIPS locally (a dev box may legitimately have provisioned nothing) and FAILS
+        // on CI, where artifacts are provisioned by construction, so "every artifact-gated
+        // test skipped and the leg is green" cannot happen either.
+        TestArtifacts.SkipIfMissing();
+
         var root = Environment.GetEnvironmentVariable(BcArtifacts.ArtifactsRootEnvVar);
         if (string.IsNullOrWhiteSpace(root))
             root = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 BcArtifacts.ArtifactsRoot_Rel);
-        if (!Directory.Exists(root)) return;   // nothing provisioned here; nothing to assert
+        TestArtifacts.SkipIfDirectoryMissing(root, "the BC artifacts root");
 
-        foreach (var r in ArtifactDirState.ScanRoot(root))
+        var results = ArtifactDirState.ScanRoot(root);
+        // Non-vacuity: a root that classifies nothing means this assertion measured nothing,
+        // which must not read as a pass (TestArtifactsGateTests takes the same line).
+        Assert.NotEmpty(results);
+
+        foreach (var r in results)
         {
             if (r.Status == ArtifactDirStatus.Complete)
             {
