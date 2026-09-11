@@ -623,6 +623,49 @@ public sealed class DependencyResolverTests : IDisposable
         bool r2r, bool alSource, string? platform)
         => MakeMinimalApp(appId, name, publisher, version, r2r, alSource, platform, application: null);
 
+    /// <summary>
+    /// A package declaring explicit <c>&lt;Dependency&gt;</c> entries alongside its
+    /// <c>Platform</c> floor — the shape Business Foundation and Base Application actually ship
+    /// (#3875). Always carries AL source, because the closure only matters for a package this
+    /// run would source-compile.
+    /// </summary>
+    private static byte[] MakeMinimalAppWithDeps(
+        string appId, string name, string publisher, string version, string? platform,
+        (string Id, string Name, string Publisher, string MinVersion)[] deps)
+    {
+        var platformAttr = platform == null ? "" : $" Platform=\"{platform}\"";
+        var depXml = deps.Length == 0
+            ? "<Dependencies />"
+            : "<Dependencies>"
+              + string.Concat(deps.Select(d =>
+                  $"<Dependency Id=\"{d.Id}\" Name=\"{d.Name}\" Publisher=\"{d.Publisher}\" MinVersion=\"{d.MinVersion}\" />"))
+              + "</Dependencies>";
+        var xml = $"""
+            <?xml version="1.0" encoding="utf-8"?>
+            <Package xmlns="http://schemas.microsoft.com/navx/2015/manifest">
+              <App Id="{appId}" Name="{name}" Publisher="{publisher}" Version="{version}"{platformAttr}/>
+              {depXml}
+            </Package>
+            """;
+
+        using var ms = new MemoryStream();
+        using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            var entry = zip.CreateEntry("NavxManifest.xml");
+            using (var es = entry.Open())
+                es.Write(Encoding.UTF8.GetBytes(xml));
+            var al = zip.CreateEntry("src/" + name + ".al");
+            using var als = al.Open();
+            als.Write(Encoding.UTF8.GetBytes("codeunit 130002 \"" + name + "\" { }"));
+        }
+        var zipBytes = ms.ToArray();
+        var result = new byte[8 + zipBytes.Length];
+        result[0] = (byte)'N'; result[1] = (byte)'A'; result[2] = (byte)'V'; result[3] = (byte)'X';
+        BitConverter.TryWriteBytes(result.AsSpan(4, 4), (uint)8);
+        Buffer.BlockCopy(zipBytes, 0, result, 8, zipBytes.Length);
+        return result;
+    }
+
     private static byte[] MakeMinimalApp(string appId, string name, string publisher, string version,
         bool r2r, bool alSource, string? platform, string? application)
     {
@@ -791,30 +834,161 @@ public sealed class DependencyResolverTests : IDisposable
             AppLoader.ImplicitRoots(manifest).Select(r => r.Name).OrderBy(n => n, StringComparer.Ordinal).ToArray());
     }
 
+    // -- #3875: a Microsoft platform app's Platform floor IS followed; its Application floor is not --
+    //
+    // #3719 made Visit follow a resolved package's implicit floors and exempted the Microsoft
+    // platform apps, on the premise that their floors cycle (Application -> Base Application ->
+    // Application ...). Measured across six artifact builds, 27.3 through 28.4, that premise is
+    // false for the floor that matters: NO Microsoft platform app declares Application= at all,
+    // every one declares Platform=, and System.app itself declares neither a floor nor a
+    // dependency. The cycle lives in the <Dependencies> array, which Visit already guards with
+    // its own cycle detector, not in the floors. Blanket-exempting both floors therefore bought
+    // nothing and cost System Application every symbol it compiles against -- see
+    // docs/dependency-metadata-from-bc.md#platform-floor.
+    //
+    // The Application floor stays unfollowed, because that is the one that could cycle if a
+    // future build did declare it; PlatformApp_ApplicationFloor_IsStillNotFollowed pins that.
+
     /// <summary>
-    /// The trap AppLoader.ImplicitRoots' own doc comment names: every Microsoft platform app's
-    /// manifest carries these attributes and they reference each other (Application → Base
-    /// Application → Application …), so following a PLATFORM app's floors would cycle. They
-    /// are not followed; only a non-platform package's are. Base Application declaring a
-    /// Platform floor resolves to exactly itself, no System, no cycle exception.
+    /// System Application's real shape: <c>Platform="28.0.0.0"</c> and an EMPTY
+    /// <c>&lt;Dependencies /&gt;</c>. Before #3875 it resolved to a closure of exactly itself,
+    /// so its Tier-3 source compile ran with <c>specsLen=0</c>, produced 2,587 AL0185
+    /// declaration diagnostics and zero metadata documents, and aborted the run.
     /// </summary>
     [Fact]
-    public void MicrosoftPlatformAppDeclaringPlatform_FloorIsNotFollowed()
+    public void PlatformAppDeclaringOnlyAPlatformFloor_ResolvesSystemApp()
     {
-        var dir = MakeDir("PlatformFloorGuard");
+        var dir = MakeDir("PlatformFloorSysApp");
         var systemId = "00000000-0000-0000-0000-00000000c0de";
+        var sysAppId = "63ca2fa4-4f03-4f2b-a480-172fef340d3f";
+        File.WriteAllBytes(Path.Combine(dir, "System.app"),
+            MakeMinimalApp(systemId, "System", "Microsoft", "28.0.54265.0", r2r: false, alSource: false, platform: null));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_System Application.app"),
+            MakeMinimalApp(sysAppId, "System Application", "Microsoft", "28.1.49838.54308",
+                r2r: false, alSource: true, platform: "28.0.0.0"));
+
+        var result = new DependencyResolver(new[] { dir }).Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(sysAppId), "System Application", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        var names = result.Select(r => r.Manifest.Name).ToArray();
+        Assert.Contains("System", names);
+        Assert.Contains("System Application", names);
+        // System must precede the app that needs it: Resolve emits post-order, and
+        // BcCompiler turns this list into SymbolReferenceSpecifications in order.
+        Assert.True(Array.IndexOf(names, "System") < Array.IndexOf(names, "System Application"),
+            $"System must be resolved before System Application; got [{string.Join(", ", names)}]");
+    }
+
+    /// <summary>
+    /// Business Foundation's real shape, and the reason this bug hid: BF declares ONE dependency
+    /// (System Application) plus <c>Platform="28.0.0.0"</c>, so before #3875 it compiled with
+    /// <c>specsLen=1</c> and SUCCEEDED -- emitting 55 of the 70 documents BC emits, the 15 that
+    /// need platform tables (<c>Field</c>, <c>Table Metadata</c>) silently falling back to the
+    /// hand-derivation under a green run. The closure must contain System, not merely be
+    /// non-empty.
+    /// </summary>
+    [Fact]
+    public void PlatformAppWithOneDependencyAndAPlatformFloor_StillResolvesSystemApp()
+    {
+        var dir = MakeDir("PlatformFloorBusinessFoundation");
+        var systemId = "00000000-0000-0000-0000-00000000c0de";
+        var sysAppId = "63ca2fa4-4f03-4f2b-a480-172fef340d3f";
+        var bfId = "f3552374-a1f2-4356-848e-196002525837";
+        File.WriteAllBytes(Path.Combine(dir, "System.app"),
+            MakeMinimalApp(systemId, "System", "Microsoft", "28.0.54265.0", r2r: false, alSource: false, platform: null));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_System Application.app"),
+            MakeMinimalApp(sysAppId, "System Application", "Microsoft", "28.1.49838.54308",
+                r2r: false, alSource: true, platform: "28.0.0.0"));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Business Foundation.app"),
+            MakeMinimalAppWithDeps(bfId, "Business Foundation", "Microsoft", "28.1.49838.54308",
+                platform: "28.0.0.0",
+                deps: new[] { (sysAppId, "System Application", "Microsoft", "28.0.0.0") }));
+
+        var result = new DependencyResolver(new[] { dir }).Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(bfId), "Business Foundation", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        var names = result.Select(r => r.Manifest.Name).ToArray();
+        Assert.Contains("System", names);
+        Assert.Equal(
+            new[] { "Business Foundation", "System", "System Application" },
+            names.OrderBy(n => n, StringComparer.Ordinal).ToArray());
+    }
+
+    /// <summary>
+    /// The half of the #3719 exemption that stays: an <c>Application</c> floor on a platform app
+    /// is NOT followed. No shipped build declares one (measured 27.3-28.4), but Microsoft/Application
+    /// transitively pulls Base Application, whose own manifest names Business Foundation and
+    /// System Application, so following it would re-enter the closure through a second route for
+    /// no symbol the Platform floor does not already supply.
+    /// </summary>
+    [Fact]
+    public void PlatformApp_ApplicationFloor_IsStillNotFollowed()
+    {
+        var dir = MakeDir("PlatformFloorApplicationGuard");
+        var systemId = "00000000-0000-0000-0000-00000000c0de";
+        var umbrellaId = "00000000-0000-0000-0000-0000000a9911";
         var baseId = "437dbf0e-84ff-417a-965d-ed2bb9650972";
         File.WriteAllBytes(Path.Combine(dir, "System.app"),
-            MakeMinimalApp(systemId, "System", "Microsoft", "28.0.54265.0", r2r: false, alSource: false, platform: "28.0.54265.0"));
+            MakeMinimalApp(systemId, "System", "Microsoft", "28.0.54265.0", r2r: false, alSource: false, platform: null));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Application.app"),
+            MakeMinimalApp(umbrellaId, "Application", "Microsoft", "28.1.49838.54308",
+                r2r: true, alSource: false, platform: "28.0.0.0"));
+        // A synthetic Application floor -- no shipped build has one; this pins that we do not
+        // start following it if one appears.
         File.WriteAllBytes(Path.Combine(dir, "Microsoft_Base Application.app"),
-            MakeMinimalApp(baseId, "Base Application", "Microsoft", "28.1.49838.54169", r2r: true, alSource: false, platform: "28.0.0.0"));
+            MakeMinimalApp(baseId, "Base Application", "Microsoft", "28.1.49838.54169",
+                r2r: true, alSource: false, platform: "28.0.0.0", application: "28.1.0.0"));
 
         var result = new DependencyResolver(new[] { dir }).Resolve(new[]
         {
             new DependencyRef(Guid.Parse(baseId), "Base Application", "Microsoft", new Version(28, 0, 0, 0)),
         });
 
-        Assert.Equal(new[] { "Base Application" }, result.Select(r => r.Manifest.Name).ToArray());
+        var names = result.Select(r => r.Manifest.Name).ToArray();
+        Assert.DoesNotContain("Application", names);
+        Assert.Equal(new[] { "Base Application", "System" },
+            names.OrderBy(n => n, StringComparer.Ordinal).ToArray());
+    }
+
+    /// <summary>
+    /// The cycle #3719 actually guarded against is in the &lt;Dependencies&gt; array, not in the
+    /// floors, and Visit's own cycle detector handles it. Base Application naming Business
+    /// Foundation naming Base Application resolves rather than throwing, with System pulled in
+    /// through both floors exactly once.
+    /// </summary>
+    [Fact]
+    public void PlatformAppsNamingEachOtherInDependencies_DoNotCycleWhenFloorsAreFollowed()
+    {
+        var dir = MakeDir("PlatformFloorMutualDeps");
+        var systemId = "00000000-0000-0000-0000-00000000c0de";
+        var baseId = "437dbf0e-84ff-417a-965d-ed2bb9650972";
+        var bfId = "f3552374-a1f2-4356-848e-196002525837";
+        File.WriteAllBytes(Path.Combine(dir, "System.app"),
+            MakeMinimalApp(systemId, "System", "Microsoft", "28.0.54265.0", r2r: false, alSource: false, platform: null));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Base Application.app"),
+            MakeMinimalAppWithDeps(baseId, "Base Application", "Microsoft", "28.1.49838.54169",
+                platform: "28.0.0.0",
+                deps: new[] { (bfId, "Business Foundation", "Microsoft", "28.0.0.0") }));
+        File.WriteAllBytes(Path.Combine(dir, "Microsoft_Business Foundation.app"),
+            MakeMinimalAppWithDeps(bfId, "Business Foundation", "Microsoft", "28.1.49838.54308",
+                platform: "28.0.0.0",
+                deps: Array.Empty<(string, string, string, string)>()));
+
+        var result = new DependencyResolver(new[] { dir }).Resolve(new[]
+        {
+            new DependencyRef(Guid.Parse(baseId), "Base Application", "Microsoft", new Version(28, 0, 0, 0)),
+        });
+
+        var names = result.Select(r => r.Manifest.Name).ToArray();
+        Assert.Equal(
+            new[] { "Base Application", "Business Foundation", "System" },
+            names.OrderBy(n => n, StringComparer.Ordinal).ToArray());
+        // Exactly once, not once per floor that named it.
+        Assert.Single(names.Where(n => n == "System"));
     }
 
     // -- #3794: a floor that cannot be supplied is named, not skipped in silence --

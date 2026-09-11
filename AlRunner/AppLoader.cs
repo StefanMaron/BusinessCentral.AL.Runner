@@ -671,11 +671,17 @@ public static class AppLoader
     /// and resolved by (Name, Publisher) — version is informational.
     ///
     /// Applied to the root app being compiled and, since #3719, to every resolved package
-    /// that is NOT itself a Microsoft platform app (DependencyResolver.Visit): Microsoft's
-    /// test-toolkit packages declare only a Platform floor, and their source compile needs
-    /// System.app for it. The platform apps' own floors are still never followed — their
-    /// manifests reference each other (Application → Base Application → Application …) and
-    /// the resolver throws on cycles.
+    /// (DependencyResolver.Visit): Microsoft's test-toolkit packages declare only a Platform
+    /// floor, and their source compile needs System.app for it.
+    ///
+    /// <para>Since #3875 a Microsoft platform app's <c>Platform</c> floor is followed as well —
+    /// it is the reference System Application and Business Foundation compile against, and
+    /// withholding it cost System Application every symbol (specsLen=0, EMIT-ZERO) and Business
+    /// Foundation 15 of BC's 70 documents under a green run. Only their <c>Application</c> floor
+    /// stays unfollowed; no shipped build declares one (measured 27.3-28.4), and following it
+    /// would re-enter the closure through Microsoft/Application for no symbol the Platform floor
+    /// does not already supply. The cycle #3719's comment named is in the <c>&lt;Dependencies&gt;</c>
+    /// array, which DependencyResolver.Visit detects itself.</para>
     /// </summary>
     public static IEnumerable<DependencyRef> ImplicitRoots(AppManifest manifest)
     {
