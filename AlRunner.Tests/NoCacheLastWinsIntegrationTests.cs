@@ -37,6 +37,29 @@ public class NoCacheLastWinsIntegrationTests
     private static readonly string ProjectPath = Path.Combine(RepoRoot, "AlRunner");
 
     private static (string output, int exit) RunRunner(string bundleDir, string absentPackageCache, params string[] extraArgs)
+        => RunRunnerCore(bundleDir, absentPackageCache, noCacheRoot: null, extraArgs);
+
+    /// <param name="noCacheRoot">
+    /// When non-null, handed to the child as <see cref="CacheRoots.NoCacheRootEnvVar"/> so a
+    /// <c>--no-cache</c> run ADOPTS this exact directory instead of minting a GUID-named one
+    /// (CacheRoots.DisableForRun's adopt branch). Set on the child's own ProcessStartInfo, never
+    /// through Environment.SetEnvironmentVariable: the environment is process-global and
+    /// Path.GetTempPath() re-reads it per call, so a test host mutating it redirects the temp
+    /// root for every OTHER test class running in parallel (#3838).
+    /// </param>
+    /// <remarks>
+    /// Named differently from <c>RunRunner</c>, and takes <c>string[]</c> rather than
+    /// <c>params</c>, deliberately. An overload pair
+    /// <c>(string, string, params string[])</c> / <c>(string, string, string?, params string[])</c>
+    /// is not ambiguous to the compiler and picks the SECOND for a three-argument call, binding
+    /// the caller's first flag to <c>noCacheRoot</c> and leaving <c>extraArgs</c> empty — so
+    /// <c>RunRunner(bundle, pkg, "--cache DIR")</c> silently drops <c>--cache</c> and the child
+    /// runs against the default cache root. Measured: that turned this file's sibling test red
+    /// deterministically (A/B/A, three builds), and it fails as a MISSING cache entry, which
+    /// reads like a caching defect rather than a dropped argument (#3849).
+    /// </remarks>
+    private static (string output, int exit) RunRunnerCore(
+        string bundleDir, string absentPackageCache, string? noCacheRoot, string[] extraArgs)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
@@ -50,6 +73,8 @@ public class NoCacheLastWinsIntegrationTests
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
+        if (noCacheRoot != null)
+            psi.Environment[AlRunner.Infrastructure.CacheRoots.NoCacheRootEnvVar] = noCacheRoot;
         var sb = new StringBuilder();
         using var p = Process.Start(psi)!;
         p.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
@@ -175,17 +200,37 @@ public class NoCacheLastWinsIntegrationTests
         }
         """);
 
-        // Set difference, not a count (#2706): the spawned runner sweeps stale al-runner-*
-        // directories of DEAD processes at startup, so the count can legitimately go DOWN
-        // across the run on a machine with leftovers. The claim here is only that this run
-        // left no NEW directory behind.
-        var tempRoot = Path.GetTempPath();
-        var before = Directory.GetDirectories(tempRoot, "al-runner-no-cache-*").ToHashSet(StringComparer.Ordinal);
+        // Name this run's throwaway root, rather than looking for whichever al-runner-no-cache-*
+        // directories appear in the shared temp root while the run is in flight (#3849). Ten
+        // other classes in this assembly spawn --no-cache runners — CacheGateProbeScopeTests,
+        // CoverageTests, PlainRunInstrumentationGateTests, AlObjectEmitOrderDeterminismTests,
+        // the four ServerAffectedSelection* files, both WatchPageMetadataReload* files — and
+        // xunit.runner.json runs 4 collections at once, so a neighbour's live root is in the
+        // temp root, is absent from `before`, and reads as this run's leak. Measured: with just
+        // four of those classes selected the set difference named TWO directories at once, from
+        // a test that spawns exactly ONE runner, and both were gone by the time the assertion
+        // was read — they were neighbours mid-run, never leaks. CacheRootStartupFailureTests'
+        // "al-runner-no-cache-root-expectations" matches that glob too.
+        //
+        // DisableForRun ADOPTS AL_RUNNER_NO_CACHE_ROOT when set, so this is the same code path
+        // a re-exec'd child takes, and the run still gets exactly one throwaway root. The claim
+        // is unchanged and the assertion is strictly stronger: not "no unexplained directory
+        // appeared" but "the directory THIS run was told to use is gone, and so is its .owner
+        // sidecar". A neighbour cannot satisfy or break it, because it names one path.
+        var throwawayRoot = Path.Combine(
+            Path.GetTempPath(), "al-runner-no-cache-scoped-" + Guid.NewGuid().ToString("N"));
 
-        var (output, exit) = RunRunner(bundleDir, absentPackageCache, "--no-cache");
+        var (output, exit) = RunRunnerCore(
+            bundleDir, absentPackageCache, throwawayRoot, new[] { "--no-cache" });
         Assert.True(exit == 0 && output.Contains("1P/0F/0E"), $"run must pass:\n{output}");
 
-        var leaked = Directory.GetDirectories(tempRoot, "al-runner-no-cache-*").Where(d => !before.Contains(d)).ToList();
-        Assert.True(leaked.Count == 0, "the --no-cache run left its throwaway root behind: " + string.Join(", ", leaked));
+        // Positive: the run really USED the root it was handed — without this the negative below
+        // would pass against a runner that ignored the variable and leaked a minted root instead.
+        Assert.Contains(throwawayRoot, output, StringComparison.Ordinal);
+
+        Assert.False(Directory.Exists(throwawayRoot),
+            $"the --no-cache run left its throwaway root behind: {throwawayRoot}");
+        Assert.False(File.Exists(AlRunner.Infrastructure.ScratchDirs.MarkerPathFor(throwawayRoot)),
+            $"the --no-cache run left its throwaway root's .owner sidecar behind: {throwawayRoot}");
     }
 }
