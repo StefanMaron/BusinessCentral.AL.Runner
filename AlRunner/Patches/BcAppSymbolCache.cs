@@ -2537,6 +2537,14 @@ internal static partial class BcAppSymbolCache
     /// at all — a third state the caller must keep, not collapse (see
     /// <see cref="EnumSymbol"/>'s <c>Extensible</c>).
     ///
+    /// <para><b>Why this is not <c>SymbolBoolFalse</c>, which the page side uses for the
+    /// SAME property name.</b> That reader folds absence into the AL default, and its comment
+    /// gives the reason: BC's emitter writes a page's <c>Extensible</c> unconditionally, so
+    /// absent and default-valued are the same document. For ENUMS the emitter does not — 12 of
+    /// 144 emitted enum documents state no <c>Extensible</c> attribute at all (28.1 and 28.4) —
+    /// so folding here would make the render state an attribute BC omits. The divergence is
+    /// measured, not accidental.</para>
+    ///
     /// <para>Both spellings are accepted because both occur: <c>SymbolReference.json</c> states
     /// <c>Extensible</c> as <c>"1"</c>/<c>"0"</c> on every one of the 130 System Application +
     /// Business Foundation enums that declare it (measured on 28.1 and 28.4), while AL source
