@@ -164,10 +164,13 @@ Done when every path you write to carries the issue number: the worktree as
 
 1. **RED** — write failing AL test. Run it. Confirm failure.
 2. **GREEN** — implement fix. Run again. Confirm pass.
+3. **MUTATE** — break the implementation (delete the guard, invert the condition, return the
+   default), rebuild, confirm the test goes **RED**, restore. Report both counts in the PR body:
+   `Failed: 1, Passed: 7` -> `Failed: 0, Passed: 8`. Once per closed issue.
 
 Branch: `agent/<AGENT-ID>/issue-<N>`.
 
-Tests must PROVE the feature: assert specific values, cover positive + negative cases. A test that passes with a no-op implementation is invalid. Proving-test rules and the run/flag reference are in the `al-runner-tests` skill — read it, don't guess the command. Two things that cost real CI runs when missed:
+Tests must PROVE the feature: assert specific values, cover positive + negative cases. A test that passes with a no-op implementation is invalid — and step 3 is how you find out, because *asking* whether it would has twice answered wrong here (`.claude/rules/tdd.md`, `docs/incidents/tdd.md`). **A test that names the thing is not a test that drives it**: a grep for the symbol finds assertions about a naming convention and reads as coverage. Proving-test rules and the run/flag reference are in the `al-runner-tests` skill — read it, don't guess the command. Two things that cost real CI runs when missed:
 
 - **`--package-cache "$HOME/.al-runner/platform-apps"` is required on every corpus run in this repo's CI** (`.github/workflows/bc-tests.yml`) — without it the runner build's default BC major and the corpus's platform apps don't line up, and the run aborts on a provisioning-gap message before executing a single test. If that directory doesn't exist yet, run `al-runner provision` (or pass `--auto-provision`), or fetch it with `tools/DownloadArtifacts` (exact invocation: the skill and `bc-tests.yml`).
 - **Never background a long-running command and end your turn** (`.claude/rules/no-backgrounding-long-commands.md`). A cold full-corpus run takes minutes; commit and push before starting anything long.
