@@ -164,6 +164,16 @@ load_assembly(assemblyPath: "<artifacts>/<ver>/Microsoft.Dynamics.Nav.Ncl.dll",
               additionalSearchDirs: ["<artifacts>/<ver>"], contextAlias: "bc284")
 ```
 
+**`list_contexts` answers two different questions in one response, and the wrong one is the
+easier to read.** `registeredAliases` lists every alias that *can* be activated; `items` lists
+the contexts actually **loaded**. An alias in the first and not the second means nothing has
+been read through it — so a cross-version comparison resting on it is an inference, not a
+measurement. Measured: an agent read `bc270`/`bc273` sharing an MVID from `items`, saw `bc275`
+in `registeredAliases`, and concluded 27.5 was a distinct binary; hashing the files showed all
+three `Ncl.dll` byte-identical. Hash the artifact, or load the context, before claiming two
+versions differ.
+
+
 **3. `grep` here is a shell function, and it fails silently.**
 
 `grep` resolves to a shell **function**, not `/usr/bin/grep`. It rejects `-E`, `--include` and
