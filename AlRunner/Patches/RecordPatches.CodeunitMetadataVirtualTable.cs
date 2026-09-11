@@ -237,6 +237,48 @@ public static partial class RecordPatches
     }
 
     /// <summary>
+    /// One CodeUnit Metadata column, rendered for a codeunit id through the SAME
+    /// <see cref="BuildCodeunitMetadataValue"/> the live populator calls, as the string AL would
+    /// read — or null when the runner knows no codeunit with that id.
+    ///
+    /// <para><b>Why this seam exists.</b> The runner renders a codeunit's metadata TWICE, from
+    /// one row: this virtual table, which is what AL observes, and
+    /// <c>TryBuildCodeunitMetadataEquivalenceXml</c>, which is what the metadata-equivalence
+    /// harness compares. The two are independent code and disagree on spelling — the projection
+    /// writes BC's NUMERIC mask, this table writes the AL LETTER string — so a test driving one
+    /// says nothing about the other. #3788 landed with only the projection proven: reverting all
+    /// three <c>case</c> arms here to <c>Default()</c> left 252 tests green.</para>
+    ///
+    /// <para>Reached only from tests, and deliberately NOT a second derivation: it resolves the
+    /// same row, the same subtype ordinal and the same document as the populator, so a fix that
+    /// moved the populator without moving this would be a compile error rather than a silent
+    /// divergence.</para>
+    /// </summary>
+    internal static string? TryRenderCodeunitMetadataColumnForTests(int codeunitId, string fieldName)
+    {
+        var row = EnumerateKnownCodeunitMetadata().FirstOrDefault(r => r.Id == codeunitId);
+        if (row is null) return null;
+
+        var metaTable = GetOrBuildNCLMetaTable(CodeunitMetadataVirtualTableId)
+            ?? throw CodeunitMetadataShapeGap("the CodeUnit Metadata metatable could not be built");
+
+        EnsureAllObjReflection(metaTable);
+        EnsureReportMetadataReflection(metaTable);
+        var subtypeOrdinals = EnsureCodeunitSubtypeOrdinals(metaTable);
+
+        var field = (GetAllFields(metaTable) ?? Enumerable.Empty<NCLMetaField>())
+            .FirstOrDefault(f => NormalizeObjectTypeName(f.FieldName ?? string.Empty)
+                                 == NormalizeObjectTypeName(fieldName))
+            ?? throw CodeunitMetadataShapeGap($"metatable has no \"{fieldName}\" field");
+
+        var subtypeOrdinal = ResolveCodeunitSubtypeOrdinal(
+            subtypeOrdinals, _cmvSubtypeOptionString, row.Subtype, row.Id);
+        var document = TryReadCodeunitMetadataDocument(row.Id);
+
+        return BuildCodeunitMetadataValue(field, row, subtypeOrdinal, document)?.ToString();
+    }
+
+    /// <summary>
     /// AL's default <c>Subtype</c> for a codeunit that declares none. Pinned upstream by
     /// <c>Record_CodeunitMetadata_Get_DeclaredCodeunit_ReturnsMatchingRow</c> in the al-language
     /// corpus, which asserts <c>Subtype::Normal</c> for ALT Codeunit Meta Probe — a fixture
