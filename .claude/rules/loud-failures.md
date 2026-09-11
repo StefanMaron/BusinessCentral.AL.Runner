@@ -91,6 +91,17 @@ be shortened, never for one to be removed, and may never accept a patch that has
 the shortened claim and the `docs/` section disagree, the `docs/` section is the one under
 test, because it is the copy a drift test can check.
 
+**Why the citation must be right even when the claim is: a reviewer can only check the
+account, never the result.** A correct finding reached by a method you have misdescribed is not
+merely at risk of being disbelieved — it is *indistinguishable* from a wrong one, because the
+account is all a checker has to work with. Measured twice on 2026-09-11 (#3399): an agent
+produced the correct answer in round one and could not defend it for three rounds, having
+described the wrong mechanism; and the coordinator's own correction to it was wrong for the
+same reason. Both were settled by re-running the scan, never by argument. So state the method
+you actually used, and when a disagreement persists, re-measure rather than restate — a
+disagreement kept attached to something measurable converges, and one that is not becomes two
+positions.
+
 **Leave the pointer, and pin a load-bearing claim with a drift test.** Prose moved out of the
 code can stop matching it with nothing failing; the pointer is what lets a reader who finds
 the claim find the document, and this repository already has about ten such drift tests
