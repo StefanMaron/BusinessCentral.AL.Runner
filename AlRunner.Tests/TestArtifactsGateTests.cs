@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using Microsoft.CodeAnalysis.CSharp;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -291,20 +292,39 @@ public class TestArtifactsGateTests
         var offenders = new List<string>();
         foreach (var (rel, text) in TestSources())
         {
-            if (rel is "TestArtifacts.cs" or "TestArtifactsGateTests.cs") continue;
-            foreach (var line in text.Split('\n'))
-            {
-                var trimmed = line.TrimStart();
-                if (trimmed.StartsWith("//", StringComparison.Ordinal)) continue;
-                if (trimmed.Contains(".bcartifacts.cache", StringComparison.Ordinal)
-                    || trimmed.Contains("\"al-runner\", \"artifacts\"", StringComparison.Ordinal))
-                    offenders.Add($"{rel}: {trimmed.Trim()}");
-            }
+            if (rel is "TestArtifacts.cs" or "TestArtifactsGateTests.cs"
+                    or "SkippableAttributeDetectorTests.cs") continue;
+            offenders.AddRange(FindHardCodedArtifactPaths(rel, text));
         }
 
         Assert.True(offenders.Count == 0,
             "these lines spell an artifact cache path instead of asking TestArtifacts:\n"
             + string.Join("\n", offenders));
+    }
+
+    /// <summary>
+    /// The lines of one source that spell an artifact cache path in code.
+    ///
+    /// <para>The parenthesis in the summary above — "comments may still discuss the paths" —
+    /// used to be implemented as "skip a line whose first characters are <c>//</c>", which
+    /// caught a comment on its own line and missed a trailing one and a block one. So the same
+    /// prose-decides-the-verdict defect #3813 reports lived in the function next door, and both
+    /// now share one stripper rather than two disagreeing approximations of one.</para>
+    ///
+    /// <para>String contents are KEPT here, unlike the skippable-attribute scan: a hard-coded
+    /// path IS a string literal, so blanking literals would remove the subject.</para>
+    /// </summary>
+    internal static IEnumerable<string> FindHardCodedArtifactPaths(string rel, string sourceText)
+    {
+        var offenders = new List<string>();
+        foreach (var line in StripCommentsPreservingLines(sourceText, blankStringContents: false).Split('\n'))
+        {
+            if (line.Contains(".bcartifacts.cache", StringComparison.Ordinal)
+                || line.Contains("\"al-runner\", \"artifacts\"", StringComparison.Ordinal))
+                offenders.Add($"{rel}: {line.Trim()}");
+        }
+
+        return offenders;
     }
 
     /// <summary>
@@ -378,34 +398,163 @@ public class TestArtifactsGateTests
     [Fact]
     public void EveryTestThatCanSkipIsDeclaredSkippable()
     {
-        var factLine = new Regex(@"^\s*\[(?<attr>SkippableFact|SkippableTheory|Fact|Theory)[\](]");
-        var methodLine = new Regex(@"^\s*(?:public|private|internal|protected)[^=]*\s(?<name>\w+)\s*\(");
-        var skipCall = new Regex(@"\bTestArtifacts\.(SkipIfMissing|SkipIf|SkipIfDirectoryMissing)\b|\bSkip\.(If|IfNot|Always)\b");
-
         var offenders = new List<string>();
+        var declarations = 0;
         foreach (var file in TestSourcePaths())
         {
             var rel = Rel(file);
-            if (rel is "TestArtifacts.cs" or "TestArtifactsGateTests.cs") continue;
-            string? attr = null, method = null;
-            foreach (var line in File.ReadAllLines(file))
-            {
-                var f = factLine.Match(line);
-                if (f.Success) { attr = f.Groups["attr"].Value; method = null; continue; }
-                if (attr != null && method == null)
-                {
-                    var m = methodLine.Match(line);
-                    if (m.Success) { method = m.Groups["name"].Value; continue; }
-                }
-                if (attr is "Fact" or "Theory" && method != null && skipCall.IsMatch(line))
-                {
-                    offenders.Add($"{rel}.{method} is [{attr}] but can skip");
-                    attr = null;
-                }
-            }
+            if (rel is "TestArtifacts.cs" or "TestArtifactsGateTests.cs"
+                    or "SkippableAttributeDetectorTests.cs") continue;
+            var text = File.ReadAllText(file);
+            offenders.AddRange(FindTestsThatCanSkipButAreNotSkippable(rel, text));
+            declarations += CountTestDeclarationsIn(text);
         }
+
+        Assert.True(declarations > MinimumTestDeclarations,
+            $"only {declarations} [Fact]/[Theory] declaration(s) were examined across the suite, so "
+            + "'no offenders' would be a verdict about nothing rather than a clean suite. "
+            + $"The floor of {MinimumTestDeclarations} is a tripwire against a scan that stopped "
+            + "matching, not a target: it was set when this landed, against 4,119 declarations in "
+            + "676 files — 41x headroom. So a count near the floor means the scan broke, and only "
+            + "a suite that genuinely lost most of its tests should reach it. If that shrink is "
+            + "real, lower this deliberately and say why.");
 
         Assert.True(offenders.Count == 0,
             "a SkipException out of a plain [Fact] is reported Failed, not Skipped:\n" + string.Join("\n", offenders));
     }
+
+    /// <summary>Tripwire floor; the reasoning and the calibration are in the failure message.</summary>
+    internal const int MinimumTestDeclarations = 100;
+
+    private static readonly Regex FactLine =
+        new(@"^\s*\[(?<attr>SkippableFact|SkippableTheory|Fact|Theory)[\](]");
+
+    private static readonly Regex MethodLine =
+        new(@"^\s*(?:public|private|internal|protected)[^=]*\s(?<name>\w+)\s*\(");
+
+    private static readonly Regex SkipCall =
+        new(@"\bTestArtifacts\.(SkipIfMissing|SkipIf|SkipIfDirectoryMissing)\b|\bSkip\.(If|IfNot|Always)\b");
+
+    /// <summary>
+    /// The offenders in one source text: tests declared <c>[Fact]</c>/<c>[Theory]</c> whose body
+    /// can reach a skip. A function over TEXT so the detector is testable against synthetic
+    /// inputs — see <see cref="SkippableAttributeDetectorTests"/>. #3813: as inline logic over
+    /// raw lines it matched the skip spelling inside COMMENTS and attributed the match to
+    /// whichever declaration preceded that line, so prose and line position decided whether a
+    /// test needed the attribute, and the failure named a test unrelated to the match.
+    /// </summary>
+    internal static IEnumerable<string> FindTestsThatCanSkipButAreNotSkippable(string rel, string sourceText)
+    {
+        var offenders = new List<string>();
+        string? attr = null, method = null;
+        // Comments cannot call anything, so they are removed before the scan — line-for-line, so
+        // that a declaration and a match still line up the way they do in the file.
+        foreach (var line in StripCommentsPreservingLines(sourceText).Split('\n'))
+        {
+            var f = FactLine.Match(line);
+            if (f.Success) { attr = f.Groups["attr"].Value; method = null; continue; }
+            if (attr != null && method == null)
+            {
+                var m = MethodLine.Match(line);
+                if (m.Success) { method = m.Groups["name"].Value; continue; }
+            }
+            if (attr is "Fact" or "Theory" && method != null && SkipCall.IsMatch(line))
+            {
+                offenders.Add($"{rel}.{method} is [{attr}] but can skip");
+                attr = null;
+            }
+        }
+
+        return offenders;
+    }
+
+    /// <summary>
+    /// <paramref name="sourceText"/> with every comment blanked to spaces and every newline
+    /// kept, so line N of the result is line N of the input — attribution in the scans below
+    /// depends on that alignment. Optionally the contents of string and char literals go the
+    /// same way.
+    ///
+    /// <para>Roslyn draws the line rather than a hand-rolled scanner. <c>DescendantTokens()</c>
+    /// does not descend into trivia, so comments — <c>//</c>, <c>/* */</c>, XML doc comments and
+    /// disabled <c>#if</c> regions alike — contribute no tokens at all, and a <c>//</c> inside a
+    /// literal is not one either. That last case is not hypothetical: 116 lines in this suite
+    /// carry a <c>//</c> inside a string (URLs in XML manifests, AlSourceParserCommentTests' AL
+    /// fixtures), and a scanner cutting at the first <c>//</c> would truncate real code on every
+    /// one of them.</para>
+    ///
+    /// <para>This is the third guard in the project to need the distinction —
+    /// <c>BaseAppFloorFixtureGuardTests.CSharpWritesFloor</c> is the model, and its doc comment
+    /// names by hand exactly the trailing-comment and block-comment holes this replaces (#3153,
+    /// #3527: do not add a fourth handwritten C# lexer).</para>
+    /// </summary>
+    internal static string StripCommentsPreservingLines(string sourceText) =>
+        StripCommentsPreservingLines(sourceText, blankStringContents: true);
+
+    /// <summary>
+    /// The same pass, with a choice about string literals, because the two scans in this file
+    /// need opposite answers about them and both are right.
+    ///
+    /// <para><paramref name="blankStringContents"/> true — the skippable-attribute scan: a
+    /// literal calls nothing, so a skip spelling inside one is not a skip. False — the
+    /// artifact-path scan, whose whole subject is a path spelled as a literal, and for which
+    /// blanking literals would remove the thing being looked for.</para>
+    /// </summary>
+    internal static string StripCommentsPreservingLines(string sourceText, bool blankStringContents)
+    {
+        var kept = new System.Text.StringBuilder(sourceText);
+        // Blank by SPAN rather than rebuilding the text, so anything not explicitly blanked --
+        // code, and the literals the artifact-path scan needs -- is preserved byte for byte.
+        void Blank(Microsoft.CodeAnalysis.Text.TextSpan span)
+        {
+            for (var i = span.Start; i < span.End && i < kept.Length; i++)
+                if (kept[i] != '\n' && kept[i] != '\r') kept[i] = ' ';
+        }
+
+        var root = CSharpSyntaxTree.ParseText(sourceText).GetRoot();
+
+        foreach (var trivia in root.DescendantTrivia(descendIntoTrivia: true))
+            if (IsCommentOrDisabledCode(trivia.Kind()))
+                Blank(trivia.Span);
+
+        if (blankStringContents)
+            foreach (var token in root.DescendantTokens(descendIntoTrivia: true))
+                if (IsLiteralContent(token.Kind()))
+                    Blank(token.Span);
+
+        return kept.ToString();
+    }
+
+    /// <summary>
+    /// Trivia that is not code. Disabled <c>#if</c> regions are included because the compiler
+    /// does not build them either, so a call spelled there is not a call this suite can make.
+    /// </summary>
+    private static bool IsCommentOrDisabledCode(SyntaxKind kind) => kind
+        is SyntaxKind.SingleLineCommentTrivia
+        or SyntaxKind.MultiLineCommentTrivia
+        or SyntaxKind.SingleLineDocumentationCommentTrivia
+        or SyntaxKind.MultiLineDocumentationCommentTrivia
+        or SyntaxKind.DocumentationCommentExteriorTrivia
+        or SyntaxKind.DisabledTextTrivia;
+
+    /// <summary>
+    /// Every token kind whose text is literal CONTENT rather than code. The interpolated-string
+    /// TEXT token is content; the expressions inside <c>{…}</c> holes are separate tokens and are
+    /// deliberately left alone, because an interpolation hole really can call something —
+    /// the blind spot #3527 names.
+    /// </summary>
+    private static bool IsLiteralContent(SyntaxKind kind) => kind
+        is SyntaxKind.StringLiteralToken
+        or SyntaxKind.Utf8StringLiteralToken
+        or SyntaxKind.SingleLineRawStringLiteralToken
+        or SyntaxKind.MultiLineRawStringLiteralToken
+        or SyntaxKind.Utf8SingleLineRawStringLiteralToken
+        or SyntaxKind.Utf8MultiLineRawStringLiteralToken
+        or SyntaxKind.InterpolatedStringTextToken
+        or SyntaxKind.CharacterLiteralToken;
+
+    internal static int CountTestDeclarations() =>
+        TestSourcePaths().Sum(f => CountTestDeclarationsIn(File.ReadAllText(f)));
+
+    private static int CountTestDeclarationsIn(string sourceText) =>
+        sourceText.Split('\n').Count(line => FactLine.IsMatch(line));
 }
