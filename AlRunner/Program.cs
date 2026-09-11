@@ -6174,7 +6174,18 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                         // the client naming ONE statement on a line that carries several
                         // (#3879 review). The legacy `lines` array has no column to carry.
                         var lines = new List<(int Line, int? Column)>();
+                        // BRACES, and they are load-bearing. Without them C#'s dangling-else
+                        // binds the `else` below to the INNER `if (bp.TryGetProperty("line"))`
+                        // — so the legacy branch sat inside the loop over `breakpoints`, and
+                        // could run only for a request that HAD a `breakpoints` array carrying
+                        // an element with no `line`. A request sending `lines[]` alone reached
+                        // neither branch and was answered `breakpoints: []` with success: true
+                        // — every legacy breakpoint silently dropped, and the client told the
+                        // request succeeded. It compiles, it reads correctly, and nothing drove
+                        // it: found by adding the coverage GitHub Copilot's review of PR #3899
+                        // asked for.
                         if (args.Value.TryGetProperty("breakpoints", out var bpsEl) && bpsEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                        {
                             foreach (var bp in bpsEl.EnumerateArray())
                                 if (bp.TryGetProperty("line", out var lineEl))
                                     // Both to 1-based, which is what the resolver compares in.
@@ -6183,10 +6194,13 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                                             && colEl.ValueKind == System.Text.Json.JsonValueKind.Number
                                             ? FromClientColumn(colEl.GetInt32())
                                             : null));
+                        }
                         else if (args.Value.TryGetProperty("lines", out var legacyLinesEl) && legacyLinesEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                        {
                             // The legacy array carries no column, and its lines are in the
                             // client's base exactly as `breakpoints[].line` is.
                             foreach (var l in legacyLinesEl.EnumerateArray()) lines.Add((FromClientLine(l.GetInt32()), null));
+                        }
 
                         // An EMPTY list resolves nothing — "remove every breakpoint in this
                         // source" needs no map — so it is answered now, whatever the compile

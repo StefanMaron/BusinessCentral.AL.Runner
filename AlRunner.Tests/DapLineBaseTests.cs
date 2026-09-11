@@ -77,6 +77,45 @@ public class DapLineBaseTests
         }
     }
 
+    /// <summary>Drives the same session with the LEGACY <c>lines[]</c> array instead of
+    /// <c>breakpoints[]</c>. DAP's older spelling carries a bare line and no column, and it is
+    /// a separate parse in the handler — so it is a separate conversion, which is why it needs
+    /// its own session rather than a parameter on the one above.</summary>
+    private static async Task<(DapClient Dap, JsonElement BpResponse)> StartAndSetLegacyLineBreakpointAsync(
+        int line, bool linesStartAt1)
+    {
+        var dap = await DapClient.StartAsync(FixtureSrc);
+        try
+        {
+            var initSeq = dap.SendRequest("initialize",
+                new { adapterID = "al-runner-tests", linesStartAt1 });
+            var initEvents = new List<JsonElement>();
+            var initResp = await dap.ReadUntilResponseAsync(initSeq, initEvents);
+            Assert.True(initResp.GetProperty("success").GetBoolean(), initResp.ToString());
+            if (!initEvents.Any(e => e.GetProperty("event").GetString() == "initialized"))
+                await dap.ReadUntilEventAsync("initialized");
+
+            var launchSeq = dap.SendRequest("launch", new { });
+            var launchResp = await dap.ReadUntilResponseAsync(launchSeq, timeout: TimeSpan.FromSeconds(120));
+            Assert.True(launchResp.GetProperty("success").GetBoolean(),
+                $"launch failed: {launchResp}\n--- stderr ---\n{dap.StdErr}");
+
+            var bpSeq = dap.SendRequest("setBreakpoints", new
+            {
+                source = new { path = Path.Combine(FixtureSrc, SourceFileName) },
+                lines = new[] { line },
+            });
+            var bpResp = await dap.ReadUntilResponseAsync(bpSeq);
+            Assert.True(bpResp.GetProperty("success").GetBoolean(), bpResp.ToString());
+            return (dap, bpResp);
+        }
+        catch
+        {
+            await dap.DisposeAsync();
+            throw;
+        }
+    }
+
     /// <summary>
     /// RED before the fix: the breakpoint is unverified. A 0-based client naming
     /// <c>First := 1;</c> as line 34 had that number compared against 1-based spans, so it
@@ -299,6 +338,61 @@ public class DapLineBaseTests
         var stResp = await dap.ReadUntilResponseAsync(stSeq);
         Assert.Equal(SingleStatementLine - 1, stResp.GetProperty("body").GetProperty("stackFrames")[0]
             .GetProperty("line").GetInt32());
+
+        var contSeq = dap.SendRequest("continue", new { threadId = 1 });
+        await dap.ReadUntilResponseAsync(contSeq);
+        var exited = await dap.ReadUntilEventAsync("exited", TimeSpan.FromSeconds(60));
+        Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
+    }
+
+    /// <summary>
+    /// The legacy <c>lines[]</c> array is a second, independent parse of the same request, and
+    /// it converts too. Nothing in the rest of this suite sends that spelling, so a regression
+    /// leaving this one path 1-based would keep every other fact green — which is exactly the
+    /// shape that makes a test suite read as coverage while protecting nothing.
+    ///
+    /// <para>RED against <c>origin/main</c>, where the legacy path did not convert: a 0-based
+    /// client's 34 was read as 1-based 34, resolved against the <c>begin</c>, and came back
+    /// unverified. GREEN: verified, echoed as 34, and the stop is at the statement it meant —
+    /// pinned by the locals, since <c>First</c> is still 0 in front of <c>First := 1;</c>.</para>
+    ///
+    /// <para>Raised by GitHub Copilot's automatic review of PR #3899.</para>
+    /// </summary>
+    [SkippableFact]
+    public async Task ZeroBasedClient_UsingTheLegacyLinesArray_BindsAndReportsInItsOwnBase()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (dap, bpResp) = await StartAndSetLegacyLineBreakpointAsync(
+            SingleStatementLine - 1, linesStartAt1: false);
+        await using var _ = dap;
+
+        var bp = bpResp.GetProperty("body").GetProperty("breakpoints")[0];
+        Assert.True(bp.GetProperty("verified").GetBoolean(),
+            $"{bpResp}\n--- stderr ---\n{dap.StdErr}");
+        Assert.Equal(SingleStatementLine - 1, bp.GetProperty("line").GetInt32());
+
+        var cfgSeq = dap.SendRequest("configurationDone");
+        await dap.ReadUntilResponseAsync(cfgSeq);
+
+        var stopped = await dap.ReadUntilEventAsync("stopped");
+        Assert.Equal(SingleStatementLine - 1, stopped.GetProperty("body").GetProperty("line").GetInt32());
+
+        var stSeq = dap.SendRequest("stackTrace", new { threadId = 1 });
+        var stResp = await dap.ReadUntilResponseAsync(stSeq);
+        var topFrame = stResp.GetProperty("body").GetProperty("stackFrames")[0];
+        Assert.Equal(SingleStatementLine - 1, topFrame.GetProperty("line").GetInt32());
+
+        var frameId = topFrame.GetProperty("id").GetInt32();
+        var scSeq = dap.SendRequest("scopes", new { frameId });
+        var scResp = await dap.ReadUntilResponseAsync(scSeq);
+        var variablesReference = scResp.GetProperty("body").GetProperty("scopes")[0]
+            .GetProperty("variablesReference").GetInt32();
+        var varSeq = dap.SendRequest("variables", new { variablesReference });
+        var varResp = await dap.ReadUntilResponseAsync(varSeq);
+        var locals = varResp.GetProperty("body").GetProperty("variables").EnumerateArray()
+            .ToDictionary(v => v.GetProperty("name").GetString()!, v => v.GetProperty("value").GetString());
+        Assert.Equal("0", locals["First"]);
 
         var contSeq = dap.SendRequest("continue", new { threadId = 1 });
         await dap.ReadUntilResponseAsync(contSeq);

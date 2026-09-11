@@ -102,8 +102,22 @@ Session lifecycle is identical to the TCP transport from here on:
    statement *starting* at the column; failing that, the statement *containing* it
    (a mid-token click); failing that, the whole line. The last is a relocation, so
    the response reports the `column` actually bound. The client capability
-   `columnsStartAt1` is honoured for that field in both directions; its sibling
-   `linesStartAt1` is **not** honoured anywhere yet (#3881).
+   `columnsStartAt1` is honoured for that field in both directions.
+
+   **Both client bases are honoured, everywhere a number crosses the wire** (#3881).
+   `initialize` carries `linesStartAt1` and `columnsStartAt1`, each defaulting to
+   true when absent, and the adapter converts into its own 1-based numbering on the
+   way in and back into the client's on the way out — at the `setBreakpoints`
+   request (`breakpoints[].line`, `breakpoints[].column`, and the legacy `lines[]`
+   array), the breakpoint response's `line` and `column`, the `stopped` event's
+   `line`, and every `stackTrace` frame's `line` and `column`. A line of 0 is the
+   sentinel for a frame that could not be mapped, not a coordinate, so it is passed
+   through rather than converted; #3901 carries what that costs a 0-based client.
+
+   **A second `initialize` is refused**, with a message saying why. DAP allows it
+   only as the first request and only once, and the two bases are negotiated there
+   and answered against for the rest of the session — honouring a repeat would move
+   the numbering under breakpoints already armed and acknowledged.
 4. `configurationDone` → AL execution begins.
 5. When a breakpointed statement's `StmtHit` fires, the AL execution thread
    blocks and a `stopped` event (`reason: "breakpoint"`) is sent.
