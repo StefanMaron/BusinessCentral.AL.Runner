@@ -69,10 +69,26 @@ public sealed record TddExcludedObjectDetail(
 /// </summary>
 /// <param name="ExcludedObjects">
 /// Objects the emit-retry loop dropped to get the rest of the module to compile. NON-EMPTY
-/// MEANS TESTS VANISHED: an excluded test codeunit contributes no results, so the run reports
-/// a smaller total and still exits 0. Measured on the al-language corpus — a stale System.app
-/// silently cost 7 tests (1904 -> 1897) with no output at any verbosity below --verbose.
-/// The caller MUST treat this as a hard failure (.claude/rules/loud-failures.md).
+/// MEANS THE MODULE IS INCOMPLETE: an excluded test codeunit contributes no results, so the
+/// run reports a smaller total and still exits 0. Measured on the al-language corpus — a stale
+/// System.app silently cost 7 tests (1904 -> 1897) with no output at any verbosity below
+/// --verbose.
+///
+/// <para>EVERY caller MUST inspect this and say something; none may ignore it
+/// (.claude/rules/loud-failures.md). What they may then do differs by what the loss costs,
+/// and all four live callers discriminate rather than sharing one verdict:</para>
+/// <list type="bullet">
+/// <item>Program.cs (bundle) — four-way: all-profiles and every-drop-safe continue, --tdd
+/// reports synthetic failures, anything else fails the run.</item>
+/// <item>SiblingCompile.cs (--precompile) — fails, via its AL-DIAGNOSTIC-FAIL guard.</item>
+/// <item>DependencyLoader.LoadOne — REPORTS and continues (#2247): a dropped dependency object
+/// has a runtime backstop the bundle case lacks, and refusing aborts whole suites over an
+/// object that is unavailable headless by construction.</item>
+/// <item>DependencyMetadataProducer.Ensure — throws, because a partial document set would be
+/// CACHED and replayed silently forever.</item>
+/// </list>
+/// <para>Trap: a caller that also caches its output has to make the report survive a cache
+/// HIT, or it is loud exactly once and silent on every later run (#2247).</para>
 /// </param>
 public sealed record BcEmitOutput(
     IReadOnlyList<EmittedSource> Sources,

@@ -640,6 +640,9 @@ public sealed class DependencyLoader
         // dep emitted, keyed by (kind, id). Same cache-HIT hazard as the four sidecars
         // above, and the same shape of fix.
         var objectMetadataSidecar = Path.Combine(cacheDir, cacheKey + ".object-metadata.json");
+        // #2247: the emit-exclusion report, cached like the six above because a HIT skips
+        // the compile that would otherwise produce it.
+        var emitExcludedSidecar = Path.Combine(cacheDir, cacheKey + ".emit-excluded.txt");
         if (File.Exists(cachedDll))
         {
             try
@@ -663,6 +666,11 @@ public sealed class DependencyLoader
                     replayedEnums = AlEnumMetadataRegistry.LoadSidecar(enumRegistrySidecar);
                 Console.Error.WriteLine(
                     $"[deps] source-cache HIT: {m.Name} v{m.Version} key={cacheKey[..12]} ({cachedBytes.Length} bytes, {replayedReports} report-metadata entries, {replayedEnums} enum-registry entries)");
+                // #2247: replay the exclusion report too. This return is 80 lines above the
+                // EMIT-EXCLUDED guard, so without this a warm run of a partially-emitted
+                // dependency says nothing at all — exactly the pre-fix silence, and invisible to
+                // CI, which provisions a fresh cache on every leg.
+                ReplayEmitExcludedSidecar(emitExcludedSidecar);
                 return (Assembly.Load(cachedBytes), cacheKey, EmptyAssemblies);
             }
             catch (Exception ex)
@@ -705,7 +713,10 @@ public sealed class DependencyLoader
             catch (Exception ex) { Console.Error.WriteLine($"[deps] layout stage failed for {layoutName}: {ex.Message}"); }
         }
 
-        IReadOnlyList<EmittedSource> emitted;
+        BcEmitOutput emitOutput;
+        // Non-null once an exclusion has been reported, so it can be cached beside the DLL
+        // and replayed on a later HIT (#2247 — see PublishSourceDependencyCache).
+        string? emitExcludedReport = null;
         // Snapshot the report-metadata registry before this dep's emit so we can
         // persist exactly the entries THIS app contributed to its own sidecar.
         var reportIdsBeforeEmit = new HashSet<int>(AlReportMetadataRegistry.Ids);
@@ -719,7 +730,7 @@ public sealed class DependencyLoader
         // the PARENT bundle) would be both in the reference list AND in the primary AL
         // source → AL0275 "ambiguous reference". The scope is restored on dispose.
         try { using (BcCompiler.ScopeCurrentAppIdentity(m.AppId, m.Publisher, m.Version))
-                  emitted = _compiler.Emit(new[] { tempDir }, m.Name, tempDir).Sources; }
+                  emitOutput = _compiler.Emit(new[] { tempDir }, m.Name, tempDir); }
         catch (Exception ex)
         {
             // EMIT-FAIL: the BC Compilation.Emit() call threw (e.g. "Unexpected value 'None'
@@ -730,6 +741,7 @@ public sealed class DependencyLoader
             Console.Error.WriteLine($"[dep-load-fail] {m.Publisher}_{m.Name} v{m.Version}: EMIT-FAIL — {detail}");
             throw new DependencyLoadException(m.Publisher, m.Name, m.Version.ToString(), "EMIT-FAIL", detail, ex);
         }
+        var emitted = emitOutput.Sources;
         if (emitted.Count == 0)
         {
             // EMIT-ZERO: Emit returned success but produced no sources — BC's silent
@@ -740,6 +752,39 @@ public sealed class DependencyLoader
                 "Run with BCCOMPILER_DIAG=1 or --precompile for full diagnostics.";
             Console.Error.WriteLine($"[dep-load-fail] {m.Publisher}_{m.Name} v{m.Version}: EMIT-ZERO — {detail}");
             throw new DependencyLoadException(m.Publisher, m.Name, m.Version.ToString(), "EMIT-ZERO", detail);
+        }
+        // EMIT-EXCLUDED (#2247): the PARTIAL case of EMIT-ZERO above. The retry loop drops an
+        // object that cannot bind and recompiles the survivors, so `Sources` is non-empty and
+        // every check here passed, while the assembly being loaded and cached was missing it.
+        //
+        // REPORTS and continues, unlike the bundle path (Program.cs) and unlike the metadata
+        // path (DependencyMetadataProducer, which throws because its output is cached and
+        // replayed). A dependency's dropped object has a runtime backstop those lack — the
+        // first AL that touches it dies with NavNCLMissingMethodException — so what #2247 is
+        // written against here is "nobody could tell", not "nothing stopped it". Refusing was
+        // measured and aborts the whole runner-extras suite over Tests-TestLibraries dropping
+        // 1 of 203 objects on a DotNet type unavailable headless; ExcludedObjectTriage does not
+        // clear that one either. Same over-refusal #3476 removed from the bundle path.
+        //
+        // Trap: the report is CACHED (see PublishSourceDependencyCache) and replayed on a HIT.
+        // Without that it fires only on the run that compiled, and a warm run of a partial
+        // dependency is the pre-fix silence — which CI cannot see, provisioning fresh per leg.
+        if (emitOutput.ExcludedObjects.Count > 0)
+        {
+            var detail = BuildDependencyEmitExcludedDetail(
+                emitOutput.ExcludedObjects, emitted.Count,
+                emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>());
+            // Reported, not merely printed: on a long run the discovery line scrolls thousands
+            // of lines above the summary the caller actually reads (#2587), and this one has to
+            // survive to the end because the run CONTINUES past it. ProvisionGapLog writes to
+            // stderr itself, so this is one call, not two.
+            //
+            // Deliberately not a `[deps]` line: Log's component filter drops those at default
+            // verbosity (#2750, CorruptSidecarLoudnessTests) — the same filter that made the
+            // original silence possible, so tagging it `[deps]` would reproduce the defect
+            // while looking like a fix.
+            emitExcludedReport = $"{m.Publisher}_{m.Name} v{m.Version}: EMIT-EXCLUDED — {detail}";
+            AlRunner.Infrastructure.ProvisionGapLog.Report(emitExcludedReport);
         }
 
         var asmName = $"Dep_{SanitizeIdent(m.Publisher)}_{SanitizeIdent(m.Name)}_{m.Version.ToString().Replace('.', '_')}";
@@ -772,7 +817,8 @@ public sealed class DependencyLoader
                 enumRegistrySidecar,
                 AlEnumMetadataRegistry.Ids.Where(i => !enumIdsBeforeEmit.Contains(i)),
                 objectMetadataSidecar,
-                AlObjectMetadataRegistry.Keys.Where(k => !objectKeysBeforeEmit.Contains(k)).ToArray());
+                AlObjectMetadataRegistry.Keys.Where(k => !objectKeysBeforeEmit.Contains(k)).ToArray(),
+                emitExcludedSidecar: emitExcludedSidecar, emitExcludedReport: emitExcludedReport);
             Console.Error.WriteLine(
                 $"[deps] source-cache WROTE: {m.Name} v{m.Version} key={cacheKey[..12]} ({compile.AssemblyBytes!.Length} bytes, {sidecarCount} report-metadata entries, {enumSidecarCount} enum-registry entries)");
         }
@@ -832,8 +878,19 @@ public sealed class DependencyLoader
         string xmlPortMetadataSidecar, int[] ownXmlPortIds,
         string enumRegistrySidecar, IEnumerable<int> ownEnumIds,
         string objectMetadataSidecar, IEnumerable<string> ownObjectKeys,
-        Action? onSidecarsPublishedBeforeDll = null)
+        Action? onSidecarsPublishedBeforeDll = null,
+        string? emitExcludedSidecar = null, string? emitExcludedReport = null)
     {
+        // #2247: the emit-exclusion report is cached like every other per-dependency fact,
+        // because the DLL beside it is. A HIT returns before the compile, so without this the
+        // report fires on the first run and never again — and a warm run of a partial
+        // dependency is byte-for-byte the pre-fix silence. Measured on a 2-object package
+        // against one cache root: run 1 printed 2 EMIT-EXCLUDED lines and 1 provisioning gap,
+        // runs 2 and 3 printed neither, while the cached sidecar held 1 object of 2.
+        // Published FIRST so it lands before the DLL, which is the file the read side gates on.
+        if (emitExcludedSidecar != null && emitExcludedReport != null)
+            AlCacheWriter.AtomicPublish(emitExcludedSidecar,
+                tmp => File.WriteAllText(tmp, emitExcludedReport));
         int sidecarCount = AlCacheWriter.AtomicPublish(reportSidecar,
             tmp => AlReportMetadataRegistry.SaveSidecar(tmp, ownReportIds));
         AlCacheWriter.AtomicPublish(reportLayoutSidecar,
@@ -852,6 +909,32 @@ public sealed class DependencyLoader
     }
 
     /// <summary>
+    /// Re-report a cached emit exclusion (#2247). The report is a property of the compiled
+    /// artifact, so it has to survive a cache HIT the same way the metadata sidecars do:
+    /// otherwise a partial dependency is loud exactly once, on the run that compiled it, and
+    /// silent on every run afterwards. Absent file = nothing was excluded, which is the
+    /// ordinary case and stays silent (guards-need-a-third-state.md: the genuinely-absent
+    /// thing is a pass). An unreadable one says so rather than being swallowed.
+    /// </summary>
+    private static void ReplayEmitExcludedSidecar(string emitExcludedSidecar)
+    {
+        if (!File.Exists(emitExcludedSidecar)) return;
+        try
+        {
+            var report = File.ReadAllText(emitExcludedSidecar).Trim();
+            if (report.Length > 0)
+                AlRunner.Infrastructure.ProvisionGapLog.Report(report + " (from a cached compile)");
+        }
+        catch (Exception ex)
+        {
+            AlRunner.Infrastructure.ProvisionGapLog.Report(
+                $"an emit-exclusion record for this dependency exists at {emitExcludedSidecar} but "
+                + $"could not be read ({ex.GetType().Name}: {ex.Message}), so this run cannot say "
+                + "which objects were dropped from it.");
+        }
+    }
+
+    /// <summary>
     /// Replay this dependency's Tier-3 source-compile-cache metadata sidecars (report,
     /// report-layout, page, xmlport, enum) into the process-wide registries. Called from
     /// the <c>LoadAll</c> cache-hit fast path (see its call site for the full "why"), ONLY
@@ -867,6 +950,8 @@ public sealed class DependencyLoader
     private void ReplayDependencyMetadataSidecars(AppManifest m, string cacheKey)
     {
         var cacheDir = AlRunner.Infrastructure.CacheRoots.Resolve("compiled-deps");
+        // #2247: the reused-module path is a cache HIT too — same reasoning as LoadOne's.
+        ReplayEmitExcludedSidecar(Path.Combine(cacheDir, cacheKey + ".emit-excluded.txt"));
         var reportSidecar = Path.Combine(cacheDir, cacheKey + ".report-metadata.json");
         var reportLayoutSidecar = Path.Combine(cacheDir, cacheKey + ".report-layouts.json");
         var pageMetadataSidecar = Path.Combine(cacheDir, cacheKey + ".page-metadata.json");
@@ -1050,6 +1135,38 @@ public sealed class DependencyLoader
         Func<string, bool> indexContains)
         => !IsMetadataStage(stage)
            && HasFaithfulServiceTierFallback(serviceTierIndexAvailable, codeunitTypeNames, indexContains);
+
+    /// <summary>
+    /// The EMIT-EXCLUDED detail text (#2247). Split out so the message contract can be
+    /// asserted directly, without a runner subprocess and without a dependency whose AL
+    /// happens to fail to bind on the BC version the test runs against.
+    ///
+    /// It has to state three things, because a reader who sees only "some objects were
+    /// excluded" still has to go looking: WHICH objects were dropped, HOW MANY of the
+    /// dependency's objects survived (so the loss has a denominator — the shape #3875
+    /// measured as 55 of 70), and WHY each one was dropped, which is the AL diagnostic.
+    /// The diagnostics are inlined rather than put behind --verbose: this aborts the run,
+    /// so they are the only account of the cause, the same choice the EMIT-ZERO path and
+    /// Program.cs's non-profile EMIT-EXCLUDED branch make (#2949).
+    /// </summary>
+    internal static string BuildDependencyEmitExcludedDetail(
+        IReadOnlyList<string> excludedObjects,
+        int emittedCount,
+        IReadOnlyList<string> excludedDiagnostics)
+    {
+        var names = string.Join(", ", excludedObjects);
+        var total = emittedCount + excludedObjects.Count;
+        var sb = new System.Text.StringBuilder();
+        sb.Append($"{excludedObjects.Count} of this dependency's {total} object(s) could not be ")
+          .Append($"compiled and were dropped, so the loaded assembly provides only {emittedCount} ")
+          .Append($"of them: [{names}]. Dependent AL that touches a dropped object fails later ")
+          .Append("with a cryptic NavNCLMissingMethodException, and a test that only touches the ")
+          .Append("survivors passes while covering less than it claims.");
+        if (excludedDiagnostics.Count > 0)
+            sb.Append(" AL diagnostics that identified the dropped object(s): ")
+              .Append(string.Join(" | ", excludedDiagnostics));
+        return sb.ToString();
+    }
 
     /// <summary>
     /// True for the stages <see cref="DependencyMetadataProducer"/> raises. Matched on the
