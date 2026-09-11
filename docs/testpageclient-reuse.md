@@ -87,10 +87,30 @@ from the artifact directory by filename probe):
 | 28.4.53241.54346 | present | **OK**, `Version=28.0.0.0` | resolves, 6 args |
 
 Strong-name binding was never the problem — the requested and actual identities match
-exactly. `TestPageClient.dll` is present in all nine provisioned artifact directories
-(27.0, 27.3, 27.5 ×2, 28.0, 28.1, 28.2, 28.3, 28.4).
+exactly.
 
-### The one failure, and it is a provisioning artifact
+**Stated as a dated measurement, because an artifact cache changes under you.** On
+2026-09-11, this machine held **twelve service-tier artifact directories** — a directory
+counts as one when it carries `Microsoft.Dynamics.Nav.Ncl.dll`, which is what makes it the
+kind of directory this claim is about — and **every one of the twelve carried
+`TestPageClient.dll`**: 27.0, 27.3, 27.5 ×2, 28.0, 28.1 ×2, 28.2, 28.3, 28.4 ×3.
+
+A count is a snapshot; the next `al-runner provision` changes it. **The durable claim is not
+the number but the absence of a counter-example**: no service-tier directory has yet been
+found without the DLL. Re-run the recipe at the end of this page rather than trusting the
+figure — and if you find one that lacks it, that is a real finding and this page is wrong.
+
+The duplicates are load-bearing twice over. `27.5` appears twice because one of those two
+directories is the incomplete one below, which is the whole finding. And the `28.0` pair is
+the trap: only one of them is a service-tier directory at all.
+
+> **A directory under `artifacts/` is not necessarily a service tier.** On the same day,
+> `28.0.46665.54452` held **zero DLLs** — one entry, `platform-apps/`. It has no `Ncl.dll`,
+> so it is a different artifact kind, and it neither has nor should have `TestPageClient.dll`.
+> Counting it would manufacture a counter-example out of a directory the claim was never
+> about. Filter on `Ncl.dll` before counting, which is exactly what the twelve above does.
+
+### The one real failure, and it is a provisioning artifact
 
 `27.5.46862.48827` loads the assembly but `GetType(..., throwOnError: true)` fails:
 
@@ -100,9 +120,15 @@ FileNotFoundException: Could not load file or assembly
 ```
 
 That directory is missing `Microsoft.Dynamics.Framework.UI.dll`; its sibling
-`27.5.46862.53931` has it, as do the other eight. So this is an incomplete artifact
-directory, not a version-shape difference — and it is precisely the **missing transitive
-dependency** case BC's `catch (FileNotFoundException)` converts into "not installed".
+`27.5.46862.53931` has it, as did every other service-tier directory measured on 2026-09-11.
+It is also visibly truncated — **82 DLLs against the 501 a complete extraction carries** — so
+this is an incomplete artifact directory, not a version-shape difference, and it is precisely
+the **missing transitive dependency** case BC's `catch (FileNotFoundException)` converts into
+"not installed".
+
+The DLL-count asymmetry is the cheap way to recognise the state: a directory with `Ncl.dll`
+but far fewer than ~500 DLLs is partially extracted, and BC will report whatever is missing
+from it under a name that sounds like a verdict about the product.
 
 ## Why reuse still does not follow
 
@@ -154,3 +180,24 @@ own concatenation — `"Microsoft.Dynamics.Nav.Client.TestPageClient" + fullName
 — through `Assembly.Load`, and call `GetType("…TestPageClientSession", throwOnError: true)`.
 Pointing it at a directory missing `Framework.UI.dll` reproduces the
 `FileNotFoundException` that BC swallows.
+
+**Re-measuring the presence figure takes one command**, and it filters on `Ncl.dll` so a
+`platform-apps` directory cannot become a false counter-example:
+
+```bash
+cd ~/.local/share/al-runner/artifacts
+for v in */; do v=${v%/}
+  [ -f "$v/Microsoft.Dynamics.Nav.Ncl.dll" ] || continue      # service-tier dirs only
+  printf '%-22s TestPageClient=%s FrameworkUI=%s dlls=%s\n' "$v" \
+    "$([ -f "$v/Microsoft.Dynamics.Nav.Client.TestPageClient.dll" ] && echo yes || echo NO)" \
+    "$([ -f "$v/Microsoft.Dynamics.Framework.UI.dll" ] && echo yes || echo NO)" \
+    "$(ls "$v"/*.dll 2>/dev/null | wc -l)"
+done
+```
+
+A `TestPageClient=NO` row on a directory that has `Ncl.dll` contradicts this page. A
+`FrameworkUI=NO` row with a low `dlls=` count is the incomplete-extraction state above, not a
+finding about BC.
+
+`AlRunner.Tests/TestPageClientPresenceTests.cs` asserts the same thing against whichever
+artifact directory the runner selects, so the claim fails a test rather than merely aging.

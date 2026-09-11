@@ -156,9 +156,11 @@ NOT_A_MATRIX_CLAIM = [
      "the 27.x artifact directories provisioned on the machine that checked whether "
      "TestPageClient.dll ships -- a historical observation of where the DLL was found, "
      "not a claim about which legs any workflow runs (#3799)"),
-    ("docs/testpageclient-reuse.md", "28.0 28.1 28.2 28.3 28.4",
-     "the 28.x half of the same historical observation -- which artifact directories were "
-     "present at measurement time, not the matrix (#3799)"),
+    ("docs/testpageclient-reuse.md", "28.2 28.3 28.4",
+     "the tail of the same dated enumeration. The sentence reads '28.0, 28.1 x2, 28.2, "
+     "28.3, 28.4 x3', so the multiplicity markers break it into runs and only this one "
+     "scans as a version list -- which is itself the tell that it is a directory census "
+     "and not a leg set (#3799)"),
     ("docs/upstream-corpus-workflow.md", "27.1 27.2 27.4",
      "the 27 minors the corpus does NOT run; naming the gap is the point of the sentence"),
     ("docs/virtual-tables-allobj.md", "27.0 27.3 27.5 28.2 28.3",
