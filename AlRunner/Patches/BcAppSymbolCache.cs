@@ -836,8 +836,16 @@ internal static partial class BcAppSymbolCache
     // DefaultImplementations / UnknownImplementations are the ENUM-level fallbacks, one list
     // per enum (indexed by interface-declaration index), not one per value — see issue #2306
     // and AlEnumOptionMetadata.GetImplementationCodeunitIdPublic.
+    // Extensible is the AL `Extensible` property (#3807), read from the same Properties bag as
+    // DefaultImplementation. NULLABLE, because "declares false" and "declares nothing" are
+    // states BC's own emitter keeps apart: of 144 emitted enum documents in 28.1 and 28.4, 31
+    // state "1", 99 state "0" and 12 base enums state the attribute NOT AT ALL — the same 12
+    // whose SymbolReference.json omits the property. Collapsing null to false would make the
+    // render state an attribute BC leaves off, which is a manufactured difference in the
+    // direction this derivation exists to avoid.
     internal sealed record EnumSymbol(int Id, string Name, List<string> Options, List<int> Indexes, List<List<int>> Implementations, List<string?>? Captions = null,
-        List<int>? DefaultImplementations = null, List<int>? UnknownImplementations = null);
+        List<int>? DefaultImplementations = null, List<int>? UnknownImplementations = null,
+        bool? Extensible = null);
 
     // Parsed query SymbolReference.json shape. A query is a tree of dataitems; the root
     // dataitem(s) live under the query's "Elements", nested dataitems under "DataItems".
@@ -2512,9 +2520,37 @@ internal static partial class BcAppSymbolCache
         // Enum-level fallbacks. Both are written the same way a value's Implementation is —
         // a comma-separated list of codeunit ids, one per interface the enum implements.
         var enumProps = SymbolProperties(enumType);
+        // #3807 — Extensible is written as "1"/"0" in the same bag, and absent stays absent.
+        // Measured on 28.1.49838.53910 and 28.4.53241.54407 (two distinct binaries, identical
+        // counts): of 142 System Application + Business Foundation enums, 130 state the
+        // property and 31 of those state "1". The runner carried it nowhere at all, so BC
+        // applied its own default of false for all 142 — right for 111 by accident and wrong
+        // for the 31 that are extensible.
         return new EnumSymbol(id, name, options, indexes, implementations, captions,
             SymbolCodeunitIdList(enumProps, "DefaultImplementation"),
-            SymbolCodeunitIdList(enumProps, "UnknownValueImplementation"));
+            SymbolCodeunitIdList(enumProps, "UnknownValueImplementation"),
+            SymbolBoolean(enumProps, "Extensible"));
+    }
+
+    /// <summary>
+    /// The named property read as an AL boolean, or <c>null</c> when the enum declares it not
+    /// at all — a third state the caller must keep, not collapse (see
+    /// <see cref="EnumSymbol"/>'s <c>Extensible</c>).
+    ///
+    /// <para>Both spellings are accepted because both occur: <c>SymbolReference.json</c> states
+    /// <c>Extensible</c> as <c>"1"</c>/<c>"0"</c> on every one of the 130 System Application +
+    /// Business Foundation enums that declare it (measured on 28.1 and 28.4), while AL source
+    /// and several other property bags spell booleans <c>"true"</c>/<c>"false"</c>. An
+    /// unrecognised spelling reads as <c>false</c> rather than <c>true</c> or null: it IS a
+    /// declaration, so it is not the absent case, and the true direction is the one that
+    /// changes what AL is allowed to do.</para>
+    /// </summary>
+    private static bool? SymbolBoolean(Dictionary<string, string> props, string propertyName)
+    {
+        if (!props.TryGetValue(propertyName, out var text) || string.IsNullOrWhiteSpace(text))
+            return null;
+        var t = text.Trim();
+        return t == "1" || string.Equals(t, "true", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>The named property read as a comma-separated list of codeunit ids, or null

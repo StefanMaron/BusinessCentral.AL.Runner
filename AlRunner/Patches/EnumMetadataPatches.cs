@@ -63,8 +63,14 @@ public static class AlEnumMetadataRegistry
     // by interface-declaration index exactly like a value's own Implementations entry (issue
     // #2306). They are not parallel to Options — one list per enum, not per value. An empty
     // array means the enum declares none, which is how most enums are written.
+    // Extensible is the enum's own AL `Extensible` property (#3807) — a property of the BASE
+    // enum only, so the merge in TryGet takes the base entry's and an enumextension carries
+    // none. NULLABLE: "declares false" and "declares nothing" are states BC's own emitter
+    // keeps apart (12 of 144 emitted enum documents omit the attribute), so collapsing them
+    // would make the render state something BC leaves off.
     public sealed record Entry(int Id, string Name, string[] Options, int[] Indexes, int[][] Implementations, string?[]? Captions = null,
-        int[]? DefaultImplementations = null, int[]? UnknownImplementations = null);
+        int[]? DefaultImplementations = null, int[]? UnknownImplementations = null,
+        bool? Extensible = null);
 
     // Base-enum registrations, keyed by the enum's own object Id. This also
     // absorbs precompiled-dependency enums (RegisterFromAppPath) and cache
@@ -90,7 +96,7 @@ public static class AlEnumMetadataRegistry
     /// collisions are quarantined upstream. Enumextension values are tracked
     /// separately — see <see cref="RegisterExtension"/>.</summary>
     public static void Register(int id, string name, string[] options, int[] indexes, int[][]? implementations = null, string?[]? captions = null,
-        int[]? defaultImplementations = null, int[]? unknownImplementations = null)
+        int[]? defaultImplementations = null, int[]? unknownImplementations = null, bool? extensible = null)
     {
         if (options == null || indexes == null) return;
         if (options.Length != indexes.Length) return;
@@ -100,7 +106,7 @@ public static class AlEnumMetadataRegistry
         if (captions != null && captions.Length != options.Length)
             captions = null;
         _byId[id] = new Entry(id, name ?? string.Empty, options, indexes, implementations, captions,
-            defaultImplementations, unknownImplementations);
+            defaultImplementations, unknownImplementations, extensible);
     }
 
     /// <summary>
@@ -175,8 +181,14 @@ public static class AlEnumMetadataRegistry
         foreach (var ext in extensions)
             AddValues(ext);
 
+        // Extensible, like the two implementation fallbacks, is a property of the BASE enum:
+        // an enumextension declares none and RegisterExtension takes none, so an extension
+        // present without its base leaves this NULL — "nobody said" — rather than inventing a
+        // value (#3807). BC's emitter does the same: its two enumextension documents state no
+        // Extensible attribute either.
         entry = new Entry(id, name, options.ToArray(), indexes.ToArray(), implementations.ToArray(), captions.ToArray(),
-            baseEntry?.DefaultImplementations, baseEntry?.UnknownImplementations);
+            baseEntry?.DefaultImplementations, baseEntry?.UnknownImplementations,
+            baseEntry?.Extensible);
         return true;
     }
 
@@ -220,7 +232,8 @@ public static class AlEnumMetadataRegistry
                     enumSymbol.Implementations.Select(i => i.ToArray()).ToArray(),
                     enumSymbol.Captions?.ToArray(),
                     enumSymbol.DefaultImplementations?.ToArray(),
-                    enumSymbol.UnknownImplementations?.ToArray());
+                    enumSymbol.UnknownImplementations?.ToArray(),
+                    enumSymbol.Extensible);
         }
         catch (Exception ex) when (ex is not AlRunner.Infrastructure.BcAppSymbolReadException)
         {
@@ -331,6 +344,10 @@ public static class AlEnumMetadataRegistry
                 // from this build anyway.
                 defaultImplementations = r.Entry.DefaultImplementations,
                 unknownImplementations = r.Entry.UnknownImplementations,
+                // #3807 — the enum's declared Extensible, as a NULLABLE bool: absent from the
+                // sidecar and read back as null means "declares none", which is a different
+                // statement from a declared false and is the one the render leaves off.
+                extensible = r.Entry.Extensible,
                 // #2709 — null for a base registration; the base enum id it extends for an
                 // enumextension's own (unmerged) entry. Absent/null on replay means "plain
                 // Register", exactly like a pre-#2709 sidecar (which never carried this
@@ -355,6 +372,20 @@ public static class AlEnumMetadataRegistry
         int k = 0;
         foreach (var v in el.EnumerateArray()) ids[k++] = v.GetInt32();
         return ids.Length > 0 ? ids : null;
+    }
+
+    /// <summary>A sidecar's optional boolean property, or null when absent or JSON null —
+    /// "declares none", which for <c>Extensible</c> is a different statement from a declared
+    /// false and is the one the metadata render leaves off (issue #3807).</summary>
+    private static bool? ReadNullableBool(System.Text.Json.JsonElement parent, string name)
+    {
+        if (!parent.TryGetProperty(name, out var el)) return null;
+        return el.ValueKind switch
+        {
+            System.Text.Json.JsonValueKind.True => true,
+            System.Text.Json.JsonValueKind.False => false,
+            _ => null,
+        };
     }
 
     /// <summary>
@@ -430,7 +461,8 @@ public static class AlEnumMetadataRegistry
                 RegisterExtension(extendsTargetId.Value, name, opts, idxs, implementations, captions);
             else
                 Register(id, name, opts, idxs, implementations, captions,
-                    ReadIdList(e, "defaultImplementations"), ReadIdList(e, "unknownImplementations"));
+                    ReadIdList(e, "defaultImplementations"), ReadIdList(e, "unknownImplementations"),
+                    ReadNullableBool(e, "extensible"));
             count++;
         }
         return count;

@@ -31,6 +31,9 @@ internal static partial class ProgramSupport
                 // be cast to its interface on a cache HIT.
                 defaultImplementations = r.Entry.DefaultImplementations,
                 unknownImplementations = r.Entry.UnknownImplementations,
+                // #3807 — the enum's declared Extensible. Nullable: absent means "declares
+                // none", which the metadata render leaves off rather than stating as false.
+                extensible = r.Entry.Extensible,
                 // #2709 — null for a base registration; the base enum id an enumextension's
                 // own (unmerged) entry targets otherwise. See SnapshotRaw.
                 extends = r.ExtendsTargetId,
@@ -102,6 +105,20 @@ internal static partial class ProgramSupport
             return ids.Length > 0 ? ids : null;
         }
 
+        // A sidecar's optional boolean property, or null when absent or JSON null — "declares
+        // none", which for Extensible the metadata render leaves off rather than stating as
+        // false (issue #3807).
+        static bool? ReadNullableBool(System.Text.Json.JsonElement parent, string name)
+        {
+            if (!parent.TryGetProperty(name, out var el)) return null;
+            return el.ValueKind switch
+            {
+                System.Text.Json.JsonValueKind.True => true,
+                System.Text.Json.JsonValueKind.False => false,
+                _ => null,
+            };
+        }
+
         var json = File.ReadAllText(path);
         using var doc = System.Text.Json.JsonDocument.Parse(json);
         if (!doc.RootElement.TryGetProperty("enums", out var arr)
@@ -165,7 +182,8 @@ internal static partial class ProgramSupport
                 AlEnumMetadataRegistry.RegisterExtension(extendsTargetId.Value, name, opts, idxs, implementations, captions);
             else
                 AlEnumMetadataRegistry.Register(id, name, opts, idxs, implementations, captions,
-                    ReadIdList(e, "defaultImplementations"), ReadIdList(e, "unknownImplementations"));
+                    ReadIdList(e, "defaultImplementations"), ReadIdList(e, "unknownImplementations"),
+                    ReadNullableBool(e, "extensible"));
             count++;
         }
         // v4: replay per-report metadata XML (absent in pre-v4 sidecars — fine,

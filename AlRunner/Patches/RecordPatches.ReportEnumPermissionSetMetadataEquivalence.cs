@@ -137,9 +137,17 @@ public static partial class RecordPatches
     /// constructor then applies BC's default and the reported difference is a true statement
     /// about what the runner does not know. Writing BC's value into any element would
     /// manufacture agreement — which is the whole failure mode this harness exists to catch.
-    /// Measured on BC 28.1.49838.53910: <c>Extensible</c> is absent here because
-    /// <see cref="BcAppSymbolCache.EnumSymbol"/> does not carry it at all (#3807), not because
-    /// it is unknowable.</para>
+    /// <c>ALNamespace</c> and the enum-level <c>CaptionML</c> are absent for exactly that
+    /// reason: <see cref="BcAppSymbolCache.EnumSymbol"/> carries neither (#3807).</para>
+    ///
+    /// <para><b>Four members ARE derived (#3807)</b>, all four stated verbatim in
+    /// <c>SymbolReference.json</c> and all four expressible in the shape BC's own reader
+    /// parses: <c>Extensible</c>, <c>DefaultImplementation</c> and <c>UnknownImplementation</c>
+    /// as attributes on this root, and a value's <c>Implementation</c> as an attribute on
+    /// <c>&lt;Value&gt;</c>. That last one was the issue's open question and this is its answer
+    /// — <c>MetaEnumValue(XmlNode)</c> reads an <c>Implementation</c> attribute into
+    /// <c>InterfaceImplementation</c>. An enum declaring none of them still states none, so the
+    /// harness's "left off, never defaulted" contract above is unchanged.</para>
     /// </summary>
     internal static string? TryBuildEnumMetadataEquivalenceXml(int enumId)
     {
@@ -150,6 +158,26 @@ public static partial class RecordPatches
         doc.AppendChild(root);
         root.SetAttribute("ID", entry.Id.ToString(CultureInfo.InvariantCulture));
         root.SetAttribute("Name", entry.Name);
+
+        // "1"/"0", never "true"/"false": BC reads this through MetaBase.Int32Value, which is
+        // Int32.Parse with only "" and "undefined" mapped to 0, so a boolean spelling makes
+        // MetaEnum's constructor THROW rather than default.
+        //
+        // CONDITIONAL, matching BC's emitter rather than BC's default: of 144 emitted enum
+        // documents in 28.1 and 28.4, 31 state "1", 99 state "0" and 12 base enums state the
+        // attribute not at all — the same 12 whose SymbolReference.json omits the property.
+        // Writing "0" for those would state something BC leaves off, which is the manufactured
+        // agreement this file's header forbids, in the direction that is hardest to notice.
+        if (entry.Extensible is { } extensible)
+            root.SetAttribute("Extensible", extensible ? "1" : "0");
+
+        // Both enum-level implementation fallbacks (#2306), comma-joined: BC splits on
+        // MetaBase.SplitChar and Int32.Parse's each part. Null means "declares none" and stays
+        // OFF the document, because an empty attribute would still be an assertion.
+        if (entry.DefaultImplementations is { Length: > 0 } defaults)
+            root.SetAttribute("DefaultImplementation", string.Join(",", defaults));
+        if (entry.UnknownImplementations is { Length: > 0 } unknowns)
+            root.SetAttribute("UnknownImplementation", string.Join(",", unknowns));
 
         var values = doc.CreateElement("Values");
         root.AppendChild(values);
@@ -164,6 +192,16 @@ public static partial class RecordPatches
             value.SetAttribute(
                 "Ordinal",
                 (i < entry.Indexes.Length ? entry.Indexes[i] : i).ToString(CultureInfo.InvariantCulture));
+
+            // The value's own `Implementation` (#2306, rendered at #3807) — already parsed and
+            // previously dropped. This IS the shape BC's emitter writes: enum 1465's emitted
+            // document states <Value Name="Aes" Ordinal="0" Implementation="1467">, and
+            // MetaEnumValue(XmlNode) reads that attribute into InterfaceImplementation.
+            // An empty list means "declares none" and stays off, because writing an empty
+            // attribute sets InterfaceImplementation to Empty explicitly rather than leaving
+            // BC's own default — the same statement here, but not on a value BC did state.
+            if (i < entry.Implementations.Length && entry.Implementations[i] is { Length: > 0 } valueImplementations)
+                value.SetAttribute("Implementation", string.Join(",", valueImplementations));
 
             // Caption null means "this value declares none" (#1775), which is a different
             // statement from "declares an empty one" — so nothing is written for a null and
