@@ -96,11 +96,16 @@ public static partial class RecordPatches
             }
 
             var props = permissionSet.PropertyList;
-            // AL's `Assignable` property defaults to true when a permission set declares
-            // none — same rule BcAppSymbolCache.CollectPermissionSets already applies for
-            // precompiled dependency .apps, so a source-compiled and a precompiled
-            // declaration of the same shape answer identically.
-            var assignable = !PropIs(props, "Assignable", "false");
+            // An UNDECLARED `Assignable` is false, matching BcAppSymbolCache.CollectPermissionSets
+            // and TryReadPermissionSetFromBcDocument, so a source-compiled and a precompiled
+            // declaration of the same shape still answer identically (#2417, #3806). The shared
+            // rule is BC's own reader: MetaPermissionSet.Create assigns the property only when
+            // the attribute is present, leaving default(bool).
+            //
+            // TRAP: this value reaches ComposeSourcePermissionSet only on the FALLBACK path,
+            // when no BC document is registered — a compile-cache HIT. Letting it disagree with
+            // the document route would make one set answer false cold and true warm.
+            var assignable = PropIs(props, "Assignable", "true");
 
             _parsedPermissionSets[(appId, name)] = new ParsedAlPermissionSet(
                 id, name, PropertyTextFrom(PropValue(props, "Caption")), assignable, appId, appName,

@@ -279,7 +279,19 @@ internal static partial class BcAppSymbolCache
     //
     // 41 was confirmed free immediately before pushing, per v39's own warning: origin/main read
     // 40, and a sweep of all 252 remote branches carrying this file found none above 40.
-    private const int CacheVersion = 41;
+    // v42: a permission set stating no Assignable is read as FALSE rather than true (#2417,
+    // #3806) — what BC's own MetaPermissionSet.Create answers, since it assigns the property
+    // only when the attribute is present. The same trap as v35, v36, v38, v39, v40 and v41:
+    // PermissionSetSymbol.Assignable is a bool either way, so PayloadShape cannot see that the
+    // VALUE changed, and a warm box would replay Assignable=true — the exact pre-fix wrong
+    // answer, from cache, on a green build. Measured across the real 28.1 .app symbol files:
+    // 436 permission sets, of which 3 state no Assignable — Base Application 208 "D365 Basic -
+    // Edit" and 209 "D365 Basic - Read" (a Properties array with no Assignable key) and System
+    // Application 68 "System Execute - Basic" (no Properties key at all).
+    //
+    // 42 was confirmed free immediately before pushing, per v39's own warning: origin/main read
+    // 41, and a sweep of every remote branch carrying this file found none above 41.
+    private const int CacheVersion = 42;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -1150,13 +1162,22 @@ internal static partial class BcAppSymbolCache
                     if (string.IsNullOrEmpty(name)) continue;
                     var props = SymbolProperties(el);
                     props.TryGetValue("Caption", out var caption);
-                    // AL's `Assignable` defaults to true; only an explicit false flips it
-                    // (Base Application's "LOCAL" states `Assignable = false`, while
-                    // "D365 Basic - Edit" states nothing and is assignable). Table
-                    // 2000000250's own field 4 carries `InitValue = true` for the same reason.
+                    // CLAIM: an absent `Assignable` is FALSE, which is what BC's own reader
+                    // answers — not AL's source-language default of true. BC's
+                    // Types.Metadata.MetaPermissionSet.Create assigns Assignable only inside
+                    // `case 10: if (name == "Assignable")`, and MetaPermissionSet() initialises
+                    // only Permissions/Included/Excluded, so an absent attribute leaves
+                    // default(bool). Read off Microsoft.Dynamics.Nav.Types.dll 28.1.49838.53910;
+                    // #3806 measured that reader answering False for set 68, and #2417 traced
+                    // the true answer to a ModifyLength crash in the Aggregate Permission Set
+                    // provider, whose Assignable=true filter real BC never lets that row past.
+                    //
+                    // TRAP: table 2000000250's field 4 carries `InitValue = true`, which is the
+                    // initial value of a NEW AL record and says nothing about reading an emitted
+                    // document. Citing it is what kept this wrong.
                     props.TryGetValue("Access", out var access);
                     into.TryAdd(id, new PermissionSetSymbol(
-                        id, name, caption, !SymbolBoolFalse(props, "Assignable"),
+                        id, name, caption, SymbolBool(props, "Assignable"),
                         ReadPermissions(el),
                         ReadIncludedPermissionSets(props),
                         access));

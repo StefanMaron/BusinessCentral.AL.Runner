@@ -1382,11 +1382,6 @@
       "issue": 3806
     },
     {
-      "member": "MetaPermissionSet.Assignable",
-      "reason": "PermissionSet 68 'System Execute - Basic' only: BC answers False, the runner answers True. THIS IS THE MEASUREMENT #2417 ASKED FOR, and it is a measurement rather than an inference -- #2417 states the question must be settled against BC itself and not by reading SymbolReference.json. BC's own emitted document for 68 is the only one of 178 carrying no Assignable attribute at all (the distribution is 140 x \"0\", 37 x \"1\", 1 x absent), and BC's own MetaPermissionSet.Create resolved that absence to False. So BC's reader defaults absent -> false and CollectPermissionSets's absent -> true is wrong, exactly as #2417 predicted. The fix lands in BcAppSymbolCache/RecordPatches.MetadataPermissionSetVirtualTable rather than in the harness, so it is tracked on #3806 which records the answer and points at #2417. Deliberately NOT versionContingent despite matching a single object: the criterion is that the member's population depends on a per-object declaration, and this one does -- but it is one object on every BC build measured, and an entry that stopped matching would mean either the fix landed or BC changed its default, both of which must be loud.",
-      "issue": 3806
-    },
-    {
       "member": "MetaPermissionSet.ALNamespace",
       "reason": "BC states the permission set's AL namespace; the runner answers null on all 178 because PermissionSetSymbol does not carry it. Derivable -- SymbolReference.json states the namespace -- and simply not carried. Same member and same fix as MetaTable.ALNamespace (#3568), MetaReport.ALNamespace (#3808) and MetaEnum.ALNamespace (#3807).",
       "issue": 3806

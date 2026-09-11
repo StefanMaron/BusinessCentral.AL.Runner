@@ -130,15 +130,27 @@ public class PermissionSetFromBcDocumentTests : IDisposable
     }
 
     /// <summary>
-    /// Assignable="0" must read as false, and an ABSENT Assignable must read as AL's own
-    /// default of true — not as false. The two directions are asserted together because a
-    /// reader that ignored the attribute entirely would pass either one alone.
+    /// <c>Assignable="0"</c> and an ABSENT <c>Assignable</c> both read as false, and
+    /// <c>Assignable="1"</c> reads as true — so a reader that ignored the attribute entirely
+    /// fails the third assertion rather than passing by accident (#2417, #3806).
+    ///
+    /// <para>CLAIM: this matches BC's own reader on the identical document.
+    /// <c>MetaPermissionSet.Create</c> assigns the property only inside
+    /// <c>case 10: if (name == "Assignable")</c>, and the constructor never touches it, so an
+    /// absent attribute leaves <c>default(bool)</c> — false. Measured on
+    /// Microsoft.Dynamics.Nav.Types.dll 28.1.49838.53910 (sha256 c91ede8f…).</para>
+    ///
+    /// <para>TRAP: this test previously asserted <c>true</c> here, reasoning from AL's
+    /// source-language default. That default governs what the COMPILER emits, not what BC's
+    /// reader does with a document that states nothing — and BC's emitter does omit the
+    /// attribute (set 68 of the 178 #3806 measured).</para>
     /// </summary>
     [Fact]
-    public void AssignableFalseAndAbsentAreDifferentAnswers()
+    public void AssignableFalseAndAbsentBothReadAsFalse_AndAnExplicitTrueIsHonored()
     {
         const int notAssignable = SetWithEverything + 200;
         const int unstated = SetWithEverything + 201;
+        const int assignable = SetWithEverything + 202;
 
         AlObjectMetadataRegistry.Register(
             RecordPatches.BcPermissionSetMetadataKind, notAssignable, "PSD NotAssignable",
@@ -152,9 +164,16 @@ public class PermissionSetFromBcDocumentTests : IDisposable
              <PermissionSet ID="{unstated}" Name="PSD Unstated"
                             xmlns="urn:schemas-microsoft-com:dynamics:NAV:MetaObjects" />
              """);
+        AlObjectMetadataRegistry.Register(
+            RecordPatches.BcPermissionSetMetadataKind, assignable, "PSD Assignable",
+            $"""
+             <PermissionSet ID="{assignable}" Name="PSD Assignable" Assignable="1"
+                            xmlns="urn:schemas-microsoft-com:dynamics:NAV:MetaObjects" />
+             """);
 
         Assert.False(RecordPatches.TryReadPermissionSetFromBcDocument(notAssignable, "PSD NotAssignable")!.Assignable);
-        Assert.True(RecordPatches.TryReadPermissionSetFromBcDocument(unstated, "PSD Unstated")!.Assignable);
+        Assert.False(RecordPatches.TryReadPermissionSetFromBcDocument(unstated, "PSD Unstated")!.Assignable);
+        Assert.True(RecordPatches.TryReadPermissionSetFromBcDocument(assignable, "PSD Assignable")!.Assignable);
     }
 
     /// <summary>
