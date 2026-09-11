@@ -1013,9 +1013,17 @@ internal sealed partial class RunnerPageInstance
     ///
     /// <para>This narrows a refusal introduced by this change; it does not widen the pre-#3504
     /// silent default. A declaration the runner CAN resolve still gates the invoke exactly as
-    /// before, including the literal <c>Enabled = false</c> that corpus codeunit 60583 pins.
-    /// #3825 removes the unresolvable case entirely, at which point this method collapses back
-    /// into <see cref="ActionEnabled"/>.</para>
+    /// before, including the literal <c>Enabled = false</c> that corpus codeunit 60583 pins.</para>
+    ///
+    /// <para>#3825 resolved the population this was written for — an expression naming a binding
+    /// the page registers now answers, so the warning below no longer fires for it — but this
+    /// method STAYS, because unresolvable declarations still exist and #3825 did not make them
+    /// impossible: a client expression the compiler DROPPED (a procedure call, AL0573; see
+    /// <see cref="ClientExpressionTheCompilerDropped"/>), and an expression naming something the
+    /// page publishes no binding for. Collapsing this back into <see cref="ActionEnabled"/> would
+    /// turn each of those from "this one property is unreadable" into "this action's OnAction
+    /// never runs", which is the strictly larger loss the paragraph above rejects. Delete it only
+    /// once a measurement shows the unresolvable set is empty.</para>
     /// </summary>
     internal bool ActionEnabledForInvoke(int actionId)
     {

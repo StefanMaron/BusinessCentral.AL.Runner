@@ -20,6 +20,18 @@
 //                                                            three-entry RunPageLink resolved from
 //                                                            the symbol file, then applied
 //   - 31   "Item List", action "Item Substitutions"          (RunObject naming an AMBIGUOUS name)
+//
+// #3825 added four arms for an EXPRESSION-BOUND Editable/Visible/Enabled, which is a different
+// claim from trigger dispatch and shares these pages because they are the precompiled surface
+// already reachable here. A precompiled page states the property as the raw AL identifier
+// (`Enabled = PageEditable`) while the binding table its own .app IL fills is keyed by the
+// compiler's spelling (`p790p790PageEditable`), so the lookup missed and the read refused.
+// The arms cover both properties and both directions, so neither answer can be a default:
+//   - 790  "G/L Account Categories", five actions Enabled = PageEditable   -> true  (OpenEdit)
+//   - 9900 "Import Data", IncludeAllCompanies Editable = ContainsCompanies -> false (unset at open)
+//   - 1810 "Data Migration Entities", Selected Visible = not HideSelected  -> true  (COMPOUND)
+//        and Balance Visible = ShowBalance                                 -> false (same page)
+//   - 790  GetBalance Editable = false (literal)                           -> still false
 codeunit 64571 "PMN Precompiled Member Tests"
 {
     Subtype = Test;
@@ -137,6 +149,46 @@ codeunit 64571 "PMN Precompiled Member Tests"
             'action Indent declares Enabled = PageEditable, true on a page opened for edit');
         Assert.IsTrue(GLAccountCategories.Outdent.Enabled(),
             'action Outdent declares Enabled = PageEditable, true on a page opened for edit');
+    end;
+
+    [Test]
+    procedure ExpressionBoundEditable_OnPrecompiledBasePage_ReadsFalseWhenTheGlobalIsFalse()
+    var
+        ImportData: TestPage "Import Data";
+    begin
+        // [GIVEN] Base Application page 9900 "Import Data" opened. Its IncludeAllCompanies
+        // control declares `Editable = ContainsCompanies`, a page global that only
+        // OnAssistEdit/OnValidate assign - so at open it still holds Boolean's default.
+        ImportData.OpenEdit();
+
+        // [THEN] The control reads NOT editable. This is the arm that makes the pair prove
+        // something: the same mechanism answers true for page 790's actions above and false
+        // here, so it is reading the global rather than defaulting in either direction. It
+        // also covers Editable, where the arm above covers Enabled.
+        Assert.IsFalse(ImportData.IncludeAllCompanies.Editable(),
+            'IncludeAllCompanies declares Editable = ContainsCompanies, false before any company is loaded');
+    end;
+
+    [Test]
+    procedure CompoundExpressionVisible_OnPrecompiledBasePage_ResolvesItsOperands()
+    var
+        DataMigrationEntities: TestPage "Data Migration Entities";
+    begin
+        // [GIVEN] Base Application page 1810, whose OnOpenPage sets both of its globals
+        // false: `ShowBalance := false; HideSelected := false;`.
+        DataMigrationEntities.OpenView();
+
+        // [THEN] A COMPOUND property text resolves. `Visible = not HideSelected` reaches
+        // PageControlExpression, whose identifier resolution is the same join - so the
+        // operand resolves and `not false` evaluates to true. This is the arm showing the
+        // fix is not limited to a property that is one bare name.
+        Assert.IsTrue(DataMigrationEntities.Selected.Visible(),
+            'Selected declares Visible = not HideSelected, and OnOpenPage sets HideSelected false');
+
+        // [AND] the bare-name sibling on the same page answers the other way, from the same
+        // mechanism - so neither direction is a default.
+        Assert.IsFalse(DataMigrationEntities.Balance.Visible(),
+            'Balance declares Visible = ShowBalance, and OnOpenPage sets ShowBalance false');
     end;
 
     [Test]
