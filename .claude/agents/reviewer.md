@@ -38,6 +38,12 @@ and #3882 shipped one proven guard beside one that left all 8 tests green when m
 The PR should report both counts. **Re-run at least the mutation the PR's own claim rests on** —
 a reported number nobody reproduced is the same evidence as no number.
 
+**Confirm your own mutation landed before believing it.** A mutation that silently no-ops leaves
+the test green, which reads as "this test is broken" — the opposite of the truth. Measured twice
+in one session (#3895): a backslash a heredoc collapsed, so the file never changed; and a `-p:`
+override on an incremental build that skipped `CoreCompile`. Re-read the mutated region, and
+force a clean rebuild when the thing you mutated is a build input.
+
 - **A test that names the thing is not a test that drives it.** #3882's unproven guard had two
   test references to its stage name — one asserting a naming convention, one passing it as
   routing data — and neither reached the `throw`. Grepping the symbol finds them and reads as

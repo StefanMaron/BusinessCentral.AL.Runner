@@ -78,3 +78,42 @@ gone on asserting a false relationship indefinitely.
 No mutation-testing framework, no tooling, no new CI job. The change is to which check is
 **required** and that its result is **reported**, so a reviewer can see a number instead of
 re-deriving it. Both instances were caught by a human-directed mutation taking one rebuild.
+
+
+## The mutation that does not land (2026-09-11, #3895)
+
+Requiring an executed mutation (above) created a second-order failure the first rule did not
+anticipate: **a mutation that silently fails to apply leaves the test green**, and green after a
+mutation is indistinguishable from "my test does not catch this" without looking at the file.
+
+Two instances in the session that introduced the requirement, by different mechanisms:
+
+**The edit never reached the file.** A reviewer mutating a backslash in `AlRunner.csproj` got a
+passing test twice and nearly reported a working parity test as broken. In Python source `'\\'`
+*is* the single-backslash string, and a shell heredoc collapsed it again, so the "mutated" file
+was byte-identical. The third attempt landed and gave the real answer:
+
+```
+MUTATED_RC=1
+Assert.Equal() Failure: Strings differ
+Expected: ...Replace('\\','/')...
+Actual:   ...Replace('\','/')...
+```
+
+**The build never reran.** Disabling the analyzer target with
+`-p:EnableAspNetCoreAnalyzers=false` reported `AD0001=0`, reading as "the target is a no-op".
+The build was incremental and had skipped `CoreCompile`; a forced clean rebuild showed the
+analyzers present. The same session also produced two *invalid* mutations of a third kind:
+renaming a target carrying `BeforeTargets="CoreCompile"` does not disable it, and wiping `obj/`
+wipes the restore.
+
+So three distinct ways to not-mutate, all presenting as one green test.
+
+**Why this is not the existing false-zero class.** `CLAUDE.md` and
+`verify-execution-not-the-tick.md` cover a zero from a **query**. Here the instrument is an
+**edit**, and the direction is worse: a failed search returns nothing and looks like a finding,
+while a failed mutation returns green and looks like the system working correctly.
+
+Both were caught by the person running them noticing the result was too clean, and both were
+reported rather than quietly fixed — which is the only reason there are two instances to write
+down instead of one.

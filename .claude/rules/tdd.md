@@ -24,8 +24,12 @@ are claiming to prove:
 
 1. **Mutate the implementation, not the test** — delete the guard, invert the condition, or
    return the default.
-2. **Rebuild and re-run. Confirm RED.** Restore.
-3. **Report both numbers in the PR body** — `Failed: 1, Passed: 7` → `Failed: 0, Passed: 8`.
+2. **Confirm the mutation LANDED** — re-read the mutated region or diff it. A mutation that
+   silently no-ops leaves the test **green**, which reads as "my test is broken" when it means
+   "I changed nothing". Force a clean rebuild when you mutated a build input (`.csproj`, an
+   MSBuild target, a generator), since an incremental build may skip the compile entirely.
+3. **Rebuild and re-run. Confirm RED.** Restore.
+4. **Report both numbers in the PR body** — `Failed: 1, Passed: 7` → `Failed: 0, Passed: 8`.
    A mutation whose result nobody can see is the same as one nobody ran.
 
 Once **per closed issue**, matching the per-issue RED→GREEN that
@@ -43,6 +47,12 @@ fixed before merge, which is the outcome this step exists to produce.
 two references to `METADATA-EMIT-EXCLUDED` — one asserting the naming convention, one passing it
 as routing data. Both mention the stage; neither reaches the `throw`. A grep for the symbol
 finds them and reads as coverage, which is why the mutation is the check and the grep is not.
+
+**Trap: a failed mutation and a working guard look identical.** Measured twice in one session
+(#3895): a backslash edit that a heredoc collapsed, so the file never changed; and a
+`-p:` override whose build was incremental and skipped `CoreCompile`, reporting the clean
+number. A failed *search* returns nothing and looks like a finding; a failed *mutation* returns
+green and looks like the system working.
 
 **Trap: CI catches the opposite error, never this one.** A test that fails when it should pass
 is red within minutes; one that passes when it should fail is caught only if somebody looks,
