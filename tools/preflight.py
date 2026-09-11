@@ -2531,6 +2531,22 @@ def check_corpus(repo: str, enabled: bool) -> CheckResult:
                     obs.broken_buckets + obs.lost_suites + lines,
                     "Fix the compile/suite error above - the tests those suites "
                     "declare are MISSING from this run, not passing.", data)
+    # A key that is ABSENT is a third state, not a zero (#3361). parse_corpus_run
+    # seeds the summary from `Tests: N total` and adds a key only when its line
+    # appears, so a block truncated or reshaped by a BC-version change yields
+    # {"total", "pass"} -- and `.get("fail")` answers None, which is falsy, which
+    # is this check's PASS direction for a question it never measured. The
+    # `pass != counted` comparison below does not backstop it: `pass` is still
+    # there and still agrees, so the run goes green (`guards-need-a-third-state.md`).
+    missing = [k for k in ("fail", "error") if k not in obs.summary]
+    if missing:
+        return fail("the run's summary did not report " + " or ".join(missing) +
+                    " at all, so whether anything failed was never measured",
+                    [f"summary as parsed: {obs.summary}", tail] + lines,
+                    "Re-run the invocation by hand and read its summary block. This is "
+                    "NOT a report of zero failures - the line the count comes from was "
+                    "absent, which usually means the run was truncated or the summary "
+                    "changed shape.", data)
     if obs.summary.get("fail") or obs.summary.get("error"):
         return fail(f"{obs.summary.get('fail', 0)} test(s) failed and "
                     f"{obs.summary.get('error', 0)} errored on this box",

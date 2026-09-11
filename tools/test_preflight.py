@@ -1578,7 +1578,8 @@ def corpus_repo():
 # every summary line below are that output, not an idea of it -- a fixture shaped
 # to satisfy the parser would test the author rather than the runner (#3311).
 def corpus_output(counts, *, fail=0, error=0, skipped=0, oos=0, known_gap=0,
-                  reported_pass=None, summary=True, suite_errors=(), compile_fail=()):
+                  reported_pass=None, summary=True, suite_errors=(), compile_fail=(),
+                  drop_fields=()):
     """Synthesise runner output for `counts` = {bundle dir name: passing tests}."""
     lines = ["al-runner — running %d bundle(s)" % (len(counts) + len(compile_fail))]
     for name in compile_fail:
@@ -1616,7 +1617,14 @@ def corpus_output(counts, *, fail=0, error=0, skipped=0, oos=0, known_gap=0,
         lines.append(f"    pass-oos:        {oos}")
     if known_gap:
         lines.append(f"    pass-known-gap:  {known_gap}")
-    lines += [f"  fail:        {fail}", f"  error:       {error}"]
+    # `drop_fields` omits a summary LINE, which is how a key goes missing for
+    # real: parse_corpus_run seeds the dict from `Tests: N total` and adds a key
+    # only when its line appears, so a summary block truncated or reshaped by a
+    # BC-version change yields {"total", "pass"} with no `fail` at all (#3361).
+    if "fail" not in drop_fields:
+        lines.append(f"  fail:        {fail}")
+    if "error" not in drop_fields:
+        lines.append(f"  error:       {error}")
     if skipped:
         lines.append(f"  skipped:     {skipped}")
     lines += ["Time:", "  AL emit:     2.1s", "  C# compile:  1.7s",
@@ -1735,6 +1743,46 @@ check("a summary that disagrees with the per-bundle PASS lines FAILs",
 _res, _ = corpus_result(_full, apps=[])
 check("an enumerator that produced no apps FAILs -- a run of nothing is not a baseline",
       _res.status == "FAIL", f"{_res.status}: {_res.summary}")
+
+# ---- a summary that parsed but LOST a key is unreadable, not "zero failures"
+#
+# #3361 part 2. The guard used to read `if summary.get("fail") or
+# summary.get("error")`, so a summary block without those lines answered False --
+# the success direction -- for a question it had not measured.
+#
+# The issue and its reviewer both judged this unreachable, backstopped by the
+# `summary.get("pass") != counted` comparison below it, where a None FAILs
+# loudly. That backstop does not cover this shape: `pass` is still present and
+# still agrees with the per-bundle PASS lines, so the run goes green on a summary
+# that never said whether anything failed.
+_no_fail_key = corpus_output({"al-language": 12,
+                              "al-language-internals-fixture": 0,
+                              "al-language-onprem": 3}, drop_fields=("fail",))
+check("the fixture really does lose the key -- otherwise the check below proves nothing",
+      "fail" not in (pf.parse_corpus_run(_no_fail_key).summary or {"fail": 0}),
+      str(pf.parse_corpus_run(_no_fail_key).summary))
+_res, _ = corpus_result(_no_fail_key)
+check("a summary missing `fail` FAILs rather than reading as zero failures",
+      _res.status == "FAIL", f"{_res.status}: {_res.summary}")
+check("...and says the count is MISSING, not that it counted zero",
+      "did not report" in (_res.summary + " ".join(_res.detail)).lower(),
+      f"{_res.summary} {_res.detail}")
+check("...and names which key was absent, so the remedy is not a guess",
+      "fail" in _res.summary.lower(), _res.summary)
+
+_no_error_key = corpus_output({"al-language": 12,
+                               "al-language-internals-fixture": 0,
+                               "al-language-onprem": 3}, drop_fields=("error",))
+check("a summary missing `error` FAILs the same way -- the sibling key, same shape",
+      corpus_result(_no_error_key)[0].status == "FAIL",
+      corpus_result(_no_error_key)[0].summary)
+
+# The constraint from guards-need-a-third-state.md: only an UNMEASURABLE thing
+# becomes the third state. A summary that reports zero failures explicitly is a
+# legitimate pass and must stay one, or the fix has traded a false green for a
+# false red.
+check("a summary reporting `fail: 0` explicitly still PASSes -- zero measured is not zero missing",
+      corpus_result(_full)[0].status == "PASS", corpus_result(_full)[0].summary)
 
 # ---- SKIP stays honest, and still points at the file it is about
 _res = pf.check_corpus(corpus_repo(), False)
