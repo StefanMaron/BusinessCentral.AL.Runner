@@ -377,6 +377,63 @@ public sealed class DependencyEmitExclusionEndToEndTests
             try { Directory.Delete(root, recursive: true); } catch { }
         }
     }
+
+    /// <summary>
+    /// The WARM half, and the one a cold-only test cannot catch — it is what shipped in the
+    /// first version of this fix.
+    ///
+    /// LoadOne's `source-cache HIT` returns about 80 lines ABOVE the EMIT-EXCLUDED guard, so a
+    /// second run against the same cache root never reaches it. Measured on this fixture before
+    /// the sidecar existed, cache root the only variable: run 1 printed 2 EMIT-EXCLUDED lines
+    /// and 1 provisioning gap; runs 2 and 3 printed neither, while the cached
+    /// .object-metadata.json held 1 object where the package shipped 2 — byte-for-byte the
+    /// pre-fix silence.
+    ///
+    /// CI cannot see that: it provisions a fresh cache on every leg, so the legs stay green
+    /// forever while every repeat local run is silently partial.
+    /// </summary>
+    [SkippableFact]
+    public void ThePartialEmitReport_SurvivesACacheHit_NotJustTheCompilingRun()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.FlatDir("al-runner-dex-warm-");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var bundle = BuildFixture(root);
+            // ONE cache root, deliberately: the whole point is the second run's HIT.
+            var cacheDir = Path.Combine(root, "cache");
+            Directory.CreateDirectory(cacheDir);
+
+            var first = RunRunner(bundle, cacheDir);
+            var second = RunRunner(bundle, cacheDir);
+
+            // Positive control: without this, a fixture that silently stopped producing an
+            // exclusion at all would make the real assertion below pass vacuously.
+            Assert.Contains("EMIT-EXCLUDED", first.Output, StringComparison.Ordinal);
+            Assert.DoesNotContain("from a cached compile", first.Output, StringComparison.Ordinal);
+
+            // The assertion this test exists for.
+            Assert.Contains("EMIT-EXCLUDED", second.Output, StringComparison.Ordinal);
+            Assert.Contains("DEX Dep Broken", second.Output, StringComparison.Ordinal);
+            Assert.Contains("1 of this dependency's 2 object(s)", second.Output, StringComparison.Ordinal);
+            Assert.Contains("Provisioning gaps:", second.Output, StringComparison.Ordinal);
+
+            // ...and that the second run really took the CACHED route rather than recompiling,
+            // which would make it a second cold run wearing a warm label. This marker is added
+            // only by the replay path. Checked because `[deps] source-cache HIT` is swallowed by
+            // Log's component filter at default verbosity and cannot serve as the signal.
+            Assert.Contains("from a cached compile", second.Output, StringComparison.Ordinal);
+
+            Assert.Equal(0, first.Exit);
+            Assert.Equal(0, second.Exit);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+        }
+    }
 }
 
 /// <summary>
