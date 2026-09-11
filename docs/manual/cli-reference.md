@@ -65,6 +65,13 @@ al-runner [OPTIONS] <bundle-dir>...
 | `4` | A suite's test or app-group count did not match its declared baseline (`--count-baseline`). |
 | `5` | An expectations entry matched no test in this run (`--expectations-require-match`). |
 
+A run can hold several of these at once, and reports the most fundamental: **`3` > `2` > `4` >
+`1` > `5`**. `3`, `2` and `4` all say *the run did not measure what it claims to*, so the
+report cannot be read at face value; `1` and `5` are statements about the AL it did measure.
+That is why a count-baseline mismatch outranks a test failure (#3350) — a consumer who sees
+only `1` fixes the failing test, sees green, and never learns that a bundle stopped being
+discovered.
+
 ## Environment variables
 
 `AL_RUNNER_VERBOSE=1` and `AL_RUNNER_SHOW_PASS=1` mirror the flags of the same

@@ -266,6 +266,13 @@ table is a copy and the CLI is the authority.
 | `4` | `--count-baseline`: a suite's test or app-group count did not exactly match its declared baseline |
 | `5` | `--expectations-require-match`: an expectations entry matched no test in this run |
 
+When a run holds several of these at once it reports the most fundamental, in the order
+**`3` > `2` > `4` > `1` > `5`**. The boundary that matters is between `3`/`2`/`4` — *this
+report cannot be trusted, because the run did not measure what it claims to* — and `1`/`5`,
+which are statements about the AL the run did measure. So a run that both fails a test and
+measured the wrong number of tests reports `4`: fixing the failing test would otherwise turn
+the leg green while the missing coverage stayed missing.
+
 ## Tooling for AI-assisted development (optional)
 
 This repo is largely developed with coding agents, and its instruction files
