@@ -1387,38 +1387,59 @@ public static partial class BcRuntime
     // Well-known codeunit IDs that ship inside Microsoft dependency apps. When the
     // test compile resolves a `Codeunit X` reference against a Microsoft .app at
     // symbol-resolution time but the runtime has no DLL for that .app loaded,
-    // CreateTarget can't find the type. We surface the dependency name instead of
-    // a bare numeric id so the user knows which dependency is missing.
+    // CreateTarget can't find the type. We surface the id's real name and the app it
+    // ships in, so BuildMissingCodeunitMessage can tell the user which .app to put on a
+    // --package-cache directory.
+    //
+    // Package is the app's MANIFEST name, which is what a user matches against a file in
+    // the cache ("Application Test Library" → Microsoft_Application Test Library_<ver>.app).
+    // Every row was measured against the shipped packages for #3399 — four of the six were
+    // wrong, including two that named a different toolkit app entirely. The measurement and
+    // the instrument are in MissingCodeunitDependencyTableTests, which pins each row.
     private static readonly Dictionary<int, (string Name, string Package)> _knownDependencyCodeunits = new()
     {
-        [130000] = ("Assert",                  "Library Assert (test framework)"),
-        [130002] = ("Library Assert",          "Library Assert (test framework)"),
-        [130440] = ("Library Variable Storage","Library Variable Storage (test framework)"),
-        [130500] = ("Test Runner",             "Test Runner (test framework)"),
-        [131000] = ("Library - Test Initialize","Library - Test Initialize (test framework)"),
-        [310]    = ("No. Series",              "Base Application"),
+        [310]    = ("No. Series",        "Business Foundation"),
+        [130000] = ("Assert",            "Application Test Library"),
+        [130002] = ("Library Assert",    "Library Assert"),
+        [130440] = ("Library - Random",  "Application Test Library"),
+        [130500] = ("Any",               "Any"),
+        [131000] = ("Library - Utility", "Application Test Library"),
     };
+
+    /// <summary>Test seam for #3399: the table and the message it produces are the
+    /// user-facing contract, so they are asserted directly rather than through a
+    /// source-text grep. See MissingCodeunitDependencyTableTests.</summary>
+    internal static IReadOnlyDictionary<int, (string Name, string Package)> KnownDependencyCodeunitsForTests
+        => _knownDependencyCodeunits;
+
+    internal static string BuildMissingCodeunitMessageForTests(int id) => BuildMissingCodeunitMessage(id);
 
     private static string BuildMissingCodeunitMessage(int id)
     {
         if (_knownDependencyCodeunits.TryGetValue(id, out var known))
         {
             return
-                $"Codeunit {id} (\"{known.Name}\") is not present in the test " +
-                $"assembly or any loaded dependency. It belongs to {known.Package}, " +
-                $"a Microsoft dependency app. AL Runner does not yet load " +
-                $"Microsoft R2R packages at runtime — either provide an AL " +
-                $"implementation/stub for this codeunit at the bucket level, or " +
-                $"wait until runtime dependency loading lands.";
+                $"Codeunit {id} (\"{known.Name}\") is not present in the test assembly " +
+                $"or any loaded dependency. It ships in Microsoft's '{known.Package}' app, " +
+                $"whose runtime package is not loaded. " +
+                $"Point --package-cache at a directory holding " +
+                $"'Microsoft_{known.Package}*.app' (the test-toolkit apps live in " +
+                $"~/.al-runner/test-apps, the platform apps in ~/.al-runner/platform-apps), " +
+                $"or run 'al-runner provision' — or re-run with --auto-provision — to fetch " +
+                $"them. Note --package-cache may be repeated, and a cache holding only " +
+                $"symbol/dev packages cannot satisfy this: the runtime .app is required.";
         }
         return
-            $"Codeunit {id} is not present in the test assembly or any loaded " +
-            $"dependency. It is most likely defined in a dependency .app " +
-            $"(e.g. System Application, Base Application, a test-framework " +
-            $"library, or a third-party app) whose runtime DLL is not loaded. " +
-            $"AL Runner does not yet load dependency-app DLLs at runtime — " +
-            $"either provide an AL implementation/stub at the bucket level, " +
-            $"or wait until runtime dependency loading lands.";
+            $"Codeunit {id} is not present in the test assembly or any loaded dependency. " +
+            $"It is most likely defined in a dependency .app (System Application, Base " +
+            $"Application, Business Foundation, a test-toolkit library, or a third-party " +
+            $"app) whose runtime package is not loaded. " +
+            $"Check that the app declaring codeunit {id} is listed in your app.json " +
+            $"dependencies, and that --package-cache points at a directory holding its " +
+            $"runtime .app; run 'al-runner provision' — or re-run with --auto-provision — " +
+            $"to fetch Microsoft's. Note --package-cache may be repeated, and a cache " +
+            $"holding only symbol/dev packages cannot satisfy this: the runtime .app is " +
+            $"required.";
     }
 
     /// <summary>
