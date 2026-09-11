@@ -1,34 +1,19 @@
 // RecordPatches.ExtensionRuntimeDeltasMetadataEquivalence — the runner-side accessor the
 // metadata-equivalence harness needs for MetadataRuntimeDeltas (#3782 step 8, #3809).
 //
-// WHAT THIS IS FOR
-//   BC's emitter writes one <MetadataRuntimeDeltas> document per EXTENSION object —
-//   tableextension, pageextension, permissionsetextension. Until this file the runner had
-//   nothing to compare against any of them, so all 11 documents in the two 28.1 bundles were
-//   reported as unbuildable and the comparison measured one side of a two-sided question.
+// BC emits one <MetadataRuntimeDeltas> document per EXTENSION object; this renders the runner's
+// side of it. Three things a later editor gets wrong, each with its derivation in
+// docs/metadata-equivalence.md#metadataruntimedeltas:
 //
-// THE KEY IS (OBJECT TYPE, ID), NOT ID
-//   BC's own NCLObjectXmlMetadataLoader.GetExtensionDeltasForAppObject matches an Extension-
-//   format summary on `s.ObjectType == objectId.ObjectType && s.ObjectId == objectId.ObjectNumber`
-//   — the extension's OWN id, paired with its object type. The pair is load-bearing rather than
-//   decorative: Business Foundation + System Application 28.1 carry a tableextension 774 and a
-//   pageextension 774, both named "Plan User Details", and BC emits a different document for
-//   each (12 deltas vs an empty root). Keying on id alone answers one question for two objects.
-//
-// WHY A RENDER AND NOT AN OBJECT
-//   NavAppObjectMetadataRuntimeDeltas exposes AllDeltas get-only over a private List<Delta> on
-//   NavAppObjectMetadataDeltaCreator<Delta>, and its only public constructor is parameterless,
-//   so no route sets deltas on an instance. Rendering the document BC's own FromXml reads is the
-//   only way to produce a populated one — the same shape, and for the same reason, as
-//   TryBuildEnumMetadataEquivalenceXml (#3807).
-//
-// A VALUE THE RUNNER DOES NOT DERIVE IS LEFT OFF, NEVER DEFAULTED
-//   BC's emitted deltas carry ControlGUID, SourceExtensionType and several *TranslationKey
-//   hashes, none of which SymbolReference.json states. They are omitted rather than filled with
-//   a placeholder, so a reported difference is a true statement about what the runner does not
-//   know. Writing any value would manufacture agreement, which is what this harness exists to
-//   catch. Measured content of the real population, and what each side can state, is in
-//   docs/metadata-equivalence.md#metadataruntimedeltas.
+//   - THE KEY IS (OBJECT TYPE, ID), NOT ID. The 28.1 bundles carry a tableextension 774 and a
+//     pageextension 774, both "Plan User Details", with different documents — so keying on the
+//     id alone answers one question for two objects, as the previous call site did.
+//   - A RENDER, NOT AN OBJECT. AllDeltas is get-only over a private list and the only public
+//     constructor is parameterless, so BC's own FromXml is the sole route to a populated
+//     instance — the same reason TryBuildEnumMetadataEquivalenceXml renders (#3807).
+//   - A VALUE THE RUNNER DOES NOT DERIVE IS LEFT OFF, NEVER DEFAULTED. Writing BC's
+//     ControlGUID, SourceExtensionType or *TranslationKey hashes without reading them from the
+//     symbol file would manufacture agreement, which is what this harness exists to catch.
 
 using System.Globalization;
 using System.Xml;
@@ -99,29 +84,15 @@ public static partial class RecordPatches
 
         var doc = NewDeltasDocument(ext.Id, ext.Name, out var root);
 
-        // ActionChanges[].Actions and ControlChanges[].Controls are the two containers the
-        // compiler writes for addfirst/addlast/addafter/addbefore, and TryParsePageExtensionSymbol
-        // collects both into MemberIdToName — keyed, as BC keys them, in the EXTENSION's own id
-        // space. A modify(...) change carries Properties only, so it adds no member here and
-        // contributes no delta, which matches BC: its ControlChange delta is a MODIFY and is
-        // deliberately not rendered as an add.
+        // MemberIdToName merges the two change containers; MemberIdToOrigin is what survives that
+        // merge, because BC puts an added action in <ActionAdd> and an added control in
+        // <ControlAdd> and neither the id nor the name says which. A null map (a cached payload
+        // predating the field) renders an EMPTY document rather than guessing.
         //
-        // MemberIdToOrigin is what survives that merge: BC's document puts an added action in
-        // <ActionAdd> and an added control in <ControlAdd>, and neither the id nor the name says
-        // which. A null map (a cached payload predating the field) renders an EMPTY document
-        // rather than guessing every member into one of the two wrappers.
-        //
-        // DECLARATION ORDER, not id order. BC emits deltas in the order the AL declares them,
-        // and the equivalence differ pairs AllDeltas POSITIONALLY — so a render sorted by id
-        // reports every member of every reordered element as a difference. Measured: sorting by
-        // id put pageextension 774's four controls in a different order from BC's and produced
-        // ID and Name "differences" on controls the runner had in fact got exactly right, and
-        // swapped ext 2515's two ActionChanges so their ContainerType and OperationType each
-        // read as wrong. Both vanish under declaration order.
-        //
-        // Ordered on Origin.Sequence, which TryParsePageExtensionSymbol assigns as it walks the
-        // file. Explicitly, not by relying on Dictionary enumeration order, which is documented
-        // as unspecified.
+        // ORDER ON Origin.Sequence — AL declaration order, never member id. The equivalence
+        // differ pairs AllDeltas POSITIONALLY, so a reordered render reports correctly-rendered
+        // members as wrong ones (docs/metadata-equivalence.md#deltas-declaration-order). Sequence
+        // rather than Dictionary enumeration order, which is documented as unspecified.
         foreach (var (memberId, origin) in (ext.MemberIdToOrigin ?? new()).OrderBy(kv => kv.Value.Sequence))
         {
             // An id in the origin map but not the name map cannot be rendered: the member has no
@@ -142,31 +113,11 @@ public static partial class RecordPatches
             // unstripped baseline already fails there on a WindowsLanguageHelper static-init
             // fault — every row is then a measurement of the fault (#3809).
             //
-            // WHAT THE ANCHOR MEANS DEPENDS ON THE CHANGE KIND, and only one case is derivable.
-            // Measured across all five real pageextensions:
-            //
-            //   addfirst (1) — the Anchor IS the container. ext 324 Anchor "Prompting" ->
-            //                  ParentContainer "Prompting"; ext 2515 "Promoted" -> "Promoted",
-            //                  and BC writes no AnchorName. Derivable, and stated.
-            //   addlast  (2) — the Anchor is a container too ("Processing"), but BC writes the
-            //                  RESOLVED one ("ActionItems"). Resolving it needs the target page's
-            //                  own layout, which this render does not have.
-            //   add*      (3/4) — the Anchor is a SIBLING member, so BC writes it as AnchorName
-            //                  and resolves ParentContainer from the target page ("ContentArea",
-            //                  "ActionItems").
-            //
-            // ParentContainer is an ENUM to BC's reader, not free text: Enum.Parse throws
-            // ArgumentException ("Requested value 'Processing' was not found") on anything
-            // outside its member set, which loses the whole document. Across all 111 delta
-            // elements in the four cached builds' bundles the observed set is exactly
-            // {Prompting, ContentArea, ViewActions, ActionItems, Promoted, RelatedInformation}.
-            //
-            // So the Anchor is used only when it NAMES one of those containers — the addfirst
-            // case, where BC does write it through verbatim (ext 324 "Prompting", ext 2515
-            // "Promoted"). Otherwise the Anchor names a sibling member or an AL-level container
-            // BC renames ("Processing" -> "ActionItems"), and resolving it needs the target
-            // page's own layout, which this render does not have; the member's own kind gives
-            // the container BC uses in the great majority of those cases.
+            // ParentContainer is an ENUM to BC's reader, not free text: an anchor outside its
+            // member set throws ArgumentException and loses the whole document, so the AL anchor
+            // is passed through only when it names a container. What the anchor means per change
+            // kind, and why only addfirst is derivable, is in
+            // docs/metadata-equivalence.md#deltas-required-attributes.
             wrapper.SetAttribute("ParentContainer",
                 !string.IsNullOrEmpty(origin.Anchor) && IsBcContainerName(origin.Anchor)
                     ? origin.Anchor
