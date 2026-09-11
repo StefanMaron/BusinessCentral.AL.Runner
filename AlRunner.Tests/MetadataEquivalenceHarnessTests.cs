@@ -98,27 +98,15 @@ public sealed class MetadataEquivalenceHarnessTests
         // failure rather than a quietly smaller comparison.
         foreach (var report in RunAll())
         {
-            // MetadataRuntimeDeltas is the ONE kind where the runner has nothing to build, and
-            // it is unbuildable on every object rather than on some — a ONE-SIDED gap, not a
-            // per-object failure. BC's side parses (see the oracle test); the runner's
-            // GetExtensionDeltasForAppObject answers null because there is no published-app
-            // extension pipeline (#3809).
-            //
-            // Scoped by kind AND asserted to be TOTAL, so this cannot become a place other
-            // kinds' failures hide: a deltas object that somehow DID build, or any object of
-            // another kind that did not, still fails.
-            var deltasDeclared = report.Bundle.Census.GetValueOrDefault("MetadataRuntimeDeltas");
-            var deltasUnbuildable = report.Unbuildable
-                .Count(u => u.StartsWith("MetadataRuntimeDeltas ", StringComparison.Ordinal));
-            Assert.Equal(deltasDeclared, deltasUnbuildable);
-
-            var otherUnbuildable = report.Unbuildable
-                .Where(u => !u.StartsWith("MetadataRuntimeDeltas ", StringComparison.Ordinal))
-                .ToArray();
-            Assert.True(otherUnbuildable.Length == 0,
+            // Every object of every compared kind must build a runner side, MetadataRuntimeDeltas
+            // included since #3809 closed the one-sided gap that used to exempt it. The exemption
+            // is GONE rather than relaxed: this used to assert that deltas unbuildables EQUALLED
+            // the census — all 11 of them — which is the shape a kind with no runner side has.
+            // Both bundles now report zero.
+            Assert.True(report.Unbuildable.Count == 0,
                 $"{report.Bundle.Label}: the runner produced no comparable metadata for " +
-                $"{otherUnbuildable.Length} object(s) outside MetadataRuntimeDeltas:" +
-                Environment.NewLine + string.Join(Environment.NewLine, otherUnbuildable.Take(20)));
+                $"{report.Unbuildable.Count} object(s):" +
+                Environment.NewLine + string.Join(Environment.NewLine, report.Unbuildable.Take(20)));
 
             foreach (var kind in report.KindsCompared)
                 Assert.Equal(report.Bundle.Census[kind],
