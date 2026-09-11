@@ -49,28 +49,51 @@ public static class DapUnverifiedReason
     {
         if (sourceMap.ScanFailures.Count == 0) return null;
 
-        string full;
-        try { full = Path.GetFullPath(sourcePath); }
-        catch (ArgumentException) { return null; }   // a path shape this cannot reason about
-        catch (NotSupportedException) { return null; }
+        if (Normalize(sourcePath) is not string full) return null;
 
         foreach (var failure in sourceMap.ScanFailures)
         {
-            string failurePath;
-            try { failurePath = Path.GetFullPath(failure.Path); }
-            catch (ArgumentException) { continue; }
-            catch (NotSupportedException) { continue; }
+            if (Normalize(failure.Path) is not string failurePath) continue;
 
             if (DapBreakpointResolver.PathComparer.Equals(failurePath, full))
                 return failure.Reason;
 
-            // Under a directory or root that could not be scanned. The separator is appended
-            // so `/src/app` does not swallow `/src/application`.
-            var prefix = failurePath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                         + Path.DirectorySeparatorChar;
+            // Containment applies to a ROOT or a DIRECTORY, which cover the sources beneath
+            // them, and never to a FILE, which covers exactly one path — a file failure was
+            // being used as a prefix, so `C:\src\Locked.al` also claimed
+            // `C:\src\Locked.al\Child.al` (#3884 review).
+            if (failure.Kind == SourceScanFailureKind.File) continue;
+
+            // The separator is appended so `/src/app` does not swallow `/src/application`.
+            // Both sides are already separator-normalised by Normalize, so an extended-length
+            // path whose caller wrote `\\?\C:\src/missing` still matches the sources under it.
+            var prefix = failurePath.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             if (full.StartsWith(prefix, PathComparison)) return failure.Reason;
         }
         return null;
+    }
+
+    /// <summary>
+    /// One spelling for both sides of every comparison, or null for a path shape this cannot
+    /// reason about. GetFullPath alone is not enough: .NET deliberately leaves an
+    /// extended-length path (<c>\\?\C:\...</c>) unnormalised, so a caller's mixed separators
+    /// survive it and a prefix test then fails against a path that really is underneath
+    /// (#3884 review). Separators are folded to the platform's own, and a trailing one is
+    /// dropped so equality does not depend on it.
+    /// </summary>
+    private static string? Normalize(string path)
+    {
+        string full;
+        try { full = Path.GetFullPath(path); }
+        catch (ArgumentException) { return null; }
+        catch (NotSupportedException) { return null; }
+        catch (PathTooLongException) { return null; }
+
+        if (Path.AltDirectorySeparatorChar != Path.DirectorySeparatorChar)
+            full = full.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        // Not the root itself: "C:\" and "/" must keep their separator.
+        var trimmed = full.TrimEnd(Path.DirectorySeparatorChar);
+        return trimmed.Length == 0 || (trimmed.Length == 2 && trimmed[1] == ':') ? full : trimmed;
     }
 
     /// <summary>The string comparison matching <see cref="DapBreakpointResolver.PathComparer"/> —

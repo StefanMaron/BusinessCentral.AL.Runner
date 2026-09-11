@@ -4539,6 +4539,9 @@ if (tddMode)
 // code as a distinct reporting failure, so a script that depends on the file still learns
 // it is missing rather than reading a stale copy as this run's output.
 var lostOutputs = new List<string>();
+// Set when a coverage report was written from a source map that could not be fully read;
+// escalated with lostOutputs below (#3884).
+var incompleteCoverage = false;
 if (outPath != null)
 {
     var writeProblem = AlRunner.Infrastructure.OutputPaths.TryWrite("--out", outPath,
@@ -4583,6 +4586,24 @@ if (coverageEnabled)
         coverageOut.WriteLine();
         coverageOut.WriteLine(AlRunner.Infrastructure.AlCoverageReport.FormatConsoleTable(coverageFiles!));
         coverageOut.WriteLine($"Cobertura → {coverageOutputPath}");
+    }
+
+    // #3884: the report is on disk and it is SHORT. Everything the scan could not read is
+    // missing from it, and a coverage number computed over an unknown subset is not a
+    // coverage number — so this must not leave on the exit-0 path
+    // (.claude/rules/guards-need-a-third-state.md). Same escalation the unwritable-output
+    // path below uses, for the same reason: the caller asked for an artifact and did not
+    // get the one they think they got.
+    if (coverageSourceMap.IsIncomplete)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine(
+            "al-runner could not read every source it was asked to map, so the coverage report "
+            + "above is incomplete — statements in these paths are absent from it, not proven "
+            + "uncovered:");
+        foreach (var failure in coverageSourceMap.ScanFailures)
+            Console.Error.WriteLine($"  {failure.Path}  ({failure.Reason})");
+        incompleteCoverage = true;
     }
 }
 
@@ -4673,6 +4694,12 @@ if (expectations != null && expectations.CompanyInitAcceptances.Count > 0)
 // REPORT is not there — so a consumer must not read it as "some tests failed", and equally
 // must not read a zero as "the file I asked for is on disk". Never RAISED above what the
 // tests earned, so a failing run still reports its own, more specific code.
+if (incompleteCoverage && computedExitCode == 0)
+{
+    Console.Error.WriteLine(
+        "exiting 2 because the coverage report you asked for does not describe every source.");
+    computedExitCode = 2;
+}
 if (lostOutputs.Count > 0 && computedExitCode == 0)
 {
     Console.Error.WriteLine(
@@ -6754,10 +6781,15 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             // work for callers who never asked for it.
             IReadOnlyList<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null;
             IReadOnlyDictionary<string, List<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null;
+            IReadOnlyList<AlRunner.Infrastructure.SourceScanFailure>? scanFailures = null;
             if (requestCoverage || collectPerTestForSelection)
             {
                 var covSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
                     req.SourcePaths, relativeTo: null);
+                // #3884: a table built from a map that could not read everything is short, and
+                // the response has to say so — otherwise the client gets an ordinary success
+                // and no way to tell an uncovered statement from an unread one.
+                if (covSourceMap.IsIncomplete) scanFailures = covSourceMap.ScanFailures;
                 if (requestCoverage)
                     statementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectStatementTable(covSourceMap);
                 // #2135: independent of the aggregate table above — see
@@ -6908,7 +6940,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     selection: requestSelection,
                     statementTable: statementTable,
                     perTestStatementTable: requestPerTestCoverage ? perTestStatementTable : null,
-                    companyInitFailures: companyInitFailures));
+                    companyInitFailures: companyInitFailures,
+                    sourceScanFailures: scanFailures));
                 output.Flush();
             }
         }
@@ -7024,9 +7057,12 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             // needs the .al files on disk to still exist when it scans them.
             IReadOnlyList<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null;
             IReadOnlyDictionary<string, List<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null;
+            IReadOnlyList<AlRunner.Infrastructure.SourceScanFailure>? scanFailures = null;
             if (req.Coverage == true || req.PerTestCoverage == true)
             {
                 var covSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(sourcePaths, relativeTo: null);
+                // #3884, same as runTests: a short table must not go out as an ordinary success.
+                if (covSourceMap.IsIncomplete) scanFailures = covSourceMap.ScanFailures;
                 if (req.Coverage == true)
                     statementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectStatementTable(covSourceMap);
                 if (req.PerTestCoverage == true)
@@ -7059,7 +7095,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 selection: selection,
                 statementTable: statementTable,
                 perTestStatementTable: perTestStatementTable,
-                companyInitFailures: companyInitFailures);
+                companyInitFailures: companyInitFailures,
+                sourceScanFailures: scanFailures);
         }
         finally
         {

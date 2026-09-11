@@ -10,9 +10,14 @@ using NavSyntax = Microsoft.Dynamics.Nav.CodeAnalysis.Syntax;
 
 namespace AlRunner.Infrastructure;
 
+/// <summary>What a scan failure names. Only <see cref="Root"/> and <see cref="Directory"/>
+/// cover the sources BENEATH them; a <see cref="File"/> failure covers exactly one path, so a
+/// consumer must not treat it as a prefix (#3884 review).</summary>
+public enum SourceScanFailureKind { Root, Directory, File }
+
 /// <summary>Something the scan could not read, and why. Never a parse failure or an object
 /// kind the map does not carry — those are measurements, and this is the absence of one.</summary>
-public readonly record struct SourceScanFailure(string Path, string Reason);
+public readonly record struct SourceScanFailure(string Path, string Reason, SourceScanFailureKind Kind);
 
 /// <summary>
 /// (object label, object id) → the declaring file, readable as the plain
@@ -71,13 +76,13 @@ public sealed class AlSourceLocationMap : IReadOnlyDictionary<(string Label, int
     internal void Add(string label, int id, string path, int lineOffset) =>
         _entries[(label, id)] = (path, lineOffset);
 
-    internal void AddScanFailure(string path, string reason)
+    internal void AddScanFailure(string path, string reason, SourceScanFailureKind kind)
     {
         // Deduplicated: one root can be named by two callers, and a locked file is reached
         // once per scan but a scan can run per bundle.
         foreach (var existing in _scanFailures)
             if (existing.Path == path) return;
-        _scanFailures.Add(new SourceScanFailure(path, reason));
+        _scanFailures.Add(new SourceScanFailure(path, reason, kind));
     }
 
     /// <summary>Lines to add to a decoded [SourceSpans] line of this object to get its file
@@ -130,6 +135,24 @@ public static class AlCoverageSourceMap
     /// </para>
     /// </summary>
     public static AlSourceLocationMap Build(IEnumerable<string> roots, string? relativeTo = null)
+        => Build(roots, relativeTo, static (string root, out IReadOnlyList<string> inaccessible)
+            => SafeDirectoryScan.Files(root, "*.al", out inaccessible));
+
+    /// <summary>
+    /// How <see cref="Build"/> lists a root: the .al files under it, and the directories it
+    /// could not enter. A seam, not a policy — the production implementation is
+    /// <see cref="SafeDirectoryScan.Files(string, string, out IReadOnlyList{string}, SearchOption)"/>
+    /// and nothing else may be passed outside tests.
+    ///
+    /// <para>It exists because the inaccessible-directory arm is otherwise untestable without
+    /// permission bits, which do not bite on Windows or for a root CI user — and a test of
+    /// SafeDirectoryScan alone would stay green if THIS method stopped forwarding what it
+    /// reports, which is exactly the defect (#3884 review).</para>
+    /// </summary>
+    internal delegate IReadOnlyList<string> RootScanner(string root, out IReadOnlyList<string> inaccessible);
+
+    internal static AlSourceLocationMap Build(
+        IEnumerable<string> roots, string? relativeTo, RootScanner scan)
     {
         var map = new AlSourceLocationMap();
         var symbolsByAppJson = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
@@ -139,16 +162,23 @@ public static class AlCoverageSourceMap
             if (!Directory.Exists(root))
             {
                 // Not the same as a root with nothing in it: the caller named this path, so
-                // its absence is an unmeasured scan rather than an empty one (#3847).
-                map.AddScanFailure(root, "the source root does not exist");
+                // its absence is an unmeasured scan rather than an empty one (#3847). A path
+                // that IS there but is a file says so rather than "does not exist", which was
+                // false and sent the reader looking for the wrong thing (#3884 review).
+                map.AddScanFailure(root,
+                    File.Exists(root)
+                        ? "the source root is a file, and a source root must be a directory"
+                        : "the source root does not exist",
+                    SourceScanFailureKind.Root);
                 continue;
             }
             // SafeDirectoryScan has always been able to say which directories it could not
             // enter; this scan discarded the answer with `out _`, which is the shape #3847 is
             // about — the mechanism existed and the caller threw it away.
-            var files = SafeDirectoryScan.Files(root, "*.al", out var inaccessible);
+            var files = scan(root, out var inaccessible);
             foreach (var dir in inaccessible)
-                map.AddScanFailure(dir, "the directory could not be read, so any AL under it was not scanned");
+                map.AddScanFailure(dir, "the directory could not be read, so any AL under it was not scanned",
+                    SourceScanFailureKind.Directory);
             foreach (var file in files)
             {
                 var appJson = NearestAppJson(Path.GetDirectoryName(file)!, appJsonByDir);
@@ -161,33 +191,35 @@ public static class AlCoverageSourceMap
                 var parsed = ParseObjects(file, symbols, out var readFailure);
                 foreach (var o in parsed)
                     map.Add(o.Label, o.Id, path, o.LineOffset);
-                if (readFailure != null) map.AddScanFailure(file, readFailure);
+                if (readFailure != null)
+                    map.AddScanFailure(file, readFailure, SourceScanFailureKind.File);
             }
         }
-        WarnOnce(map);
+        Warn(map);
         return map;
     }
 
-    private static readonly HashSet<string> _warned = new();
-
     /// <summary>
-    /// Says out loud, once per path per process, that part of the scan did not happen. Here
-    /// rather than at each of the five call sites, because every one of them would otherwise
-    /// have to remember — and the consumer that forgets is the one that reports a confident
-    /// negative about AL nobody read (#3847).
+    /// Says out loud that part of the scan did not happen. Here rather than at each of the five
+    /// call sites, because every one of them would otherwise have to remember — and the
+    /// consumer that forgets is the one that reports a confident negative about AL nobody read
+    /// (#3847).
+    ///
+    /// <para>Once per BUILD, not once per process. A process-wide memo of warned paths was the
+    /// first version and it is wrong twice over (#3884 review): under --server and --watch the
+    /// process is long-lived, so a path that failed, was repaired, and failed AGAIN is a new
+    /// event that the memo silently swallows — and the memo grows for the life of the process,
+    /// one entry per distinct path any request ever named. AddScanFailure already
+    /// de-duplicates within one map, which is the honest scope for "do not say it twice".</para>
     ///
     /// Console.Error, not Console.Out: under --dap stdio, stdout IS the protocol channel.
     /// </summary>
-    private static void WarnOnce(AlSourceLocationMap map)
+    private static void Warn(AlSourceLocationMap map)
     {
         foreach (var failure in map.ScanFailures)
-        {
-            lock (_warned)
-                if (!_warned.Add(failure.Path)) continue;
             Console.Error.WriteLine(
                 $"[source-map] {failure.Path}: {failure.Reason}. Objects it declares are absent "
                 + "from the source map, so coverage and the debugger cannot attribute them.");
-        }
     }
 
     /// <summary>The nearest app.json in <paramref name="dir"/> or an ancestor, or null. The
@@ -214,8 +246,29 @@ public static class AlCoverageSourceMap
         string file, IReadOnlyList<string> symbols, out string? readFailure)
     {
         readFailure = null;
-        var info = new FileInfo(file);
-        var key = $"{file}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{string.Join(",", symbols)}";
+        // The FINGERPRINT read is guarded too. FileInfo.Length and LastWriteTimeUtc hit the
+        // filesystem, so a file deleted between the directory enumeration and this line, or one
+        // whose metadata the filesystem refuses, threw out of Build instead of becoming the
+        // third state this whole change is about (#3884 review).
+        string key;
+        try
+        {
+            var info = new FileInfo(file);
+            key = $"{file}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{string.Join(",", symbols)}";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            readFailure = $"the file's metadata could not be read ({ex.GetType().Name}: {ex.Message})";
+            return Array.Empty<ParsedObject>();
+        }
+
+        // A cache hit is a PREVIOUS measurement of a file whose path, length, modification
+        // time and preprocessor symbols are all unchanged, and it is accepted as one: this
+        // does not re-open the file, so a file that has become unreadable since without
+        // changing its fingerprint reports its old objects and no failure. Stated because it
+        // is the one way ScanFailures can be empty while a fresh read would fail (#3884
+        // review); the alternative is an open() per file per build, which is the cost this
+        // memo exists to avoid.
         if (_parsed.TryGetValue(key, out var cached)) return cached;
 
         string content;

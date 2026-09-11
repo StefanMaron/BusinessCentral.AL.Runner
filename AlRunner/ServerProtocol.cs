@@ -334,7 +334,8 @@ public static class ServerProtocol
         ServerSelection? selection = null,
         IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null,
         IReadOnlyDictionary<string, List<Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null,
-        IReadOnlyList<CompanyInitFailure>? companyInitFailures = null)
+        IReadOnlyList<CompanyInitFailure>? companyInitFailures = null,
+        IReadOnlyList<Infrastructure.SourceScanFailure>? sourceScanFailures = null)
     {
         var payload = new
         {
@@ -362,11 +363,27 @@ public static class ServerProtocol
             coverage = ToStatementTableWire(statementTable),
             perTestCoverage = ToPerTestCoverageWire(perTestStatementTable),
             companyInitFailures = ToCompanyInitWire(companyInitFailures),
+            sourceScanFailures = ToScanFailureWire(sourceScanFailures),
             wallSeconds,
             protocolVersion = 2,
         };
         return JsonSerializer.Serialize(payload, Opts);
     }
+
+    /// <summary>
+    /// The sources the scan could not read, or null when it read everything. Null rather than
+    /// an empty array, matching `coverage`'s convention, so a client that does not know the
+    /// field sees no change.
+    ///
+    /// <para>#3884: a coverage table built from an incomplete source map is SHORT, and until
+    /// this field existed the response said so nowhere — the client got an ordinary success
+    /// carrying tables that silently omit whatever could not be read. A stderr warning is
+    /// observability; a client parsing JSON needs a field.</para>
+    /// </summary>
+    private static object? ToScanFailureWire(IReadOnlyList<Infrastructure.SourceScanFailure>? failures) =>
+        failures is { Count: > 0 }
+            ? failures.Select(f => new { path = f.Path, reason = f.Reason, kind = f.Kind.ToString() })
+            : null;
 
     /// <summary>Serialize an execute response (run-mode / inline code). <paramref
     /// name="statementTable"/> — see Summary's doc comment; identical `coverage`
@@ -383,11 +400,13 @@ public static class ServerProtocol
         ServerSelection? selection = null,
         IReadOnlyList<Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null,
         IReadOnlyDictionary<string, List<Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null,
-        IReadOnlyList<CompanyInitFailure>? companyInitFailures = null)
+        IReadOnlyList<CompanyInitFailure>? companyInitFailures = null,
+        IReadOnlyList<Infrastructure.SourceScanFailure>? sourceScanFailures = null)
     {
         var payload = new
         {
             exitCode,
+            sourceScanFailures = ToScanFailureWire(sourceScanFailures),
             tests = tests.Select(ToWire),
             messages = messages is { Count: > 0 } ? messages.Select((m, i) => ToWire(m, Tag(messageTags, i))) : null,
             selection = selection == null ? null : new

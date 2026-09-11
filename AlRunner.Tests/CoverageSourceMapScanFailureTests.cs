@@ -69,10 +69,11 @@ public sealed class CoverageSourceMapScanFailureTests : IDisposable
     /// bare <c>continue</c> that leaves nothing behind. A root the caller named and that is not
     /// there is not the same as a root with nothing in it — the caller asserted it exists.
     /// </summary>
-    [SkippableFact]
+    [Fact]
     public void Build_ARootThatIsNotThere_IsReportedRatherThanSkippedSilently()
     {
-        RequireEngine();
+        // No RequireEngine: a root that is not there is never opened, so nothing parses AL.
+        // The third state must still be provable on a box with no BC artifacts (#3884 review).
         var missing = Path.Combine(_root, "no-such-directory");
 
         var map = AlCoverageSourceMap.Build(new[] { _root, missing }, relativeTo: _root);
@@ -236,10 +237,9 @@ public sealed class CoverageSourceMapScanFailureTests : IDisposable
     /// the file, so equality alone would miss every source beneath it — and those are exactly
     /// the sources nothing measured.
     /// </summary>
-    [SkippableFact]
+    [Fact]
     public void UnverifiedReason_ForAFileUnderAnUnscannedRoot_SaysSoRatherThanBlamingTheLine()
     {
-        RequireEngine();
         var missingRoot = Path.Combine(_root, "gone");
         var underIt = Path.Combine(missingRoot, "src", "Thing.Codeunit.al");
 
@@ -254,10 +254,9 @@ public sealed class CoverageSourceMapScanFailureTests : IDisposable
     /// A compile failure outranks both: nothing bound because nothing compiled, and saying the
     /// source was unreadable instead would send the user to the wrong place.
     /// </summary>
-    [SkippableFact]
+    [Fact]
     public void UnverifiedReason_WhenTheBundleDidNotCompile_SaysThatFirst()
     {
-        RequireEngine();
         var missingRoot = Path.Combine(_root, "gone");
         var map = AlCoverageSourceMap.Build(new[] { missingRoot }, relativeTo: null);
         Assert.Single(map.ScanFailures);
@@ -266,5 +265,125 @@ public sealed class CoverageSourceMapScanFailureTests : IDisposable
 
         Assert.Contains("did not compile", reason, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("AL0134", reason, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// #3884 review: the arm nothing of mine proved. SafeDirectoryScan has always reported the
+    /// directories it could not enter and this caller discarded them with <c>out _</c>; that
+    /// forwarding is what the fix restores, and deleting the loop again would leave a test of
+    /// SafeDirectoryScan itself perfectly green.
+    ///
+    /// Permission bits cannot produce the condition here — they do not bite on Windows or for
+    /// a root CI user, which is why the four InaccessibleDirectoryScanTests rows skip — so the
+    /// scanner is injected instead. This is the forwarding, not the scanning.
+    /// </summary>
+    [Fact]
+    public void Build_ADirectoryTheScannerCouldNotEnter_IsForwardedAsAFailure()
+    {
+        var unreadable = Path.Combine(_root, "locked-subdir");
+
+        var map = AlCoverageSourceMap.Build(
+            new[] { _root }, relativeTo: null,
+            (string root, out IReadOnlyList<string> inaccessible) =>
+            {
+                inaccessible = new[] { unreadable };
+                return Array.Empty<string>();
+            });
+
+        var failure = Assert.Single(map.ScanFailures);
+        Assert.Equal(unreadable, failure.Path);
+        Assert.Equal(SourceScanFailureKind.Directory, failure.Kind);
+        Assert.True(map.IsIncomplete);
+    }
+
+    /// <summary>
+    /// The scanner reporting nothing inaccessible is a clean pass — the constraint again, at
+    /// the seam: injecting a scanner must not itself manufacture a failure.
+    /// </summary>
+    [Fact]
+    public void Build_AScannerThatReportsNothingInaccessible_ReportsNoFailures()
+    {
+        var map = AlCoverageSourceMap.Build(
+            new[] { _root }, relativeTo: null,
+            (string root, out IReadOnlyList<string> inaccessible) =>
+            {
+                inaccessible = Array.Empty<string>();
+                return Array.Empty<string>();
+            });
+
+        Assert.Empty(map.ScanFailures);
+        Assert.False(map.IsIncomplete);
+    }
+
+    /// <summary>
+    /// #3884 review: containment belongs to a ROOT or a DIRECTORY, which cover the sources
+    /// beneath them — never to a FILE, which covers exactly one path. A file failure used as a
+    /// prefix claimed paths "under" a file, which is a shape a DAP client can ask about even
+    /// when the filesystem cannot hold it.
+    /// </summary>
+    [Fact]
+    public void UnverifiedReason_ForAPathUnderAFileFailure_StillBlamesTheLine()
+    {
+        var locked = Path.Combine(_root, "Locked.Codeunit.al");
+        var map = AlCoverageSourceMap.Build(
+            new[] { _root }, relativeTo: null,
+            (string root, out IReadOnlyList<string> inaccessible) =>
+            {
+                inaccessible = Array.Empty<string>();
+                return Array.Empty<string>();
+            });
+        map.AddScanFailure(locked, "the file could not be read (test)", SourceScanFailureKind.File);
+
+        // The file itself is covered...
+        Assert.Contains("could not be read",
+            DapUnverifiedReason.For(null, map, locked), StringComparison.OrdinalIgnoreCase);
+        // ...and a path lexically beneath it is not.
+        Assert.Equal("no executable AL statement on this line in this file",
+            DapUnverifiedReason.For(null, map, Path.Combine(locked, "Child.al")));
+    }
+
+    /// <summary>
+    /// #3884 review: a root supplied as a FILE said "the source root does not exist", which is
+    /// false — it does exist, and the remedy is different.
+    /// </summary>
+    [Fact]
+    public void Build_ARootThatIsAFile_SaysSoRatherThanThatItIsAbsent()
+    {
+        var asFile = Path.Combine(_root, "not-a-directory.al");
+        File.WriteAllText(asFile, "// not a directory\n");
+
+        var map = AlCoverageSourceMap.Build(new[] { asFile }, relativeTo: null);
+
+        var failure = Assert.Single(map.ScanFailures);
+        Assert.Equal(SourceScanFailureKind.Root, failure.Kind);
+        Assert.Contains("is a file", failure.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("does not exist", failure.Reason, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// #3884 review: the warning is per BUILD, not per process. A path that failed, was
+    /// repaired, and failed again is a new event — a process-wide memo of warned paths
+    /// swallowed the second one, and under --server and --watch the process outlives many
+    /// builds.
+    ///
+    /// Asserted on the map rather than on stderr: what the memo suppressed was the WARNING,
+    /// but the contract that matters to a caller is that every build reports its own failures.
+    /// </summary>
+    [Fact]
+    public void Build_TheSameRootFailingTwice_IsReportedBothTimes()
+    {
+        var missing = Path.Combine(_root, "gone-then-back");
+
+        var first = AlCoverageSourceMap.Build(new[] { missing }, relativeTo: null);
+        Assert.Single(first.ScanFailures);
+
+        Directory.CreateDirectory(missing);
+        var repaired = AlCoverageSourceMap.Build(new[] { missing }, relativeTo: null);
+        Assert.Empty(repaired.ScanFailures);
+
+        Directory.Delete(missing);
+        var again = AlCoverageSourceMap.Build(new[] { missing }, relativeTo: null);
+        Assert.Single(again.ScanFailures);
+        Assert.True(again.IsIncomplete);
     }
 }
