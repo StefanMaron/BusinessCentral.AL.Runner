@@ -29,6 +29,18 @@
 //   SymbolProperties does for the property NAME, and the obvious thing to reach for — answers
 //   16 for that codeunit, a wrong value that no count of agreeing codeunits would reveal.
 //
+//   ON CODEUNITS THAT IS A POPULATION OF ONE, AND THE SURROUNDING POPULATION IS NOT. Scanning
+//   every .app shipped in 28.1.49838.53910 (Base Application, System Application, Business
+//   Foundation, Application Test Library): the codeunit values are "X" x1166 and "x" x1, while
+//   the OTHER object kinds carry 71 lowercase-bearing values, mixed case dominating — "rX" x40,
+//   "RIMDX" x18, "rimdX" x12, "RX" x10, plus "riX"/"rimX"/"rimx"/"rimd"/"Rimd"/"r". Those kinds
+//   are #3798's and #3808's to render, and they will reuse this decoder, so the mixed-case case
+//   is asserted here rather than left for them to rediscover.
+//
+//   Not measured on any other BC build: 28.4 is provisioned on this box WITHOUT its .app files,
+//   so a scan there returns zero for every kind — which is an absent input, not a version
+//   difference. Only 28.1 is cited above because only 28.1 was measured.
+//
 // WHY A RUNNER-SIDE MECHANISM TEST
 //   The BC-behaviour claim is not what is at stake: BC's own emitter output IS the ground truth
 //   here, and the metadata-equivalence harness compares against it on every unit-test leg. What
@@ -55,6 +67,7 @@ public sealed class CodeunitSymbolNamespaceAndInherentMaskTests : IDisposable
     private const int IndirectExecute = 61055;
     private const int DeclaresNoMask = 61056;
     private const int ReadModifyMask = 61057;
+    private const int MixedCaseMask = 61058;
 
     private readonly string _root;
 
@@ -121,6 +134,13 @@ public sealed class CodeunitSymbolNamespaceAndInherentMaskTests : IDisposable
                       "Name": "Read Modify",
                       "Properties": [
                         { "Name": "InherentPermissions", "Value": "RM" }
+                      ]
+                    },
+                    {
+                      "Id": {{MixedCaseMask}},
+                      "Name": "Mixed Case",
+                      "Properties": [
+                        { "Name": "InherentPermissions", "Value": "rX" }
                       ]
                     }
                   ]
@@ -209,6 +229,16 @@ public sealed class CodeunitSymbolNamespaceAndInherentMaskTests : IDisposable
         // rather than a lookup that only knows Execute.
         Assert.Equal("5", Projection(ReadModifyMask).GetAttribute("InherentPermissions"));
         Assert.False(Projection(ReadModifyMask).HasAttribute("InherentEntitlements"));
+
+        // MIXED case in ONE value, which is the shape that actually ships. "rX" is indirect Read
+        // (bit 0+5 = 32) | direct Execute (bit 4 = 16) = 48, so one value exercises both halves
+        // of the rule and the two cannot be satisfied by a decoder that picks a single mode per
+        // string. Measured across every .app in BC 28.1.49838.53910: the mixed forms occur 71
+        // times on the non-codeunit kinds — "rX" 40, "rimdX" 12, "riX"/"rimX" 4 each — while the
+        // codeunit population carries exactly one lowercase value ("x", codeunit 2516). So this
+        // fixture is the codeunit-side stand-in for a spelling the same decoder will meet in
+        // volume when #3798 and #3808 reuse it.
+        Assert.Equal("48", Projection(MixedCaseMask).GetAttribute("InherentPermissions"));
     }
 
     /// <summary>
