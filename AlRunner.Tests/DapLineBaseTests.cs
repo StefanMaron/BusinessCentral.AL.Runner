@@ -33,6 +33,15 @@ public class DapLineBaseTests
     /// <summary>`First := 1;` — one statement, so one stop. 1-based, as the file is numbered.</summary>
     private const int SingleStatementLine = 35;
 
+    /// <summary>`procedure Seven() ... end;  procedure Nine() ... end;` — two one-line
+    /// procedures, so a breakpoint here arms two scopes and each stop has a caller. 1-based.
+    /// </summary>
+    private const int TwoProceduresLine = 26;
+
+    /// <summary>`Total := Seven() + Nine();` — the statement that calls both, and so the line
+    /// the CALLER frame sits on at each of those stops. 1-based.</summary>
+    private const int CallerOfTheTwoProceduresLine = 48;
+
     /// <summary>The blank line after the two one-line procedures: no executable AL statement
     /// on it. 1-based. Its predecessor, line 26, carries two — which is what makes the number
     /// a 0-based client writes for it discriminating.</summary>
@@ -212,14 +221,15 @@ public class DapLineBaseTests
     }
 
     /// <summary>
-    /// A 1-based client — the default, and what every real client in use today sends — is
-    /// unchanged by the conversion. Sending nothing at all for either capability must be the
-    /// same conversation as before: line 35 asked for, line 35 verified, line 35 reported by
-    /// the <c>stopped</c> event and by the frame, column 1 on the frame.
+    /// A client that sends <c>linesStartAt1: true</c> explicitly is unchanged by the
+    /// conversion: line 35 asked for, line 35 verified, line 35 reported by the <c>stopped</c>
+    /// event and by the frame, column 1 on the frame.
     ///
     /// <para>This is the control the in/out conversions are measured against: a fix that
     /// converted unconditionally, or that subtracted where it should add, turns this red while
-    /// leaving the 0-based facts green.</para>
+    /// leaving the 0-based facts green. It does NOT cover the absent-property default — this
+    /// helper sends both booleans — which is what
+    /// <see cref="DefaultBases_WhenTheClientSendsNeitherProperty_AreOneBased"/> is for.</para>
     /// </summary>
     [SkippableFact]
     public async Task OneBasedClient_IsUnaffected_AndTheFrameColumnStaysOne()
@@ -351,12 +361,17 @@ public class DapLineBaseTests
     /// leaving this one path 1-based would keep every other fact green — which is exactly the
     /// shape that makes a test suite read as coverage while protecting nothing.
     ///
-    /// <para>RED against <c>origin/main</c>, where the legacy path did not convert: a 0-based
-    /// client's 34 was read as 1-based 34, resolved against the <c>begin</c>, and came back
-    /// unverified. GREEN: verified, echoed as 34, and the stop is at the statement it meant —
-    /// pinned by the locals, since <c>First</c> is still 0 in front of <c>First := 1;</c>.</para>
+    /// <para>RED against <c>origin/main</c>, and NOT for the reason this comment first gave.
+    /// The legacy path did not merely skip the conversion there — it was unreachable, because
+    /// an unbraced <c>else</c> bound it to the inner <c>if (bp.TryGetProperty("line"))</c>. So
+    /// the request resolved nothing and came back <c>{"success":true,"breakpoints":[]}</c>, and
+    /// this fact failed indexing element zero rather than on a wrong line number. GREEN:
+    /// verified, echoed as 34, and the stop is at the statement it meant — pinned by the
+    /// locals, since <c>First</c> is still 0 in front of <c>First := 1;</c>.</para>
     ///
-    /// <para>Raised by GitHub Copilot's automatic review of PR #3899.</para>
+    /// <para>Raised by GitHub Copilot's automatic review of PR #3899; the account above was
+    /// corrected after an adversarial review (gpt-6-astra) caught it describing a defect that
+    /// was never there.</para>
     /// </summary>
     [SkippableFact]
     public async Task ZeroBasedClient_UsingTheLegacyLinesArray_BindsAndReportsInItsOwnBase()
@@ -396,6 +411,121 @@ public class DapLineBaseTests
 
         var contSeq = dap.SendRequest("continue", new { threadId = 1 });
         await dap.ReadUntilResponseAsync(contSeq);
+        var exited = await dap.ReadUntilEventAsync("exited", TimeSpan.FromSeconds(60));
+        Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
+    }
+
+    /// <summary>
+    /// The specification's default, driven as a client actually sends it: an <c>initialize</c>
+    /// carrying NEITHER <c>linesStartAt1</c> nor <c>columnsStartAt1</c> means both are true.
+    ///
+    /// <para>Every other fact here sends both properties explicitly, so a regression reading an
+    /// absent property as <c>false</c> would leave the whole suite green while breaking every
+    /// client that omits them — which is most of them. Raised by an adversarial review of
+    /// PR #3899 (gpt-6-astra).</para>
+    /// </summary>
+    [SkippableFact]
+    public async Task DefaultBases_WhenTheClientSendsNeitherProperty_AreOneBased()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var dap = await DapClient.StartAsync(FixtureSrc);
+        await using var _ = dap;
+
+        // No `linesStartAt1`, no `columnsStartAt1`. That absence is the whole fact.
+        var initSeq = dap.SendRequest("initialize", new { adapterID = "al-runner-tests" });
+        var initEvents = new List<JsonElement>();
+        var initResp = await dap.ReadUntilResponseAsync(initSeq, initEvents);
+        Assert.True(initResp.GetProperty("success").GetBoolean(), initResp.ToString());
+        if (!initEvents.Any(e => e.GetProperty("event").GetString() == "initialized"))
+            await dap.ReadUntilEventAsync("initialized");
+
+        var launchSeq = dap.SendRequest("launch", new { });
+        var launchResp = await dap.ReadUntilResponseAsync(launchSeq, timeout: TimeSpan.FromSeconds(120));
+        Assert.True(launchResp.GetProperty("success").GetBoolean(),
+            $"launch failed: {launchResp}\n--- stderr ---\n{dap.StdErr}");
+
+        var bpSeq = dap.SendRequest("setBreakpoints", new
+        {
+            source = new { path = Path.Combine(FixtureSrc, SourceFileName) },
+            breakpoints = new[] { new { line = SingleStatementLine } },
+        });
+        var bpResp = await dap.ReadUntilResponseAsync(bpSeq);
+        var bp = bpResp.GetProperty("body").GetProperty("breakpoints")[0];
+        Assert.True(bp.GetProperty("verified").GetBoolean(),
+            $"{bpResp}\n--- stderr ---\n{dap.StdErr}");
+        Assert.Equal(SingleStatementLine, bp.GetProperty("line").GetInt32());
+
+        var cfgSeq = dap.SendRequest("configurationDone");
+        await dap.ReadUntilResponseAsync(cfgSeq);
+
+        var stopped = await dap.ReadUntilEventAsync("stopped");
+        Assert.Equal(SingleStatementLine, stopped.GetProperty("body").GetProperty("line").GetInt32());
+
+        var stSeq = dap.SendRequest("stackTrace", new { threadId = 1 });
+        var stResp = await dap.ReadUntilResponseAsync(stSeq);
+        var topFrame = stResp.GetProperty("body").GetProperty("stackFrames")[0];
+        Assert.Equal(SingleStatementLine, topFrame.GetProperty("line").GetInt32());
+        Assert.Equal(1, topFrame.GetProperty("column").GetInt32());
+
+        var contSeq = dap.SendRequest("continue", new { threadId = 1 });
+        await dap.ReadUntilResponseAsync(contSeq);
+        var exited = await dap.ReadUntilEventAsync("exited", TimeSpan.FromSeconds(60));
+        Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
+    }
+
+    /// <summary>
+    /// EVERY frame converts, not just the paused one. A breakpoint inside a one-line procedure
+    /// gives a stack with a caller, and the caller's line comes from a different branch of
+    /// <c>AlDapStackWalker.Walk</c> than frame 0's — `ResolveCurrentLine` rather than the
+    /// paused statement index.
+    ///
+    /// <para>So a conversion applied only where the paused line is computed would answer this
+    /// suite's other facts correctly and still hand a 0-based client a 1-based caller. Line 26
+    /// declares <c>Seven()</c> and <c>Nine()</c>; both are armed (#3820), and the call that
+    /// reaches them is line 48, so a 0-based client must be told 25 and 47.</para>
+    ///
+    /// <para>Raised by an adversarial review of PR #3899 (gpt-6-astra).</para>
+    /// </summary>
+    [SkippableFact]
+    public async Task ZeroBasedClient_ACallerFrame_ConvertsToo()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (dap, bpResp) = await StartAndSetBreakpointAsync(
+            TwoProceduresLine - 1, linesStartAt1: false);
+        await using var _ = dap;
+        Assert.True(bpResp.GetProperty("body").GetProperty("breakpoints")[0]
+            .GetProperty("verified").GetBoolean(), $"{bpResp}\n--- stderr ---\n{dap.StdErr}");
+
+        var cfgSeq = dap.SendRequest("configurationDone");
+        await dap.ReadUntilResponseAsync(cfgSeq);
+
+        // Seven() then Nine(), in call order; both stops have the same caller line.
+        foreach (var expectedFrame in new[] { "Seven", "Nine" })
+        {
+            var stopped = await dap.ReadUntilEventAsync("stopped", TimeSpan.FromSeconds(60));
+            Assert.Equal(TwoProceduresLine - 1, stopped.GetProperty("body").GetProperty("line").GetInt32());
+
+            var stSeq = dap.SendRequest("stackTrace", new { threadId = 1 });
+            var stResp = await dap.ReadUntilResponseAsync(stSeq);
+            var frames = stResp.GetProperty("body").GetProperty("stackFrames");
+            Assert.True(frames.GetArrayLength() >= 2,
+                $"expected a caller frame behind {expectedFrame}: {stResp}");
+
+            var top = frames[0];
+            var frameName = top.GetProperty("name").GetString() ?? "";
+            Assert.True(frameName.Contains(expectedFrame, StringComparison.OrdinalIgnoreCase),
+                $"paused frame is '{frameName}', not {expectedFrame}: {stResp}");
+            Assert.Equal(TwoProceduresLine - 1, top.GetProperty("line").GetInt32());
+
+            // The caller, whose line comes from the scope's own live StatementNumber.
+            Assert.Equal(CallerOfTheTwoProceduresLine - 1, frames[1].GetProperty("line").GetInt32());
+
+            var contSeq = dap.SendRequest("continue", new { threadId = 1 });
+            await dap.ReadUntilResponseAsync(contSeq);
+        }
+
         var exited = await dap.ReadUntilEventAsync("exited", TimeSpan.FromSeconds(60));
         Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
     }

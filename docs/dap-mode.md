@@ -88,8 +88,10 @@ Session lifecycle is identical to the TCP transport from here on:
    AL-compiler-instrumented statements on it, via an exact absolute-line match — no
    "nearest line" heuristic. A line with no exact instrumented statement comes
    back `verified: false` rather than silently relocated, carrying a `message`
-   saying which reason applies: the bundle did not compile, or that line holds no
-   statement.
+   saying which of THREE reasons applies: the bundle did not compile, the source
+   could not be READ during map preparation so nobody knows what is on that line
+   (#3847), or that line holds no statement. The three are chosen in
+   `AlRunner/Infrastructure/DapUnverifiedReason.cs`, which is where to add a fourth.
 
    **Every statement on the line is armed, not one of them** (#3820). A line can
    carry several — two statements separated by `;`, two one-line procedures, or
@@ -114,6 +116,12 @@ Session lifecycle is identical to the TCP transport from here on:
    sentinel for a frame that could not be mapped, not a coordinate, so it is passed
    through rather than converted; #3901 carries what that costs a 0-based client.
 
+   Two things to keep straight about that sentinel. The `stopped` event's `line` is an
+   **adapter extension** — DAP's own `StoppedEvent` has no such property, and a
+   specification-following client reads the location from `stackTrace`. And the
+   sentinel is **internal** line 0: for a client that counts from 0, client line 0 is a
+   real coordinate, which is exactly the collision #3901 records.
+
    **A second `initialize` is refused**, with a message saying why. DAP allows it
    only as the first request and only once, and the two bases are negotiated there
    and answered against for the rest of the session — honouring a repeat would move
@@ -128,7 +136,9 @@ Session lifecycle is identical to the TCP transport from here on:
    again. `next` (step over) / `stepIn` / `stepOut` (issue #2045) each arm a
    depth-based condition instead — the AL execution thread stops at the first
    subsequent `StmtHit` that "qualifies" for the command sent, and the
-   `stopped` event's `reason` is `"step"` rather than `"breakpoint"`. See
+   `stopped` event's `reason` is `"step"` — unless the statement it lands on also
+   carries a breakpoint, which takes precedence and reports `"breakpoint"`
+   (`AlDapSession.OnStmtHit`). See
    `AlRunner/Infrastructure/AlDapSession.cs`'s file header for exactly what
    "qualifies" means for each. The depth signal is a manual walk of
    `NavMethodScope.ParentScope` (the same chain `AlDapStackWalker` already
