@@ -14,7 +14,7 @@ The number is a convention; `tools/corpus-pass-count.py` spells the third state 
 label instead. What is not negotiable is that it is **distinct from the success state**, and
 that the message says which of the three it is.
 
-## The three that get this right — copy one of them
+## The four that get this right — copy one of them
 
 - **`tools/ci-wait.py`, exit 3** — the model to copy is `rollup_is_final`, which returns
   `True`/`False`/**`None`**, with `None` "deliberately distinct from False: an unknown must
@@ -31,6 +31,14 @@ that the message says which of the three it is.
   so "not in this leg's suite" and "this leg never reached the test phase" cannot be read as
   "your tests did not run". A zero has three meanings and a bare grep gives all three the same
   answer.
+- **`TestArtifacts.SkipIfMissingIn`** — the third state where the *same* condition is a
+  legitimate pass in one environment and a defect in another. Artifacts missing on a dev box is
+  an honest skip; on a CI leg it is impossible by construction, so it **fails** there instead.
+  Its own comment says why a visible skip is not enough: *"if the workflow moves where it
+  provisions artifacts, `Present` answers false for EVERY test, all of them skip — visibly, with
+  an accurate reason — and the leg is still GREEN."* A correct per-test answer, and the run above
+  it still asserts nothing. Deliberately scoped to that gate rather than a blanket `Skipped: 0`
+  assertion, which would fail every local run for a correct reason.
 
 ## The worked example: three-way discrimination (#3299, #3681, PR #3683, #3737)
 
@@ -58,6 +66,11 @@ would otherwise have produced the same corpus.
 **A genuinely absent thing must stay a pass. Only an *unmeasurable* one becomes the third
 state.** A fix that hard-errors a submodule-free repository has swapped a false green for a
 false red.
+
+**But "genuinely absent" can depend on where you are running.** `SkipIfMissingIn` above is the
+case: the same missing directory is a legitimate absence locally and a provisioning defect on
+CI, so one verdict for both would be wrong in one of them. Ask which environments the condition
+can legitimately occur in before deciding it is a pass.
 
 `tools/agent_self_freshness.py` has the sharper form, splitting "could not establish" into
 three and refusing only one (#3296):
