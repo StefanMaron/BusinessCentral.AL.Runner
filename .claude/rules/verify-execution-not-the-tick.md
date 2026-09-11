@@ -50,6 +50,25 @@ differently-shaped query whose shape does not depend on the same assumption:
 - the count of *all* PASS names on the leg, which tells you the log parsed at all;
 - for a prefix question, grep for one full test name copied from the `.al` file.
 
+**Where this discipline actually fails: on the instrument, not the subject.** The confirmations
+above get applied to the thing under investigation and skipped on the tool doing the
+investigating — and the tool's answer is the one nothing else cross-checks. Three instances on
+2026-09-11, all by one agent in one task, all caught only because something else ran:
+
+| the instrument | what it returned | why it looked like an answer |
+|---|---|---|
+| a `\| tail` pipeline's `$?` | 0 | it is 0 whatever the tool returned (#3864) |
+| an exit-code claim about `ci-wait.py` | "exits 0 on a non-verdict" | never re-run directly; it exits 2 |
+| a log pattern for `PASS +<name>` | 6 of 9 tests | the `(known-gap)` column widened the gap the `+` had to span |
+
+The third is the sharpest: **six of nine is exactly the shape of a real finding** — "that codeunit
+did not run" — on a leg that was green. A second, differently-shaped query found all nine.
+
+So when a query about a run returns something surprising, re-derive it a second way **before**
+reporting it, and treat the instrument with the suspicion you would give the subject: a tool that
+cannot be wrong in the direction you are reading is not evidence.
+
+
 ## Which legs were ever going to run it
 
 The corpus runs 16 legs, eight cloud and eight OnPrem, and **only the eight cloud legs are the
