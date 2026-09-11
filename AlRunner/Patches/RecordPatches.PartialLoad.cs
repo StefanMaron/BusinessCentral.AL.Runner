@@ -17,8 +17,9 @@
 // the data path is untouched: the read of an unloaded field still lands on BC's
 // GetFieldValue `else if` arm, which calls AddLoadField and flips the field to loaded.
 //
-// The one divergence this leaves — narrowing the load set AFTER a fetch and asking before
-// re-fetching — is written up, with the BC side still awaiting a service-tier verdict, at
+// The one divergence this leaves — narrowing the load set after a field is already in the
+// fetched buffer — is service-tier measured (corpus PR 323, cloud legs 27.3 and 27.5: BC keeps
+// the field loaded, and a re-fetch does not change that) and tracked by #3859. Write-up:
 // docs/limitations.md#are-fields-loaded-narrow-after-fetch. Alternatives weighed: PR for #3358.
 // Reference: upstream corpus codeunit 60775 "Test Record Partial Load".
 //
