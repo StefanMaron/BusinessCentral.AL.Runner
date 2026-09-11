@@ -2604,12 +2604,24 @@ def classify_corpus_checkout(reading: dict) -> CheckResult:
 ARTIFACTS_ROOT_ENV = "AL_RUNNER_ARTIFACTS_ROOT"
 ARTIFACTS_ROOT_REL = ".local/share/al-runner/artifacts"
 
-# The engine closure a usable service-tier directory must hold. Deliberately the
-# same set AlRunner/Infrastructure/ProvisioningCheck.cs requires, and NOT a DLL
-# count: 501 is one version's number, not a constant, so a threshold would be
-# fragile in both directions. Measured on the reporting box, this set separates
-# both broken directories from all 11 healthy ones.
-ARTIFACT_CLOSURE_FILES = (
+# The engine closure a usable service-tier directory must hold. NOT a DLL count:
+# 501 is one version's number, not a constant, so a threshold would be fragile in
+# both directions. Measured on the reporting box, this set separates both broken
+# directories from all 11 healthy ones.
+#
+# #3893: this list is READ OUT OF the C# definition rather than transcribed. It was
+# a hand-maintained copy of AlRunner/Infrastructure/ProvisioningCheck.cs's private
+# list, which is the shape the issue reports one level up — two copies agree until
+# one is edited, and nothing says which. The C# moved to EngineClosure.cs, whose
+# whole purpose is being readable from outside the runner; parsing its string
+# literals costs no build and no dotnet invocation.
+ENGINE_CLOSURE_CS = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "AlRunner", "Infrastructure", "EngineClosure.cs")
+
+# The transcription that WAS here, kept only as the drift check's expected value.
+# A mismatch is reported, never silently resolved toward either copy.
+_ARTIFACT_CLOSURE_FALLBACK = (
     "Microsoft.Dynamics.Nav.Ncl.dll",
     "Microsoft.Dynamics.Nav.Types.dll",
     "Microsoft.Dynamics.Nav.Common.dll",
@@ -2617,6 +2629,27 @@ ARTIFACT_CLOSURE_FILES = (
     "Microsoft.Dynamics.Nav.CodeAnalysis.dll",
     "Microsoft.Identity.ServiceEssentials.Core.dll",
 )
+
+
+def engine_closure_files(path: str = ENGINE_CLOSURE_CS) -> tuple:
+    """The closure set, read from EngineClosure.cs.
+
+    Returns the fallback when the file cannot be read -- a source checkout is not
+    guaranteed (preflight runs from an installed tree too), and refusing there
+    would swap a false green for a false red on a box that is fine. A file that
+    IS readable but yields no DLL names returns empty, so the caller can tell
+    "could not read" from "read, and it said nothing" rather than getting the
+    success answer for both (guards-need-a-third-state.md).
+    """
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return _ARTIFACT_CLOSURE_FALLBACK
+    return tuple(dict.fromkeys(re.findall(r'"([A-Za-z0-9_.]+\.dll)"', text)))
+
+
+ARTIFACT_CLOSURE_FILES = engine_closure_files()
 
 _VERSION_DIR_RE = re.compile(r"^\d+(\.\d+){1,3}$")
 
