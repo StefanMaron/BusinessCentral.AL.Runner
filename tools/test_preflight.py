@@ -2272,6 +2272,69 @@ check("...and --agent-id is still a real flag on preflight.py itself",
 # -------------------------------------------------- END agent-id-wiring (#3746)
 
 
+# -------------------------------------------------- artifacts probe (#3878)
+# A partially-provisioned artifact directory used to be indistinguishable from a
+# complete one until a consumer failed deep inside an assembly load. preflight
+# had no artifacts check at all (measured: 0 occurrences of "artifact" in a
+# 154 KB file), so the breakage was found mid-measurement, three times in one
+# session, rather than at cycle start.
+#
+# The classification is proven in C# (AlRunner.Tests/ArtifactDirStateTests.cs)
+# against the real closure predicate. What is proven HERE is the disposition:
+# which status each reading maps to, including the third state.
+
+def _art(status, broken=(), total=0, error=""):
+    return {"status": status, "broken": list(broken), "total": total, "error": error}
+
+
+check("artifacts: a root where every directory is complete PASSes",
+      pf.classify_artifacts(_art("ok", total=11)).status == "PASS",
+      f"got {pf.classify_artifacts(_art('ok', total=11)).status}")
+
+# The constraint from guards-need-a-third-state.md: a genuinely absent root is a
+# legitimate state, not a broken measurement. A box that has provisioned nothing
+# is fine; refusing it would swap a false green for a false red.
+_absent = pf.classify_artifacts(_art("absent"))
+check("artifacts: no artifacts root at all is a PASS, not a failure",
+      _absent.status == "PASS", f"got {_absent.status}: {_absent.summary}")
+
+# The issue's subject: broken directories are named, so nobody re-derives which.
+_partial = pf.classify_artifacts(_art("partial", broken=["27.5.46862.48827", "28.0.46665.54452"], total=13))
+check("artifacts: a partially-provisioned directory WARNs",
+      _partial.status == "WARN", f"got {_partial.status}")
+check("artifacts: ...and names every broken directory in the summary or detail",
+      all(d in (_partial.summary + " " + " ".join(_partial.detail))
+          for d in ("27.5.46862.48827", "28.0.46665.54452")),
+      f"summary={_partial.summary!r} detail={_partial.detail!r}")
+check("artifacts: ...and does not propose deleting them",
+      "rm -rf" not in _partial.remedy and "rm -rf" not in " ".join(_partial.detail),
+      f"remedy={_partial.remedy!r}")
+
+# The third state, proven to fire: a root that could not be read is NOT reported
+# as the success state and NOT folded into "absent" (whose remedy is `provision`,
+# which cannot fix an unreadable path).
+_unreadable = pf.classify_artifacts(_art("unreadable", error="permission denied"))
+check("artifacts: an unreadable root is neither PASS nor the absent case",
+      _unreadable.status == "WARN" and "permission denied" in
+      (_unreadable.summary + " " + " ".join(_unreadable.detail)),
+      f"got {_unreadable.status}: {_unreadable.summary!r}")
+check("artifacts: ...and says the measurement failed rather than that nothing is provisioned",
+      _unreadable.summary != _absent.summary,
+      "the unreadable and absent summaries are identical, so the third state is spelled as row 1")
+
+# An artifacts root that EXISTS but holds no version directory used to summarise as
+# "0 artifact directories, all holding a complete engine closure" -- vacuously true and
+# misleading. It is still a PASS (nothing is broken), but it must say what it found.
+_empty_root = pf.classify_artifacts(_art("ok", total=0))
+check("artifacts: an existing-but-empty root PASSes",
+      _empty_root.status == "PASS", f"got {_empty_root.status}")
+check("artifacts: ...without claiming 0 directories are 'all complete'",
+      "all holding" not in _empty_root.summary,
+      f"summary reads {_empty_root.summary!r}")
+
+# -------------------------------------------------- END artifacts probe (#3878)
+
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")

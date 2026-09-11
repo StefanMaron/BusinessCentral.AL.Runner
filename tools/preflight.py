@@ -2598,6 +2598,143 @@ def classify_corpus_checkout(reading: dict) -> CheckResult:
         remedy=remedy, data=reading)
 
 
+# --------------------------------------------------------------------------
+# artifacts root (#3878)
+# --------------------------------------------------------------------------
+ARTIFACTS_ROOT_ENV = "AL_RUNNER_ARTIFACTS_ROOT"
+ARTIFACTS_ROOT_REL = ".local/share/al-runner/artifacts"
+
+# The engine closure a usable service-tier directory must hold. Deliberately the
+# same set AlRunner/Infrastructure/ProvisioningCheck.cs requires, and NOT a DLL
+# count: 501 is one version's number, not a constant, so a threshold would be
+# fragile in both directions. Measured on the reporting box, this set separates
+# both broken directories from all 11 healthy ones.
+ARTIFACT_CLOSURE_FILES = (
+    "Microsoft.Dynamics.Nav.Ncl.dll",
+    "Microsoft.Dynamics.Nav.Types.dll",
+    "Microsoft.Dynamics.Nav.Common.dll",
+    "Microsoft.Dynamics.Nav.Language.dll",
+    "Microsoft.Dynamics.Nav.CodeAnalysis.dll",
+    "Microsoft.Identity.ServiceEssentials.Core.dll",
+)
+
+_VERSION_DIR_RE = re.compile(r"^\d+(\.\d+){1,3}$")
+
+
+def artifacts_root_path() -> str:
+    """Where the artifact cache lives, honouring the relocation knob."""
+    env = os.environ.get(ARTIFACTS_ROOT_ENV, "").strip()
+    if env:
+        return env
+    return os.path.join(os.path.expanduser("~"), ARTIFACTS_ROOT_REL)
+
+
+def artifacts_reading(root: str) -> dict:
+    """Classify every version directory under `root`. Never raises.
+
+    Four outcomes, mirroring ArtifactDirState:
+      absent      -- no artifacts root; a legitimate state on a fresh box
+      ok          -- every version directory holds a complete closure
+      partial     -- at least one directory exists but is short of the closure
+      unreadable  -- the root exists and could not be listed (the third state)
+    """
+    if not root:
+        return {"status": "unreadable", "broken": [], "total": 0,
+                "error": "no artifacts root path could be derived", "root": root}
+    if os.path.isfile(root):
+        return {"status": "unreadable", "broken": [], "total": 0,
+                "error": "the artifacts root path is a file, not a directory", "root": root}
+    if not os.path.isdir(root):
+        return {"status": "absent", "broken": [], "total": 0, "error": "", "root": root}
+    try:
+        names = sorted(os.listdir(root))
+    except OSError as exc:
+        return {"status": "unreadable", "broken": [], "total": 0,
+                "error": str(exc), "root": root}
+
+    broken, total = [], 0
+    for name in names:
+        if not _VERSION_DIR_RE.match(name):
+            continue
+        path = os.path.join(root, name)
+        if not os.path.isdir(path):
+            continue
+        total += 1
+        try:
+            missing = [f for f in ARTIFACT_CLOSURE_FILES
+                       if not os.path.isfile(os.path.join(path, f))]
+        except OSError as exc:
+            return {"status": "unreadable", "broken": [], "total": total,
+                    "error": f"{name}: {exc}", "root": root}
+        if missing:
+            broken.append(name)
+    return {"status": "partial" if broken else "ok",
+            "broken": broken, "total": total, "error": "", "root": root}
+
+
+def classify_artifacts(reading: dict) -> CheckResult:
+    """Turn an artifacts reading into a verdict.
+
+    WARN rather than FAIL throughout: a broken artifact directory does not stop a
+    cycle -- 11 healthy directories sat beside the two broken ones -- it just has
+    to be VISIBLE, so nobody spends a third diagnosis re-deriving it.
+    """
+    status, broken = reading["status"], reading["broken"]
+    root = reading.get("root", "")
+    if status == "ok":
+        # A root that exists but holds no version directory is still a pass -- nothing is
+        # broken -- but "0 directories, all complete" is vacuously true and reads as a
+        # measurement of something. Say what was actually found.
+        if reading["total"] == 0:
+            return CheckResult(
+                name="artifacts", status="PASS",
+                summary="the artifacts root exists but holds no version directory yet",
+                command="ls ~/.local/share/al-runner/artifacts",
+                detail=["Not an error: a run provisions what it needs."])
+        return CheckResult(
+            name="artifacts", status="PASS",
+            summary=f"{reading['total']} artifact director{'y' if reading['total'] == 1 else 'ies'}, "
+                    f"all holding a complete engine closure",
+            command="ls ~/.local/share/al-runner/artifacts")
+    if status == "absent":
+        # The guards-need-a-third-state.md constraint: genuinely absent stays a
+        # pass. A box that has provisioned nothing is not a broken box.
+        return CheckResult(
+            name="artifacts", status="PASS",
+            summary="no artifacts root on this box -- nothing provisioned yet",
+            command="ls ~/.local/share/al-runner/artifacts",
+            detail=["Not an error: a run provisions what it needs."])
+    if status == "unreadable":
+        # Deliberately NOT folded into "absent": that case sends the reader to
+        # `provision`, which cannot fix a root it is unable to read.
+        return CheckResult(
+            name="artifacts", status="WARN",
+            summary=f"the artifacts root could not be inspected: {reading['error']}",
+            command=f"ls -la {root}",
+            detail=["This is not 'nothing is provisioned' -- the measurement itself "
+                    "failed, so no directory here has been checked either way."],
+            remedy="Fix the path or its permissions, then re-run preflight.",
+            data=reading)
+    return CheckResult(
+        name="artifacts", status="WARN",
+        summary=f"{len(broken)} of {reading['total']} artifact directories are partially "
+                f"provisioned: {', '.join(broken)}",
+        command="ls ~/.local/share/al-runner/artifacts",
+        detail=["A partially-provisioned directory carries no marker saying so, and one "
+                "that still holds Ncl.dll passes every 'is this a service-tier directory' "
+                "check before failing deep inside an assembly load (#3878).",
+                "Named here so a measurement that lands on one is recognised as "
+                "provisioning rather than as a code fault.",
+                "Do not delete these: 27.5.46862.48827 is cited as measurement "
+                "provenance in about 20 files."],
+        remedy="al-runner provision --service-tier --bc-version <version> --force",
+        data=reading)
+
+
+def check_artifacts() -> CheckResult:
+    return classify_artifacts(artifacts_reading(artifacts_root_path()))
+
+
 def check_corpus_checkout(repo: str) -> CheckResult:
     return classify_corpus_checkout(corpus_checkout_reading(repo))
 
@@ -2995,6 +3132,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         check_push(repo, identity),
         check_commit(repo),
         check_github(slug),
+        check_artifacts(),
         check_corpus_checkout(repo),
         check_corpus(repo, args.with_corpus),
     ]
