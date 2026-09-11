@@ -173,6 +173,16 @@ in `registeredAliases`, and concluded 27.5 was a distinct binary; hashing the fi
 three `Ncl.dll` byte-identical. Hash the artifact, or load the context, before claiming two
 versions differ.
 
+**The mirror error is the commoner one: citing ONE binary under a version label that implies
+independence.** 27.0, 27.3 and 27.5 are one file (sha256 `affa03c9…`, 10716984 bytes); 28.4 is a
+different one (`6f2cf682…`, 11294560). So "measured on 27.5" and "27.0, 27.3 and 27.5 agree" are
+the same single measurement, the second wearing three labels — and nothing in the first phrasing
+looks like a claim about independence, which is why it passes review. **Cite the binaries you
+measured, not the versions**: a count re-run across the 27.x/28.x boundary is two measurements,
+and one anywhere inside 27.x is one. Measured twice: #3372 (the over-claim above) and #3859,
+where an agent deleted a stale waiver recording exactly this hazard and then made the error the
+waiver had described.
+
 
 **3. `grep` here is a shell function, and it fails silently.**
 
