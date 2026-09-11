@@ -286,12 +286,25 @@ check("...and a FAIL next to them is still a FAIL",
 
 # The additive half: the corpus fixtures must parse to exactly what they did
 # before the pattern learned the local spelling.
-check("the 27.x corpus fixture is unaffected by the widened pattern",
-      cpc.parse_leg(LOG_27X, "TestPart_")["passed"] == r27["passed"],
-      str(cpc.parse_leg(LOG_27X, "TestPart_")["passed"]))
-check("the 28.x corpus fixture is unaffected too",
-      cpc.parse_leg(LOG_28X, "TestPart_")["passed"] == r28["passed"],
-      str(cpc.parse_leg(LOG_28X, "TestPart_")["passed"]))
+#
+# The expectation is a LITERAL, transcribed from the fixtures above, and that is
+# the whole point of it (#3361). Both of these used to read
+# `cpc.parse_leg(LOG_27X, ...)["passed"] == r27["passed"]`, comparing one call
+# against another call of the same parser in the same process -- `x == x`, green
+# under a parser returning an empty list. They were cited as #3359's evidence that
+# widening `_RESULT` is additive for corpus logs, and they were the only two checks
+# in this file that survived a deliberate revert of that widening.
+CORPUS_FIXTURE_NAMES = [
+    "TestPart_Editable_IsNotDrivenByTheHostControlsEditableProperty",
+    "TestPart_Enabled_AnswersTrueForAReachablePart",
+    "TestPart_InvisiblePart_IsNotInTheControlTreeAtAll",
+    "TestPart_Visible_AnswersTrueForAReachablePart",
+]
+check("the 27.x corpus fixture parses to the four recorded names, unchanged by "
+      "the widened pattern",
+      r27["passed"] == CORPUS_FIXTURE_NAMES, str(r27["passed"]))
+check("the 28.x corpus fixture parses to those same four names too",
+      r28["passed"] == CORPUS_FIXTURE_NAMES, str(r28["passed"]))
 check("a bare corpus name is still captured without a dot",
       all("." not in n for n in r27["passed"]), str(r27["passed"]))
 
