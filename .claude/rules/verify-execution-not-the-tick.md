@@ -68,6 +68,27 @@ So when a query about a run returns something surprising, re-derive it a second 
 reporting it, and treat the instrument with the suspicion you would give the subject: a tool that
 cannot be wrong in the direction you are reading is not evidence.
 
+### The fourth mechanism: a correct instrument reading the WRONG SUBJECT
+
+The three above are instruments that malfunction. This one works perfectly and answers a
+different question than the one asked — so its output is well-formed, plausible, and wrong.
+Three instances in one issue's work (#3805 / corpus #325), each caught by someone doubting a
+surprising result rather than by the instrument:
+
+| the measurement | what it read | what it should have read |
+|---|---|---|
+| "which object ids are free?" | the corpus checkout **inside the runner worktree**, resolved per run and older than `master` | the branch being pushed to |
+| "how many enum values omit `Ordinal`?" | the top-level `EnumTypes` array, which is **empty** | the `Namespaces` tree, where the enums live |
+| "are any ids duplicated?" | the id alone, repo-wide | `(object kind, id)`, scoped to one `app.json`'s `idRanges` |
+
+The first produced an id that was genuinely free in the tree measured and taken in the tree
+pushed to. The second produced an all-zeros table. The third produced **61 duplicates** that do
+not exist, because a codeunit and a table may share an id.
+
+**Ask what the query read, not only what it returned.** A checkout resolved elsewhere, a
+container that is empty because the data moved, and a scope wider than the thing being validated
+all return clean answers to a question nobody asked.
+
 
 ## Which legs were ever going to run it
 
