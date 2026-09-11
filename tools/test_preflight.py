@@ -603,6 +603,239 @@ try:
 finally:
     shutil.rmtree(tmp, ignore_errors=True)
 
+
+# --------------------------------- the retired corpus gitlink (#3335)
+print()
+print("preflight.py -- a retired corpus gitlink is not uncommitted work")
+
+# #3737 deleted the tests/al-language submodule. A worktree branched BEFORE that
+# still carries the 160000 gitlink in its own HEAD, so its checkout drifts from
+# a pin nothing updates any more: `git status` prints ` M tests/al-language`
+# forever, and there is no `git submodule update` left to silence it. Measured
+# on this box 2026-09-11: 7 of 7 held-back worktrees, every one a MERGED PR,
+# every one with that single line and nothing else.
+
+check("the retired corpus gitlink is recognised",
+      pf.is_retired_corpus_gitlink(" M tests/al-language", {"tests/al-language": "160000"}),
+      "the exact shape that held back 7 merged worktrees")
+check("...and so is the staged spelling",
+      pf.is_retired_corpus_gitlink("M  tests/al-language", {"tests/al-language": "160000"}))
+
+# The discriminator is the gitlink MODE, not the path. A post-#3737 worktree has
+# an ordinary directory there, and real files in it are real work.
+check("a tracked FILE under the corpus path is real work, not a gitlink",
+      not pf.is_retired_corpus_gitlink(" M tests/al-language/x.al",
+                                       {"tests/al-language/x.al": "100644"}))
+check("an UNTRACKED file under the corpus path is real work",
+      not pf.is_retired_corpus_gitlink("?? tests/al-language/RreLayout.rdl", {}),
+      "corpus-stma-auto-32-issue-2943 on this box holds 5 such files")
+check("a path the index does not call a gitlink is never discounted",
+      not pf.is_retired_corpus_gitlink(" M tests/al-language", {"tests/al-language": "100644"}))
+check("a gitlink at some OTHER path is not discounted",
+      not pf.is_retired_corpus_gitlink(" M vendor/thing", {"vendor/thing": "160000"}))
+check("a DELETED gitlink is not discounted -- that is a real edit",
+      not pf.is_retired_corpus_gitlink(" D tests/al-language", {"tests/al-language": "160000"}))
+
+# classify_dirt(): the three-state answer disposition() consumes.
+GL = {"tests/al-language": "160000"}
+check("a tree dirty ONLY by the retired gitlink is not dirty",
+      pf.classify_dirt(" M tests/al-language\n", GL, gitlink_workless=True)
+      == (False, "the retired tests/al-language gitlink only"))
+check("a tree with the gitlink AND real work stays dirty",
+      pf.classify_dirt(" M tests/al-language\n M AlRunner/X.cs\n", GL,
+                       gitlink_workless=True)[0])
+
+# The superproject line is AMBIGUOUS: git prints ` M tests/al-language` for a
+# moved pin, for untracked files inside the checkout, and for both. Only the
+# submodule's own status separates them, so an unproven checkout stays dirt.
+check("the gitlink stays dirt until the checkout under it is proven empty",
+      pf.classify_dirt(" M tests/al-language\n", GL)[0],
+      "gitlink_workless defaults False -- a forgetful caller gets the safe answer")
+check("...and says the checkout holds files of its own",
+      "holds files of its own" in pf.classify_dirt(" M tests/al-language\n", GL)[1],
+      pf.classify_dirt(" M tests/al-language\n", GL)[1])
+check("a clean tree is clean", pf.classify_dirt("", {}) == (False, ""))
+check("real work alone is dirty", pf.classify_dirt(" M AlRunner/X.cs\n", {})[0])
+
+# guards-need-a-third-state: a line we cannot parse is dirt, never a free pass.
+check("an unparseable status line keeps the tree dirty",
+      pf.classify_dirt("garbage\n", {})[0],
+      "could not classify must not read as safe to delete")
+check("...and says it could not classify it",
+      "could not" in pf.classify_dirt("garbage\n", {})[1].lower(),
+      pf.classify_dirt("garbage\n", {})[1])
+check("a rename line is dirt rather than silently discounted",
+      pf.classify_dirt("R  a -> b\n", {})[0])
+
+
+# ------------------------------- the gitlink reap, end to end (real git, #3335)
+print()
+print("preflight.py -- a merged worktree held back ONLY by the retired gitlink")
+
+# The classifier above is only worth anything if collect_worktrees() and reap()
+# both consult it. reap() re-reads status immediately before deleting, so an
+# unwired reap() refuses every worktree the census just cleared -- the failure
+# that makes the fix look applied while nothing is reaped.
+
+tmp2 = tempfile.mkdtemp(prefix="preflight-gitlink-")
+try:
+    env = dict(os.environ,
+               GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@e",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@e",
+               GIT_CONFIG_GLOBAL=os.path.join(tmp2, "nogitconfig"),
+               GIT_CONFIG_SYSTEM=os.path.join(tmp2, "nogitconfig"))
+
+    sub2 = os.path.join(tmp2, "corpus")
+    os.makedirs(sub2)
+    git("init", "-q", "-b", "master", cwd=sub2, env=env)
+    open(os.path.join(sub2, "c.txt"), "w").write("one\n")
+    git("add", "c.txt", cwd=sub2, env=env)
+    git("commit", "-qm", "c1", cwd=sub2, env=env)
+
+    repo2 = os.path.join(tmp2, "main")
+    os.makedirs(repo2)
+    git("init", "-q", "-b", "main", cwd=repo2, env=env)
+    open(os.path.join(repo2, "a.txt"), "w").write("one\n")
+    git("add", "a.txt", cwd=repo2, env=env)
+    git("commit", "-qm", "base", cwd=repo2, env=env)
+    git("-c", "protocol.file.allow=always", "submodule", "add", "-q", sub2,
+        "tests/al-language", cwd=repo2, env=env)
+    git("commit", "-qm", "pre-#3737: the corpus is a submodule", cwd=repo2, env=env)
+
+    def gitlink_worktree(name, branch):
+        """A worktree whose ONLY dirt is the retired gitlink -- the #3335 state."""
+        path = os.path.join(tmp2, name)
+        git("branch", branch, cwd=repo2, env=env)
+        git("worktree", "add", "-q", path, branch, cwd=repo2, env=env)
+        git("-c", "protocol.file.allow=always", "submodule", "update", "--init", "-q",
+            cwd=path, env=env)
+        # Move the checkout off the pin, exactly as a corpus resolve does now.
+        open(os.path.join(sub2, "c.txt"), "w").write(f"moved for {name}\n")
+        git("commit", "-qam", f"corpus moves on: {name}", cwd=sub2, env=env)
+        git("fetch", "-q", "origin", cwd=os.path.join(path, "tests/al-language"), env=env)
+        git("checkout", "-q", "FETCH_HEAD",
+            cwd=os.path.join(path, "tests/al-language"), env=env)
+        return path
+
+    wt3 = gitlink_worktree("wt3", "gitlink-only")
+    st3 = subprocess.run(["git", "status", "--porcelain"], cwd=wt3, env=env,
+                         capture_output=True, text=True).stdout
+    check("the fixture reproduces the #3335 state exactly",
+          st3.strip() == "M tests/al-language" or st3.rstrip("\n") == " M tests/al-language",
+          repr(st3))
+
+    modes = pf.index_gitlink_modes(wt3)
+    check("index_gitlink_modes reads the 160000 mode off a real worktree",
+          modes.get("tests/al-language") == "160000", str(modes))
+    check("the submodule checkout under it is proven empty",
+          pf.corpus_gitlink_is_workless(wt3))
+    _cd = pf.classify_dirt(st3, modes, gitlink_workless=True)
+    check("...and classify_dirt then calls the tree clean",
+          _cd == (False, "the retired tests/al-language gitlink only"), str(_cd))
+    check("worktree_dirt agrees", pf.worktree_dirt(wt3)[0] is False, str(pf.worktree_dirt(wt3)))
+
+    head3 = git("rev-parse", "HEAD", cwd=wt3, env=env).stdout.strip()
+    prs = {"gitlink-only": {"number": 3266, "state": "MERGED", "headRefOid": head3}}
+    rows3 = pf.collect_worktrees(repo2, prs, measure=False)
+    mine = [r for r in rows3 if os.path.realpath(r[0].path) == os.path.realpath(wt3)]
+    check("collect_worktrees sees the worktree", len(mine) == 1, str([r[0].path for r in rows3]))
+    check("collect_worktrees no longer calls it dirty", not mine[0][2], "still dirty")
+    check("...so its merged worktree is reapable", mine[0][4].reapable, mine[0][4].reason)
+
+    log3 = pf.reap(repo2, mine, dry_run=False)
+    check("reap() actually removes it -- its own re-read agrees with the census",
+          not os.path.isdir(wt3), str(log3))
+    check("...and says REMOVED", any("REMOVED" in l for l in log3), str(log3))
+
+    # The direction that must NOT change: a real edit still keeps the tree.
+    wt4 = gitlink_worktree("wt4", "gitlink-plus-work")
+    open(os.path.join(wt4, "a.txt"), "w").write("edited by an agent\n")
+    head4 = git("rev-parse", "HEAD", cwd=wt4, env=env).stdout.strip()
+    prs4 = {"gitlink-plus-work": {"number": 3267, "state": "MERGED", "headRefOid": head4}}
+    rows4 = [r for r in pf.collect_worktrees(repo2, prs4, measure=False)
+             if os.path.realpath(r[0].path) == os.path.realpath(wt4)]
+    check("a worktree with the gitlink AND a real edit is still dirty", rows4[0][2])
+    check("...and is NOT reapable", not rows4[0][4].reapable, rows4[0][4].reason)
+    pf.reap(repo2, rows4, dry_run=False)
+    check("...and reap() leaves it on disk", os.path.isdir(wt4))
+    check("...with the agent's edit intact",
+          open(os.path.join(wt4, "a.txt")).read() == "edited by an agent\n")
+
+    # An UNTRACKED file under the corpus path is real work too -- the post-#3737
+    # shape, live on this box as corpus-stma-auto-32-issue-2943.
+    wt5 = gitlink_worktree("wt5", "gitlink-plus-untracked")
+    open(os.path.join(wt5, "tests/al-language", "RreLayout.rdl"), "w").write("layout\n")
+    head5 = git("rev-parse", "HEAD", cwd=wt5, env=env).stdout.strip()
+    prs5 = {"gitlink-plus-untracked": {"number": 3268, "state": "MERGED",
+                                       "headRefOid": head5}}
+    st5 = subprocess.run(["git", "status", "--porcelain"], cwd=wt5, env=env,
+                         capture_output=True, text=True).stdout
+    check("git prints the SAME line for pin drift and for work inside the checkout",
+          st5.rstrip("\n").strip() == "M tests/al-language", repr(st5))
+    check("...so the superproject line alone cannot decide, and the probe does",
+          not pf.corpus_gitlink_is_workless(wt5),
+          "the checkout holds RreLayout.rdl")
+    check("...and worktree_dirt therefore keeps it dirty", pf.worktree_dirt(wt5)[0],
+          str(pf.worktree_dirt(wt5)))
+    rows5 = [r for r in pf.collect_worktrees(repo2, prs5, measure=False)
+             if os.path.realpath(r[0].path) == os.path.realpath(wt5)]
+    check("...and it is not reapable", not rows5[0][4].reapable, rows5[0][4].reason)
+    pf.reap(repo2, rows5, dry_run=False)
+    check("an untracked file inside the corpus directory keeps the worktree",
+          os.path.isdir(wt5) and os.path.exists(
+              os.path.join(wt5, "tests/al-language", "RreLayout.rdl")))
+finally:
+    shutil.rmtree(tmp2, ignore_errors=True)
+
+
+# ------------------------------------ check_stale_scratch on Windows (#3759)
+print()
+print("preflight.py -- the scratch scan must not need os.getuid()")
+
+# os.getuid does not exist on Windows, and check_stale_scratch reached it
+# unconditionally -- so EVERY check preflight would otherwise report was lost on
+# a Windows box, branch-ownership included, which is the one an agent there most
+# needs. Reproduced on all three invocations tried in #3759.
+_real_getuid = getattr(os, "getuid", None)
+try:
+    if hasattr(os, "getuid"):
+        del os.getuid
+    check("os.getuid is absent for this check", not hasattr(os, "getuid"))
+    _scratch = tempfile.mkdtemp(prefix="preflight-nouid-")
+    try:
+        os.makedirs(os.path.join(_scratch, "a-dir"))
+        open(os.path.join(_scratch, "a-file"), "w").write("x")
+        r = pf.check_stale_scratch(_scratch, [], 24.0)
+        check("check_stale_scratch still returns a result without os.getuid",
+              isinstance(r, pf.CheckResult), repr(r))
+        check("...and it is a real verdict, not an error-shaped WARN",
+              r.status in ("PASS", "WARN"), f"{r.status} {r.summary}")
+        check("...and it counted the directory rather than skipping everything",
+              "1 directory" in " ".join([r.summary] + list(r.detail)),
+              " ".join([r.summary] + list(r.detail)))
+    finally:
+        shutil.rmtree(_scratch, ignore_errors=True)
+finally:
+    if _real_getuid is not None:
+        os.getuid = _real_getuid
+
+check("os.getuid is restored for the rest of the run",
+      _real_getuid is None or hasattr(os, "getuid"))
+
+# On a POSIX box the ownership filter must still work: a directory owned by
+# somebody else is not this user's scratch and is not counted.
+if hasattr(os, "getuid"):
+    _scratch2 = tempfile.mkdtemp(prefix="preflight-uid-")
+    try:
+        os.makedirs(os.path.join(_scratch2, "mine"))
+        r2 = pf.check_stale_scratch(_scratch2, [], 24.0)
+        check("a directory this user owns is still counted on POSIX",
+              "1 directory" in " ".join([r2.summary] + list(r2.detail)),
+              " ".join([r2.summary] + list(r2.detail)))
+    finally:
+        shutil.rmtree(_scratch2, ignore_errors=True)
+
+
 # ---------------------------------------------------------------- exit codes
 print()
 print("preflight.py -- exit codes")
