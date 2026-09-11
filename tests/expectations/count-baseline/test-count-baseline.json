@@ -63,7 +63,7 @@
         "temporary-virtual-table-isolation": { "tests": 6 },
         "testpage-close-message-consumed": { "tests": 8 },
         "testpage-lookup-tablerelation-oos": { "tests": 3 },
-        "testpage-precompiled-declared-editable": { "tests": 5 },
+        "testpage-precompiled-declared-editable": { "tests": 9 },
         "testpage-precompiled-dep-control": { "tests": 2 },
         "testpage-precompiled-member-names": { "tests": 8 },
         "testpage-promoted-actionref": { "tests": 18 },
