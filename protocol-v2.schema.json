@@ -139,8 +139,32 @@
           "items": { "$ref": "#/definitions/CompanyInitFailure" },
           "description": "Present only when a company initialization codeunit did not run to completion during this request (#3538/#3561). Absent means the company initialized cleanly \u2014 never an empty array. Every test in the response ran against a company real BC cannot produce, so `exitCode` is 2 unless the run earned something more specific, or unless the expectations manifest accepts the abort (see `accepted`)."
         },
+        "sourceScanFailures": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/SourceScanFailure" },
+          "minItems": 1,
+          "description": "Present only when a source-map scan ran AND could not read something (#3847/#3884). Absent means no scan failure is being reported \u2014 which is NOT the same as \"every source was read\": an ordinary request that builds no source map reports nothing here either. Never an empty array. Any `coverage`/`perTestCoverage` table in this response is SHORT by whatever these paths declare, so a statement missing from it is unmeasured rather than uncovered, and `exitCode` is 2 unless the run earned something more specific."
+        },
         "wallSeconds": { "type": "number", "minimum": 0 },
         "protocolVersion": { "const": 2 }
+      }
+    },
+    "SourceScanFailure": {
+      "type": "object",
+      "required": ["path", "reason", "kind"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "The root, directory or file that could not be read, as the scan named it."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why, in the words the runner also prints to stderr."
+        },
+        "kind": {
+          "enum": ["Root", "Directory", "File"],
+          "description": "What `path` names. `Root` and `Directory` cover every source BENEATH them; `File` covers exactly that one path, so a client must not treat a File entry as a prefix."
+        }
       }
     },
     "CompanyInitFailure": {

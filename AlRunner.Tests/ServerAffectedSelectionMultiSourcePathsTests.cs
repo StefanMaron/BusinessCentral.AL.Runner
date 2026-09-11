@@ -327,4 +327,102 @@ public class ServerAffectedSelectionMultiSourcePathsTests
         Assert.Contains(selection2.GetProperty("changedObjects").EnumerateArray().Select(x => x.GetString()),
             x => x != null && x.Contains("Multi Affected Helper2A SX", StringComparison.Ordinal));
     }
+
+    /// <summary>
+    /// #3884: the defect the exit code cannot reach. An incomplete source scan does not merely
+    /// make the response's coverage table short — it poisons the affected-test SELECTION
+    /// baseline, silently.
+    ///
+    /// <para>CollectPerTestStatementTable drops a statement whose object never reached the
+    /// source map, so what survives is a NON-EMPTY, entirely mappable list: indistinguishable
+    /// from a test that genuinely only touched those objects, and the `unmappable` check cannot
+    /// see what was discarded upstream. Store that as a baseline and a later edit to the source
+    /// that could not be read intersects nothing, so the test that calls into it is SKIPPED —
+    /// a wrong answer, produced quietly, which is precisely what the third state exists to
+    /// prevent.</para>
+    ///
+    /// <para>The scan happens between compilation and the response, which no test can time from
+    /// outside the process — locking the file earlier fails the compile instead. Hence
+    /// AL_RUNNER_TEST_FORCE_SCAN_FAILURE_ONCE, which fires on the FIRST build only: request 1
+    /// is poisoned, request 2 is clean, so request 2 running OnlyA proves request 1 invalidated
+    /// its baseline rather than that request 2 poisoned itself.</para>
+    ///
+    /// <para><b>What this fact does and does not pin.</b> It asserts the POISONING is real and
+    /// reaches the client: the forced failure is reported, the response is not a clean run, and
+    /// OnlyA's per-test coverage has genuinely lost its HelperA statement while OnlyB's keeps
+    /// its HelperB one — which is the mechanism, measured rather than argued.</para>
+    ///
+    /// <para>It does NOT pin the guard that invalidates the baseline. Measured: with that guard
+    /// reverted this fixture still runs both tests on request 2, so an assertion on ran/skipped
+    /// would pass either way — the shape `ci-verdicts.md` calls an answer that could not have
+    /// come out any other way, and a green one here would be worse than no fact at all. Pinning
+    /// it needs a fixture where the poisoned baseline demonstrably narrows, which this one does
+    /// not produce; tracked as follow-up rather than asserted vacuously.</para>
+    /// </summary>
+    [SkippableFact]
+    public async Task AffectedOnly_AfterAnIncompleteScan_RunsEverythingRatherThanTrustingTheBaseline()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.Dir("al-runner-server-affected-incomplete-scan");
+        Directory.CreateDirectory(root);
+        var appDir = MakeAppBundleTwoHelpers(root);
+        var testAppDir = MakeTestApp2Bundle(root);
+
+        await using var server = await CliServer.StartAsync(
+            new[] { "--no-cache" },
+            extraEnv: new Dictionary<string, string>
+            {
+                ["AL_RUNNER_TEST_FORCE_SCAN_FAILURE_ONCE"] = Path.Combine(appDir, "HelperA.al"),
+            });
+
+        // Request 1: both tests run, and the scan reports a failure — so no usable baseline
+        // may be recorded from it.
+        var lines1 = await server.SendRequestStreamingAsync(RunTestsRequest2(appDir, testAppDir));
+        var (events1, summary1) = ProtocolV2Streaming.Split(lines1);
+        Assert.Equal(2, events1.Count);
+        Assert.True(summary1.TryGetProperty("sourceScanFailures", out var failures1),
+            $"the forced scan failure did not reach the response: {string.Join(" | ", lines1)}");
+        Assert.Equal(1, failures1.GetArrayLength());
+        // And it is not published as a clean run.
+        Assert.Equal(2, summary1.GetProperty("exitCode").GetInt32());
+
+        // The poisoning is REAL, not just reported: OnlyA calls into HelperA, and its per-test
+        // coverage has lost that statement because HelperA's objects never reached the map.
+        // OnlyB, whose helper was readable, keeps its HelperB statement — so this is the
+        // discarded-upstream case the `unmappable` check cannot see, and not an empty table.
+        var perTest1 = summary1.GetProperty("perTestCoverage");
+        var onlyA = perTest1.EnumerateArray()
+            .Single(t => t.GetProperty("test").GetString()!.EndsWith(".OnlyA", StringComparison.Ordinal));
+        var onlyB = perTest1.EnumerateArray()
+            .Single(t => t.GetProperty("test").GetString()!.EndsWith(".OnlyB", StringComparison.Ordinal));
+        var filesA = onlyA.GetProperty("coverage").EnumerateArray()
+            .Select(c => c.GetProperty("file").GetString() ?? "").ToList();
+        var filesB = onlyB.GetProperty("coverage").EnumerateArray()
+            .Select(c => c.GetProperty("file").GetString() ?? "").ToList();
+        Assert.DoesNotContain(filesA, f => f.EndsWith("HelperA.al", StringComparison.OrdinalIgnoreCase));
+        Assert.NotEmpty(filesA);   // non-empty and entirely mappable: the dangerous shape
+        Assert.Contains(filesB, f => f.EndsWith("HelperB.al", StringComparison.OrdinalIgnoreCase));
+
+        File.WriteAllText(Path.Combine(appDir, "HelperA.al"), """
+        codeunit 60380 "Multi Affected Helper2A SX"
+        {
+            procedure ValueA(): Integer
+            var
+                X: Integer;
+            begin
+                X := 1;
+                exit(X);
+            end;
+        }
+        """);
+
+        // Request 2's own scan is clean — the seam fires once — so a later failure here would
+        // mean the seam leaked into a second build.
+        var lines2 = await server.SendRequestStreamingAsync(RunTestsRequest2(appDir, testAppDir));
+        var (_, summary2) = ProtocolV2Streaming.Split(lines2);
+        Assert.False(summary2.TryGetProperty("sourceScanFailures", out _),
+            $"request 2's scan should be clean: {string.Join(" | ", lines2)}");
+        Assert.Equal(0, summary2.GetProperty("exitCode").GetInt32());
+    }
 }

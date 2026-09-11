@@ -119,4 +119,82 @@ public class ServerProtocolAckSummaryTests
         Assert.True(sel.GetProperty("forcedFull").GetBoolean());
         Assert.Equal("change model unavailable", sel.GetProperty("reason").GetString());
     }
+
+    // ── sourceScanFailures (#3847/#3884) ────────────────────────────────────────────────
+
+    /// <summary>
+    /// #3884 Copilot review: the wire field had no direct test, and this class is where the
+    /// Summary/Execute field contracts are pinned. A regression that renamed the field, or
+    /// dropped `kind`, would have passed everything else in the PR.
+    /// </summary>
+    [Fact]
+    public void Summary_WithScanFailures_CarriesPathReasonAndKind()
+    {
+        var failures = new[]
+        {
+            new AlRunner.Infrastructure.SourceScanFailure(
+                "/src/gone", "the source root does not exist",
+                AlRunner.Infrastructure.SourceScanFailureKind.Root),
+            new AlRunner.Infrastructure.SourceScanFailure(
+                "/src/app/Locked.al", "the file could not be read (IOException: locked)",
+                AlRunner.Infrastructure.SourceScanFailureKind.File),
+        };
+
+        var json = ServerProtocol.Summary(
+            new[] { PassResult }, exitCode: 2, cached: false, sourceScanFailures: failures);
+
+        using var doc = JsonDocument.Parse(json);
+        var arr = doc.RootElement.GetProperty("sourceScanFailures");
+        Assert.Equal(2, arr.GetArrayLength());
+        Assert.Equal("/src/gone", arr[0].GetProperty("path").GetString());
+        Assert.Equal("the source root does not exist", arr[0].GetProperty("reason").GetString());
+        Assert.Equal("Root", arr[0].GetProperty("kind").GetString());
+        // The kind a client must NOT treat as a prefix.
+        Assert.Equal("File", arr[1].GetProperty("kind").GetString());
+    }
+
+    /// <summary>
+    /// Absent, never an empty array — the convention `coverage` and `companyInitFailures`
+    /// already use, so a client that does not know the field sees no change at all. An empty
+    /// array would read as "the scan reported something", which is the opposite of the truth.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]  // null
+    [InlineData(true)]   // empty
+    public void Summary_WithNoScanFailures_OmitsTheFieldEntirely(bool empty)
+    {
+        var json = ServerProtocol.Summary(
+            new[] { PassResult }, exitCode: 0, cached: false,
+            sourceScanFailures: empty
+                ? Array.Empty<AlRunner.Infrastructure.SourceScanFailure>()
+                : null);
+
+        using var doc = JsonDocument.Parse(json);
+        Assert.False(doc.RootElement.TryGetProperty("sourceScanFailures", out _));
+    }
+
+    /// <summary>The execute response carries the same field, with the same omission rule —
+    /// it is a separate serializer and the two have drifted before.</summary>
+    [Fact]
+    public void Execute_CarriesScanFailures_AndOmitsThemWhenThereAreNone()
+    {
+        var failures = new[]
+        {
+            new AlRunner.Infrastructure.SourceScanFailure(
+                "/src/sub", "the directory could not be read",
+                AlRunner.Infrastructure.SourceScanFailureKind.Directory),
+        };
+
+        using (var doc = JsonDocument.Parse(
+            ServerProtocol.Execute(new[] { PassResult }, exitCode: 2, sourceScanFailures: failures)))
+        {
+            var arr = doc.RootElement.GetProperty("sourceScanFailures");
+            Assert.Equal(1, arr.GetArrayLength());
+            Assert.Equal("Directory", arr[0].GetProperty("kind").GetString());
+        }
+
+        using (var doc = JsonDocument.Parse(
+            ServerProtocol.Execute(new[] { PassResult }, exitCode: 0)))
+            Assert.False(doc.RootElement.TryGetProperty("sourceScanFailures", out _));
+    }
 }

@@ -4539,6 +4539,9 @@ if (tddMode)
 // code as a distinct reporting failure, so a script that depends on the file still learns
 // it is missing rather than reading a stale copy as this run's output.
 var lostOutputs = new List<string>();
+// Set when a coverage report was written from a source map that could not be fully read;
+// escalated with lostOutputs below (#3884).
+var incompleteCoverage = false;
 if (outPath != null)
 {
     var writeProblem = AlRunner.Infrastructure.OutputPaths.TryWrite("--out", outPath,
@@ -4583,6 +4586,28 @@ if (coverageEnabled)
         coverageOut.WriteLine();
         coverageOut.WriteLine(AlRunner.Infrastructure.AlCoverageReport.FormatConsoleTable(coverageFiles!));
         coverageOut.WriteLine($"Cobertura → {coverageOutputPath}");
+    }
+
+    // #3884: the report is on disk and it is SHORT. Everything the scan could not read is
+    // missing from it, and a coverage number computed over an unknown subset is not a
+    // coverage number — so this must not leave on the exit-0 path
+    // (.claude/rules/guards-need-a-third-state.md). Same escalation the unwritable-output
+    // path below uses, for the same reason: the caller asked for an artifact and did not
+    // get the one they think they got.
+    //
+    // Gated on the write having SUCCEEDED: when it did not there is no report for this text
+    // to describe, lostOutputs is the applicable error, and saying "the report above is
+    // incomplete" would claim an artifact nobody has (#3884 Copilot review).
+    if (coverageProblem == null && coverageSourceMap.IsIncomplete)
+    {
+        Console.Error.WriteLine();
+        Console.Error.WriteLine(
+            "al-runner could not read every source it was asked to map, so the coverage report "
+            + "above is incomplete — statements in these paths are absent from it, not proven "
+            + "uncovered:");
+        foreach (var failure in coverageSourceMap.ScanFailures)
+            Console.Error.WriteLine($"  {failure.Path}  ({failure.Reason})");
+        incompleteCoverage = true;
     }
 }
 
@@ -4673,6 +4698,14 @@ if (expectations != null && expectations.CompanyInitAcceptances.Count > 0)
 // REPORT is not there — so a consumer must not read it as "some tests failed", and equally
 // must not read a zero as "the file I asked for is on disk". Never RAISED above what the
 // tests earned, so a failing run still reports its own, more specific code.
+var afterIncompleteCoverage = AlRunner.Infrastructure.IncompleteCoverageOutcome.Apply(
+    computedExitCode, incompleteCoverage, coverageWasProduced: true);
+if (afterIncompleteCoverage != computedExitCode)
+{
+    Console.Error.WriteLine(
+        "exiting 2 because the coverage report you asked for does not describe every source.");
+    computedExitCode = afterIncompleteCoverage;
+}
 if (lostOutputs.Count > 0 && computedExitCode == 0)
 {
     Console.Error.WriteLine(
@@ -5842,13 +5875,13 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
             .ToList();
         var resolved = AlRunner.Infrastructure.DapBreakpointResolver.Resolve(requests, sourceMap);
 
-        // Why an unverified breakpoint is unverified. DAP's Breakpoint has a
-        // `message` field for exactly this, and without it "nothing is
-        // loaded" and "that line carries no statement" are the same answer —
-        // the first is a state the client can wait out, the second is not.
-        var unverifiedReason = bpCompileErr != null
-            ? $"the bundle did not compile, so nothing could be bound: {bpCompileErr}"
-            : "no executable AL statement on this line in this file";
+        // Why an unverified breakpoint is unverified. DAP's Breakpoint has a `message` field
+        // for exactly this, and without it the three reasons are one answer. The third of them
+        // — the source could not be READ, so nobody knows whether that line has a statement —
+        // is #3847, and the decision lives in DapUnverifiedReason so it can be tested without
+        // a live session.
+        var unverifiedReason = AlRunner.Infrastructure.DapUnverifiedReason.For(
+            bpCompileErr, sourceMap, srcPath);
 
         var fullSrcPath = Path.GetFullPath(srcPath);
         // Replace (not accumulate) — DAP's setBreakpoints contract: this
@@ -6754,10 +6787,15 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             // work for callers who never asked for it.
             IReadOnlyList<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null;
             IReadOnlyDictionary<string, List<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null;
+            IReadOnlyList<AlRunner.Infrastructure.SourceScanFailure>? scanFailures = null;
             if (requestCoverage || collectPerTestForSelection)
             {
                 var covSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
                     req.SourcePaths, relativeTo: null);
+                // #3884: a table built from a map that could not read everything is short, and
+                // the response has to say so — otherwise the client gets an ordinary success
+                // and no way to tell an uncovered statement from an unread one.
+                if (covSourceMap.IsIncomplete) scanFailures = covSourceMap.ScanFailures;
                 if (requestCoverage)
                     statementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectStatementTable(covSourceMap);
                 // #2135: independent of the aggregate table above — see
@@ -6810,6 +6848,29 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
 
                     var nextCoverage = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
                     var nextUnknown = new HashSet<string>(StringComparer.Ordinal);
+
+                    // #3884: an incomplete scan poisons this baseline SILENTLY, and the
+                    // `unmappable` check below cannot see it. A statement whose object never
+                    // reached the source map is dropped by CollectPerTestStatementTable before
+                    // it gets here, so what survives is a non-empty, entirely mappable list —
+                    // indistinguishable from a test that genuinely only touched those objects.
+                    // Storing it means a later edit to the source that could not be read does
+                    // not intersect any stored coverage, and the test that calls into it is
+                    // SKIPPED. That is a wrong answer, not a missing warning.
+                    //
+                    // So every test of this bundle is recorded unknown, which forces the next
+                    // affected-only request to run them. Not merely "skip the update": leaving
+                    // the previous baseline in place keeps trusting numbers that may be just
+                    // as stale.
+                    if (scanFailures is { Count: > 0 })
+                    {
+                        foreach (var testKey in discoveredTests) nextUnknown.Add(testKey);
+                        affectedCoverageByBundle[bundlePath] = nextCoverage;
+                        affectedUnknownTestsByBundle[bundlePath] = nextUnknown;
+                        affectedEnvironmentKeyByBundle[bundlePath] = envKey;
+                        continue;
+                    }
+
                     foreach (var testKey in discoveredTests)
                     {
                         if (!resultByTest.TryGetValue(testKey, out var result)
@@ -6899,6 +6960,17 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             if (exitCode == 0 && companyInitFailures.Any(f => f.AcceptedReason == null))
                 exitCode = 2;
 
+            // #3884 Copilot review: the field alone left a client reading `exitCode` with an
+            // ordinary success carrying a short table. Same policy as the CLI, so the three
+            // callers cannot drift again.
+            exitCode = AlRunner.Infrastructure.IncompleteCoverageOutcome.Apply(
+                exitCode, scanFailures is { Count: > 0 },
+                // BOTH tables (#3884): `perTestCoverage:true, coverage:false` is a supported
+                // combination, and asking only about the aggregate one published a known-short
+                // per-test table as a clean run. The question is whether an attribution the
+                // caller asked for happened, not whether one particular variable is non-null.
+                coverageWasProduced: statementTable != null || perTestStatementTable != null);
+
             lock (outputLock)
             {
                 output.WriteLine(AlRunner.ServerProtocol.Summary(
@@ -6908,7 +6980,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                     selection: requestSelection,
                     statementTable: statementTable,
                     perTestStatementTable: requestPerTestCoverage ? perTestStatementTable : null,
-                    companyInitFailures: companyInitFailures));
+                    companyInitFailures: companyInitFailures,
+                    sourceScanFailures: scanFailures));
                 output.Flush();
             }
         }
@@ -6972,10 +7045,22 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
         AlRunner.Infrastructure.AlIterationTracker.Enabled = req.IterationTracking == true;
         AlRunner.Infrastructure.AlIterationTracker.ConfigureResponse();
         // Syntax facts for captureValues (write sets) and iterationTracking (loops): one parse per request.
+        //
+        // #3884: THIS map's failures count too, and they used to be dropped on the floor. An
+        // object missing from it makes AlScopeSyntaxResolver return before it records an
+        // unresolved scope, so incomplete loop/write-set attribution arrived with no diagnostic
+        // at all — and the later coverage scan cannot stand in for it: without coverage flags
+        // it never runs, and with them it is a separate measurement that may succeed after this
+        // one failed.
+        IReadOnlyList<AlRunner.Infrastructure.SourceScanFailure>? configScanFailures = null;
         if (req.CaptureValues == true || req.IterationTracking == true)
+        {
+            var syntaxSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(sourcePaths, relativeTo: null);
+            if (syntaxSourceMap.IsIncomplete) configScanFailures = syntaxSourceMap.ScanFailures;
             AlRunner.Infrastructure.AlScopeSyntaxResolver.Configure(
                 AlRunner.Infrastructure.AlMemberSyntaxIndex.Build(sourcePaths),
-                AlRunner.Infrastructure.AlCoverageSourceMap.Build(sourcePaths, relativeTo: null));
+                syntaxSourceMap);
+        }
         else
             AlRunner.Infrastructure.AlScopeSyntaxResolver.Clear();
         // #2042: 'coverage:true' on `execute` — same request/response correlation the
@@ -7024,9 +7109,20 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             // needs the .al files on disk to still exist when it scans them.
             IReadOnlyList<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>? statementTable = null;
             IReadOnlyDictionary<string, List<AlRunner.Infrastructure.AlCoverageTracker.AlStatementRecord>>? perTestStatementTable = null;
+            // Starts from the configuration scan's failures, which happened before the run and
+            // are about the same sources (#3884).
+            IReadOnlyList<AlRunner.Infrastructure.SourceScanFailure>? scanFailures = configScanFailures;
             if (req.Coverage == true || req.PerTestCoverage == true)
             {
                 var covSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(sourcePaths, relativeTo: null);
+                // #3884, same as runTests: a short table must not go out as an ordinary success.
+                if (covSourceMap.IsIncomplete)
+                    scanFailures = scanFailures is { Count: > 0 }
+                        ? scanFailures.Concat(covSourceMap.ScanFailures)
+                            .GroupBy(f => f.Path, StringComparer.Ordinal)
+                            .Select(g => g.First())
+                            .ToList()
+                        : covSourceMap.ScanFailures;
                 if (req.Coverage == true)
                     statementTable = AlRunner.Infrastructure.AlCoverageTracker.CollectStatementTable(covSourceMap);
                 if (req.PerTestCoverage == true)
@@ -7051,6 +7147,14 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             if (exitCode == 0 && companyInitFailures.Any(f => f.AcceptedReason == null))
                 exitCode = 2;
 
+            // Same policy as runTests and the CLI, over BOTH tables — and over the
+            // capture/iteration attribution, which is a measurement the caller asked for in
+            // exactly the same sense (#3884).
+            exitCode = AlRunner.Infrastructure.IncompleteCoverageOutcome.Apply(
+                exitCode, scanFailures is { Count: > 0 },
+                coverageWasProduced: statementTable != null || perTestStatementTable != null
+                    || configScanFailures is { Count: > 0 });
+
             return AlRunner.ServerProtocol.Execute(allTests, exitCode,
                 AlRunner.Infrastructure.AlMessageCapture.Snapshot(),
                 AlRunner.Infrastructure.AlIterationTracker.Enabled
@@ -7059,7 +7163,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                 selection: selection,
                 statementTable: statementTable,
                 perTestStatementTable: perTestStatementTable,
-                companyInitFailures: companyInitFailures);
+                companyInitFailures: companyInitFailures,
+                sourceScanFailures: scanFailures);
         }
         finally
         {
