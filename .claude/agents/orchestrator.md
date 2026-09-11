@@ -59,6 +59,12 @@ For each PR:
 8. Sanity check passed (step 1) + CI green + no CHANGELOG + no stray `tests/al-language/` edits + no forbidden SA implementation + every condition in the arming list (`.claude/skills/orchestrating-a-session/SKILL.md`, "A reviewer that approves a PR arms auto-merge") holds; a failed condition means commenting with what failed and moving to the next PR:
    - CI in progress: `gh pr merge <N> --auto --squash --repo StefanMaron/BusinessCentral.AL.Runner` (auto-merge is a repo setting — `allow_auto_merge=true`, `delete_branch_on_merge=true` — so this queues the merge rather than failing; it won't show in a checkout diff). **`--auto` only queues while the required checks are still pending. If they are already green it MERGES IMMEDIATELY** — `gh` branches on that itself — so do not reach for it as a safe "arm it and decide later": running it on a green PR is the merge (#3127).
    - CI complete: `gh pr merge <N> --squash --repo StefanMaron/BusinessCentral.AL.Runner`
+   - **After either, re-read the PR — the exit code is not the check.** `gh` branches on a
+     cached `mergeStateStatus`, so a PR whose checks have just settled can read `UNKNOWN`, take
+     the arming path, and be refused with `Pull request is in clean status` — left neither
+     merged nor armed (#3341). `gh pr view <N> --json state,mergedAt,autoMergeRequest`:
+     `MERGED` is done, `OPEN` with auto set is armed, and `OPEN` with no auto on a green PR
+     means re-run **without** `--auto`.
    - Skip `gh pr review --approve` (fails when you are the repo owner).
 9. CI failing: read job log, post a specific actionable comment.
 

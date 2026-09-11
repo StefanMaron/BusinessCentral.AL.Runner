@@ -37,7 +37,10 @@ something, spawning an agent to re-measure it wastes a full context. Write the P
   the proving test is there, and whether CI is green on the **current head** — then merge.
 - **Arming auto-merge** instead of waiting. Review the PR when it arrives; if it passes, arm
   it (`gh pr merge <N> --squash --delete-branch --auto`) and move on. Do not sit watching a
-  run you cannot influence.
+  run you cannot influence. **If the required checks are already green that command merges it
+  now, not later** — so running it is the merge, and every condition in the arming list below
+  has to hold at that moment. Re-read the PR afterwards rather than trusting the exit code;
+  both are in "A reviewer that approves a PR arms auto-merge" (#3150, #3341).
 - **Claiming an issue assigned to another contributor when it overlaps work already in
   flight**, once the repo owner has released that contributor's backlog. `branch-and-pr.md`'s
   assignee boundary still holds as the default. When a released issue is the same defect an
@@ -184,18 +187,53 @@ checkpoint after it, and nobody looks again. Every condition in the list above h
 the moment you run the command, because running it is the merge — not a request for one. Weigh
 the verdict accordingly rather than assuming a later sweep will catch a mistake.
 
-An earlier version of this section claimed the opposite: that GitHub *refuses* to arm an
-already-mergeable PR, answering `Pull request is in clean status`, and that the coordinator
-would merge it by hand. That was wrong, and a reviewer following it would report "it refused,
-please merge it yourself" about a PR that had already merged. It was falsified on PR #3095 —
-the documented command returned rc=0 and merged it immediately at the reviewed SHA. `gh` never
-produces that message at all; the phrase does not occur anywhere in the binary. It appears to be
-a GitHub API error from the `enablePullRequestAutoMerge` mutation, which is the call `gh` skips
-when the PR is already mergeable — so it is not something this command can produce. See #3127.
+**But `gh` decides that from a cached status, so it can lose the race — verify by re-reading the
+PR, never by the exit code.** `gh` picks the path once, at command start, from the
+`mergeStateStatus` it fetched: `autoMerge: opts.AutoMergeEnable &&
+!isImmediatelyMergeable(pr.MergeStateStatus)` (`pkg/cmd/pr/merge/merge.go`).
+`isImmediatelyMergeable` is true for `CLEAN`, `HAS_HOOKS` and `UNSTABLE` only. GitHub's enum
+also has **`UNKNOWN`** — "the state cannot currently be determined", which is what a PR reads
+while GitHub recomputes mergeability, and `gh` has no constant for it at all. So a PR whose
+checks have *just* settled reads `UNKNOWN`, `gh` takes the **arming** path, and by the time the
+mutation lands GitHub has settled to `CLEAN` and refuses to arm what can already merge:
 
-**Check the exit code either way.** It is not decoration: `gh pr merge` exits non-zero for real
-reasons (`Pull request #N is not mergeable: ...`), and a loop that printed "armed" regardless of
-it once left four green PRs sitting unarmed.
+```
+GraphQL: Pull request Pull request is in clean status (enablePullRequestAutoMerge)
+```
+
+The PR is then **neither merged nor armed** — measured twice, on #3336 and #3772, each landed
+afterwards by re-running the same command **without** `--auto`. Re-running without `--auto` is
+the fix; the state is genuinely clean, which is why it works.
+
+The message is a GitHub API error, not a `gh` one: the phrase does not occur in the binary
+(`gh` 2.98.0). That much of #3127 was right. Its conclusion — that `gh` therefore *cannot*
+produce it, because it skips the mutation on a mergeable PR — does not follow, because "already
+mergeable" there means *as cached at fetch time*, and the gap between the two reads is the race.
+`--auto` on a settled-green PR still merges on the spot (#3095); that is not in question.
+
+**So the exit code is not the check — the PR's state is.** After any `gh pr merge`, re-read it:
+
+```bash
+gh pr view <N> --repo StefanMaron/BusinessCentral.AL.Runner \
+  --json state,mergedAt,autoMergeRequest \
+  --jq '"state=\(.state) mergedAt=\(.mergedAt // "-") auto=\(.autoMergeRequest != null)"'
+```
+
+| what it reads | meaning |
+|---|---|
+| `state=MERGED`, `mergedAt` set | done — record the SHA |
+| `state=OPEN`, `auto=true` | armed; it lands when the checks pass |
+| `state=OPEN`, `auto=false`, and the PR is green | **the race above** — re-run without `--auto` |
+
+**Read that exit code directly, and never through a pipe.** `gh pr merge` does exit 1 on this
+refusal — verified on `gh` 2.98.0, and its error propagates unaltered from the mutation through
+`merge()` to the exit. The `rc=0` reported alongside this failure on #3772 came from the
+*measurement*: `cmd | tail` yields `tail`'s status, and `out=$(cmd); echo "$out"` yields
+`echo`'s, so both print the GraphQL error and then report 0 (`ci-verdicts.md` §0). That is why
+the re-read above is the check and the exit code is only corroboration: one of them was
+misreported for three days, and it was not the one GitHub sends. See #3341.
+
+Still read it: `gh pr merge` exits non-zero for real reasons too (`Pull request #N is not mergeable: ...`), and a loop that printed "armed" regardless of it once left four green PRs sitting unarmed. It is the second check, not the first.
 
 When it arms rather than merges, arming is still not merging, and it does not replace the merge
 bar — it is the bar expressed as a standing instruction to GitHub, so a PR lands the moment its
