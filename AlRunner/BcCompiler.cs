@@ -3358,15 +3358,6 @@ public sealed partial class BcCompiler
         }
 
         /// <summary>
-        /// Read an AL enum's own <c>DefaultImplementation</c> / <c>UnknownImplementation</c>
-        /// property, in the same comma-separated codeunit-id shape as a value's
-        /// <c>Implementation</c> (issue #2306). These are the enum-level fallbacks BC's
-        /// <c>NCLEnumMetadata.GetImplementationCodeunitId</c> uses when a value declares no
-        /// implementation of its own, which is how Base App 205
-        /// "Alt. Cust VAT Reg. Doc." is written — one value, no per-value Implementation.
-        /// Null means the enum declares none.
-        /// </summary>
-        /// <summary>
         /// The enum's DECLARED <c>Extensible</c> property (#3807), or null when it declares
         /// none. Deliberately the property rather than
         /// <c>IApplicationObjectTypeSymbol.IsExtensible</c>, which is
@@ -3389,6 +3380,15 @@ public sealed partial class BcCompiler
             }
         }
 
+        /// <summary>
+        /// Read an AL enum's own <c>DefaultImplementation</c> / <c>UnknownImplementation</c>
+        /// property, in the same comma-separated codeunit-id shape as a value's
+        /// <c>Implementation</c> (issue #2306). These are the enum-level fallbacks BC's
+        /// <c>NCLEnumMetadata.GetImplementationCodeunitId</c> uses when a value declares no
+        /// implementation of its own, which is how Base App 205
+        /// "Alt. Cust VAT Reg. Doc." is written — one value, no per-value Implementation.
+        /// Null means the enum declares none.
+        /// </summary>
         private static int[]? ReadEnumImplementationFallback(NavCA.IEnumBaseTypeSymbol enumSymbol, NavCA.PropertyKind kind)
         {
             try
