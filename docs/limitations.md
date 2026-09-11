@@ -684,6 +684,47 @@ the exact value will see different results.
 | `Commit()` | Commits current transaction | Establishes a rollback commit-point — see "Transaction semantics" above; not a no-op |
 | `FilterGroup(n)` | Scoped filter groups | Tracked — BC's own `NavRecord` filter state runs here. Pinned upstream by `record/TestFilterContracts.al` (`FilterGroup2_CombinesWithFilterGroup0_AsAND`, `Reset_AfterFilterGroup2_ClearsBothGroups`) and measured 2026-09-07: a group-2 `SetRange` intersected with a group-0 `SetFilter` answered the intersection, and `GetFilters` reported only group 0, as on BC. This row said "no-op" until the 2026-09 audit |
 
+### `Record.AreFieldsLoaded` after a load set narrows — answered from the requested set, not the buffer in hand
+
+<a id="are-fields-loaded-narrow-after-fetch"></a>
+
+`AreFieldsLoaded` reports from the load set BC maintains in `TableState.FieldLoadInfo`
+([#3358](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3358)), because the
+runner's `TempTableDataProvider` returns whole rows and the fetched buffer therefore carries the
+table's *default* load info whatever the request asked for — so reading the buffer answered
+"loaded" for every field on every table.
+
+That leaves **one ordering** where the runner and real BC can differ:
+
+```
+fetch  ->  SetLoadFields(narrower)  ->  AreFieldsLoaded, WITHOUT re-fetching
+```
+
+| | answers |
+|---|---|
+| real BC | from the buffer already in hand, which was fetched under the wider set — so a field the narrowing call just dropped still reports **loaded** |
+| al-runner | from the narrowed request — so it reports **unloaded** |
+
+Re-fetch between the two calls and the answers agree. Every test in corpus codeunit 60775
+`"Test Record Partial Load"` does re-fetch, which is the shape BC's documentation describes,
+so nothing in the corpus measures this ordering today and no `expect-divergence` entry exists
+for it — that mode declares a corpus test that fails here, and none does.
+
+**The BC column is not yet adjudicated.** It is the reading of BC's own
+`RecordImplementation.AreFieldsLoaded`, whose body reads `mutableRecordBuffer.ReadOnlyBuffer`
+(body-identical on 27.0 and 28.4), not a service-tier measurement — and
+`ask-the-corpus-before-claiming-bc-behavior.md` ranks reading the code below a corpus verdict.
+Corpus PR
+[#323](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/323) puts the
+ordering in front of a real tier, with a re-fetching control arm. **If it comes back the other
+way, this row is what gets corrected.**
+
+Why the runner does not simply stamp the request's `FieldLoadInfo` onto the fetched buffer:
+`GetFieldValue` branches on the **buffer**, so a buffer claiming a field is absent routes the
+read down `NavRecord.LoadFieldsAsync` — a genuine partial re-fetch the runner's provider has
+never served, on the path every fetch takes. Leaving it alone keeps BC's `else if` arm, which
+calls `AddLoadField` and flips the field to loaded, which is what the JIT-load claim requires.
+
 ### `TestPage.Edit()` on a page declaring `Editable = false` — refused by name, not by NRE
 
 <a id="testpage-page-mode-no-edit-action"></a>

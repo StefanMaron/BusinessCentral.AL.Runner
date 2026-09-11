@@ -272,11 +272,22 @@ internal static class BcShape
     /// <see cref="BcShapeGapException"/> naming what it actually held. A member that exists
     /// but holds an uninterpretable shape is the same "BC's layout moved" case as an absent
     /// one, and folding it into the absent/null branch is how #2786's silent skip happened.
+    /// A null refuses too, and says so distinguishably: before #3372 it reached
+    /// <c>value.GetType()</c> and raised a <see cref="NullReferenceException"/> naming no
+    /// surface, member or remedy — which an AL-entered path's unfiltered catch would swallow.
+    /// Callers that can legitimately be handed a null still decide that themselves, ahead of
+    /// this call; six of the seven call sites do, and their handling is unaffected.
     /// </summary>
-    public static IEnumerable RequiredEnumerable(object value, string member, string surface, string detail)
-        => value as IEnumerable
-           ?? throw new BcShapeGapException(
-               surface, member, $"holds a {value.GetType().Name}, which cannot be enumerated — {detail}");
+    public static IEnumerable RequiredEnumerable(object? value, string member, string surface, string detail)
+    {
+        if (value is null)
+            throw new BcShapeGapException(
+                surface, member, $"read as null, so it cannot be enumerated — {detail}");
+
+        return value as IEnumerable
+               ?? throw new BcShapeGapException(
+                   surface, member, $"holds a {value.GetType().Name}, which cannot be enumerated — {detail}");
+    }
 
     // ── THE NULL-FORGIVING HALF (#3051) ─────────────────────────────────────────────────
     //
