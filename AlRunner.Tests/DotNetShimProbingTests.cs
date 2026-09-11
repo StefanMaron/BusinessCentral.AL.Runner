@@ -1,4 +1,4 @@
-// DotNetShimProbingTests — issue #3745.
+// DotNetShimProbingTests — issues #3745 (Newtonsoft.Json) and #3876 (AspNetCore.StaticFiles).
 //
 // RUNNER-MECHANISM test. The claim is about the runner's own compile configuration, not about
 // what Business Central does, so a service tier cannot adjudicate it and there is nothing for
@@ -25,6 +25,15 @@
 //   naming the cause. So ordering is not a detail here, it is the fix, and OrderPutsShimsFirst
 //   is the assertion that fails if a later edit appends the shim directory instead of
 //   prepending it.
+//
+//   THE SECOND SHIM, #3876: Base Application's dotnet.al declares
+//   assembly(Microsoft.AspNetCore.StaticFiles), which BC ships in no artifact, so its emit
+//   produced zero objects too — the same atomic-per-module shape. Staging that one file from the
+//   ASP.NET Core reference pack takes it to errors=0, objects=7850, 7,842 documents. It binds
+//   despite AL0451 naming `PublicKeyToken=null` because the AL declaration states NO token and
+//   BC's AssemblyLocatorBase.IsAssemblyCompatible guards its token check on the search name
+//   carrying one — asymmetric, not token-blind. docs/dependency-metadata-from-bc.md has the
+//   measurement and the locator detail.
 //
 //   These are unit tests over the probing-path construction, deliberately not a full System
 //   Application compile: that compile is ~14s and needs provisioned BC artifacts, so it belongs
@@ -106,6 +115,84 @@ public sealed class DotNetShimProbingTests : IDisposable
         var text = File.ReadAllText(shim, System.Text.Encoding.Latin1);
         Assert.Contains(".NETStandard,Version=v2.0", text);
         Assert.DoesNotContain(".NETCoreApp,Version=v6.0", text);
+    }
+
+    /// <summary>
+    /// The second shim, and the one that makes Base Application emittable at all (#3876).
+    ///
+    /// <para>Base Application's <c>src/Modules/System/DotNetAliases/dotnet.al</c> line 23
+    /// declares <c>assembly(Microsoft.AspNetCore.StaticFiles)</c> for
+    /// <c>FileExtensionContentTypeProvider</c>. BC ships no copy of that assembly in its
+    /// artifacts, so the declaration phase raised AL0451 + AL0185 and the app produced ZERO
+    /// objects — recorded in three places as a permanent blocker. It is not: the assembly is an
+    /// ordinary part of the ASP.NET Core reference pack.</para>
+    ///
+    /// <para>Asserted on the real build output, like the Newtonsoft case above and for the same
+    /// reason: a test staging its own copy would pass with the csproj item deleted. The
+    /// <c>FileExtensionContentTypeProvider</c> assertion is what stops a same-named file
+    /// satisfying this — it is the one type the AL declaration names, so a file without it
+    /// would leave AL0185 in place while the filename assertion still went green.</para>
+    /// </summary>
+    [Fact]
+    public void BuildStagesTheAspNetCoreStaticFilesShimBesideTheRunnerBinary()
+    {
+        var dir = Path.Combine(RunnerOutputDir(), "dotnet-shims");
+        Assert.True(Directory.Exists(dir), $"no dotnet-shims directory at {dir}");
+
+        var shim = Path.Combine(dir, "Microsoft.AspNetCore.StaticFiles.dll");
+        Assert.True(File.Exists(shim),
+            $"Microsoft.AspNetCore.StaticFiles.dll missing from {dir}. AlRunner.csproj stages it " +
+            "from the Microsoft.AspNetCore.App.Ref package; without it Base Application's " +
+            "metadata emit yields zero objects (#3876).");
+
+        var name = AssemblyName.GetAssemblyName(shim);
+        Assert.Equal("Microsoft.AspNetCore.StaticFiles", name.Name);
+
+        // The type BC's dotnet.al actually names. A same-named assembly lacking it would still
+        // leave AL0185 'FileExtensionContentTypeProvider is missing' and emit nothing.
+        var text = File.ReadAllText(shim, System.Text.Encoding.Latin1);
+        Assert.Contains("FileExtensionContentTypeProvider", text);
+    }
+
+    /// <summary>
+    /// The reference pack is NOT an SDK component, and that is the whole reason the csproj takes
+    /// it as a <c>PackageReference</c> rather than as a path.
+    ///
+    /// <para>A CI leg installs the SDK with <c>actions/setup-dotnet</c>, which lays down
+    /// <c>Microsoft.NETCore.App.Ref</c> and <c>NETStandard.Library.Ref</c> under
+    /// <c>$DOTNET_ROOT/packs</c> and does NOT lay down <c>Microsoft.AspNetCore.App.Ref</c>. So
+    /// <see cref="BcCompiler"/>'s <c>EnumerateDotNetRefAssemblyDirs</c>, which reads exactly that
+    /// <c>packs</c> directory, can never supply this assembly — the staged shim is the only
+    /// route, and a future edit that "simplifies" the shim away in favour of the ref-pack
+    /// enumeration would pass on a developer box and fail on CI.</para>
+    ///
+    /// <para>This asserts the mechanism, not the machine: it pins that the ref-pack enumeration
+    /// does not yield an AspNetCore directory, which is what makes the shim load-bearing. It is
+    /// deliberately not an assertion that the pack is absent from this box, because a developer
+    /// who has restored it into <c>~/.nuget</c> still gets nothing from
+    /// <c>EnumerateDotNetRefAssemblyDirs</c>.</para>
+    /// </summary>
+    [Fact]
+    public void TheRefAssemblyEnumerationNeverSuppliesAspNetCore_SoTheShimIsTheOnlyRoute()
+    {
+        var m = typeof(BcCompiler).GetMethod(
+                    "EnumerateDotNetRefAssemblyDirs", BindingFlags.NonPublic | BindingFlags.Static)
+                ?? throw new InvalidOperationException(
+                    "BcCompiler.EnumerateDotNetRefAssemblyDirs not found. If it was renamed, this " +
+                    "test and the reasoning behind the AspNetCore shim need to move with it.");
+        var refDirs = ((IEnumerable<string>)m.Invoke(null, null)!).ToList();
+
+        Assert.DoesNotContain(refDirs,
+            d => d.Replace('\\', '/').Contains("/Microsoft.AspNetCore.App.Ref/",
+                     StringComparison.OrdinalIgnoreCase));
+
+        // And the assembly is not reachable from any directory that enumeration does yield —
+        // the positive half, so this cannot pass merely because the enumeration came back empty.
+        foreach (var d in refDirs)
+            Assert.False(File.Exists(Path.Combine(d, "Microsoft.AspNetCore.StaticFiles.dll")),
+                $"{d} carries Microsoft.AspNetCore.StaticFiles.dll — if the SDK now ships the " +
+                "ASP.NET Core reference pack, the staged shim may be redundant; re-measure " +
+                "before removing it (#3876).");
     }
 
     /// <summary>

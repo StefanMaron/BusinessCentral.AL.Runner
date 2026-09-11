@@ -28,11 +28,26 @@
     <PackageReference Include="System.Text.Json" Version="10.0.0" />
     <PackageReference Include="System.Diagnostics.DiagnosticSource" Version="10.0.0" />
 
-    <!-- Referenced for its FILE, never linked (ExcludeAssets=all). See the DotNetShims target
-         below for why the netstandard2.0 build specifically. -->
+    <!-- Referenced for their FILES, never linked (ExcludeAssets=all). See the DotNetShims
+         target below for why the netstandard2.0 Newtonsoft build specifically, and why the
+         AspNetCore ref pack has to arrive as a package rather than a ~/.nuget path. -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3"
                       GeneratePathProperty="true" ExcludeAssets="all" />
+    <PackageReference Include="Microsoft.AspNetCore.App.Ref" Version="8.0.30"
+                      GeneratePathProperty="true" ExcludeAssets="all" />
   </ItemGroup>
+
+  <!-- The AspNetCore ref pack ships Roslyn analyzers. ExcludeAssets does not keep them out of
+       the analyzer item group, and they then throw AD0001 on every build (882 of them) looking
+       for ASP.NET Core types nothing here references. The pack is wanted for ONE file, so
+       dropping its analyzers outright is exactly the intent. Measured: a CLEAN rebuild,
+       because an incremental one skips CoreCompile and reports 0 whatever this target does. -->
+  <Target Name="DropAspNetCoreRefPackAnalyzers" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)"
+                Condition="$([System.String]::Copy('%(Analyzer.FullPath)').Replace('\','/').Contains('/microsoft.aspnetcore.app.ref/'))" />
+    </ItemGroup>
+  </Target>
 
   <!-- .NET assemblies BC's AL binder must see BEFORE the service tier's own copies.
        Program.cs puts this directory at the head of the probing paths automatically.
@@ -47,11 +62,29 @@
        costs the entire ground truth. The netstandard2.0 build of the SAME Newtonsoft version
        binds against netstandard, which does resolve.
 
+       Microsoft.AspNetCore.StaticFiles is the second, and it is what makes Base Application
+       emittable at all (#3876). Its dotnet.al:23 declares assembly(Microsoft.AspNetCore.
+       StaticFiles) for FileExtensionContentTypeProvider; BC ships no copy, so AL0451 + AL0185
+       killed the declaration phase and the app produced ZERO objects. With this one file
+       staged: errors=0, objects=7850, 7,842 documents. Exactly one file, because that line is
+       the only AspNetCore assembly the app declares.
+
+       Why an ordinary strong-named ref-pack copy satisfies a reference whose AL0451 text says
+       PublicKeyToken=null: the AL declaration states no token, and
+       AssemblyLocatorBase.IsAssemblyCompatible guards its token comparison on the SEARCH name
+       carrying a non-empty one. Asymmetric, not token-blind — a wrong token is still rejected,
+       a wrong simple name always is. `null` there is DotNetUtilities.GetPublicKeyToken's
+       rendering of an absent token, which three documents in this repo read as a demand for a
+       null-token assembly (docs/dependency-metadata-from-bc.md).
+
        Deliberately a package reference rather than a path into ~/.nuget: a CI leg has no reason
        to have that package cached, and probing for one would make the generator's success
-       depend on what happened to be on the machine. -->
+       depend on what happened to be on the machine. The AspNetCore ref pack makes that
+       decisive rather than tidy — unlike Microsoft.NETCore.App.Ref it is NOT an SDK component
+       and is absent from $DOTNET_ROOT/packs on a setup-dotnet leg, so a ~/.nuget path would
+       pass locally and fail on CI. -->
   <Target Name="CopyDotNetShims" AfterTargets="Build">
-    <Copy SourceFiles="$(PkgNewtonsoft_Json)/lib/netstandard2.0/Newtonsoft.Json.dll"
+    <Copy SourceFiles="$(PkgNewtonsoft_Json)/lib/netstandard2.0/Newtonsoft.Json.dll;$(PkgMicrosoft_AspNetCore_App_Ref)/ref/net8.0/Microsoft.AspNetCore.StaticFiles.dll"
           DestinationFolder="$(OutDir)dotnet-shims" SkipUnchangedFiles="true" />
   </Target>
 
