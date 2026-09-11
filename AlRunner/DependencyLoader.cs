@@ -749,28 +749,38 @@ public sealed class DependencyLoader
         // whatever was dropped. Program.cs has treated this as a hard failure on the bundle
         // path since #1991; this path called the same Emit and read only `.Sources`.
         //
-        // Failing rather than warning is not a free choice between two defensible options:
-        // EMIT-ZERO above already aborts the run when ALL objects are lost, so tolerating a
-        // partial load would make losing 9 of 10 objects survivable and losing 10 of 10
-        // fatal — a discontinuity with no mechanism behind it. The one case where silence
-        // IS faithful (a Microsoft platform app whose bodies really live in the extracted
-        // service-tier DLLs) is already handled, for every stage, by LoadAll's
-        // IsServiceTierFallbackEligible catch — which this throw routes through unchanged,
-        // because "EMIT-EXCLUDED" is not a METADATA-* stage.
+        // It REPORTS and continues; it does not fail the run. That is a deliberate difference
+        // from the bundle path, and the reason is what a dropped object costs on each. A
+        // bundle's dropped test codeunit removes TESTS: nothing ever asks for them again, the
+        // total silently shrinks, and only the run itself can notice. A dependency's dropped
+        // object has a loud runtime backstop — the first AL that touches it dies with
+        // NavNCLMissingMethodException — so the failure mode #2247 is written against is
+        // "nobody could tell", not "nothing stopped it".
+        //
+        // Refusing outright was measured and is wrong: it aborts the entire runner-extras
+        // suite before a single test runs, because Microsoft's Tests-TestLibraries drops
+        // "Library - Azure KV Mock Mgmt." (1 of 203 objects) on AL0185 "DotNet
+        // 'MockAzureKeyVaultSecretProvider' is missing" — a permanent property of running
+        // headless, not a broken build. ExcludedObjectTriage does not rescue that case
+        // either: it is a codeunit without Subtype = Test, so the triage correctly refuses to
+        // clear it. This is the same over-refusal #3476 removed from the bundle path, where
+        // it had been costing Tests-Misc all 3,215 of its tests.
         if (emitOutput.ExcludedObjects.Count > 0)
         {
             var detail = BuildDependencyEmitExcludedDetail(
                 emitOutput.ExcludedObjects, emitted.Count,
                 emitOutput.ExcludedObjectDiagnostics ?? Array.Empty<string>());
-            // Untagged on purpose. `[deps]` is dropped by Log's component filter at default
+            // Reported, not merely printed: on a long run the discovery line scrolls thousands
+            // of lines above the summary the caller actually reads (#2587), and this one has to
+            // survive to the end because the run CONTINUES past it. ProvisionGapLog writes to
+            // stderr itself, so this is one call, not two.
+            //
+            // Deliberately not a `[deps]` line: Log's component filter drops those at default
             // verbosity (#2750, CorruptSidecarLoudnessTests) — the same filter that made the
-            // original silence possible, and writing this line as `[deps] …` would reproduce
-            // the defect while looking like a fix. `[dep-load-fail]` is the exempt tag its
-            // three sibling failures on this path already use.
-            Console.Error.WriteLine(
-                $"[dep-load-fail] {m.Publisher}_{m.Name} v{m.Version}: EMIT-EXCLUDED — {detail}");
-            throw new DependencyLoadException(
-                m.Publisher, m.Name, m.Version.ToString(), "EMIT-EXCLUDED", detail);
+            // original silence possible, so tagging it `[deps]` would reproduce the defect
+            // while looking like a fix.
+            AlRunner.Infrastructure.ProvisionGapLog.Report(
+                $"{m.Publisher}_{m.Name} v{m.Version}: EMIT-EXCLUDED — {detail}");
         }
 
         var asmName = $"Dep_{SanitizeIdent(m.Publisher)}_{SanitizeIdent(m.Name)}_{m.Version.ToString().Replace('.', '_')}";

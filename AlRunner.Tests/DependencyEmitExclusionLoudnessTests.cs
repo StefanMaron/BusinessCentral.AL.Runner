@@ -1,42 +1,23 @@
 // DependencyEmitExclusionLoudnessTests — #2247: a dependency that emits only SOME of its
-// objects must be loud, not loaded partially in silence.
+// objects must say so, rather than being loaded partially in silence.
 //
-// What was wrong
-// --------------
-// Program.cs's bundled-mode path has failed the run on emit-retry exclusion since #1991
-// (EMIT-EXCLUDED), because losing an object silently shrinks what the run covers.
-// DependencyLoader.LoadOne called the same BcCompiler.Emit and read only `.Sources`, so a
-// dependency whose AL hit the same atomic-per-module emit crash was recovered partially,
-// loaded, CACHED, and reported as a clean success.
+// CLAIM: DependencyLoader.LoadOne called the same BcCompiler.Emit the bundled path calls and
+// read only `.Sources`, so an emit-retry exclusion was loaded, cached and reported as a clean
+// success, at every verbosity.
 //
-// Measured on the fixture beside this file (AlRunner.Tests/Fixtures/DepEmitExclusion), BC
-// 28.1.49838.54308, with the compiled-deps cache cleared first — the dependency .app ships two
-// codeunits and one cannot bind:
+// CITATION: measured on the fixture this file generates — exit 0, "1P/0F/0E across 1 tests",
+// and `grep -c` = 0 over the whole run log for the dropped object, EMIT-EXCLUDED and AL0185.
+// Confirmed off disk rather than from a missing log line: the cached dependency DLL held
+// Codeunit70860 and not Codeunit70861, and its .object-metadata.json listed 1 object where the
+// package shipped 2. #3875 measured the same shape on the metadata path (55 documents of 70).
 //
-//   before:  exit 0, "1P/0F/0E across 1 tests", and ZERO lines at default verbosity
-//            mentioning the dropped object, EMIT-EXCLUDED, object 70861 or AL0185 (grep -c
-//            over the whole run log: 0). The cached dependency DLL contained Codeunit70860
-//            and not Codeunit70861, and the .object-metadata.json sidecar listed exactly one
-//            object where the .app shipped two — the drop confirmed a second way, off disk,
-//            rather than from the absence of a log line.
-//   after:   exit 1, one [dep-load-fail] … EMIT-EXCLUDED line at DEFAULT verbosity naming the
-//            dropped object, the 1-of-2 denominator, the consequence and the AL0185 that
-//            caused it. No cache entry is written at all.
-//
-// The partial case is the whole point. A test asserting only that a dependency which fails
-// ENTIRELY is loud would have passed before this fix: EMIT-ZERO already covered that, and it
-// is the discontinuity — 10 of 10 lost is fatal, 9 of 10 lost is fine — that made the gap
-// invisible.
-//
-// #3875 measured the same silent-partial shape one layer over, on the metadata path: Business
-// Foundation produced 55 documents instead of 70, reported success, and printed zero AL0185
-// lines at default verbosity. That path is fixed in the same PR
-// (DependencyMetadataProducer.Ensure, METADATA-EMIT-EXCLUDED) and pinned below.
-//
-// See .claude/rules/guards-need-a-third-state.md: "some objects were excluded" had no verdict
-// distinct from "everything emitted", so it was reported as the success state.
+// TRAP, for whoever edits this next: the fix REPORTS and continues; it does not fail the run.
+// Refusing was measured and is wrong — it aborts the entire runner-extras suite, because
+// Microsoft's Tests-TestLibraries drops 1 of 203 objects on a DotNet type that is unavailable
+// headless. DependencyLoader.cs's guard carries that reasoning at the line.
 
 using AlRunner;
+using AlRunner.Infrastructure;
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -88,9 +69,8 @@ public sealed class DependencyEmitExclusionMessageTests
     }
 
     /// <summary>
-    /// The AL diagnostic is inlined rather than held behind --verbose. This throw aborts the
-    /// run, so the diagnostic is the only account of the cause — the same choice EMIT-ZERO on
-    /// this path and Program.cs's non-profile EMIT-EXCLUDED branch already make (#2949).
+    /// The AL diagnostic is inlined rather than held behind --verbose: it is the only account
+    /// of why the object was dropped, and the run continues past it (#2949).
     /// </summary>
     [Fact]
     public void TheIdentifyingAlDiagnostic_IsInTheMessage()
@@ -120,23 +100,16 @@ public sealed class DependencyEmitExclusionMessageTests
 }
 
 /// <summary>
-/// The routing half. An EMIT-EXCLUDED dependency failure must reach Program.cs's FATAL
-/// handler, and must NOT be swallowed by LoadAll's Microsoft-source-only catch on the
-/// strength of the stage name alone.
-///
-/// That catch exists for a genuinely faithful fallback — a platform app whose procedure
-/// bodies really do live in the extracted service-tier DLLs. Whether THIS app qualifies is
-/// HasServiceTierDllFallback's call, unchanged by #2247; what is pinned here is that the new
-/// stage does not accidentally join the METADATA-* family, which is never eligible (#3749).
+/// The stage-naming half. METADATA-EMIT-EXCLUDED must land in the never-swallowable METADATA-*
+/// family and the code-path stage must not (#3749) — IsMetadataStage matches on the prefix, so
+/// a misnamed stage would silently become swallowable.
 /// </summary>
 public sealed class DependencyEmitExclusionStageRoutingTests
 {
     [Fact]
     public void EmitExcluded_IsNotAMetadataStage()
     {
-        // METADATA-* is the never-swallowable family. The code path's stage is not in it, so
-        // eligibility falls to the service-tier-fallback question, exactly like EMIT-FAIL,
-        // EMIT-ZERO and COMPILE-FAIL beside it.
+        // METADATA-* is the never-swallowable family; the code-path stage is not in it.
         Assert.False(DependencyLoader.IsMetadataStage("EMIT-EXCLUDED"));
         Assert.True(DependencyLoader.IsMetadataStage("METADATA-EMIT-EXCLUDED"));
     }
@@ -144,8 +117,8 @@ public sealed class DependencyEmitExclusionStageRoutingTests
     [Fact]
     public void EmitExcluded_IsNeverSwallowedWithoutAFaithfulFallback()
     {
-        // No service-tier index at all: nothing can answer for the dropped object, so the
-        // failure must propagate to the FATAL handler rather than being deferred.
+        // No service-tier index: nothing can answer for the dropped object, so a
+        // METADATA-EMIT-EXCLUDED must propagate rather than be deferred.
         Assert.False(DependencyLoader.IsServiceTierFallbackEligible(
             "EMIT-EXCLUDED",
             serviceTierIndexAvailable: false,
@@ -156,9 +129,8 @@ public sealed class DependencyEmitExclusionStageRoutingTests
     [Fact]
     public void TheMetadataVariant_IsNeverSwallowedEvenWithAFullIndex()
     {
-        // #3749's property, re-asserted for the new metadata stage: extracted DLLs supply
-        // procedure BODIES, so they can stand in for missing code and never for missing
-        // metadata. A complete index must not make this eligible.
+        // #3749: extracted DLLs supply procedure BODIES, so they can stand in for missing code
+        // and never for missing metadata. A complete index must not make this eligible.
         Assert.False(DependencyLoader.IsServiceTierFallbackEligible(
             "METADATA-EMIT-EXCLUDED",
             serviceTierIndexAvailable: true,
@@ -347,17 +319,18 @@ public sealed class DependencyEmitExclusionEndToEndTests
 
     /// <summary>
     /// The proving test. Before the fix this exact run exited 0 with "1P/0F/0E across 1 tests"
-    /// and said nothing at all about the dropped object — the bundle's own test passes either
-    /// way, because a green-looking run IS the defect.
+    /// and said NOTHING about the dropped object at any verbosity — the bundle's own test
+    /// passes either way, because a green-looking run IS the defect.
+    ///
+    /// The run still succeeds after the fix, deliberately (see the guard's own comment): what
+    /// changed is that the loss is stated at the point of discovery AND in the run summary,
+    /// where a reader of a long log will actually find it.
     /// </summary>
     [SkippableFact]
-    public void PartiallyEmittedDependency_IsLoudAtDefaultVerbosity_AndStopsTheRun()
+    public void PartiallyEmittedDependency_IsReportedAtDefaultVerbosity_AndInTheRunSummary()
     {
         TestArtifacts.SkipIfMissing();
 
-        // TestScratch, not a hand-built Path.GetTempPath() expression (#2706): this test writes
-        // a bundle AND a --cache root the runner fills, and an unowned directory is unreclaimable
-        // if the test host is killed. ScratchDirOwnershipGuardTests enforces it.
         var root = TestScratch.FlatDir("al-runner-dex-");
         Directory.CreateDirectory(root);
         try
@@ -368,10 +341,6 @@ public sealed class DependencyEmitExclusionEndToEndTests
 
             var (output, exit) = RunRunner(bundle, cacheDir);
 
-            Assert.True(exit != 0,
-                $"a dependency that lost an object provides less than it claims, so the run "
-                + $"must NOT exit 0. exit={exit}\n{output}");
-
             // No --verbose, and that IS the assertion: Log's component filter drops a [deps]
             // line at default verbosity (#2750), so reporting this as [deps] would reproduce
             // the original silence while looking like a fix.
@@ -380,33 +349,138 @@ public sealed class DependencyEmitExclusionEndToEndTests
             // The dropped object by name — "something was excluded" is not actionable.
             Assert.Contains("DEX Dep Broken", output, StringComparison.Ordinal);
 
-            // The denominator, which is what distinguishes a partial loss from a total one
-            // and is the whole of why EMIT-ZERO did not already cover this.
+            // The denominator, which is what distinguishes a partial loss from a total one and
+            // is the whole of why the EMIT-ZERO guard beside it did not already cover this.
             Assert.Contains("1 of this dependency's 2 object(s)", output, StringComparison.Ordinal);
 
-            // The cause, at default verbosity, since this failure aborts the run.
+            // The cause, at default verbosity.
             Assert.Contains("AL0185", output, StringComparison.Ordinal);
+
+            // Reported in the SUMMARY too, not only at the point of discovery: this run
+            // continues, so on a real run the discovery line scrolls thousands of lines above
+            // the part anyone reads (#2587). This is the assertion that would fail if the
+            // report were downgraded to a bare stderr write.
+            Assert.Contains("Provisioning gaps:", output, StringComparison.Ordinal);
 
             // Negative direction: the SURVIVING object must not be named as dropped. A guard
             // that reports everything is as useless as one that reports nothing.
             Assert.DoesNotContain("DEX Dep Healthy", output, StringComparison.Ordinal);
 
-            // And the partial assembly must not have been cached: the cache stores the DLL and
-            // is consulted before any of this, so a written entry would make a later run skip
-            // the compile, skip this guard, and be silently partial again — the same lever
-            // Program.cs pulls with `cachePath = null` (#3476).
-            var compiledDeps = Path.Combine(cacheDir, "compiled-deps");
-            var cachedDlls = Directory.Exists(compiledDeps)
-                ? Directory.GetFiles(compiledDeps, "*.dll")
-                : Array.Empty<string>();
-            Assert.True(cachedDlls.Length == 0,
-                "a partially-emitted dependency must not be cached; a later run would load it "
-                + "without recompiling and never reach the guard. found: "
-                + string.Join(", ", cachedDlls.Select(Path.GetFileName)));
+            // And the run still completes. Failing the load instead was measured and is wrong:
+            // it aborts the whole runner-extras suite over Microsoft's Tests-TestLibraries
+            // dropping one of 203 objects on a headless-unavailable DotNet type.
+            Assert.Equal(0, exit);
+            Assert.Contains("MainBundle_RunsGreenWhileTheDependencyIsPartial", output, StringComparison.Ordinal);
         }
         finally
         {
             try { Directory.Delete(root, recursive: true); } catch { }
         }
+    }
+}
+
+/// <summary>
+/// The METADATA path's own RED → GREEN (#2247, second half). The two facts above assert the
+/// stage NAMING convention, which would pass with the guard deleted — this drives the guard.
+///
+/// CLAIM: DependencyMetadataProducer.Ensure discarded the BcEmitOutput entirely
+/// (`compiler.Emit(...)` with no assignment) and checked only `produced.Length == 0`, so a
+/// partial emit was persisted as the app's COMPLETE metadata. It cannot see the shortfall by
+/// counting — it knows how many documents appeared, never how many BC should have produced.
+///
+/// CITATION: #3875 measured Business Foundation at 55 documents of 70, reported as success with
+/// zero AL0185 lines at default verbosity.
+///
+/// TRAP: unlike the LoadOne path, which reports and continues, this one THROWS — because Persist
+/// writes a sidecar every later run replays without recompiling, so a partial document set would
+/// become this app's recorded metadata permanently.
+/// </summary>
+public sealed class DependencyMetadataPartialEmitTests
+{
+    /// <summary>
+    /// A source-shipping package with TWO tables, one of which cannot bind: its field carries a
+    /// TableRelation to a table that exists nowhere, so BC's atomic-per-module Emit fails and
+    /// the retry loop drops exactly that one and recompiles the survivor — the partial emit.
+    /// </summary>
+    private static string WritePartialSourcePackage(Guid appId)
+    {
+        var path = TestScratch.FilePath("depmeta-partial", "pkg-partial-source.app");
+        using var ms = new MemoryStream();
+        using (var zip = new System.IO.Compression.ZipArchive(
+            ms, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+        {
+            void Add(string name, string content)
+            {
+                using var s = zip.CreateEntry(name).Open();
+                s.Write(System.Text.Encoding.UTF8.GetBytes(content));
+            }
+            Add("NavxManifest.xml",
+                "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+                + "<Package xmlns=\"http://schemas.microsoft.com/navx/2015/manifest\">"
+                + $"<App Id=\"{appId}\" Name=\"DEX Partial Metadata Dep\" Publisher=\"AL Runner Fixtures\""
+                + " Version=\"1.0.0.0\" ShowMyCode=\"true\" /><Dependencies /></Package>");
+            Add("src/Healthy.Table.al",
+                "table 70880 \"DEX Meta Healthy\"\n"
+                + "{\n    DataClassification = CustomerContent;\n"
+                + "    fields { field(1; \"No.\"; Code[20]) { } }\n"
+                + "    keys { key(PK; \"No.\") { Clustered = true; } }\n}\n");
+            Add("src/Broken.Codeunit.al",
+                "codeunit 70881 \"DEX Meta Broken\"\n"
+                + "{\n    procedure Go()\n    var\n"
+                + "        Missing: Codeunit \"DEX Meta No Such Codeunit Anywhere\";\n"
+                + "    begin\n        Missing.Whatever();\n    end;\n}\n");
+        }
+        var zipBytes = ms.ToArray();
+        var result = new byte[8 + zipBytes.Length];
+        result[0] = (byte)'N'; result[1] = (byte)'A'; result[2] = (byte)'V'; result[3] = (byte)'X';
+        BitConverter.TryWriteBytes(result.AsSpan(4, 4), (uint)8);
+        zipBytes.CopyTo(result, 8);
+        File.WriteAllBytes(path, result);
+        return path;
+    }
+
+    /// <summary>
+    /// The proving test. With the guard removed this returns 1 — one document, from the table
+    /// that survived — and persists it as the app's complete metadata. It must throw instead,
+    /// naming the dropped object and the denominator.
+    /// </summary>
+    [SkippableFact]
+    public void PartialMetadataEmit_ThrowsRatherThanCachingAnIncompleteDocumentSet()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        // A FRESH app id per run, not a constant: the metadata sidecar is keyed on it and
+        // lives in a machine-global cache, so a constant id lets one run's entry satisfy the
+        // next run's cache HIT before Ensure ever compiles. That is not hypothetical — it
+        // happened while proving this test: the mutated (unguarded) build cached 1 document
+        // for a 2-object package, and the restored build then read that entry back and
+        // returned early, so the test stayed red with the guard present. The poisoned cache
+        // IS the defect this guard exists to prevent; the test must not depend on it.
+        var appId = Guid.NewGuid();
+        var pkg = WritePartialSourcePackage(appId);
+        var manifest = new AppManifest(
+            Publisher: "AL Runner Fixtures", Name: "DEX Partial Metadata Dep",
+            Version: new Version(1, 0, 0, 0), AppId: appId,
+            Dependencies: Array.Empty<DependencyRef>());
+
+        var ex = Assert.Throws<DependencyLoadException>(
+            () => DependencyMetadataProducer.Ensure(manifest, pkg, new BcCompiler()));
+
+        // The stage, which is what keeps it in the never-swallowable METADATA-* family (#3749).
+        Assert.Equal("METADATA-EMIT-EXCLUDED", ex.Stage);
+        // The dropped object by name, and the denominator that makes a partial loss legible.
+        Assert.Contains("DEX Meta Broken", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("1 of this dependency's 2 object(s)", ex.Message, StringComparison.Ordinal);
+        // And why throwing is the right answer HERE specifically, where LoadOne continues.
+        Assert.Contains("metadata document(s) were produced", ex.Message, StringComparison.Ordinal);
+
+        // Negative direction, and the half that makes the throw worth having: nothing was
+        // persisted. A cached partial set is replayed by every later run without recompiling,
+        // so it would record 1 document as this app's complete metadata permanently.
+        var sidecar = Path.Combine(
+            AlRunner.Infrastructure.CacheRoots.Resolve("dep-metadata"),
+            DependencyMetadataProducer.CacheKey(manifest) + ".object-metadata.json");
+        Assert.False(File.Exists(sidecar),
+            $"a partial metadata emit must not be cached; found {sidecar}");
     }
 }

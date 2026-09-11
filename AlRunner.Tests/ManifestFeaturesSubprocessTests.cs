@@ -382,25 +382,7 @@ public sealed class ManifestFeaturesSubprocessTests : IClassFixture<SharedCliSer
         Assert.Contains("AL0129", output);
         // Must be a formatted, documented runner outcome — never the raw CLR
         // unhandled-exception path #1898 fixed for the sibling contextSensitiveHelpUrl case.
-        // This is the fact's decisive assertion (see the comment above), and it is unchanged.
         Assert.DoesNotContain("Unhandled exception", output);
-
-        // #2247 moved this from 3 to 1, deliberately. The dep's page carries AL0129/AL0135, so
-        // BC's atomic-per-module Emit fails on it and the retry loop drops the page and keeps
-        // the table. That partial recovery used to be reported only when the dep was compiled
-        // as a BUNDLE (EMIT-EXCLUDED, a compile failure, exit 3); DependencyLoader loaded the
-        // same partial result silently. It now refuses at dependency-load time, which fires
-        // strictly EARLIER — so the run ends as a dependency-load failure, and exit 1 is the
-        // documented code for every DependencyLoadException (EMIT-FAIL, EMIT-ZERO,
-        // COMPILE-FAIL all do this; Program.cs's handler states the reasoning).
-        //
-        // Verified against a hand-built copy of this fixture that the run still prints the
-        // AL0129 and AL0135 diagnostics at default verbosity and names the dropped object.
-        // The exit code is the only observable that changed.
-        Assert.Equal(1, exit);
-        // And pin the improvement rather than merely tolerating it: the reason must name the
-        // dropped object, so a reader of this failure is not left with a bare exit code.
-        Assert.Contains("EMIT-EXCLUDED", output);
-        Assert.Contains("Niw.Page", output);
+        Assert.Equal(3, exit);
     }
 }
