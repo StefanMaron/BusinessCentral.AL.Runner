@@ -1013,9 +1013,17 @@ internal sealed partial class RunnerPageInstance
     ///
     /// <para>This narrows a refusal introduced by this change; it does not widen the pre-#3504
     /// silent default. A declaration the runner CAN resolve still gates the invoke exactly as
-    /// before, including the literal <c>Enabled = false</c> that corpus codeunit 60583 pins.
-    /// #3825 removes the unresolvable case entirely, at which point this method collapses back
-    /// into <see cref="ActionEnabled"/>.</para>
+    /// before, including the literal <c>Enabled = false</c> that corpus codeunit 60583 pins.</para>
+    ///
+    /// <para>#3825 resolved the population this was written for — an expression naming a binding
+    /// the page registers now answers, so the warning below no longer fires for it — but this
+    /// method STAYS, because unresolvable declarations still exist and #3825 did not make them
+    /// impossible: a client expression the compiler DROPPED (a procedure call, AL0573; see
+    /// <see cref="ClientExpressionTheCompilerDropped"/>), and an expression naming something the
+    /// page publishes no binding for. Collapsing this back into <see cref="ActionEnabled"/> would
+    /// turn each of those from "this one property is unreadable" into "this action's OnAction
+    /// never runs", which is the strictly larger loss the paragraph above rejects. Delete it only
+    /// once a measurement shows the unresolvable set is empty.</para>
     /// </summary>
     internal bool ActionEnabledForInvoke(int actionId)
     {
@@ -1175,14 +1183,21 @@ internal sealed partial class RunnerPageInstance
         // the FIRST one, so "TestPage page N element M — Visible" made the untyped recovery path
         // report the api as "TestPage page N element M" and fold "Visible" into the reason. Same
         // defect #2945 fixed for Feature Key Modify, live at all three sites here (#2999).
-        if (atOpen && _expressionValuesAtOpen.TryGetValue(raw, out var frozen))
+        // TryFrozenValue, not a bare TryGetValue: the snapshot is keyed by the REGISTERED key, so
+        // on a precompiled page — where `raw` is the raw AL identifier — a direct lookup misses
+        // and a control's own Visible would silently fall through to the LIVE value, losing the
+        // frozen-at-open semantics this arm exists for (#3825).
+        if (atOpen && TryFrozenValue(raw, out var frozen))
             return frozen is bool fb
                 ? fb
                 : throw TestPageShapeGap.ControlProperty(
                     $"TestPage {propertyName} on page {_pageId} element {elementId}",
                     $"expression '{raw}' evaluated to '{frozen ?? "null"}', which is not a Boolean");
 
-        var expression = _sourceExpressions[raw];
+        // ?? BindingRegisteredUnderName: on a PRECOMPILED page `raw` is the raw AL identifier the
+        // symbol file states, while the live table is keyed by the compiler's mangled id, so the
+        // key lookup alone misses every expression-bound property there (#3825).
+        var expression = _sourceExpressions[raw] ?? BindingRegisteredUnderName(raw);
         if (expression != null)
         {
             var direct = GetValue(expression);
@@ -1288,13 +1303,47 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     private bool ResolveExpressionIdentifierAtOpen(string name, bool quoted, out object? value)
     {
-        if (_expressionValuesAtOpen.TryGetValue(name, out value)) return true;
+        if (TryFrozenValue(name, out value)) return true;
         return ResolveExpressionIdentifier(name, quoted, out value);
+    }
+
+    /// <summary>
+    /// The open-time value of <paramref name="name"/>, which may be either the registered key or
+    /// the raw AL identifier the binding was registered under. Both spellings reach the same
+    /// snapshot entry — see <see cref="BindingRegisteredUnderName"/> for why a precompiled page
+    /// only ever has the second.
+    /// </summary>
+    private bool TryFrozenValue(string name, out object? value)
+    {
+        if (_expressionValuesAtOpen.TryGetValue(name, out value)) return true;
+
+        if (BindingRegisteredUnderName(name) is { } expression
+            && ReadBindingId(expression) is { } id
+            && _expressionValuesAtOpen.TryGetValue(id, out value))
+            return true;
+
+        value = null;
+        return false;
+    }
+
+    /// <summary>The binding's registered key, or null when the runner cannot read it — the same
+    /// shape-tolerance <see cref="BuildBindingsByName"/> applies to <c>Name</c>.</summary>
+    private static string? ReadBindingId(object expression)
+    {
+        try
+        {
+            return BcShape.Property(
+                expression.GetType(), "Id", BcShape.AnyInstance,
+                surface: "TestPage expression-bound property",
+                detail: "the runner reads a binding's registered key to find its open-time value")
+                .GetValue(expression) as string;
+        }
+        catch (AlRunner.Infrastructure.BcShapeGapException) { return null; }
     }
 
     private bool ResolveExpressionIdentifier(string name, bool quoted, out object? value)
     {
-        var expression = _sourceExpressions[name];
+        var expression = _sourceExpressions[name] ?? BindingRegisteredUnderName(name);
         if (expression != null)
         {
             value = GetValue(expression)?.ClientObject;
@@ -1303,6 +1352,93 @@ internal sealed partial class RunnerPageInstance
 
         value = null;
         return false;
+    }
+
+    /// <summary>
+    /// The registered binding a PRECOMPILED page's declared identifier refers to — the join that
+    /// #3825 is about. Two lookups, because BC registers the two populations differently.
+    ///
+    /// <para>WHY A JOIN IS NEEDED AT ALL. A source-compiled page's declarations and its binding
+    /// table both come from the same emitted metadata, so the caller's key lookup hits. A
+    /// precompiled page states its declarations in <c>SymbolReference.json</c>, which carries the
+    /// identifier the AL author wrote (<c>Enabled = PageEditable</c>), while the table
+    /// <c>NavForm.RegisterSourceExpression</c> filled from the <c>.app</c>'s own IL is keyed by
+    /// the compiler's spelling. Both halves are in memory; only the join was missing.</para>
+    ///
+    /// <para>1. BY <c>Name</c>. A value-source binding registers
+    /// <c>(id: "Control159866013", name: "GLAccTotaling")</c> — the raw identifier IS the
+    /// <c>Name</c>, so it is read off the object rather than computed.</para>
+    ///
+    /// <para>2. BY THE MANGLED KEY, looked up and not derived. A property binding registers
+    /// <c>(id: "p790p790PageEditable", name: "p790p790PageEditable")</c> — <b>both arguments are
+    /// the mangled form and the raw identifier is nowhere on the object</b>, so step 1 cannot
+    /// reach it. This composes the candidate key and asks the table whether it EXISTS. The
+    /// distinction from re-implementing the compiler's mangling is the whole point: a wrong guess
+    /// misses and the caller refuses loudly, naming the expression, exactly as before — it can
+    /// never invent a binding or silently answer from the wrong one.</para>
+    ///
+    /// <para>Measured on Base Application 28.1.49838.53910, reading the shipped <c>.app</c>'s IL
+    /// with Cecil across all five of its assemblies (2,610 pages, 18,075 registered pairs):
+    /// every one of the <b>6,126</b> <c>p&lt;id&gt;p&lt;id&gt;</c> registrations has
+    /// <c>id == name</c> (0 counterexamples), and <b>no page registers a duplicate key</b>
+    /// (0 of 2,610), so a hit is unambiguous. The 6,126 independently reproduces the figure the
+    /// compile-route measurement on #3825 reached from BC's emitted documents.</para>
+    ///
+    /// <para>TRAP: do not "simplify" step 2 into deriving the key and using it without checking
+    /// that it exists. Existence is what keeps this a read of Microsoft's own registration
+    /// instead of a mangling rule this repository would then own across every BC version
+    /// (<c>precompiled-dll-respect.md</c> § "Reuse before you re-implement").</para>
+    ///
+    /// <para>Built once per page instance and cached, including the negative, because the table
+    /// is filled during construction and does not grow afterwards.</para>
+    /// </summary>
+    private object? BindingRegisteredUnderName(string name)
+    {
+        _bindingsByName ??= BuildBindingsByName(_sourceExpressions);
+        if (_bindingsByName.TryGetValue(name, out var byName)) return byName;
+
+        // The compiler-mangled spelling, looked UP rather than derived — see the remarks.
+        return _sourceExpressions[$"p{_pageId}p{_pageId}{name}"];
+    }
+
+    private Dictionary<string, object>? _bindingsByName;
+
+    internal static Dictionary<string, object> BuildBindingsByName(System.Collections.IDictionary expressions)
+    {
+        // Ordinal, matching the key lookup beside it: an AL identifier's case is fixed by the
+        // compiler on both sides of this join, and a case-insensitive match here would let two
+        // distinct globals differing only in case resolve to each other.
+        var byName = new Dictionary<string, object>(StringComparer.Ordinal);
+        foreach (System.Collections.DictionaryEntry entry in expressions)
+        {
+            if (entry.Value is not { } expression) continue;
+            string? name;
+            try
+            {
+                name = BcShape.Property(
+                    expression.GetType(), "Name", BcShape.AnyInstance,
+                    surface: "TestPage expression-bound property",
+                    detail: "the runner joins a precompiled page's declared identifier to the "
+                          + "binding BC registered under it")
+                    .GetValue(expression) as string;
+            }
+            catch (AlRunner.Infrastructure.BcShapeGapException)
+            {
+                // A binding whose shape the runner cannot read is left out of the index rather
+                // than costing the page every other binding: the caller's key lookup still
+                // works, and an identifier that needed this join refuses loudly, naming itself.
+                continue;
+            }
+
+            if (string.IsNullOrEmpty(name)) continue;
+            // First wins. Name is not unique per page even though the registered KEY is (measured:
+            // 0 duplicate keys across Base Application's 2,610 pages) - a global bound to two
+            // controls registers twice under one Name. Both entries' getters read the same page
+            // field, so either answers identically; this keeps the result a read rather than a
+            // reconciliation, and never throws on a shape that is normal.
+            if (!byName.ContainsKey(name)) byName[name] = expression;
+        }
+        return byName;
     }
 
     /// <summary>
@@ -2072,6 +2208,10 @@ internal sealed partial class RunnerPageInstance
         // all failed. The constructor still takes one, so a page whose OnOpenPage never runs
         // still has a snapshot rather than none.
         _expressionValuesAtOpen = SnapshotExpressionValues(_sourceExpressions);
+        // Dropped alongside the snapshot, for the same reason it is re-taken: anything that
+        // registered a binding between construction and here must be in the name index too, and
+        // a memoized index (including its negatives) would keep answering from before OnOpenPage.
+        _bindingsByName = null;
     }
 
     /// <summary>

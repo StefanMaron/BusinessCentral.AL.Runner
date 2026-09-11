@@ -16,6 +16,18 @@ codeunit 64570 "PMN Assert"
             Error('Assert.AreEqual failed. Expected:<%1> Actual:<%2>. %3', Expected, Actual, Msg);
     end;
 
+    procedure IsTrue(Actual: Boolean; Msg: Text)
+    begin
+        if not Actual then
+            Error('Assert.IsTrue failed. Expected:<true> Actual:<false>. %1', Msg);
+    end;
+
+    procedure IsFalse(Actual: Boolean; Msg: Text)
+    begin
+        if Actual then
+            Error('Assert.IsFalse failed. Expected:<false> Actual:<true>. %1', Msg);
+    end;
+
     /// <summary>The last error text must CONTAIN Expected - a substring match, so a test
     /// can pin the meaningful part of a message that also carries a variable id.</summary>
     procedure ExpectedError(Expected: Text)

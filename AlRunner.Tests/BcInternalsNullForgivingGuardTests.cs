@@ -249,7 +249,21 @@ public sealed class BcInternalsNullForgivingGuardTests
         // engine-bootstrap step that registers the platform SystemApp package: its failure used
         // to log and return, so "registration failed" was spelled as "initialization succeeded"
         // and the run continued without the NCL-internal system tables (#3581).
-        Assert.Equal(90, converted);
+        //
+        // 90 -> 92 for the Id and Name reads on a registered source expression in
+        // RunnerPageInstance.cs (#3825). Both are new sites rather than converted `!`/`?.` ones:
+        // they join a precompiled page's DECLARED identifier ("PageEditable", from the symbol
+        // file) to the binding table BC's own IL keyed by the compiler's spelling
+        // ("p790p790PageEditable"). A null from either has to mean "BC no longer exposes this
+        // member", which is a shape gap that must refuse — NOT "this expression does not match",
+        // which is precisely the silent non-match that made every expression-bound
+        // Editable/Visible/Enabled on a precompiled page unresolvable in the first place. Read
+        // through the bare reflection call, a renamed member would degrade the join back to that
+        // original symptom with nothing saying so; the two are indistinguishable at the call
+        // site, which is why these are shape-checked rather than `?.`. The enclosing
+        // BcShapeGapException catch still drops the one unreadable binding from the index rather
+        // than costing the page every other one — what changed is that the gap is named.
+        Assert.Equal(92, converted);
     }
 
     /// <summary>
