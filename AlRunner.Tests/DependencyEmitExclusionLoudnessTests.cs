@@ -355,7 +355,10 @@ public sealed class DependencyEmitExclusionEndToEndTests
     {
         TestArtifacts.SkipIfMissing();
 
-        var root = Path.Combine(Path.GetTempPath(), "al-runner-dex-" + Guid.NewGuid().ToString("N"));
+        // TestScratch, not a hand-built Path.GetTempPath() expression (#2706): this test writes
+        // a bundle AND a --cache root the runner fills, and an unowned directory is unreclaimable
+        // if the test host is killed. ScratchDirOwnershipGuardTests enforces it.
+        var root = TestScratch.FlatDir("al-runner-dex-");
         Directory.CreateDirectory(root);
         try
         {
