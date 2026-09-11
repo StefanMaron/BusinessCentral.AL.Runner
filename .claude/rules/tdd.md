@@ -54,6 +54,12 @@ finds them and reads as coverage, which is why the mutation is the check and the
 number. A failed *search* returns nothing and looks like a finding; a failed *mutation* returns
 green and looks like the system working.
 
+**Trap: a filter that matches nothing is a silent pass.** `dotnet test --filter
+"FullyQualifiedName~SomeTests"` prints `No test matches the given testcase filter` and **exits
+0**. Measured on #3882, where the filename and the four class names inside it differ. So quote
+the `Total:` line from every run, and treat a run with no `Total:` line as *unverified* rather
+than green — the exit code cannot tell you the difference.
+
 **Trap: CI catches the opposite error, never this one.** A test that fails when it should pass
 is red within minutes; one that passes when it should fail is caught only if somebody looks,
 and until then it reads as coverage while protecting nothing.

@@ -117,3 +117,23 @@ while a failed mutation returns green and looks like the system working correctl
 Both were caught by the person running them noticing the result was too clean, and both were
 reported rather than quietly fixed — which is the only reason there are two instances to write
 down instead of one.
+
+
+## A filter that matches nothing is a silent pass (2026-09-11)
+
+Found while verifying #3882's fix. Running
+
+```
+dotnet test AlRunner.Tests/AlRunner.Tests.csproj \
+  --filter "FullyQualifiedName~DependencyEmitExclusionLoudnessTests"
+```
+
+printed `No test matches the given testcase filter` and **exited 0**. The filter was the
+*filename*; the file declares four classes under different names
+(`DependencyEmitExclusionMessageTests`, `...StageRoutingTests`, `...EndToEndTests`,
+`DependencyMetadataPartialEmitTests`).
+
+The coordinator had already written "EXIT=0" into a verification note before noticing the run
+had executed nothing. Same family as the mutation that does not land: **an action that silently
+did nothing reports success**, and the exit code cannot distinguish it from the real thing. The
+discriminator is the `Total:` line, which a no-match run does not print at all.
