@@ -65,7 +65,7 @@
         "testpage-lookup-tablerelation-oos": { "tests": 3 },
         "testpage-precompiled-declared-editable": { "tests": 9 },
         "testpage-precompiled-dep-control": { "tests": 2 },
-        "testpage-precompiled-member-names": { "tests": 8 },
+        "testpage-precompiled-member-names": { "tests": 12 },
         "testpage-promoted-actionref": { "tests": 18 },
         "testpage-procedure-bound-property": { "tests": 6 },
         "testpage-same-value-modify": { "tests": 6 },
