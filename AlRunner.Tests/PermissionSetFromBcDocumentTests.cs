@@ -275,7 +275,6 @@ public class PermissionSetFromBcDocumentWiringTests : IDisposable
         Assert.Equal(TableId, grant.ObjectId);      // the id AL source never states
         Assert.Equal(15, grant.Value);              // RIMD
     }
-
 }
 
 /// <summary>
