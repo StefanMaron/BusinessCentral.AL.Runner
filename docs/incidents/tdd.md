@@ -137,3 +137,36 @@ The coordinator had already written "EXIT=0" into a verification note before not
 had executed nothing. Same family as the mutation that does not land: **an action that silently
 did nothing reports success**, and the exit code cannot distinguish it from the real thing. The
 discriminator is the `Total:` line, which a no-match run does not print at all.
+
+
+## A mutation that breaks the build fails loudly and proves nothing (2026-09-11, #3900)
+
+The landing check added above catches the **silent** direction — a mutation that does not apply
+leaves the test green. This is the other direction, and it is easier to accept because it *looks*
+like the check working.
+
+Verifying #3900's null-forgiving ratchet (`Assert.Equal(92, converted)`), the coordinator removed
+one converted call site by text substitution. The run returned **exit 1** — the shape of a caught
+regression. It was 10 `error CS` lines:
+
+```
+RunnerPageInstance.cs(1336,37): error CS1002: ; expected
+RunnerPageInstance.cs(1336,37): error CS1513: } expected
+```
+
+A build that does not compile cannot exercise an assertion. The tell is the missing `Total:`
+line, the same discriminator the `--filter` trap uses: a run that never executed a test prints no
+summary.
+
+Re-done by mutating the **expected value** (`92 -> 91`) instead, which compiles and isolates the
+assertion: `0 compile errors`, `Expected: 91  Actual: 92`, `Failed: 1, Passed: 4, Total: 5`. That
+is what proves 92 is measured rather than asserted.
+
+**The implementing agent hit the same class independently, in the other direction**, and reported
+it rather than accepting the result: its first mutation *added* an unconverted line without
+removing a converted one, and the ratchet stayed green — correctly, since the converted count was
+still 92. It re-did the mutation as a real removal.
+
+Two people, one guard, one hour, two different ways for a mutation to prove nothing. The general
+form: **a mutation must change what the assertion reads, and nothing else.** Structural edits to
+code are the risky kind; a value the assertion consumes is the safe kind.
