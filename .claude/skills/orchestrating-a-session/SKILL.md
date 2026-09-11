@@ -368,6 +368,14 @@ more; what a second run can still change is the corpus itself, so a runner PR wh
 predates a corpus merge is measured against the older corpus. Read the `corpus: <sha> (<ref>)`
 line the legs print before arming, and re-run rather than carrying an old verdict forward.
 
+**A push restarts the matrix, so a non-blocking finding waits for the gating leg.** A reviewer's
+"worth fixing eventually" item on a PR whose required BC legs are mid-flight costs ~15 minutes of
+matrix, and that cost is invisible while you are reading a trivial diff. Push it when the legs
+have reported, not while they run — and never on a PR that is unblocking others, where the delay
+is multiplied by every PR behind it. Measured twice in one session (#3923, #3927), both times a
+comment-only change that was correct, verified, and still the wrong moment. **"Trivial" describes
+the diff, never the schedule**, and the schedule is what is scarce near a merge.
+
 **Expectation-manifest drift is dispatched from here, and only from here.** A known-gap entry left behind after its issue closed, or a red `main` from manifest drift, gets one implementation agent per drift, briefed to carry the entry's key, `<CodeunitName>.<Method>` from the manifest entry, in both the issue title and the PR title, after `gh pr list --state open --search "\"<CodeunitName>.<Method>\" in:title" --json number,title` returns no title containing that key; when it returns one, that PR is the fix in flight. Done when exactly one open PR title carries the key. An implementation agent that finds a drift comments and keeps its own task (`.claude/agents/impl-agent.md`).
 
 ## Measurement rules
