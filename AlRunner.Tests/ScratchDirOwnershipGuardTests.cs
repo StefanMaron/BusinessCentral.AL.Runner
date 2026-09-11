@@ -91,6 +91,13 @@ public sealed class ScratchDirOwnershipGuardTests
               + "array and 2 more in EveryScannedExpression_IsMatchedByTheScanner_OnSyntheticSource, "
               + "which builds synthetic source lines to prove each entry fires. Was 1 until #3831 "
               + "widened the scan from one expression to three"),
+        ["ProductionScratchDirOwnershipGuardTests.cs"] =
+            (8, "the same thing one directory over: the literals the PRODUCTION-side guard scans "
+              + "for, never paths it creates (#3850). 3 in its Expressions array, 2 in its "
+              + "synthetic-source fact, and 3 in TheScannedSet_IsExactlyTheThreeTempApis, which "
+              + "pins the scanned set so broadening one entry into a prefix of another cannot "
+              + "pass unnoticed. This entry existing is the neighbouring guard working: it "
+              + "flagged the new file on its first run"),
 
         // ── paths that must NOT exist ───────────────────────────────────────────────────
         ["AppLoaderManifestCacheTests.cs"] =
