@@ -85,6 +85,16 @@ public class ParserStaticsIsolationGuardTests
     /// <see cref="RecordPatchesSerialCollection"/> would have cost it the fixture it cannot
     /// run without. VirtualTableBitClearingTests (#2543) is the case that surfaced it.</para>
     ///
+    /// <para><see cref="CacheRootsSerialCollection"/> earns its place for the same reason and
+    /// on the same evidence (#3788). <c>CacheRoots</c> is process-wide mutable state of its own,
+    /// and its collection cites this same #1696 class of bug for it — so a class asserting a
+    /// cache MISS (through a parse-invocation count, or through which on-disk path exists
+    /// afterwards) needs that collection specifically: another thread's override turns a HIT
+    /// into a MISS and destroys exactly the distinction under test. Such a class touches the
+    /// parse statics too, via <c>RecordPatches.ResetForReload</c>, and with one
+    /// <c>[Collection]</c> per class it could otherwise satisfy neither guard.
+    /// CodeunitSymbolNamespaceWarmCacheTests is the case that surfaced it.</para>
+    ///
     /// <para>Pinned by <see cref="EverySerialCollection_ReallyDisablesParallelization"/>, so
     /// this list cannot quietly start naming a collection that runs in parallel.</para>
     /// </summary>
@@ -92,6 +102,7 @@ public class ParserStaticsIsolationGuardTests
     {
         RecordPatchesSerialCollection.Name,
         BcEngineCollection.Name,
+        CacheRootsSerialCollection.Name,
     };
 
     internal static string? FindViolation(string className, string? collectionName, string sourceText)
@@ -107,7 +118,9 @@ public class ParserStaticsIsolationGuardTests
                    : $"in collection \"{collectionName}\"") +
                $". Add [Collection(RecordPatchesSerialCollection.Name)] to it — or " +
                $"[Collection(BcEngineCollection.Name)] if it also needs the in-process BC " +
-               "engine fixture. The parsers publish into process-wide static dictionaries on " +
+               $"engine fixture, or [Collection(CacheRootsSerialCollection.Name)] if it asserts " +
+               "a cache HIT/MISS, which a concurrent CacheRoots override would destroy. " +
+               "The parsers publish into process-wide static dictionaries on " +
                "RecordPatches and xunit runs collections in parallel, so a concurrent class " +
                "can clear or repopulate them between your write and your read (see #1696 for " +
                "the four-of-five-CI-legs failure this produced, and #1712 for the real fix).";

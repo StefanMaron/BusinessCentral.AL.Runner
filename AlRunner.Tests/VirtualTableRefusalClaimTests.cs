@@ -448,7 +448,16 @@ public sealed class VirtualTableRefusalClaimTests
         // and deliberately does not appear here: the fallback answers the whole table, on a
         // `[warn]`.
         // 77 was READ OUT of this test's own failure message ("Expected: 76, Actual: 77").
-        Assert.Equal(77, total);
+        // +2 (#3788): TryRenderCodeunitMetadataColumnForTests, the seam that renders ONE
+        // CodeUnit Metadata column through the live metatable so the AL-observable rendering can
+        // be driven directly. It resolves the same metatable and the same field the populator
+        // does, and refuses on each — an unbuildable metatable, and a field name the metatable
+        // does not declare. Both are the populator's own refusals reached from a second entry
+        // point rather than new claims about the surface: this file's other guard, that each
+        // surface anchor is spelled in exactly one file, still passes, because both go through
+        // CodeunitMetadataShapeGap like every other refusal in that file.
+        // 79 was READ OUT of this test's own failure message ("Expected: 77, Actual: 79").
+        Assert.Equal(79, total);
     }
 
 

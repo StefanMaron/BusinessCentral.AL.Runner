@@ -36,13 +36,15 @@
 //   shared inventory AllObj reads, so AllObj and CodeUnit Metadata cannot disagree about
 //   which codeunits exist.
 //
-// COLUMNS FROM BC'S OWN METADATA DOCUMENT (#3606)
+// COLUMNS FROM BC'S OWN METADATA DOCUMENT (#3606), FALLING BACK TO THE SYMBOL FILE (#3788)
 //   AL Namespace, InherentPermissions and InherentEntitlements are read off the document
 //   BC's emitter produced for the codeunit — see
-//   RecordPatches.CodeunitMetadataFromBcDocument.cs. A codeunit with no document keeps BC's
-//   default for all three; that is every codeunit in a precompiled dependency, whose .app
-//   ships no metadata XML, and every codeunit on a compile-cache HIT with no replayed
-//   sidecar.
+//   RecordPatches.CodeunitMetadataFromBcDocument.cs. When no document is registered — every
+//   codeunit in a precompiled dependency, whose .app ships no metadata XML, and every codeunit
+//   on a compile-cache HIT with no replayed sidecar — all three come from SymbolReference.json
+//   instead: the namespace from the Namespaces TREE PATH the object was reached through, the
+//   two masks from its Properties bag. Only a codeunit whose symbol file states none keeps BC's
+//   own default, which is the honest answer for "declares none".
 //
 // COLUMNS STILL NOT IMPLEMENTED, AND WHY NONE IS WAITING ON THE CONVERSION ABOVE
 //   App ID, TestType and RequiredTestIsolation get BC's own NavValue.GetDefaultNavValue.
@@ -99,8 +101,13 @@ public static partial class RecordPatches
     /// reported, never silent; the same rule Table Metadata applies to LookupPageId).
     /// <see cref="Subtype"/> is the AL name as written (<c>Normal</c>, <c>Test</c>,
     /// <c>Install</c>, …), matched against the live option string by name at row-build time.
+    /// <para>The last three are null for a codeunit that states none, which is a different
+    /// answer from stating an empty one: BC's emitter OMITS the attribute rather than writing a
+    /// default, so the projection must be able to omit it too (#3788). The two masks are the AL
+    /// LETTER spelling, decoded case-sensitively where they are rendered.</para>
     /// </summary>
-    private sealed record CodeunitMetaRow(int Id, string Name, int TableNo, bool SingleInstance, string Subtype);
+    private sealed record CodeunitMetaRow(int Id, string Name, int TableNo, bool SingleInstance, string Subtype,
+        string? ALNamespace = null, string? InherentEntitlements = null, string? InherentPermissions = null);
 
     private static List<CodeunitMetaRow>? _codeunitMetaRows;
     // The .app term is RecordPatches' registration EPOCH, never _bcAppPaths.Count (#2888):
@@ -208,15 +215,67 @@ public static partial class RecordPatches
                 {
                     field.FieldOptionMetadata, subtypeOrdinal
                 });
+            // BC's document wins when one is registered — it is BC's own emitter output for the
+            // codeunit this run compiled. When none is (every codeunit in a precompiled
+            // dependency, whose .app ships no metadata XML), the SYMBOL FILE states all three and
+            // the row now carries them: the namespace from the Namespaces tree path, the two
+            // masks as the AL letter spelling these columns are themselves spelled in (#3788).
+            // A codeunit stating none still falls through to BC's default, which is the honest
+            // answer for "declares none" and the one BC's own row builder gives.
             case "alnamespace":
-                return document == null ? Default() : Text(document.AlNamespace);
+                return document != null ? Text(document.AlNamespace)
+                    : string.IsNullOrEmpty(row.ALNamespace) ? Default() : Text(row.ALNamespace);
             case "inherentpermissions":
-                return document == null ? Default() : Text(document.InherentPermissions);
+                return document != null ? Text(document.InherentPermissions)
+                    : string.IsNullOrEmpty(row.InherentPermissions) ? Default() : Text(row.InherentPermissions);
             case "inherententitlements":
-                return document == null ? Default() : Text(document.InherentEntitlements);
+                return document != null ? Text(document.InherentEntitlements)
+                    : string.IsNullOrEmpty(row.InherentEntitlements) ? Default() : Text(row.InherentEntitlements);
             default:
                 return Default();
         }
+    }
+
+    /// <summary>
+    /// One CodeUnit Metadata column, rendered for a codeunit id through the SAME
+    /// <see cref="BuildCodeunitMetadataValue"/> the live populator calls, as the string AL would
+    /// read — or null when the runner knows no codeunit with that id.
+    ///
+    /// <para><b>Why this seam exists.</b> The runner renders a codeunit's metadata TWICE, from
+    /// one row: this virtual table, which is what AL observes, and
+    /// <c>TryBuildCodeunitMetadataEquivalenceXml</c>, which is what the metadata-equivalence
+    /// harness compares. The two are independent code and disagree on spelling — the projection
+    /// writes BC's NUMERIC mask, this table writes the AL LETTER string — so a test driving one
+    /// says nothing about the other. #3788 landed with only the projection proven: reverting all
+    /// three <c>case</c> arms here to <c>Default()</c> left 252 tests green.</para>
+    ///
+    /// <para>Reached only from tests, and deliberately NOT a second derivation: it resolves the
+    /// same row, the same subtype ordinal and the same document as the populator, so a fix that
+    /// moved the populator without moving this would be a compile error rather than a silent
+    /// divergence.</para>
+    /// </summary>
+    internal static string? TryRenderCodeunitMetadataColumnForTests(int codeunitId, string fieldName)
+    {
+        var row = EnumerateKnownCodeunitMetadata().FirstOrDefault(r => r.Id == codeunitId);
+        if (row is null) return null;
+
+        var metaTable = GetOrBuildNCLMetaTable(CodeunitMetadataVirtualTableId)
+            ?? throw CodeunitMetadataShapeGap("the CodeUnit Metadata metatable could not be built");
+
+        EnsureAllObjReflection(metaTable);
+        EnsureReportMetadataReflection(metaTable);
+        var subtypeOrdinals = EnsureCodeunitSubtypeOrdinals(metaTable);
+
+        var field = (GetAllFields(metaTable) ?? Enumerable.Empty<NCLMetaField>())
+            .FirstOrDefault(f => NormalizeObjectTypeName(f.FieldName ?? string.Empty)
+                                 == NormalizeObjectTypeName(fieldName))
+            ?? throw CodeunitMetadataShapeGap($"metatable has no \"{fieldName}\" field");
+
+        var subtypeOrdinal = ResolveCodeunitSubtypeOrdinal(
+            subtypeOrdinals, _cmvSubtypeOptionString, row.Subtype, row.Id);
+        var document = TryReadCodeunitMetadataDocument(row.Id);
+
+        return BuildCodeunitMetadataValue(field, row, subtypeOrdinal, document)?.ToString();
     }
 
     /// <summary>
@@ -381,7 +440,10 @@ public static partial class RecordPatches
                     symbol.Id, symbol.Name,
                     ResolveTableNo(symbol.TableNo, symbol.Id),
                     symbol.SingleInstance || symbol.Id == 1,
-                    symbol.Subtype ?? "Normal");
+                    symbol.Subtype ?? "Normal",
+                    symbol.ALNamespace,
+                    symbol.InherentEntitlements,
+                    symbol.InherentPermissions);
             }
 
             // Loud, never silent (#3540). This is the runner answering a column WRONG on
