@@ -707,16 +707,22 @@ full fetch  ->  SetLoadFields(narrower)  ->  AreFieldsLoaded
 
 **Measured on a service tier**, corpus PR
 [#323](https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests/pull/323), cloud legs
-27.3 and 27.5, identical on both (27.0 and 27.3 ship the same `Ncl.dll`; 27.5 is a separate
-binary). The re-fetch case is the part worth stating, because it is the one that surprises: this
-row originally claimed a re-fetch made the narrowed set observable and **the tier said
-otherwise**, which is why the corpus codeunit 60766 now asserts BC's answer instead.
+27.3 and 27.5. The re-fetch case is the part worth stating, because it is the one that
+surprises: this row originally claimed a re-fetch made the narrowed set observable and **the
+tier said otherwise**, which is why corpus codeunit 60766 now asserts BC's answer instead.
+
+Those two legs are **not independent confirmations of each other**: on the box where this was
+investigated, 27.0, 27.3 and 27.5 all ship a byte-identical `Ncl.dll` (sha256 `affa03c9…`,
+10716984 bytes), so the whole provisioned 27.x runtime is one binary set. What carries the claim
+is the mechanism below, which does not depend on how many legs reported.
 
 **What distinguishes this from corpus codeunit 60775**, whose
 `PartialLoad_SetLoadFieldsNoArgs_ResetsToFullLoad` asserts *unloaded* and is green in the same
 run: the preceding **full** fetch, not the re-fetch. 60775 fetches under an already-narrow set,
 so the field was never in the buffer. Narrowing is a hint about what to fetch next; it does not
-evict a row already materialised.
+evict a row already materialised — `RecordImplementation.TrySetNewFieldLoadInfoAndInvalidate`
+assigns `TableState.FieldLoadInfo` and invalidates the result-set enumerator, and discards no
+materialised row.
 
 **Tracked by [#3859](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3859).**
 No `expect-divergence` entry exists yet, because that mode declares a corpus test that **fails**
