@@ -865,46 +865,78 @@ than a case to handle.
 
 ### What the query comparison found
 
-7 queries, **616 differences**, of which 553 are the seven already-declared `TranslationKey.*`
-members — they match on signature, so a query carries them like any other object. The real
-remainder is **63 differences across 12 members**.
+7 queries, and the structural result is the strongest the harness has produced for any kind.
 
 **Every structural member agrees exactly** — zero differences on `MetaQueryColumn.*`,
 `MetaQueryDataItem.*` and `MetaQueryOrderBy.*`, including every compiler-assigned column id,
 `FieldNo`, `ColumnType`, `MethodType`, `QueryColumnIndex`, `DataItemLinkType` and
-`DataItemTable`. That is the strongest positive result the harness has produced for any kind,
-and `The_query_structural_tree_still_agrees_with_BC_exactly` pins it: those ids are handed
-verbatim to `NavQuery.ValidateExpectedType` and `GetColumnByNo` by precompiled callers, so a
-regression is an AL-visible wrong answer.
+`DataItemTable`. `The_query_structural_tree_still_agrees_with_BC_exactly` pins it: those ids are
+handed verbatim to `NavQuery.ValidateExpectedType` and `GetColumnByNo` by precompiled callers,
+so a regression is an AL-visible wrong answer.
 
-| member | x | BC | runner | derivable from |
-|---|---:|---|---|---|
-| `MetaQuery.InherentEntitlements` | 4 | `Execute` | `None` | `InherentEntitlements = "X"`, 4 of 4 |
-| `MetaQuery.InherentPermissions` | 4 | `Execute` | `None` | `InherentPermissions = "X"`, 4 of 4 |
-| `MetaQuery.Caption` | 4 | see below | see below | both sides, see below |
-| `MetaQuery.HelpLink` | 7 | the docs URL | `<null>` | a constant BC writes unconditionally |
-| `MetaQuery.APIGroup` / `APIPublisher` / `QueryCategory` | 7 each | `<empty>` | `<null>` | a null/empty distinction only |
-| `MetaQuery.APIVersion` | 4 | `beta` | `<null>` | a constant on non-API queries |
-| `MetaQuery.RuntimeInfo.<presence>` | 7 | present | `<null>` | not stated in the symbol file |
-| `MetaQuery.CaptionML.<presence>` (+`#captionML`) | 4 + 4 | present | `<null>` | the flat `Caption`, plus the language id |
-| `MetaQueryDataItemLink.LinkOperator` | 4 | `=` | `<null>` | stated in BC's document; AL has no other operator |
+The query-level scalars did not agree, and #3798 closed eight of the twelve members that
+differed. Measured on BC 28.1.49838.53910: **35 non-`TranslationKey` differences across 12
+members, now 19 across 4.**
 
-`Caption` is two different situations, which is why it is tracked rather than called a defect in
-one direction:
+#### The eight #3798 closed
+
+| member | x | BC | derived from |
+|---|---:|---|---|
+| `MetaQuery.InherentEntitlements` | 4 | `Execute` | `InherentEntitlements = "X"` in the symbol file |
+| `MetaQuery.InherentPermissions` | 4 | `Execute` | `InherentPermissions = "X"` in the symbol file |
+| `MetaQuery.Caption` | 4 | the object **name** | `Name` — see below |
+| `MetaQuery.HelpLink` | 7 | the docs URL | a constant BC writes unconditionally |
+| `MetaQuery.APIGroup` / `APIPublisher` / `QueryCategory` | 7 each | `<empty>` | the same, as `""` |
+| `MetaQueryDataItemLink.LinkOperator` | 4 | `=` | a constant; AL has no other operator |
+
+The two masks decode through `RecordPatches.TryDecodePermissionMaskLetters`, shared with the
+codeunit direction so the **case-sensitive** spelling cannot drift: uppercase is the direct bit,
+lowercase the indirect bit at n+5, so `"X"` is 16 and `"x"` is 512. Measured on the query
+population specifically — BC 28.4.53241.54407, Base Application (154 queries) + System
+Application (7) — **6 of 161 queries state a mask and all 6 spell it `"X"`**. No lowercase form
+occurs on this kind in Microsoft's shipped packages, which is why
+`QuerySymbolDerivedMetaQueryPropertiesTests` asserts `"x"` and `"rX"` from a fixture: the shared
+decoder's indirect-bit path is otherwise unexercised by every query in every Microsoft app.
+
+<a id="query-caption-tracks-name"></a>
+#### `MetaQuery.Caption` answers the NAME, not the declared caption
+
+This was recorded as a case where the runner might be right, and the measurement inverts it.
 
 ```
 Query 777  Name='Role Center from Plans'  CaptionML='ENU=RoleCenter from Plans'
            symbol Caption='RoleCenter from Plans'
-           BC's MetaQuery.Caption = 'Role Center from Plans'   runner = 'RoleCenter from Plans'
-Query 8888 Name='Outbox Emails'  no CaptionML at all  symbol states no Caption
-           BC's MetaQuery.Caption = 'Outbox Emails'            runner = <null>
+           BC's MetaQuery.Caption = 'Role Center from Plans'   (the NAME)
 ```
 
-On 777 BC's `Caption` property reports the object **name** while the runner reports the
-**declared caption** — which is what both the symbol file and BC's own `CaptionML` say. On
-8888/8889/8890 nothing is declared and BC falls back to `Name`. Both are derivable; which is
-correct depends on what AL observes through this property, and that is worth settling before
-changing anything. All of it is tracked on **#3798**.
+BC's emitter writes **no `<Caption>` element at all** — 0 of the System Application bundle's
+1,218 documents carry one, against 113 carrying `<CaptionML>` — so the property cannot be coming
+from a declared caption on any object of any kind. Feeding BC's own `MetaQuery(XmlNode,0,0)`
+synthesised documents isolates what does drive it:
+
+| document | `Caption` |
+|---|---|
+| `<Name>My Name</Name>` | `My Name` |
+| `<Name>My Name</Name><CaptionML>ENU=My Caption</CaptionML>` | `My Name` — the ML is ignored |
+| `<Name>My Name</Name><Caption>My Caption</Caption>` | `My Name` — the element is ignored |
+| `<CaptionML>ENU=My Caption</CaptionML>`, no `<Name>` | `` (empty) |
+
+So `Caption` tracks `Name` unconditionally on the document route, and the declared caption
+reaches AL through `CaptionML` instead — which is why that member stays open below. Writing the
+symbol file's caption into `Caption` answered something BC never answers, on **both** of the two
+situations rather than only the three undeclared ones.
+
+#### The four still open
+
+| member | x | BC | runner | why it is not a straight fix |
+|---|---:|---|---|---|
+| `MetaQuery.APIVersion` | 4 | `beta` | `<null>` | the symbol file states it for none of the 7; BC assigns it, and the split correlates exactly with `Access = Internal` on a population of 7 — a correlation, not a measured mechanism |
+| `MetaQuery.RuntimeInfo.<presence>` | 7 | present | `<null>` | **read-only** on the design object (`CanWrite=false`), so the SymbolReference route cannot state it; BC's constructor builds it while parsing |
+| `MetaQuery.CaptionML.<presence>` (+`#captionML`) | 4 + 4 | present | `<null>` | needs a `MultiLanguage` with a language id the symbol file's flat string does not carry |
+
+`APIVersion` is the one worth re-measuring on a wider population: four queries declaring no
+`Access` get `beta` and three declaring `Access = Internal` get nothing, which is suggestive and
+not established. All four are tracked on **#3798**.
 
 <a id="xmlports"></a>
 ## XmlPorts

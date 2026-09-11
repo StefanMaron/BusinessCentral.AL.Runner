@@ -182,7 +182,7 @@ public static partial class RecordPatches
         SetProp(mq, "ReadState", "ReadUncommitted");
         SetProp(mq, "QueryType", string.IsNullOrEmpty(sym.QueryType) ? "Normal" : sym.QueryType!);
         SetProp(mq, "TopNumberOfRowsToReturn", sym.TopNumberOfRowsToReturn);
-        if (!string.IsNullOrEmpty(sym.Caption)) TrySetProp(mq, "Caption", sym.Caption);
+        ApplyDerivableQueryProperties(mq, sym);
 
         // Flatten the dataitem tree (root first, then nested) into the flat DataItems list.
         // resultColumnIndex is shared across all dataitems (filters do NOT consume a slot).
@@ -374,6 +374,75 @@ public static partial class RecordPatches
         return mq;
     }
 
+    /// <summary>
+    /// The query-level properties BC's emitter states that the SymbolReference derivation was
+    /// leaving at their design-object defaults (#3798). Three sources, and the difference
+    /// matters when reading the assertions:
+    ///
+    /// <list type="bullet">
+    /// <item><b>Caption tracks Name</b>, never the declared caption. BC's emitter writes no
+    /// <c>&lt;Caption&gt;</c> element at all — 0 of 1,218 documents in the System Application
+    /// ground-truth bundle carry one, against 113 carrying <c>&lt;CaptionML&gt;</c> — and
+    /// feeding BC's own reader a synthesised document shows it setting Caption from
+    /// <c>&lt;Name&gt;</c> while ignoring both a <c>&lt;Caption&gt;</c> element and a
+    /// disagreeing <c>&lt;CaptionML&gt;</c>. Query 777 is the case that settles it: the symbol
+    /// file says "RoleCenter from Plans", BC answers "Role Center from Plans" (the name).</item>
+    /// <item><b>The two inherent masks</b> come from the symbol file's own letter string,
+    /// decoded by the shared <see cref="TryDecodePermissionMaskLetters"/> so the case-sensitive
+    /// spelling cannot drift from the codeunit direction.</item>
+    /// <item><b>HelpLink and the three empty strings</b> are constants BC's emitter writes
+    /// unconditionally — identical on all 7 queries of the bundle.</item>
+    /// </list>
+    ///
+    /// <para>Deliberately NOT set here: <c>APIVersion</c>, which BC answers "beta" for 4 of the
+    /// 7 and null for the 3 declaring <c>Access = Internal</c>, with nothing stated in the
+    /// symbol file either way — the correlation is real on a population of 7 and the mechanism
+    /// is unmeasured, so it stays on #3798 rather than being guessed. <c>CaptionML</c> needs a
+    /// MultiLanguage whose language id would be invented, and <c>RuntimeInfo</c> is read-only on
+    /// the design object.</para>
+    ///
+    /// <para>See docs/metadata-equivalence.md#queries.</para>
+    /// </summary>
+    private static void ApplyDerivableQueryProperties(object mq, BcAppSymbolCache.QuerySymbol sym)
+    {
+        // BC's reader sets Caption from the document's <Name>, so the runner states the name
+        // too. The declared caption reaches AL through CaptionML, which this design object does
+        // not carry — writing it into Caption would answer something BC never answers.
+        if (!string.IsNullOrEmpty(sym.Name)) TrySetProp(mq, "Caption", sym.Name);
+
+        // SetProp, not TrySetProp: these two are what AL observes as the query's inherent
+        // permission, and both are measured present on every BC build a leg runs. TrySetProp
+        // swallows a missing property, which would turn a Types.dll shape change back into the
+        // silent None this fixes rather than a loud failure (loud-failures.md).
+        if (TryDecodePermissionMaskLetters(sym.InherentEntitlements, out var entitlements))
+            SetProp(mq, "InherentEntitlements", entitlements);
+        if (TryDecodePermissionMaskLetters(sym.InherentPermissions, out var permissions))
+            SetProp(mq, "InherentPermissions", permissions);
+
+        TrySetProp(mq, "HelpLink", QueryHelpLink);
+        // BC writes <QueryCategory/>, <APIGroup/> and <APIPublisher/> — an EMPTY element, which
+        // its reader turns into "" rather than null. The design object's own default is already
+        // "", so these are stated for the same reason the others are: the property is set from
+        // one place, and a future default change cannot silently reopen the difference.
+        TrySetProp(mq, "QueryCategory", string.Empty);
+        TrySetProp(mq, "APIGroup", string.Empty);
+        TrySetProp(mq, "APIPublisher", string.Empty);
+    }
+
+    /// <summary>
+    /// The documentation URL BC's emitter writes into every query document unconditionally —
+    /// identical on all 7 queries of the System Application ground-truth bundle, and not read
+    /// from anything the AL declares.
+    /// </summary>
+    private const string QueryHelpLink = "https://learn.microsoft.com/dynamics365/business-central/";
+
+    /// <summary>
+    /// The operator BC states on every <c>&lt;DataItemLink&gt;</c> it emits. AL has no syntax
+    /// for anything but equality today, so the constant is faithful rather than a guess — and
+    /// leaving it null made the runner's link disagree with BC's on all 4 links in the bundle.
+    /// </summary>
+    private const string DataItemLinkEqualsOperator = "=";
+
     // Depth-first flatten: root dataitem(s) then their nested children, preserving order so
     // the engine reconstructs the join tree (root=None, child join types follow).
     private static IEnumerable<BcAppSymbolCache.QueryDataItemSymbol> FlattenDataItems(
@@ -466,6 +535,9 @@ public static partial class RecordPatches
         SetProp(dl, "SourceDataItemName", sourceDataItem);
         SetProp(dl, "SourceFieldNo", srcFieldNo);
         SetProp(dl, "DestinationFieldNo", destFieldNo);
+        // #3798 — the equality this method just parsed, stated the way BC states it. The
+        // property was left null while BC answered "=" on every link it emits.
+        TrySetProp(dl, "LinkOperator", DataItemLinkEqualsOperator);
         return dl;
     }
 

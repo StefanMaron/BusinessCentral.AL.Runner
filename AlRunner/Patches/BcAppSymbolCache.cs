@@ -882,9 +882,17 @@ internal static partial class BcAppSymbolCache
     // dataitem(s) live under the query's "Elements", nested dataitems under "DataItems".
     // Column/Filter Id is the BC-compiler-assigned column id baked into precompiled callers
     // (NavQuery.ValidateExpectedType(columnId,...)/GetColumnValueSafe) — it MUST be used verbatim.
+    // InherentEntitlements / InherentPermissions (#3798) are carried as the AL mask LETTER
+    // string, decoded by the consumer — case-significant, for the reason the codeunit sweep in
+    // VisitSymbolContainer states. Measured on the query population specifically (BC
+    // 28.4.53241.54407, Base Application + System Application): 6 of 161 queries state a mask
+    // and all 6 spell it "X". No lowercase form occurs on this kind, so the decoder's indirect
+    // bits are unexercised here — which is why the value is carried verbatim rather than
+    // normalised, instead of resting on a population that happens not to need it.
     internal sealed record QuerySymbol(
         int Id, string Name, string? QueryType, string? Caption, string? OrderBy,
-        int TopNumberOfRowsToReturn, List<QueryDataItemSymbol> DataItems);
+        int TopNumberOfRowsToReturn, List<QueryDataItemSymbol> DataItems,
+        string? InherentEntitlements = null, string? InherentPermissions = null);
 
     // DataItemTableFilter (#3571) is the AL `DataItemTableFilter = <Field> = const(...)/
     // filter(...) [, ...]` property, carried verbatim ("Status = const(Open)"). It restricts the
@@ -2289,6 +2297,9 @@ internal static partial class BcAppSymbolCache
         props.TryGetValue("QueryType", out var queryType);
         props.TryGetValue("Caption", out var caption);
         props.TryGetValue("OrderBy", out var orderBy);
+        // #3798 — carried verbatim; the letters are case-significant (see QuerySymbol's comment).
+        props.TryGetValue("InherentEntitlements", out var inherentEntitlements);
+        props.TryGetValue("InherentPermissions", out var inherentPermissions);
         int top = 0;
         if (props.TryGetValue("TopNumberOfRows", out var topText) && int.TryParse(topText, out var t)) top = t;
 
@@ -2300,7 +2311,9 @@ internal static partial class BcAppSymbolCache
                 var di = TryParseQueryDataItem(el);
                 if (di != null) dataItems.Add(di);
             }
-        return new QuerySymbol(queryId, name, queryType, caption, orderBy, top, dataItems);
+        return new QuerySymbol(queryId, name, queryType, caption, orderBy, top, dataItems,
+            string.IsNullOrWhiteSpace(inherentEntitlements) ? null : inherentEntitlements.Trim(),
+            string.IsNullOrWhiteSpace(inherentPermissions) ? null : inherentPermissions.Trim());
     }
 
     private static QueryDataItemSymbol? TryParseQueryDataItem(JsonElement el)

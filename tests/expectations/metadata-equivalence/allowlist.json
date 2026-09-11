@@ -1242,80 +1242,28 @@
       "versionContingent": true
     },
     {
-      "member": "MetaQuery.InherentEntitlements",
-      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3), comparing BC's own MetaQuery(XmlNode,0,0) against the runner's own MetaQuery design object -- the one NCLMetaQuery.CreateDynamicQuery consumes, so this is what AL gets. BC answers Execute, the runner answers the enum default None. SymbolReference.json states InherentEntitlements with value 'X' for 4 of the 7 queries and BC answers Execute for exactly those 4 -- presence agrees 4 of 4. The 'X' mask spelling is the one RecordPatches.CodeunitMetadataFromBcDocument.cs already parses from BC's document, and #3788 records the same finding on the codeunit side. NOT direction-scoped: None is BC's own enum default, a real value rather than absent, so bc-only would not match it.",
-      "issue": 3798,
-      "Doc": "docs/metadata-equivalence.md#queries",
-      "versionContingent": true
-    },
-    {
-      "member": "MetaQuery.InherentPermissions",
-      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3), comparing BC's own MetaQuery(XmlNode,0,0) against the runner's own MetaQuery design object -- the one NCLMetaQuery.CreateDynamicQuery consumes, so this is what AL gets. BC answers Execute, the runner answers None. Same measurement as InherentEntitlements: the symbol file states InherentPermissions='X' for 4 of 7 and presence agrees 4 of 4. NOT direction-scoped, for the same reason.",
-      "issue": 3798,
-      "Doc": "docs/metadata-equivalence.md#queries",
-      "versionContingent": true
-    },
-    {
-      "member": "MetaQuery.Caption",
-      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3), comparing BC's own MetaQuery(XmlNode,0,0) against the runner's own MetaQuery design object -- the one NCLMetaQuery.CreateDynamicQuery consumes, so this is what AL gets. Four differences and they are TWO different situations, which is why this is tracked rather than called a defect in one direction. On query 777 BC answers 'Role Center from Plans' (the object NAME) while the runner answers 'RoleCenter from Plans' -- which is what the symbol file states AND what BC's own <CaptionML> states, so the runner is reporting the declared caption and BC's Caption property is reporting the name. On 8888/8889/8890 nothing is declared, BC's document carries no <CaptionML> at all, BC falls back to Name and the runner answers null. Both are derivable; which is correct depends on what AL observes through this property, and that is worth settling before changing anything.",
-      "issue": 3798,
-      "Doc": "docs/metadata-equivalence.md#queries",
-      "versionContingent": true
-    },
-    {
-      "member": "MetaQuery.HelpLink",
-      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3). BC's emitter ASSIGNS this rather than copying it from AL, and SymbolReference.json states nothing for it -- checked per query, not inferred from the member's name. Not underivable: three of these are constants BC writes unconditionally and could be set without reading anything. Tracked rather than declared permanent. This member is the docs URL BC's emitter writes unconditionally -- identical on all 7 queries.",
-      "issue": 3798,
-      "Doc": "docs/metadata-equivalence.md#queries"
-    },
-    {
-      "member": "MetaQuery.APIGroup",
-      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3). BC's emitter ASSIGNS this rather than copying it from AL, and SymbolReference.json states nothing for it -- checked per query, not inferred from the member's name. Not underivable: three of these are constants BC writes unconditionally and could be set without reading anything. Tracked rather than declared permanent. This member is BC writes <empty> and the runner leaves null; a null/empty distinction only.",
-      "issue": 3798,
-      "Doc": "docs/metadata-equivalence.md#queries"
-    },
-    {
-      "member": "MetaQuery.APIPublisher",
-      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3). BC's emitter ASSIGNS this rather than copying it from AL, and SymbolReference.json states nothing for it -- checked per query, not inferred from the member's name. Not underivable: three of these are constants BC writes unconditionally and could be set without reading anything. Tracked rather than declared permanent. This member is BC writes <empty> and the runner leaves null.",
-      "issue": 3798,
-      "Doc": "docs/metadata-equivalence.md#queries"
-    },
-    {
-      "member": "MetaQuery.QueryCategory",
-      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3). BC's emitter ASSIGNS this rather than copying it from AL, and SymbolReference.json states nothing for it -- checked per query, not inferred from the member's name. Not underivable: three of these are constants BC writes unconditionally and could be set without reading anything. Tracked rather than declared permanent. This member is BC writes <empty> and the runner leaves null.",
-      "issue": 3798,
-      "Doc": "docs/metadata-equivalence.md#queries"
-    },
-    {
       "member": "MetaQuery.APIVersion",
-      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3). BC's emitter ASSIGNS this rather than copying it from AL, and SymbolReference.json states nothing for it -- checked per query, not inferred from the member's name. Not underivable: three of these are constants BC writes unconditionally and could be set without reading anything. Tracked rather than declared permanent. This member is BC writes 'beta' on the 4 non-API queries and the runner leaves null.",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries, re-measured after #3798 landed the eight members that WERE derivable. BC answers 'beta' for the 4 queries that declare no Access property and <null> for the 3 declaring Access = Internal, while SymbolReference.json states no APIVersion for ANY of the 7 -- checked per query in the shipped symbol file, not inferred from the member's name, and confirmed against the AL sources the app ships (no query declares the property). So BC ASSIGNS this and the split correlates exactly with Access, but the correlation rests on a population of 7 and the mechanism is unmeasured: nothing establishes that Access is what drives it rather than something else those 4 share. #3798 deliberately did not guess it. Settling it needs a population declaring Access and APIVersion independently.",
       "issue": 3798,
       "Doc": "docs/metadata-equivalence.md#queries",
       "versionContingent": true
     },
     {
       "member": "MetaQuery.RuntimeInfo.<presence>",
-      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3). BC's emitter ASSIGNS this rather than copying it from AL, and SymbolReference.json states nothing for it -- checked per query, not inferred from the member's name. Not underivable: three of these are constants BC writes unconditionally and could be set without reading anything. Tracked rather than declared permanent. This member is the MetaRuntimeInfo BC attaches to every query; the runner's design object has none.",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries, re-measured after #3798. The MetaRuntimeInfo BC attaches to every query; the runner's design object has none. NOT derivable the way this issue's other members were, and the reason is mechanical rather than a missing input: Types.Metadata.MetaQuery.RuntimeInfo is READ-ONLY on the design object (CanWrite=false, measured through the property directly), so the SymbolReference route cannot state it at all -- BC's own constructor builds it while parsing the document. Closing it means constructing a MetaRuntimeInfo, which is the same work the codeunit <Methods> gap needs, and it is tracked with that rather than here.",
       "issue": 3798,
       "Doc": "docs/metadata-equivalence.md#queries"
     },
     {
       "member": "MetaQuery.CaptionML.<presence>",
-      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3), comparing BC's own MetaQuery(XmlNode,0,0) against the runner's own MetaQuery design object -- the one NCLMetaQuery.CreateDynamicQuery consumes, so this is what AL gets. This member is the MultiLanguage caption object. BC builds it from the document's <CaptionML>ENU=...; the runner sets the flat Caption string and no MultiLanguage, so rendering one would mean inventing the language id. Derivable (BC states only ENU/1033 across all 7) and deliberately not guessed. Four occurrences: the three queries declaring no caption have none on either side.",
+      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries, re-measured after #3798 settled the sibling Caption member. This is the MultiLanguage caption object, and it is where the DECLARED caption actually reaches AL: BC's MetaQuery.Caption tracks the object NAME unconditionally (0 of the bundle's 1,218 emitted documents state a <Caption> element at all, and feeding BC's reader a synthesised document shows it ignoring both a <Caption> element and a disagreeing <CaptionML>), so #3798 set Caption from Name and left this one open. BC builds it from the document's <CaptionML>ENU=...; the runner would have to construct a MultiLanguage and state a language id. Derivable in principle -- BC states only ENU/1033 across all 7 -- and deliberately not guessed, because the symbol file's flat Caption string carries no language at all and inventing 1033 would state something the input does not. Four occurrences: the three queries declaring no caption have none on either side.",
       "issue": 3798,
       "Doc": "docs/metadata-equivalence.md#queries",
       "versionContingent": true
     },
     {
       "member": "MetaQuery.#captionML.<presence>",
-      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3), comparing BC's own MetaQuery(XmlNode,0,0) against the runner's own MetaQuery design object -- the one NCLMetaQuery.CreateDynamicQuery consumes, so this is what AL gets. This member is the field backing CaptionML -- the SAME object under a second signature, because BC backs the property with it and the differ walks both. BC builds it from the document's <CaptionML>ENU=...; the runner sets the flat Caption string and no MultiLanguage, so rendering one would mean inventing the language id. Derivable (BC states only ENU/1033 across all 7) and deliberately not guessed. Four occurrences: the three queries declaring no caption have none on either side.",
-      "issue": 3798,
-      "Doc": "docs/metadata-equivalence.md#queries",
-      "versionContingent": true
-    },
-    {
-      "member": "MetaQueryDataItemLink.LinkOperator",
-      "reason": "Measured on BC 28.1.49838.53910 over System Application's 7 queries (#3782 step 3), comparing BC's own MetaQuery(XmlNode,0,0) against the runner's own MetaQuery design object -- the one NCLMetaQuery.CreateDynamicQuery consumes, so this is what AL gets. BC answers '=' and the runner answers null, on all 4 dataitem links in the bundle. BC's document states it as <LinkOperator>=</LinkOperator> and ParseDataItemLink in RecordPatches.NclMetaQueryBuilder.cs does not set the property. AL has no syntax for any other operator today, so a constant would be faithful -- which is exactly why leaving it null is a defect rather than a scope boundary. The ONLY difference anywhere in the query structural tree: every column id, FieldNo, ColumnType, MethodType, QueryColumnIndex, DataItemLinkType and DataItemTable agrees exactly on all 7 queries.",
+      "reason": "The SAME object as MetaQuery.CaptionML under a second signature -- BC backs the property with a field and the differ walks both, so one absent caption object is reported twice. Declared separately because the allowlist matches on the signature; it clears with the same fix. See the CaptionML entry for why #3798 settled Caption from Name and left this open.",
       "issue": 3798,
       "Doc": "docs/metadata-equivalence.md#queries",
       "versionContingent": true
