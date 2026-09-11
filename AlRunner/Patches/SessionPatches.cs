@@ -348,9 +348,8 @@ public static partial class BcRuntime
     /// <para>Deliberately NOT <c>RunnerOutOfScopeException</c>: that type announces a runner
     /// limitation and is what <c>tests/expectations/</c> classifies as an out-of-scope signal.
     /// This refusal is the opposite — real BC behaviour faithfully reproduced, which no
-    /// expectation entry should ever mark out of scope. Same shape and reasoning as
-    /// <c>MakeDataTransferException</c>. (Trappability is NOT the distinction, and an earlier
-    /// version of this comment said it was: <c>RunnerOutOfScopeException</c> is a plain
+    /// expectation entry should ever mark out of scope. (Trappability is NOT the distinction,
+    /// and an earlier version of this comment said it was: <c>RunnerOutOfScopeException</c> is a plain
     /// <c>System.Exception</c>, and <c>asserterror</c> catches it too — the runner's asserterror
     /// replacement is an unfiltered <c>catch (Exception)</c>. See
     /// <c>RunnerOutOfScopeException.cs</c>'s header and issue #2871.)</para>

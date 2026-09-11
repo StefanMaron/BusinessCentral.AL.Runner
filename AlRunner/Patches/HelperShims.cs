@@ -152,8 +152,8 @@ public static partial class BcRuntime
     // TestPage field DrillDown() on a control with no OnDrillDown trigger — real BC (confirmed
     // 27.5 and 28.3, see al-language TestPageFieldDrillDown_Tests.FieldDrillDownWithNoTriggerIsRefused)
     // raises this exact fixed platform error regardless of TableRelation/UI state, so it is
-    // reproducible faithfully in-process. Public (unlike MakeDataTransferException) because
-    // RunnerPageInstance.RaiseOnDrillDown, in a different file/class, needs it too.
+    // reproducible faithfully in-process. Public because RunnerPageInstance.RaiseOnDrillDown,
+    // in a different file/class, needs it too.
     internal static System.Exception MakeNavDrilldownActionNotSupportedException()
     {
         var t = System.Type.GetType(
