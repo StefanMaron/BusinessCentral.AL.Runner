@@ -50,6 +50,13 @@ two references to `METADATA-EMIT-EXCLUDED` — one asserting the naming conventi
 as routing data. Both mention the stage; neither reaches the `throw`. A grep for the symbol
 finds them and reads as coverage, which is why the mutation is the check and the grep is not.
 
+**Trap: one red proves something is covered, not WHICH thing.** A fix that feeds two
+observables owes a mutation per observable. #3917 fixed a derivation reaching both an equivalence
+projection and the AL-observable virtual table; reverting **only** the AL-observable half left
+**252 tests green**, because all three new test files reached the projection alone. Its own body
+argued the two-rendering point correctly and it still tested one — so awareness does not close
+this, and a single red that says "the fix is covered" is the shape to distrust (#3912).
+
 **Trap: a mutation that breaks the build proves nothing, and it fails LOUDLY.** The landing
 check above catches the silent direction; this is the other one. Mutating a call site by text
 substitution produced `exit 1` with **10 `error CS`** lines and no `Total:` — a broken build

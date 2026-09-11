@@ -170,3 +170,38 @@ still 92. It re-did the mutation as a real removal.
 Two people, one guard, one hour, two different ways for a mutation to prove nothing. The general
 form: **a mutation must change what the assertion reads, and nothing else.** Structural edits to
 code are the risky kind; a value the assertion consumes is the safe kind.
+
+
+## One red proves something is covered, not which thing (2026-09-11, #3917 / #3912)
+
+`tdd.md` already carries *a test that names the thing is not a test that drives it* — a test that
+mentions a symbol without reaching it. This is the adjacent failure: tests that **do** drive real
+code and **do** go red under mutation, while covering only one of two observables.
+
+**#3912** recorded the first instance: mutating `ReadEnumExtensible` to `return null` left six
+tests green, because they exercise the render rather than the compiler-side reader.
+
+**#3917** is the second and the sharper one. A codeunit derivation feeds two independent
+renderings — an equivalence **projection** (numeric mask) and the AL-observable **virtual table**
+(letter string). A reviewer reverted only the AL-observable half:
+
+```
+~CodeunitMetadata|~CodeunitSymbol|~MetadataEquivalence   Failed: 0, Passed: 56
+~VirtualTable|~AllObj|~Inherent|~Namespace              Failed: 0, Passed: 196
+```
+
+252 tests green with the rendering AL actually reads reverted. All three new test files reference
+the virtual-table rendering zero times.
+
+**What makes it sharp: the PR's own body argued the point correctly.** It said fixing only the
+projection *"would have closed the issue while leaving `CodeUnit Metadata` still answering BC's
+default to AL"*. The author identified the trap, wrote it down, fixed both renderings in the
+code — and tested one.
+
+So awareness does not close this, and neither does prose. What closes it is running the mutation
+**per observable**. A single red tells you the fix is covered somewhere; it does not tell you
+where, and "somewhere" is exactly what a reader infers as "everywhere".
+
+Generalises past enums and codeunits: wherever a derivation feeds both an equivalence projection
+and an AL-observable surface — pages, queries, reports, permission sets — those are two
+observables and each owes its own red.

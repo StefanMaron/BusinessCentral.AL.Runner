@@ -89,6 +89,18 @@ not exist, because a codeunit and a table may share an id.
 container that is empty because the data moved, and a scope wider than the thing being validated
 all return clean answers to a question nobody asked.
 
+**A fourth instance, and the one least likely to be re-checked: the coordinator's own number,
+supplied while correcting an agent.** Told that a permission mask was case-sensitive on one
+codeunit, the coordinator "corrected" the scale to 27 lowercase-bearing entries. All 27 were on
+**Tables**; the scan walked every `Properties` bag without tracking which object kind owned it,
+and the issue's surface was codeunits, where the true count is **one**. The agent re-derived the
+figure instead of relaying it and found the split.
+
+Two things make that shape worse than an agent's own miss. A correction arrives with authority,
+so it is taken rather than tested — and it had already been relayed onto two sibling issues
+before anyone checked it. **Re-derive a number you are about to hand someone as a correction, on
+the population THEY are working**, not the one your query happened to cover.
+
 
 ## Which legs were ever going to run it
 
