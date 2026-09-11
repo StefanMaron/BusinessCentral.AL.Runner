@@ -339,4 +339,87 @@ public class DapPreLaunchBreakpointTests
             + $"--- stderr ---\n{dap.StdErr}");
         Assert.Equal(SecondObjectSecondStatementLine, bp.GetProperty("line").GetInt32());
     }
+
+    /// <summary>
+    /// A request that jumps the deferral queue must not be overtaken by the one it replaced.
+    /// An EMPTY breakpoint list needs no source map, so it is answered immediately — which is
+    /// right, and was the whole reason for that fast path — but a non-empty request for the
+    /// SAME source may still be sitting in the deferred queue, and draining it later re-arms
+    /// what the empty request had just removed.
+    ///
+    /// <para>RED before the fix: the run stops at
+    /// <see cref="SecondObjectSecondStatementLine"/>, on a breakpoint the client removed before
+    /// execution began and was told was removed. The client's last word about this source was
+    /// "no breakpoints"; the adapter's was the request before it.</para>
+    ///
+    /// <para>GREEN: no <c>stopped</c> event at all, and the run exits 0. Both requests are
+    /// still answered — a superseded request is not an unanswered one — but they are answered
+    /// in the order they were sent, so the empty one is last and wins.</para>
+    ///
+    /// <para>The ordering is only observable while the map is being prepared, which is what
+    /// AL_RUNNER_DAP_TEST_DELAY_MAP_MS holds open; an organically slow bundle would make this
+    /// flaky. Raised by an adversarial review of PR #3899 (gpt-6-astra).</para>
+    /// </summary>
+    [SkippableFact]
+    public async Task AnEmptyBreakpointListIsNotOvertakenByTheDeferredRequestItReplaced()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        await using var dap = await StartAndInitializeAsync(HoldMapPreparation(4_000));
+        var srcPath = Path.Combine(FixtureSrc, SourceFileName);
+
+        // Deferred by construction: the map is held, and this list is non-empty.
+        dap.SendRequest("setBreakpoints", new
+        {
+            source = new { path = srcPath },
+            breakpoints = new[] { new { line = SecondObjectSecondStatementLine } },
+        });
+
+        // "Remove every breakpoint in this source" — DAP's own spelling for it, and the
+        // client's last word about this file.
+        dap.SendRequest("setBreakpoints", new
+        {
+            source = new { path = srcPath },
+            breakpoints = Array.Empty<object>(),
+        });
+
+        // Neither response is read here, deliberately. Which of the two arrives first is the
+        // very thing under test — answered-in-order when this is right, clear-first when it is
+        // not — so a fixed read order would decide the outcome by how this client behaves
+        // rather than by how the adapter does (it drops a response it is not waiting for, so
+        // reading the wrong one first discards the other and then waits out the clock). That a
+        // deferred request IS answered at all is pinned by
+        // ABreakpointRequestDeferredForTheMap_IsAnsweredWhenTheMapArrives above; what is left
+        // to this fact is what the adapter ARMS, which the run itself reports.
+        // The `launch` read below drains both responses on its way past them.
+        var launchSeq = dap.SendRequest("launch", new { });
+        var launchResp = await dap.ReadUntilResponseAsync(launchSeq, timeout: TimeSpan.FromSeconds(120));
+        Assert.True(launchResp.GetProperty("success").GetBoolean(),
+            $"launch failed: {launchResp}\n--- stderr ---\n{dap.StdErr}");
+
+        var cfgSeq = dap.SendRequest("configurationDone");
+        await dap.ReadUntilResponseAsync(cfgSeq);
+
+        // The failing shape is a PAUSE, not a wrong number, so the read has to be bounded and
+        // its timeout reported as the finding rather than as a flake: a run that stops at the
+        // removed breakpoint never reaches `exited` at all, because nothing continues it.
+        var events = new List<JsonElement>();
+        JsonElement exited;
+        try
+        {
+            exited = await dap.ReadUntilEventAsync("exited", TimeSpan.FromSeconds(60), events);
+        }
+        catch (TimeoutException)
+        {
+            var stopped = events.FirstOrDefault(
+                e => e.GetProperty("event").GetString() == "stopped");
+            Assert.Fail(stopped.ValueKind == JsonValueKind.Object
+                ? $"the run stopped at a breakpoint the client had removed: {stopped}"
+                : $"no `exited` within 60s and no `stopped` either; events: "
+                    + string.Join(" | ", events.Select(e => e.GetProperty("event").GetString())));
+            throw;   // unreachable; Assert.Fail does not return
+        }
+        Assert.DoesNotContain(events, e => e.GetProperty("event").GetString() == "stopped");
+        Assert.Equal(0, exited.GetProperty("body").GetProperty("exitCode").GetInt32());
+    }
 }

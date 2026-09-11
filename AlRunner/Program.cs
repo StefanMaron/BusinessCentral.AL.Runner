@@ -5726,17 +5726,38 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     var sourceMapResolved = false;
     string? compileFailure = null;
 
-    // DAP's `initialize` lets the client say whether it counts columns from 1 or from 0
-    // (`columnsStartAt1`, default TRUE when absent). Everything below this line works in
-    // 1-based columns, which is what AlSourceSpanCodec.AbsoluteFromColumn produces, so a
-    // 0-based client's numbers are converted on the way in and back on the way out (#3879
-    // Copilot review). Without that, such a client's inline breakpoint lands one column left
-    // of the statement it meant.
+    // DAP's `initialize` lets the client say whether it counts lines and columns from 1 or
+    // from 0 (`linesStartAt1` / `columnsStartAt1`, both default TRUE when absent). Everything
+    // below this line works in the 1-based numbering AlSourceSpanCodec.AbsoluteFromLine and
+    // AbsoluteFromColumn produce, so a 0-based client's numbers are converted on the way in
+    // and back on the way out (#3879 Copilot review for columns, #3881 for lines). Without
+    // that, such a client's breakpoint lands one line above — or one column left of — the
+    // statement it meant, and is then told about stops in a numbering it did not ask for.
     //
-    // `linesStartAt1` has the identical problem and is NOT handled here: lines are reported
-    // by `stopped`, `stackTrace` and this response, so honouring it is a change across the
-    // whole surface rather than the one field this pull request adds (#3881).
+    // Lines cross the wire at FOUR places, which is what made this bigger than the column
+    // half: the setBreakpoints request, its response, the `stopped` event and every
+    // `stackTrace` frame. One converter per direction, used at every one of them, so a
+    // surface cannot be forgotten without the others disagreeing with it.
+    var linesStartAt1 = true;
     var columnsStartAt1 = true;
+    // DAP permits `initialize` as the first request and only once, and a second one is
+    // refused rather than honoured (#3899 review): these two are negotiated ONCE and then
+    // answered against for the rest of the session, so letting a repeat move them shows the
+    // client two different numbers for one breakpoint it set once. The deferred path makes
+    // that concrete — a request parked while the source map builds carries numbers already
+    // converted in the base that was in force when it arrived, and DrainDeferredBreakpoints
+    // answers it later.
+    var initializeAnswered = false;
+
+    // 0 is not a line: AlDapStackWalker reports it for a frame it could not map, and the
+    // `stopped` handler reports it when the walk threw. Converting that sentinel would send a
+    // 0-based client -1, so it is passed through unchanged in both converters.
+    int ToClientLine(int oneBasedLine) =>
+        linesStartAt1 || oneBasedLine <= 0 ? oneBasedLine : oneBasedLine - 1;
+    int FromClientLine(int clientLine) => linesStartAt1 ? clientLine : clientLine + 1;
+    int ToClientColumn(int oneBasedColumn) =>
+        columnsStartAt1 || oneBasedColumn <= 0 ? oneBasedColumn : oneBasedColumn - 1;
+    int FromClientColumn(int clientColumn) => columnsStartAt1 ? clientColumn : clientColumn + 1;
 
     // setBreakpoints requests that arrived before the map could be built, waiting to be
     // answered. Answering one needs the compile, and BLOCKING this single-threaded loop for
@@ -5919,17 +5940,32 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
             {
                 id = idx,
                 verified = rb.Verified,
-                line = rb.Verified ? rb.ActualLine : rb.RequestedLine,
+                // Back into the client's own base — including on the unverified path, where the
+                // number echoed is the one the client sent rather than the 1-based reading of it.
+                line = ToClientLine(rb.Verified ? rb.ActualLine : rb.RequestedLine),
                 // The column actually bound — the leftmost of the armed targets. A client that
                 // asked for a column no statement starts at can see where the breakpoint went,
                 // which is what keeps the resolver's widest fallback from being a silent
                 // relocation (#3879 Copilot review). Back into the client's own base.
                 column = rb.Verified && rb.Targets.Count > 0
-                    ? rb.Targets.Min(t => t.Column) - (columnsStartAt1 ? 0 : 1)
+                    ? ToClientColumn(rb.Targets.Min(t => t.Column))
                     : (int?)null,
                 message = rb.Verified ? null : unverifiedReason,
             }),
         });
+    }
+
+    // Two spellings of one file — "./Foo.al" from one request and an absolute path from the
+    // next — have to compare equal, or a replacement would queue behind nothing and overtake
+    // the request it replaces after all. GetFullPath is what AnswerSetBreakpoints already
+    // keys its registry by; a path it cannot resolve falls back to itself, so an unusable
+    // path is compared rather than throwing here and losing the request.
+    static string NormalizeSourcePath(string path)
+    {
+        try { return Path.GetFullPath(path); }
+        catch (ArgumentException) { return path; }
+        catch (NotSupportedException) { return path; }
+        catch (PathTooLongException) { return path; }
     }
 
     // Answers everything deferred, in arrival order. Called only where the map question is
@@ -6025,7 +6061,16 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                 reason,
                 threadId = 1,
                 allThreadsStopped = true,
-                line,
+                // In the client's own base (#3881). A walk that threw leaves `line` at 0, the
+                // sentinel ToClientLine passes through rather than converting to -1.
+                //
+                // For a 0-based client that sentinel collides with a legal coordinate: the
+                // first line of a file is also 0. `line` is not a property DAP's StoppedEvent
+                // defines, and the failed walk is separately reported — an `output` event says
+                // why, and the following `stackTrace` returns no frames — so the conversation
+                // still distinguishes them; this one field does not. #3901 carries it, with
+                // the source-less-frame defect it belongs with.
+                line = ToClientLine(line),
             });
             AlRunner.Infrastructure.AlDapSession.Trace("STOPPED-HANDLER write-event(stopped) ok");
             if (walkError != null)
@@ -6088,7 +6133,20 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                 switch (command)
                 {
                     case "initialize":
-                        // Absent means true, per the specification.
+                        if (initializeAnswered)
+                        {
+                            transport.WriteResponse(msg.Seq, command, false,
+                                message: "initialize: this session is already initialized. DAP "
+                                    + "allows initialize only as the first request and only once; "
+                                    + "the line and column bases negotiated then are what every "
+                                    + "later response answers in.");
+                            break;
+                        }
+                        initializeAnswered = true;
+                        // Absent means true, per the specification — for both.
+                        linesStartAt1 = !(args != null
+                            && args.Value.TryGetProperty("linesStartAt1", out var lineBaseEl)
+                            && lineBaseEl.ValueKind == System.Text.Json.JsonValueKind.False);
                         columnsStartAt1 = !(args != null
                             && args.Value.TryGetProperty("columnsStartAt1", out var colBaseEl)
                             && colBaseEl.ValueKind == System.Text.Json.JsonValueKind.False);
@@ -6129,17 +6187,33 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                         // the client naming ONE statement on a line that carries several
                         // (#3879 review). The legacy `lines` array has no column to carry.
                         var lines = new List<(int Line, int? Column)>();
+                        // BRACES, and they are load-bearing. Without them C#'s dangling-else
+                        // binds the `else` below to the INNER `if (bp.TryGetProperty("line"))`
+                        // — so the legacy branch sat inside the loop over `breakpoints`, and
+                        // could run only for a request that HAD a `breakpoints` array carrying
+                        // an element with no `line`. A request sending `lines[]` alone reached
+                        // neither branch and was answered `breakpoints: []` with success: true
+                        // — every legacy breakpoint silently dropped, and the client told the
+                        // request succeeded. It compiles, it reads correctly, and nothing drove
+                        // it: found by adding the coverage GitHub Copilot's review of PR #3899
+                        // asked for.
                         if (args.Value.TryGetProperty("breakpoints", out var bpsEl) && bpsEl.ValueKind == System.Text.Json.JsonValueKind.Array)
+                        {
                             foreach (var bp in bpsEl.EnumerateArray())
                                 if (bp.TryGetProperty("line", out var lineEl))
-                                    lines.Add((lineEl.GetInt32(),
+                                    // Both to 1-based, which is what the resolver compares in.
+                                    lines.Add((FromClientLine(lineEl.GetInt32()),
                                         bp.TryGetProperty("column", out var colEl)
                                             && colEl.ValueKind == System.Text.Json.JsonValueKind.Number
-                                            // To 1-based, which is what the resolver compares in.
-                                            ? colEl.GetInt32() + (columnsStartAt1 ? 0 : 1)
+                                            ? FromClientColumn(colEl.GetInt32())
                                             : null));
+                        }
                         else if (args.Value.TryGetProperty("lines", out var legacyLinesEl) && legacyLinesEl.ValueKind == System.Text.Json.JsonValueKind.Array)
-                            foreach (var l in legacyLinesEl.EnumerateArray()) lines.Add((l.GetInt32(), null));
+                        {
+                            // The legacy array carries no column, and its lines are in the
+                            // client's base exactly as `breakpoints[].line` is.
+                            foreach (var l in legacyLinesEl.EnumerateArray()) lines.Add((FromClientLine(l.GetInt32()), null));
+                        }
 
                         // An EMPTY list resolves nothing — "remove every breakpoint in this
                         // source" needs no map — so it is answered now, whatever the compile
@@ -6148,7 +6222,20 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                         // able to read `disconnect` (#3846). The deferred request is answered
                         // by DrainDeferredBreakpoints, from the read race below or from
                         // launch / configurationDone.
-                        if (lines.Count > 0 && !MapAnswerAvailable())
+                        //
+                        // ...but that fast path must not OVERTAKE a request for the same
+                        // source already in the queue (#3899 review). Each setBreakpoints is
+                        // the complete set for its source from then on, so the LAST one the
+                        // client sent has to be the one that stands: answering an empty list
+                        // immediately while a non-empty one for that file is still parked
+                        // cleared the file and then re-armed it on the drain, stopping
+                        // execution at a breakpoint the client had removed and been told was
+                        // removed. Queueing behind it costs the empty request its fast answer
+                        // and keeps arrival order, which is the thing that decides the result.
+                        var queuedForThisSource = deferredBreakpointRequests.Any(
+                            d => AlRunner.Infrastructure.DapBreakpointResolver.PathComparer
+                                .Equals(NormalizeSourcePath(d.SrcPath), NormalizeSourcePath(srcPath)));
+                        if ((lines.Count > 0 && !MapAnswerAvailable()) || queuedForThisSource)
                         {
                             deferredBreakpointRequests.Add((msg.Seq, command, srcPath, lines));
                             break;
@@ -6189,8 +6276,12 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                                 id = f.Id,
                                 name = f.ScopeName,
                                 source = f.SourcePath != null ? new { path = f.SourcePath, name = Path.GetFileName(f.SourcePath) } : null,
-                                line = f.Line,
-                                column = 1,
+                                line = ToClientLine(f.Line),
+                                // The first column of the line. It was written as a literal 1,
+                                // so a 0-based client was told every frame starts one column
+                                // right of where it does — the same defect as the line half,
+                                // on the surface #3879 did not reach (#3881).
+                                column = ToClientColumn(1),
                             }),
                             totalFrames = lastFrames.Count,
                         });
