@@ -827,9 +827,15 @@ jobs:
           # --count-baseline (#1880), same rationale as the al-language corpus leg
           # above. runner-extras genuinely has fewer tests on BC 27.0/27.3/27.5 than
           # 28.x (some AL surfaces are gated on preprocessor symbols only defined from
-          # 28.0 on) — tests/expectations/count-baseline/test-count-baseline.json
-          # carries a per-BC-version expected count for exactly that reason, not a
-          # single global value.
+          # 28.0 on). tests/expectations/count-baseline/test-count-baseline.json
+          # expresses that with ONE count per group plus an `absentOn` list naming the
+          # versions where a group does not run at all — not a per-version count per
+          # group, which is what this comment used to claim and no group has (#3903).
+          # So a leg's expected total is sum(tests) minus the tests of every group
+          # whose absentOn names that version. Bumping a baseline after adding tests
+          # means changing ONE number, and re-deriving that sum is what makes the
+          # change checkable — deliberately stated as the formula rather than today's
+          # totals, which no drift test pins and which go stale on the next suite.
           #
           # The exit code is EXPLAINED here, not left bare (#3350). This is the only
           # step in the matrix that still passes --count-baseline, so it is the only
