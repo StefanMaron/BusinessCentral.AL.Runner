@@ -9,16 +9,39 @@
 //   Every Microsoft .app in ~/.al-runner/test-apps and ~/.al-runner/platform-apps was opened
 //   (a BC .app is a NAVX-prefixed zip) and the `codeunit <id> <name>` declarations were read
 //   out of both SymbolReference.json and the AL sources — 113 app files, BC 28.1.49838.53910.
-//   The two sources agree on all six ids.
+//   Where both answer they agree exactly, on all six ids; the trap below is about making
+//   symbols answer at all.
 //
-//   THE TRAP, because the first sweep here fell into it and its zero looked like a finding:
-//   the four R2R runtime packages — Application Test Library, Base Application, Business
-//   Foundation, System Application — NEST a second .app inside, and their SymbolReference.json
-//   lives in that inner one. All 113 apps carry a SymbolReference.json; none is missing it. A
-//   sweep that opens only the outer zip therefore sees 109 of 113, silently skips exactly those
-//   four, and answers "not found" for 310/130000/130440/131000 — which is precisely the set
-//   those four packages hold. The zero is a property of the sweep, not of the packages.
-//   Recurse into nested .app entries, and confirm the app count you scanned.
+//   THE TRAP: reaching these ids needs TWO INDEPENDENT RECURSIONS, and implementing one
+//   without the other answers a strict subset while looking like a complete result. All 113
+//   apps carry a SymbolReference.json — none is missing one — so every failure here is the
+//   sweep's, not the packages'. Measured over the 113 apps:
+//
+//     recurse nested .app?  recurse Namespaces?   ids found of the six
+//     no                    no                    none
+//     YES                   no                    130000, 130440, 131000
+//     no                    YES                   130002, 130500
+//     YES                   YES                   all six
+//
+//   The two axes are unrelated, and 310 needs BOTH — which is why it is the only id no
+//   single-axis reader finds. Four apps (Application Test Library, Base Application, Business
+//   Foundation, System Application) NEST a second .app carrying the real SymbolReference.json;
+//   an outer-only sweep sees 109 of 113 and never opens them. Separately, a symbol file may
+//   leave the TOP-LEVEL Codeunits array empty and put objects under Namespaces, so a reader
+//   taking sr["Codeunits"] alone gets nothing from it. Per id:
+//
+//     130002, 130500      outer .app, Namespaces depth 3   -> needs the Namespaces walk
+//     130000, 130440,     nested .app, depth 0 (42 top-    -> needs the .app recursion
+//       131000              level codeunits in that file)
+//     310                 nested .app, Namespaces depth 3  -> needs both
+//
+//   So neither shape is the rule, and neither axis alone is a safe default.
+//
+//   Both were implemented separately while establishing this table, and each looked right:
+//   one found three ids, the other found two, and only doing both finds six. Check the app
+//   count you scanned AND that you descended Namespaces; a zero from either is a property of
+//   the reader. Reading the `codeunit <id> <name>` declarations out of the .al sources needs
+//   neither recursion to be got right, which is why it was used as the independent check.
 //
 //   The measured answers, and what the table used to claim:
 //
