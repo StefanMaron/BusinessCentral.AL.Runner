@@ -80,8 +80,10 @@
     "27.5 happened to hit. See docs/metadata-equivalence.md#one-build-measured-three-evaluated.",
     "",
     "Measurement caveat: ONE BC build and TWO apps. Base Application's ~4,000 pages are not measured",
-    "at all -- apps.json excludes it because its emit needs a .NET reference no BC artifact ships",
-    "(#3549) -- so nothing here is evidence about the pages most AL tests actually touch.",
+    "at all -- apps.json excludes it on COST (257s, 8.83 GiB peak RSS), not because it cannot be",
+    "compiled: this line used to say its emit needs a .NET reference no BC artifact ships, which",
+    "#3876 disproved -- the reference ships in the ASP.NET Core reference pack and is staged. So",
+    "nothing here is evidence about the pages most AL tests actually touch.",
     "",
     "The seven pre-existing TranslationKey.* entries already covered the page side without being",
     "touched: they match on member signature, and pages carry the same TranslationKey type.",
@@ -1366,7 +1368,7 @@
     },
     {
       "member": "MetaReport.RequestPageDefinition.<presence>",
-      "reason": "BC's emitted document carries a full <RequestPage><PageDefinition> subtree even for report 9810, which declares UseRequestPage = false and ProcessingOnly = true; DependencyReportMetadata.EmitReportXml writes no <RequestPage> element at all, so BC's reader leaves the property null on the runner's side. Two questions are deliberately OPEN rather than answered here, and they are on #3808: whether BC emits a request page for every report (unanswerable from this bundle -- System Application ships exactly ONE report, and Base Application, which would settle it, is excluded from apps.json because its emit needs a .NET reference no BC artifact ships, #3549), and whether anything AL-observable reads MetaReport.RequestPageDefinition on a ProcessingOnly report. Declared as a tracked defect rather than out of scope precisely because neither is settled: an outOfScope claim here would be a guess wearing a classification.",
+      "reason": "BC's emitted document carries a full <RequestPage><PageDefinition> subtree even for report 9810, which declares UseRequestPage = false and ProcessingOnly = true; DependencyReportMetadata.EmitReportXml writes no <RequestPage> element at all, so BC's reader leaves the property null on the runner's side. Two questions are deliberately OPEN rather than answered here, and they are on #3808: whether BC emits a request page for every report (unanswerable from this bundle -- System Application ships exactly ONE report, and Base Application, which would settle it, is excluded from apps.json on cost -- 257s and 8.83 GiB peak RSS -- rather than because its emit is impossible; the earlier claim here that it needs a .NET reference no BC artifact ships was disproved by #3876), and whether anything AL-observable reads MetaReport.RequestPageDefinition on a ProcessingOnly report. Declared as a tracked defect rather than out of scope precisely because neither is settled: an outOfScope claim here would be a guess wearing a classification.",
       "issue": 3808
     },
     {

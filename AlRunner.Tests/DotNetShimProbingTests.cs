@@ -216,6 +216,83 @@ public sealed class DotNetShimProbingTests : IDisposable
     }
 
     /// <summary>
+    /// The runner and the ground-truth generator must stage the SAME shim set.
+    ///
+    /// <para>Two projects build a DotNet probing list — <c>AlRunner.csproj</c> for the runner and
+    /// <c>tools/metadata-ground-truth/MetadataGroundTruth.csproj</c> for the generator — and the
+    /// generator's output is the ORACLE the runner's metadata derivation is measured against
+    /// (<c>MetadataEquivalenceHarnessTests</c>). A shim present in one and not the other means
+    /// the two sides compile the same Microsoft app against different reference sets, so a
+    /// difference the harness reports would be an artifact of the drift rather than a defect in
+    /// the runner — and it would look exactly like a real finding.</para>
+    ///
+    /// <para>Asserted against the csproj SOURCES rather than two build outputs, because the
+    /// generator is deliberately not in <c>AlRunner.slnx</c> and is not built by
+    /// <c>dotnet test</c>: there is no output to compare on a normal run. #3745 staged the first
+    /// shim in both; #3876 added the second and this test, because nothing was holding them
+    /// together.</para>
+    /// </summary>
+    [Fact]
+    public void TheRunnerAndTheGroundTruthGeneratorStageTheSameShimSet()
+    {
+        var root = RepoRoot();
+        var runner = File.ReadAllText(Path.Combine(root, "AlRunner", "AlRunner.csproj"));
+        var generator = File.ReadAllText(Path.Combine(
+            root, "tools", "metadata-ground-truth", "MetadataGroundTruth.csproj"));
+
+        // The shim files each project stages, by the file name that lands in dotnet-shims.
+        string[] expected = { "Newtonsoft.Json.dll", "Microsoft.AspNetCore.StaticFiles.dll" };
+
+        foreach (var dll in expected)
+        {
+            Assert.True(runner.Contains(dll, StringComparison.Ordinal),
+                $"AlRunner.csproj does not stage {dll} into dotnet-shims.");
+            Assert.True(generator.Contains(dll, StringComparison.Ordinal),
+                $"MetadataGroundTruth.csproj does not stage {dll} into dotnet-shims. The " +
+                "generator produces the ground truth the runner is measured against, so a shim " +
+                "in one project and not the other compares two different reference sets (#3876).");
+        }
+
+        // And the same package versions, so the two do not bind different builds of one assembly.
+        foreach (var pkg in new[] { "Newtonsoft.Json", "Microsoft.AspNetCore.App.Ref" })
+        {
+            var v1 = PackageVersion(runner, pkg);
+            var v2 = PackageVersion(generator, pkg);
+            Assert.Equal(v1, v2);
+        }
+    }
+
+    /// <summary>
+    /// The <c>Version</c> of a <c>PackageReference</c>, read out of csproj text. Deliberately a
+    /// regex over the source rather than an MSBuild evaluation: the point is to compare what the
+    /// two files DECLARE, and an evaluation would need the generator project restored, which a
+    /// normal <c>dotnet test</c> run does not do.
+    /// </summary>
+    private static string PackageVersion(string csproj, string package)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(
+            csproj,
+            "<PackageReference\\s+Include=\"" + System.Text.RegularExpressions.Regex.Escape(package) +
+            "\"\\s+Version=\"([^\"]+)\"");
+        Assert.True(m.Success, $"no <PackageReference Include=\"{package}\" Version=...> found");
+        return m.Groups[1].Value;
+    }
+
+    /// <summary>
+    /// The repository root, walked up from the test assembly's location by looking for a marker
+    /// that exists in a checkout and nowhere else — so this works under any configuration or
+    /// output layout, like <see cref="RunnerOutputDir"/> above.
+    /// </summary>
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "AlRunner.slnx")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+        return dir!.FullName;
+    }
+
+    /// <summary>
     /// The runner project's build output. Derived from the location of the assembly under test
     /// rather than from a path relative to the source tree, so it stays correct under any
     /// configuration or target-framework layout.

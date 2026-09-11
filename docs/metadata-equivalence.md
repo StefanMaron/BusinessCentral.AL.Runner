@@ -696,16 +696,18 @@ marked, so the next six kinds do not rediscover this one leg at a time.
 <a id="what-the-page-measurement-does-not-cover"></a>
 ### What the page measurement does not cover
 
-**One BC build, two apps.** Base Application's ~4,000 pages are not measured at all: `apps.json`
-excludes it because its emit needs a `PublicKeyToken=null` copy of `Microsoft.AspNetCore.StaticFiles`
-that no BC artifact ships (#3549). None of the figures above is evidence about the pages most AL
-tests actually touch.
+**One BC build, two apps.** Base Application's ~4,000 pages are not measured at all, because
+`apps.json` excludes it. None of the figures above is evidence about the pages most AL tests
+actually touch.
 
-**Base Application is not covered.** Its emit needs a `PublicKeyToken=null` copy of
-`Microsoft.AspNetCore.StaticFiles` that no BC artifact ships, and without it BC's emitter
-produces zero objects for the whole app (#3549). The generator treats a zero-object emit as a
-failure rather than writing an empty bundle, and `apps.json` says why Base Application is absent
-rather than listing it and failing every leg.
+**Base Application is not covered — on cost, not because it cannot be compiled.** This section
+used to say its emit needed a `PublicKeyToken=null` copy of `Microsoft.AspNetCore.StaticFiles`
+that no BC artifact ships. **#3876 disproved that**: the assembly ships in the ASP.NET Core
+reference pack, both csprojs stage it, and the emit produces 7,842 documents with `errors=0`.
+What keeps the app out of `apps.json` is that this file drives a step on the unit-test legs where
+it would cost **257 s and 8.83 GiB peak RSS** against ~3 s and ~14 s for the two apps listed — a
+sizing decision on a 16 GB runner, recorded in `apps.json` itself. The generator still treats a
+zero-object emit as a failure rather than writing an empty bundle.
 
 <a id="codeunits"></a>
 ## Codeunits: the runner has no `MetaCodeunit`, so its derivation is projected into one
@@ -1025,8 +1027,10 @@ field independently.
 `<RequestPage><PageDefinition>` subtree for report 9810 even though it declares
 `UseRequestPage = false` and `ProcessingOnly = true`. Whether BC does that for *every* report is
 **not answerable from this bundle** — one report — and Base Application, which would answer it,
-is excluded from `apps.json` because its emit needs a .NET reference no BC artifact ships
-(#3549). That question is left open on #3808 rather than closed by assumption.
+is excluded from `apps.json` on cost (257 s, 8.83 GiB), not because it cannot be compiled: the
+.NET reference it needs ships in the ASP.NET Core reference pack and is staged (#3876, correcting
+an earlier claim here that no BC artifact ships it). That question is left open on #3808 rather
+than closed by assumption.
 
 **What this comparison does not reach:** report 9810 has no data items and no columns, so the
 data-item and column derivation — the substantial part of `DependencyReportMetadata.cs` — is not
