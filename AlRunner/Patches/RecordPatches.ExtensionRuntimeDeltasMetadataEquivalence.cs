@@ -114,24 +114,31 @@ public static partial class RecordPatches
             // fault — every row is then a measurement of the fault (#3809).
             //
             // ParentContainer is an ENUM to BC's reader, not free text: an anchor outside its
-            // member set throws ArgumentException and loses the whole document, so the AL anchor
-            // is passed through only when it names a container. What the anchor means per change
-            // kind, and why only addfirst is derivable, is in
-            // docs/metadata-equivalence.md#deltas-required-attributes.
+            // member set throws ArgumentException and loses the whole document. The AL anchor
+            // names either an AREA or a SIBLING MEMBER, and only the first is a container — and
+            // then under BC's RUNTIME spelling, which is a different word from AL's for five of
+            // the ten action areas (BcContainerForAlArea). A sibling anchor keeps the
+            // kind-implied fallback; the container BC writes for it is the sibling's own, which
+            // SymbolReference does not state from this side (#3926). What the anchor means per
+            // change kind is in docs/metadata-equivalence.md#deltas-required-attributes.
+            var container = origin.Anchor is { Length: > 0 }
+                ? BcContainerForAlArea(origin.Anchor, origin.IsAction)
+                : null;
             wrapper.SetAttribute("ParentContainer",
-                !string.IsNullOrEmpty(origin.Anchor) && IsBcContainerName(origin.Anchor)
-                    ? origin.Anchor
-                    : origin.IsAction ? "ActionItems" : "ContentArea");
+                container ?? (origin.IsAction ? "ActionItems" : "ContentArea"));
             wrapper.SetAttribute("Operation", ContentOperation(origin.ChangeKind));
 
             // Not required by the reader, but SymbolReference does determine it: the container
             // the member was declared in is what BC writes here on all 11 documents.
             wrapper.SetAttribute("SemanticKind", origin.IsAction ? "Action" : "Content");
 
-            // AnchorName only for the kinds whose Anchor names a SIBLING (addbefore/addafter).
-            // For addfirst BC writes none, and writing one would state a relationship the AL
-            // does not declare. BC's AnchorId — a hash beside it — is left off either way.
-            if (!string.IsNullOrEmpty(origin.Anchor) && origin.ChangeKind is 3 or 4)
+            // AnchorName only for the kinds whose Anchor names a SIBLING (addbefore/addafter),
+            // and only when it IS a sibling: an anchor naming an area is the container, and BC
+            // writes no AnchorName for one — measured over all 111 delta elements in the four
+            // cached builds' bundles, of which 32 carry an AnchorName and NOT ONE of those 32 is
+            // an AL area name. BC's AnchorId — a hash beside it — is left off either way.
+            if (!string.IsNullOrEmpty(origin.Anchor) && origin.ChangeKind is 3 or 4
+                && container is null)
                 wrapper.SetAttribute("AnchorName", origin.Anchor);
 
             var member = doc.CreateElement(origin.IsAction ? "Actions" : "Controls", MetaObjectsNamespace);
@@ -191,23 +198,65 @@ public static partial class RecordPatches
     };
 
     /// <summary>
-    /// Whether <paramref name="name"/> is one of the container names BC's delta reader accepts
-    /// for <c>ParentContainer</c>, which it <c>Enum.Parse</c>s.
+    /// The <c>ParentContainer</c> BC writes for an AL <c>Anchor</c> that names an AREA, or
+    /// <c>null</c> when the anchor names something else — a sibling member, or a word from
+    /// neither vocabulary.
     ///
-    /// <para>The set is MEASURED, not declared: every <c>ParentContainer</c> value across all
-    /// 111 delta elements in the four cached builds' bundles. An AL <c>Anchor</c> outside it —
-    /// "Processing", or a sibling member's name — is not a container BC would accept, and
-    /// passing one through makes the whole document fail to parse rather than one attribute
-    /// differ.</para>
+    /// <para><b>AL and the runtime are two different vocabularies and the anchor is in the first
+    /// one.</b> AL source names the area (<c>ActionAreaKind</c> / <c>AreaKind</c>, in
+    /// Microsoft.Dynamics.Nav.CodeAnalysis); the runtime names the container
+    /// (<c>ActionContainerType</c> / <c>ControlContainerType</c>, in
+    /// Microsoft.Dynamics.Nav.Types), and five of the ten action areas and four of the five
+    /// control areas spell it differently — <c>addlast(Navigation)</c> is
+    /// <c>ParentContainer="RelatedInformation"</c>. Passing the anchor through unchanged is
+    /// therefore wrong for those, and so is falling back to the kind-implied container.</para>
     ///
-    /// <para>Deliberately a membership test rather than the full enum read out of
+    /// <para>MEASURED, not inferred: BC's own
+    /// <c>CodeAnalysis.Emit.MetadataEmitterHelper.GetContainerType</c> — the method its emitter
+    /// applies — invoked for every member of both enums on 27.5.46862.53931. Corroborated in a
+    /// second binary by <c>Ncl.dll</c>'s <c>NavDesignerUtil.ActionContainerTypeToAreaKind</c>,
+    /// which is the same relation read backwards and agrees on all seven pairs it covers.
+    /// <c>ActionAreaKind.None</c> and <c>AreaKind.Navigation</c> both make that method throw
+    /// <c>InvalidOperationException</c>, so neither is a container and both land in the null
+    /// branch here.</para>
+    ///
+    /// <para>Deliberately a literal table rather than a reflective call into
     /// <c>Microsoft.Dynamics.Nav.CodeAnalysis</c>: this file must not take a load-time dependency
-    /// on an assembly the runner does not otherwise need, and a name outside this set is handled
-    /// the same way whether it is genuinely absent from BC's enum or merely absent from here.</para>
+    /// on an assembly the runner does not otherwise need.
+    /// <c>ExtensionRuntimeDeltasBcMappingTests</c> is what stops the table drifting from BC —
+    /// it invokes <c>GetContainerType</c> itself and fails when the two disagree.</para>
     /// </summary>
-    private static bool IsBcContainerName(string name) => name is
-        "Prompting" or "ContentArea" or "ViewActions" or "ActionItems"
-        or "Promoted" or "RelatedInformation";
+    private static string? BcContainerForAlArea(string anchor, bool isAction) => isAction
+        ? anchor switch
+        {
+            "Processing" => "ActionItems",
+            "Reporting" => "Reports",
+            "Navigation" => "RelatedInformation",
+            "Creation" => "NewDocumentItems",
+            "Embedding" => "HomeItems",
+            "Sections" => "ActivityButtons",
+            "Promoted" => "Promoted",
+            "SystemActions" => "SystemActions",
+            "Prompting" => "Prompting",
+            "PromptGuide" => "PromptGuide",
+            _ => null,
+        }
+        : anchor switch
+        {
+            "Content" => "ContentArea",
+            "FactBoxes" => "FactBoxArea",
+            "RoleCenter" => "RoleCenterArea",
+            "Prompt" => "PromptArea",
+            "PromptOptions" => "PromptOptionsArea",
+            _ => null,
+        };
+
+    /// <summary>
+    /// <see cref="BcContainerForAlArea"/>, for the drift test that holds its table to BC's own
+    /// <c>MetadataEmitterHelper.GetContainerType</c>.
+    /// </summary>
+    internal static string? BcContainerForAlAreaForTests(string anchor, bool isAction)
+        => BcContainerForAlArea(anchor, isAction);
 
     private const string MetaObjectsNamespace = "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects";
     private const string XsiNamespace = "http://www.w3.org/2001/XMLSchema-instance";

@@ -199,10 +199,13 @@ public sealed class ExtensionRuntimeDeltasTests
             Assert.Equal("ActionDefinition", actions[0].Attribute(xsi + "type")!.Value);
             Assert.Equal("ControlDefinition", controls[0].Attribute(xsi + "type")!.Value);
 
-            // ParentContainer is an ENUM to BC's reader. Neither fixture anchor ("Processing",
-            // "Has SUPER permission set") names one of BC's containers, so both fall back to the
-            // container the member's own kind implies rather than being passed through — which
-            // would make the document fail to parse outright.
+            // ParentContainer is an ENUM to BC's reader, and the AL anchor is in the OTHER
+            // vocabulary. "Processing" is an AL action AREA, translated to its runtime container
+            // name; "Has SUPER permission set" is a sibling member, so it is not a container at
+            // all and falls back to the one the member's own kind implies. The two happen to be
+            // the same word here only because ActionAreaKind.Processing maps to ActionItems —
+            // An_AL_action_area_anchor_is_translated_to_BCs_own_container_name is what separates
+            // the two mechanisms.
             Assert.Equal("ActionItems", actionAdds[0].Attribute("ParentContainer")!.Value);
             Assert.Equal("ContentArea", controlAdds[0].Attribute("ParentContainer")!.Value);
         });
@@ -244,6 +247,154 @@ public sealed class ExtensionRuntimeDeltasTests
 
             // addfirst: BC writes no AnchorName, because the anchor IS the container.
             Assert.Null(wrapper.Attribute("AnchorName"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
+    /// An AL area anchor whose RUNTIME container name is a DIFFERENT word is translated, not
+    /// passed through and not fallen back on. <c>addlast(Navigation)</c> is
+    /// <c>ParentContainer="RelatedInformation"</c>.
+    ///
+    /// <para>Real object: System Application pageextension 2516 "AppSourceMarketPlaceExtension",
+    /// whose SymbolReference states <c>Anchor: "Navigation"</c> and whose BC-emitted document
+    /// states <c>ParentContainer="RelatedInformation"</c> (27.5 ground truth). That object has a
+    /// deltas document on 27.5 and none on 28.1, which is why the metadata-equivalence harness
+    /// only reported it on the 27.5 leg (#3923).</para>
+    ///
+    /// <para>The two vocabularies are BC's own and they are not the same set: AL source names
+    /// the area <c>ActionAreaKind</c> (CodeAnalysis), the runtime names the container
+    /// <c>ActionContainerType</c> (Types), and <c>MetadataEmitterHelper.GetContainerType</c> is
+    /// the translation BC's own emitter applies. Measured by invoking that method for every
+    /// enum member rather than inferred — see <c>ActionAreaToContainer</c>.</para>
+    /// </summary>
+    [Theory]
+    // The four AL area names whose container name is a different word — the cases a
+    // pass-through or a fallback gets wrong.
+    [InlineData("Navigation", "RelatedInformation")]
+    [InlineData("Reporting", "Reports")]
+    [InlineData("Creation", "NewDocumentItems")]
+    [InlineData("Embedding", "HomeItems")]
+    [InlineData("Sections", "ActivityButtons")]
+    // ...and the ones that happen to spell the same, which must keep working.
+    [InlineData("Processing", "ActionItems")]
+    [InlineData("Promoted", "Promoted")]
+    [InlineData("Prompting", "Prompting")]
+    [InlineData("SystemActions", "SystemActions")]
+    [InlineData("PromptGuide", "PromptGuide")]
+    public void An_AL_action_area_anchor_is_translated_to_BCs_own_container_name(
+        string alArea, string containerName)
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-area");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteAppWith(dir, $$"""
+                {
+                  "RuntimeVersion": "17.0",
+                  "PageExtensions": [
+                    {
+                      "Id": 88380904,
+                      "Name": "Area Ext",
+                      "TargetObject": "ERD Target Page",
+                      "ActionChanges": [
+                        { "Anchor": "{{alArea}}", "ChangeKind": 2,
+                          "Actions": [ { "Kind": 2, "Id": 640938004, "Name": "Gallery" } ] }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var wrapper = Assert.Single(Render(appPath, "Page", 88380904)!.Root!.Elements($"{Ns}ActionAdd"));
+            Assert.Equal(containerName, wrapper.Attribute("ParentContainer")!.Value);
+
+            // The anchor names an AREA, so it is the container and NOT a sibling: BC writes no
+            // AnchorName for these, whatever the change kind.
+            Assert.Null(wrapper.Attribute("AnchorName"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
+    /// The control-side half of the same translation: an AL <c>AreaKind</c> anchor.
+    /// <c>FactBoxes</c> is <c>FactBoxArea</c>, which neither a pass-through nor the
+    /// <c>ContentArea</c> fallback produces.
+    /// </summary>
+    [Theory]
+    [InlineData("FactBoxes", "FactBoxArea")]
+    [InlineData("RoleCenter", "RoleCenterArea")]
+    [InlineData("Prompt", "PromptArea")]
+    [InlineData("PromptOptions", "PromptOptionsArea")]
+    [InlineData("Content", "ContentArea")]
+    public void An_AL_control_area_anchor_is_translated_to_BCs_own_container_name(
+        string alArea, string containerName)
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-carea");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteAppWith(dir, $$"""
+                {
+                  "RuntimeVersion": "17.0",
+                  "PageExtensions": [
+                    {
+                      "Id": 88380905,
+                      "Name": "CArea Ext",
+                      "TargetObject": "ERD Target Page",
+                      "ControlChanges": [
+                        { "Anchor": "{{alArea}}", "ChangeKind": 2,
+                          "Controls": [ { "Kind": 8, "Id": 640938005, "Name": "Extra" } ] }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var wrapper = Assert.Single(Render(appPath, "Page", 88380905)!.Root!.Elements($"{Ns}ControlAdd"));
+            Assert.Equal(containerName, wrapper.Attribute("ParentContainer")!.Value);
+            Assert.Null(wrapper.Attribute("AnchorName"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
+    /// An anchor naming a SIBLING MEMBER is still not a container: it keeps the
+    /// kind-implied fallback and is written as <c>AnchorName</c> for the anchored change kinds.
+    ///
+    /// <para>This is the case the runner genuinely cannot derive — BC writes the container the
+    /// SIBLING sits in, which SymbolReference does not state from the extension's side. Real
+    /// object: pageextension 774, whose three ActionAdds anchor on view names and whose
+    /// ParentContainer is <c>ViewActions</c>, not the <c>ActionItems</c> fallback (#3926).</para>
+    /// </summary>
+    [Fact]
+    public void An_anchor_naming_a_sibling_member_is_not_treated_as_an_area()
+    {
+        var dir = TestScratch.Dir("al-runner-extension-runtime-deltas-sibling");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteAppWith(dir, """
+                {
+                  "RuntimeVersion": "17.0",
+                  "PageExtensions": [
+                    {
+                      "Id": 88380906,
+                      "Name": "Sibling Ext",
+                      "TargetObject": "ERD Target Page",
+                      "ActionChanges": [
+                        { "Anchor": "Refresh", "ChangeKind": 4,
+                          "Actions": [ { "Kind": 2, "Id": 640938006, "Name": "Gallery" } ] }
+                      ]
+                    }
+                  ]
+                }
+                """);
+
+            var wrapper = Assert.Single(Render(appPath, "Page", 88380906)!.Root!.Elements($"{Ns}ActionAdd"));
+            Assert.Equal("ActionItems", wrapper.Attribute("ParentContainer")!.Value);
+            Assert.Equal("ContentAfter", wrapper.Attribute("Operation")!.Value);
+            Assert.Equal("Refresh", wrapper.Attribute("AnchorName")!.Value);
         }
         finally { Directory.Delete(dir, recursive: true); }
     }

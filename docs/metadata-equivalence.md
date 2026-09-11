@@ -1379,6 +1379,51 @@ Two further traps the render hit, both invisible to a namespace-aware reader:
   cached builds the observed set is `{Prompting, ContentArea, ViewActions, ActionItems, Promoted,
   RelatedInformation}`. Passing an AL anchor through verbatim raised
   `ArgumentException: Requested value 'Processing' was not found`, which loses the whole document.
+  **The anchor is in a different vocabulary from the attribute** — see below.
+
+<a id="deltas-anchor-vocabulary"></a>
+### The AL anchor and `ParentContainer` are two different vocabularies
+
+An AL `Anchor` names either an **area** or a **sibling member**, and only the first is a
+container — under BC's *runtime* spelling, which is a different word from AL's for five of the
+ten action areas and four of the five control areas. `addlast(Navigation)` is
+`ParentContainer="RelatedInformation"`.
+
+| AL source (`ActionAreaKind`, CodeAnalysis) | runtime (`ActionContainerType`, Types) |
+|---|---|
+| `Processing` | `ActionItems` |
+| `Reporting` | `Reports` |
+| `Navigation` | **`RelatedInformation`** |
+| `Creation` | **`NewDocumentItems`** |
+| `Embedding` | **`HomeItems`** |
+| `Sections` | **`ActivityButtons`** |
+| `Promoted`, `SystemActions`, `Prompting`, `PromptGuide` | same word |
+| `None` | *not a container* — BC's own mapper throws |
+
+| AL source (`AreaKind`) | runtime (`ControlContainerType`) |
+|---|---|
+| `Content` | `ContentArea` |
+| `FactBoxes` | **`FactBoxArea`** |
+| `RoleCenter` | **`RoleCenterArea`** |
+| `Prompt` | **`PromptArea`** |
+| `PromptOptions` | **`PromptOptionsArea`** |
+| `Navigation` | *not a container* — BC's own mapper throws |
+
+**Measured, not inferred**: both tables are BC's own
+`CodeAnalysis.Emit.MetadataEmitterHelper.GetContainerType` — the method its emitter applies —
+invoked for every member of both enums on 27.5.46862.53931. Corroborated in a *second* binary by
+`Ncl.dll`'s `NavDesignerUtil.ActionContainerTypeToAreaKind`, the same relation read backwards,
+which agrees on all seven pairs it covers.
+
+The runner keeps the table as a literal so the render takes no load-time dependency on
+`Microsoft.Dynamics.Nav.CodeAnalysis`; `ExtensionRuntimeDeltasBcMappingTests` holds it to BC's
+own method and fails when a BC version moves it.
+
+**An anchor naming a sibling member keeps the kind-implied fallback** (`ActionItems` /
+`ContentArea`) and is written as `AnchorName`. Measured over all 111 delta elements in the four
+cached builds' bundles: 32 carry an `AnchorName`, and not one of those 32 is an AL area name. The container BC writes for one of those is the
+*sibling's* own — pageextension 774's three view-anchored actions are `ViewActions`, not the
+fallback — and SymbolReference does not state it from the extension's side (#3926).
 
 <a id="deltas-declaration-order"></a>
 ### Declaration order is load-bearing, because the differ pairs positionally
@@ -1390,9 +1435,19 @@ produced four `ControlDefinition.ID` / `.Name` differences on controls the runne
 right, and swapped ext 2515's two change contexts so their `ContainerType` and `OperationType`
 each read as wrong. Declaration order removes all of those.
 
-A residue of 12 such positional differences remains, and it is *not* a wrong id either:
+A residue of such positional differences remains, and it is *not* a wrong id either:
 pageextension 774's document opens with a `PagePropertiesChange` the runner does not emit, so
 every later element pairs one slot early. Producing the missing delta kinds removes them (#3926).
+
+**The same residue reaches four more members on 27.5 only.** System Application pageextension
+2516 `AppSourceMarketPlaceExtension` has a deltas document on 27.5 and none on 28.1, so only the
+27.5 legs compare it; its document is `[PagePropertiesChange, ActionAdd, ActionAdd]`, giving the
+same one-slot shift on `ActionDefinition.ID`/`.Name` and `ContentAddContext\`1.ContainerType`/
+`.OperationType`. Measured: splicing an empty `PagePropertiesChange` into the runner's own
+rendered document — changing nothing else — takes that object from 6 undeclared differences to 0
+and its total from 222 to 216, so all four are on content the runner renders correctly. The
+entries carry `versionContingent`, because the object's existence moves with the BC version
+(#3923).
 
 <a id="deltas-what-remains"></a>
 ### What the comparison measures now
