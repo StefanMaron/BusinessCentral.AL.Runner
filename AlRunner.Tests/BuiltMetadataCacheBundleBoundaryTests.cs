@@ -362,6 +362,57 @@ public sealed class BuiltMetadataCacheBundleBoundaryTests : IDisposable
         return path;
     }
 
+    /// <summary>
+    /// The AL-source parser defaults an UNDECLARED <c>Assignable</c> to false, matching what
+    /// BC's own reader answers for the document BC emits from that same declaration (#2417,
+    /// #3806) — and an explicit <c>Assignable = true</c> is still honoured, so a parser that
+    /// simply answered false everywhere fails the second half.
+    ///
+    /// <para>TRAP: this parser's value is consumed by
+    /// <c>ComposeSourcePermissionSet</c> only on the fallback path — when no BC document is
+    /// registered, i.e. a COMPILE-CACHE HIT. So a parser disagreeing with the document route
+    /// makes one permission set answer false on a cold run and true on a warm one, which is a
+    /// cache-dependent wrong answer nothing downstream can detect.</para>
+    /// </summary>
+    [Fact]
+    public void AlSourceParser_UndeclaredAssignableIsFalse_AndAnExplicitTrueIsHonored()
+    {
+        var dir = Path.Combine(_root, "assignable-default");
+        Directory.CreateDirectory(dir);
+        // The parser drops a declaration whose owning app.json it cannot find, so the manifest
+        // is load-bearing. No "application" property — that is the Base Application floor,
+        // which no-base-app-in-csharp-tests.md forbids in a C# fixture.
+        File.WriteAllText(Path.Combine(dir, "app.json"),
+            """
+            {
+              "id": "b3f1c0de-7931-4a11-9c7e-000000079942",
+              "name": "BMCB Assignable App",
+              "publisher": "AL Runner",
+              "version": "1.0.0.0"
+            }
+            """);
+
+        // Declares NO Assignable — the shape of Base Application 208/209 and System
+        // Application 68, the three real sets that state none.
+        var undeclaredPath = Path.Combine(dir, "BmcbUndeclared.PermissionSet.al");
+        File.WriteAllText(undeclaredPath,
+            "permissionset 79960 \"BMCB Undeclared Assignable\"\n"
+            + "{\n    Caption = 'BMCB Undeclared Assignable';\n}\n");
+        ParseOneSourceFile(undeclaredPath);
+
+        // Declares Assignable = true explicitly.
+        var declaredPath = WritePermissionSet(dir, 79961, "BMCB Declared Assignable");
+        ParseOneSourceFile(declaredPath);
+
+        // Asserted, not assumed: if the sweep had not picked these up, the claims below would
+        // be about an empty dictionary rather than about the defaulting rule.
+        Assert.Equal(79960, PermissionSetNamed("BMCB Undeclared Assignable").Id);
+        Assert.Equal(79961, PermissionSetNamed("BMCB Declared Assignable").Id);
+
+        Assert.False(PermissionSetNamed("BMCB Undeclared Assignable").Assignable);
+        Assert.True(PermissionSetNamed("BMCB Declared Assignable").Assignable);
+    }
+
     private static RecordPatches.ParsedAlProfile ProfileNamed(string profileId)
         => Assert.Single(RecordPatches.ParsedProfiles.Where(p => p.ProfileId == profileId));
 
