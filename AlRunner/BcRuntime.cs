@@ -1745,16 +1745,16 @@ public static partial class BcRuntime
         // NCLEnumMetadata.Create(int), NavCodeunitHandle.CreateTarget, NavCodeunit.get_MetaCodeunit,
         // and NCLMetaCodeunit.get_IsEventManualBinding are all Cecil-owned (see NclCecilRewrite.cs).
 
-        // NavDataTransfer (#1883 cluster audit) — SetTables used to be Hook()ed to a no-op and
-        // Add{Field,Constant,Source}Value / AddJoin / CopyFields / CopyRows / Clear to stubs
-        // throwing a hardcoded copy of BC's "DataTransfer is only usable during upgrade and
-        // installation code." All seven were orphaned (JmpHook is off by default), so BC's real
-        // bodies were already running — and once the skeleton tenant can answer
-        // IsIntelligentCloudReplicationEnabled (MetadataPatches steps 3¾ and 3⅞) they are strictly
-        // more faithful than the stubs were: BC raises that same message from its own resource,
-        // tells "SetTables must first be called before calling other methods on DataTransfer."
-        // apart from it, and would honour a real install/upgrade context, which a hardcoded throw
-        // never could. Deleted outright rather than left as dead call sites.
+        // NavDataTransfer (#1883 cluster audit) — eight JmpHook registrations used to live here:
+        // SetTables to a no-op, and AddFieldValue, AddConstantValue, AddSourceFilter, AddJoin,
+        // CopyFields, CopyRows, Clear to stubs throwing a hardcoded copy of BC's "DataTransfer is
+        // only usable during upgrade and installation code." All eight were orphaned (JmpHook is
+        // off by default), so BC's real bodies were already running — and once the skeleton tenant
+        // can answer IsIntelligentCloudReplicationEnabled (MetadataPatches steps 3¾ and 3⅞) they
+        // beat the stubs: BC raises that message from its own resource, tells "SetTables must first
+        // be called before calling other methods on DataTransfer." apart from it, and would honour
+        // a real install/upgrade context, which a hardcoded throw never could. Deleted outright
+        // rather than left as dead call sites; corpus codeunit 60992 adjudicates the behaviour.
 
 
         // ALTaskScheduler.CheckCodeUnit / ALCanCreateTask / CanCreateTask (scope.md §3.6,

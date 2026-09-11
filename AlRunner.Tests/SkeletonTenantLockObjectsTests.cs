@@ -11,7 +11,7 @@
 // and installation code." AL error.
 //
 // Runner-mechanism tests: a real service tier runs the real ctor, so none of this arises
-// upstream. The BC-behaviour half is corpus codeunit 60875.
+// upstream. The BC-behaviour half is corpus codeunit 60992 (corpus PR #327).
 using System;
 using System.Linq;
 using System.Reflection;
@@ -58,8 +58,9 @@ public sealed class SkeletonTenantLockObjectsTests
         var fields = ReadonlyObjectFields(tenant);
 
         // Without this the assertion below passes on an empty set — the failure mode where the
-        // walk read the wrong type and measured nothing at all. BC 28.1 declares seven; a floor
-        // rather than an equality so a BC build adding one does not fail for being fixed too.
+        // walk read the wrong type and measured nothing at all. 28.0 and 28.1 both declare seven;
+        // a floor rather than an equality because a count is version-specific, and a field BC adds
+        // is caught by name in EverySeededLockField_IsOnTheAuditedRoster below instead.
         Assert.True(fields.Length >= 5,
             $"expected NavTenant to declare several readonly object lock fields, found {fields.Length} — "
             + "the field walk is reading the wrong type, so the null check below proves nothing.");
@@ -69,6 +70,30 @@ public sealed class SkeletonTenantLockObjectsTests
             "these lock fields are null on the skeleton tenant, so any BC body locking one raises "
             + "ArgumentNullException out of Monitor.ReliableEnter instead of doing its job: "
             + string.Join(", ", nulls));
+    }
+
+    /// <summary>
+    /// The seeder matches on shape, not on a name list, so a lock field an unmeasured BC version
+    /// declares is still seeded rather than left null. This is what keeps that breadth from being
+    /// silent: anything seeded that <c>BcRuntime.AuditedTenantLockFields</c> does not name fails
+    /// here by name, so a <c>readonly object</c> BC adds later gets audited before it ships
+    /// holding a value the runner invented.
+    /// </summary>
+    [SkippableFact]
+    public void EverySeededLockField_IsOnTheAuditedRoster()
+    {
+        SkeletonTenant();   // skips when the engine is not ready; also proves the bootstrap ran
+
+        Assert.True(BcRuntime.SeededTenantLockFields.Count > 0,
+            "nothing is recorded as seeded, so the assertion below would pass without measuring "
+            + "anything — the BcRuntime statics read here are not the ones this process bootstrapped.");
+
+        Assert.True(BcRuntime.UnauditedSeededLockFields.Count == 0,
+            "the skeleton tenant carries readonly object field(s) the #1883 audit does not cover, and "
+            + "the runner has given each one a new object(): "
+            + string.Join(", ", BcRuntime.UnauditedSeededLockFields)
+            + ". Confirm each is only ever a lock target and add it to BcRuntime.AuditedTenantLockFields, "
+            + "or stop seeding it.");
     }
 
     /// <summary>

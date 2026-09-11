@@ -2091,7 +2091,7 @@ internal sealed partial class RunnerPageInstance
     /// real BC 27.5 and 28.3 in al-language's TestPageFieldDrillDown_Tests
     /// (FieldDrillDownWithNoTriggerIsRefused). That is reproducible in-process with no UI, so
     /// it is raised as a genuine AL error via NavNCLDialogException (same mechanism as
-    /// BcRuntime's DataTransfer-out-of-context message), not a RunnerOutOfScopeException —
+    /// SessionPatches.MakeStartSessionNotAllowedInTestException), not a RunnerOutOfScopeException —
     /// this is not a capability the runner lacks, it is exactly what BC itself does here.
     /// </summary>
     internal void RaiseOnDrillDown(int controlId)
