@@ -909,19 +909,6 @@ public sealed class DependencyLoader
     }
 
     /// <summary>
-    /// Replay this dependency's Tier-3 source-compile-cache metadata sidecars (report,
-    /// report-layout, page, xmlport, enum) into the process-wide registries. Called from
-    /// the <c>LoadAll</c> cache-hit fast path (see its call site for the full "why"), ONLY
-    /// when the reused <see cref="LoadedAppEntry"/> carries a non-null
-    /// <c>Tier3CacheKey</c> — that gate is the caller's job (it also decides "is there
-    /// anything to do at all"), so this method trusts <paramref name="cacheKey"/> rather
-    /// than re-deriving or re-checking it. This keeps a dependency's metadata answering
-    /// after every <c>BcRuntime.ResetForNewBundleReload()</c>, not just the first time this
-    /// AppId is resolved in the process — WITHOUT re-hashing the .app file on every reuse
-    /// (see <see cref="LoadedAppEntry"/>'s own header comment on Tier3CacheKey for the cost
-    /// that would otherwise be paid every single cycle).
-    /// </summary>
-    /// <summary>
     /// Re-report a cached emit exclusion (#2247). The report is a property of the compiled
     /// artifact, so it has to survive a cache HIT the same way the metadata sidecars do:
     /// otherwise a partial dependency is loud exactly once, on the run that compiled it, and
@@ -947,6 +934,19 @@ public sealed class DependencyLoader
         }
     }
 
+    /// <summary>
+    /// Replay this dependency's Tier-3 source-compile-cache metadata sidecars (report,
+    /// report-layout, page, xmlport, enum) into the process-wide registries. Called from
+    /// the <c>LoadAll</c> cache-hit fast path (see its call site for the full "why"), ONLY
+    /// when the reused <see cref="LoadedAppEntry"/> carries a non-null
+    /// <c>Tier3CacheKey</c> — that gate is the caller's job (it also decides "is there
+    /// anything to do at all"), so this method trusts <paramref name="cacheKey"/> rather
+    /// than re-deriving or re-checking it. This keeps a dependency's metadata answering
+    /// after every <c>BcRuntime.ResetForNewBundleReload()</c>, not just the first time this
+    /// AppId is resolved in the process — WITHOUT re-hashing the .app file on every reuse
+    /// (see <see cref="LoadedAppEntry"/>'s own header comment on Tier3CacheKey for the cost
+    /// that would otherwise be paid every single cycle).
+    /// </summary>
     private void ReplayDependencyMetadataSidecars(AppManifest m, string cacheKey)
     {
         var cacheDir = AlRunner.Infrastructure.CacheRoots.Resolve("compiled-deps");
