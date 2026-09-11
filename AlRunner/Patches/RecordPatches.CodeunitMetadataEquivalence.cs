@@ -14,7 +14,7 @@
 //   with MetaPageDefinition.
 //
 //   So this file renders the runner's genuinely independent derivation — the SymbolReference
-//   properties BcAppSymbolCache.ObjectSymbol carries, the same five values CodeUnit Metadata
+//   properties BcAppSymbolCache.ObjectSymbol carries, the same values CodeUnit Metadata
 //   (2000000137) answers from — into BC's document shape. What BC's constructor then reads out
 //   of it is the runner's answer, arrived at without BC's emitter.
 //
@@ -47,10 +47,10 @@ public static partial class RecordPatches
     /// <c>Types.Metadata.MetaCodeunit(XmlNode)</c> parses — or null when the runner knows no
     /// codeunit with that id, which the caller must report rather than absorb.
     ///
-    /// <para><b>Only the five derived attributes are written.</b> A value the runner does not
-    /// derive is left off the element rather than defaulted, so BC's constructor applies its
-    /// own default and the difference the harness then reports is a true statement about what
-    /// the runner does not know. See this file's header.</para>
+    /// <para><b>Only the derived attributes are written</b> — eight since #3788. A value the
+    /// runner does not derive is left off the element rather than defaulted, so BC's constructor
+    /// applies its own default and the difference the harness then reports is a true statement
+    /// about what the runner does not know. See this file's header.</para>
     /// </summary>
     internal static string? TryBuildCodeunitMetadataEquivalenceXml(int codeunitId)
     {

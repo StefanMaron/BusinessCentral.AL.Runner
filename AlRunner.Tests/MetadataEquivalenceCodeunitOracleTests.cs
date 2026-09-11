@@ -104,9 +104,20 @@ public sealed class MetadataEquivalenceCodeunitOracleTests
     /// says so at its head — and it is the SAME document the ground truth holds. Feeding it to
     /// the harness would report zero differences having measured nothing.</para>
     ///
-    /// <para>What the projection states is therefore exactly the five values the runner derives
-    /// from SymbolReference.json, and it must NOT state the members BC's emitter adds. Asserting
-    /// their absence is what pins the two sides apart.</para>
+    /// <para>What the projection states is therefore exactly the values the runner derives from
+    /// SymbolReference.json, and it must NOT state the members only BC's emitter knows.</para>
+    ///
+    /// <para><b>Since #3788 that set is eight, not five</b> — ALNamespace, InherentEntitlements
+    /// and InherentPermissions joined it, because the symbol file states all three and the runner
+    /// now reads them. So absence is no longer what pins the two sides apart for those three, and
+    /// this test says what does: the projection's values must be the ones the SYMBOL FILE
+    /// produces, which for the two masks is a DIFFERENT SPELLING from the registry document's.
+    /// A projection that started echoing BC's document would be caught by the mask assertions
+    /// below, not by an absence check.</para>
+    ///
+    /// <para>The members BC's emitter alone derives — TestIsolation, EventSubscriberInstance,
+    /// MetadataVersion, the whole &lt;Methods&gt; subtree — are still asserted absent, and that is
+    /// still the BC-against-BC guard for them.</para>
     /// </summary>
     [SkippableFact]
     public void The_runner_side_states_only_what_the_runner_derives()
@@ -131,21 +142,34 @@ public sealed class MetadataEquivalenceCodeunitOracleTests
         doc.LoadXml(xml!);
         var root = doc.DocumentElement!;
 
-        // Present: the five the runner genuinely derives.
+        // Present: the eight the runner genuinely derives from SymbolReference.json.
         Assert.Equal("26", root.GetAttribute("ID"));
         Assert.Equal("Confirm Management Impl.", root.GetAttribute("Name"));
         Assert.Equal("1", root.GetAttribute("SingleInstance"));
         Assert.Equal("Normal", root.GetAttribute("Subtype"));
 
-        // Absent: everything only BC's emitter knows. If any of these appears, the runner side
+        // The three #3788 added. The namespace comes from the Namespaces tree path — nothing in
+        // the registry document would supply it to a projection that never read the tree.
+        Assert.Equal("System.Utilities", root.GetAttribute("ALNamespace"));
+
+        // The two masks, which are the sharper half of the BC-against-BC guard now. The symbol
+        // file states the AL LETTER "X" and the runner decodes it to 16; a projection that had
+        // started echoing BC's captured document would be reading an attribute that is ALREADY
+        // "16" without decoding anything — so these assertions do not discriminate on their own,
+        // and the fixture-driven CodeunitSymbolNamespaceAndInherentMaskTests is what proves the
+        // decode: it feeds "x" and requires 512, a value BC's document for codeunit 26 does not
+        // contain at all.
+        Assert.Equal("16", root.GetAttribute("InherentEntitlements"));
+        Assert.Equal("16", root.GetAttribute("InherentPermissions"));
+
+        // Still absent: what only BC's emitter knows. If any of these appears, the runner side
         // has started carrying BC's own answers and the comparison has stopped measuring.
         foreach (var emitterOnly in new[]
-                 { "ALNamespace", "InherentPermissions", "InherentEntitlements",
-                   "TestIsolation", "EventSubscriberInstance", "MetadataVersion" })
+                 { "TestIsolation", "EventSubscriberInstance", "MetadataVersion" })
             Assert.False(root.HasAttribute(emitterOnly),
                 $"the runner's projection states '{emitterOnly}', which only BC's emitter " +
                 "derives. Stating it would manufacture agreement with the ground truth and " +
-                "turn a real gap (#3788) into a silent pass.");
+                "turn a real gap into a silent pass.");
 
         Assert.False(root.HasChildNodes,
             "the runner's projection carries a child element. It derives no methods and no " +
