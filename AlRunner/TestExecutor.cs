@@ -1172,13 +1172,41 @@ public sealed class TestExecutor
     /// <c>CodeUnit Metadata</c> (keyed on <c>ID</c>) since v27 and <c>AllObjWithCaption</c>
     /// (keyed on "Object Type", "Object ID") before it; both are keyed on the object ID.</para>
     ///
-    /// <para><b>Stable, and total.</b> A type whose object ID cannot be read — every
-    /// non-codeunit type in the assembly, plus BC's compiler-generated nested types — keeps
-    /// its relative <c>GetTypes()</c> position and sorts after everything that resolved. Only
-    /// test codeunits are ever executed (<c>IsTestCodeunit</c>), so this changes the order
-    /// tests run in and nothing else. Deliberately does NOT touch method order inside a
-    /// codeunit: <see cref="OrderTestMethodsBySourceDeclaration"/> already pins that to source
-    /// declaration order, which is a different rule and stays.</para>
+    /// <para><b>Total, and independent of reflection order (#3217).</b> A type for which neither
+    /// a readable <c>[ApplicationObjectId]</c> nor the <c>Codeunit&lt;digits&gt;</c> name shape
+    /// yields an id — <see cref="TryReadAlObjectId"/> is syntactic and asks nothing about the
+    /// type beyond those two — sorts after every type that resolved one, and ties among those
+    /// break on an ordinal <c>Type.FullName</c> comparison. That tie used to break on the type's
+    /// index in the <c>Assembly.GetTypes()</c> array: the primary key fixed the order of
+    /// everything that resolved and left everything else in exactly the undefined order this
+    /// method exists to remove. The name key is the one #3201 settled on for methods, for the
+    /// reason given there — the metadata token IS the compiler's TypeDef layout, so tie-breaking
+    /// on it reproduces #2801, while a name comparison depends on nothing but the types
+    /// themselves. <c>FullName</c> and not <c>Name</c>, because BC's compiler-generated nested
+    /// types collide freely on the simple name; it is unique among one assembly's types by CLI
+    /// metadata, and every production call site passes types from ONE assembly's
+    /// <c>GetTypes()</c> — or, in <see cref="Run"/>, the loadable subset left after a
+    /// <c>ReflectionTypeLoadException</c> — so the key is total for every input the runner
+    /// produces.</para>
+    ///
+    /// <para><b>Not a claim about BC</b>, exactly as
+    /// <see cref="OrderMethodsByDeclarationLine"/>'s fallback is not. A valid AL app cannot
+    /// define two codeunits with one object id, so real BC has neither a duplicate-id order to
+    /// reproduce nor unresolved objects to have a fallback for. What the name key decides is only
+    /// the order among types THIS RUNNER could not resolve, plus an id collision its own synthetic
+    /// inputs can construct — neither of which has a BC counterpart. The ascending-id rule above
+    /// is the part that mirrors Microsoft, and it is unchanged.</para>
+    ///
+    /// <para>The three call sites are not affected alike. <see cref="Run"/> executes only test
+    /// codeunits (<c>IsTestCodeunit</c>), so there this decides the order tests run in and
+    /// nothing else. <see cref="DiscoverTests"/> applies the same eligibility filter but
+    /// executes nothing — it returns <c>"{Codeunit}.{Method}"</c> keys — so there it decides
+    /// only the order those names come back in.
+    /// Server-mode <c>execute</c> (<c>Program.RunFirstCodeunitOnRun</c>, below) shares the order
+    /// to choose which — preferably NON-test — codeunit's <c>OnRun</c> runs, so there it decides
+    /// which code runs at all. Deliberately does NOT touch method order inside a codeunit:
+    /// <see cref="OrderTestMethodsBySourceDeclaration"/> already pins that to source declaration
+    /// order, which is a different rule and stays.</para>
     ///
     /// <para><b>Internal, not private</b>, for two reasons. <c>Program.RunFirstCodeunitOnRun</c>
     /// (server-mode <c>execute</c>) picks WHICH codeunit's <c>OnRun</c> to run out of the same
@@ -1193,10 +1221,8 @@ public sealed class TestExecutor
     /// </summary>
     internal static Type[] OrderTestCodeunitsByObjectId(Type[] types) =>
         types
-            .Select((t, i) => (t, i, id: TryReadAlObjectId(t)))
-            .OrderBy(x => x.id ?? int.MaxValue)
-            .ThenBy(x => x.i)
-            .Select(x => x.t)
+            .OrderBy(t => TryReadAlObjectId(t) ?? int.MaxValue)
+            .ThenBy(t => t.FullName ?? t.Name, StringComparer.Ordinal)
             .ToArray();
 
     /// <summary>
