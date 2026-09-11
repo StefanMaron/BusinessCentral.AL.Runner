@@ -213,11 +213,19 @@
        the analyzer item group, and they then throw AD0001 on every build (882 of them) looking
        for ASP.NET Core types nothing here references. The pack is wanted for ONE file, so
        dropping its analyzers outright is exactly the intent. Measured: a CLEAN rebuild, because
-       an incremental one skips CoreCompile and reports 0 whatever this target does. -->
+       an incremental one skips CoreCompile and reports 0 whatever this target does.
+
+       Replace('\','/') takes ONE backslash. MSBuild does not treat a backslash as an escape
+       here, so '\\' matches a literal two-backslash sequence, finds none in a Windows path and
+       leaves it unconverted — after which Contains('/microsoft.aspnetcore.app.ref/') is false
+       and the analyzers are NOT dropped. Measured in a standalone MSBuild project:
+       DOUBLE on a Windows path -> unchanged, contains False; SINGLE -> converted, True; both
+       True on a POSIX path, which is why every CI leg passes either way and only a Windows
+       developer build regresses. -->
   <Target Name="DropAspNetCoreRefPackAnalyzers" BeforeTargets="CoreCompile">
     <ItemGroup>
       <Analyzer Remove="@(Analyzer)"
-                Condition="$([System.String]::Copy('%(Analyzer.FullPath)').Replace('\\','/').Contains('/microsoft.aspnetcore.app.ref/'))" />
+                Condition="$([System.String]::Copy('%(Analyzer.FullPath)').Replace('\','/').Contains('/microsoft.aspnetcore.app.ref/'))" />
     </ItemGroup>
   </Target>
 

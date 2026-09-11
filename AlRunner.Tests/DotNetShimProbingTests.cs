@@ -260,6 +260,33 @@ public sealed class DotNetShimProbingTests : IDisposable
             var v2 = PackageVersion(generator, pkg);
             Assert.Equal(v1, v2);
         }
+
+        // And the analyzer-drop CONDITION, character for character.
+        //
+        // Filename and version parity alone is not enough, and that is measured rather than
+        // asserted: the first version of this test compared exactly those two things and passed
+        // while the two Replace() calls genuinely disagreed — the runner had Replace('\\','/')
+        // and the generator Replace('\','/'). MSBuild does not treat a backslash as an escape,
+        // so the doubled form looks for a literal two-backslash run, finds none in a Windows
+        // path, and the analyzers are not dropped. Both forms work on a POSIX path, so every CI
+        // leg is green either way and only a Windows developer build regresses — which is
+        // exactly the divergence a parity test exists to catch.
+        Assert.Equal(AnalyzerDropCondition(runner), AnalyzerDropCondition(generator));
+    }
+
+    /// <summary>
+    /// The <c>Condition</c> of the <c>Analyzer Remove</c> item, read out of csproj text. Same
+    /// reasoning as <see cref="PackageVersion"/>: the point is to compare what the two files
+    /// DECLARE, so this reads the source rather than evaluating MSBuild.
+    /// </summary>
+    private static string AnalyzerDropCondition(string csproj)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(
+            csproj, "<Analyzer\\s+Remove=\"@\\(Analyzer\\)\"\\s+Condition=\"([^\"]+)\"");
+        Assert.True(m.Success,
+            "no <Analyzer Remove=\"@(Analyzer)\" Condition=...> found. Both projects drop the " +
+            "AspNetCore ref pack's analyzers; without it every build carries 882 AD0001 (#3876).");
+        return m.Groups[1].Value;
     }
 
     /// <summary>
