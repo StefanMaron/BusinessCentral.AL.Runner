@@ -71,6 +71,86 @@ name-based join that matched nothing, and every unit test passed because the fix
 the relationship instead of measuring it — while every AL test declared a literal and
 short-circuited before the lookup. This arm is what closes that hole.
 
+## The action arm (#2460)
+
+`PrecompiledDeclaredActionTests.Codeunit.al` does for ACTIONS what the file beside it does for
+controls, through a real `TestPage`:
+
+- an action declaring `Enabled = false` reports `false`;
+- an action declaring `Visible = false` reports `false` — and still reports `Enabled = true`,
+  because a hidden action is not a disabled one;
+- an action declaring **neither** reports `true` for both;
+- an action whose `Enabled` is bound to a page global **refuses loudly**, naming the
+  expression, rather than answering `true`.
+
+**Why this was missing.** #3819 wired the action arm as a two-line mirror of the control arm and
+said so in its own PR body: the committed fixture's page declared no actions, so nothing drove
+`DeclaredActionProperty` end to end. Everything referencing it asserted against
+`TryGetDependencyActionDeclaredProperty`, the string resolver one layer below — a test that names
+the thing rather than driving it.
+
+**Why #2460's proposed action tree is not what closed it.** The issue asked for
+`<ActionContainers>`/`<Actions>` in the synthesized metadata. Measured against BC's own compiler
+output, that reconstruction answers nothing the flat symbol lookup does not already answer:
+
+| `Enabled` on a Base Application action | 28.1 | 27.3 |
+|---|---:|---:|
+| absent (AL declared none -> default `true`) | 24,179 | 23,990 |
+| expression-bound (#3825 owns this) | 1,116 | 1,101 |
+| literal `true` | 10 | 10 |
+| **literal `false`** | **3** | **6** |
+
+Only the literal changes an answer, and #3819's id-keyed symbol lookup already resolves it with
+no tree. Joining the 235 compiled `PageDefinition` documents in
+`~/.local/share/al-runner/metadata-ground-truth/28.1.49838.53910` against the matching symbol
+files, action by action, shows why the compiled documents look so much richer: **293 of their
+literal `Enabled='true'` values come from declarations that are absent upstream** — the compiler
+writing out the AL default — against 132 genuinely expression-bound and 1 genuine literal.
+
+### Regenerating the action half of the fixture
+
+The `.app`'s page gains an `Actions` tree nested inside a `group()` node, because that is where a
+real page's actions live — a collector reading only the top level of `Actions` would find none of
+them and every one of these tests would pass against a resolver that had found nothing:
+
+```bash
+python3 - <<'EOF'
+import zipfile, io, json, struct, uuid
+src = ("tests/runner-extras/testpage-precompiled-declared-editable/.alpackages/"
+       "AL_Runner_Fixtures_TPCD_Precompiled_Control_Dep_1.0.0.0.app")
+d = open(src, 'rb').read(); i = d.find(b'PK\x03\x04')
+z = zipfile.ZipFile(io.BytesIO(d[i:]))
+sym = json.loads(z.read('SymbolReference.json'))
+sym['Pages'][0]['Actions'] = [{
+    "Kind": 3, "Id": 65601900, "Name": "Processing",
+    "Actions": [
+        {"Kind": 2, "Id": 65601901, "Name": "DisabledAction",
+         "Properties": [{"Name": "Enabled", "Value": "false"}]},
+        {"Kind": 2, "Id": 65601902, "Name": "HiddenAction",
+         "Properties": [{"Name": "Visible", "Value": "false"}]},
+        {"Kind": 2, "Id": 65601903, "Name": "PlainAction", "Properties": []},
+        {"Kind": 2, "Id": 65601904, "Name": "WizardAction",
+         "Properties": [{"Name": "Enabled", "Value": "BackActionEnabled"}]},
+    ]}]
+buf = io.BytesIO()
+with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+    zf.writestr("NavxManifest.xml", z.read('NavxManifest.xml').decode())
+    zf.writestr("SymbolReference.json", json.dumps(sym))
+    zf.writestr("[Content_Types].xml", z.read('[Content_Types].xml').decode())
+zb = buf.getvalue()
+header = (b"NAVX" + struct.pack("<I", 40) + struct.pack("<I", 2)
+          + uuid.UUID("d1e2f3a4-5b6c-4d1e-9f8a-1b2c3d4e5f61").bytes_le
+          + struct.pack("<Q", len(zb)) + b"NAVX")
+open(src, "wb").write(header + zb)
+EOF
+```
+
+The actions need no counterpart in `.deps-bin/*.dll`: `LiveNavTestAction` resolves an action by
+member id through the symbol-file declaration, so the compiled page never has to know about them.
+That is also why the expression arm can be driven here while the control-side expression arm
+cannot — an expression needs a binding the page's own IL registers, and a refusal needs only the
+declaration.
+
 ## Why this is not a corpus test
 
 A corpus test compiles its page **from source**, so it takes the source-parsed branch and never
