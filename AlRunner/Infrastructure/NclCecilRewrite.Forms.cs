@@ -614,8 +614,12 @@ public static partial class NclCecilRewrite
         //     Rewrite CheckPageOpened to be a no-op: the mock is always usable.
         //
         //  4. GetField / GetAction / GetDataItem / GetPart / GetBuiltInAction / FindBuiltInAction
-        //     pass the raw ITest* result through TestClientProxy<T>.Proxy() which tries to
-        //     load Microsoft.Dynamics.Nav.Client.TestPageClient — not present in the runner.
+        //     pass the raw ITest* result through TestClientProxy<T>.Proxy(), which wraps it in
+        //     the TestPageClient's dispatcher — and that needs a UI session ("The
+        //     UISessionManager was expected to be initialized"), which the runner has not set
+        //     up. It is NOT that the assembly is missing: TestPageClient.dll ships in every
+        //     artifact directory and Assembly.Load-s fine here (#3799; steps 3 and 4 below
+        //     state the same dispatcher reason, and #3185 is the call site this missed).
         //     Remove the Proxy call from each method; the raw mock interface value works fine.
 
         var navTestPageType = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.NavTestPage")

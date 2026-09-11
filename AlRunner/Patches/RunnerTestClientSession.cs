@@ -6,9 +6,16 @@
 //   AL [ModalPageHandler] receives:
 //       new NavTestPage(..., TestClientProxy<ITestPage>.Proxy(
 //           testClientSession.GetPage(runRequest.Data.FormHandle)))
-//   Real BC gets that session by Assembly.Load-ing the TestPageClient, which does not exist
-//   in the runner — so testClientSession stayed null and the delegate NRE'd the moment the
-//   dispatch reached it.
+//   Real BC gets that session from NavTestExecution.CreateTestClientSession, which
+//   Assembly.Load-s Microsoft.Dynamics.Nav.Client.TestPageClient. That assembly SHIPS in every
+//   artifact directory and the load SUCCEEDS here — measured on 27.0, 27.3, 27.5, 28.0-28.4,
+//   with TestPageClientSession.Create resolving at the 6-arg signature BC invokes (#3799).
+//   The reason we supply our own ITestClientSession is NOT absence: BC's proxies resolve a
+//   field only by NAME through the control tree (TestPageProxy.GetField searches
+//   form.ContainedControls and returns null when no control matches; TestFieldProxy holds a
+//   LogicalControl, never a record), and for a PRECOMPILED page the runner synthesizes no
+//   control tree — DependencyPageMetadataXml omits it deliberately. So MS's proxy builds page
+//   chrome and answers null for every field there. See docs/testpageclient-reuse.md.
 //
 // WHAT GetPage RETURNS
 //   The page BC already opened. The form is live and registered under the handle, so the
