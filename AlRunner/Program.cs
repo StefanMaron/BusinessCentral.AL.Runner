@@ -5849,13 +5849,19 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
         var nowRegistered = new HashSet<Type>();
         foreach (var rb in resolved)
         {
-            if (!rb.Verified || rb.ScopeType == null) continue;
-            // A scope reached for the first time in THIS request may still
-            // carry breakpoints from a request naming a different file that
-            // declares the same object — clear before the first add, once.
-            if (nowRegistered.Add(rb.ScopeType))
-                AlRunner.Infrastructure.AlDapSession.ClearBreakpoints(rb.ScopeType);
-            AlRunner.Infrastructure.AlDapSession.SetBreakpoint(rb.ScopeType, rb.StatementIndex);
+            if (!rb.Verified) continue;
+            // EVERY target of the line, not one of them (#3820): a line carrying two
+            // statements has two, and arming one means the breakpoint fires only if
+            // execution reaches the one that was picked.
+            foreach (var target in rb.Targets)
+            {
+                // A scope reached for the first time in THIS request may still
+                // carry breakpoints from a request naming a different file that
+                // declares the same object — clear before the first add, once.
+                if (nowRegistered.Add(target.ScopeType))
+                    AlRunner.Infrastructure.AlDapSession.ClearBreakpoints(target.ScopeType);
+                AlRunner.Infrastructure.AlDapSession.SetBreakpoint(target.ScopeType, target.StatementIndex);
+            }
         }
         registeredScopesBySource[fullSrcPath] = nowRegistered;
 

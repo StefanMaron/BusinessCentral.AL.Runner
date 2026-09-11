@@ -1,0 +1,23 @@
+{
+  "id": "d4e5f6a7-b8c9-4a0b-9d4e-5f6a7b8c9d04",
+  "name": "Runner Tests Fixture - DAP Multi Target",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Fixture for #3820: one source line carrying more than one executable statement.",
+  "description": "Used by AlRunner.Tests' DapMultiTargetLineTests. No application/platform floor - see .claude/rules/no-base-app-in-csharp-tests.md.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 60310,
+      "to": 60339
+    }
+  ],
+  "runtime": "14.0",
+  "features": []
+}
