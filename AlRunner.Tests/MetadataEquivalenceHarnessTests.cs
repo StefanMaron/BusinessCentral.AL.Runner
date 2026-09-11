@@ -251,14 +251,21 @@ public sealed class MetadataEquivalenceHarnessTests
                             && d.ObjectKey.StartsWith(objectPrefix, StringComparison.Ordinal))
                 .ToArray();
 
-            // #3807 FIXED this one, and the hazard above is exactly why the replacement is an
-            // assertion rather than a deletion. EnumSymbol now carries the DECLARED Extensible
-            // — nullable, so "declares false" and "declares nothing" stay apart — and the
-            // render states the attribute only when the symbol file did, which is what BC's
-            // own emitter does (12 of its 144 enum documents omit it). The manufactured-
-            // agreement mutation described above is what an unconditional render IS, so the
-            // claim worth holding now is that NO difference survives in either direction:
-            // agreement reached by deriving the value, not by writing BC's answer over ours.
+            // #3807 FIXED this one: EnumSymbol now carries the declared Extensible and the
+            // render states it, so the 31 enums that disagreed agree, in both directions.
+            //
+            // THIS ASSERTION IS WEAKER THAN THE ONE IT REPLACED, deliberately and with the
+            // limit written down rather than left to be discovered. It does NOT catch the
+            // manufactured-agreement mutation described above — making the render write
+            // Extensible unconditionally leaves this Empty and all 13 tests in this class
+            // green, measured. The reason is structural: both sides here are MetaEnum OBJECTS
+            // and MetaEnum.Extensible is a plain bool, so BC's ABSENT attribute reads back as
+            // false on BC's side too and a runner writing "0" agrees with it. The difference
+            // lives in the XML, which this harness does not compare.
+            //
+            // Where that property IS held: EnumExtensibleAndImplementationRenderTests asserts
+            // on HasAttribute against the rendered document, and goes RED on that mutation.
+            // See docs/metadata-equivalence.md#enum-extensible-conditional.
             Assert.Empty(On("MetaEnum.Extensible", "Enum "));
 
             // ALNamespace is stated by SymbolReference.json for all three kinds and carried by
