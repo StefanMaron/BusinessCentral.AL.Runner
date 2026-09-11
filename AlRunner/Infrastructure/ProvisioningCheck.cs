@@ -1135,22 +1135,35 @@ public static class ProvisioningCheck
                 // edge a bundle naming only it never learns it needs the platform set, downloads
                 // the test set alone, and the toolkit's source compile dies (EMIT-ZERO).
                 //
-                // Two guards, both matching DependencyResolver's. Skipped for the Microsoft
-                // platform apps themselves, whose manifests reference each other (Application ->
-                // Base Application -> Application ...), so a graph the resolver refuses to walk
-                // cannot make provisioning fetch a set resolution never asks for. And skipped
-                // for an R2R package (#3794): a floor exists to be compiled against, Tier-2
-                // serves an R2R payload without compiling, and demanding a 116 MB platform
-                // download — or refusing the run offline — for a package nothing will compile is
-                // a cost with no failure behind it. Its declared <Dependencies> are recorded
-                // either way, because those are runtime dependencies rather than symbols.
-                if (!AlRunner.DependencyResolver.IsMicrosoftPlatformApp(manifest.Name, manifest.Publisher))
-                {
-                    var floors = AlRunner.AppLoader.ImplicitRoots(manifest).ToList();
-                    if (floors.Count > 0 && !IsR2RQuietly(file))
-                        foreach (var floor in floors)
-                            Record(floor);
-                }
+                // Two guards, both matching DependencyResolver.Visit's — and they must stay
+                // matched in BOTH directions: an edge the resolver walks but this scan withholds
+                // tells provisioning a bundle needs no System.app for a closure that does pull
+                // one in, which under-fetches and reproduces #3719's unattributable EMIT-ZERO.
+                //
+                // #3875 narrowed the platform-app guard on both sides. A Microsoft platform app's
+                // PLATFORM floor is now walked and recorded: System Application declares zero
+                // <Dependency> entries and compiles against System.app alone, so withholding it
+                // cost that app every symbol. Only the APPLICATION floor stays unrecorded — no
+                // shipped build declares one (measured 27.3-28.4), and Microsoft/Application
+                // transitively names Base Application, so it would demand a set resolution never
+                // walks. That is where the cycle #3719's comment named actually lives.
+                //
+                // The R2R guard (#3794) is unchanged and independent: a floor exists to be
+                // compiled against, Tier-2 serves an R2R payload without compiling, and demanding
+                // a 116 MB platform download — or refusing the run offline — for a package nothing
+                // will compile is a cost with no failure behind it. In practice it is what
+                // exempts the shipped System Application / Business Foundation / Base Application
+                // packages here, all three of which are R2R. Their declared <Dependencies> are
+                // recorded either way, because those are runtime dependencies rather than symbols.
+                var isPlatformApp =
+                    AlRunner.DependencyResolver.IsMicrosoftPlatformApp(manifest.Name, manifest.Publisher);
+                var floors = AlRunner.AppLoader.ImplicitRoots(manifest)
+                    .Where(f => !isPlatformApp
+                                || string.Equals(f.Name, "System", StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (floors.Count > 0 && !IsR2RQuietly(file))
+                    foreach (var floor in floors)
+                        Record(floor);
                 edges[key] = deps;
                 edgeRequirements[key] = reqs;
                 recordedVersion[key] = manifest.Version;

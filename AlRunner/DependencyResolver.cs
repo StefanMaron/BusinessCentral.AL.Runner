@@ -201,13 +201,28 @@ public sealed class DependencyResolver
         // Microsoft's test-toolkit packages declare NOTHING else (Library Assert: Platform=
         // "28.0.0.0", empty <Dependencies />). Without this, a consumer whose app.json has no
         // `platform` of its own resolved a closure with no System.app, and Library Assert was
-        // source-compiled without the platform symbols: EMIT-ZERO. Not followed for the Microsoft
-        // platform apps themselves, whose manifests reference each other (Application → Base
-        // Application → Application …) and would cycle — AppLoader.ImplicitRoots' trap.
+        // source-compiled without the platform symbols: EMIT-ZERO.
+        //
+        // #3875: a Microsoft PLATFORM app's Platform floor is followed too; only its Application
+        // floor is not. #3719 exempted platform apps from both, on the premise that their floors
+        // cycle (Application → Base Application → Application …). Measured across six artifact
+        // builds, 27.3 through 28.4, that premise is false for the floor that matters: no
+        // Microsoft platform app declares Application= at all, every one declares Platform=, and
+        // System.app declares neither a floor nor a dependency, so following it terminates in one
+        // step. The cycle lives in the <Dependencies> array — which Visit's own `state` detector
+        // already handles — not in the floors. Cost of the blanket exemption: System Application
+        // declares ZERO <Dependency> entries, so its Tier-3 source compile ran with specsLen=0,
+        // and Business Foundation's with specsLen=1, silently emitting 55 of BC's 70 documents.
+        // docs/dependency-metadata-from-bc.md#platform-floor has the per-app measurement.
+        //
         // Optional, like the consumer-side roots: a missing System.app skips, as above.
-        if (!IsMicrosoftPlatformApp(found.Manifest.Name, found.Manifest.Publisher))
-            foreach (var floor in AppLoader.ImplicitRoots(found.Manifest))
-                Visit(floor, state, output, stack, floorOwner: found);
+        foreach (var floor in AppLoader.ImplicitRoots(found.Manifest))
+        {
+            if (IsMicrosoftPlatformApp(found.Manifest.Name, found.Manifest.Publisher)
+                && !string.Equals(floor.Name, "System", StringComparison.OrdinalIgnoreCase))
+                continue;
+            Visit(floor, state, output, stack, floorOwner: found);
+        }
         stack.Pop();
         state[id] = 2;
         output.Add((found.Manifest, found.Path));

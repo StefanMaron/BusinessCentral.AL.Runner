@@ -120,15 +120,17 @@ public sealed class ManifestDependencyEdgeScanTests : IDisposable
     }
 
     /// <summary>
-    /// A Microsoft PLATFORM app's own floor is not recorded, matching
-    /// DependencyResolver.Visit's guard: their manifests reference each other
-    /// (Application → Base Application → Application …), and an edge the resolver refuses to
-    /// walk would make provisioning fetch a set resolution never asks for. Both directions
-    /// here — a self-pointing floor (System declaring Platform) and a cross-pointing one
-    /// (Base Application declaring Platform, i.e. → System).
+    /// #3875: a Microsoft platform app's PLATFORM floor IS recorded, because
+    /// DependencyResolver.Visit now walks it — a scan that withheld the edge would tell
+    /// provisioning a bundle needs no System.app for a closure resolution does pull it into,
+    /// which is the direction that under-fetches rather than over-fetches. The two guards
+    /// stay matched; what changed is what they guard.
+    ///
+    /// <para>Both directions here: a self-pointing floor (System declaring Platform, which
+    /// must not become a self-edge) and a cross-pointing one (Base Application → System).</para>
     /// </summary>
     [Fact]
-    public void ScanDependencyEdges_PlatformAppsOwnFloor_IsNotRecorded()
+    public void ScanDependencyEdges_PlatformAppsPlatformFloor_IsRecorded()
     {
         var dir = NewDir("floor-edge-platform");
         WriteAppWithPlatform(dir, "System", "Microsoft", "28.0.54265.0", platform: "28.0.54265.0");
@@ -136,8 +138,30 @@ public sealed class ManifestDependencyEdgeScanTests : IDisposable
 
         var edges = ProvisioningCheck.ScanDependencyEdges(new[] { dir }).Edges;
 
-        Assert.Empty(edges["System"]);
-        Assert.Empty(edges["Base Application"]);
+        Assert.Equal(new[] { "System" }, edges["Base Application"]);
+        // System's own Platform floor points at System: recorded, and harmless — the resolver
+        // marks System done before the floor is visited, so the self-edge terminates there.
+        Assert.Equal(new[] { "System" }, edges["System"]);
+    }
+
+    /// <summary>
+    /// The other half of #3875's narrowing, and the one that keeps the cycle closed: a
+    /// platform app's APPLICATION floor is still not recorded. No shipped build declares one
+    /// (measured across six artifact builds, 27.3-28.4), and Microsoft/Application
+    /// transitively names Base Application, so recording it would make provisioning demand a
+    /// set resolution never walks.
+    /// </summary>
+    [Fact]
+    public void ScanDependencyEdges_PlatformAppsApplicationFloor_IsNotRecorded()
+    {
+        var dir = NewDir("floor-edge-platform-application");
+        WriteAppWithFloors(dir, "Base Application", "Microsoft", "28.1.49838.54169",
+            platform: "28.0.0.0", application: "28.1.0.0");
+
+        var edges = ProvisioningCheck.ScanDependencyEdges(new[] { dir }).Edges;
+
+        Assert.DoesNotContain("Application", edges["Base Application"]);
+        Assert.Equal(new[] { "System" }, edges["Base Application"]);
     }
 
     /// <summary>
