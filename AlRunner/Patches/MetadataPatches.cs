@@ -333,6 +333,36 @@ public static partial class BcRuntime
     /// SQL connection. We manufacture a skeleton via <c>GetUninitializedObject</c> and write it
     /// into the field directly.
     /// </summary>
+    /// <summary>
+    /// Assign a fresh <c>new object()</c> to every null <c>readonly</c> field of exactly type
+    /// <see cref="object"/> declared on <paramref name="instance"/>'s type and its bases up to
+    /// and including <paramref name="stopAfter"/>. Returns the field names that were seeded.
+    /// </summary>
+    /// <remarks>
+    /// Enumerated rather than named: a name list silently stops covering a field BC adds, and the
+    /// symptom (<c>ArgumentNullException</c> out of <c>Monitor.ReliableEnter</c>) does not name the
+    /// skeleton. The filter is what keeps it faithful — a <c>readonly</c> field of exactly
+    /// <c>object</c> carries no value a caller can read, so the only thing it can be is a lock
+    /// token, and BC's ctor gives each one its own <c>new object()</c>.
+    /// </remarks>
+    internal static List<string> SeedNullReadonlyLockObjects(object instance, Type stopAfter)
+    {
+        var seeded = new List<string>();
+        for (var t = instance.GetType(); t != null; t = t.BaseType)
+        {
+            foreach (var f in t.GetFields(BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (f.DeclaringType != t) continue;
+                if (f.FieldType != typeof(object) || !f.IsInitOnly) continue;
+                if (f.GetValue(instance) != null) continue;
+                FieldPoke.SetInstance(f, instance, new object());
+                seeded.Add(t.Name + "." + f.Name);
+            }
+            if (t == stopAfter) break;
+        }
+        return seeded;
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     public static void InjectSkeletonSystemTenant(Assembly navNcl)
     {
@@ -485,6 +515,53 @@ public static partial class BcRuntime
         }
         else
             Console.Error.WriteLine("[BcRuntime] InjectSkeletonSystemTenant: NavTenant.disposingGate field NOT FOUND — NavSession.Open() will still NRE");
+
+        // 3¾. Seed NavTenant's plain `readonly object` LOCK fields — the same GetUninitializedObject
+        //      gap as disposingGate above, in the shape BC uses five more times on this one type.
+        //      A null lock target does not NRE: `lock (null)` reaches Monitor.ReliableEnter and
+        //      raises ArgumentNullException("Value cannot be null."), whose stack names
+        //      System.Threading.Monitor rather than anything BC, so it reads as a threading fault
+        //      rather than as unconstructed skeleton state (#1883).
+        //      Measured on 28.1: NavDataTransfer.CheckIsOpen -> NavTenant.IsIntelligentCloudReplicationEnabled
+        //      locks isIntelligentCloudReplicationEnabledLockObj, so every AL DataTransfer call
+        //      after SetTables raised that ArgumentNullException instead of BC's own
+        //      "only valid during upgrade and install" AL error — and being a CLR exception rather
+        //      than an AL one, AL `asserterror` observed the wrong message and a [TryFunction]
+        //      did not catch it at all.
+        //      A fresh `new object()` is what BC's own ctor assigns to each of them, and a
+        //      `readonly object` field is a lock token by construction — nothing can read a value
+        //      out of it — so BC's real body then computes the answer itself (here:
+        //      !IsDatabaseInitialized => false, BC's own verdict for a tenant with no database).
+        var seededLocks = SeedNullReadonlyLockObjects(_skeletonSystemTenant!, navTenantType);
+        if (seededLocks.Count > 0)
+            Console.Error.WriteLine(
+                "[BcRuntime] InjectSkeletonSystemTenant: seeded " + seededLocks.Count
+                + " null readonly lock object(s) on the skeleton tenant: " + string.Join(", ", seededLocks));
+
+        // 3⅞. Seed NavTenant.isIntelligentCloudReplicationEnabled = false — the answer BC's own
+        //      getter computes for a tenant whose database Lazy was never materialised, taken
+        //      one line earlier so the lazy path is not entered at all.
+        //
+        //      BC: `if (cached.HasValue) return cached.Value;` then, under the lock,
+        //      `if (!IsDatabaseInitialized || …) return false;` and only otherwise does it open a
+        //      SQL connection. IsDatabaseInitialized reads `database.IsValueCreated`, and the
+        //      skeleton's `database` field is null (asserted in SkeletonTenantLockObjectsTests),
+        //      so BC NREs on the way to a branch that would have answered false. Pre-seeding the
+        //      cache with that same false is observably equivalent and reaches no database —
+        //      the runner has no Intelligent Cloud replication to report.
+        //
+        //      Without it every AL `DataTransfer` call after SetTables raised a CLR exception out
+        //      of NavTenant instead of BC's own "only valid during upgrade and install" AL error,
+        //      which AL `asserterror` could not observe faithfully (#1883).
+        var icrField = navTenantType.GetField("isIntelligentCloudReplicationEnabled",
+            BindingFlags.NonPublic | BindingFlags.Instance);
+        if (icrField != null)
+            FieldPoke.SetInstance(icrField, _skeletonSystemTenant!, (bool?)false);
+        else
+            Console.Error.WriteLine(
+                "[BcRuntime] InjectSkeletonSystemTenant: NavTenant.isIntelligentCloudReplicationEnabled "
+                + "NOT FOUND — DataTransfer outside upgrade/install will still fail inside NavTenant");
+
         var treeBackingField = navTenantType.GetField("<Tree>k__BackingField",
             BindingFlags.NonPublic | BindingFlags.Instance);
         if (treeBackingField != null && _skeletonRootScope != null)
