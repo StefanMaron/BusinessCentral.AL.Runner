@@ -42,7 +42,7 @@ the entire app, not a partial result. Measured per app:
 
 | app | `.al` files | outcome | documents |
 |---|---|---|---|
-| Business Foundation | 96 | clean, 6.0–6.2 s | **55** (11 tables, 16 codeunits, 13 permission sets, 9 pages, 5 tableextensions, 1 enum) |
+| Business Foundation | 96 | clean, 5.8–6.2 s | **70** (was 55 before #3875 — see “The platform floor”) |
 | System Application | 1,319 | clean since #3745, 10.9–13.1 s | **1,218** (138 tables, 533 codeunits, 224 pages, 164 permission sets, 142 enums, 7 queries, 5 runtime deltas, 4 xmlports, 1 report) |
 | Base Application | 8,025 | not attempted — see below | — |
 
@@ -99,6 +99,59 @@ needs a `PublicKeyToken=null` copy of `Microsoft.AspNetCore.StaticFiles` that no
 ships, and without it the emitter produces **zero objects**.
 `tests/expectations/metadata-equivalence/apps.json` records the same exclusion for the same
 reason, and attributes it to this issue.
+
+## The platform floor
+
+Both apps here compile against `System.app` — BC's platform symbols — and neither says so in a
+way the resolver used to read. That made the reference silently absent, and #3875 is the fix.
+
+**What the manifests actually declare.** Parsed from every platform package's
+`NavxManifest.xml`, across six artifact builds from 27.3 to 28.4 (identical in all six):
+
+| package | `Platform=` | `Application=` | `<Dependency>` entries |
+|---|---|---|---|
+| System (`System.app`) | — | — | **0** |
+| System Application | `<major>.0.0.0` | — | **0** |
+| Business Foundation | `<major>.0.0.0` | — | 1 (System Application) |
+| Base Application | `<major>.0.0.0` | — | 2 |
+| Application | `<major>.0.0.0` | — | 3 |
+
+So **System Application names no dependency at all**, and its only statement of what it needs is
+the `Platform` attribute. `DependencyResolver.Visit` turns that attribute into a synthetic
+`Microsoft/System` root (`AppLoader.ImplicitRoots`) — but until #3875 it skipped that step for
+the Microsoft platform apps themselves, on the premise that their floors cycle
+(`Application → Base Application → Application …`).
+
+**That premise does not hold for the floor that matters.** No platform app declares
+`Application=` at all; `System.app` declares neither a floor nor a dependency, so following a
+`Platform` floor terminates in one step. The cycle the premise describes lives in the
+`<Dependencies>` array, which `Visit`'s own colour-marker detector already handles. The
+exemption therefore prevented no cycle and cost both apps their platform symbols:
+
+| app | before #3875 | after | BC's own emitter |
+|---|---|---|---|
+| System Application | `specsLen=0` → 2,587 declaration diagnostics → `METADATA-EMIT-ZERO`, run aborts | **1,218** documents | 1,218 |
+| Business Foundation | `specsLen=1` → **55** documents, **reported as success** | **70** documents | 70 |
+
+Business Foundation is the one worth remembering. It survived because 55 of its 70 objects need
+nothing from the platform; the other 15 — the ones referencing `Field`, `Table Metadata` and the
+other platform tables — silently fell back to the SymbolReference hand-derivation, under a green
+run with a cache entry written. At default verbosity that run printed **zero** `AL0185` lines.
+
+So #3875 follows a platform app's `Platform` floor and still refuses its `Application` floor,
+which is the half that could cycle if a future build ever declared one.
+`ProvisioningCheck.ScanDependencyEdges` carries the matching guard and is narrowed identically —
+an edge resolution walks but provisioning does not would under-fetch `System.app`, which is how
+#3719's unattributable `EMIT-ZERO` arrives.
+
+**Measuring this needs a bundle that declares no floor of its own.** A bundle whose `app.json`
+carries `application` or `platform` already injects `Microsoft/System` into the closure, so the
+shortfall does not reproduce and Business Foundation yields 70 either way. The 55 appears only
+when the app's own floor is the sole route to the platform.
+
+**What is still silent.** #3875 removed one *cause* of a partial compile; it did not make a
+partial compile loud. `DependencyMetadataProducer` sees how many documents appeared and never
+how many BC should have produced, so it has no local comparison to make — tracked by #2247.
 
 ## Availability decides the route; a failed compile is loud
 

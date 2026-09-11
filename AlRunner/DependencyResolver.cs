@@ -213,7 +213,7 @@ public sealed class DependencyResolver
         // already handles — not in the floors. Cost of the blanket exemption: System Application
         // declares ZERO <Dependency> entries, so its Tier-3 source compile ran with specsLen=0,
         // and Business Foundation's with specsLen=1, silently emitting 55 of BC's 70 documents.
-        // docs/dependency-metadata-from-bc.md#platform-floor has the per-app measurement.
+        // docs/dependency-metadata-from-bc.md#the-platform-floor has the per-app measurement.
         //
         // Optional, like the consumer-side roots: a missing System.app skips, as above.
         foreach (var floor in AppLoader.ImplicitRoots(found.Manifest))
