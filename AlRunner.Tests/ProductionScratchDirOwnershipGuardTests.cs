@@ -28,9 +28,9 @@ namespace AlRunner.Tests;
 /// site naming a temp location has been classified and that the classification is current. It
 /// cannot prove a site classified <see cref="Why.Owned"/> really reaches
 /// <c>ScratchDirs.Create</c> at runtime — <see cref="EveryOwnedSite_NamesAnOwningEntryPoint"/>
-/// narrows that to "the owning call appears within a few lines of the expression", which is a
-/// textual check too. The runtime behaviour of the ownership machinery itself is
-/// <c>ScratchDirsTests</c>' subject.</para>
+/// narrows that to "the file names an owning entry point at all", which is a textual check too.
+/// The runtime behaviour of the ownership machinery itself is <c>ScratchDirsTests</c>'
+/// subject.</para>
 /// </summary>
 public sealed class ProductionScratchDirOwnershipGuardTests
 {
@@ -462,6 +462,42 @@ public sealed class ProductionScratchDirOwnershipGuardTests
         // Negative: a name that merely resembles a scanned one must not match, or the guard
         // would report offenders nobody can act on.
         Assert.False(MatchesInLine("var p = MyPath.GetTempPathish();", "Path.GetTempFileName"));
+    }
+
+    /// <summary>
+    /// The scanned set is exactly these three, and no entry is a prefix of another.
+    ///
+    /// <para>This exists because a mutation survived without it (#3850). Broadening
+    /// <c>"Path.GetTempPath()"</c> to <c>"Path.GetTemp"</c> left every other fact in this class
+    /// green: it is a strict prefix, so on today's source it matches the same occurrences, and
+    /// <see cref="TheScanItself_ActuallyMatches_SoAnEmptyOffenderListMeansSomething"/> asserts on
+    /// the matched <c>Expression</c> — which is the mutated constant itself, so the assertion
+    /// compares the mutation against itself and cannot fail. A guard whose own subject is read
+    /// out of the thing being mutated is measuring nothing, and that is the same self-reference
+    /// class as the neighbour-credited false green #3856 measured.</para>
+    ///
+    /// <para>The harm is concrete rather than stylistic: under that mutation
+    /// <c>Path.GetTempFileName</c> is matched by two entries at once, so every occurrence of it
+    /// counts twice and the exact counts this allowlist depends on silently inflate. Pinning the
+    /// literals is what makes the widening visible; the overlap check is what makes a FUTURE
+    /// widening safe.</para>
+    /// </summary>
+    [Fact]
+    public void TheScannedSet_IsExactlyTheThreeTempApis_AndNoneIsAPrefixOfAnother()
+    {
+        Assert.Equal(
+            new[] { "Directory.CreateTempSubdirectory", "Path.GetTempFileName", "Path.GetTempPath()" },
+            Expressions.OrderBy(e => e, StringComparer.Ordinal).ToArray());
+
+        foreach (var a in Expressions)
+            foreach (var b in Expressions)
+            {
+                if (ReferenceEquals(a, b)) continue;
+                Assert.False(a.StartsWith(b, StringComparison.Ordinal),
+                    $"'{b}' is a prefix of '{a}', so every occurrence of '{a}' is counted twice "
+                    + "and every exact count in the allowlist is inflated by a scan that looks "
+                    + "correct. Scan for whole expressions that cannot nest.");
+            }
     }
 
     private static bool MatchesInLine(string raw, string expression)
