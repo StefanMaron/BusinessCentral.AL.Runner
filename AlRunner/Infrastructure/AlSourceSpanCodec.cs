@@ -70,4 +70,22 @@ public static class AlSourceSpanCodec
     /// report or an editor gutter needs, as opposed to RelativeLine's stack-trace format.
     /// </summary>
     public static int AbsoluteFromLine(long statementSpan) => Decode(statementSpan).FromLine + 1;
+
+    /// <summary>
+    /// The 1-based column a statement span starts at — the other half of
+    /// <see cref="AbsoluteFromLine"/>, and what tells two statements on ONE line apart. DAP
+    /// counts columns from 1 by default, which is the convention this matches; BC's packed
+    /// value is 0-based like its line.
+    /// </summary>
+    public static int AbsoluteFromColumn(long statementSpan) => Decode(statementSpan).FromColumn + 1;
+
+    /// <summary>The 1-based line a statement span ENDS on — equal to the from-line for a
+    /// statement written on one line, greater for one that wraps.</summary>
+    public static int AbsoluteToLine(long statementSpan) => Decode(statementSpan).ToLine + 1;
+
+    /// <summary>The 1-based column a statement span ends at. With the three above, this is
+    /// what decides whether a requested column falls INSIDE a statement rather than at its
+    /// start — the difference between an inline breakpoint a client placed precisely and one
+    /// it placed somewhere in the middle of the statement it meant.</summary>
+    public static int AbsoluteToColumn(long statementSpan) => Decode(statementSpan).ToColumn + 1;
 }

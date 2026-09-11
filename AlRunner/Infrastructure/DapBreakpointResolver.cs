@@ -16,10 +16,39 @@ using System.Reflection;
 
 namespace AlRunner.Infrastructure;
 
-public readonly record struct DapBreakpointRequest(string SourcePath, int Line);
+/// <summary>
+/// One requested breakpoint. <paramref name="Column"/> is DAP's optional
+/// <c>SourceBreakpoint.column</c> — an INLINE breakpoint, which is how a client says "this
+/// statement on the line, not the others". Null means the ordinary gutter breakpoint, which
+/// means the whole line (#3879 review).
+/// </summary>
+public readonly record struct DapBreakpointRequest(string SourcePath, int Line, int? Column = null);
 
+/// <summary>One armable statement: the emitted AL scope class and the statement's index
+/// within it, which is what <see cref="AlDapSession.SetBreakpoint"/> registers, plus the
+/// 1-based column it starts at — the only thing that tells two targets on one line apart.</summary>
+public readonly record struct DapBreakpointTarget(Type ScopeType, int StatementIndex, int Column);
+
+/// <summary>Where one instrumented statement sits in the FILE: 1-based, both ends. The end is
+/// what makes "does this column fall inside the statement" answerable, as opposed to "does it
+/// start it".</summary>
+internal readonly record struct StatementSpan(int Line, int Column, int EndLine, int EndColumn);
+
+/// <summary>
+/// The answer to one <c>setBreakpoints</c> line. <see cref="Targets"/> holds EVERY statement
+/// the line resolves to, because a source line can carry more than one (#3820) — two
+/// statements on one physical line, two one-line procedures, or statements of two objects a
+/// file declares. Arming one of them makes the breakpoint fire only if execution happens to
+/// reach the one that was picked, and which one that was is arbitrary: the instrumented
+/// statement indexes come out of a HashSet, and type enumeration order is not a semantic
+/// ordering.
+///
+/// The DAP response still carries exactly ONE breakpoint per request, as the protocol
+/// requires — the fan-out is in what gets registered, not in what the client is told.
+/// </summary>
 public readonly record struct DapResolvedBreakpoint(
-    string SourcePath, int RequestedLine, bool Verified, int ActualLine, Type? ScopeType, int StatementIndex);
+    string SourcePath, int RequestedLine, bool Verified, int ActualLine,
+    IReadOnlyList<DapBreakpointTarget> Targets);
 
 public static class DapBreakpointResolver
 {
@@ -81,7 +110,8 @@ public static class DapBreakpointResolver
 
         // (label,id) -> every loaded scope type for that object, each with its own
         // (statement index -> absolute AL line) map.
-        var byObject = new Dictionary<(string, int), List<(Type Type, Dictionary<int, int> LineByStmt)>>();
+        var byObject = new Dictionary<(string, int),
+            List<(Type Type, Dictionary<int, StatementSpan> LineByStmt)>>();
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             Type[] types;
@@ -105,11 +135,17 @@ public static class DapBreakpointResolver
                 // than being shifted by a guess.
                 var lineOffset = sourceMap.LineOffset(label, id);
                 var instrumented = AlCoverageInstrumentedStatements.Find(t);
-                var lineByStmt = new Dictionary<int, int>();
+                var lineByStmt = new Dictionary<int, StatementSpan>();
                 foreach (var i in instrumented)
                 {
                     if (i < 0 || i >= spans.Length) continue; // defensive: BC shape drift
-                    lineByStmt[i] = AlSourceSpanCodec.AbsoluteFromLine(spans[i]) + lineOffset;
+                    // Columns need no offset: AlSourceLocationMap.LineOffset moves an object's
+                    // text DOWN the file, never across it. Both LINES do.
+                    lineByStmt[i] = new StatementSpan(
+                        AlSourceSpanCodec.AbsoluteFromLine(spans[i]) + lineOffset,
+                        AlSourceSpanCodec.AbsoluteFromColumn(spans[i]),
+                        AlSourceSpanCodec.AbsoluteToLine(spans[i]) + lineOffset,
+                        AlSourceSpanCodec.AbsoluteToColumn(spans[i]));
                 }
                 if (!byObject.TryGetValue((label, id), out var list))
                     byObject[(label, id)] = list = new();
@@ -121,41 +157,70 @@ public static class DapBreakpointResolver
         foreach (var req in requests)
         {
             var full = Path.GetFullPath(req.SourcePath);
-            (Type Type, int Stmt, int Line)? match = null;
+            var targets = new List<DapBreakpointTarget>();
             if (byPath.TryGetValue(full, out var objKeys))
             {
-                // Every object the file declares, not just one.
+                // Every object the file declares, and within each, EVERY scope and EVERY
+                // instrumented statement whose absolute line is the requested one.
                 //
-                // The first exact match wins, and that is a real limitation rather than a
-                // proof of uniqueness (#3786 review). AL permits two statements on one
-                // physical line — CollectStatementTable's doc comment says so explicitly, and
-                // keeps them apart by id and column precisely because a line cannot — so a
-                // requested line can have more than one executable target, in one scope or
-                // across several. Binding one of them means a breakpoint on such a line stops
-                // only if execution reaches the target that was picked. #3820 tracks
-                // registering every match behind the single DAP breakpoint the protocol
-                // returns; it needs DapResolvedBreakpoint to carry a set, so it is not a
-                // widening of this change.
+                // This used to stop at the first exact match, which was a real limitation
+                // rather than a proof of uniqueness (#3786 review, filed as #3820). AL permits
+                // two statements on one physical line — CollectStatementTable's doc comment
+                // says so explicitly, and keeps them apart by id and column precisely because
+                // a line cannot — so a requested line can have more than one executable
+                // target, in one scope or across several.
+                //
+                // Enumeration order is deliberately not relied on for anything: the set is
+                // collected whole, and registering all of it is what makes the arbitrary order
+                // stop mattering.
+                var onLine = new List<(DapBreakpointTarget Target, StatementSpan Span)>();
                 foreach (var objKey in objKeys)
                 {
                     if (!byObject.TryGetValue(objKey, out var scopes)) continue;
                     foreach (var (type, lineByStmt) in scopes)
-                    {
-                        foreach (var kv in lineByStmt)
-                        {
-                            if (kv.Value != req.Line) continue;
-                            match = (type, kv.Key, kv.Value);
-                            break;
-                        }
-                        if (match != null) break;
-                    }
-                    if (match != null) break;
+                        foreach (var entry in lineByStmt)
+                            if (entry.Value.Line == req.Line)
+                                onLine.Add((
+                                    new DapBreakpointTarget(type, entry.Key, entry.Value.Column),
+                                    entry.Value));
                 }
+
+                // An INLINE breakpoint names a column, which is DAP's own way of saying "this
+                // statement, not the others on the line" — VS Code's inline breakpoints exist
+                // for exactly the several-statements-on-one-line case. Arming the whole line
+                // for one is the gutter behaviour applied to a request that said otherwise
+                // (#3879 review).
+                //
+                // Three steps, narrowest first:
+                //   1. a statement STARTING at the column — the client placed it precisely;
+                //   2. otherwise a statement CONTAINING it — the client pointed inside the
+                //      statement it meant, which is what a mid-token click produces;
+                //   3. otherwise every statement on the line, because a column in the
+                //      indentation names no statement at all and a breakpoint that silently
+                //      never fires is worse than the line the user clicked on.
+                //
+                // Step 3 is a relocation, so it is REPORTED: the response carries the column
+                // actually bound (see the handler), which is what keeps it from being the
+                // silent widening this cascade exists to avoid.
+                if (req.Column is int wantColumn && onLine.Count > 0)
+                {
+                    var starting = onLine.Where(t => t.Span.Column == wantColumn).ToList();
+                    var containing = starting.Count > 0 ? starting : onLine
+                        .Where(t => wantColumn >= t.Span.Column
+                                    && (t.Span.EndLine > t.Span.Line || wantColumn <= t.Span.EndColumn))
+                        .ToList();
+                    if (containing.Count > 0) onLine = containing;
+                }
+
+                targets.AddRange(onLine.Select(t => t.Target));
             }
 
-            result.Add(match is { } m
-                ? new DapResolvedBreakpoint(req.SourcePath, req.Line, true, m.Line, m.Type, m.Stmt)
-                : new DapResolvedBreakpoint(req.SourcePath, req.Line, false, 0, null, -1));
+            // ActualLine is the requested line whenever anything matched, because the match is
+            // an EXACT line comparison — there is no nearest-line heuristic here (see the file
+            // header), so every target in the set shares it.
+            result.Add(targets.Count > 0
+                ? new DapResolvedBreakpoint(req.SourcePath, req.Line, true, req.Line, targets)
+                : new DapResolvedBreakpoint(req.SourcePath, req.Line, false, 0, Array.Empty<DapBreakpointTarget>()));
         }
         return result;
     }

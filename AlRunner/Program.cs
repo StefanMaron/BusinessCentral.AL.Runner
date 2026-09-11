@@ -5693,12 +5693,25 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     var sourceMapResolved = false;
     string? compileFailure = null;
 
+    // DAP's `initialize` lets the client say whether it counts columns from 1 or from 0
+    // (`columnsStartAt1`, default TRUE when absent). Everything below this line works in
+    // 1-based columns, which is what AlSourceSpanCodec.AbsoluteFromColumn produces, so a
+    // 0-based client's numbers are converted on the way in and back on the way out (#3879
+    // Copilot review). Without that, such a client's inline breakpoint lands one column left
+    // of the statement it meant.
+    //
+    // `linesStartAt1` has the identical problem and is NOT handled here: lines are reported
+    // by `stopped`, `stackTrace` and this response, so honouring it is a change across the
+    // whole surface rather than the one field this pull request adds (#3881).
+    var columnsStartAt1 = true;
+
     // setBreakpoints requests that arrived before the map could be built, waiting to be
     // answered. Answering one needs the compile, and BLOCKING this single-threaded loop for
     // the compile makes the session deaf to `disconnect` and turns a compile that never
     // finishes into an adapter that never exits (#3846). DAP matches a response to its
     // request by `request_seq`, so answering later is within the protocol.
-    var deferredBreakpointRequests = new List<(int Seq, string Command, string SrcPath, List<int> Lines)>();
+    var deferredBreakpointRequests =
+        new List<(int Seq, string Command, string SrcPath, List<(int Line, int? Column)> Lines)>();
 
     // A test seam, and the only way to prove the paragraph above: an organically slow bundle
     // makes a flaky test, so this holds map preparation open for a known interval while the
@@ -5817,14 +5830,16 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
     // The whole of what `setBreakpoints` does once the map question is settled, lifted out of
     // the switch so a DEFERRED request is answered by exactly the same code as an immediate
     // one — two copies of this would drift, and the deferred path is the one nobody watches.
-    void AnswerSetBreakpoints(int seq, string command, string srcPath, List<int> lines)
+    void AnswerSetBreakpoints(int seq, string command, string srcPath, List<(int Line, int? Column)> lines)
     {
         // #3821: a request arriving between `initialized` and `launch` is the specification's
         // own sequence, and answering it against an empty map made every breakpoint
         // unverified. An empty list needs no map (see the call site).
         var bpCompileErr = lines.Count > 0 ? EnsureSourceMap() : null;
 
-        var requests = lines.Select(l => new AlRunner.Infrastructure.DapBreakpointRequest(srcPath, l)).ToList();
+        var requests = lines
+            .Select(l => new AlRunner.Infrastructure.DapBreakpointRequest(srcPath, l.Line, l.Column))
+            .ToList();
         var resolved = AlRunner.Infrastructure.DapBreakpointResolver.Resolve(requests, sourceMap);
 
         // Why an unverified breakpoint is unverified. DAP's Breakpoint has a
@@ -5849,13 +5864,19 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
         var nowRegistered = new HashSet<Type>();
         foreach (var rb in resolved)
         {
-            if (!rb.Verified || rb.ScopeType == null) continue;
-            // A scope reached for the first time in THIS request may still
-            // carry breakpoints from a request naming a different file that
-            // declares the same object — clear before the first add, once.
-            if (nowRegistered.Add(rb.ScopeType))
-                AlRunner.Infrastructure.AlDapSession.ClearBreakpoints(rb.ScopeType);
-            AlRunner.Infrastructure.AlDapSession.SetBreakpoint(rb.ScopeType, rb.StatementIndex);
+            if (!rb.Verified) continue;
+            // EVERY target of the line, not one of them (#3820): a line carrying two
+            // statements has two, and arming one means the breakpoint fires only if
+            // execution reaches the one that was picked.
+            foreach (var target in rb.Targets)
+            {
+                // A scope reached for the first time in THIS request may still
+                // carry breakpoints from a request naming a different file that
+                // declares the same object — clear before the first add, once.
+                if (nowRegistered.Add(target.ScopeType))
+                    AlRunner.Infrastructure.AlDapSession.ClearBreakpoints(target.ScopeType);
+                AlRunner.Infrastructure.AlDapSession.SetBreakpoint(target.ScopeType, target.StatementIndex);
+            }
         }
         registeredScopesBySource[fullSrcPath] = nowRegistered;
 
@@ -5866,6 +5887,13 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                 id = idx,
                 verified = rb.Verified,
                 line = rb.Verified ? rb.ActualLine : rb.RequestedLine,
+                // The column actually bound — the leftmost of the armed targets. A client that
+                // asked for a column no statement starts at can see where the breakpoint went,
+                // which is what keeps the resolver's widest fallback from being a silent
+                // relocation (#3879 Copilot review). Back into the client's own base.
+                column = rb.Verified && rb.Targets.Count > 0
+                    ? rb.Targets.Min(t => t.Column) - (columnsStartAt1 ? 0 : 1)
+                    : (int?)null,
                 message = rb.Verified ? null : unverifiedReason,
             }),
         });
@@ -6027,6 +6055,10 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                 switch (command)
                 {
                     case "initialize":
+                        // Absent means true, per the specification.
+                        columnsStartAt1 = !(args != null
+                            && args.Value.TryGetProperty("columnsStartAt1", out var colBaseEl)
+                            && colBaseEl.ValueKind == System.Text.Json.JsonValueKind.False);
                         transport.WriteResponse(msg.Seq, command, true, new
                         {
                             supportsConfigurationDoneRequest = true,
@@ -6060,12 +6092,21 @@ int RunDapLoop(string bundleDir, int port, bool stdioMode, System.IO.Stream? std
                             transport.WriteResponse(msg.Seq, command, false, message: "setBreakpoints: missing source.path");
                             break;
                         }
-                        var lines = new List<int>();
+                        // (line, optional column). The column is DAP's inline breakpoint —
+                        // the client naming ONE statement on a line that carries several
+                        // (#3879 review). The legacy `lines` array has no column to carry.
+                        var lines = new List<(int Line, int? Column)>();
                         if (args.Value.TryGetProperty("breakpoints", out var bpsEl) && bpsEl.ValueKind == System.Text.Json.JsonValueKind.Array)
                             foreach (var bp in bpsEl.EnumerateArray())
-                                if (bp.TryGetProperty("line", out var lineEl)) lines.Add(lineEl.GetInt32());
+                                if (bp.TryGetProperty("line", out var lineEl))
+                                    lines.Add((lineEl.GetInt32(),
+                                        bp.TryGetProperty("column", out var colEl)
+                                            && colEl.ValueKind == System.Text.Json.JsonValueKind.Number
+                                            // To 1-based, which is what the resolver compares in.
+                                            ? colEl.GetInt32() + (columnsStartAt1 ? 0 : 1)
+                                            : null));
                         else if (args.Value.TryGetProperty("lines", out var legacyLinesEl) && legacyLinesEl.ValueKind == System.Text.Json.JsonValueKind.Array)
-                            foreach (var l in legacyLinesEl.EnumerateArray()) lines.Add(l.GetInt32());
+                            foreach (var l in legacyLinesEl.EnumerateArray()) lines.Add((l.GetInt32(), null));
 
                         // An EMPTY list resolves nothing — "remove every breakpoint in this
                         // source" needs no map — so it is answered now, whatever the compile

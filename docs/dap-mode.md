@@ -78,13 +78,32 @@ byte-for-byte, not just "the handshake succeeded".
 Session lifecycle is identical to the TCP transport from here on:
 
 1. `initialize` → capabilities, then an `initialized` event.
-2. `launch`/`attach` → compiles the bundle. The response does not return until
-   compilation finishes (success or failure), so a `setBreakpoints` request
-   right after has real statement indices to resolve against.
-3. `setBreakpoints` (per source file) → resolves each requested line to an
-   AL-compiler-instrumented statement via an exact absolute-line match — no
+2. `launch`/`attach` → waits for the compile. The response does not return until
+   compilation finishes (success or failure). **A `setBreakpoints` may also arrive
+   BEFORE `launch`** — that is the specification's own sequence, a client answering
+   the `initialized` event with its configuration — and it is answered against the
+   same compile, deferred rather than waited for so the loop stays able to read
+   `disconnect` (#3821, #3846).
+3. `setBreakpoints` (per source file) → resolves each requested line to the
+   AL-compiler-instrumented statements on it, via an exact absolute-line match — no
    "nearest line" heuristic. A line with no exact instrumented statement comes
-   back `verified: false` rather than silently relocated.
+   back `verified: false` rather than silently relocated, carrying a `message`
+   saying which reason applies: the bundle did not compile, or that line holds no
+   statement.
+
+   **Every statement on the line is armed, not one of them** (#3820). A line can
+   carry several — two statements separated by `;`, two one-line procedures, or
+   statements of two objects the file declares — so execution stops at each, in
+   the order it reaches them. The response still carries exactly one breakpoint
+   per request, as the protocol requires.
+
+   **`SourceBreakpoint.column` narrows that.** An inline breakpoint is DAP's way of
+   naming one statement on such a line, and it is honoured in three steps: a
+   statement *starting* at the column; failing that, the statement *containing* it
+   (a mid-token click); failing that, the whole line. The last is a relocation, so
+   the response reports the `column` actually bound. The client capability
+   `columnsStartAt1` is honoured for that field in both directions; its sibling
+   `linesStartAt1` is **not** honoured anywhere yet (#3881).
 4. `configurationDone` → AL execution begins.
 5. When a breakpointed statement's `StmtHit` fires, the AL execution thread
    blocks and a `stopped` event (`reason: "breakpoint"`) is sent.
