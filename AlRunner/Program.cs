@@ -1380,11 +1380,12 @@ string? variantSwapDir = null;
     if (resolution.Kind == AlRunner.Infrastructure.EngineVariants.ResolutionKind.SwapRequired)
     {
         variantSwapDir = resolution.SwapDir;
+        var variant = resolution.Variant!;
         // Issue #2239: engine-variant selection mechanics — a diagnostic, not the result.
         // The `[reexec]` line in TryShadowReexec says a hand-off is happening; this is the WHY.
         if (AlRunner.Log.Verbose)
             Console.Error.WriteLine(
-                $"[bc] selecting engine variant {resolution.Variant!.BuildVersion} for BC {selected} (this process is " +
+                $"[bc] selecting engine variant {variant.BuildVersion} for BC {selected} (this process is " +
                 $"currently running the {(runningBuild?.ToString() ?? "unknown")} variant) — re-execing.");
     }
 }
