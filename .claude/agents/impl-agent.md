@@ -321,6 +321,14 @@ do not merge.
 
 The coordinator watches CI and resumes you or dispatches a fresh agent if the PR goes red.
 
+**If you pushed to a PR you did not open, say so in your handback and check whether its
+auto-merge is armed** — `gh pr view <N> --json autoMergeRequest`. Arming **survives a push**, so
+a commit added to an armed PR merges on a verdict nobody gave it, against a review of an earlier
+head. Landing work on an existing PR is often right — a file that exists only on that branch
+cannot be edited from a second branch without conflicting the moment either merges (#3980) — but
+the coordinator has to re-verify the new head, and can only do that if it knows the head moved.
+Reporting the SHA you pushed is not enough on its own; name the PR and whether it was armed.
+
 Before you return, confirm all four and state them in your report:
 
 1. The branch is pushed (`git push` succeeded; `git status` shows nothing unpushed).
