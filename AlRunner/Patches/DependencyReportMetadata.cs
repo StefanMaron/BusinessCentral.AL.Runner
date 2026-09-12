@@ -287,21 +287,6 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// The three report-level properties SymbolReference.json states that this derivation was
-    /// leaving at BC's own design-object defaults (#3808) — <c>ALNamespace</c> (null) and both
-    /// inherent masks (<c>None</c>).
-    ///
-    /// <para>BC's <c>MetaReport(XmlElement, …)</c> reader takes <c>ALNAMESPACE</c> as
-    /// <c>InnerText</c> verbatim and both masks through
-    /// <c>Enum.Parse(typeof(PermissionMask), InnerText)</c>, so the masks are written as the
-    /// DECODED NUMBER rather than the AL letter spelling — "X" is not a PermissionMask member
-    /// and would throw where the value the symbol file states is perfectly readable.</para>
-    ///
-    /// <para>Deliberately NOT written here: the <c>&lt;RequestPage&gt;</c> subtree, whose
-    /// element BC deserializes into a whole MetaPageDefinition. That is the other half of
-    /// #3808 and stays open — see docs/metadata-equivalence.md#reports.</para>
-    /// </summary>
-    /// <summary>
     /// The default-layout pair BC's <c>DefaultLayoutInternal</c> reads (#2297), in the element
     /// shape BC's own emit writes for a source-compiled report: rendering syntax gives
     /// <c>DefaultLayoutName</c> + <c>DefaultRenderingLayoutType</c> (the Type of the layout that
@@ -325,6 +310,21 @@ public static partial class RecordPatches
             w.WriteElementString("DefaultLayout", report.LegacyDefaultLayout);
     }
 
+    /// <summary>
+    /// The three report-level properties SymbolReference.json states that this derivation was
+    /// leaving at BC's own design-object defaults (#3808) — <c>ALNamespace</c> (null) and both
+    /// inherent masks (<c>None</c>).
+    ///
+    /// <para>BC's <c>MetaReport(XmlElement, …)</c> reader takes <c>ALNAMESPACE</c> as
+    /// <c>InnerText</c> verbatim and both masks through
+    /// <c>Enum.Parse(typeof(PermissionMask), InnerText)</c>, so the masks are written as the
+    /// DECODED NUMBER rather than the AL letter spelling — "X" is not a PermissionMask member
+    /// and would throw where the value the symbol file states is perfectly readable.</para>
+    ///
+    /// <para>Deliberately NOT written here: the <c>&lt;RequestPage&gt;</c> subtree, whose
+    /// element BC deserializes into a whole MetaPageDefinition. That is the other half of
+    /// #3808 and stays open — see docs/metadata-equivalence.md#reports.</para>
+    /// </summary>
     private static void WriteDerivableReportProperties(XmlWriter w, BcAppSymbolCache.ReportSymbol report)
     {
         if (!string.IsNullOrEmpty(report.ALNamespace))

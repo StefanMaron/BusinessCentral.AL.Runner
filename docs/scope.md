@@ -156,7 +156,10 @@ handler chose — the value is never held aside. Data-item filters
 **Layout *selection* is in scope; layout *content* is not.** A report's
 `rendering { layout(Name) { Type; MimeType; LayoutFile; … } }` declarations are
 captured at compile time and published into the "Report Layout List" system
-virtual table (2000000234), which is where BC's own by-name resolution looks. So
+virtual table (2000000234), which is where BC's own by-name resolution looks. A
+report in a precompiled dependency (Base Application's 1306, say) is never
+compiled, so its layouts and its `DefaultRenderingLayout` / legacy `DefaultLayout`
+are read from the package's `SymbolReference.json` instead (#2297). So
 `ReportLayoutSelection.SetTempLayoutSelectedName('<LayoutName>')` resolves the
 named layout through BC's unmodified code path, and the resolved layout's
 `Type` drives the processor fork exactly as on a real tier (an undeclared name
