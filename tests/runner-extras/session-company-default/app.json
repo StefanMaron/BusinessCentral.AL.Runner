@@ -1,0 +1,18 @@
+{
+  "id": "8e2c4f61-3b7a-4d09-a5e8-1f6c9d2b7a34",
+  "name": "Runner Extras - Session Company Default",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #3400: the runner's session company is the literal \"My Company\", a runner invention no service tier can confirm. This suite pins the literal and that the Company row and Record.CurrentCompany() name the same company.",
+  "description": "Runner-mechanism claim. What the corpus pins about CompanyName() on a real service tier - non-empty, equal to Record.CurrentCompany(), resolvable in Company - is BC behaviour and stays upstream. This suite asserts only the runner's chosen literal, written by two separate seeds: the skeleton NavCompany in AlRunner/BcRuntime.cs and the Company (2000000006) row. GuiAllowed() = true is deliberately NOT asserted here: corpus codeunit 60173 GuiAllowed_InTestContext_ReturnsTrue pins it on real BC and runs through the runner on every leg. See docs/limitations.md.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 62220,
+      "to": 62229
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
