@@ -45,6 +45,17 @@ A pull request branched during a red window inherits a failure it did not cause,
 and that was invisible here. The line is a REPORT: it never changes the exit
 code, and a read that did not happen prints as `unavailable`, never as GREEN.
 
+On a failure it also names the failing corpus codeunits and matches each to the
+open runner PR that fixes it (#3922), so "is this red mine?" is one call rather
+than twenty minutes of reading PR titles:
+
+    --- failing corpus codeunits (#3922: is this red mine?) ---
+      Codeunit60976  x6  <- open runner PR #3985 fixes this
+
+Every failing codeunit matched means the red is inherited from the per-run
+corpus resolution; anything UNMATCHED may be this PR's own. Counted per codeunit
+because the inherited total moves as each pair lands. Also a REPORT.
+
 Exit codes
 ----------
     0  every required check passed ON THE CURRENT HEAD -- safe to report green
@@ -538,6 +549,164 @@ def print_corpus_pr_states(pr: str) -> None:
     """Print the corpus line(s). Returns nothing, raises nothing, gates nothing."""
     for line in corpus_state_lines(pr):
         print(line)
+
+
+# --------------------------------------------------------------------------
+# Is this red MINE? (#3922)
+#
+# The corpus is resolved per run, not pinned, so a corpus pull request that
+# merges before the runner pull request its tests need leaves every unrelated
+# PR in flight measuring those tests WITHOUT the fix. Measured four times: one
+# window held `main` red for 9h45m and blocked five PRs, and the failures are
+# indistinguishable from a real defect without counting per codeunit.
+#
+# The recurring cost is not the red -- it is the time each loop spends deciding
+# whether the red is theirs. That question has a mechanical answer, so this
+# prints it beside the failing log ci-wait.py has already fetched.
+#
+# Counted PER CODEUNIT, never as a total: the inherited total shrinks as each
+# foreign pair lands (measured 17 -> 13 in twenty minutes), so "17 means
+# inherited" is wrong within the hour, and it fails in the dangerous direction
+# -- a later run showing 13 reads as "fewer than inherited, so something here is
+# mine".
+#
+# A REPORT, like the floor line: it never touches the exit code, and a read that
+# did not happen prints `unavailable`, never zero failures.
+# --------------------------------------------------------------------------
+
+# `+` and not a literal run of spaces: 27.x prints `FAIL` with two spaces and no
+# timing, 28.x with one space, a duration and a deeper indent. A pattern fitted
+# to one major returns zero for the other, in the shape of a result
+# (verify-execution-not-the-tick.md, trap 1).
+_FAIL_LINE = re.compile(r"^\S+Z\s+FAIL\s+(Codeunit(\d+)\.\S+)")
+
+
+def failing_codeunits(log: str) -> dict[str, int] | None:
+    """{codeunit id: distinct failing test count}, or None when the log is unreadable.
+
+    None rather than {} for an empty log: both of ci-wait.py's log recipes have
+    an empty-output REFUSAL mode (#3309), and a refusal reported as zero
+    failures is the exact answer that ends an investigation wrongly.
+
+    Distinct test NAMES, not lines, so a duplicated log line cannot inflate a
+    count. A failure that is not a corpus codeunit -- a C# unit test -- is
+    simply not in this table; `inherited_red_lines` says so rather than letting
+    its absence read as "all accounted for".
+    """
+    if not log:
+        return None
+    seen: dict[str, set[str]] = {}
+    for line in log.split("\n"):
+        m = _FAIL_LINE.match(line.strip())
+        if not m:
+            continue
+        seen.setdefault(m.group(2), set()).add(m.group(1))
+    return {cu: len(names) for cu, names in seen.items()}
+
+
+# Both shapes are "a codeunit this corpus PR changes", and BOTH are needed --
+# measured on live corpus PRs #328/#331/#333:
+#   * an ADDED `codeunit <id>` declaration -- a brand-new suite (#328, #333);
+#   * a HUNK HEADER naming one -- tests appended to an existing codeunit, which
+#     adds no declaration line at all (#331, where added-lines-only found
+#     nothing).
+# Unchanged context lines are deliberately excluded: #331's comment mentions
+# codeunit 60455 while changing 60285, and claiming 60455 would tell a loop a
+# red is not theirs when it is.
+_PATCH_CODEUNIT = re.compile(r"^(?:\+|@@).*?\bcodeunit\s+(\d+)", re.IGNORECASE)
+
+
+def codeunits_in_patch(patch: str) -> set[str]:
+    """Codeunit ids a corpus PR's patch CHANGES -- not every id it mentions."""
+    out: set[str] = set()
+    for line in (patch or "").split("\n"):
+        m = _PATCH_CODEUNIT.match(line)
+        if m:
+            out.add(m.group(1))
+    return out
+
+
+def corpus_codeunit_to_pr(open_prs=None) -> dict[str, str]:
+    """{corpus codeunit id: open runner PR number that fixes it}.
+
+    Mechanical, with no guessing anywhere in it: an open runner PR declares
+    `Corpus-PR: <url>` (the linkage gate makes the line's shape exact), and that
+    corpus PR's patch names the codeunits it changes. Raises on a failed read;
+    the caller degrades that to `unavailable`.
+    """
+    if open_prs is None:
+        rc, out = gh(["pr", "list", "--repo", REPO, "--state", "open", "--limit", "100",
+                      "--json", "number,body"])
+        if rc != 0:
+            raise RuntimeError("could not list open pull requests")
+        open_prs = json.loads(out)
+
+    mapping: dict[str, str] = {}
+    for pr in open_prs:
+        body = pr.get("body") or ""
+        for m in re.finditer(
+                r"Corpus-PR:\s*\S*?BusinessCentral\.AL\.Language\.Tests/pull/(\d+)", body):
+            rc, out = gh(["api",
+                          f"repos/StefanMaron/BusinessCentral.AL.Language.Tests"
+                          f"/pulls/{m.group(1)}/files", "--jq", ".[].patch"])
+            if rc != 0:
+                continue
+            for cu in codeunits_in_patch(out):
+                # First writer wins, and ties are reported rather than resolved:
+                # two open PRs claiming one codeunit is itself worth seeing.
+                mapping.setdefault(cu, str(pr.get("number")))
+    return mapping
+
+
+def inherited_red_lines(log: str, pr_map_fetch=None) -> list[str]:
+    """The per-codeunit table, with the match where one exists. Never raises."""
+    counts = failing_codeunits(log)
+    if counts is None:
+        return ["inherited-red check: unavailable (the failing log could not be read, "
+                "which is a refusal -- NOT zero corpus failures)"]
+    if not counts:
+        return ["inherited-red check: no corpus `FAIL Codeunit<id>` lines in this log, "
+                "so this failure is not the resolved-corpus window (#3922)"]
+
+    try:
+        mapping = (pr_map_fetch or corpus_codeunit_to_pr)()
+        map_why = ""
+    except Exception as exc:
+        mapping, map_why = {}, f"{type(exc).__name__} while reading open pull requests"
+
+    lines = ["", "--- failing corpus codeunits (#3922: is this red mine?) ---"]
+    unmatched = []
+    for cu in sorted(counts):
+        pr = mapping.get(cu)
+        if pr:
+            lines.append(f"  Codeunit{cu}  x{counts[cu]}  <- open runner PR #{pr} fixes this")
+        else:
+            unmatched.append(cu)
+            why = "no open runner PR declares a corpus PR touching it"
+            lines.append(f"  Codeunit{cu}  x{counts[cu]}  <- UNMATCHED: {why}")
+
+    if map_why:
+        lines.append(f"  (the codeunit -> runner-PR match is unavailable: {map_why}; "
+                     "the counts above still stand)")
+    elif not unmatched:
+        lines.append("  every failing codeunit has an open runner PR -- this red is "
+                     "INHERITED from the resolved-corpus window, not this PR's. Rebase "
+                     "once they land; a re-run reproduces it and destroys the log.")
+    else:
+        lines.append(f"  {len(unmatched)} codeunit(s) UNMATCHED -- do NOT read this as "
+                     "inherited. An unmatched codeunit may be this PR's own failure.")
+    lines.append("  Counts are per codeunit on purpose: the inherited TOTAL shrinks as "
+                 "each foreign pair lands (17 -> 13 in twenty minutes, #3922).")
+    return lines
+
+
+def print_inherited_red(log: str, pr_map_fetch=None) -> None:
+    """Print the table. Returns nothing, raises nothing, gates nothing."""
+    try:
+        for line in inherited_red_lines(log, pr_map_fetch=pr_map_fetch):
+            print(line)
+    except Exception as exc:  # pragma: no cover - a report may never break a verdict
+        print(f"inherited-red check: unavailable ({type(exc).__name__})")
 
 
 def contexts_from_branch_rules(payload) -> tuple[str, ...] | None:
@@ -1549,6 +1718,10 @@ def main() -> int:
                     tail = out.split("\n")[-120:]
                     print("\n--- failing log (tail) ---")
                     print("\n".join(tail))
+                    # The log is already in hand, so answering "is this red
+                    # mine?" costs no extra fetch of it (#3922). A report: it
+                    # cannot change the exit code returned below.
+                    print_inherited_red(out)
                 else:
                     # Both recipes came back empty, so do NOT send the reader to
                     # the one that just did -- name the other one too (#3309).
