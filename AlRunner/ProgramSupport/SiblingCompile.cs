@@ -736,7 +736,11 @@ internal static partial class ProgramSupport
     // any other dep. This is what lets the corpus's two-app internalsVisibleTo
     // fixture (tests/.../al-language-internals-fixture next to tests/.../al-language)
     // resolve. Inert when no declared dep matches a sibling source app.
-    internal static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> packageCacheDirs, List<string> workspaceDirsOut)
+    // implAppPathsOut: same contract as RunLayeredPrePass's (#2683) — every sibling source app this
+    // call handled, mapped to the workspace package it resolves from, so a caller that runs again in
+    // the same process can tell which modules moved (#4025).
+    internal static List<string> BuildSiblingSourceDeps(List<string> bundles, List<string> packageCacheDirs, List<string> workspaceDirsOut,
+        IDictionary<Guid, string>? implAppPathsOut = null)
     {
         // 1. Collect each bundle's declared (non-implicit) deps + their bundle roots.
         var neededDeps = new List<DependencyRef>();
@@ -917,6 +921,7 @@ internal static partial class ProgramSupport
             var appFileName = $"{Sanitize(sid.Publisher)}_{Sanitize(sid.Name)}_{sid.Version.ToString().Replace('.', '_')}.app";
             var outPath = Path.Combine(wsDir, appFileName);
             var hadApp = File.Exists(outPath);
+            if (implAppPathsOut != null) implAppPathsOut[sid.AppId] = outPath;
             if (!hadApp)
             {
                 try

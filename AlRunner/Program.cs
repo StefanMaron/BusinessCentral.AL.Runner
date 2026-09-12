@@ -2170,7 +2170,7 @@ int? RunDependencyPrePasses()
     // Same #2095 provisioning/version-gap special-case as RunLayeredPrePass above.
     try
     {
-        packageCacheDirs = BuildSiblingSourceDeps(bundles, packageCacheDirs, layeredWorkspaceDirs);
+        packageCacheDirs = BuildSiblingSourceDeps(bundles, packageCacheDirs, layeredWorkspaceDirs, implAppPaths);
     }
     catch (Exception ex) when (ex is AlRunner.Infrastructure.IDependencyProvisioningDiagnostic diag)
     {
@@ -2190,14 +2190,26 @@ int? RunDependencyPrePasses()
     compilerPackageDirs.AddRange(packageCacheDirs
         .Where(d => !layeredWorkspaceDirs.Contains(d, StringComparer.OrdinalIgnoreCase)));
 
+    InvalidateMovedWorkspacePackages(implAppPaths);
+    return null;
+}
+
+// Shared by RunDependencyPrePasses (--watch cycles) and RunAllBundlesForServer (--server
+// requests, #4025). Merged per AppId rather than replaced, so a server request that does not
+// mention an app does not forget where that app's module came from.
+void InvalidateMovedWorkspacePackages(IReadOnlyDictionary<Guid, string> implAppPaths)
+{
+    changedImplAppIds.Clear();
     // An impl counts as changed only if it was ALSO present last time: on the very first call
     // nothing has been compiled or loaded against it yet, so there is nothing to invalidate and
     // reporting every impl as "changed" would force a pointless full rebuild of cycle 1.
     foreach (var (appId, appPath) in implAppPaths)
+    {
         if (previousImplAppPaths.TryGetValue(appId, out var before)
             && !string.Equals(before, appPath, StringComparison.OrdinalIgnoreCase))
             changedImplAppIds.Add(appId);
-    previousImplAppPaths = implAppPaths;
+        previousImplAppPaths[appId] = appPath;
+    }
 
     // #2683, the runtime half. A dependency that was re-synthesised has new CODE, and
     // DependencyLoader caches the compiled module per AppId with a reuse gate that compares
@@ -2206,7 +2218,6 @@ int? RunDependencyPrePasses()
     // EXECUTES the module built in the first cycle, and the only symptom is a test that keeps
     // passing.
     DependencyLoader.InvalidateApps(changedImplAppIds);
-    return null;
 }
 
 {
@@ -4799,11 +4810,16 @@ return strictExitCode ? computedExitCode : 0;
 
         var bundleList = sourcePaths.ToList();
         var workspaceScratch = new List<string>();
+        // #4025: from the caches as the user gave them, never from the previous request's output —
+        // see basePackageCacheDirs. That output holds the previous request's synthesized workspace
+        // packages, which BuildSiblingSourceDeps reads as "already packaged" and stops rebuilding.
+        packageCacheDirs = basePackageCacheDirs.ToList();
+        var requestImplAppPaths = new Dictionary<Guid, string>();
         if (sourcePaths.Length > 1)
         {
             try
             {
-                packageCacheDirs = RunLayeredPrePass(bundleList, packageCacheDirs, workspaceScratch);
+                packageCacheDirs = RunLayeredPrePass(bundleList, packageCacheDirs, workspaceScratch, requestImplAppPaths);
             }
             // #2956: the same #2095 special case the CLI path applies, which server mode
             // never had — a missing/too-old package reported as "LAYERED-PREPASS-FAIL:
@@ -4832,7 +4848,7 @@ return strictExitCode ? computedExitCode : 0;
 
         try
         {
-            packageCacheDirs = BuildSiblingSourceDeps(bundleList, packageCacheDirs, workspaceScratch);
+            packageCacheDirs = BuildSiblingSourceDeps(bundleList, packageCacheDirs, workspaceScratch, requestImplAppPaths);
         }
         // Same #2956 provisioning-gap special case as the layered pre-pass above.
         catch (Exception ex) when (ex is AlRunner.Infrastructure.IDependencyProvisioningDiagnostic diag)
@@ -4851,6 +4867,7 @@ return strictExitCode ? computedExitCode : 0;
                 ServerRunResult.Failure(3, "<sibling-source-deps>", $"SIBLING-SOURCE-DEPS-FAIL: {ex.Message}", new())
             };
         }
+        InvalidateMovedWorkspacePackages(requestImplAppPaths);
 
         var results = new List<ServerRunResult>(sourcePaths.Length);
         // #1888: open/close a phase-log bundle+app row per request bundle, mirroring
