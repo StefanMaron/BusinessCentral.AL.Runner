@@ -96,38 +96,45 @@ public static partial class RecordPatches
         // than an assumption.
         var ordinals = EnsureAllObjWithCaptionObjectTypeOrdinals(metaTable);
         var done = _awcPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<(int, int), byte>());
+        // Built lazily after the `done` guard, as PopulateAllObjVirtualTable does (#3117).
+        Dictionary<(string Kind, int Id), Guid>? ownerIndex = null;
 
         foreach (var (kind, id, name, caption, subtype) in EnumerateKnownAlObjects())
         {
             if (id <= 0) continue;
-            if (!ordinals.TryGetValue(NormalizeObjectTypeName(kind), out var typeOrdinal))
+            var normalized = NormalizeObjectTypeName(kind);
+            if (!ordinals.TryGetValue(normalized, out var typeOrdinal))
                 // This AL object kind has no ordinal in THIS BC version's option set.
                 // Real BC would not list it either — skipping is faithful, inventing an
                 // ordinal is not.
                 continue;
             if (!done.TryAdd((typeOrdinal, id), 0))
                 continue;
+            // #3106: the same owner AllObj stamps, so the two tables agree on 60/61.
+            ownerIndex ??= BuildObjectOwnerIndex();
+            var owningAppId = ownerIndex.TryGetValue((normalized, id), out var owner) ? owner : Guid.Empty;
 
             InsertVirtualRow(provider, metaTable,
                 new object[] { AllObjWithCaptionVirtualTableId, typeOrdinal, id, 0 },
                 field => BuildAllObjWithCaptionValue(field, typeOrdinal, id, name,
                     // AL's own default caption is the object name. Applied here, once.
                     string.IsNullOrEmpty(caption) ? name : caption,
-                    ObjectSubtypeTextFor(kind, subtype)));
+                    ObjectSubtypeTextFor(kind, subtype),
+                    owningAppId,
+                    AllObjWithCaptionKindCarriesAppId(kind)));
         }
     }
 
     /// <summary>
     /// One column of an AllObjWithCaption row, matched by the metatable's own FIELD NAME so
     /// the mapping tracks whatever the System package in the resolved artifact declares
-    /// rather than a hardcoded field-number table. Every other column (App Package ID, App
-    /// Runtime Package ID, Object Namespace, …) gets BC's own default, which is exactly what
-    /// AllObjWithCaptionDataProvider emits for a base object with no app package and no
-    /// namespace.
+    /// rather than a hardcoded field-number table. Every other column (AL Namespace, …) gets
+    /// BC's own default, which is exactly what AllObjWithCaptionDataProvider emits for an
+    /// object with no namespace.
     /// </summary>
     private static object? BuildAllObjWithCaptionValue(
         NCLMetaField field, int typeOrdinal, int objectId, string objectName, string objectCaption,
-        string objectSubtype)
+        string objectSubtype, Guid owningAppId, bool kindCarriesAppId)
     {
         switch (NormalizeObjectTypeName(field.FieldName ?? string.Empty))
         {
@@ -145,10 +152,37 @@ public static partial class RecordPatches
                 // provider. Truncated through the field's own defined length, same as every
                 // other text column here, rather than to a written-down 30.
                 return _aovNavTextCreateTruncated!.Invoke(null, new object?[] { field.FieldDefinedLength, objectSubtype ?? string.Empty });
+            // #3106. Observably equivalent to AllObjWithCaptionDataProvider: 60/61 come from the
+            // same per-object entry AllObj reads, so they carry the values InsertAllObjRow writes;
+            // App ID is the owning app's MANIFEST id (OwningApp.AppId), un-derived, and only for
+            // the kinds GetCaptionAndSubtype resolves an owner for. An unknown owner stays
+            // Guid.Empty, which is also BC's answer when OwningApp is null.
+            // Corpus: 60802 AllObjWithCaption_*App* (corpus PR #329).
+            case "apppackageid":
+                return NavValue.CreateNavValueFromObject(field, AppPackageIdentity.PackageIdFor(owningAppId));
+            case "appruntimepackageid":
+                return NavValue.CreateNavValueFromObject(field, AppPackageIdentity.RuntimePackageIdFor(owningAppId));
+            case "appid":
+                return NavValue.CreateNavValueFromObject(field, kindCarriesAppId ? owningAppId : Guid.Empty);
             default:
                 return _aovGetDefaultNavValue!.Invoke(null, new object?[] { field, false });
         }
     }
+
+    /// <summary>
+    /// True for the object kinds whose AllObjWithCaption "App ID" BC fills:
+    /// AllObjWithCaptionDataProvider.GetCaptionAndSubtype sets the owner for TableData, Table,
+    /// Report, XMLport, Page, Query, Codeunit and the five extension kinds it also resolves a
+    /// target id for, and leaves it null for every other kind (Enum, PermissionSet, Profile,
+    /// System, …) — same body in the 27.x and 28.4 Ncl.dll. Trap: do not widen this to "every
+    /// kind with an owner"; an Enum's package columns are filled while its App ID is empty.
+    /// </summary>
+    internal static bool AllObjWithCaptionKindCarriesAppId(string kind)
+        => NormalizeObjectTypeName(kind) switch
+        {
+            "tabledata" or "table" or "report" or "xmlport" or "page" or "query" or "codeunit" => true,
+            _ => ExtensionTargetObjectKind(kind) != null,
+        };
 
     /// <summary>
     /// The text BC puts in "Object Subtype" for one object, given the subtype the runner's
