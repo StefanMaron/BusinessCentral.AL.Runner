@@ -4814,12 +4814,15 @@ return strictExitCode ? computedExitCode : 0;
         // see basePackageCacheDirs. That output holds the previous request's synthesized workspace
         // packages, which BuildSiblingSourceDeps reads as "already packaged" and stops rebuilding.
         packageCacheDirs = basePackageCacheDirs.ToList();
-        var requestImplAppPaths = new Dictionary<Guid, string>();
+        // Sibling source apps only. A layered impl is itself a bundle of this request, and its
+        // module is registered by the bundle loop (#1892); evicting it here loses that registration
+        // (LayeredDepSymbolsIncrementalServerTests).
+        var siblingAppPaths = new Dictionary<Guid, string>();
         if (sourcePaths.Length > 1)
         {
             try
             {
-                packageCacheDirs = RunLayeredPrePass(bundleList, packageCacheDirs, workspaceScratch, requestImplAppPaths);
+                packageCacheDirs = RunLayeredPrePass(bundleList, packageCacheDirs, workspaceScratch);
             }
             // #2956: the same #2095 special case the CLI path applies, which server mode
             // never had — a missing/too-old package reported as "LAYERED-PREPASS-FAIL:
@@ -4848,7 +4851,7 @@ return strictExitCode ? computedExitCode : 0;
 
         try
         {
-            packageCacheDirs = BuildSiblingSourceDeps(bundleList, packageCacheDirs, workspaceScratch, requestImplAppPaths);
+            packageCacheDirs = BuildSiblingSourceDeps(bundleList, packageCacheDirs, workspaceScratch, siblingAppPaths);
         }
         // Same #2956 provisioning-gap special case as the layered pre-pass above.
         catch (Exception ex) when (ex is AlRunner.Infrastructure.IDependencyProvisioningDiagnostic diag)
@@ -4867,7 +4870,7 @@ return strictExitCode ? computedExitCode : 0;
                 ServerRunResult.Failure(3, "<sibling-source-deps>", $"SIBLING-SOURCE-DEPS-FAIL: {ex.Message}", new())
             };
         }
-        InvalidateMovedWorkspacePackages(requestImplAppPaths);
+        InvalidateMovedWorkspacePackages(siblingAppPaths);
 
         var results = new List<ServerRunResult>(sourcePaths.Length);
         // #1888: open/close a phase-log bundle+app row per request bundle, mirroring
