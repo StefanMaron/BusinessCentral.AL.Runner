@@ -57,6 +57,15 @@ progress detail belongs. Check a new invocation against a PR whose state you alr
 **Exit 2 is the ordinary answer here, not a failure**, and never a green: the checks have not
 reported, so move on and read again later.
 
+**A `main-verdict-floor.yml` run whose conclusion is `success` may have measured nothing.** Its
+`verdict-needed` job skips `floor-matrix` when the SHA already has a conclusive matrix run, so the
+*workflow* succeeds while the job that would answer the question never ran — deliberate debounce,
+not a fault. Measured: on `c028bf3f`, run `34656743829` FAILED across five legs at 23:06 and run
+`34658754607` reported `success` at 23:37 with `floor-matrix: skipped`. Reading the second as "main
+recovered" would invert the truth on identical code. **Check the `floor-matrix` job's own result
+before reading a floor run as a verdict** — `gh api repos/<o>/<r>/actions/runs/<id>/jobs --jq
+'.jobs[]|"\(.name): \(.conclusion)"'` — and treat `skipped` as "no new measurement", never as green.
+
 **Beside every verdict it prints one line about `main` itself** — `main floor: RED on 8b6885f4
 (main-verdict-floor.yml, 1h ago)` (#3679), so a PR branched during a red window is visible as
 inheriting a failure it did not cause. It is a report: it never changes the exit code, and a
