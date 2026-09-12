@@ -61,29 +61,42 @@ public sealed class ServerTableRelationReloadTests(ITestOutputHelper output)
                 codeunit 70782 "SRR Tests"
                 {
                     Subtype = Test;
+                    var Assert: Codeunit "SRR Assert";
                     [Test] procedure ValidRelation()
                     var Subject: Record "SRR Subject";
                     begin
                         Subject.Validate("Target Code", 'PRESENT');
-                        if Subject."Target Code" <> 'PRESENT' then Error('Wrong relation value');
+                        Assert.AreEqual('PRESENT', Subject."Target Code", 'valid relation');
                     end;
                     [Test] procedure MissingRelation()
                     var Subject: Record "SRR Subject";
                     begin
                         asserterror Subject.Validate("Target Code", 'MISSING');
-                        if StrPos(GetLastErrorText(), 'cannot be found') = 0 then
-                            Error('Expected normal missing target error, got %1', GetLastErrorText());
+                        Assert.ExpectedError('cannot be found');
                     end;
                     [Test] procedure DependencyLogic()
                     var Logic: Codeunit "SRR Logic";
                     begin
-                        if Logic.Twice(21) <> 42 then Error('Wrong dependency result');
+                        Assert.AreEqual('42', Format(Logic.Twice(21)), 'dependency result');
                     end;
                     [Test] procedure InstallSeed()
                     var Target: Record "SRR Target";
                     begin
                         Target.Get('PRESENT');
-                        if Target.Marker <> 37 then Error('Wrong install seed');
+                        Assert.AreEqual('37', Format(Target.Marker), 'install seed');
+                    end;
+                }
+                codeunit 70783 "SRR Assert"
+                {
+                    procedure AreEqual(Expected: Text; Actual: Text; Context: Text)
+                    begin
+                        if Expected <> Actual then
+                            Error('%1: expected %2, actual %3', Context, Expected, Actual);
+                    end;
+                    procedure ExpectedError(Part: Text)
+                    begin
+                        if StrPos(GetLastErrorText(), Part) = 0 then
+                            Error('Expected error containing %1, actual %2', Part, GetLastErrorText());
                     end;
                 }
                 """);
