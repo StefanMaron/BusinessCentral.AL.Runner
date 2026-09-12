@@ -1,3 +1,12 @@
+// LEAVE-BEHIND (#3293): the BC claims about an app id that is not installed now live in the
+// corpus, codeunit 60136 "Test NavApp Extended" (corpus PR #332, green on the 8 cloud legs):
+// the statement form raises naming the id and BC's not-installed message, and the boolean form
+// returns false without raising. GetModuleInfo_ByUnknownAppId_StatementForm_RaisesNamingTheId
+// and GetModuleInfo_ByUnknownAppId_BooleanForm_ReturnsFalse were deleted from here for that
+// reason. What stays is runner-specific: module identity per emitted bundle, resolution from
+// the runner's loaded dependency closure, the derived PackageId the runner stamps, and the
+// runner's out-of-scope refusal for Guid.Empty.
+//
 /// <summary>
 /// Per-module NavApp.GetCurrentModuleInfo/GetCallerModuleInfo/GetModuleInfo.
 /// A dependency's code must see ITS OWN module identity (the SPBLIC
@@ -96,52 +105,6 @@ codeunit 61240 "XMI Main Tests"
             Error('GetModuleInfo must resolve the loaded dependency by AppId.');
         if Format(Info.AppVersion()) <> '25.8.43.0' then
             Error('GetModuleInfo(depId) must carry the dep version, got %1.', Format(Info.AppVersion()));
-    end;
-
-    /// <summary>
-    /// #2961. NavApp.GetModuleInfo for an app the runner has NOT loaded must answer the way
-    /// BC's own ALGetModuleInfo does, and the two arms differ. This is the trapping arm: the
-    /// boolean form compiles to DataError.TrapError, so an unresolvable id is `false` with no
-    /// error raised.
-    ///
-    /// It is the discriminating half of the pair below. A helper that answered "installed"
-    /// for every id — the shape that would make the corpus green by lying — passes
-    /// GetModuleInfo_ByDepAppId_ResolvesRegisteredDep above and fails here.
-    /// </summary>
-    [Test]
-    procedure GetModuleInfo_ByUnknownAppId_BooleanForm_ReturnsFalse()
-    var
-        Info: ModuleInfo;
-    begin
-        if NavApp.GetModuleInfo('00000000-dead-beef-0000-000000000001', Info) then
-            Error('GetModuleInfo must not resolve an app id the runner never loaded.');
-    end;
-
-    /// <summary>
-    /// #2961, the raising arm. Statement form compiles to DataError.RaiseError, and BC's
-    /// ALGetModuleInfo throws NavAppException naming the id it could not find. Before the
-    /// fix the runner's source-compiled polyfill returned false here whatever the DataError
-    /// was, so the statement form left <c>Info</c> untouched and said nothing — the silent
-    /// wrong answer loud-failures.md is about.
-    /// </summary>
-    [Test]
-    // UPSTREAM FOLLOW-UP — #3293. This one test is NOT runner-specific and does not belong
-    // here on the merits: "an app id that is not installed raises, and the message names it"
-    // is plain BC behaviour that a service tier can adjudicate with any random GUID. The rest
-    // of this suite genuinely is runner-specific (it asserts the runner's loaded-app closure
-    // is what answers, and that PackageId matches the derived identity the runner stamps —
-    // real BC has a publish step and the runner does not), so "the suite already sits in
-    // runner-extras" is a precedent, not the structural reason bc-behavior-tests-go-upstream.md
-    // asks for. The corpus covers only the POSITIVE by-id case today (TestNavApp.al:70,
-    // TestNavAppExtended.al:95). #3293 tracks writing the negative case upstream and deleting
-    // this one when the pin moves.
-    procedure GetModuleInfo_ByUnknownAppId_StatementForm_RaisesNamingTheId()
-    var
-        Info: ModuleInfo;
-    begin
-        asserterror NavApp.GetModuleInfo('00000000-dead-beef-0000-000000000002', Info);
-        if StrPos(GetLastErrorText(), 'No installed extension was found with ID') = 0 then
-            Error('GetModuleInfo must raise BC''s own not-found message, got: %1', GetLastErrorText());
     end;
 
     /// <summary>
