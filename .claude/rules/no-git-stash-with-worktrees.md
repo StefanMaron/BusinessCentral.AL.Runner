@@ -28,6 +28,24 @@ no per-worktree stash.
 
 Committing early is the preferred answer to all of these.
 
+## `origin/main` is a LOCAL ref with a remote-looking name
+
+`git reset --soft origin/main` resets to whatever your **local** `origin/main` says. If `main`
+has moved since your last fetch, every intervening merge is captured in your commit as a
+**deletion**, and a force-push offers that as the PR's diff. Measured (#3907): a docs-only
+branch whose only intended change was +22/-1 in one markdown file committed
+`12 files changed, 60 insertions(+), 1032 deletions(-)` — another PR's entire contribution
+staged for deletion — and was force-pushed before anyone noticed.
+
+**The trap is that every ordinary guard passes.** `--force-with-lease` covers someone else's
+push to your branch, not your branch's content; `git status` is clean because the deletions are
+committed; and a "same tree as reviewed" check **passes and is exactly wrong**, because
+preserving the old tree *is* the revert once `main` has moved.
+
+So: **`git fetch origin main` immediately before any command naming `origin/main` as a base** —
+`reset`, `rebase`, `merge-tree`, `diff origin/main...` — and read
+`git diff --stat origin/main...HEAD` **before** pushing a rewritten branch, not after.
+
 ## The RED-baseline recipe has two ways to destroy work
 
 Both are properties of `git checkout` (git 2.55.0). `git checkout HEAD -- <path>` with your fix

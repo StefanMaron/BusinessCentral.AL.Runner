@@ -39,3 +39,37 @@ pattern, including the outer tool shell that ran your command, so `pgrep -f <pat
 still matches and the loop still spins. `grep -v $$` is a substring filter besides — with `$$`
 of `123` it also drops PIDs `1234` and `4123`; `grep -vx` fixes that half and not the ancestor
 half. Use `$!` on a job you started, or `wait`. Better: don't poll, run it in the foreground.
+
+## `git reset --soft origin/main` against a stale ref (#3907)
+
+A coordinator was reworking a docs-only branch so its **commit message** would satisfy the
+closing-reference gate — the gate reads commit messages as well as the PR body, so rewording
+required rebuilding the commit. It ran `git reset --soft origin/main` and committed.
+
+PR #3902 had merged as `d9c6f8f0` minutes earlier. The local `origin/main` predated it, so the
+reset captured that merge's whole contribution as deletions:
+
+```
+12 files changed, 60 insertions(+), 1032 deletions(-)
+  AlRunner/Infrastructure/EngineClosure.cs           |  74 -----
+  AlRunner.Tests/PlatformAppsEntryGuardTests.cs      | 343 ---------------------
+  docs/provisioning.md                               | 149 ---------
+```
+
+on a branch whose only intended change was +22/-1 in one markdown file. It was force-pushed
+before being noticed, and caught only because `--stat` happened to be in the terminal afterwards.
+
+**Why the ordinary guards all passed.** `--force-with-lease` protects against someone else's
+push to your branch, and nobody had pushed — the branch content was the problem, not a race.
+`git status` was clean, because the deletions were committed rather than sitting in the working
+tree. And a "same tree as what was reviewed" check *passed*: preserving the previously-reviewed
+tree is precisely the revert once `main` has moved underneath it, so that check is not merely
+useless here but actively misleading.
+
+CI would probably have caught it, but as a red leg on a docs-only PR — where the natural reading
+is "unrelated flake", not "this PR deletes a merged feature".
+
+**What generalises:** `origin/main` is local state wearing a remote-looking name. Every
+command that treats it as authoritative — `reset`, `rebase`, `merge-tree`, `diff origin/main...`
+— inherits however stale it is, silently, and the staleness window is exactly as long as the
+interval since the last fetch.
