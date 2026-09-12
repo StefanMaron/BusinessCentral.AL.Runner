@@ -148,34 +148,12 @@ public static partial class BcRuntime
     }
 
     [MethodImpl(MethodImplOptions.NoInlining)] public static object? ReturnNull_OneArg(object a) => null;
-    [MethodImpl(MethodImplOptions.NoInlining)] public static int ReturnZero_OneArg(object? a) => 0;
-
-    // DataTransfer throw helpers — match BC's "DataTransfer is only usable during
-    // upgrade and installation code." error so AL tests can `asserterror` + assert
-    // the message. Signatures mirror the NoOpN family (receiver + N-1 args).
-    private static System.Exception MakeDataTransferException()
-    {
-        var t = System.Type.GetType(
-            "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException, Microsoft.Dynamics.Nav.Types");
-        const string msg = "DataTransfer is only usable during upgrade and installation code.";
-        if (t != null)
-        {
-            var ctor = t.GetConstructor(new[] { typeof(string) });
-            if (ctor != null) return (System.Exception)ctor.Invoke(new object[] { msg });
-        }
-        return new System.InvalidOperationException(msg);
-    }
-    [MethodImpl(MethodImplOptions.NoInlining)] public static void ThrowDataTransfer_OneArg(object? a) => throw MakeDataTransferException();
-    [MethodImpl(MethodImplOptions.NoInlining)] public static void ThrowDataTransfer_2Args(object? a, object? b) => throw MakeDataTransferException();
-    [MethodImpl(MethodImplOptions.NoInlining)] public static void ThrowDataTransfer_3Args(object? a, object? b, object? c) => throw MakeDataTransferException();
-    [MethodImpl(MethodImplOptions.NoInlining)] public static void ThrowDataTransfer_4Args(object? a, object? b, object? c, object? d) => throw MakeDataTransferException();
-    [MethodImpl(MethodImplOptions.NoInlining)] public static int ThrowDataTransferReturnInt_OneArg(object? a) => throw MakeDataTransferException();
 
     // TestPage field DrillDown() on a control with no OnDrillDown trigger — real BC (confirmed
     // 27.5 and 28.3, see al-language TestPageFieldDrillDown_Tests.FieldDrillDownWithNoTriggerIsRefused)
     // raises this exact fixed platform error regardless of TableRelation/UI state, so it is
-    // reproducible faithfully in-process. Public (unlike MakeDataTransferException) because
-    // RunnerPageInstance.RaiseOnDrillDown, in a different file/class, needs it too.
+    // reproducible faithfully in-process. Public because RunnerPageInstance.RaiseOnDrillDown,
+    // in a different file/class, needs it too.
     internal static System.Exception MakeNavDrilldownActionNotSupportedException()
     {
         var t = System.Type.GetType(

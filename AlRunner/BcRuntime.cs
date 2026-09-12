@@ -1745,61 +1745,17 @@ public static partial class BcRuntime
         // NCLEnumMetadata.Create(int), NavCodeunitHandle.CreateTarget, NavCodeunit.get_MetaCodeunit,
         // and NCLMetaCodeunit.get_IsEventManualBinding are all Cecil-owned (see NclCecilRewrite.cs).
 
-        // NavDataTransfer.SetTables — uses NCLMetadata.GetMetaTableById to validate source/dest
-        // tables before staging the transfer. Validation is meaningless in headless mode (the
-        // actual data move happens via patched RecordImpl). No-op so AL DataTransfer.SetTables
-        // calls succeed and downstream Add{Constant,Field,Source}Value can proceed against
-        // skeleton-managed buffers.
-        var navDataTransferType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavDataTransfer");
-        if (navDataTransferType != null)
-        {
-            var setTables = navDataTransferType.GetMethod("SetTables",
-                BindingFlags.NonPublic | BindingFlags.Instance, null,
-                new[] { typeof(int), typeof(int) }, null);
-            if (setTables != null)
-                Hook(setTables, nameof(NoOp3), "NavDataTransfer.SetTables");
+        // NavDataTransfer (#1883 cluster audit) — eight JmpHook registrations used to live here:
+        // SetTables to a no-op, and AddFieldValue, AddConstantValue, AddSourceFilter, AddJoin,
+        // CopyFields, CopyRows, Clear to stubs throwing a hardcoded copy of BC's "DataTransfer is
+        // only usable during upgrade and installation code." All eight were orphaned (JmpHook is
+        // off by default), so BC's real bodies were already running — and once the skeleton tenant
+        // can answer IsIntelligentCloudReplicationEnabled (MetadataPatches steps 3¾ and 3⅞) they
+        // beat the stubs: BC raises that message from its own resource, tells "SetTables must first
+        // be called before calling other methods on DataTransfer." apart from it, and would honour
+        // a real install/upgrade context, which a hardcoded throw never could. Deleted outright
+        // rather than left as dead call sites; corpus codeunit 60992 adjudicates the behaviour.
 
-            // The AL `DataTransfer.{AddFieldValue,AddConstantValue,AddSourceFilter,AddJoin,
-            // CopyFields,CopyRows,Clear}` builtins are not usable outside upgrade/install code.
-            // Throw a BC exception so AL `asserterror` observes the same contract.
-            var thrownNames = new System.Collections.Generic.HashSet<string> {
-                "AddFieldValue", "AddConstantValue", "AddSourceFilter", "AddJoin",
-                "CopyFields", "CopyRows", "Clear"
-            };
-            var hookNames = new System.Collections.Generic.List<string>(
-                new[] { "AddFieldValue", "AddConstantValue", "AddSourceFilter",
-                        "AddJoin", "CopyFields", "CopyRows", "Clear" });
-            foreach (var name in hookNames)
-            {
-                var m = navDataTransferType.GetMethod(name,
-                    BindingFlags.NonPublic | BindingFlags.Instance);
-                if (m == null) continue;
-                var ps = m.GetParameters().Length;
-                bool throwHere = thrownNames.Contains(name);
-                string? hook;
-                if (m.ReturnType == typeof(void))
-                {
-                    hook = ps switch
-                    {
-                        0 => throwHere ? nameof(ThrowDataTransfer_OneArg) : nameof(NoOp_OneArg),
-                        1 => throwHere ? nameof(ThrowDataTransfer_2Args) : nameof(NoOp2),
-                        2 => throwHere ? nameof(ThrowDataTransfer_3Args) : nameof(NoOp3),
-                        3 => throwHere ? nameof(ThrowDataTransfer_4Args) : nameof(NoOp4),
-                        _ => null
-                    };
-                }
-                else if (m.ReturnType == typeof(int))
-                {
-                    hook = ps switch
-                    {
-                        0 => throwHere ? nameof(ThrowDataTransferReturnInt_OneArg) : nameof(ReturnZero_OneArg),
-                        _ => null
-                    };
-                }
-                else hook = null;
-                if (hook != null) Hook(m, hook, $"NavDataTransfer.{name}");
-            }
-        }
 
         // ALTaskScheduler.CheckCodeUnit / ALCanCreateTask / CanCreateTask (scope.md §3.6,
         // #1733) are now Cecil-owned (see NclCecilRewrite.cs, CecilOwned + the ALTaskScheduler
