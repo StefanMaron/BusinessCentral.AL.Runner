@@ -1224,15 +1224,18 @@ for _exp, _why in ((None, "bc-versions.txt unreadable"), ([], "empty expected se
 
 # Docs that name a decompiler alias must name one the repository tests.
 _alias_re = re.compile(r"\bbc(\d{3})\b")
-_doc_hits = {}
+_doc_hits, _silent_docs = {}, []
 for _rel in (".claude/agents/impl-agent.md", ".claude/agents/triager.md",
              ".claude/skills/orchestrating-a-session/SKILL.md", "CLAUDE.md",
              "tools/setup-bc-decompiler.sh"):
     with open(os.path.join(REPO_ROOT, _rel), encoding="utf-8") as fh:
-        for _m in _alias_re.finditer(fh.read()):
-            _doc_hits.setdefault("bc" + _m.group(1), set()).add(_rel)
-check("the alias docs scan read something (a zero here is a broken pattern)",
-      len(_doc_hits) > 0, str(_doc_hits))
+        _found = list(_alias_re.finditer(fh.read()))
+    if not _found:
+        _silent_docs.append(_rel)
+    for _m in _found:
+        _doc_hits.setdefault("bc" + _m.group(1), set()).add(_rel)
+check("every scanned doc yields at least one alias (a zero here is a broken pattern or a moved table)",
+      not _silent_docs, str(_silent_docs))
 _stray = {a: sorted(f) for a, f in _doc_hits.items() if a not in _EXPECTED_ALIASES}
 check("every decompiler alias the docs name is a version in bc-versions.txt",
       not _stray, str(_stray))
