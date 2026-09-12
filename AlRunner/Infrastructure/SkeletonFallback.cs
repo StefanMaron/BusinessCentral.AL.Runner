@@ -9,12 +9,22 @@ namespace AlRunner.Infrastructure;
 /// </summary>
 internal static class SkeletonFallback
 {
-    internal static void InstallOrThrow(Type type, FieldInfo instanceField, Exception? factoryFailure, string hint)
+    internal static void InstallOrThrow(Type type, FieldInfo instanceField, string hint)
     {
-        // A type whose static constructor failed rethrows on every later static access,
-        // including the SetValue below, so no skeleton can be installed (#2064).
-        if (OwnInitializerFailure(type, factoryFailure) is { } tie)
+        try
         {
+            // The allocation throws for a precise-init type and the static write for a
+            // beforefieldinit one (NavEnvironment), so both stay inside the try.
+            var skel = RuntimeHelpers.GetUninitializedObject(type);
+            var instLock = type.GetField("lockObject", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (instLock != null) instLock.SetValue(skel, new object());
+            instanceField.SetValue(null, skel);
+        }
+        catch (Exception e) when (AsInitializerFailure(e) is { } tie)
+        {
+            // Keyed on the install failing, not on matching tie.TypeName: the CLR reports a
+            // nested type under its simple name, so a name match can miss and fall through
+            // to the unexplained crash this exists to replace (#2064).
             var root = tie.InnerException ?? tie;
             throw new InvalidOperationException(
                 $"{type.FullName}'s static constructor threw {root.GetType().FullName}: {root.Message} " +
@@ -22,18 +32,9 @@ internal static class SkeletonFallback
                 $"used at all, so the runner cannot fall back to a skeleton instance. {hint}",
                 tie);
         }
-
-        var skel = RuntimeHelpers.GetUninitializedObject(type);
-        var instLock = type.GetField("lockObject", BindingFlags.NonPublic | BindingFlags.Instance);
-        if (instLock != null) instLock.SetValue(skel, new object());
-        instanceField.SetValue(null, skel);
     }
 
-    private static TypeInitializationException? OwnInitializerFailure(Type type, Exception? failure)
-    {
-        for (var e = failure; e != null; e = e.InnerException)
-            if (e is TypeInitializationException tie && tie.TypeName == type.FullName)
-                return tie;
-        return null;
-    }
+    // Reflection's FieldInfo.SetValue wraps it in TargetInvocationException; the allocation does not.
+    private static TypeInitializationException? AsInitializerFailure(Exception e)
+        => e as TypeInitializationException ?? (e as TargetInvocationException)?.InnerException as TypeInitializationException;
 }

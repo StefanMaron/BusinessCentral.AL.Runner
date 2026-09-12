@@ -1014,7 +1014,6 @@ public static partial class BcRuntime
         var factory = envType.GetMethod("InstantiateStandaloneNavEnvironment",
             BindingFlags.NonPublic | BindingFlags.Static);
         bool ctorOk = false;
-        Exception? factoryFailure = null;
         if (factory != null)
         {
             try
@@ -1035,7 +1034,6 @@ public static partial class BcRuntime
             }
             catch (Exception ex)
             {
-                factoryFailure = ex;
                 var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
                 Console.Error.WriteLine("[BcRuntime] NavEnvironment ctor THREW — falling back to skeleton:");
                 Console.Error.WriteLine($"  {inner.GetType().FullName}: {inner.Message}");
@@ -1049,7 +1047,7 @@ public static partial class BcRuntime
             }
         }
         if (!ctorOk && instField != null)
-            AlRunner.Infrastructure.SkeletonFallback.InstallOrThrow(envType, instField, factoryFailure,
+            AlRunner.Infrastructure.SkeletonFallback.InstallOrThrow(envType, instField,
                 "If the cause is WindowsIdentity.GetCurrent(), the loaded Microsoft.Dynamics.Nav.Ncl.dll lacks " +
                 "the Cecil rewrite that removes that call (NclCecilRewrite.Runtime.cs): this process loaded an " +
                 "un-rewritten copy. See #2064.");
