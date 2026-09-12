@@ -22,9 +22,19 @@ guard itself fails the guard's own tests in < 1 ms with `REFUSING TO SKIP` neste
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 from dataclasses import dataclass, field
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
+    import agent_stdio as _stdio
+except Exception:  # pragma: no cover - a copy detached from its sibling module
+    _stdio = None
+if _stdio is not None:
+    # Before any print: a failure message carries an em dash, which cp1252 stdout cannot encode.
+    _stdio.enable_utf8_stdio()
 
 GREEN, RED, UNMEASURED, BUILD_BROKE, ENGINE_NOT_BOOTSTRAPPED = 0, 1, 3, 4, 5
 

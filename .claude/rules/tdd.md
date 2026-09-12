@@ -64,6 +64,15 @@ wearing the shape of a caught regression. Measured twice on one guard in one hou
 agent and its coordinator independently. Prefer mutating a **value** the assertion reads over
 editing code structure, and read the error text before believing a red.
 
+**Trap: a red from the engine-bootstrap guard prints `Total:` and reads as a caught regression.**
+On a box with BC artifacts but no `tools/engine-test-bootstrap.sh` run, every `bc-engine-serial`
+test fails before doing any work, so the missing-`Total:` tell above does not fire: #3948's
+premise mutation read `Failed: 18` and meant `Failed: 0` once bootstrapped. Sub-millisecond
+durations and the text `REFUSING TO SKIP` are not enough either, because a mutation of the guard
+itself produces both and is a genuine red. Pipe the run through `tools/mutation-verdict.py` before
+believing a red: exit 1 is a real one, 4 a build break, 5 the engine guard, 3 unmeasured (#3957;
+`docs/incidents/tdd.md`).
+
 **Trap: a failed mutation and a working guard look identical.** Measured twice in one session
 (#3895): a backslash edit that a heredoc collapsed, so the file never changed; and a
 `-p:` override whose build was incremental and skipped `CoreCompile`, reporting the clean
