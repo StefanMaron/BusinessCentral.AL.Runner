@@ -917,25 +917,19 @@ AlRunner.Infrastructure.ExpectationManifest? expectations = null;
     }
     if (expectationsDir == null)
     {
-        expectationsDir = AlRunner.Infrastructure.ExpectationsDirectoryResolution.Resolve(bundles, Environment.CurrentDirectory);
+        // #3120: an unreadable working directory is "no cwd candidate", not a crash.
+        var probeCwd = AlRunner.Infrastructure.WorkingDirectory.TryGet();
+        expectationsDir = AlRunner.Infrastructure.ExpectationsDirectoryResolution.Resolve(bundles, probeCwd);
         if (expectationsDir == null)
         {
             // #1984: this used to be silent — an explicit --expectations miss exits 2
             // loudly, but the auto-probed default just left `expectations` null and
             // every expect-oos/expect-divergence test in the run flipped to a plain
             // FAIL with nothing in the output to say why. Diagnosable, not inferred.
-            var cwdCandidate = Path.Combine(Path.GetFullPath(Environment.CurrentDirectory), "tests", "expectations");
-            // #2097: deferred — see `deferredStartupLines`'s declaration above. Captured
-            // into a local now: `bundles` itself is never mutated again after arg
-            // parsing, but capturing its count here (rather than reading `bundles.Count`
-            // fresh inside the closure) keeps this consistent with every other deferred
-            // line's rule of freezing values at queue time, not at flush time.
-            var bundleCountForPrint = bundles.Count;
-            deferredStartupLines.Add(() => Console.Error.WriteLine(
-                $"[expectations] no tests/expectations manifest found (probed {cwdCandidate}" +
-                (bundleCountForPrint > 0 ? $" and the ancestor tree of {bundleCountForPrint} bundle path(s)" : "") +
-                ") — expect-oos / expect-fail-known-gap / expect-divergence classification is OFF " +
-                "this run. Pass --expectations DIR to set it explicitly."));
+            // #2097: deferred — see `deferredStartupLines`'s declaration above. The message is
+            // built now, so the closure prints exactly what this generation probed.
+            var notFoundMessage = AlRunner.Infrastructure.ExpectationsDirectoryResolution.BuildNotFoundMessage(probeCwd, bundles.Count);
+            deferredStartupLines.Add(() => Console.Error.WriteLine(notFoundMessage));
         }
     }
     if (expectationsDir != null)
@@ -2430,7 +2424,7 @@ foreach (var bundle in bundles)
 {
     i2++;
     var bundleAbs = Path.GetFullPath(bundle);
-    var rel = Path.GetRelativePath(Environment.CurrentDirectory, bundleAbs);
+    var rel = AlRunner.Infrastructure.WorkingDirectory.DisplayPath(bundleAbs, AlRunner.Infrastructure.WorkingDirectory.TryGet());
     AlRunner.Infrastructure.PhaseLog.BeginBundle(rel, i2);
 
     // Watch mode re-runs the SAME process across edits, so drop the previous
@@ -4570,7 +4564,7 @@ if (coverageEnabled)
     // working directory so cobertura's <source> (".") lines up with the filename
     // attributes, matching v1's convention.
     var coverageSourceMap = AlRunner.Infrastructure.AlCoverageSourceMap.Build(
-        bundles, relativeTo: Directory.GetCurrentDirectory());
+        bundles, relativeTo: AlRunner.Infrastructure.WorkingDirectory.TryGet());   // #3120: null → absolute filenames
     var coverageStatements = AlRunner.Infrastructure.AlCoverageTracker.Collect(coverageSourceMap);
     List<AlRunner.Infrastructure.AlCoverageReport.FileCoverage>? coverageFiles = null;
     var coverageProblem = AlRunner.Infrastructure.OutputPaths.TryWrite("--coverage-out", coverageOutputPath,
@@ -5032,8 +5026,8 @@ return strictExitCode ? computedExitCode : 0;
         {
             if (cancellationToken.IsCancellationRequested) break;
             bundleIndex++;
-            var relBundle = Path.GetRelativePath(
-                Environment.CurrentDirectory, Path.GetFullPath(bundleDir));
+            var relBundle = AlRunner.Infrastructure.WorkingDirectory.DisplayPath(
+                Path.GetFullPath(bundleDir), AlRunner.Infrastructure.WorkingDirectory.TryGet());
             AlRunner.Infrastructure.PhaseLog.BeginBundle(relBundle, bundleIndex);
             // #2603: see the two comments above. An earlier bundle fell back, or a dependency of
             // this bundle is listed after it and changed this cycle — either way this bundle must

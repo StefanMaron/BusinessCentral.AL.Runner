@@ -35,10 +35,11 @@ public static class ExpectationsDirectoryResolution
     /// <summary>
     /// Probes for <c>&lt;ancestor&gt;/tests/expectations</c>, walking UP from each
     /// bundle root's absolute path first (in the order given), then from
-    /// <paramref name="currentDirectory"/>. Returns the first existing directory
+    /// <paramref name="currentDirectory"/> — skipped when it is null, i.e. the working
+    /// directory could not be read (#3120). Returns the first existing directory
     /// found, or null if none of the probed locations exist.
     /// </summary>
-    public static string? Resolve(IReadOnlyList<string> bundleRoots, string currentDirectory)
+    public static string? Resolve(IReadOnlyList<string> bundleRoots, string? currentDirectory)
     {
         foreach (var root in bundleRoots)
         {
@@ -50,10 +51,28 @@ public static class ExpectationsDirectoryResolution
             if (found != null) return found;
         }
 
+        if (currentDirectory == null) return null;
         string cwdStart;
         try { cwdStart = Path.GetFullPath(currentDirectory); }
         catch { return null; }
         return TryWalkUp(cwdStart);
+    }
+
+    /// <summary>
+    /// The stderr line printed when <see cref="Resolve"/> found nothing (#1984). With a null
+    /// <paramref name="currentDirectory"/> (#3120) it names no cwd candidate and says why.
+    /// </summary>
+    public static string BuildNotFoundMessage(string? currentDirectory, int bundleCount)
+    {
+        var bundlesProbed = bundleCount > 0 ? $"the ancestor tree of {bundleCount} bundle path(s)" : null;
+        var probed = currentDirectory != null
+            ? Path.Combine(Path.GetFullPath(currentDirectory), "tests", "expectations")
+              + (bundlesProbed != null ? " and " + bundlesProbed : "")
+            : (bundlesProbed ?? "nothing")
+              + "; the working directory could not be read, so it was not probed";
+        return $"[expectations] no tests/expectations manifest found (probed {probed}) — " +
+               "expect-oos / expect-fail-known-gap / expect-divergence classification is OFF " +
+               "this run. Pass --expectations DIR to set it explicitly.";
     }
 
     /// <summary>
