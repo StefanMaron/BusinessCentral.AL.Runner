@@ -842,6 +842,10 @@ jobs:
           # one that can exit 4 -- and a 4 arrives with every suite reporting zero
           # failures, which reads as a mystery until someone searches the log for the
           # [count-baseline] line. A leg must be diagnosable from its own log.
+          #
+          # --count-baseline-require-all (#3130): this step is the one invocation that covers
+          # every suite the baseline declares, so a declared suite with no bucket fails here
+          # (MISSING) instead of being skipped without a word.
           rc=0
           dotnet run --no-build --project AlRunner -c Release --framework net8.0 -- \
               tests/runner-extras \
@@ -849,10 +853,11 @@ jobs:
               --package-cache "$HOME/.al-runner/test-apps" \
               --strict \
               --count-baseline tests/expectations/count-baseline/test-count-baseline.json \
+              --count-baseline-require-all \
               --out runner-extras-results.json || rc=$?
           if [ "$rc" -ne 0 ]; then
             if [ "$rc" -eq 4 ]; then
-              echo "::error::runner-extras count-baseline mismatch (exit 4) -- a suite ran a different NUMBER of tests than tests/expectations/count-baseline/test-count-baseline.json declares. Search this log for '[count-baseline]': the DROP/GROWTH line names the suite, the expected count and the actual one. A GROWTH means the baseline needs bumping in this PR; a DROP means an app group stopped being discovered."
+              echo "::error::runner-extras count-baseline mismatch (exit 4) -- a suite ran a different NUMBER of tests than tests/expectations/count-baseline/test-count-baseline.json declares. Search this log for '[count-baseline]': the DROP/GROWTH line names the suite, the expected count and the actual one. A GROWTH means the baseline needs bumping in this PR; a DROP means an app group stopped being discovered; a MISSING means a declared suite produced no bucket at all (vanished, or its key is misspelled)."
             else
               echo "::error::runner-extras run failed (exit $rc: 1=test failure, 2=exec fail, 3=compile fail, 4=count-baseline mismatch, 5=expectations entry matched no test, 134/139=crash)"
             fi
