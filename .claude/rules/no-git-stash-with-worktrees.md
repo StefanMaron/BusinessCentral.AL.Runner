@@ -37,14 +37,22 @@ branch whose only intended change was +22/-1 in one markdown file committed
 `12 files changed, 60 insertions(+), 1032 deletions(-)` — another PR's entire contribution
 staged for deletion — and was force-pushed before anyone noticed.
 
-**The trap is that every ordinary guard passes.** `--force-with-lease` covers someone else's
-push to your branch, not your branch's content; `git status` is clean because the deletions are
-committed; and a "same tree as reviewed" check **passes and is exactly wrong**, because
-preserving the old tree *is* the revert once `main` has moved.
+**The trap is that every ordinary guard is SILENT on this class.** `--force-with-lease` covers
+someone else's push to your branch, not your branch's content; `git status --porcelain` is clean
+because the deletions are committed; and the same-tree check (`ci-verdicts.md` §5) passes.
+`git merge-tree --write-tree` also keeps the other PR's files, so the damage is a wrong *diff*
+rather than a merge that reverts anything.
+
+**`git diff --stat origin/main...HEAD` does NOT catch it — use two dots.** Three-dot diffs
+against the **merge base**, and a soft reset moves the merge base back with it, so re-added
+content reads as insertions and the command prints a clean `1 file changed`. Measured in four
+scratch repositories (both stale-ref orderings × `--soft`/`--hard`), and reproduced
+independently: three-dot `1 file changed, 1 insertion(+)`; two-dot
+`2 files changed, 1 insertion(+), 50 deletions(-)`.
 
 So: **`git fetch origin main` immediately before any command naming `origin/main` as a base** —
-`reset`, `rebase`, `merge-tree`, `diff origin/main...` — and read
-`git diff --stat origin/main...HEAD` **before** pushing a rewritten branch, not after.
+`reset`, `rebase`, `merge-tree`, `diff` — and read **`git diff --stat origin/main..HEAD`**, two
+dots, **before** pushing a rewritten branch.
 
 ## The RED-baseline recipe has two ways to destroy work
 
