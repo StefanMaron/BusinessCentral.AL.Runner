@@ -99,18 +99,32 @@ jobs:
         run: |
           set -uo pipefail
 
+          # #3930. Every exit from this job prints one `label-hygiene decision:`
+          # line carrying the values that drove it. Two "Part of" merges 36
+          # minutes apart, one correct and one not, produced logs that could not
+          # be told apart -- the only evaluated line either printed was
+          # "Releasing #N", which both printed -- so pinning the cause took two
+          # sightings and a timeline read. The line is the falsifiable record.
+          branch_issue=none; declared=0; state=unread; foreign_label=none; edit_rc=na
+          decide() {
+            printf 'label-hygiene decision: %s pr=%s head=%s branch_issue=%s declared=%s state=%s foreign=%s edit_rc=%s\n' \
+              "$1" "$PR_NUMBER" "$PR_HEAD_REF" "$branch_issue" "$declared" \
+              "$state" "$foreign_label" "$edit_rc"
+          }
+
           # Narrowed to the issue the BRANCH names -- the pairing pr-gate.yml
           # refuses to merge without. A "Part of #N" naming some OTHER issue is
           # usually the tracking issue each stage of an epic cites, and putting
           # an epic on the ready queue invites an agent to claim the epic
           # itself. Those stay with the merge pass, which can read what landed.
-          branch_issue=$(printf '%s' "$PR_HEAD_REF" | grep -oP '^agent/[^/]+/issue-\K[0-9]+$' || true)
-          if [ -z "$branch_issue" ]; then
+          resolved=$(printf '%s' "$PR_HEAD_REF" | grep -oP '^agent/[^/]+/issue-\K[0-9]+$' || true)
+          if [ -z "$resolved" ]; then
             echo "Head branch '$PR_HEAD_REF' names no issue -- nothing to do."
+            decide no-issue-in-branch
             exit 0
           fi
+          branch_issue="$resolved"
 
-          declared=0
           while IFS= read -r n; do
             if [ "$n" = "$branch_issue" ]; then
               declared=1
@@ -121,16 +135,20 @@ jobs:
 
           if [ "$declared" -eq 0 ]; then
             echo "PR #$PR_NUMBER declares no 'Part of #$branch_issue' line -- nothing to do."
+            decide no-part-of-declaration
             exit 0
           fi
 
           meta=$(gh issue view "$branch_issue" --json state,labels 2>/dev/null) || {
+            state=unreadable
             echo "#$branch_issue is not a readable issue in this repository -- nothing to do."
+            decide issue-unreadable
             exit 0
           }
           state=$(printf '%s' "$meta" | jq -r '.state')
           if [ "$state" != "OPEN" ]; then
             echo "#$branch_issue is $state -- the close path already cleared its labels."
+            decide issue-not-open
             exit 0
           fi
 
@@ -146,16 +164,41 @@ jobs:
             | select(startswith("agent:"))
             | select(. as $l | $m | index($l) | not)')
           if [ -n "$foreign" ]; then
+            foreign_label=$(printf '%s' "$foreign" | tr '\n' ',' | sed 's/,$//')
             echo "#$branch_issue carries an agent: label this PR does not -- left untouched for the merge pass."
+            decide foreign-agent-label
             exit 0
           fi
 
+          # `status: ready` is EXCLUDED here because the edit below ADDS it,
+          # and naming one label in both lists of a single `gh issue edit` is a
+          # race: gh dispatches addLabels and removeLabels as two concurrent
+          # GraphQL mutations (cli/cli v2.98.0,
+          # pkg/cmd/pr/shared/editable_http.go). #3930 is the instance -- remove
+          # won on #1883 and the job reported success having removed the label
+          # it meant to add.
+          #
+          # Trap: re-widening this filter to "every status: label" reintroduces
+          # that race for any issue carrying `status: ready` at merge time,
+          # which #3960 says a claim can still produce.
           args=()
           while IFS= read -r label; do
             [ -n "$label" ] && args+=(--remove-label "$label")
           done < <(
             printf '%s' "$meta" |
-              jq -r '.labels[].name | select(startswith("status:") or startswith("agent:"))'
+              jq -r '.labels[].name
+                     | select(startswith("status:") or startswith("agent:"))
+                     | select(. != "status: ready")'
           )
           echo "Releasing #$branch_issue: PR #$PR_NUMBER merged and declared 'Part of #$branch_issue'."
           gh issue edit "$branch_issue" "${args[@]}" --add-label "status: ready"
+          edit_rc=$?
+          if [ "$edit_rc" -ne 0 ]; then
+            # An edit that failed and reported success is the defect #3930 was
+            # filed for. `set -e` is deliberately not used: every early exit
+            # above is a legitimate 0, and this is the one failure the step has.
+            echo "gh issue edit failed for #$branch_issue (exit $edit_rc) -- #$branch_issue was NOT relabelled."
+            decide edit-failed
+            exit 1
+          fi
+          decide released
