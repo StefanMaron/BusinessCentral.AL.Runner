@@ -409,6 +409,56 @@ public class ServerAffectedSelectionTests
         Assert.Equal(0, selection.GetProperty("skipped").GetInt32());
     }
 
+    // #3337: a FULL request (no narrowing) must not carry old entries forward either. OnlyA fails
+    // during a forced-full run; an unrelated later edit must still rerun it.
+    [SkippableFact]
+    public async Task AffectedOnly_TestFailingDuringForcedFullRun_RerunsOnUnrelatedLaterEdit()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = MakeBundle(HelperABody(0));
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
+
+        File.WriteAllText(Path.Combine(bundle, "HelperA.Codeunit.al"), """
+        codeunit 60201 "Affected Helper A SX"
+        {
+            procedure ValueA(): Integer
+            begin
+                exit(99);
+            end;
+        }
+        """);
+        File.AppendAllText(Path.Combine(bundle, "app.json"), "\n ");
+        var fullLines = await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
+        var (fullEvents, fullSummary) = ProtocolV2Streaming.Split(fullLines);
+        Assert.True(fullSummary.TryGetProperty("selection", out var fullSelection), string.Join(" | ", fullLines));
+        Assert.True(fullSelection.GetProperty("forcedFull").GetBoolean());
+        Assert.Equal(2, fullEvents.Count);
+        Assert.Equal("fail", fullEvents.Single(e => e.GetProperty("name").GetString() == "Codeunit60210.OnlyA")
+            .GetProperty("status").GetString());
+
+        File.WriteAllText(Path.Combine(bundle, "HelperB.Codeunit.al"), """
+        codeunit 60202 "Affected Helper B SX"
+        {
+            procedure ValueB(): Integer
+            var
+                Y: Integer;
+            begin
+                Y := 2;
+                exit(Y);
+            end;
+        }
+        """);
+        var lines = await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
+        var (events, summary) = ProtocolV2Streaming.Split(lines);
+
+        Assert.True(summary.TryGetProperty("selection", out var selection), string.Join(" | ", lines));
+        Assert.False(selection.GetProperty("forcedFull").GetBoolean(), string.Join(" | ", lines));
+        var names = events.Select(e => e.GetProperty("name").GetString()).OrderBy(x => x, StringComparer.Ordinal);
+        Assert.Equal(new[] { "Codeunit60210.OnlyA", "Codeunit60210.OnlyB" }, names);
+    }
+
     private static string HelperABody(int cycle) => $$"""
         codeunit 60201 "Affected Helper A SX"
         {
