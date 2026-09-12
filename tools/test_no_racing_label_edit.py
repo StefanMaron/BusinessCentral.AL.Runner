@@ -33,6 +33,22 @@ Two known-safe constructions are exempt, each for a stated reason:
   * tools/test_*.py files asserting the ABSENCE of the shape necessarily contain
     both flag names as string literals.
 
+Scope: this checks `gh issue edit` COMMAND TEXT only. It cannot see
+`mcp__github__issue_write`, the claim route web and remote sessions use because
+they have no `gh` at all (`github-access.md`). That path is measured and does not
+race (#3980): its `labels` is one array, "Labels to apply to this issue", applied
+by one `PATCH /repos/{owner}/{repo}/issues/{n}` with set semantics, and
+`pkg/github/issues.go` contains no `errgroup`, `wg.Go` or `go func(` at all --
+nor the `addLabelsToLabelable`/`removeLabelsFromLabelable` delta mutations the
+`gh` race is built from (github/github-mcp-server @ 7d13a7ad). So the uncovered
+route is safe rather than unguarded, and a pattern matching MCP call text would
+be a false-positive source guarding nothing.
+
+Its hazard is a different one this test does not attempt to cover: PATCH set
+semantics mean `labels` is the complete final list, so sending one label drops
+the rest. That is a deterministic lost update, not a race, and the server errors
+when the applied set does not match the requested one.
+
 Run directly: python3 tools/test_no_racing_label_edit.py
 """
 from __future__ import annotations
