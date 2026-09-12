@@ -155,6 +155,13 @@ exit **1**, **3** or **4** does not. Measured on PR #3959, where a reviewer arme
 so prominently rather than quietly, and was right — the coordinator's brief had over-specified the
 condition, not the reviewer's judgement (#3961).
 
+**Arming at exit 2 is safe; it is not self-correcting. Re-read every armed PR's verdict on each
+sweep.** `--auto` holds a red PR rather than merging it, so nothing breaks — but nothing tells you
+either, and an armed PR that goes red merges the instant a fix pushes on top, against a verdict
+nobody gave the new head. Measured on #3978: armed at exit 2 with 0 failing, two BC legs reported
+`Failed: 2, Passed: 5506` twenty minutes later, and the coordinator found it only by sweeping.
+**Disarm before dispatching the repair**, then re-arm on a fresh verdict.
+
 Arm **only** when all of these hold. Any one missing means report it to the coordinator instead:
 
 - **The PR is on a branch this loop owns.** Check the **branch prefix**, never the author field
