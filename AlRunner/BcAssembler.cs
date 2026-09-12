@@ -624,7 +624,7 @@ namespace AlRunnerShim
             int objectId,
             Microsoft.Dynamics.Nav.Runtime.NavDuration timeout)
             => global::AlRunner.BcRuntime.AlRunnerStartSession(
-                errorLevel, sessionId, objectId, null, null);
+                errorLevel, sessionId, objectId, null, null, timeout?.Value);
 
         public static bool ALSession_ALStartSession(
             Microsoft.Dynamics.Nav.Types.DataError errorLevel,
@@ -633,7 +633,7 @@ namespace AlRunnerShim
             Microsoft.Dynamics.Nav.Runtime.NavDuration timeout,
             string companyName)
             => global::AlRunner.BcRuntime.AlRunnerStartSession(
-                errorLevel, sessionId, objectId, companyName, null);
+                errorLevel, sessionId, objectId, companyName, null, timeout?.Value);
 
         public static bool ALSession_ALStartSession(
             Microsoft.Dynamics.Nav.Types.DataError errorLevel,
@@ -643,7 +643,7 @@ namespace AlRunnerShim
             string companyName,
             Microsoft.Dynamics.Nav.Runtime.NavRecord record)
             => global::AlRunner.BcRuntime.AlRunnerStartSession(
-                errorLevel, sessionId, objectId, companyName, record);
+                errorLevel, sessionId, objectId, companyName, record, timeout?.Value);
 
         public static bool ALSession_ALStartSession(
             Microsoft.Dynamics.Nav.Types.DataError errorLevel,
@@ -662,7 +662,7 @@ namespace AlRunnerShim
             Microsoft.Dynamics.Nav.Runtime.NavRecord record,
             Microsoft.Dynamics.Nav.Runtime.NavDuration timeout)
             => global::AlRunner.BcRuntime.AlRunnerStartSession(
-                errorLevel, sessionId, objectId, companyName, record);
+                errorLevel, sessionId, objectId, companyName, record, timeout?.Value);
 
         // ───────────────────────────────────────────────────────────────────────
         // NavForm.Run (static, non-modal) — Page.Run.
