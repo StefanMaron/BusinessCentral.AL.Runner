@@ -176,7 +176,9 @@ public static class ServiceTierDllIndex
         }
         catch { /* index cache is an optimization; ignore write failures */ }
 
-        Console.Error.WriteLine($"[servicetier-dll] indexed {map.Count} objects across {dlls.Count} DLLs in {Path.GetFileName(dir)}");
+        // Hyphenated tags bypass Log's filter, so this healthy-run chatter needs its own gate (#2257).
+        if (AlRunner.Log.Verbose)
+            Console.Error.WriteLine($"[servicetier-dll] indexed {map.Count} objects across {dlls.Count} DLLs in {Path.GetFileName(dir)}");
         return map;
     }
 
