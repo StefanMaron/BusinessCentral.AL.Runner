@@ -172,7 +172,11 @@ public static partial class RecordPatches
         if (session.TestExecution != null && NavTestExecution.UseEffectivePermissions(session))
             return false;
 
-        var user = session.User;
+        NavUser? user;
+        try { user = session.User; }
+        catch (NullReferenceException) { user = null; } // no Authenticator: no user, as IsSkeletonSessionUser
+        if (user == null)
+            return false;
         if (user.IsNavAdminUser)
             return true;
 
