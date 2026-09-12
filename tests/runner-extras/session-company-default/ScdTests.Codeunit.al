@@ -33,8 +33,8 @@ codeunit 62221 "SCD Tests"
     var
         Company: Record Company;
     begin
-        // A second writer, the Company (2000000006) row seed. Changing one seed without the
-        // other turns this red while the two tests above stay green.
+        // The Company (2000000006) row is seeded from the skeleton NavCompany's name
+        // (RecordPatches.CompanySystemTable.cs); if the two stop agreeing, only this test goes red.
         Assert.IsTrue(Company.Get(RunnerCompanyTok), 'Company.Get(''My Company'') must find the seeded row');
         Assert.AreEqual(RunnerCompanyTok, Company.Name, 'Company.Name');
         Assert.AreEqual(1, Company.Count(), 'the runner seeds exactly one company');
@@ -46,6 +46,6 @@ codeunit 62221 "SCD Tests"
         Company: Record Company;
     begin
         // Negative control: Get must not answer true for any name.
-        Assert.IsFalse(Company.Get('CRONUS International Ltd.'), 'a company the runner never seeded must not be found');
+        Assert.IsFalse(Company.Get('SCD Never Seeded'), 'a company the runner never seeded must not be found');
     end;
 }
