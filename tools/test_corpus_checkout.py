@@ -25,6 +25,9 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import scratch_git_config  # noqa: E402
+scratch_git_config.isolate()  # scratch commits must not reach the user's signer (#4001)
 _spec = importlib.util.spec_from_file_location("corpus_checkout",
                                                os.path.join(HERE, "corpus-checkout.py"))
 cc = importlib.util.module_from_spec(_spec)
