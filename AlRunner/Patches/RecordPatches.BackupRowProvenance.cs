@@ -36,8 +36,8 @@
 //     * PopulateObjectSystemTable no longer exists, and
 //     * CaptureInstallBaselineSnapshot no longer has to leave 2000000001 out — the only rows
 //       it can hold are a backup's, which a baseline SHOULD carry.
-//   IsProjectionOwnedSystemTableId went with them; it was defined as "2000000001 and no backup
-//   behind it", which now describes an empty table rather than a projection.
+//   IsProjectionOwnedSystemTableId went with them, and #3236 brought it back for Object
+//   Metadata (2000000071), whose synthesised row set does exist.
 //
 // WHY THE RECORDER STAYS
 //   What it records is still true, still cheap, and still the only place the fact exists:
