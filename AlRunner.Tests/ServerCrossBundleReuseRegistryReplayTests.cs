@@ -62,6 +62,37 @@ public sealed class ServerCrossBundleReuseRegistryReplayTests
             }
         }
 
+        table 62404 "R3250 Line"
+        {
+            fields
+            {
+                field(1; "Row No."; Integer) { }
+                field(2; "Line No."; Integer) { }
+                field(3; Qty; Integer) { }
+            }
+            keys
+            {
+                key(PK; "Row No.", "Line No.") { Clustered = true; }
+            }
+        }
+
+        query 62405 "R3250 Row Lines"
+        {
+            elements
+            {
+                dataitem(Row; "R3250 Row")
+                {
+                    column(RowNo; "No.") { }
+                    dataitem(Line; "R3250 Line")
+                    {
+                        DataItemLink = "Row No." = Row."No.";
+                        SqlJoinType = InnerJoin;
+                        column(LineQty; Qty) { }
+                    }
+                }
+            }
+        }
+
         query 62402 "R3250 Rows"
         {
             elements
@@ -105,6 +136,28 @@ public sealed class ServerCrossBundleReuseRegistryReplayTests
                 if Rows.Amount <> 7 then
                     Error('query column Amount answered <%1>, expected <7>', Rows.Amount);
             end;
+
+            [Test]
+            procedure JoinQueryReadsItsOwnColumns()
+            var
+                Row: Record "R3250 Row";
+                Line: Record "R3250 Line";
+                RowLines: Query "R3250 Row Lines";
+            begin
+                Row.Init();
+                Row."No." := 5;
+                Row.Insert();
+                Line.Init();
+                Line."Row No." := 5;
+                Line."Line No." := 1;
+                Line.Qty := 11;
+                Line.Insert();
+                RowLines.Open();
+                if not RowLines.Read() then
+                    Error('join query returned no row');
+                if (RowLines.RowNo <> 5) or (RowLines.LineQty <> 11) then
+                    Error('join query answered <%1>/<%2>, expected <5>/<11>', RowLines.RowNo, RowLines.LineQty);
+            end;
         }
         """);
     }
@@ -125,8 +178,8 @@ public sealed class ServerCrossBundleReuseRegistryReplayTests
         var (_, d1) = ProtocolV2Streaming.Split(lines1);
         // Request 1 is the control: the same AL, the same assertions, green. A red here is a
         // general failure of the fixture, not this issue.
-        Assert.True(d1.GetProperty("passed").GetInt32() == 2 && d1.GetProperty("failed").GetInt32() == 0,
-            $"[{label}] request 1 (directory A) must pass both tests: {joined1}");
+        Assert.True(d1.GetProperty("passed").GetInt32() == 3 && d1.GetProperty("failed").GetInt32() == 0,
+            $"[{label}] request 1 (directory A) must pass all three tests: {joined1}");
 
         var mark = server.StdErrMark;
         var lines2 = await server.SendRequestStreamingAsync(Req(dirB), TimeSpan.FromSeconds(240));
@@ -143,8 +196,8 @@ public sealed class ServerCrossBundleReuseRegistryReplayTests
         var joined2 = string.Join(" | ", lines2);
         Assert.Contains(ReuseLine, stderr2, StringComparison.Ordinal);
         var (_, d2) = ProtocolV2Streaming.Split(lines2);
-        Assert.True(d2.GetProperty("passed").GetInt32() == 2 && d2.GetProperty("failed").GetInt32() == 0,
-            $"[{label}] request 2 (directory B, reused module) must pass both tests: {joined2}");
+        Assert.True(d2.GetProperty("passed").GetInt32() == 3 && d2.GetProperty("failed").GetInt32() == 0,
+            $"[{label}] request 2 (directory B, reused module) must pass all three tests: {joined2}");
     }
 
     [SkippableFact]
