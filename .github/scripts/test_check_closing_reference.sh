@@ -494,6 +494,58 @@ assert_exit_branch "a stray close is still caught on an agent branch" 1 \
 
 This also fixes #999 in passing."
 
+# --- #3934: prose after the issue number ---------------------------------------
+#
+# PR #3927 opened with "Part of #1883 — the NavDataTransfer cluster (...)" and
+# the gate reported the declaration as absent. The marker still has to START
+# the line; only the end is relaxed, and the number must not run on into more
+# digits or letters.
+
+assert_exit_branch "a Part of line with prose after the number passes" 0 \
+  "agent/fbk-2/issue-3678" "fix: something" \
+  "Part of #3678 — the NavDataTransfer cluster (7 of the 69 registrations)."
+
+assert_exit_branch "a Part of line with prose after a colon form passes" 0 \
+  "agent/fbk-2/issue-3678" "fix: something" "Part of: #3678, the first half"
+
+assert_exit_branch "a Part of number that runs on into more digits is a different issue" 1 \
+  "agent/fbk-2/issue-3678" "fix: something" "Part of #36789 — some other work"
+
+assert_exit_branch "a Part of number glued to letters is not a declaration" 1 \
+  "agent/fbk-2/issue-3678" "fix: something" "Part of #3678abc"
+
+assert_stderr_branch "a mention that is not a declaration is reported as malformed, naming the line" \
+  "malformed" "agent/fbk-2/issue-3678" "fix: something" "Closes #123
+
+This is part of #3678, landing the first half."
+
+assert_stderr_branch "...and quotes the line the author wrote" \
+  "This is part of #3678, landing the first half." "agent/fbk-2/issue-3678" "fix: something" \
+  "Closes #123
+
+This is part of #3678, landing the first half."
+
+assert_stderr_branch "a body with no mention at all is still reported as absent, not malformed" \
+  "neither closes that issue nor says it stays open" "agent/fbk-2/issue-3678" "fix: something" \
+  "Closes #123"
+
+# --- #3792: a suffix after the branch's issue number ---------------------------
+#
+# One issue landed as several PRs on agent/<id>/issue-N-<step> branches is the
+# case "Part of #N" exists for; the $ anchor stood the whole check down there.
+
+assert_exit_branch "a suffixed branch reads its issue number and accepts Part of" 0 \
+  "agent/fbk-2/issue-3678-codeunit" "fix: something" "Part of #3678"
+
+assert_exit_branch "a suffixed branch still requires the body to declare its issue" 1 \
+  "agent/fbk-2/issue-3678-codeunit" "fix: something" "Closes #123"
+
+assert_exit_branch "a digit after the number is part of the number, not a suffix" 1 \
+  "agent/fbk-2/issue-36780" "fix: something" "Part of #3678"
+
+assert_exit_branch "letters glued to the number are not an issue branch, so the check stands down" 0 \
+  "agent/fbk-2/issue-3678abc" "fix: something" "Closes #123"
+
 echo ""
 echo "$pass passed, $fail failed"
 if [ "$fail" -ne 0 ]; then
