@@ -1,0 +1,34 @@
+[
+  {
+    "codeunitId": 60802,
+    "CodeunitName": "Test AllObj Virtual Table",
+    "Method": "AllObjWithCaption_Get_OwnObjects_AppIdIsThisModulesId",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3106",
+    "Note": "Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#329 merged before its runner fix. Measured on run 34720904279, BC 27.0 leg, corpus 2e86c44e40f87bcd34a0904aca9b1505f87a1e76: exactly these four of codeunit 60802's AllObjWithCaption tests fail; the rest pass. The fix is PR #3993, which must delete this file."
+  },
+  {
+    "codeunitId": 60802,
+    "CodeunitName": "Test AllObj Virtual Table",
+    "Method": "AllObjWithCaption_Get_OwnTable_PackageIdsEqualAllObj",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3106",
+    "Note": "Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#329 merged before its runner fix. Measured on run 34720904279, BC 27.0 leg, corpus 2e86c44e40f87bcd34a0904aca9b1505f87a1e76: exactly these four of codeunit 60802's AllObjWithCaption tests fail; the rest pass. The fix is PR #3993, which must delete this file."
+  },
+  {
+    "codeunitId": 60802,
+    "CodeunitName": "Test AllObj Virtual Table",
+    "Method": "AllObjWithCaption_Get_BaseApplicationTable_AppIdIsBaseApplication",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3106",
+    "Note": "Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#329 merged before its runner fix. Measured on run 34720904279, BC 27.0 leg, corpus 2e86c44e40f87bcd34a0904aca9b1505f87a1e76: exactly these four of codeunit 60802's AllObjWithCaption tests fail; the rest pass. The fix is PR #3993, which must delete this file."
+  },
+  {
+    "codeunitId": 60802,
+    "CodeunitName": "Test AllObj Virtual Table",
+    "Method": "AllObjWithCaption_FindEnum_BaseApplicationEnum_AppIdIsEmpty",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3106",
+    "Note": "Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#329 merged before its runner fix. Measured on run 34720904279, BC 27.0 leg, corpus 2e86c44e40f87bcd34a0904aca9b1505f87a1e76: exactly these four of codeunit 60802's AllObjWithCaption tests fail; the rest pass. The fix is PR #3993, which must delete this file."
+  }
+]

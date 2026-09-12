@@ -1,0 +1,50 @@
+[
+  {
+    "codeunitId": 60976,
+    "CodeunitName": "Test Active Session Table",
+    "Method": "ActiveSession_GetByInstanceAndSessionId_FindsTheReadingSession",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3233",
+    "Note": "Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#328 merged before its runner fix, so this test reaches every run from corpus master (#3737). Measured on run 34720904279, BC 27.0 leg, corpus 2e86c44e40f87bcd34a0904aca9b1505f87a1e76: the six ActiveSession_* tests below fail; ActiveSession_GetOnASessionIdThatIsNoSession_ReturnsFalse passes, which is why methods are named rather than '*'. The fix is PR #3985, which must delete this file."
+  },
+  {
+    "codeunitId": 60976,
+    "CodeunitName": "Test Active Session Table",
+    "Method": "ActiveSession_FilterOnSessionId_IsNotEmpty",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3233",
+    "Note": "Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#328 merged before its runner fix, so this test reaches every run from corpus master (#3737). Measured on run 34720904279, BC 27.0 leg, corpus 2e86c44e40f87bcd34a0904aca9b1505f87a1e76: the six ActiveSession_* tests below fail; ActiveSession_GetOnASessionIdThatIsNoSession_ReturnsFalse passes, which is why methods are named rather than '*'. The fix is PR #3985, which must delete this file."
+  },
+  {
+    "codeunitId": 60976,
+    "CodeunitName": "Test Active Session Table",
+    "Method": "ActiveSession_ReadingSessionRow_UserIdIsWhatUserIdReturns",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3233",
+    "Note": "Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#328 merged before its runner fix, so this test reaches every run from corpus master (#3737). Measured on run 34720904279, BC 27.0 leg, corpus 2e86c44e40f87bcd34a0904aca9b1505f87a1e76: the six ActiveSession_* tests below fail; ActiveSession_GetOnASessionIdThatIsNoSession_ReturnsFalse passes, which is why methods are named rather than '*'. The fix is PR #3985, which must delete this file."
+  },
+  {
+    "codeunitId": 60976,
+    "CodeunitName": "Test Active Session Table",
+    "Method": "ActiveSession_ReadingSessionRow_UserSidIsWhatUserSecurityIdReturns",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3233",
+    "Note": "Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#328 merged before its runner fix, so this test reaches every run from corpus master (#3737). Measured on run 34720904279, BC 27.0 leg, corpus 2e86c44e40f87bcd34a0904aca9b1505f87a1e76: the six ActiveSession_* tests below fail; ActiveSession_GetOnASessionIdThatIsNoSession_ReturnsFalse passes, which is why methods are named rather than '*'. The fix is PR #3985, which must delete this file."
+  },
+  {
+    "codeunitId": 60976,
+    "CodeunitName": "Test Active Session Table",
+    "Method": "ActiveSession_ReadingSessionRow_CarriesALoginDatetimeAndAUniqueId",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3233",
+    "Note": "Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#328 merged before its runner fix, so this test reaches every run from corpus master (#3737). Measured on run 34720904279, BC 27.0 leg, corpus 2e86c44e40f87bcd34a0904aca9b1505f87a1e76: the six ActiveSession_* tests below fail; ActiveSession_GetOnASessionIdThatIsNoSession_ReturnsFalse passes, which is why methods are named rather than '*'. The fix is PR #3985, which must delete this file."
+  },
+  {
+    "codeunitId": 60976,
+    "CodeunitName": "Test Active Session Table",
+    "Method": "ActiveSession_AgreesWithTheSessionVirtualTableOnTheUser",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3233",
+    "Note": "Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#328 merged before its runner fix, so this test reaches every run from corpus master (#3737). Measured on run 34720904279, BC 27.0 leg, corpus 2e86c44e40f87bcd34a0904aca9b1505f87a1e76: the six ActiveSession_* tests below fail; ActiveSession_GetOnASessionIdThatIsNoSession_ReturnsFalse passes, which is why methods are named rather than '*'. The fix is PR #3985, which must delete this file."
+  }
+]
