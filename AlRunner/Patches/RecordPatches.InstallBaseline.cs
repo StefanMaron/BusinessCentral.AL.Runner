@@ -321,6 +321,7 @@ public static partial class RecordPatches
         // Diagnostic only (the PerfTrace line below). At most ten ids, so collecting them
         // unconditionally costs nothing worth gating.
         var skippedVirtual = new List<int>();
+        var skippedProjection = new List<int>();
         foreach (var (source, perTable) in _dataAccessByTable)
         {
             var tables = new List<BaselineTable>();
@@ -362,6 +363,16 @@ public static partial class RecordPatches
                 if (IsSelfPopulatingVirtualTableId(tableId))
                 {
                     skippedVirtual.Add(tableId);
+                    continue;
+                }
+
+                // #3236: a replay of Object Metadata's synthesised rows reads as backup rows to
+                // its populate and disarms the #2771 payload refusal. Not captured, the store is
+                // dropped at the boundary and re-synthesised. NOT IsSelfPopulatingVirtualTableId:
+                // AppendBaselineTable throws for those, and a backup can own this table's rows.
+                if (IsProjectionOwnedSystemTableId(tableId))
+                {
+                    skippedProjection.Add(tableId);
                     continue;
                 }
 
@@ -416,7 +427,8 @@ public static partial class RecordPatches
                       // #2272: named, not just counted — "which tables were left out" is the
                       // whole claim, and a bare count cannot distinguish "skipped AllObj" from
                       // "skipped something that should have been captured".
-                      $"skipped-self-populating [{string.Join(",", skippedVirtual)}]" +
+                      $"skipped-self-populating [{string.Join(",", skippedVirtual)}] " +
+                      $"skipped-projection-owned [{string.Join(",", skippedProjection)}]" +
                       // #1867: a content digest, not just counts — lets a diagnostic run compare
                       // "the dep+company baseline this app group got via a cache HIT" against
                       // "what a fresh, uncached capture for that same app group would have

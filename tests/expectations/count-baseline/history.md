@@ -2258,3 +2258,20 @@ codeunit carrying this AL is one BC minor away from failing every leg's compile.
 Measured 6P/0F/0E on the whole bundle, not computed from the diff.
 
 Written by an agent (Claude, `fbk-3`).
+
+## runner-extras `object-metadata-baseline-replay` NEW, 6 (#3236)
+
+A new bundle. An install trigger reads Object Metadata (2000000071), which puts the runner's
+synthesised rows into the install baseline. Before the fix every codeunit-boundary restore
+replayed them into a new provider, the populate took them for supplied rows, and the #2771
+payload refusal switched off: four of the six tests failed (`2P/4F`). The capture now leaves the
+table out unless a backup owns its rows.
+
+Six tests, three per codeunit so the pair proves the restore in either execution order: a scalar
+payload column and a BLOB payload column still refuse by name, and the key columns still read
+(the control a fix that dropped the rows would fail).
+
+Measured 6P/0F/0E on the whole bundle, cold and warm against one cache root, not computed from
+the diff.
+
+Written by an agent (Claude, `stma-auto2-6`).

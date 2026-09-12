@@ -42,11 +42,8 @@
 // WHY THE RECORDER STAYS
 //   What it records is still true, still cheap, and still the only place the fact exists:
 //   TestDataProvisioner.LoadOnDemand is the one writer that can put rows into these tables, and
-//   nothing downstream of a store can reconstruct that afterwards. Issue #3236 is the named
-//   consumer — the SAME wrong-shaped question, ProviderHasAnyRow, still decides whether Object
-//   Metadata's (2000000071) #2771 payload refusal is armed, and an install-baseline restore
-//   replaying that table's synthesised rows disarms it. #3236 has the table and the reason
-//   BackupOwnsRowsFor alone is not the whole fix there.
+//   nothing downstream of a store can reconstruct that afterwards. Its consumer is
+//   IsProjectionOwnedSystemTableId below (#3236).
 //
 //   It deliberately does NOT weaken #2272's loud refusal. The self-populating virtual tables
 //   are refused by AppendBaselineTable whatever this file says.
@@ -74,6 +71,15 @@ public static partial class RecordPatches
     /// run. False for every table in a run without --test-data, and for a table the armed
     /// backup's plan does not offer or whose rows it holds none of.</summary>
     internal static bool BackupOwnsRowsFor(int tableId) => _backupContributedRows.ContainsKey(tableId);
+
+    /// <summary>True when <paramref name="tableId"/>'s rows in this run can only be the runner's
+    /// own synthesis: Object Metadata (2000000071) with no backup behind it. The install-baseline
+    /// capture leaves such a table out (#3236), because
+    /// <c>PopulateObjectMetadataSystemTable</c> reads a replay of its own rows as supplied ones and
+    /// disarms the #2771 payload refusal. A disk-cache HIT stays right: a file carries this table
+    /// only when a backup owned it in the process that wrote the file.</summary>
+    internal static bool IsProjectionOwnedSystemTableId(int tableId)
+        => tableId == ObjectMetadataSystemTableId && !BackupOwnsRowsFor(tableId);
 
     /// <summary>Drop everything recorded here. Paired with clearing
     /// <see cref="TestDataOnDemandLoader"/>: the two describe the same armed backup, and a
