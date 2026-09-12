@@ -134,8 +134,9 @@ public static partial class RecordPatches
         // #3117: built on FIRST ACTUAL INSERT, not on entry. PopulateAllObjVirtualTable runs on
         // every AllObj data-access handout, but `done` makes all but the first few handouts
         // insert nothing — and BuildObjectOwnerIndex walks every registered module assembly's
-        // TypeDef name index six times (once per _emittedObjectTypePrefixes entry), Base
-        // Application included, so an eager build paid that price to produce no rows.
+        // TypeDef name index once per _emittedObjectTypePrefixes entry (six when the figures
+        // below were measured, nine since #4000), Base Application included, so an eager
+        // build paid that price to produce no rows.
         //
         // Measured on the al-language corpus (2665 tests, BC 28.1, warm compile cache), which
         // is what settles the "cost is not the reason for a skip any more" claim #3107's PR
@@ -168,8 +169,9 @@ public static partial class RecordPatches
             // for stays Guid.Empty and therefore matches no Published Application row.
             //
             // NOT a fallback to the current bundle. That is the conservative direction and it
-            // is deliberate: an object kind with no entry in _emittedObjectTypePrefixes, or one
-            // reached before its assembly was registered, is an object whose owner the runner
+            // is deliberate: an object neither an emitted type name nor a parsed source
+            // declaration attributes, or one reached before its assembly was registered, is an
+            // object whose owner the runner
             // does not know — and answering "the bundle" there would let the bundle own it,
             // which is a permission granted on a guess. An unowned object simply fails the
             // ownership check, which is what a wrong guess should look like.
@@ -533,7 +535,29 @@ public static partial class RecordPatches
                     // it has a handful of types, so resolving them is cheap.
                     : typeIndex.EnumerateWithPrefix(prefix).Select(t => t.Name));
         }
+
+        // #4000: enums, enumextensions, permission sets and permissionsetextensions emit no CLR
+        // type, so the pass above cannot see them; their owner is the app.json above the source
+        // file that declares them.
+        AddSourceDeclaredOwners(index, ParsedObjectDeclOwners);
         return index;
+    }
+
+    /// <summary>
+    /// Fold the declaring app of each source-parsed object declaration into
+    /// <paramref name="index"/>. TryAdd: a symbol reference or an emitted assembly that already
+    /// named the object answered first, and both are exact. An empty app id is left out, so the
+    /// object stays unowned rather than owned by nobody in particular.
+    /// </summary>
+    internal static void AddSourceDeclaredOwners(
+        Dictionary<(string Kind, int Id), Guid> index,
+        IEnumerable<KeyValuePair<(string Kind, int Id), Guid>> declaredOwners)
+    {
+        foreach (var ((kind, id), appId) in declaredOwners)
+        {
+            if (id <= 0 || appId == Guid.Empty) continue;
+            index.TryAdd((NormalizeObjectTypeName(kind), id), appId);
+        }
     }
 
     /// <summary>Assembly name for a diagnostic, without letting the diagnostic itself throw.</summary>
@@ -608,6 +632,12 @@ public static partial class RecordPatches
         ("Report", "Report"),
         ("Query", "Query"),
         ("XmlPort", "XMLport"),
+        // #4000. Emitted as `TableExtension63701` etc., the extension's own id (measured in
+        // AlCallStackCapture). "Page"/"Report" never match these: the text after the shorter
+        // prefix starts with "Extension", which is not an id.
+        ("TableExtension", "TableExtension"),
+        ("PageExtension", "PageExtension"),
+        ("ReportExtension", "ReportExtension"),
     };
 
     private static string NormalizeObjectTypeName(string raw)

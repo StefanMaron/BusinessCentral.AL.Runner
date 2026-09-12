@@ -410,6 +410,7 @@ public static partial class RecordPatches
         _parsedQueries.Clear();
         _parsedXmlPorts.Clear();
         _parsedObjectDecls.Clear();
+        _parsedObjectDeclOwners.Clear();
         _parsedObjectCaptions.Clear();
         // Both keyed by (AppId, Name), both populated by the same per-file sweep
         // (ParseSourceFileIntoAllExtractors) as every dict above — an edited re-run that
@@ -534,7 +535,7 @@ public static partial class RecordPatches
         TryParseReportFile(text);
         TryParseQueryFile(text);
         TryParseXmlPortFile(text);
-        TryParseObjectDeclFile(text);
+        TryParseObjectDeclFile(text, filePath);
         TryParseObjectCaptionFile(text);
         // Profiles need the file PATH, not just its text: a profile has no object id, and
         // its "All Profile" row carries the declaring app's id and name, which are only
