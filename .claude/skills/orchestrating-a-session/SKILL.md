@@ -167,6 +167,15 @@ Arm **only** when all of these hold. Any one missing means report it to the coor
 - **The newest comment on the PR whose last line begins `Verdict:` reads `Verdict: MERGE` with a
   head equal to the PR's current head** (`gh pr view <N> --json headRefOid`); any other line, or none, sends the
   PR back to its reviewer naming what is missing.
+- **No commit is attributed to another real GitHub account.**
+  `gh pr view <N> --json commits --jq '[.commits[].authors[]|{login,name}]|unique'` — such a commit
+  makes the `main` ruleset's `require_extra_approval_for_unattributed_changes` refuse the merge until
+  a human approves, with every check green and `mergeable: MERGEABLE`. It is not a check, so
+  `ci-wait.py` cannot see it and reports GREEN (#3942). **Ignore an empty login and `claude`** — this
+  loop's own commits carry both and they never block (measured: #3943 CLEAN with both, #3927 BLOCKED
+  only once `SShadowS` appeared). Keying on "not the pushing identity" false-positives on everything
+  this loop writes. Report it and ask the owner; **never self-approve** — that rule exists to put a
+  human in front of exactly this change.
 
 **Record the head you armed against** — it is the head in that verdict line. If the head moves
 afterwards, GitHub keeps auto-merge armed against the new head, which nobody has reviewed, and
