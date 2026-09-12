@@ -14,9 +14,10 @@
 # The accepted shape is deliberately the one check_closing_reference.sh's
 # branch check accepts, so the gate and the merge-time action cannot disagree
 # about what a body declared: the marker stands alone on its own line, an
-# optional single punctuation separator, "#N", optional trailing period.
-# An inline "this is part of #N" is prose about the issue and is NOT a
-# declaration -- test_part_of_references.sh pins both halves of that pair.
+# optional single punctuation separator, "#N", and then anything that does not
+# continue the number (prose after it is allowed, #3934). An inline "this is
+# part of #N" is prose about the issue and is NOT a declaration --
+# test_part_of_references.sh pins both halves of that pair.
 #
 # owner/repo#N and full URLs are deliberately NOT accepted: the workflow
 # relabels issues in THIS repository, and a cross-repo reference would send a
@@ -32,7 +33,7 @@ set -uo pipefail
 # Same separator shape as check_closing_reference.sh: optional whitespace, an
 # optional single punctuation mark, optional whitespace.
 SEP='[[:space:]]*[,;:]?[[:space:]]*'
-LINE_RE="^[[:space:]]*Part of${SEP}#[0-9]+[[:space:]]*[.]?[[:space:]]*\$"
+LINE_RE="^[[:space:]]*Part of${SEP}#[0-9]+(?![0-9A-Za-z_])"
 
 seen=""
 while IFS= read -r line; do
