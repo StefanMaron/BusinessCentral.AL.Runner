@@ -214,6 +214,10 @@ public static partial class RecordPatches
 
         foreach (var field in obj.DescendantNodes().OfType<NavSyntax.PageFieldSyntax>())
             Add(IdentText(field.Name));
+        // PageActionSyntax only, on purpose: its two trigger-carrying siblings need no entry (#2200).
+        // systemaction names are a closed compiler list of plain identifiers (AL0810), so the
+        // backward scan in FindTriggerOnTarget already resolves them; a fileuploadaction is not a
+        // TestPage member at all (AL0132) and is reached only through an actionref, by name.
         foreach (var action in obj.DescendantNodes().OfType<NavSyntax.PageActionSyntax>())
             Add(IdentText(action.Name));
         return map;
