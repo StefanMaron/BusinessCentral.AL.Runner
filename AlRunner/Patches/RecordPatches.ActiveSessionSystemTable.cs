@@ -110,9 +110,9 @@ public static partial class RecordPatches
         Set("Session ID", sessionId);
         rec.SetFieldValue(FieldByNameOn(m, "User SID").FieldNo, userSid);
         Set("User ID", userName!);
-        // BC's (int)ClientType into field 7's option. The runner's CurrentClientType() answers
-        // Background (MiscPatches.ALSession_GetALCurrentClientType), so the row says the same.
-        Set("Client Type", OptionOrdinalByName(FieldByNameOn(m, "Client Type"), "Background"));
+        // BC's own mapping (SessionEventTableHandler.TranslateToClientType) over the session's
+        // own ClientConnectionType — the same property CurrentClientType() switches on.
+        Set("Client Type", TranslateSkeletonClientType(session));
         // BC stores DateTime.UtcNow; SkeletonSessionLoginTime is the same instant in host-local
         // time (see its doc), so Session's GetDatePart/GetTimePart view of this value matches the
         // Session table's Login Date / Login Time.
@@ -143,13 +143,15 @@ public static partial class RecordPatches
         return session.UniqueSessionId;
     }
 
-    private static int OptionOrdinalByName(NCLMetaField field, string member)
+    private static int TranslateSkeletonClientType(NavSession session)
     {
-        var members = field.FieldOptionMetadata?.OptionString?.Split(',') ?? Array.Empty<string>();
-        var ordinal = Array.FindIndex(members, s => string.Equals(s.Trim(), member, StringComparison.OrdinalIgnoreCase));
-        if (ordinal < 0)
-            throw ActiveSessionShapeGap($"\"{field.FieldName}\" declares no \"{member}\" member");
-        return ordinal;
+        var translate = typeof(NavSession).Assembly
+            .GetType("Microsoft.Dynamics.Nav.Runtime.SessionEventTableHandler")
+            ?.GetMethod("TranslateToClientType", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
+            ?? throw ActiveSessionShapeGap(
+                "BC's SessionEventTableHandler.TranslateToClientType was not found, so \"Client Type\" "
+                + "would have to be mapped by hand");
+        return Convert.ToInt32(translate.Invoke(null, new object[] { session.ClientConnectionType }));
     }
 
     private static NCLMetaField FieldByNameOn(NCLMetaTable table, string fieldName)
