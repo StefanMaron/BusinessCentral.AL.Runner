@@ -10,7 +10,7 @@ print a non-zero one (#3957, .claude/rules/tdd.md):
   exit 0  GREEN        every test that ran passed, none skipped: the mutation was NOT caught
   exit 1  RED          assertion failures, none of them the engine guard: the mutation WAS caught
   exit 3  UNMEASURED   no summary line, a filter that matched nothing, zero tests, or skips
-  exit 4  BUILD-BROKE  compiler errors, so no test ran against the mutation (#3900)
+  exit 4  BUILD-BROKE  MSBuild errors and no summary, so no test ran against the mutation (#3900)
   exit 5  ENGINE-NOT-BOOTSTRAPPED
                        failures raised by BcEngineUnbootstrappedGuard before any test work:
                        run tools/engine-test-bootstrap.sh, then --settings engine.runsettings
@@ -49,7 +49,9 @@ SUMMARY_RE = re.compile(
     r"^\s*(?:Passed|Failed|Skipped)!\s+-\s+Failed:\s*(\d+),\s*Passed:\s*(\d+),"
     r"\s*Skipped:\s*(\d+),\s*Total:\s*(\d+)", re.M)
 FAILED_HEADER_RE = re.compile(r"^\s*Failed (\S.*?) \[[^\]]*\]\s*$")
-BUILD_ERROR_RE = re.compile(r": error [A-Z]{2,}\d+:", re.M)
+# MSBuild's shape: a diagnostic line ending in the project it belongs to. A bare ": error AL0118:"
+# also appears in assertion messages about compiler output, which are genuine test failures.
+BUILD_ERROR_RE = re.compile(r"^\S.*: error [A-Z]{2,}\d+: .*\[[^\]]+\.csproj\]\s*$", re.M)
 NO_MATCH = "No test matches the given testcase filter"
 
 
@@ -81,10 +83,10 @@ def first_message_lines(text: str) -> dict[str, str]:
 
 
 def classify(text: str) -> Result:
-    if BUILD_ERROR_RE.search(text):
-        return Result(BUILD_BROKE, reason="the build failed, so no test ran against the mutation")
-
     sums = SUMMARY_RE.findall(text)
+    build_error = BUILD_ERROR_RE.search(text) is not None
+    if not sums and build_error:
+        return Result(BUILD_BROKE, reason="the build failed, so no test ran against the mutation")
     if not sums:
         why = ("the test filter matched nothing" if NO_MATCH in text
                else "no `Total:` summary line: the output is empty, truncated, or not dotnet test's")
@@ -95,6 +97,11 @@ def classify(text: str) -> Result:
 
     if total == 0:
         r.verdict, r.reason = UNMEASURED, "zero tests ran"
+        return r
+    if build_error:
+        r.verdict = UNMEASURED
+        r.reason = ("a project failed to build alongside the tests that ran, so the mutated code "
+                    "may not be in what was measured")
         return r
 
     firsts = first_message_lines(text)

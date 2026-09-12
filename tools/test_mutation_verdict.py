@@ -11,6 +11,10 @@ tell apart, and both fail in under a millisecond with `REFUSING TO SKIP` in the 
   genuine-red-guard-mutation.txt   BcEngineUnbootstrappedGuardTests with the guard's
                                    IsRecoverableLocally check inverted: a real mutation RED
 
+genuine-red-quoting-al-diagnostic.txt is DotNetCompilationTargetScopeTests.CloudTarget_* with one
+assertion added, `Assert.DoesNotContain(": error AL0296:", output)`: a real failure whose message
+quotes an AL compiler diagnostic, which an unanchored build-error pattern read as a build break.
+
 Cases marked "derived" edit a recorded fixture in memory, and say what they changed.
 
 Run: python3 tools/test_mutation_verdict.py
@@ -68,6 +72,10 @@ check("  counts 9 of 29", (r.failed, r.total) == (9, 29), repr((r.failed, r.tota
 
 expect("an inverted readiness guard is a genuine RED", fixture("genuine-red-readiness-mutation.txt"), mv.RED)
 expect("compiler errors are BUILD-BROKE, not RED", fixture("build-break.txt"), mv.BUILD_BROKE)
+r = expect("a genuine red whose assertion quotes `: error AL0296:` is RED, not BUILD-BROKE",
+           fixture("genuine-red-quoting-al-diagnostic.txt"), mv.RED)
+check("  the fixture really quotes an AL diagnostic",
+      ": error AL0296:" in fixture("genuine-red-quoting-al-diagnostic.txt"))
 expect("a clean run is GREEN", fixture("green.txt"), mv.GREEN)
 r = expect("a filter matching nothing is UNMEASURED, though dotnet exits 0",
            fixture("no-filter-match.txt"), mv.UNMEASURED)
@@ -78,6 +86,8 @@ engine = fixture("engine-guard-unbootstrapped.txt")
 expect("derived: engine fixture with its summary line cut off is UNMEASURED",
        "\n".join(l for l in engine.splitlines() if "Total:" not in l), mv.UNMEASURED)
 expect("derived: empty input is UNMEASURED", "", mv.UNMEASURED)
+expect("derived: a green run beside an MSBuild error line is UNMEASURED",
+       fixture("green.txt") + fixture("build-break.txt").splitlines()[-1] + "\n", mv.UNMEASURED)
 expect("derived: green fixture with Passed 0 / Skipped 3 is UNMEASURED",
        fixture("green.txt").replace("Passed:     3, Skipped:     0", "Passed:     0, Skipped:     3"),
        mv.UNMEASURED)
@@ -99,7 +109,7 @@ expect("derived: one engine-guard failure alongside genuine ones still refuses t
 
 print("the CLI")
 for name, code in (("engine-guard-unbootstrapped.txt", 5), ("genuine-red-guard-mutation.txt", 1),
-                   ("build-break.txt", 4), ("green.txt", 0), ("no-filter-match.txt", 3)):
+                   ("build-break.txt", 4), ("genuine-red-quoting-al-diagnostic.txt", 1), ("green.txt", 0), ("no-filter-match.txt", 3)):
     with redirect_stdout(io.StringIO()) as out:
         rc = mv.main(["mutation-verdict.py", os.path.join(FIXTURES, name)])
     check(f"exit {code} for {name}", rc == code, f"got {rc}: {out.getvalue()}")
