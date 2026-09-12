@@ -66,6 +66,12 @@ if [ "${1:-}" = "issue" ] && [ "${2:-}" = "view" ]; then
   fi
   exit 1
 fi
+# EDIT_RC lets a test drive the API-failure branch: #3930's release job issued
+# an edit that produced no label and still reported success, and a step that
+# cannot fail on its own edit cannot be told from one that had nothing to do.
+if [ "${1:-}" = "issue" ] && [ "${2:-}" = "edit" ]; then
+  exit "${EDIT_RC:-0}"
+fi
 exit 0
 """
 
@@ -164,12 +170,13 @@ BRANCH = "agent/fbk-2/issue-42"
 
 
 def release(body: str, issue: dict | None, head: str = BRANCH,
-            pr_labels: list[str] | None = None):
+            pr_labels: list[str] | None = None, edit_rc: int = 0):
     return invoke(RELEASE, {
         "PR_NUMBER": "999",
         "PR_BODY": body,
         "PR_HEAD_REF": head,
         "PR_LABELS": json.dumps(pr_labels if pr_labels is not None else ["agent: fbk-2"]),
+        "EDIT_RC": str(edit_rc),
     }, issue_json=issue)
 
 
@@ -226,6 +233,89 @@ check("an INLINE part-of mention is not a declaration and relabels nothing",
 rc, out, calls = release("Part of #42", None)
 check("an unreadable issue number is reported, not retried into a failure",
       rc == 0 and not [c for c in calls if c.startswith("issue edit")], f"{calls} {out}")
+
+# --- #3930: the release job must not race an add against a remove -------------
+#
+# #1883 arrived at its "Part of" merge carrying `status: ready` AND
+# `status: in-progress` at once -- a claim had added in-progress without
+# removing ready. The `jq` selects every `status:`/`agent:` label, so
+# `status: ready` landed in the --remove-label list, and the trailing
+# --add-label named it too. `gh issue edit` dispatches addLabels and
+# removeLabels as two CONCURRENT GraphQL mutations (cli/cli v2.98.0,
+# pkg/cmd/pr/shared/editable_http.go: two wg.Go calls, no ordering), so the
+# outcome of naming one label in both is a race. On #1883 remove won: GitHub's
+# timeline for 2026-09-12T07:33:53Z records three `unlabeled` events and zero
+# `labeled` ones, and the issue came out with no status label while the job
+# reported success.
+
+conflicted = {"state": "OPEN",
+              "labels": [{"name": "status: ready"},
+                         {"name": "status: in-progress"},
+                         {"name": "agent: fbk-2"},
+                         {"name": "bug"}]}
+rc, out, calls = release("Part of #42", conflicted)
+edits = [c for c in calls if c.startswith("issue edit")]
+edit = edits[0] if edits else ""
+check("an issue already carrying status: ready is not asked to remove and add it "
+      "in one edit -- gh races the two mutations",
+      rc == 0 and len(edits) == 1 and "--remove-label status: ready" not in edit,
+      f"rc={rc} {calls} {out}")
+check("...and it still ends on the ready queue",
+      "--add-label status: ready" in edit or "status: ready" in str(conflicted), edit)
+check("...while the labels that really must go still go",
+      "--remove-label status: in-progress" in edit
+      and "--remove-label agent: fbk-2" in edit, edit)
+check("...and the area/bug labels are still untouched", "bug" not in edit, edit)
+
+# --- #3930: every path must say what it decided -------------------------------
+#
+# Two runs 36 minutes apart, one correct and one not, produced logs that could
+# not be told apart: the only evaluated line either printed was "Releasing #N",
+# which both printed. Nothing said what the inputs were, and nothing said
+# whether the edit landed. Each check below is one question the log could not
+# answer at the time #3930 was filed.
+
+DECISION = "label-hygiene decision:"
+
+rc, out, calls = release("Part of #42", open_issue)
+check("the release path prints a machine-greppable decision line", DECISION in out, out)
+check("...naming the branch issue it resolved", "branch_issue=42" in out, out)
+check("...saying the Part of declaration was found", "declared=1" in out, out)
+check("...naming the issue state it read", "state=OPEN" in out, out)
+check("...saying no foreign agent label blocked it", "foreign=none" in out, out)
+check("...and reporting the edit's exit status", "edit_rc=0" in out, out)
+
+rc, out, calls = release("Part of #42", open_issue, head="feature/some-work")
+check("a branch that names no issue still prints a decision line", DECISION in out, out)
+check("...recording that no issue was resolved", "branch_issue=none" in out, out)
+
+rc, out, calls = release("Closes #42", open_issue)
+check("a PR declaring no Part of still prints a decision line", DECISION in out, out)
+check("...recording that nothing was declared", "declared=0" in out, out)
+
+rc, out, calls = release("Part of #42", closed_issue)
+check("a closed issue still prints a decision line", DECISION in out, out)
+check("...recording the state that stopped it", "state=CLOSED" in out, out)
+
+rc, out, calls = release("Part of #42", foreign)
+check("a foreign agent label still prints a decision line", DECISION in out, out)
+check("...naming the label that blocked it", "foreign=agent: fbk-1" in out, out)
+
+rc, out, calls = release("Part of #42", None)
+check("an unreadable issue still prints a decision line", DECISION in out, out)
+check("...recording that the state could not be read", "state=unreadable" in out, out)
+
+# --- #3930: a failed edit must fail the step ----------------------------------
+#
+# The step runs under `set -uo pipefail` with no -e, so a non-zero `gh issue
+# edit` on the last line was the step's own exit status by accident. That held
+# only while the edit WAS the last line; anything appended after it -- the
+# verification below, for one -- would have silently swallowed the failure.
+
+rc, out, calls = release("Part of #42", open_issue, edit_rc=1)
+check("a failed gh issue edit fails the step rather than reporting success",
+      rc != 0, f"rc={rc} {out}")
+check("...and says the edit failed, with its status", "edit_rc=1" in out, out)
 
 print("")
 print(f"{passes} passed, {len(failures)} failed")
