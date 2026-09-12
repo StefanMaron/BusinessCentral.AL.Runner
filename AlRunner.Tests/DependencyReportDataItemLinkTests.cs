@@ -200,4 +200,114 @@ public class DependencyReportDataItemLinkTests
             Directory.Delete(dir, recursive: true);
         }
     }
+
+    // Report 304 "Vendor - Detail Trial Balance" as the Base Application's symbol file states
+    // it, trimmed: the AL writes DataItemLink with no DataItemLinkReference, so the symbol file
+    // carries none (264 of the 391 Base Application links are like this). A deeper item and a
+    // sibling at the parent's level sit around the joined item so the parent has to be found by
+    // nesting, not by position (#2521).
+    private const string ReferencelessLinkSymbolReference = """
+        {
+          "RuntimeVersion": "15.1",
+          "Namespaces": [
+            {
+              "Name": "Purchases",
+              "Reports": [
+                {
+                  "Id": 304,
+                  "Name": "Vendor - Detail Trial Balance",
+                  "DataItems": [
+                    {
+                      "Id": 1,
+                      "Name": "Vendor",
+                      "RelatedTable": "Vendor",
+                      "Properties": [
+                        { "Name": "DataItemTableView", "Value": "sorting(\"No.\")" }
+                      ],
+                      "DataItems": [
+                        {
+                          "Id": 2,
+                          "Name": "Vendor Ledger Entry",
+                          "OwningDataItemName": "Vendor",
+                          "RelatedTable": "Vendor Ledger Entry",
+                          "Indentation": 1,
+                          "Properties": [
+                            { "Name": "DataItemLink", "Value": "\"Vendor No.\" = field(\"No.\"), \"Posting Date\" = field(\"Date Filter\")" }
+                          ],
+                          "DataItems": [
+                            {
+                              "Id": 3,
+                              "Name": "Detailed Vendor Ledg. Entry",
+                              "OwningDataItemName": "Vendor Ledger Entry",
+                              "RelatedTable": "Detailed Vendor Ledg. Entry",
+                              "Indentation": 2,
+                              "Properties": [
+                                { "Name": "DataItemLink", "Value": "\"Vendor Ledger Entry No.\" = field(\"Entry No.\")" }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "Id": 4,
+                          "Name": "Integer",
+                          "OwningDataItemName": "Vendor",
+                          "RelatedTable": "#8874ed3a064342479ced7a7002f7135d#Integer",
+                          "Indentation": 1,
+                          "Properties": [
+                            { "Name": "DataItemTableView", "Value": "sorting(Number) where(Number = const(1))" }
+                          ]
+                        },
+                        {
+                          "Id": 5,
+                          "Name": "SecondJoin",
+                          "OwningDataItemName": "Vendor",
+                          "RelatedTable": "Vendor Ledger Entry",
+                          "Indentation": 1,
+                          "Properties": [
+                            { "Name": "DataItemLink", "Value": "\"Vendor No.\" = field(\"No.\")" }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+        """;
+
+    [Fact]
+    public void ReportMetadataXml_ReferencelessLink_JoinsToTheEnclosingDataItem()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-report-dataitemlink-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var appPath = WriteApp(dir, ReferencelessLinkSymbolReference);
+            var report = Assert.Single(BcAppSymbolCache.Get(appPath).Reports, r => r.Id == 304);
+            var doc = System.Xml.Linq.XDocument.Parse(RecordPatches.EmitReportXml(report, sourceExprByColumn: null));
+
+            string? ReferenceOf(string varName) => doc.Root!.Elements("DataItem")
+                .Single(e => (string?)e.Element("DataItemVarName") == varName)
+                .Element("DataItemLinkReference")?.Value;
+
+            // DataItemIterator.SetDataItemLink applies a link only when some data item's
+            // DataItemVarName equals DataItemLinkReference; with none written the nested item
+            // iterated its whole table. BC's compiler writes the enclosing item's name here.
+            Assert.Equal("Vendor", ReferenceOf("Vendor Ledger Entry"));
+            Assert.Equal("Vendor Ledger Entry", ReferenceOf("Detailed Vendor Ledg. Entry"));
+            // After a deeper item has closed, the parent is still the enclosing item, not the
+            // item written just before.
+            Assert.Equal("Vendor", ReferenceOf("SecondJoin"));
+
+            // Negative: an item with no link acquires no reference.
+            Assert.Null(ReferenceOf("Vendor"));
+            Assert.Null(ReferenceOf("Integer"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
 }

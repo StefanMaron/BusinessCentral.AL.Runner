@@ -264,8 +264,19 @@ public static partial class RecordPatches
             w.WriteElementString("Name", report.Name);
             WriteDerivableReportProperties(w, report);
 
+            // enclosing[d] = DataItemVarName of the innermost open data item at indentation d.
+            var enclosing = new List<string>();
             foreach (var di in report.DataItems)
-                WriteDataItem(w, di, sourceExprByColumn);
+            {
+                string? parent = di.Indentation > 0 && di.Indentation <= enclosing.Count
+                    ? enclosing[di.Indentation - 1]
+                    : null;
+                WriteDataItem(w, di, sourceExprByColumn, parent);
+                if (di.Indentation < enclosing.Count)
+                    enclosing.RemoveRange(di.Indentation, enclosing.Count - di.Indentation);
+                if (di.Indentation == enclosing.Count)
+                    enclosing.Add(di.Name);
+            }
 
             w.WriteEndElement();
         }
@@ -305,7 +316,8 @@ public static partial class RecordPatches
     }
 
     private static void WriteDataItem(
-        XmlWriter w, BcAppSymbolCache.ReportDataItemSymbol di, Dictionary<string, string>? sourceExprByColumn)
+        XmlWriter w, BcAppSymbolCache.ReportDataItemSymbol di, Dictionary<string, string>? sourceExprByColumn,
+        string? enclosingDataItemName)
     {
         int tableId = ResolveTableIdByName(di.RelatedTable);
 
@@ -329,8 +341,15 @@ public static partial class RecordPatches
         // Omitting them left every nested data item of a precompiled report unrestricted.
         if (!string.IsNullOrEmpty(di.DataItemLink))
             w.WriteElementString("DataItemLink", di.DataItemLink);
-        if (!string.IsNullOrEmpty(di.DataItemLinkReference))
-            w.WriteElementString("DataItemLinkReference", di.DataItemLinkReference);
+        // SetDataItemLink applies the link only to a data item whose DataItemVarName equals this
+        // reference, so a missing one silently drops the join. The symbol file states it only
+        // when the AL spelled it (264 of 391 Base Application links do not); BC's own compiler
+        // writes the enclosing data item's name in that case, which is what we write (#2521).
+        var linkReference = !string.IsNullOrEmpty(di.DataItemLinkReference)
+            ? di.DataItemLinkReference
+            : string.IsNullOrEmpty(di.DataItemLink) ? null : enclosingDataItemName;
+        if (!string.IsNullOrEmpty(linkReference))
+            w.WriteElementString("DataItemLinkReference", linkReference);
         if (di.PrintOnlyIfDetail)
             w.WriteElementString("PrintOnlyIfDetail", "1");
         // MetaDataItem reads MAXITERATION from this same node through int.Parse, and
