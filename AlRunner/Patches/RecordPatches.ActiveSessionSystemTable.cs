@@ -146,12 +146,17 @@ public static partial class RecordPatches
 
     private static int TranslateSkeletonClientType(NavSession session)
     {
-        var translate = typeof(NavSession).Assembly
+        var handler = typeof(NavSession).Assembly
             .GetType("Microsoft.Dynamics.Nav.Runtime.SessionEventTableHandler")
-            ?.GetMethod("TranslateToClientType", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
             ?? throw ActiveSessionShapeGap(
-                "BC's SessionEventTableHandler.TranslateToClientType was not found, so \"Client Type\" "
-                + "would have to be mapped by hand");
+                "BC's SessionEventTableHandler was not found, so \"Client Type\" would have to be "
+                + "mapped by hand");
+        var translate = AlRunner.Infrastructure.BcShape.RequiredMethod(
+            handler, "TranslateToClientType", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public,
+            surface: "Active Session (system table 2000000110)",
+            member: "SessionEventTableHandler.TranslateToClientType",
+            detail: "the row's \"Client Type\" would have to be mapped by hand",
+            types: new[] { session.ClientConnectionType.GetType() });
         return Convert.ToInt32(translate.Invoke(null, new object[] { session.ClientConnectionType }));
     }
 
