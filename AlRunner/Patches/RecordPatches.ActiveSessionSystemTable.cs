@@ -6,8 +6,8 @@
 // SessionEventTableHandler, or to ActiveSessionDataProvider's in-memory list when
 // TrackSessionsInMemory is on. The runner has no login step, so without this seed the table
 // answers "no sessions". Every column written here is READ BACK from the same state the AL
-// functions answer from (ServiceInstanceId(), SessionId(), UserId(), UserSecurityId(),
-// CurrentClientType()), so the row cannot disagree with them.
+// functions answer from (ServiceInstanceId(), SessionId(), UserId(), UserSecurityId()), so the
+// row cannot disagree with them; Client Type goes through BC's own TranslateToClientType.
 // Citation: corpus "Test Active Session Table" (codeunit 60976, corpus PR #328); BC member
 // SessionEventTableHandler.InsertSessionEventRecord.
 //
@@ -162,7 +162,7 @@ public static partial class RecordPatches
         throw ActiveSessionShapeGap($"the table states no \"{fieldName}\" field");
     }
 
-    private static AlRunner.Infrastructure.RunnerOutOfScopeException ActiveSessionShapeGap(string detail)
-        => new($"Active Session ({ActiveSessionSystemTableId})",
-            $"active-session-row — {detail}; see docs/limitations.md");
+    internal static AlRunner.Infrastructure.RunnerOutOfScopeException ActiveSessionShapeGap(string detail)
+        => VirtualTableShapeGap("Active Session (system table 2000000110)", "active-session-row", detail,
+            "docs/limitations.md#virtual-table-shape-gaps");
 }

@@ -1748,6 +1748,16 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   [#3506](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3506); see
   [`Record Date`](#date-virtual-table) and [`Record Integer`](#integer-virtual-table) for what
   that removed).
+- **`Active Session` (2000000110) holds one row — the runner's own session — and three of its
+  columns are blank.** On a tier the platform writes the row at login; the runner writes it once
+  per app group, keyed by `(ServiceInstanceId(), SessionId())`, with `User ID`, `User SID`,
+  `Login Datetime` and `Session Unique ID` read back from the skeleton session, `Client Type`
+  through BC's own `SessionEventTableHandler.TranslateToClientType`, and `Server Computer Name`
+  from the host. `Server Instance Name`, `Client Computer Name` and `Database Name` keep BC's
+  default: the runner has no server instance, client machine or database to name. A dependency's
+  install code does not see the row — it is written after the cached dependency snapshot, so a
+  snapshot never replays another process's login instant
+  ([#3233](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3233)).
 - **`Session` (2000000009) answers one row — the reading session — and two of its columns are
   blank.** That single row is not a runner simplification: BC's own `SessionDataProvider`
   returns `new ReadOnlyRecordBuffer[1]` unconditionally, with `My Session` a constant `true`,
@@ -1757,9 +1767,8 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   ([#2940](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2940)).
 
   `Database Name` and `Application Name` keep BC's own per-field default. BC takes both from
-  `Active Session` (2000000110), a tenant-database table the runner does not maintain — there
-  is no database to name, and the client type BC stringifies into `Application Name` is
-  unmeasured here. Blank rather than invented, tracked in
+  `Active Session` (2000000110) — there is no database to name, and the client type BC
+  stringifies into `Application Name` is unmeasured here. Blank rather than invented, tracked in
   [#3230](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3230). `Host Name`
   reports the machine the runner is on, the same host-derived answer BC's `DnsHelper.HostName`
   gives on a tier.
