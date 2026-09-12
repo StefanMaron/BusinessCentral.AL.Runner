@@ -112,39 +112,51 @@ public sealed class ServerPackagedDependencyReplacementTests
             Version = version,
         }));
 
-    /// <summary>Rewrite the dependency's source and re-package it at the SAME .app path.</summary>
+    /// <summary>
+    /// Put the (version, multiplier) variant of the dependency at the SAME .app path. Each variant
+    /// is packaged once and its bytes copied in, so publishing a variant again reproduces the exact
+    /// package — which is what lets a later request, or a fresh server, hit the compiled-deps cache
+    /// (a re-packaged zip carries new entry timestamps and would never hit).
+    /// </summary>
     private static void PublishSubject(Fixture f, string subjectAppId, string tag, int idBase, string version, int multiplier)
     {
-        File.WriteAllText(Path.Combine(f.SubjectDir, "app.json"), $$"""
+        var staged = Path.Combine(f.SubjectDir, "staged", $"{version}-x{multiplier}.app");
+        if (!File.Exists(staged))
         {
-          "id": "{{subjectAppId}}",
-          "name": "Repro3974 Subject {{tag}}",
-          "publisher": "Repro3974",
-          "version": "{{version}}",
-          "dependencies": [],
-          "platform": "1.0.0.0",
-          "idRanges": [ { "from": {{idBase}}, "to": {{idBase + 4}} } ],
-          "runtime": "14.0"
+            var src = Path.Combine(f.SubjectDir, "src");
+            Directory.CreateDirectory(src);
+            File.WriteAllText(Path.Combine(src, "app.json"), $$"""
+            {
+              "id": "{{subjectAppId}}",
+              "name": "Repro3974 Subject {{tag}}",
+              "publisher": "Repro3974",
+              "version": "{{version}}",
+              "dependencies": [],
+              "platform": "1.0.0.0",
+              "idRanges": [ { "from": {{idBase}}, "to": {{idBase + 4}} } ],
+              "runtime": "14.0"
+            }
+            """);
+            File.WriteAllText(Path.Combine(src, "Logic.Codeunit.al"), $$"""
+            codeunit {{idBase}} "Repro3974 Logic {{tag}}"
+            {
+                procedure Twice(Value: Integer): Integer
+                begin
+                    exit(Value * {{multiplier}});
+                end;
+            }
+            """);
+            var identity = InProcessAppPackager.ReadIdentity(Path.Combine(src, "app.json"))
+                ?? throw new InvalidOperationException("fixture app.json did not parse");
+            Directory.CreateDirectory(Path.GetDirectoryName(staged)!);
+            InProcessAppPackager.EmitAppPackageToFile(
+                src, identity, staged, SymbolReference(subjectAppId, tag, idBase, version));
         }
-        """);
-        File.WriteAllText(Path.Combine(f.SubjectDir, "Logic.Codeunit.al"), $$"""
-        codeunit {{idBase}} "Repro3974 Logic {{tag}}"
-        {
-            procedure Twice(Value: Integer): Integer
-            begin
-                exit(Value * {{multiplier}});
-            end;
-        }
-        """);
-        var identity = InProcessAppPackager.ReadIdentity(Path.Combine(f.SubjectDir, "app.json"))
-            ?? throw new InvalidOperationException("fixture app.json did not parse");
-        var before = File.Exists(f.AppPath) ? File.GetLastWriteTimeUtc(f.AppPath) : DateTime.MinValue;
-        InProcessAppPackager.EmitAppPackageToFile(
-            f.SubjectDir, identity, f.AppPath, SymbolReference(subjectAppId, tag, idBase, version));
-        // `* 2` and `* 3` package to the same byte length; move mtime forward explicitly so no
-        // (inode, size, mtime) file identity can mistake the rewrite for the previous file.
-        var after = before == DateTime.MinValue ? DateTime.UtcNow : before.AddSeconds(5);
-        File.SetLastWriteTimeUtc(f.AppPath, after);
+        var before = File.Exists(f.AppPath) ? File.GetLastWriteTimeUtc(f.AppPath) : DateTime.UtcNow;
+        File.Copy(staged, f.AppPath, overwrite: true);
+        // Variants can share a byte length; move mtime forward explicitly so no (inode, size,
+        // mtime) file identity can mistake the rewrite for the previous file.
+        File.SetLastWriteTimeUtc(f.AppPath, before.AddSeconds(5));
     }
 
     private static string Req(Fixture f) => JsonSerializer.Serialize(new
@@ -184,6 +196,12 @@ public sealed class ServerPackagedDependencyReplacementTests
         }
     }
 
+    /// <summary>The second server must have served the dependency from the shared --cache root;
+    /// otherwise its half of the fact is a second cold run, not a warm one.</summary>
+    private static void AssertWarm(CliServer warm, string tag) =>
+        Assert.True(warm.StdErr.Contains($"[deps] source-cache HIT: Repro3974 Subject {tag}"),
+            $"the fresh server never hit the compiled-deps cache:\n{warm.StdErr}");
+
     [SkippableFact]
     public async Task PackageReplacedWithANewVersion_ExecutesTheNewCode_ColdAndWarm()
     {
@@ -193,7 +211,7 @@ public sealed class ServerPackagedDependencyReplacementTests
         const string testsId = "3974a000-0000-4000-8000-00000000a002";
         const int idBase = 63970;
         var f = Create(tag, subjectId, testsId, idBase);
-        var args = new[] { "--cache", f.CacheDir, "--package-cache", f.PackageDir };
+        var args = new[] { "--cache", f.CacheDir, "--package-cache", f.PackageDir, "--verbose" };
         try
         {
             await using (var cold = await CliServer.StartAsync(args))
@@ -215,6 +233,7 @@ public sealed class ServerPackagedDependencyReplacementTests
                 await AssertRequest(warm, f, "warm 2 (v1.0.0.2, *2)", null);
                 PublishSubject(f, subjectId, tag, idBase, "1.0.0.1", multiplier: 3);
                 await AssertRequest(warm, f, "warm 3 (v1.0.0.1 again, *3)", 63);
+                AssertWarm(warm, tag);
             }
         }
         finally
@@ -233,7 +252,7 @@ public sealed class ServerPackagedDependencyReplacementTests
         const string testsId = "3974b000-0000-4000-8000-00000000b002";
         const int idBase = 63980;
         var f = Create(tag, subjectId, testsId, idBase);
-        var args = new[] { "--cache", f.CacheDir, "--package-cache", f.PackageDir };
+        var args = new[] { "--cache", f.CacheDir, "--package-cache", f.PackageDir, "--verbose" };
         try
         {
             await using (var cold = await CliServer.StartAsync(args))
@@ -254,6 +273,7 @@ public sealed class ServerPackagedDependencyReplacementTests
                 await AssertRequest(warm, f, "warm 2 (same version, *2)", null);
                 PublishSubject(f, subjectId, tag, idBase, "1.0.0.0", multiplier: 3);
                 await AssertRequest(warm, f, "warm 3 (same version, *3)", 63);
+                AssertWarm(warm, tag);
             }
         }
         finally

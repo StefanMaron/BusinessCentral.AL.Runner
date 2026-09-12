@@ -443,7 +443,21 @@ public static partial class BcRuntime
     {
         var name = asm.GetName().Name;
         if (name != null) _latestGenerationByAssemblyName[name] = asm;
+        _retiredGenerations.TryRemove(asm, out _);
     }
+
+    /// <summary>
+    /// Assemblies superseded by a module with a DIFFERENT simple name — a Tier-3 dependency's
+    /// module name carries its app version (<c>Dep_&lt;Pub&gt;_&lt;Name&gt;_&lt;Version&gt;</c>), so
+    /// the name-keyed registry above cannot see a version bump as a new generation (#3974).
+    /// </summary>
+    private static readonly ConcurrentDictionary<Assembly, byte> _retiredGenerations = new();
+
+    /// <summary>
+    /// Mark <paramref name="asm"/> as no longer current, whatever its simple name; see
+    /// <see cref="_retiredGenerations"/>. Callers retire only an assembly they are replacing.
+    /// </summary>
+    internal static void RetireAssemblyGeneration(Assembly asm) => _retiredGenerations[asm] = 0;
 
     /// <summary>
     /// True when <paramref name="asm"/> is a previous-cycle generation of a bundle
@@ -465,6 +479,7 @@ public static partial class BcRuntime
     /// </summary>
     internal static bool IsStaleBundleAssembly(Assembly asm)
     {
+        if (_retiredGenerations.ContainsKey(asm)) return true;
         var name = asm.GetName().Name;
         return name != null
             && _latestGenerationByAssemblyName.TryGetValue(name, out var latest)

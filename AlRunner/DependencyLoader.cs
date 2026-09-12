@@ -94,6 +94,7 @@ public sealed class DependencyLoader
         foreach (var appId in appIds)
         {
             if (!_cache.TryRemove(appId, out var removed)) continue;
+            RetireGeneration(removed.AllAssemblies, keep: null);
             // The by-name map is what AssemblyResolve answers from (see EnsureResolverInstalled).
             // Leaving the stale module there would let a type load resolve to the assembly this
             // call just evicted, which is the same wrong answer one indirection further away.
@@ -124,6 +125,18 @@ public sealed class DependencyLoader
     /// a source suite) omits `publisher` — both paths, both fields missing at once. If you
     /// change either default, keep the other in sync or this comparison silently drifts.
     /// </summary>
+    /// <summary>
+    /// Every write that replaces or evicts an AppId's module retires the one it displaces, so an
+    /// AL object lookup cannot bind to it (#3974). The by-name registry alone misses a Tier-3
+    /// module whose replacement carries a different version in its name.
+    /// </summary>
+    private static void RetireGeneration(IReadOnlyList<Assembly> previous, IReadOnlyList<Assembly>? keep)
+    {
+        foreach (var old in previous)
+            if (keep == null || !keep.Contains(old))
+                BcRuntime.RetireAssemblyGeneration(old);
+    }
+
     private static bool IdentityMatches(LoadedAppEntry entry, string name, string publisher, string version)
         => string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase)
         && string.Equals(entry.Publisher, publisher, StringComparison.OrdinalIgnoreCase)
@@ -174,7 +187,14 @@ public sealed class DependencyLoader
                 // version's compiled module for the new one's tests — the silent wrong answer
                 // #1850 exists to prevent, reached from the other side. The cache entry is
                 // overwritten further down, when this app is loaded afresh.
-                if (identityMatches)
+                // #3974: same identity at the same path is only the same module while the package
+                // still holds the bytes it was compiled from; a package rewritten in place at an
+                // unchanged version falls through to a recompile. A DIFFERENT path with the same
+                // identity keeps reusing (#1892: sibling bundles share one module).
+                var packageRewritten = identityMatches && sameDirectory
+                    && existing.Tier3CacheKey != null
+                    && !string.Equals(existing.Tier3CacheKey, ComputeSourceDependencyCacheKey(m, path), StringComparison.Ordinal);
+                if (identityMatches && !packageRewritten)
                 {
                     // #2593/#2579: this dependency's Assembly is being reused without calling
                     // LoadOne again — but LoadOne is the ONLY place that replays this dependency's
@@ -294,6 +314,8 @@ public sealed class DependencyLoader
             if (asm != null)
             {
                 var appAssemblies = chunks.Count > 0 ? chunks : new List<Assembly> { asm };
+                if (_cache.TryGetValue(m.AppId, out var superseded))
+                    RetireGeneration(superseded.AllAssemblies, keep: appAssemblies);
                 _cache[m.AppId] = new LoadedAppEntry(
                     asm, m.Name, m.Publisher, m.Version.ToString(), path, tier3CacheKey, appAssemblies);
                 RegisterAppAssemblies(appAssemblies, m, path);
@@ -1389,6 +1411,7 @@ public sealed class DependencyLoader
         // that happened to run first.
         if (string.Equals(existing.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase))
         {
+            RetireGeneration(existing.AllAssemblies, keep: new[] { asm });
             _cache[appId] = newEntry;
             return;
         }
