@@ -1,0 +1,18 @@
+[
+  {
+    "codeunitId": 60285,
+    "CodeunitName": "TPARONH Tests",
+    "Method": "RunObjectActionOnADialogTargetWithoutAHandlerIsRefused",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3223",
+    "Note": "Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#331 merged before its runner fix. Measured locally against corpus 8ae033899ce08557d253170dab972c369227e661 on the runner at main: codeunit 60285 7 passed, 2 failed -- these two; the bound-handler control ProbeControlTheDialogTargetIsAnsweredByABoundModalHandler passes. The fix is PR #3996, which must delete this file."
+  },
+  {
+    "codeunitId": 60285,
+    "CodeunitName": "TPARONH Tests",
+    "Method": "RunObjectActionOnADialogTargetWithoutAHandlerOpensItBeforeRefusing",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/3223",
+    "Note": "Corpus PR StefanMaron/BusinessCentral.AL.Language.Tests#331 merged before its runner fix. Measured locally against corpus 8ae033899ce08557d253170dab972c369227e661 on the runner at main: codeunit 60285 7 passed, 2 failed -- these two; the bound-handler control ProbeControlTheDialogTargetIsAnsweredByABoundModalHandler passes. The fix is PR #3996, which must delete this file."
+  }
+]
