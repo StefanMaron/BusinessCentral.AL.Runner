@@ -1362,53 +1362,30 @@ catch (InvalidOperationException ex)
 // reused here rather than re-walking the variants/ directory a second time.
 string? variantSwapDir = null;
 {
-    if (shippedVariants.Count > 0)
+    var selected = AlRunner.Infrastructure.BcArtifacts.SelectedVersion;
+    var runningBuild = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion();
+    var resolution = AlRunner.Infrastructure.EngineVariants.Resolve(shippedVariants, selected, runningBuild);
+    if (resolution.Kind == AlRunner.Infrastructure.EngineVariants.ResolutionKind.NoneSupported)
     {
-        var selected = AlRunner.Infrastructure.BcArtifacts.SelectedVersion;
-        var match = AlRunner.Infrastructure.EngineVariants.SelectBestMatch(shippedVariants, selected);
-        if (match == null)
-        {
+        Console.Error.WriteLine(resolution.FailureMessage);
+        return 2;
+    }
+    if (resolution.DegradedWarning is { } degradedWarning)
+    {
+        // #2041/#2066: deferred — see `deferredStartupLines`' declaration above. This
+        // block runs in EVERY generation that reaches it, so without deferring it this
+        // warning reprints once per generation.
+        deferredStartupLines.Add(() => Console.Error.WriteLine(degradedWarning));
+    }
+    if (resolution.Kind == AlRunner.Infrastructure.EngineVariants.ResolutionKind.SwapRequired)
+    {
+        variantSwapDir = resolution.SwapDir;
+        // Issue #2239: engine-variant selection mechanics — a diagnostic, not the result.
+        // The `[reexec]` line in TryShadowReexec says a hand-off is happening; this is the WHY.
+        if (AlRunner.Log.Verbose)
             Console.Error.WriteLine(
-                $"BC version selection failed: no shipped engine variant supports BC {selected} " +
-                $"(major {selected.Major}). Available variants: " +
-                $"{AlRunner.Infrastructure.EngineVariants.DescribeAvailable(shippedVariants)}. Select a " +
-                $"cached BC version this install ships an engine for (--bc-version), or update al-runner.");
-            return 2;
-        }
-
-        var (variant, degraded) = match.Value;
-        if (degraded)
-        {
-            // #2041/#2066: deferred — see `deferredStartupLines`' declaration above. This
-            // block runs in EVERY generation that reaches it (it is not itself gated on a
-            // re-exec prediction), so without deferring it this warning reprints once per
-            // generation — the specific "[bc] warning: ... built against ..." duplication
-            // (×3 on a stacked variant-swap-then-fresh-rewrite run) the issue measured.
-            var degradedVariantBuild = variant.BuildVersion;
-            var degradedSelected = selected;
-            deferredStartupLines.Add(() => Console.Error.WriteLine(
-                $"[bc] warning: the shipped {degradedVariantBuild.Major}.{degradedVariantBuild.Minor} engine " +
-                $"variant was built against {degradedVariantBuild}, not the selected {degradedSelected} — " +
-                $"different BUILDS of the same minor can still fail to load " +
-                $"Microsoft.Dynamics.Nav.CodeAnalysis (it's strong-named per build, not per minor). Expected: " +
-                $"variants pin the newest build of a minor AT PACK TIME, so any user on a different build of " +
-                $"that same minor hits this. See docs/limitations.md."));
-        }
-
-        var runningBuild = AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion();
-        if (runningBuild != variant.BuildVersion)
-        {
-            variantSwapDir = variant.Dir;
-            // Issue #2239: engine-variant selection mechanics — a diagnostic, not the
-            // result. The `[reexec] Re-execing into a shadow runtime dir with the
-            // matching BC-minor engine variant` line right after this decision already
-            // explains that a hand-off is happening; this line is the WHY, gated the
-            // same way.
-            if (AlRunner.Log.Verbose)
-                Console.Error.WriteLine(
-                    $"[bc] selecting engine variant {variant.BuildVersion} for BC {selected} (this process is " +
-                    $"currently running the {(runningBuild?.ToString() ?? "unknown")} variant) — re-execing.");
-        }
+                $"[bc] selecting engine variant {resolution.Variant!.BuildVersion} for BC {selected} (this process is " +
+                $"currently running the {(runningBuild?.ToString() ?? "unknown")} variant) — re-execing.");
     }
 }
 

@@ -83,6 +83,55 @@ public static class EngineVariants
         return null;
     }
 
+    public enum ResolutionKind
+    {
+        /// <summary>No variants/ directory: a single-build install, proceed in place.</summary>
+        NoVariantsShipped,
+        /// <summary>The best-matching variant is the engine already running.</summary>
+        RunningEngineMatches,
+        /// <summary>A different variant must be entered; <see cref="Resolution.SwapDir"/> names it.</summary>
+        SwapRequired,
+        /// <summary>No shipped variant serves the selected version; the caller must exit 2 with
+        /// <see cref="Resolution.FailureMessage"/>.</summary>
+        NoneSupported,
+    }
+
+    public sealed record Resolution(
+        ResolutionKind Kind, Variant? Variant, bool Degraded, string? FailureMessage, string? DegradedWarning)
+    {
+        public string? SwapDir => Kind == ResolutionKind.SwapRequired ? Variant!.Dir : null;
+    }
+
+    /// <summary>
+    /// The one variant decision, shared by the bundle-run flow and every subcommand that
+    /// dispatches before it (#2190: `--precompile` used to skip it).
+    /// </summary>
+    public static Resolution Resolve(IReadOnlyList<Variant> variants, Version selected, Version? runningBuild)
+    {
+        if (variants.Count == 0)
+            return new Resolution(ResolutionKind.NoVariantsShipped, null, false, null, null);
+
+        var match = SelectBestMatch(variants, selected);
+        if (match == null)
+            return new Resolution(ResolutionKind.NoneSupported, null, false,
+                $"BC version selection failed: no shipped engine variant supports BC {selected} " +
+                $"(major {selected.Major}). Available variants: {DescribeAvailable(variants)}. Select a " +
+                $"cached BC version this install ships an engine for (--bc-version), or update al-runner.",
+                null);
+
+        var (variant, degraded) = match.Value;
+        var warning = degraded
+            ? $"[bc] warning: the shipped {variant.BuildVersion.Major}.{variant.BuildVersion.Minor} engine " +
+              $"variant was built against {variant.BuildVersion}, not the selected {selected} — " +
+              $"different BUILDS of the same minor can still fail to load " +
+              $"Microsoft.Dynamics.Nav.CodeAnalysis (it's strong-named per build, not per minor). Expected: " +
+              $"variants pin the newest build of a minor AT PACK TIME, so any user on a different build of " +
+              $"that same minor hits this. See docs/limitations.md."
+            : null;
+        var kind = runningBuild != variant.BuildVersion ? ResolutionKind.SwapRequired : ResolutionKind.RunningEngineMatches;
+        return new Resolution(kind, variant, degraded, null, warning);
+    }
+
     /// <summary>Human-readable list of available variant versions, for the loud-fail message.</summary>
     public static string DescribeAvailable(IReadOnlyList<Variant> variants) =>
         variants.Count == 0 ? "(none)" : string.Join(", ", variants.Select(v => v.BuildVersion.ToString()));
