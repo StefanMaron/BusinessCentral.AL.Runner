@@ -261,7 +261,8 @@ internal static partial class ProgramSupport
         string artifactsRootDir, string majorMinorPrefix,
         IReadOnlyList<string> requiredPlatformApps, bool needTest,
         IReadOnlyDictionary<string, Version>? versionFloors = null,
-        Action<string>? onRejected = null)
+        Action<string>? onRejected = null,
+        string? preferredVersion = null)
     {
         if (!Directory.Exists(artifactsRootDir)) return null;
         var candidates = Directory.EnumerateDirectories(artifactsRootDir)
@@ -270,7 +271,10 @@ internal static partial class ProgramSupport
                 && (n == majorMinorPrefix || n!.StartsWith(majorMinorPrefix + ".", StringComparison.Ordinal)))
             .Select(n => (Name: n!, Ver: Version.TryParse(n, out var v) ? v : null))
             .Where(t => t.Ver != null)
-            .OrderByDescending(t => t.Ver)
+            // #2226: the selected engine's own build first, so a complete set for it is reused
+            // over a newer build of the same minor that happens to be on disk.
+            .OrderByDescending(t => t.Name == preferredVersion)
+            .ThenByDescending(t => t.Ver)
             .Select(t => t.Name);
 
         foreach (var name in candidates)
@@ -832,7 +836,7 @@ internal static partial class ProgramSupport
             ? FindWarmProvisionedVersion(
                 AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, mm,
                 decision.RequiredPlatformApps, needTest: false,
-                provisionFloors, m => Console.Error.WriteLine(m))
+                provisionFloors, m => Console.Error.WriteLine(m), preferredVersion: engineVersion)
             : null;
         if (warmVersion != null)
         {
@@ -846,8 +850,8 @@ internal static partial class ProgramSupport
             return;
         }
 
-        var platformFull = AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
-            mm, m => Console.Error.WriteLine($"[provision] {m}"));
+        var platformFull = AlRunner.Infrastructure.ProvisioningCheck.ResolveManifestAppsBuild(
+            engineVersion, m => Console.Error.WriteLine($"[provision] {m}"));
         if (platformFull == null)
         {
             Console.Error.WriteLine(
