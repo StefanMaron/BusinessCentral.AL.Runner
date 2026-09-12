@@ -1035,11 +1035,16 @@ issue. What it contributes is the instrument: a runner-side null now reports as
 in a corpus run.
 
 <a id="reports"></a>
-## Reports: one object, and the honesty that forces
+## Reports: one object in the bundle, and where that limit does and does not bind
 
-System Application ships **exactly one** report — 9810 `Change Password` — and Business
-Foundation ships none. Every number in this section is `n = 1`, and it is enough to say *that*
-the runner drops a member, never how often.
+The harness's loaded bundle holds **exactly one** report — 9810 `Change Password` in System
+Application; Business Foundation ships none. So every number the **comparison** produces is
+`n = 1`, and it is enough to say *that* the runner drops a member, never how often.
+
+That limit binds the comparison, not every question about reports. A question answerable from
+`SymbolReference.json` alone reaches Base Application's 659 reports too, because reading a symbol
+file costs nothing like compiling one — see "The population, which is two different numbers"
+below, where the two halves of #3808 come out at 660 and at 1.
 
 The oracle is `Types.Metadata.MetaReport(XmlElement, CreateRequestForm, int, int,
 RemoveItemsOnPageBasedOnLicenseAndApplicationArea)`; both delegates are optional and null is
@@ -1049,20 +1054,62 @@ metadata actually reads, since `RunnerXmlMetadataLoader` hands exactly this XML 
 than a test-only rendering, and never `AlReportMetadataRegistry`, which holds BC's emit-captured
 output and would compare BC against BC.
 
-**5 differences**, all tracked on #3808: both `Inherent*` masks (the `"X"` spelling
-`SymbolReference.json` states and `ReportSymbol` does not carry — the same property #3788
-records for codeunits and #3798 for queries, three kinds and one unparsed value), `ALNamespace`,
-and `RequestPageDefinition` counted twice because the differ walks the property and its backing
-field independently.
+**5 differences when #3808 was filed; 2 remain.** The three dropped properties — `ALNamespace`
+and both `Inherent*` masks — now agree, and `No_allowlist_entry_has_gone_stale` reporting all
+three as stale is the evidence that landed them. `RequestPageDefinition` stays, counted twice
+because the differ walks the property and its backing field independently.
 
-`RequestPageDefinition` is the one that is not merely a dropped property: BC emits a full
-`<RequestPage><PageDefinition>` subtree for report 9810 even though it declares
-`UseRequestPage = false` and `ProcessingOnly = true`. Whether BC does that for *every* report is
-**not answerable from this bundle** — one report — and Base Application, which would answer it,
-is excluded from `apps.json` on cost (257 s, 8.83 GiB), not because it cannot be compiled: the
-.NET reference it needs ships in the ASP.NET Core reference pack and is staged (#3876, correcting
-an earlier claim here that no BC artifact ships it). That question is left open on #3808 rather
-than closed by assumption.
+### The three that landed
+
+`ReportSymbol` now carries the `Namespaces` tree path and both mask letter strings, and
+`EmitReportXml` states them. BC's own reader decides the spelling: `MetaReport..ctor` takes
+`ALNAMESPACE` as `InnerText` verbatim and both masks through
+`Enum.Parse(typeof(PermissionMask), InnerText)`, so the masks are emitted as the **decoded
+number** — the AL letter `"X"` is not a `PermissionMask` member and would throw.
+
+The decode goes through the shared `RecordPatches.TryDecodePermissionMaskLetters`, the same one
+#3788 added for codeunits and #3798 reuses for queries — three kinds, one decoder. It is
+**case-sensitive**: uppercase is the direct bit, lowercase the indirect bit at `n+5`, so `X` is
+16, `x` is 512 and `rX` is 48. A case-collapsing reimplementation answers 16 and 17.
+
+### The population, which is two different numbers
+
+`ALNamespace` is **not** `n = 1`, and the issue's framing of it as such is the harness's loaded
+bundle rather than the symbol files. Walking the `Namespaces` tree of every `.app` in
+28.1.49838.53910:
+
+| | reports | stating a namespace | stating either mask |
+|---|---|---|---|
+| Base Application | 659 | 659 | 0 |
+| System Application | 1 | 1 | 1 (`"X"` for both) |
+| **total** | **660** | **660** | **1** |
+
+Both flat top-level `Reports` arrays are empty, so the tree path is the only source. Base
+Application is readable for a **symbol-file** question because it needs no emit — the 257 s and
+8.83 GiB is the cost of compiling it, which this question does not pay.
+
+So the mask work rests on one report and the namespace work on 660; and because no shipped
+report spells a lowercase or mixed-case mask, the decoder's indirect arms are unexercised by the
+real population. `ReportSymbolNamespaceAndInherentMaskTests` states `x` and `rX` anyway, so the
+case rule is driven rather than assumed from a population that happens not to need it.
+
+### `RequestPageDefinition`, and its two questions now answered
+
+BC emits a full `<RequestPage><PageDefinition>` subtree for report 9810 even though it declares
+`UseRequestPage = false` and `ProcessingOnly = true`. Both questions #3808 left open are now
+settled by measurement, and both say the gap is real:
+
+1. **Not one report, and not only the processing-only ones.** All **660 of 660** reports declare
+   a `RequestPage` node in `SymbolReference.json`, including all **24** that state
+   `UseRequestPage = 0`.
+2. **Something AL-observable reads it.** `NavTestExecution.TestHandleModalForm` constructs a
+   `NavTestRequestPage` whenever the form it is handling `IsRequestPage`, and
+   `NavTestRequestPage.LoadMetadata` returns exactly
+   `GetReportMetadata(objectId).RequestPageDefinition`. An AL `[RequestPageHandler]` on a
+   precompiled report therefore reaches the null.
+
+What remains unbuilt is the subtree itself, which is a page-definition renderer rather than a
+dropped property — so it stays tracked on #3808 rather than being closed with the three above.
 
 **What this comparison does not reach:** report 9810 has no data items and no columns, so the
 data-item and column derivation — the substantial part of `DependencyReportMetadata.cs` — is not

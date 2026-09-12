@@ -814,7 +814,20 @@ internal static partial class BcAppSymbolCache
         // symbol file states it. The runtime metadata synthesizer uses it to read back
         // that ONE file for the column source expressions the symbol file omits — see
         // DependencyReportMetadata.cs.
-        string? ReferenceSourceFileName = null);
+        string? ReferenceSourceFileName = null,
+        // The Namespaces TREE PATH the report was reached through, not a property: the
+        // symbol file states no such property, and Microsoft puts every report in the tree
+        // — measured on 28.1.49838.53910, 660 of 660 reports across Base Application (659)
+        // and System Application (1) sit under a namespace and both flat top-level Reports
+        // arrays are empty (#3808).
+        string? ALNamespace = null,
+        // Carried as the AL mask LETTER string, decoded by the consumer through the shared
+        // TryDecodePermissionMaskLetters — case-significant, so the value is NOT normalised
+        // here. Measured on the report population specifically (same bundle): 1 of 660
+        // reports states either mask, and it spells both "X". The decoder's indirect bits
+        // are therefore unexercised on this kind, which is the reason to carry the letters
+        // verbatim rather than rest on a population that happens not to need them.
+        string? InherentEntitlements = null, string? InherentPermissions = null);
 
     /// <summary>One entry of a report's data-item tree, flattened in declaration order.</summary>
     internal sealed record ReportDataItemSymbol(
@@ -1399,7 +1412,7 @@ internal static partial class BcAppSymbolCache
         {
             foreach (var r in reportArray.EnumerateArray())
             {
-                var parsed = TryParseReportSymbol(r);
+                var parsed = TryParseReportSymbol(r, alNamespace);
                 if (parsed != null && !reports.ContainsKey(parsed.Id))
                     reports[parsed.Id] = parsed;
             }
@@ -2229,7 +2242,9 @@ internal static partial class BcAppSymbolCache
     /// inferred here — a shape the symbol file does not state is left null/absent for the
     /// caller to default, never invented.
     /// </summary>
-    private static ReportSymbol? TryParseReportSymbol(JsonElement report)
+    /// <param name="alNamespace">The dotted <c>Namespaces</c> tree path this report was reached
+    /// through, or null at the root — the only source for its ALNamespace (#3808).</param>
+    private static ReportSymbol? TryParseReportSymbol(JsonElement report, string? alNamespace)
     {
         if (!report.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var reportId) || reportId <= 0)
             return null;
@@ -2239,6 +2254,9 @@ internal static partial class BcAppSymbolCache
         var props = SymbolProperties(report);
         props.TryGetValue("Caption", out var caption);
         props.TryGetValue("WordMergeDataItem", out var wordMergeDataItem);
+        // #3808 — carried verbatim; the letters are case-significant (see ReportSymbol's comment).
+        props.TryGetValue("InherentEntitlements", out var inherentEntitlements);
+        props.TryGetValue("InherentPermissions", out var inherentPermissions);
         // AL defaults: ProcessingOnly false, UseRequestPage true. The symbol file only
         // states a property when the AL source declared it.
         bool processingOnly = props.TryGetValue("ProcessingOnly", out var po)
@@ -2254,7 +2272,10 @@ internal static partial class BcAppSymbolCache
             : null;
 
         return new ReportSymbol(reportId, name, caption, processingOnly, useRequestPage,
-            wordMergeDataItem, dataItems, referenceSourceFileName);
+            wordMergeDataItem, dataItems, referenceSourceFileName,
+            string.IsNullOrWhiteSpace(alNamespace) ? null : alNamespace.Trim(),
+            string.IsNullOrWhiteSpace(inherentEntitlements) ? null : inherentEntitlements.Trim(),
+            string.IsNullOrWhiteSpace(inherentPermissions) ? null : inherentPermissions.Trim());
     }
 
     /// <summary>

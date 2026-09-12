@@ -1293,28 +1293,13 @@
       "Doc": "docs/metadata-equivalence.md#xmlports"
     },
     {
-      "member": "MetaReport.InherentEntitlements",
-      "reason": "BC resolves the report's InherentEntitlements mask to Execute; the runner answers None because BcAppSymbolCache's ReportSymbol does not carry the property at all. SymbolReference.json states it as the \"X\" mask spelling, and RecordPatches.CodeunitMetadataFromBcDocument.cs already parses that spelling for codeunits -- so this is a dropped property, not an underivable one. Same member and same \"X\" spelling as the codeunit gap (#3788) and the query gap (#3798); three kinds, one unparsed property. Measured on BC 28.1.49838.53910 on the single report System Application ships (9810 Change Password).",
-      "issue": 3808
-    },
-    {
-      "member": "MetaReport.InherentPermissions",
-      "reason": "The other half of the same dropped property: BC resolves Execute, the runner answers None. See MetaReport.InherentEntitlements immediately above -- one \"X\" mask in SymbolReference.json feeds both, and neither reaches ReportSymbol.",
-      "issue": 3808
-    },
-    {
-      "member": "MetaReport.ALNamespace",
-      "reason": "BC states the report's AL namespace (System.Security.AccessControl on report 9810); the runner answers null because ReportSymbol does not carry it. SymbolReference.json states the namespace -- it is what BcAppSymbolCache's own namespace walk already reads to build ObjectSymbol -- so this is derivable and simply not carried. Same member, same reason and same fix as MetaTable.ALNamespace (#3568), MetaPermissionSet.ALNamespace (#3806) and MetaEnum.ALNamespace (#3807).",
-      "issue": 3808
-    },
-    {
       "member": "MetaReport.RequestPageDefinition.<presence>",
-      "reason": "BC's emitted document carries a full <RequestPage><PageDefinition> subtree even for report 9810, which declares UseRequestPage = false and ProcessingOnly = true; DependencyReportMetadata.EmitReportXml writes no <RequestPage> element at all, so BC's reader leaves the property null on the runner's side. Two questions are deliberately OPEN rather than answered here, and they are on #3808: whether BC emits a request page for every report (unanswerable from this bundle -- System Application ships exactly ONE report, and Base Application, which would settle it, is excluded from apps.json on cost -- 257s and 8.83 GiB peak RSS -- rather than because its emit is impossible; the earlier claim here that it needs a .NET reference no BC artifact ships was disproved by #3876), and whether anything AL-observable reads MetaReport.RequestPageDefinition on a ProcessingOnly report. Declared as a tracked defect rather than out of scope precisely because neither is settled: an outOfScope claim here would be a guess wearing a classification.",
+      "reason": "BC's emitted document carries a full <RequestPage><PageDefinition> subtree even for report 9810, which declares UseRequestPage = false and ProcessingOnly = true; DependencyReportMetadata.EmitReportXml writes no <RequestPage> element at all, so BC's reader (MetaReport..ctor, REQUESTPAGE -> DeserializePageDefinition) leaves the property null on the runner's side. The two questions this entry recorded as OPEN are now both ANSWERED, and both answers say the gap is real (#3808). (1) Not one report, and not only the processing-only ones: walking the Namespaces tree of every .app in 28.1.49838.53910, 660 of 660 reports declare a RequestPage node in SymbolReference.json -- Base Application 659 plus System Application 1 -- including all 24 that state UseRequestPage = 0. Base Application is readable here for this question because it needs only the symbol file, not the emit that costs 257s and 8.83 GiB. (2) Something AL-observable does read it: NavTestExecution.TestHandleModalForm constructs a NavTestRequestPage whenever the form it is handling IsRequestPage, and NavTestRequestPage.LoadMetadata returns exactly GetReportMetadata(objectId).RequestPageDefinition -- so an AL [RequestPageHandler] on a precompiled report reaches this null. Still a tracked defect rather than out of scope, and now on measurement rather than on the absence of one; what remains unbuilt is the subtree itself, which is a page-definition renderer and not a dropped property.",
       "issue": 3808
     },
     {
       "member": "MetaReport.#requestPageDefinition.<presence>",
-      "reason": "The backing field of MetaReport.RequestPageDefinition. The differ walks the property and the field independently, so one absent subtree is reported twice; this entry exists so the second report is declared rather than left undeclared. Same fact, same issue -- see the property entry above for the two open questions.",
+      "reason": "The backing field of MetaReport.RequestPageDefinition. The differ walks the property and the field independently, so one absent subtree is reported twice; this entry exists so the second report is declared rather than left undeclared. Same fact, same issue -- see the property entry above, whose two formerly-open questions are now answered by measurement.",
       "issue": 3808
     },
     {
