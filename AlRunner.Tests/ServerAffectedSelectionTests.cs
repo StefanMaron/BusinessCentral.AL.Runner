@@ -329,4 +329,97 @@ public class ServerAffectedSelectionTests
         Assert.Equal(0, selection.GetProperty("skipped").GetInt32());
         Assert.Equal(2, events.Count);
     }
+
+    // #3337: a test that selection skipped used to lose its coverage entry when the baseline was
+    // rebuilt, so the next request ran it as "unknown" — narrow and full runs alternated. The
+    // defect has period 2, so every cycle is asserted, not only the last.
+    [SkippableFact]
+    public async Task AffectedOnly_RepeatedEditsToSameObject_NarrowOnEveryCycle()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = MakeBundle(HelperABody(0));
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
+
+        var observed = new List<string>();
+        for (var cycle = 1; cycle <= 4; cycle++)
+        {
+            File.WriteAllText(Path.Combine(bundle, "HelperA.Codeunit.al"), HelperABody(cycle));
+            var lines = await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
+            var (events, summary) = ProtocolV2Streaming.Split(lines);
+            Assert.True(summary.TryGetProperty("selection", out var selection), string.Join(" | ", lines));
+            observed.Add($"cycle {cycle}: ran={selection.GetProperty("ran").GetInt32()} "
+                + $"skipped={selection.GetProperty("skipped").GetInt32()} "
+                + $"forcedFull={selection.GetProperty("forcedFull").GetBoolean()} "
+                + $"events=[{string.Join(",", events.Select(e => e.GetProperty("name").GetString()))}]");
+        }
+
+        var expected = Enumerable.Range(1, 4)
+            .Select(c => $"cycle {c}: ran=1 skipped=1 forcedFull=False events=[Codeunit60210.OnlyA]")
+            .ToList();
+        Assert.True(expected.SequenceEqual(observed), string.Join("\n", observed));
+    }
+
+    // #3337, the other direction: only a SKIPPED test keeps its previous coverage. A test that was
+    // selected and failed must still become unknown, so an unrelated later edit reruns it rather
+    // than hiding a red test behind its last green coverage.
+    [SkippableFact]
+    public async Task AffectedOnly_SelectedTestThatFailed_RerunsOnUnrelatedLaterEdit()
+    {
+        TestArtifacts.SkipIfMissing();
+        var bundle = MakeBundle(HelperABody(0));
+        await using var server = await CliServer.StartAsync(new[] { "--no-cache" });
+
+        await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
+
+        File.WriteAllText(Path.Combine(bundle, "HelperA.Codeunit.al"), """
+        codeunit 60201 "Affected Helper A SX"
+        {
+            procedure ValueA(): Integer
+            begin
+                exit(99);
+            end;
+        }
+        """);
+        var failLines = await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
+        var (failEvents, _) = ProtocolV2Streaming.Split(failLines);
+        Assert.Single(failEvents);
+        Assert.Equal("fail", failEvents[0].GetProperty("status").GetString());
+
+        File.WriteAllText(Path.Combine(bundle, "HelperB.Codeunit.al"), """
+        codeunit 60202 "Affected Helper B SX"
+        {
+            procedure ValueB(): Integer
+            var
+                Y: Integer;
+            begin
+                Y := 2;
+                exit(Y);
+            end;
+        }
+        """);
+        var lines = await server.SendRequestStreamingAsync(RunTestsRequest(bundle, affectedOnly: true));
+        var (events, summary) = ProtocolV2Streaming.Split(lines);
+
+        Assert.True(summary.TryGetProperty("selection", out var selection), string.Join(" | ", lines));
+        var names = events.Select(e => e.GetProperty("name").GetString()).OrderBy(x => x, StringComparer.Ordinal);
+        Assert.Equal(new[] { "Codeunit60210.OnlyA", "Codeunit60210.OnlyB" }, names);
+        Assert.Equal(2, selection.GetProperty("ran").GetInt32());
+        Assert.Equal(0, selection.GetProperty("skipped").GetInt32());
+    }
+
+    private static string HelperABody(int cycle) => $$"""
+        codeunit 60201 "Affected Helper A SX"
+        {
+            procedure ValueA(): Integer
+            var
+                X: Integer;
+            begin
+                X := {{cycle}};
+                X := 1;
+                exit(X);
+            end;
+        }
+        """;
 }
