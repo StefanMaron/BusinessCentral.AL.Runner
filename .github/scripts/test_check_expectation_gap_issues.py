@@ -246,6 +246,7 @@ def run_report(files: dict[str, object], states: dict[tuple[str, str, int], str 
 
 
 key = ("StefanMaron", "BusinessCentral.AL.Runner", 2361)
+key3784 = ("StefanMaron", "BusinessCentral.AL.Runner", 3784)
 
 rc, out = run_report({"known-gaps-x.json": [gap(f"{ISSUE}/2361")]}, {key: "closed"})
 check("an entry linking a CLOSED issue is reported as a warning", "::warning" in out, out)
@@ -263,6 +264,169 @@ check("an unreachable API is LOUD about not having checked, and still does not f
       rc == 0 and "::warning" in out and "could not" in out.lower(), f"rc={rc}: {out}")
 check("...and says explicitly that the sweep did not run for that entry",
       "2361" in out, out)
+
+
+# ---------------------------------------------------------------------------
+print()
+print("The metadata-equivalence allowlist (#3975)")
+# ---------------------------------------------------------------------------
+
+# The allowlist is a SECOND manifest citing issues, in a subdirectory, with a
+# different schema: {"comment": [...], "differences": [{"member", "reason",
+# "issue"}]}. Its `issue` carries exactly the meaning `Issue` carries in a
+# known-gaps entry -- this is a tracked defect, expected to go away -- so an
+# entry citing a closed issue has quietly become a permanent exemption.
+#
+# Every case below builds the condition deliberately, for the reason in this
+# file's docstring: asserting over whatever the shipped allowlist contains today
+# would go green the moment someone fixed the 44.
+
+def allow(*entries, comment=("synthetic",)):
+    return {"comment": list(comment), "differences": list(entries)}
+
+
+def diff(member="MetaTable.Thing", reason="constructed by the test suite",
+         issue=None, **extra):
+    e = {"member": member, "reason": reason}
+    if issue is not None:
+        e["issue"] = issue
+    e.update(extra)
+    return e
+
+
+def run_allow(allowlist, *, states=None, title="", body="", commits="",
+              argv=None, subdir="metadata-equivalence",
+              gaps=None, raw=None):
+    """Write a synthetic allowlist into MANIFEST_DIR/<subdir>/ and run the guard."""
+    original = cegi.issue_state
+    if states is not None:
+        cegi.issue_state = lambda owner, repo, n: states.get((owner, repo, n))
+    env_keys = ("PR_TITLE", "PR_BODY", "PR_COMMITS", "GITHUB_REPOSITORY")
+    saved = {k: os.environ.get(k) for k in env_keys}
+    try:
+        with tempfile.TemporaryDirectory() as md:
+            for name, content in (gaps or {}).items():
+                with open(os.path.join(md, name), "w", encoding="utf-8") as fh:
+                    fh.write(json.dumps(content, indent=2))
+            if allowlist is not None or raw is not None:
+                sub = os.path.join(md, subdir)
+                os.makedirs(sub, exist_ok=True)
+                text = raw if raw is not None else json.dumps(allowlist, indent=2)
+                with open(os.path.join(sub, "allowlist.json"), "w", encoding="utf-8") as fh:
+                    fh.write(text)
+            os.environ["PR_TITLE"] = title
+            os.environ["PR_BODY"] = body
+            os.environ["PR_COMMITS"] = commits
+            os.environ["GITHUB_REPOSITORY"] = "StefanMaron/BusinessCentral.AL.Runner"
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = cegi.main([md] + list(argv or []))
+            return rc, out.getvalue() + err.getvalue()
+    finally:
+        cegi.issue_state = original
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+REPORT = ["--report-closed-issues"]
+
+# --- the sweep sees allowlist entries at all -------------------------------
+
+rc, out = run_allow(allow(diff(issue=f"{ISSUE}/3784")), states={key3784: "closed"},
+                    argv=REPORT)
+check("an allowlist entry citing a CLOSED issue is reported", "::warning" in out, out)
+check("...naming the issue", "3784" in out, out)
+check("...naming the allowlist file so the reader can find the entry",
+      "allowlist.json" in out, out)
+check("...and the member, so they know WHICH entry", "MetaTable.Thing" in out, out)
+check("...and does not fail the job: the sweep is advisory (#2858)", rc == 0, f"rc={rc}: {out}")
+
+rc, out = run_allow(allow(diff(issue=f"{ISSUE}/3784")), states={key3784: "open"},
+                    argv=REPORT)
+check("an allowlist entry citing an OPEN issue produces no warning",
+      rc == 0 and "::warning" not in out, f"rc={rc}: {out}")
+
+# The distinguishing test: this is what a guard reading only the top-level
+# known-gaps-*.json cannot do, and it is the whole defect in #3975.
+rc, out = run_allow(allow(diff(issue=f"{ISSUE}/3784")), states={key3784: "closed"},
+                    gaps={"known-gaps-x.json": [gap(f"{ISSUE}/2361")]},
+                    argv=REPORT)
+check("the allowlist is swept even when a known-gaps file is present",
+      "3784" in out and "allowlist.json" in out, out)
+
+rc, out = run_allow(allow(diff(issue=f"{ISSUE}/3784"), diff(member="M2", issue=f"{ISSUE}/3784")),
+                    states={key3784: "closed"}, argv=REPORT)
+check("several entries citing one closed issue are grouped into one warning",
+      out.count("::warning") == 1 and "2 " in out, out)
+
+# --- the third state: the measurement failed, not the subject ---------------
+
+rc, out = run_allow(allow(diff(issue=f"{ISSUE}/3784")), states={}, argv=REPORT)
+check("an unresolvable issue is LOUD rather than read as 'open'",
+      rc == 0 and "::warning" in out and "could not" in out.lower(), f"rc={rc}: {out}")
+check("...and names the allowlist entry it could not check",
+      "3784" in out and "allowlist.json" in out, out)
+
+# --- a missing `issue` is LEGITIMATE, and must stay a pass ------------------
+#
+# Established by reading the shipped file rather than assumed: 77 of its 270
+# entries carry no `issue`, and every one of them carries `outOfScope` or
+# `oracleLimitation` instead. The allowlist's own comment block declares four
+# mutually-exclusive reason KINDS, of which `issue` is one. So absence is a
+# different, valid kind -- not a finding. A guard that failed on it would be a
+# false red on 77 correct entries, which is guards-need-a-third-state.md's
+# "a genuinely absent thing must stay a pass".
+
+rc, out = run_allow(allow(diff(outOfScope=True, Doc="docs/x.md#y")),
+                    states={}, argv=REPORT)
+check("an entry with no 'issue' at all is a clean pass, not a finding",
+      rc == 0 and "::warning" not in out, f"rc={rc}: {out}")
+
+rc, out = run_allow(allow(diff(outOfScope=True, Doc="docs/x.md#y"),
+                          diff(member="M2", issue=f"{ISSUE}/3784")),
+                    states={key3784: "closed"}, argv=REPORT)
+check("...and does not stop the entries beside it being swept", "3784" in out, out)
+
+# --- a broken allowlist is exit 2, never a pass -----------------------------
+
+rc, out = run_allow(None, raw="{not json", argv=REPORT)
+check("an allowlist that will not parse is exit 2, not a pass", rc == 2, f"rc={rc}: {out}")
+
+rc, out = run_allow({"comment": [], "differences": {"not": "a list"}}, argv=REPORT)
+check("an allowlist whose 'differences' is not an array is exit 2", rc == 2, f"rc={rc}: {out}")
+
+rc, out = run_allow(allow(diff(issue="see the issue tracker")), argv=REPORT)
+check("an 'issue' that is not a resolvable reference is exit 2, not skipped",
+      rc == 2, f"rc={rc}: {out}")
+check("...and the message names the unresolvable value",
+      "see the issue tracker" in out, out)
+
+rc, out = run_allow(allow(diff(issue=f"{ISSUE}/3784")), states={key3784: "open"},
+                    argv=REPORT)
+check("a passing sweep says how many allowlist entries it scanned",
+      "1 allowlist" in out, out)
+
+# An allowlist file that is absent entirely is a legitimate state (a checkout
+# predating the metadata harness), and must not be confused with one that is
+# there and unreadable.
+rc, out = run_allow(None, gaps={"known-gaps-x.json": [gap(f"{ISSUE}/2361")]},
+                    states={("StefanMaron", "BusinessCentral.AL.Runner", 2361): "open"},
+                    argv=REPORT)
+check("no allowlist file at all is a pass (absence is legitimate, unreadable is not)",
+      rc == 0, f"rc={rc}: {out}")
+
+# --- the blocking half covers the allowlist too ----------------------------
+
+rc, out = run_allow(allow(diff(issue=f"{ISSUE}/3784")), body="Closes #3784\n")
+check("a PR that CLOSES the issue an allowlist entry cites fails the gate",
+      rc == 1, f"rc={rc}: {out}")
+check("...naming the allowlist and the member", "allowlist.json" in out and "MetaTable.Thing" in out, out)
+
+rc, out = run_allow(allow(diff(issue=f"{ISSUE}/3784")), body="Closes #2361\n")
+check("...and a PR closing an unrelated issue passes", rc == 0, f"rc={rc}: {out}")
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +497,21 @@ _has_gap_file = any(f.startswith("known-gaps-") and f.endswith(".json")
                     for f in os.listdir(shipped))
 check("shipped known-gaps-*.json files yield entries (else the check above is vacuous)",
       (not _has_gap_file) or len(entries) > 0, f"gap files={_has_gap_file}, entries={len(entries)}")
+
+# The shipped allowlist, same reasoning: proves the extraction works against the
+# REAL schema, which the synthetic cases above cannot. #3975 measured 193 of its
+# 270 entries citing an issue across 9 distinct issues; asserting the exact
+# number would break every time an entry is added, so this asserts the shape --
+# the file is found, entries come back, and each resolves to a real reference.
+_allow_entries = cegi.load_allowlist_entries(shipped)
+print(f"  note shipped allowlist carries {len(_allow_entries)} issue-citing entr"
+      f"{'y' if len(_allow_entries) == 1 else 'ies'}")
+_allow_file = os.path.join(shipped, "metadata-equivalence", "allowlist.json")
+check("the shipped metadata-equivalence allowlist yields issue-citing entries",
+      (not os.path.isfile(_allow_file)) or len(_allow_entries) > 0,
+      f"file={os.path.isfile(_allow_file)}, entries={len(_allow_entries)}")
+check("every shipped allowlist citation resolves to a real issue reference",
+      all(e.number > 0 and e.owner and e.repo for e in _allow_entries), "")
 
 
 print()
