@@ -1,6 +1,7 @@
 // Runner-mechanism tests for #3174. What AL observes from
-// NavUserAccountHelper.IsUserSuperInAllCompanies is a BC-behaviour claim and lives upstream in
-// the corpus (al-language-onprem codeunit 61203). These pin the runner's own plumbing: that the
+// NavUserAccountHelper.IsUserSuperInAllCompanies is a BC-behaviour claim with NO service-tier
+// verdict: the corpus tier cannot compile DotNet (#4014), and these tests do not pin the decision
+// logic in RecordPatches.IsUserSuperInAllCompanies. They pin only the runner's plumbing: that the
 // rewritten Ncl routes NavDotNet.Invoke<T>'s reflective call through the redirect, and that the
 // redirect leaves every other member's invocation, including its exception shape, untouched.
 using System.Reflection;
