@@ -2547,10 +2547,14 @@ public sealed partial class BcCompiler
     // LastBundleQuerySymbolsPath static below still exists for Program.cs (which copies the
     // file next to the AL-output cache DLL), but it is process-global and must not be read by
     // anything that cannot prove the current Emit set it — see CaptureRadMetadataSnapshotFull.
+    /// <summary>Where <see cref="EmitAndRegisterBundleQuerySymbols"/> writes this module's query
+    /// symbols in this process (#3250 reads it back for a reused module's replay).</summary>
+    internal static string BundleQuerySymbolsPathFor(string moduleName)
+        => Path.Combine(PerProcessScratch.Dir("al-runner-query-symbols", moduleName), "SymbolReference.json");
+
     private static string EmitAndRegisterBundleQuerySymbols(NavCA.Compilation compilation, string moduleName)
     {
-        var dir = PerProcessScratch.Dir("al-runner-query-symbols", moduleName);
-        var path = Path.Combine(dir, "SymbolReference.json");
+        var path = BundleQuerySymbolsPathFor(moduleName);
         using (var fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
             SymbolJsonWriter.WriteSymbolJson(compilation, fs);
         AlRunner.Patches.RecordPatches.RegisterBundleQuerySymbolsJson(path);

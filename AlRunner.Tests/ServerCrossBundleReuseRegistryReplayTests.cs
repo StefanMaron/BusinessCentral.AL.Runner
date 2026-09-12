@@ -160,6 +160,8 @@ public sealed class ServerCrossBundleReuseRegistryReplayTests
         try
         {
             AssertRequest2(await RunSessionAsync(dirA, dirB, new[] { "--cache", cache }, "cold"), "cold");
+            // The warm session is only a different branch if the cold one left an entry to HIT.
+            Assert.NotEmpty(Directory.EnumerateFiles(cache, "*.enum-registry.json", SearchOption.AllDirectories));
             AssertRequest2(await RunSessionAsync(dirA, dirB, new[] { "--cache", cache }, "warm"), "warm");
         }
         finally
