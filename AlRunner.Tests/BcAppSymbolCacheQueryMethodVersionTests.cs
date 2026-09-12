@@ -20,7 +20,7 @@
 // hash of the key), so a stale v13 entry sits at a different on-disk filename entirely and
 // is never looked up; the .app is reparsed, and the fresh parse carries Method correctly.
 //
-// This is the same shape as every prior CacheVersion bump documented above the constant
+// This is the same shape as every prior CacheVersion bump in docs/bc-symbol-cache-versions.md
 // (v9 LookupPageName, v11 SourceTableTemporary, v12 EnumSymbol.Captions, v13 PageSymbol's
 // PageType/Controls/CardPageName) — the fix for a "field defaults to a value that makes
 // old data readable but WRONG" bug is not just adding the field, it's making sure an old
