@@ -233,8 +233,22 @@ NAV_ALLOWED = [
     ("writing a C# file with a heredoc", "cat > AlRunner/New.cs <<EOF\nclass X {}\nEOF"),
     ("git log over the C# tree", "git log --oneline -5 -- AlRunner"),
 ]
+# The dotnet exemption is PIPE-connected only: `dotnet test` appearing anywhere in
+# the string would make the literal text an untraceable opt-out (#3994 review).
+NAV_BLOCKED_DESPITE_DOTNET = [
+    ("dotnet test in a trailing comment",
+     "command grep -rn 'Editable' AlRunner/ # after dotnet test"),
+    ("a read chained after a build",
+     "dotnet build AlRunner; sed -n '1,50p' AlRunner/Program.cs"),
+    ("a source grep chained with &&",
+     "dotnet test AlRunner.Tests && command grep -n 'Foo' AlRunner/Patches/Bar.cs"),
+]
 for name, cmd in NAV_ALLOWED:
     ok, d = allows(NAV, cmd, cwd=WORKTREE)
+    check(name, ok, d)
+
+for name, cmd in NAV_BLOCKED_DESPITE_DOTNET:
+    ok, d = blocks(NAV, cmd, "context-pack.py", cwd=WORKTREE)
     check(name, ok, d)
 
 print("\nboth hooks are actually registered -- a hook nothing invokes blocks nothing")

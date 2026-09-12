@@ -88,7 +88,13 @@ NOT_A_SYMBOL_LOOKUP = re.compile(
     # line -- and blocking it sent agents to `# hook:allow-grep`, an override whose
     # name says "grep" for a command that greps no file. An override reached for
     # routinely on false positives is one reached for reflexively on a true one (#3994).
-    r'|\bdotnet\s+(?:test|run|build|publish)\b')
+    # ...but ONLY when the search reads that command's STDOUT, i.e. the dotnet
+    # invocation is `|`-connected to it. Matching `dotnet test` anywhere in the
+    # string would exempt `grep ... AlRunner/ # after dotnet test` -- a plain-text
+    # opt-out with no name and, unlike `# hook:allow-grep`, no trace -- and
+    # `dotnet build AlRunner; sed -n 1,50p AlRunner/Program.cs`, a READ, which the
+    # docstring records as the dominant cost (533 of 940 calls).
+    r'|\bdotnet\s+(?:test|run|build|publish)\b(?:(?!;|&&)[^|])*\|')
 
 ADVISORY_HEADER = "Code-navigation reminder (advisory, nothing was blocked).\n"
 BLOCK_HEADER = (
