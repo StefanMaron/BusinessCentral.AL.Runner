@@ -113,8 +113,36 @@ public static partial class RecordPatches
     /// </remarks>
     private static bool TryDecodePermissionMaskLetters(string? letters, out int mask)
     {
+        if (TryDecodePermissionMaskLettersCore(letters, out mask, out var unreadable)) return mask != 0;
+
+        throw CodeunitMetadataShapeGap(
+            $"SymbolReference.json states an inherent mask '{letters}', whose character '{unreadable}' is "
+            + $"not one of the permission letters '{PermissionMaskLetters}' in either case — the "
+            + "runner cannot read a mask it cannot spell, and dropping the character would answer "
+            + "a narrower permission than the codeunit declares");
+    }
+
+    /// <summary>
+    /// The mask arithmetic alone, with the unreadable-letter POLICY left to the caller: true
+    /// when every character decoded, false with <paramref name="unreadableLetter"/> naming the
+    /// first one that did not. Case is significant — see
+    /// <see cref="TryDecodePermissionMaskLetters"/>, which owns the full claim and its
+    /// citation.
+    ///
+    /// <para>Two callers, two policies, and the split is deliberate (#3933). The codeunit and
+    /// query directions THROW, because a <c>RunnerOutOfScopeException</c> there reaches the AL
+    /// author as the test's failure message. <c>EmitInherentMask</c> omits and says, because a
+    /// throw out of <see cref="TryBuildDependencyPageMetadata"/> is swallowed into a null
+    /// metadata document and silently demotes the whole TestPage — measured on that builder,
+    /// see the "ORDER IS LOAD-BEARING" note in DependencyPageMetadataXml.cs. Sharing the
+    /// arithmetic and not the policy is what keeps a loud failure loud on both paths.</para>
+    /// </summary>
+    private static bool TryDecodePermissionMaskLettersCore(
+        string? letters, out int mask, out char unreadableLetter)
+    {
         mask = 0;
-        if (string.IsNullOrWhiteSpace(letters)) return false;
+        unreadableLetter = '\0';
+        if (string.IsNullOrWhiteSpace(letters)) return true;
 
         foreach (var c in letters.Trim())
         {
@@ -124,13 +152,11 @@ public static partial class RecordPatches
             var indirect = PermissionMaskLetters.IndexOf(char.ToUpperInvariant(c));
             if (indirect >= 0 && char.IsLower(c)) { mask |= 1 << (indirect + PermissionMaskLetters.Length); continue; }
 
-            throw CodeunitMetadataShapeGap(
-                $"SymbolReference.json states an inherent mask '{letters}', whose character '{c}' is "
-                + $"not one of the permission letters '{PermissionMaskLetters}' in either case — the "
-                + "runner cannot read a mask it cannot spell, and dropping the character would answer "
-                + "a narrower permission than the codeunit declares");
+            unreadableLetter = c;
+            mask = 0;
+            return false;
         }
 
-        return mask != 0;
+        return true;
     }
 }

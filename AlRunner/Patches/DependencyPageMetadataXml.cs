@@ -335,49 +335,49 @@ public static partial class RecordPatches
     /// One inherent-permission mask: the symbol file states AL permission LETTERS
     /// (<c>InherentEntitlements = X</c>) and BC's <c>PageProperties</c> holds an
     /// <c>Int32</c>, so the letters are decoded against
-    /// <c>Microsoft.Dynamics.Nav.Types.PermissionMask</c> — <c>Read 1, Insert 2, Modify 4,
-    /// Delete 8, Execute 16</c>. That enum is what makes this a DECODE of a stated value
-    /// rather than a guess at an absent one.
+    /// <c>Microsoft.Dynamics.Nav.Types.PermissionMask</c> through the shared
+    /// <see cref="TryDecodePermissionMaskLettersCore"/> — <c>Read 1, Insert 2, Modify 4,
+    /// Delete 8, Execute 16</c>, and the same five again as INDIRECT bits at n+5 for a
+    /// lowercase letter. That enum is what makes this a DECODE of a stated value rather than
+    /// a guess at an absent one.
     ///
-    /// <para>Measured on Base Application + System Application + Business Foundation at BC
-    /// 28.4.53241.54407 (2,852 pages): the only value either property ever takes is
-    /// <c>"X"</c> — 101 + 99 occurrences — which BC's emitter writes as <c>16</c>. The other
-    /// four letters are implemented because the decode is total and cheap, not because a page
-    /// stating them was observed; that is why an unknown letter refuses rather than
-    /// contributing nothing.</para>
+    /// <para><b>Case is significant and must not be normalised</b> (#3933). This decoded with
+    /// <c>char.ToUpperInvariant</c> until then, so <c>"x"</c> answered 16 where BC answers 512
+    /// and <c>"rX"</c> answered 17 where BC answers 48 — a page reading as holding a DIRECT
+    /// permission it does not have. Latent when fixed: measured across every shipped app at BC
+    /// 28.4.53241.54407, pages carry 210 masks and all 210 are <c>"X"</c>, so no Microsoft page
+    /// reached it; an ISV page declaring one does. The codeunit direction has a real instance
+    /// (System Application codeunit 2516), which is what settled the spelling — see
+    /// docs/codeunit-metadata-from-bc.md#permission-mask-spelling.</para>
     ///
-    /// <para>A letter this cannot read is REFUSED and SAID, never folded into 0 — the same
+    /// <para>A letter this cannot read is OMITTED and SAID, never folded into 0 — the same
     /// choice, and the same reason, as the unreadable-boolean and wrong-shape-DataCaptionFields
     /// arms of <see cref="EmitSourceObjectPropertiesXml"/>. Both a mask of 0 and an absent
     /// attribute are answers BC can tell apart (the <c>Specified</c> bit its setter raises),
     /// so inventing either from a value nobody could read would be a silent wrong answer on a
-    /// surface with no way to fail.</para>
+    /// surface with no way to fail. It deliberately does NOT reuse the shared decoder's throw:
+    /// on this builder a throw is the quieter answer, because it returns a null document and
+    /// demotes the whole TestPage — the trade is stated once at
+    /// <see cref="TryDecodePermissionMaskLettersCore"/>.</para>
     /// </summary>
     private static void EmitInherentMask(
         XmlWriter w, BcAppSymbolCache.PageSymbol page, string attribute, string? stated)
     {
         if (string.IsNullOrWhiteSpace(stated)) return;
 
-        int mask = 0;
-        foreach (var c in stated)
+        // The shared decoder's arithmetic, and NOT its throw — see
+        // TryDecodePermissionMaskLettersCore for why the policy splits here.
+        if (!TryDecodePermissionMaskLettersCore(stated, out var mask, out var unreadable))
         {
-            if (c == ' ' || c == ',') continue;
-            int bit = char.ToUpperInvariant(c) switch
-            {
-                'R' => 1, 'I' => 2, 'M' => 4, 'D' => 8, 'X' => 16,
-                _ => 0,
-            };
-            if (bit == 0)
-            {
-                Console.Error.WriteLine(
-                    $"[RecordPatches] page {page.Id} \"{page.Name}\": {attribute} \"{stated}\" "
-                    + "is not the R/I/M/D/X permission-letter list BC reads — omitted, so the "
-                    + "page reads as declaring none");
-                return;
-            }
-            mask |= bit;
+            Console.Error.WriteLine(
+                $"[RecordPatches] page {page.Id} \"{page.Name}\": {attribute} \"{stated}\" "
+                + $"states '{unreadable}', which is not one of the {PermissionMaskLetters} "
+                + "permission letters BC reads in either case — omitted, so the page reads as "
+                + "declaring none");
+            return;
         }
 
+        if (mask == 0) return;
         w.WriteAttributeString(attribute, mask.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
