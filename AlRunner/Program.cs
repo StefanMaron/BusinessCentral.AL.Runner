@@ -1021,7 +1021,7 @@ if (artifactPathArg != null)
 // as a clear message instead of a deep failure. All of this stays overridable.
 // Tracks whether bcVersionArg/artifactPathArg came from the auto-select default
 // below, so the explicit-selection engine-minor-mismatch warning further down (see
-// BcArtifacts.WarnIfExplicitEngineMinorMismatch) does not double-warn a case the
+// BcArtifacts.ExplicitEngineMinorMismatchWarning) does not double-warn a case the
 // auto-select branch already covers with its own, richer message.
 bool bcVersionAutoSelected = false;
 if (bcVersionArg == null && artifactPathArg == null)
@@ -1320,9 +1320,18 @@ try
     // all (see ShouldWarnExplicitEngineMinorMismatch) — once any variant is shipped, the
     // variant-swap block below is the sole authority on whether the selection is
     // degraded, not this generic same-process-engine comparison.
+    //
+    // #4038: deferred — see `deferredStartupLines`' declaration above. The shadow child
+    // re-runs this block, so an immediate write printed once per generation. No exit
+    // between here and the flush is one this warning explains: the variant refusal
+    // cannot coexist with it (shippedVariants.Count == 0), and the rest name their own cause.
     if (AlRunner.Infrastructure.BcArtifacts.ShouldWarnExplicitEngineMinorMismatch(
             bcVersionAutoSelected, shippedVariants.Count))
-        AlRunner.Infrastructure.BcArtifacts.WarnIfExplicitEngineMinorMismatch();
+    {
+        var engineMinorMismatchWarning = AlRunner.Infrastructure.BcArtifacts.ExplicitEngineMinorMismatchWarning();
+        if (engineMinorMismatchWarning != null)
+            deferredStartupLines.Add(() => Console.Error.WriteLine(engineMinorMismatchWarning));
+    }
     // #2041/#2066: deferred — see `deferredStartupLines`' declaration above. Captured into
     // locals now (the values are fixed the instant SelectVersion above returns) so the
     // closure below reads exactly what THIS generation selected, not whatever the static

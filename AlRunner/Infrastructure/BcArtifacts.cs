@@ -438,7 +438,7 @@ public static class BcArtifacts
     /// <summary>
     /// Pure core of <see cref="DefaultProvisionTarget"/>, network-injectable for testing
     /// (see AlRunner.Tests.DefaultProvisionTargetTests) — same shape as
-    /// <see cref="DescribeExplicitEngineMinorMismatch"/>/<see cref="WarnIfExplicitEngineMinorMismatch"/>:
+    /// <see cref="DescribeExplicitEngineMinorMismatch"/>/<see cref="ExplicitEngineMinorMismatchWarning"/>:
     /// a provable pure function plus a thin real-network wrapper.
     ///
     /// Issue #2033: <see cref="DefaultVersionPrefix"/> answers "what does the LOCAL CACHE
@@ -590,7 +590,7 @@ public static class BcArtifacts
     }
 
     /// <summary>
-    /// Pure core of <see cref="WarnIfExplicitEngineMinorMismatch"/>, split out for direct unit
+    /// Pure core of <see cref="ExplicitEngineMinorMismatchWarning"/>, split out for direct unit
     /// testing (see AlRunner.Tests.EngineMinorMismatchWarningTests) — mirrors the
     /// BcEngineReadinessGuard.AssertReadyOnCi(bool,string?,bool) shape: a pure function over
     /// explicit values is provable with no BC engine or CLI invocation involved.
@@ -623,16 +623,14 @@ public static class BcArtifacts
     }
 
     /// <summary>
-    /// Called ONLY when the user explicitly chose the BC version (--bc-version or
+    /// Used ONLY when the user explicitly chose the BC version (--bc-version or
     /// --artifact-path) — never from the auto-select default path, which already prints its
     /// own equivalent warning inside Program.cs and must not be double-warned. See
-    /// DescribeExplicitEngineMinorMismatch for the full rationale.
+    /// DescribeExplicitEngineMinorMismatch for the full rationale. Returns the message rather
+    /// than printing it: Program.cs queues it so only the terminal generation prints (#4038).
     /// </summary>
-    public static void WarnIfExplicitEngineMinorMismatch()
-    {
-        var msg = DescribeExplicitEngineMinorMismatch(EngineBuiltVersion(), SelectedVersion);
-        if (msg != null) Console.Error.WriteLine(msg);
-    }
+    public static string? ExplicitEngineMinorMismatchWarning()
+        => DescribeExplicitEngineMinorMismatch(EngineBuiltVersion(), SelectedVersion);
 
     /// <summary>
     /// Issue #2210: the auto-select default path's cross-major note body — describes the
@@ -685,7 +683,7 @@ public static class BcArtifacts
     }
 
     /// <summary>
-    /// Issue #2037: whether Program.cs should even CALL <see cref="WarnIfExplicitEngineMinorMismatch"/>
+    /// Issue #2037: whether Program.cs should even CALL <see cref="ExplicitEngineMinorMismatchWarning"/>
     /// at all, given how many per-BC-minor engine variants this install ships (see
     /// <see cref="EngineVariants.Discover"/>, called just before the variant-swap block in
     /// Program.cs — the same input, so no rediscovery is needed at the call site).
