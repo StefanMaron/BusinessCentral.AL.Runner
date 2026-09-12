@@ -525,7 +525,7 @@ public sealed class RunnerExtrasIdRangeGuardTests
 
     private static string TempBundle(params (string Path, string Content)[] files)
     {
-        var dir = Path.Combine(Path.GetTempPath(), "rx-objscan-" + Guid.NewGuid().ToString("N"));
+        var dir = TestScratch.Dir("rx-objscan");
         foreach (var (p, c) in files)
         {
             var full = Path.Combine(dir, p);
@@ -587,8 +587,10 @@ public sealed class RunnerExtrasIdRangeGuardTests
         }
         finally { Directory.Delete(dir, true); }
 
-        Assert.Equal(ObjectScanVerdict.CouldNotMeasure,
-            ScanObjectCollisions(Path.Combine(Path.GetTempPath(), "rx-objscan-missing-" + Guid.NewGuid().ToString("N"))).Verdict);
+        // TestScratch.Dir reserves an owned path without creating it: a root that does not exist.
+        var missing = TestScratch.Dir("rx-objscan-missing");
+        Assert.False(Directory.Exists(missing));
+        Assert.Equal(ObjectScanVerdict.CouldNotMeasure, ScanObjectCollisions(missing).Verdict);
     }
 
     [Fact]
