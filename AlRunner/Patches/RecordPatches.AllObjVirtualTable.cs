@@ -134,9 +134,9 @@ public static partial class RecordPatches
         // #3117: built on FIRST ACTUAL INSERT, not on entry. PopulateAllObjVirtualTable runs on
         // every AllObj data-access handout, but `done` makes all but the first few handouts
         // insert nothing — and BuildObjectOwnerIndex walks every registered module assembly's
-        // TypeDef name index once per _emittedObjectTypePrefixes entry (six when the figures
-        // below were measured, nine since #4000), Base Application included, so an eager
-        // build paid that price to produce no rows.
+        // TypeDef name index once per _emittedObjectTypePrefixes entry, Base Application
+        // included, so an eager build paid that price to produce no rows. Every figure below
+        // was measured with six prefixes; #4000 made it nine and added a source-owner fold.
         //
         // Measured on the al-language corpus (2665 tests, BC 28.1, warm compile cache), which
         // is what settles the "cost is not the reason for a skip any more" claim #3107's PR
@@ -499,8 +499,9 @@ public static partial class RecordPatches
         // precompiled .app, and the assembly pass only fills ids no symbol reference claimed.
         //
         // On cost (#3117): #3107 asserted "cost is not the reason for a skip any more" with no
-        // number behind it. Measured since, on the al-language corpus: one build of this index
-        // is ~25 ms with Base Application loaded (10,349 entries), and it is NOT free. What
+        // number behind it. Measured since (before #4000 widened the scan), on the al-language
+        // corpus: one build of this index is ~25 ms with Base Application loaded (10,349
+        // entries), and it is NOT free. What
         // makes it affordable is that the caller now builds it at most once per handout that
         // actually inserts a row — see PopulateAllObjVirtualTable — rather than on every
         // handout. The half of the original claim that does hold is the mechanism:
