@@ -1,0 +1,88 @@
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:01.87]     AlRunner.Tests.BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(cause: BinRewrittenThisProcess) [FAIL]
+[xUnit.net 00:00:01.92]     AlRunner.Tests.BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(cause: NclPreloaded) [FAIL]
+[xUnit.net 00:00:01.93]     AlRunner.Tests.BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(cause: BootstrapThrew) [FAIL]
+[xUnit.net 00:00:01.93]     AlRunner.Tests.BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(cause: BootstrapDidNotRun) [FAIL]
+[xUnit.net 00:00:01.93]     AlRunner.Tests.BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(cause: CecilCacheCold) [FAIL]
+  Failed AlRunner.Tests.BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(cause: BinRewrittenThisProcess) [16 ms]
+  Error Message:
+   Assert.NotNull() Failure: Value is null
+  Stack Trace:
+     at AlRunner.Tests.BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(BcEngineSkipCause cause) in /_/AlRunner.Tests/BcEngineUnbootstrappedGuardTests.cs:line 93
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+  Failed AlRunner.Tests.BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(cause: NclPreloaded) [< 1 ms]
+  Error Message:
+   Assert.NotNull() Failure: Value is null
+  Stack Trace:
+     at AlRunner.Tests.BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(BcEngineSkipCause cause) in /_/AlRunner.Tests/BcEngineUnbootstrappedGuardTests.cs:line 93
+   at InvokeStub_BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  Failed AlRunner.Tests.BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(cause: BootstrapThrew) [2 ms]
+  Error Message:
+   Assert.NotNull() Failure: Value is null
+  Stack Trace:
+     at AlRunner.Tests.BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(BcEngineSkipCause cause) in /_/AlRunner.Tests/BcEngineUnbootstrappedGuardTests.cs:line 93
+   at InvokeStub_BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  Failed AlRunner.Tests.BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(cause: BootstrapDidNotRun) [< 1 ms]
+  Error Message:
+   Assert.NotNull() Failure: Value is null
+  Stack Trace:
+     at AlRunner.Tests.BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(BcEngineSkipCause cause) in /_/AlRunner.Tests/BcEngineUnbootstrappedGuardTests.cs:line 93
+   at InvokeStub_BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  Failed AlRunner.Tests.BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(cause: CecilCacheCold) [< 1 ms]
+  Error Message:
+   Assert.NotNull() Failure: Value is null
+  Stack Trace:
+     at AlRunner.Tests.BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(BcEngineSkipCause cause) in /_/AlRunner.Tests/BcEngineUnbootstrappedGuardTests.cs:line 93
+   at InvokeStub_BcEngineUnbootstrappedGuardTests.EveryLocallyRecoverableCause_Fails(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+[xUnit.net 00:00:02.04]     AlRunner.Tests.BcEngineUnbootstrappedGuardTests.ARecoverableBootstrapGap_Fails_RatherThanSkipping [FAIL]
+[xUnit.net 00:00:02.04]     AlRunner.Tests.BcEngineUnbootstrappedGuardTests.AnEngineLessBox_StillSkips_RatherThanFailing(cause: ArtifactsMissing) [FAIL]
+[xUnit.net 00:00:02.05]     AlRunner.Tests.BcEngineUnbootstrappedGuardTests.AnEngineLessBox_StillSkips_RatherThanFailing(cause: ArtifactsIncomplete) [FAIL]
+[xUnit.net 00:00:02.05]     AlRunner.Tests.BcEngineUnbootstrappedGuardTests.WiredInto_TheRealFixture_SkipReasonProperty [FAIL]
+  Failed AlRunner.Tests.BcEngineUnbootstrappedGuardTests.ARecoverableBootstrapGap_Fails_RatherThanSkipping [< 1 ms]
+  Error Message:
+   Assert.NotNull() Failure: Value is null
+  Stack Trace:
+     at AlRunner.Tests.BcEngineUnbootstrappedGuardTests.ARecoverableBootstrapGap_Fails_RatherThanSkipping() in /_/AlRunner.Tests/BcEngineUnbootstrappedGuardTests.cs:line 67
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+  Failed AlRunner.Tests.BcEngineUnbootstrappedGuardTests.AnEngineLessBox_StillSkips_RatherThanFailing(cause: ArtifactsMissing) [2 ms]
+  Error Message:
+   Assert.Null() Failure: Value is not null
+Expected: null
+Actual:   Xunit.Sdk.FailException: [bc-engine-serial] REFUSING TO SKIP: BC artifacts are provisioned on this machine, so these tests CAN run — the in-process engine bootstrap simply was not performed. Run `tools/engine-test-bootstrap.sh` and re-run `dotnet test` with `--settings engine.runsettings`; a build restores a pristine bin/Microsoft.Dynamics.Nav.Ncl.dll, so this is needed again after EVERY build. This used to be a silent skip: the run reported `Skipped! - Failed: 0, Passed: 0` and exit 0, which reads exactly like a passing mutation check and has invalidated a real RED baseline (issues #3078, #3835). [bc-engine-serial] SKIPPED — this test asserted NOTHING. The in-process BC engine bootstrap did not complete, so every test in the 'bc-engine-serial' collection is skipping. Cause (ArtifactsMissing): no artifacts here Remedy: provision the BC service tier with `dotnet build AlRunner.slnx -p:AllowBcArtifactDownload=true`, then run `tools/engine-test-bootstrap.sh` and re-run `dotnet test` with `--settings engine.runsettings`.
+   at Xunit.Assert.Fail(String message) in /_/src/xunit.assert/Asserts/FailAsserts.cs:line 38
+   at AlRunner.Tests.BcEngineUnbootstrappedGuard.AssertBootstrapWasRun(Boolean ready, String reason) in /_/AlRunner.Tests/BcEngineCollection.cs:line 293
+   at AlRunner.Tests.BcEngineUnbootstrappedGuardTests.<>c__DisplayClass2_0.<AnEngineLessBox_StillSkips_RatherThanFailing>b__0() in /_/AlRunner.Tests/BcEngineUnbootstrappedGuardTests.cs:line 111
+   at Xunit.Record.Exception(Action testCode) in /_/src/xunit.core/Record.cs:line 25
+  Stack Trace:
+     at AlRunner.Tests.BcEngineUnbootstrappedGuardTests.AnEngineLessBox_StillSkips_RatherThanFailing(BcEngineSkipCause cause) in /_/AlRunner.Tests/BcEngineUnbootstrappedGuardTests.cs:line 111
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)
+  Failed AlRunner.Tests.BcEngineUnbootstrappedGuardTests.AnEngineLessBox_StillSkips_RatherThanFailing(cause: ArtifactsIncomplete) [9 ms]
+  Error Message:
+   Assert.Null() Failure: Value is not null
+Expected: null
+Actual:   Xunit.Sdk.FailException: [bc-engine-serial] REFUSING TO SKIP: BC artifacts are provisioned on this machine, so these tests CAN run — the in-process engine bootstrap simply was not performed. Run `tools/engine-test-bootstrap.sh` and re-run `dotnet test` with `--settings engine.runsettings`; a build restores a pristine bin/Microsoft.Dynamics.Nav.Ncl.dll, so this is needed again after EVERY build. This used to be a silent skip: the run reported `Skipped! - Failed: 0, Passed: 0` and exit 0, which reads exactly like a passing mutation check and has invalidated a real RED baseline (issues #3078, #3835). [bc-engine-serial] SKIPPED — this test asserted NOTHING. The in-process BC engine bootstrap did not complete, so every test in the 'bc-engine-serial' collection is skipping. Cause (ArtifactsIncomplete): no artifacts here Remedy: provision the BC service tier with `dotnet build AlRunner.slnx -p:AllowBcArtifactDownload=true`, then run `tools/engine-test-bootstrap.sh` and re-run `dotnet test` with `--settings engine.runsettings`.
+   at Xunit.Assert.Fail(String message) in /_/src/xunit.assert/Asserts/FailAsserts.cs:line 38
+   at AlRunner.Tests.BcEngineUnbootstrappedGuard.AssertBootstrapWasRun(Boolean ready, String reason) in /_/AlRunner.Tests/BcEngineCollection.cs:line 293
+   at AlRunner.Tests.BcEngineUnbootstrappedGuardTests.<>c__DisplayClass2_0.<AnEngineLessBox_StillSkips_RatherThanFailing>b__0() in /_/AlRunner.Tests/BcEngineUnbootstrappedGuardTests.cs:line 111
+   at Xunit.Record.Exception(Action testCode) in /_/src/xunit.core/Record.cs:line 25
+  Stack Trace:
+     at AlRunner.Tests.BcEngineUnbootstrappedGuardTests.AnEngineLessBox_StillSkips_RatherThanFailing(BcEngineSkipCause cause) in /_/AlRunner.Tests/BcEngineUnbootstrappedGuardTests.cs:line 111
+   at InvokeStub_BcEngineUnbootstrappedGuardTests.AnEngineLessBox_StillSkips_RatherThanFailing(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+  Failed AlRunner.Tests.BcEngineUnbootstrappedGuardTests.WiredInto_TheRealFixture_SkipReasonProperty [< 1 ms]
+  Error Message:
+   Assert.NotNull() Failure: Value is null
+  Stack Trace:
+     at AlRunner.Tests.BcEngineUnbootstrappedGuardTests.WiredInto_TheRealFixture_SkipReasonProperty() in /_/AlRunner.Tests/BcEngineUnbootstrappedGuardTests.cs:line 247
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+
+Failed!  - Failed:     9, Passed:    20, Skipped:     0, Total:    29, Duration: 213 ms - AlRunner.Tests.dll (net8.0)

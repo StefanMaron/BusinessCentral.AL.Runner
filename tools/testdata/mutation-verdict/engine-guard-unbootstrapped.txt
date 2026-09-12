@@ -1,0 +1,17 @@
+Test run for /repo/AlRunner.Tests/bin/Debug/net8.0/AlRunner.Tests.dll (.NETCoreApp,Version=v8.0)
+VSTest version 18.0.2-dev (x64)
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:01.03]     AlRunner.Tests.BcEngineReadinessGuardTests.Ready_IsTrue_WhenArtifactsAreProvisioned [FAIL]
+  Failed AlRunner.Tests.BcEngineReadinessGuardTests.Ready_IsTrue_WhenArtifactsAreProvisioned [1 ms]
+  Error Message:
+   [bc-engine-serial] REFUSING TO SKIP: BC artifacts are provisioned on this machine, so these tests CAN run — the in-process engine bootstrap simply was not performed. Run `tools/engine-test-bootstrap.sh` and re-run `dotnet test` with `--settings engine.runsettings`; a build restores a pristine bin/Microsoft.Dynamics.Nav.Ncl.dll, so this is needed again after EVERY build. This used to be a silent skip: the run reported `Skipped! - Failed: 0, Passed: 0` and exit 0, which reads exactly like a passing mutation check and has invalidated a real RED baseline (issues #3078, #3835). [bc-engine-serial] SKIPPED — this test asserted NOTHING. The in-process BC engine bootstrap did not complete, so every test in the 'bc-engine-serial' collection is skipping. Cause (NclPreloaded): Microsoft.Dynamics.Nav.Ncl was already loaded before this bootstrap ran, so the Cecil rewrite had no effect and applying the runtime patches failed with TypeInitializationException: The type initializer for 'Microsoft.Dynamics.Nav.Runtime.NavEnvironment' threw an exception. (via TargetInvocationException). Remedy: DOTNET_STARTUP_HOOKS is not wired into this test host, so VSTest's own DiaSession loaded Microsoft.Dynamics.Nav.Ncl before the Cecil rewrite could take effect (issue #1813). Run `tools/engine-test-bootstrap.sh` — it generates engine.runsettings — then re-run `dotnet test --settings engine.runsettings`. CI does this in the 'Generate .runsettings for in-process BC engine tests' step of .github/workflows/bc-tests.yml.
+  Stack Trace:
+     at AlRunner.Tests.BcEngineUnbootstrappedGuard.AssertBootstrapWasRun(Boolean ready, String reason) in /_/AlRunner.Tests/BcEngineCollection.cs:line 293
+   at AlRunner.Tests.BcEngineFixture.get_SkipReason() in /_/AlRunner.Tests/BcEngineCollection.cs:line 241
+   at AlRunner.Tests.BcEngineReadinessGuardTests.Ready_IsTrue_WhenArtifactsAreProvisioned() in /_/AlRunner.Tests/BcEngineReadinessGuardTests.cs:line 67
+   at System.RuntimeMethodHandle.InvokeMethod(Object target, Void** arguments, Signature sig, Boolean isConstructor)
+   at System.Reflection.MethodBaseInvoker.InvokeWithNoArgs(Object obj, BindingFlags invokeAttr)
+
+Failed!  - Failed:     1, Passed:     3, Skipped:     0, Total:     4, Duration: 28 ms - AlRunner.Tests.dll (net8.0)
