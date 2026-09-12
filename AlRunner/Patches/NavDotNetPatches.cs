@@ -47,18 +47,13 @@ public static class NavDotNetPatches
     internal const string IsUserSuperInAllCompaniesName = "IsUserSuperInAllCompanies";
 
     /// <summary>
-    /// Replaces the one <c>methodInfo.Invoke(serverHandle.Instance, array)</c> inside
-    /// <c>NavDotNet.Invoke&lt;T&gt;</c>, the reflective call every AL DotNet method/property
-    /// invocation ends in (#3174). Every member except the one below is invoked exactly as BC
-    /// invoked it, so exceptions still arrive wrapped in TargetInvocationException for BC's
-    /// own catch blocks.
-    ///
-    /// Observably equivalent: <c>NavUserAccountHelper.IsUserSuperInAllCompanies()</c> is
-    /// <c>Session.Permissions.IsSuperForAllCompanies</c>, whose Ncl getter answers false under
-    /// effective (lowered) test permissions, true for a NAV admin user, and otherwise whether an
-    /// all-companies System-scope SUPER Access Control row exists for the user
-    /// (NavUserPermissions.FetchRolesFromId). The runner's Permissions is null, so the same
-    /// decision is computed from the same table — see RecordPatches.IsUserSuperInAllCompanies.
+    /// Stands in for the one <c>methodInfo.Invoke(instance, args)</c> in <c>NavDotNet.Invoke&lt;T&gt;</c>,
+    /// where every AL DotNet call ends (#3174). Any other member is invoked unchanged, so its
+    /// exceptions still reach BC's catch blocks as TargetInvocationException.
+    /// Observably equivalent: <c>NavUserAccountHelper.IsUserSuperInAllCompanies()</c> reads the null
+    /// <c>Session.Permissions</c>; the answer is the decision BC's
+    /// <c>NavUserPermissions.IsSuperForAllCompanies</c> makes, from the same Access Control rows
+    /// (corpus al-language-onprem codeunit 61203).
     /// </summary>
     public static object? InvokeReflectedMember(System.Reflection.MethodBase method, object? target, object?[]? arguments)
     {

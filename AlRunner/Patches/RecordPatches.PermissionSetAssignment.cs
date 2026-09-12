@@ -109,9 +109,8 @@
 //   seed. IsSuper must answer true in both, or codeunit 9002 refuses a `User.Modify` that every
 //   real BC test tier allows. The Access-Control arm is checked FIRST, so wherever the row does
 //   exist it — not this fact — is what answers.
-//   AlRunner#3174 tracks the one reader this fix cannot reach:
-//   NavUserAccountHelper.IsUserSuperInAllCompanies is `Session.Permissions.IsSuperForAllCompanies`
-//   with no Ncl hop in it at all, so no rewrite of Ncl can answer it.
+//   NavUserAccountHelper.IsUserSuperInAllCompanies has no Ncl hop in its body; it is answered
+//   by IsUserSuperInAllCompanies below, reached from NavDotNetPatches.InvokeReflectedMember (#3174).
 //
 // PRECOMPILED-DLL RESPECT
 //   `PermissionManagement` is in Ncl.dll — the runtime engine, ours to rewrite per
