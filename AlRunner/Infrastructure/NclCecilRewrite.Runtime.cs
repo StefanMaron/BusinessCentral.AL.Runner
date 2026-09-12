@@ -831,6 +831,37 @@ public static partial class NclCecilRewrite
                          "NavSession", "Guid", "PermissionSetKey", "String"),
                 H(recordPatches, "PermissionManagement_IsPermissionSetAssignedAsync"));
 
+            // ── NavDotNet.Invoke<T>: the reflective MethodInfo.Invoke (#3174) ──────────────
+            // NavUserAccountHelper.IsUserSuperInAllCompanies is `Session.Permissions
+            // .IsSuperForAllCompanies` — no Ncl hop in its body, and Permissions is null here.
+            // AL reaches it only through this call site, so the one `callvirt
+            // MethodBase::Invoke(object, object[])` is redirected to a static with the same
+            // stack shape that answers that one member and invokes every other unchanged.
+            // Imports one memberRef (the helper); adds nothing else to Ncl.
+            {
+                var navDotNetT = nclMod.GetType(Rt + "NavDotNet")
+                    ?? throw new InvalidOperationException("[Cecil] NavDotNet not found — Ncl shape changed; do not commit");
+                var invokeT = navDotNetT.Methods.SingleOrDefault(mm =>
+                        mm.Name == "Invoke" && mm.HasGenericParameters && mm.Parameters.Count == 6 && mm.HasBody)
+                    ?? throw new InvalidOperationException("[Cecil] NavDotNet.Invoke<T>(6 params) not found — Ncl shape changed; do not commit");
+                var reflectiveInvokes = invokeT.Body.Instructions.Where(i =>
+                        i.OpCode == OpCodes.Callvirt && i.Operand is MethodReference mr
+                        && mr.Name == "Invoke" && mr.DeclaringType.FullName == "System.Reflection.MethodBase"
+                        && mr.Parameters.Count == 2)
+                    .ToList();
+                if (reflectiveInvokes.Count != 1)
+                    throw new InvalidOperationException(
+                        $"[Cecil] NavDotNet.Invoke<T> has {reflectiveInvokes.Count} MethodBase.Invoke(object, object[]) "
+                        + "call sites, expected 1 — Ncl shape changed; do not commit (#3174)");
+                var redirect = nclMod.ImportReference(
+                    typeof(AlRunner.Patches.NavDotNetPatches).GetMethod(
+                        nameof(AlRunner.Patches.NavDotNetPatches.InvokeReflectedMember),
+                        BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException("[Cecil] NavDotNetPatches.InvokeReflectedMember not found — do not commit"));
+                invokeT.Body.GetILProcessor().Replace(reflectiveInvokes[0], Instruction.Create(OpCodes.Call, redirect));
+                Console.Error.WriteLine("[Cecil] Redirected NavDotNet.Invoke<T> MethodBase.Invoke → NavDotNetPatches.InvokeReflectedMember (#3174)");
+            }
+
             // ── PermissionManagement.GetEffectivePermissionForObjectAsync (#2382) ────────
             // The SAME null as its sibling above, one method over: the real body ends in
             // `session.Permissions.GetEffectivePermissionForObject(...)`. It made

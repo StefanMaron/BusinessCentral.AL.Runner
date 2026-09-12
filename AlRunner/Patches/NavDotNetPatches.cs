@@ -42,4 +42,33 @@ public static class NavDotNetPatches
         if (ex is AlRunner.Infrastructure.RunnerOutOfScopeException oos)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(oos).Throw();
     }
+
+    internal const string NavUserAccountHelperTypeName = "Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper";
+    internal const string IsUserSuperInAllCompaniesName = "IsUserSuperInAllCompanies";
+
+    /// <summary>
+    /// Replaces the one <c>methodInfo.Invoke(serverHandle.Instance, array)</c> inside
+    /// <c>NavDotNet.Invoke&lt;T&gt;</c>, the reflective call every AL DotNet method/property
+    /// invocation ends in (#3174). Every member except the one below is invoked exactly as BC
+    /// invoked it, so exceptions still arrive wrapped in TargetInvocationException for BC's
+    /// own catch blocks.
+    ///
+    /// Observably equivalent: <c>NavUserAccountHelper.IsUserSuperInAllCompanies()</c> is
+    /// <c>Session.Permissions.IsSuperForAllCompanies</c>, whose Ncl getter answers false under
+    /// effective (lowered) test permissions, true for a NAV admin user, and otherwise whether an
+    /// all-companies System-scope SUPER Access Control row exists for the user
+    /// (NavUserPermissions.FetchRolesFromId). The runner's Permissions is null, so the same
+    /// decision is computed from the same table — see RecordPatches.IsUserSuperInAllCompanies.
+    /// </summary>
+    public static object? InvokeReflectedMember(System.Reflection.MethodBase method, object? target, object?[]? arguments)
+    {
+        if (method.IsStatic
+            && method.Name == IsUserSuperInAllCompaniesName
+            && (arguments == null || arguments.Length == 0)
+            && method.DeclaringType?.FullName == NavUserAccountHelperTypeName)
+        {
+            return RecordPatches.IsUserSuperInAllCompanies(Microsoft.Dynamics.Nav.Runtime.NavCurrentThread.Session);
+        }
+        return method.Invoke(target, arguments);
+    }
 }

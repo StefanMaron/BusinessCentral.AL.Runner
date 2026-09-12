@@ -158,6 +158,29 @@ public static partial class RecordPatches
         NavSession session, Guid userSecurityId, PermissionSetKey permissionSet, string companyName)
         => new(IsPermissionSetAssignedCore(session, userSecurityId, permissionSet, companyName));
 
+    /// <summary>
+    /// <c>NavUserPermissions.IsSuperForAllCompanies</c> for the session's own user, reached from
+    /// <c>NavUserAccountHelper.IsUserSuperInAllCompanies</c> via NavDotNetPatches (#3174). Mirrors
+    /// BC's getter in order: effective test permissions in use → false; NAV admin user → true;
+    /// otherwise the all-companies SUPER assignment, answered by the same core as
+    /// <c>IsPermissionSetAssigned</c> so the two can never disagree about one user.
+    /// BC's permission-system-disabled arm (a SQL setting) has no runner state and is not modelled.
+    /// </summary>
+    internal static bool IsUserSuperInAllCompanies(NavSession session)
+    {
+        // BC reads session.TestExecution unguarded; a session with no test execution has no
+        // effective permissions to be in use.
+        if (session.TestExecution != null && NavTestExecution.UseEffectivePermissions(session))
+            return false;
+
+        var user = session.User;
+        if (user.IsNavAdminUser)
+            return true;
+
+        return IsPermissionSetAssignedCore(
+            session, user.Id, new PermissionSetKey(SuperRoleId, Guid.Empty, PermissionScope.System), string.Empty);
+    }
+
     private static bool IsPermissionSetAssignedCore(
         NavSession session, Guid userSecurityId, PermissionSetKey permissionSet, string companyName)
     {
