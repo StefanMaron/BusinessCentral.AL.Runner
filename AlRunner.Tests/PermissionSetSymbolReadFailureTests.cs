@@ -90,7 +90,7 @@ public sealed class PermissionSetSymbolReadFailureTests : IDisposable
     private const string AppGuid = "b1b0d3e4-3031-4a31-9a31-000000003031";
 
     // Object ids process-wide unique among AlRunner.Tests statics: 939xx is taken by the
-    // #2712 / warm-reload / eviction tests, so this file uses 94100-94102.
+    // #2712 / warm-reload / eviction tests, so this file uses 94100-94104.
     private static string SymbolReference(int permissionSetId, string roleId, bool poison)
     {
         // The root "AppId" is the ONLY difference: a string (parseable) or a number (throws in
