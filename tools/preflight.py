@@ -162,10 +162,11 @@ GRAPHIFY_DIR = "AlRunner"
 GRAPHIFY_REL = os.path.join("graphify-out", "graph.json")
 GRAPHIFY_PROBE_QUERY = f"{LSP_PROBE_SYMBOL} callers"
 
-# The BC contexts CLAUDE.md's table promises. common284/navlang275/... also exist
-# on some boxes; they are extra, not required, so their absence is not a finding.
-DECOMPILER_ALIASES = ["bc260", "bc270", "bc273", "bc275",
-                      "bc280", "bc281", "bc282", "bc283", "bc284"]
+# The expected BC contexts are one per version in .github/bc-versions.txt, the list
+# the test matrix reads -- never a second hardcoded list (#3264). Any other registered
+# alias (bc260, common284, navlang275, ...) is extra, not required, and not a finding.
+BC_VERSIONS_REL = os.path.join(".github", "bc-versions.txt")
+_BC_VERSION_PREFIX = re.compile(r"^(\d+)\.(\d)$")   # 28.4 -> bc284; a two-digit minor would collide
 DECOMPILER_SERVER = "bc-decompiler"
 
 EXIT_MEANING = {
@@ -1938,6 +1939,33 @@ class DecompilerState:
     probe_rc: Optional[int] = None  # 0 = the server answered over stdio
     aliases: list = field(default_factory=list)
     error: str = ""
+    expected: Optional[list] = None  # aliases bc-versions.txt requires; None = unknown
+    expected_error: str = ""
+
+
+def decompiler_aliases_from_versions(text: str) -> tuple[Optional[list], str]:
+    """Expected decompiler aliases from bc-versions.txt content, or (None, reason)."""
+    out = []
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        for tok in line.split():
+            m = _BC_VERSION_PREFIX.match(tok)
+            if not m:
+                return None, f"unrecognised BC version prefix {tok!r} in {BC_VERSIONS_REL}"
+            out.append(f"bc{m.group(1)}{m.group(2)}")
+    if not out:
+        return None, f"{BC_VERSIONS_REL} lists no BC versions"
+    return out, ""
+
+
+def read_expected_decompiler_aliases(repo: str) -> tuple[Optional[list], str]:
+    path = os.path.join(repo, BC_VERSIONS_REL)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return decompiler_aliases_from_versions(fh.read())
+    except OSError as exc:
+        return None, f"cannot read {BC_VERSIONS_REL}: {exc}"
 
 
 def classify_lsp(st: LspState) -> CheckResult:
@@ -2157,7 +2185,16 @@ def classify_decompiler(st: DecompilerState) -> CheckResult:
             detail=[st.error.strip()[:400] or "no output"],
             remedy="Run it by hand to see the error:\n"
                    f"  dotnet {st.target}\n" + setup)
-    missing = [a for a in DECOMPILER_ALIASES if a not in st.aliases]
+    if not st.expected:
+        return CheckResult(
+            name=name, status="WARN", command=cmd,
+            summary=f"the server answers, but the expected BC contexts are unknown: "
+                    f"{BC_VERSIONS_REL} could not be read",
+            detail=[st.expected_error or f"{BC_VERSIONS_REL} yielded no versions",
+                    f"present: {', '.join(st.aliases) or '(none)'}"],
+            remedy=f"Run preflight from a full checkout; {BC_VERSIONS_REL} is the list of "
+                   "BC versions the matrix tests.")
+    missing = [a for a in st.expected if a not in st.aliases]
     if missing:
         return CheckResult(
             name=name, status="WARN", command=cmd,
@@ -2170,7 +2207,8 @@ def classify_decompiler(st: DecompilerState) -> CheckResult:
                    "see the end of " + setup)
     return CheckResult(
         name=name, status="PASS", command=cmd,
-        summary=f"server answers and all {len(DECOMPILER_ALIASES)} BC contexts are registered",
+        summary=f"server answers and all {len(st.expected)} BC contexts "
+                f"{BC_VERSIONS_REL} lists are registered",
         detail=["Registered, and proven to answer -- but a .mcp.json change still needs a "
                 "SESSION RESTART before this session or its subagents can call it. "
                 "In-session, confirm with mcp__bc-decompiler__status."],
@@ -2382,6 +2420,7 @@ def mcp_call(argv: list[str], tool: str, *, cwd: Optional[str] = None,
 
 def probe_decompiler(repo: str, timeout: float = 90) -> DecompilerState:
     st = DecompilerState()
+    st.expected, st.expected_error = read_expected_decompiler_aliases(repo)
     st.config, entry = read_mcp_entry(repo, DECOMPILER_SERVER)
     if st.config is None or entry is None:
         return st

@@ -48,4 +48,4 @@ echo "  load_assembly(assemblyPath: \"<artifacts>/<ver>/Microsoft.Dynamics.Nav.N
 echo "                additionalSearchDirs: [\"<artifacts>/<ver>\"],"
 echo "                contextAlias: \"bc281\")"
 echo
-echo "Aliases already in use on this machine follow the pattern bc260, bc270 ... bc284."
+echo "Alias pattern: bc<major><minor>, one per version in .github/bc-versions.txt (bc270 ... bc284)."
