@@ -56,6 +56,8 @@ claimed the same way and its `Closes #M` added to the draft's body (`.claude/age
 
 ## Sister rules
 
+- `search-for-the-same-defect-first.md` — the other axis: the same **defect** filed twice in
+  different words, which a file-keyed scan cannot find. Run both.
 - `check-open-prs-before-claiming.md` — the other pre-claim queue read: an open PR carrying
   `Closes #N` means N is taken, whatever its labels say. Run both scans at the same moment.
 - `branch-and-pr.md` — "one open PR per impl agent", reconciled above
