@@ -1315,60 +1315,78 @@ public static partial class RecordPatches
     /// <c>ClrType</c>. Copying them from BC's instance keeps the two in step across BC
     /// versions, where six transcribed constants would not.</para>
     ///
-    /// <para>Null when the helper cannot be reached — an older or reshaped
-    /// <c>Types.dll</c>. Callers leave the ctor defaults standing in that case, which is
-    /// exactly the pre-#3568 behaviour, so a missing helper degrades rather than throwing.</para>
+    /// <para>Null only when the <b>type</b> is absent — an older or reshaped
+    /// <c>Types.dll</c> that ships no <c>SystemFieldsHelper</c> at all. Callers leave the ctor
+    /// defaults standing then, which is exactly the pre-#3568 behaviour. A helper that IS
+    /// present but whose members have moved refuses instead: see
+    /// <see cref="LoadBcPlatformMetaFields"/>.</para>
     /// </summary>
     private static IReadOnlyDictionary<int, object>? BcPlatformMetaFields =>
         _bcPlatformMetaFields ??= LoadBcPlatformMetaFields();
 
     private static IReadOnlyDictionary<int, object>? _bcPlatformMetaFields;
 
+    /// <summary>
+    /// Reads the six platform <c>MetaField</c>s, or refuses.
+    ///
+    /// <para>Absence of the helper TYPE is a legitimate answer and returns null; every member
+    /// lookup below is an explicit refusal, because absence there is a defect rather than an
+    /// answer. Measured on both distinct <c>Types.dll</c> binaries the CI legs cover —
+    /// 27.5.46862.48827 (sha256 <c>f79286e9…</c>) and 28.4.53241.54447 (<c>ba117ca1…</c>) —
+    /// <c>SystemFieldsHelper</c> declares exactly these three properties and no others, each
+    /// holding a non-null value, and <c>MetaField</c> declares <c>Id</c>. So a null here means
+    /// Microsoft moved a member, and absorbing it would silently restore the ctor defaults this
+    /// method exists to replace — the "answer WRONG instead of failing" shape of #3663
+    /// (#3647/#3656/#3660 for what it costs).</para>
+    /// </summary>
     private static IReadOnlyDictionary<int, object>? LoadBcPlatformMetaFields()
     {
-        try
-        {
-            var helper = _tMetaField?.Assembly
-                .GetType("Microsoft.Dynamics.Nav.Types.Metadata.SystemFieldsHelper");
-            if (helper == null || _tMetaField == null) return null;
+        const string Surface = "platform field metadata (SystemId / SystemRowVersion / audit fields)";
 
-            const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static;
-            var idProp = _tMetaField.GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
-            if (idProp == null) return null;
+        var helper = _tMetaField?.Assembly
+            .GetType("Microsoft.Dynamics.Nav.Types.Metadata.SystemFieldsHelper");
+        if (helper == null || _tMetaField == null) return null;
 
-            var map = new Dictionary<int, object>();
-            foreach (var propertyName in new[] { "SystemIdField", "SystemRowVersionField", "AuditFields" })
-            {
-                var value = helper.GetProperty(propertyName, flags)?.GetValue(null);
-                if (value == null) continue;
-                foreach (var field in value is Array array ? array.Cast<object>() : new[] { value })
-                    if (field != null && idProp.GetValue(field) is int id) map[id] = field;
-            }
-            return map.Count > 0 ? map : null;
-        }
-        catch
+        const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static;
+        var idProp = BcShape.Property(
+            _tMetaField, "Id", BindingFlags.Public | BindingFlags.Instance, Surface,
+            "the platform MetaFields cannot be keyed by field id without it (#3568)");
+
+        var map = new Dictionary<int, object>();
+        foreach (var propertyName in new[] { "SystemIdField", "SystemRowVersionField", "AuditFields" })
         {
-            // A reflection failure here is not a reason to fail table construction: every
-            // member it feeds has a working pre-#3568 default. It IS worth a verbose line,
-            // because the symptom otherwise is four metadata members quietly reverting.
-            Console.Error.WriteLine(
-                "[RecordPatches] SystemFieldsHelper is not readable; the platform fields keep "
-                + "MetaField's own ctor defaults for TestRelations / AllowInCustomizations / "
-                + "ValidateRelation / ClrType (#3568).");
-            return null;
+            var value = BcShape.Property(helper, propertyName, flags, Surface,
+                            "BC's own value for TestRelations / AllowInCustomizations / "
+                            + "ValidateRelation / ClrType is read from it (#3568)")
+                        .GetValue(null)
+                ?? throw new BcShapeGapException(
+                    Surface, $"SystemFieldsHelper.{propertyName}",
+                    "read as null, so BC's own platform-field metadata cannot be read — it holds "
+                    + "a MetaField on every BC build the runner has seen (#3568)");
+
+            foreach (var field in value is Array array ? array.Cast<object>() : new[] { value })
+                if (field != null && idProp.GetValue(field) is int id) map[id] = field;
         }
+        return map.Count > 0 ? map : null;
     }
 
     /// <summary>
     /// The value BC's own platform <c>MetaField</c> carries for <paramref name="property"/>, or
-    /// null when this is not one of the six or the helper was unreadable.
+    /// null when this is not one of the six or <c>SystemFieldsHelper</c> is absent entirely.
+    /// A <c>MetaField</c> property that has MOVED refuses rather than answering null, for the
+    /// reason on <see cref="LoadBcPlatformMetaFields"/>.
     /// </summary>
     private static object? BcPlatformFieldValue(int fieldId, string property)
     {
-        if (BcPlatformMetaFields is not { } map || !map.TryGetValue(fieldId, out var field))
+        if (BcPlatformMetaFields is not { } map || !map.TryGetValue(fieldId, out var field)
+            || _tMetaField == null)
             return null;
-        return _tMetaField?.GetProperty(property, BindingFlags.Public | BindingFlags.Instance)
-            ?.GetValue(field);
+
+        return BcShape.Property(
+            _tMetaField, property, BindingFlags.Public | BindingFlags.Instance,
+            "platform field metadata (SystemId / SystemRowVersion / audit fields)",
+            "BC's own value for this member is copied onto the runner's platform MetaField (#3568)")
+            .GetValue(field);
     }
 
     /// <summary>

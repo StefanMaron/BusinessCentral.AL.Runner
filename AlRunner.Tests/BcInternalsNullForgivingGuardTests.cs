@@ -263,7 +263,17 @@ public sealed class BcInternalsNullForgivingGuardTests
         // site, which is why these are shape-checked rather than `?.`. The enclosing
         // BcShapeGapException catch still drops the one unreadable binding from the index rather
         // than costing the page every other one — what changed is that the gap is named.
-        Assert.Equal(92, converted);
+        //
+        // 92 -> 95 for the three reads that copy BC's own platform-field metadata off
+        // SystemFieldsHelper in RecordPatches.NclMetaTableBuilder.cs (#3568): MetaField.Id, the
+        // three SystemFieldsHelper properties, and the per-member MetaField read. Measured on
+        // both distinct Types.dll binaries the CI legs cover — 27.5.46862.48827 and
+        // 28.4.53241.54447 — the helper declares exactly those three properties and no others,
+        // each holding a non-null value, so a null means Microsoft moved a member. Absorbing it
+        // would silently restore the positional-ctor defaults the conversion exists to replace,
+        // which is "answer WRONG instead of failing" rather than a neutral sentinel. Absence of
+        // the helper TYPE stays a legitimate null, and is deliberately NOT shape-checked.
+        Assert.Equal(95, converted);
     }
 
     /// <summary>
