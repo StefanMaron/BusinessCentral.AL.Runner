@@ -2282,11 +2282,10 @@ Written by an agent (Claude, `stma-auto2-6`).
 Session Usr" in the `al-language-onprem` app (corpus PR #334), because "the session user has a
 User Property (2000000121) row keyed by its security id" is plain BC behaviour. The three tests
 that stay pin the runner's own `TESTUSER` identity and the precompiled relation check. The bundle
-no longer names `User Property`, so it drops `"target": "OnPrem"`; `User` and
-`User Personalization` are both `Scope = Cloud` in System.app.
+keeps `"target": "OnPrem"` unchanged.
 
-Coverage here is not lost: this repository's corpus leg enumerates every corpus app, so the runner
-still executes codeunit 61203 on every leg.
+This repository's corpus leg enumerates every corpus app (`scripts/corpus-app-dirs.py`), so
+codeunit 61203 is in the set each leg runs; measured locally, not yet on a CI leg.
 
 Measured 3P/0F/0E on the whole bundle, twice against one cache, not computed from the diff.
 
