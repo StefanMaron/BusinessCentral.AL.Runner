@@ -2000,4 +2000,191 @@ public class DependencyPageMetadataXmlTests
         var properties = (XmlElement)doc.DocumentElement!.SelectSingleNode("m:Properties", ns)!;
         return (XmlElement)properties.SelectSingleNode("m:SourceObject", ns)!;
     }
+
+    // #3933. Pages carrying a lowercase mask: no Microsoft page ships one (210 masks across
+    // every shipped app at BC 28.4.53241.54407, all "X"), so the fixture is what makes the
+    // case-significant decode observable at all — the same argument
+    // QuerySymbolDerivedMetaQueryPropertiesTests makes for a kind whose real population is
+    // entirely uppercase.
+    private const int MaskUpperPageId = 88123801;
+    private const int MaskLowerPageId = 88123802;
+    private const int MaskMixedPageId = 88123803;
+    private const int MaskUnreadablePageId = 88123804;
+
+    private const string InherentMaskSymbolReference = """
+        {
+          "RuntimeVersion": "15.1",
+          "Pages": [
+            {
+              "Id": 88123801,
+              "Name": "DPX Mask Upper",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "InherentEntitlements", "Value": "X" },
+                { "Name": "InherentPermissions", "Value": "RIMDX" }
+              ]
+            },
+            {
+              "Id": 88123802,
+              "Name": "DPX Mask Lower",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "InherentEntitlements", "Value": "x" },
+                { "Name": "InherentPermissions", "Value": "rimdx" }
+              ]
+            },
+            {
+              "Id": 88123803,
+              "Name": "DPX Mask Mixed",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "InherentEntitlements", "Value": "rX" },
+                { "Name": "InherentPermissions", "Value": "rimdX" }
+              ]
+            },
+            {
+              "Id": 88123804,
+              "Name": "DPX Mask Unreadable",
+              "Properties": [
+                { "Name": "PageType", "Value": "List" },
+                { "Name": "InherentEntitlements", "Value": "Q" },
+                { "Name": "InherentPermissions", "Value": "X" }
+              ]
+            }
+          ]
+        }
+        """;
+
+    private static XmlElement ReadPagePropertiesFor(int pageId)
+    {
+        var xml = RecordPatches.TryBuildDependencyPageMetadata(pageId);
+        Assert.NotNull(xml);
+        var doc = new XmlDocument();
+        doc.LoadXml(xml!);
+        return (XmlElement)doc.DocumentElement!.SelectSingleNode("m:Properties", MetaNs(doc))!;
+    }
+
+    /// <summary>
+    /// The uppercase direction, which the case-collapsing decode already got right — here so
+    /// the lowercase assertions below are a statement about CASE rather than about the decode
+    /// working at all.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_UppercaseInherentMask_AnswersTheDirectBits()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-mask-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, InherentMaskSymbolReference));
+
+            var properties = ReadPagePropertiesFor(MaskUpperPageId);
+
+            // X = Execute = 1 << 4.
+            Assert.Equal("16", properties.GetAttribute("InherentEntitlements"));
+            // RIMDX = the five direct bits = 1|2|4|8|16.
+            Assert.Equal("31", properties.GetAttribute("InherentPermissions"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
+    /// #3933's defect. Case is SIGNIFICANT in an AL permission mask: uppercase is the direct
+    /// bit, lowercase the indirect bit at n+5 over "RIMDX". The page decode collapsed case
+    /// with <c>char.ToUpperInvariant</c>, so <c>"x"</c> answered 16 (Execute) where BC's own
+    /// emitter answers 512 (IndirectExecute) — a page reading as holding a direct permission
+    /// it does not have.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_LowercaseInherentMask_AnswersTheIndirectBitsNotTheDirectOnes()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-mask-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, InherentMaskSymbolReference));
+
+            var properties = ReadPagePropertiesFor(MaskLowerPageId);
+
+            // x = IndirectExecute = 1 << (4 + 5) = 512, NOT 16.
+            Assert.Equal("512", properties.GetAttribute("InherentEntitlements"));
+            // rimdx = the five indirect bits = 32|64|128|256|512 = 992, NOT 31.
+            Assert.Equal("992", properties.GetAttribute("InherentPermissions"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
+    /// The mixed spelling, which is the shape 97 of Microsoft's 98 lowercase-bearing TABLE
+    /// masks take (<c>"rX"</c>, <c>"rimdX"</c>) and therefore the spelling an ISV page is
+    /// likeliest to carry. A collapsing decode answers 17 and 31; BC answers 48 and 496.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_MixedCaseInherentMask_CombinesDirectAndIndirectBits()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-mask-tests");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, InherentMaskSymbolReference));
+
+            var properties = ReadPagePropertiesFor(MaskMixedPageId);
+
+            // rX = IndirectRead (32) | Execute (16) = 48, NOT 17.
+            Assert.Equal("48", properties.GetAttribute("InherentEntitlements"));
+            // rimdX = the four indirect bits (32|64|128|256 = 480) | Execute (16) = 496, NOT 31.
+            Assert.Equal("496", properties.GetAttribute("InherentPermissions"));
+        }
+        finally { Directory.Delete(dir, recursive: true); }
+    }
+
+    /// <summary>
+    /// The error-behaviour half of #3933, and the reason the shared decoder's THROW is not
+    /// reused here. A throw out of <see cref="RecordPatches.TryBuildDependencyPageMetadata"/>
+    /// is swallowed into a NULL metadata document — measured on this exact builder when
+    /// EmitSourceTableViewXml threw InvalidOperationException (see the "ORDER IS LOAD-BEARING"
+    /// note in DependencyPageMetadataXml.cs) — after which BC NREs in
+    /// GetFrozenPageDefinitionWithExtensionWithoutMergedMultiLanguage and
+    /// RunnerPageInstance.TryCreateRecordless silently demotes the whole TestPage to the
+    /// navigation mock. So on this path a throw is the SILENT answer and the diagnostic is
+    /// the loud one; the attribute is omitted, said, and the rest of the page survives.
+    /// </summary>
+    [Fact]
+    public void TryBuildDependencyPageMetadata_UnreadableInherentMaskLetter_IsOmittedAndSaidWithoutLosingTheDocument()
+    {
+        var dir = TestScratch.Dir("al-runner-dep-pagemeta-mask-tests");
+        Directory.CreateDirectory(dir);
+        var previousError = Console.Error;
+        var captured = new StringWriter();
+        try
+        {
+            RecordPatches.AddBcAppPath(WriteApp(dir, InherentMaskSymbolReference));
+
+            // Only this test asks for this page id and the document is memoized per id, so
+            // the one and only build happens inside the capture.
+            Console.SetError(captured);
+            var properties = ReadPagePropertiesFor(MaskUnreadablePageId);
+            Console.SetError(previousError);
+
+            Assert.False(properties.HasAttribute("InherentEntitlements"),
+                "a letter nobody can read must not be invented into a mask");
+            // The document survives, and the readable sibling mask on the same page is
+            // unaffected — the property a throw would have destroyed.
+            Assert.Equal("16", properties.GetAttribute("InherentPermissions"));
+            Assert.Equal("List", properties.GetAttribute("PageType"));
+
+            var diagnostic = captured.ToString();
+            Assert.Contains("InherentEntitlements", diagnostic);
+            Assert.Contains(MaskUnreadablePageId.ToString(), diagnostic);
+            // The unreadable value itself, so the reader can see WHAT the file said.
+            Assert.Contains("Q", diagnostic);
+            // The readable one must not be reported as a problem.
+            Assert.DoesNotContain("InherentPermissions", diagnostic);
+        }
+        finally
+        {
+            Console.SetError(previousError);
+            Directory.Delete(dir, recursive: true);
+        }
+    }
 }
