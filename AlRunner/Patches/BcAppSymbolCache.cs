@@ -636,7 +636,43 @@ internal static partial class BcAppSymbolCache
         Dictionary<int, string> MemberIdToActionRefTarget,
         // Trailing + optional so a v26 payload still deserialises; guarded by the v27
         // CacheVersion bump, so null here only ever means "this extension declares none".
-        Dictionary<int, ActionRunObjectSymbol>? MemberIdToRunObject = null);
+        Dictionary<int, ActionRunObjectSymbol>? MemberIdToRunObject = null,
+        // Where each added member came from, which MemberIdToName loses: it merges
+        // ActionChanges[].Actions and ControlChanges[].Controls into one map, and BC's emitted
+        // runtime-delta document keeps them apart — an added action becomes <ActionAdd>, an
+        // added control <ControlAdd>, each carrying the anchor and operation of the change that
+        // declared it (#3809). Null means "this payload predates the field"; an id absent from
+        // a non-null map was declared by neither container.
+        //
+        // No CacheVersion bump is needed for this, and that is MEASURED rather than assumed:
+        // adding a member to a payload record changes PayloadShape, which is part of the cache
+        // key, so the on-disk cache re-keys itself. ccb081fbed1589bf -> 37a9f2f5cf79ffd1, with
+        // CacheVersion unchanged at 42.
+        Dictionary<int, PageExtensionMemberOrigin>? MemberIdToOrigin = null);
+
+    /// <summary>
+    /// Where one member an AL <c>pageextension</c> adds came from, as SymbolReference.json
+    /// states it — enough to place it in the runtime-delta document BC emits (#3809).
+    /// </summary>
+    /// <param name="IsAction">The declaring container: <c>ActionChanges[].Actions</c> (true) or
+    /// <c>ControlChanges[].Controls</c> (false). Neither the member's id nor its name says
+    /// which, and BC's document uses a different element for each.</param>
+    /// <param name="Anchor">The change's <c>Anchor</c> verbatim — a member NAME, not an id, and
+    /// null when the change states none. BC writes it as <c>AnchorName</c>, alongside an
+    /// <c>AnchorId</c> the runner cannot derive.</param>
+    /// <param name="ChangeKind">The change's AL <c>ChangeKind</c>. Measured against BC's own
+    /// emitted documents for the five real pageextensions in the 28.1 bundles: 1 -&gt;
+    /// <c>ContentFirst</c> (ext 324, 2515), 2 -&gt; <c>ContentLast</c> (ext 9862, 4318), 3 -&gt;
+    /// <c>ContentBefore</c> (ext 774), 4 -&gt; <c>ContentAfter</c> (ext 2515) — i.e. AL's
+    /// addfirst/addlast/addbefore/addafter. Kind 9 is a <c>modify(...)</c>, which adds no member
+    /// and so never reaches this map.</param>
+    /// <param name="Sequence">Zero-based position in AL declaration order, across both change
+    /// containers. BC emits deltas in declaration order and the equivalence differ pairs them
+    /// POSITIONALLY, so the order is load-bearing rather than cosmetic — sorting by member id
+    /// instead reported pageextension 774's four controls as four wrong ids and names, and
+    /// swapped two of ext 2515's change contexts (#3809). Stated explicitly because
+    /// <c>Dictionary</c> does not guarantee insertion order.</param>
+    internal sealed record PageExtensionMemberOrigin(bool IsAction, string? Anchor, int ChangeKind, int Sequence = 0);
 
     /// <summary>
     /// One subpage PART control of a precompiled dependency page, as SymbolReference.json
@@ -1588,19 +1624,43 @@ internal static partial class BcAppSymbolCache
         var memberNames = new Dictionary<int, string>();
         var actionRefTargets = new Dictionary<int, string>();
         var runObjects = new Dictionary<int, ActionRunObjectSymbol>();
+        // Where each added member came from, recorded AS it is collected rather than inferred
+        // afterwards: memberNames merges the two containers, and nothing in an id or a name says
+        // which side it came from or under which change (#3809). The diff against memberNames'
+        // keys is what attributes a member to the change currently being walked — CollectMemberNames
+        // recurses, so a change can contribute several members at several depths.
+        var origins = new Dictionary<int, PageExtensionMemberOrigin>();
+        var sequence = 0;
+        void RecordOrigin(HashSet<int> before, bool isAction, JsonElement change)
+        {
+            var anchor = change.TryGetProperty("Anchor", out var an) ? an.GetString() : null;
+            var changeKind = change.TryGetProperty("ChangeKind", out var ck) && ck.TryGetInt32(out var k) ? k : 0;
+            foreach (var id in memberNames.Keys)
+                if (!before.Contains(id))
+                    origins[id] = new PageExtensionMemberOrigin(isAction, anchor, changeKind, sequence++);
+        }
+
         if (ext.TryGetProperty("ActionChanges", out var actionChanges) && actionChanges.ValueKind == JsonValueKind.Array)
             foreach (var change in actionChanges.EnumerateArray())
                 if (change.TryGetProperty("Actions", out var added) && added.ValueKind == JsonValueKind.Array)
                     foreach (var a in added.EnumerateArray())
+                    {
+                        var before = new HashSet<int>(memberNames.Keys);
                         CollectMemberNames(a, "Actions", memberNames, actionRefTargets, runObjects);
+                        RecordOrigin(before, isAction: true, change);
+                    }
         if (ext.TryGetProperty("ControlChanges", out var controlChanges) && controlChanges.ValueKind == JsonValueKind.Array)
             foreach (var change in controlChanges.EnumerateArray())
                 if (change.TryGetProperty("Controls", out var added) && added.ValueKind == JsonValueKind.Array)
                     foreach (var c in added.EnumerateArray())
+                    {
+                        var before = new HashSet<int>(memberNames.Keys);
                         CollectMemberNames(c, "Controls", memberNames, actionRefTargets);
+                        RecordOrigin(before, isAction: false, change);
+                    }
 
         return new PageExtensionSymbol(extId, name!, StripModuleQualifierPrefix(target!),
-            memberNames, actionRefTargets, runObjects);
+            memberNames, actionRefTargets, runObjects, origins);
     }
 
     /// <summary>

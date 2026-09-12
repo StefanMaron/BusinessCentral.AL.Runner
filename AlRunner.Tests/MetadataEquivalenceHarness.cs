@@ -630,20 +630,42 @@ internal static class MetadataEquivalenceHarness
 
                 try
                 {
-                    // The runner's extension-delta answer for this object, through the one
-                    // member typed to return this type. It is NULL for every object today, and
-                    // that null is the finding rather than a failure to look: the runner has no
-                    // published-app extension pipeline, so RunnerXmlMetadataLoader's own comment
-                    // records null as BC's "no deltas" value. Reported per object as unbuildable,
-                    // which is exactly what a ONE-SIDED gap should look like — BC's side is real
-                    // and parses, the runner's is absent — and is a much narrower claim than the
-                    // "neither side exists" this harness first recorded. #3809.
-                    actual = RecordPatches.TryGetRuntimeDeltasMetadataEquivalence(obj.Id);
+                    // The runner's extension-delta answer for this object, rendered from its own
+                    // extension declarations and read back through BC's own FromXml, so both
+                    // sides of this comparison are one type (#3809).
+                    //
+                    // WHY BOTH OBJECT TYPES ARE TRIED. The runner keys an extension on (object
+                    // type, id), as BC does — but a bundle entry records only the id and the
+                    // name, and the emitted document states neither an object type nor anything
+                    // that implies one. For 10 of the 11 documents in the 28.1 bundles exactly
+                    // one type answers, so the pair is unambiguous. The eleventh is the 774
+                    // collision — a tableextension and a pageextension, both "Plan User Details"
+                    // — where this picks the PAGE extension, because that is the one carrying
+                    // deltas; the tableextension's document is empty and its counterpart here is
+                    // an empty render, so the two are interchangeable for the comparison.
+                    //
+                    // That ambiguity is a gap in the ground-truth bundle rather than in the
+                    // runner: the generator knows each document's SymbolKind and does not record
+                    // it. Recording it is tracked separately; until then this is a statement
+                    // about what the bundle can express, not a guess about BC.
+                    var deltasXml =
+                        RecordPatches.TryGetRuntimeDeltasMetadataEquivalence("Page", obj.Id)
+                        ?? RecordPatches.TryGetRuntimeDeltasMetadataEquivalence("Table", obj.Id);
+
+                    if (deltasXml is null)
+                    {
+                        unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': no registered " +
+                                        "dependency declares a table- or pageextension with that " +
+                                        "id, so the runner built no deltas document at all");
+                        continue;
+                    }
+
+                    actual = deltasFromXml.Invoke(
+                        null, new object?[] { System.Xml.Linq.XDocument.Parse(deltasXml) });
                     if (actual is null)
                     {
-                        unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': the runner tracks no " +
-                                        "extension runtime deltas — GetExtensionDeltasForAppObject " +
-                                        "answers null for every object (#3809)");
+                        unbuildable.Add($"{obj.Kind} {obj.Id} '{obj.Name}': BC's own FromXml " +
+                                        "produced null for the runner's rendered document");
                         continue;
                     }
                 }

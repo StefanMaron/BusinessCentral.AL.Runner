@@ -62,6 +62,16 @@ public sealed class DependencyAppSymbolWalkSourceGuardTests
             "#3143: AlEnumMetadataRegistry.RegisterFromAppPath — no live callers, but public, "
             + "so its swallow was converted to a refusal rather than left for a future caller "
             + "to inherit."),
+
+        ("AlRunner/Patches/RecordPatches.ExtensionRuntimeDeltasMetadataEquivalence.cs", 1,
+            "#3809: TryBuildExtensionRuntimeDeltasXmlForApp, the single-package seam. The LIVE "
+            + "path (TryBuildExtensionRuntimeDeltasXml) goes through the walk and hands the "
+            + "parsed symbols down, so it adds no site; this overload exists so a test can "
+            + "render from a fixture .app that was never registered, which is exactly what the "
+            + "walk cannot enumerate. It neither swallows nor skips: BcAppSymbolReadException "
+            + "from an unreadable package propagates to the caller, and a path that does not "
+            + "exist throws rather than reading as \"declares no extensions\" — the one answer "
+            + "that would make a render silently empty."),
     };
 
     private static int CountSites(string relativePath)

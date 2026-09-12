@@ -1242,11 +1242,13 @@ census arithmetic in `Every_object_in_a_compared_kind_really_was_compared` asser
 quietly go.
 
 <a id="metadataruntimedeltas"></a>
-## `MetadataRuntimeDeltas`: a one-sided gap, and a census that was too narrow
+## `MetadataRuntimeDeltas`: a census that was too narrow, and a gap since closed
 
 This kind was first written up here as **uncomparable — "BC ships no reader for the shape"** —
-and that was wrong. The correction is kept in full rather than quietly replaced, because the way
-it went wrong is more reusable than the conclusion.
+and that was wrong. Then as a **one-sided gap**, with BC's side parsing and the runner's absent.
+That is now closed too (#3809): both sides are built and compared. Every correction is kept in
+full rather than quietly replaced, because the way each went wrong is more reusable than the
+conclusion — and the second one went wrong in a way the first predicts.
 
 <a id="the-census-that-was-too-narrow"></a>
 ### The census that produced the false negative
@@ -1288,8 +1290,14 @@ Proven to parse rather than assumed to, over **every** document rather than a sa
 |---|---:|
 | documents in the two bundles | 11 |
 | parsed, `AllDeltas` reachable | **11** |
-| yielding a non-empty `AllDeltas` | 6 (12 on page 774, 5 on 4318, 4 on 2515, 2 on 324, 1 on 9862) |
-| genuinely empty `<MetadataRuntimeDeltas/>` elements | 5 |
+| yielding a non-empty `AllDeltas` | **5** (12 on pageext 774, 6 on 4318, 5 on 2515, 3 on 324, 1 on 9862) |
+| genuinely empty `<MetadataRuntimeDeltas/>` elements | **6** |
+
+**The 5/6 split was first written here as 6/5, and the delta counts were the root-child counts
+of a different set of documents.** Re-derived by counting root child elements per document and
+separately by reading `AllDeltas` through BC's reader: five documents carry content and six are
+empty. The correction matters beyond arithmetic, because **the six empty ones are exactly the six
+tableextensions** — see below.
 
 **A bare probe of the same call parsed only 6 of 11**, the other 5 hitting a
 `WindowsLanguageHelper` static-init fault. That is an artifact of loading the assembly outside
@@ -1297,22 +1305,157 @@ the harness: inside the `bc-engine-serial` collection, which already has the ske
 11 of 11. Worth knowing before treating a partial parse as a property of the reader.
 
 <a id="the-runner-side-is-null"></a>
-### The runner's side is null, and that is the gap
+### The runner's side: what was missing, and what closed it (#3809)
 
-`RunnerXmlMetadataLoader.GetExtensionDeltasForAppObject` is the one runner member typed to
-return `NavAppObjectMetadataRuntimeDeltas`, and it returns `null!` for every object — its own
-comment records that the runner has no published-app extension pipeline, and that null is BC's
-"no deltas" value too. Measured through that member rather than read off it: null for all 11.
+This section used to record a **one-sided gap** — BC's side real and parsing, the runner's
+absent, with all 11 objects reported as unbuildable. That is closed. What the investigation found
+is worth more than the conclusion, because two of the three things it turned up were not what the
+issue predicted.
 
-So the honest claim is a **one-sided gap** — BC's side is real and parses; the runner's is
-absent — which is narrower and more useful than "neither side exists". Each object is reported
-as unbuildable naming #3809, and
-`Every_object_in_a_compared_kind_really_was_compared` asserts that the count of deltas
-unbuildables **equals the census**, so a deltas object that somehow did build, or any object of
-another kind that did not, still fails.
+**1. The addressability the issue asked for already existed.** The issue's closing condition was
+"the runner tracking an extension's contribution addressably by the extension's own id".
+`BcAppSymbolCache.PageExtensionSymbol.Id` and `TableExtensionSymbol.ExtensionId` **are** the
+extension's own ids, read straight off `SymbolReference.json`. What was missing was the *join*
+from that id to a deltas document — not the data.
 
-**What would close it:** the runner tracking an extension's contribution addressably by the
-extension's own id — the same thing #3807 notes an enumextension `<Enum>` document would need.
+**2. The key is `(object type, id)`, and the id alone is ambiguous in the real population.**
+BC's own `NCLObjectXmlMetadataLoader.GetExtensionDeltasForAppObject` matches on
+`s.ObjectType == objectId.ObjectType && s.ObjectId == objectId.ObjectNumber`. The bundles carry a
+**tableextension 774 and a pageextension 774**, both named "Plan User Details", and BC emits a
+different document for each — 12 deltas against an empty root. The previous accessor hardcoded
+`Page`, so it asked one question for two objects.
+
+That also corrects a comment in `tools/metadata-ground-truth`, which described these documents as
+"several of them legitimately carry the id of the object they extend". They do not: the `ID`
+attribute is the **extension's own** id. `ObsoleteSourceCodeExt` is id 230 *and* extends table 230,
+which is a Microsoft numbering convention rather than a property of the document. The collision
+the comment cites is real; its stated mechanism was wrong.
+
+**3. It has to be a render, not an object.** `NavAppObjectMetadataRuntimeDeltas` exposes
+`AllDeltas` get-only over a private `List<Delta>` on `NavAppObjectMetadataDeltaCreator<Delta>`,
+and its only public constructor is parameterless. No route sets deltas on an instance, so
+rendering the document BC's own `FromXml` reads is the only way to produce a populated one — the
+same shape, and for the same reason, as the `<Enum>` render (#3807).
+
+<a id="deltas-are-a-pageextension-phenomenon"></a>
+### Runtime deltas are a pageextension phenomenon
+
+All five documents carrying any deltas are pageextensions. All six tableextensions emit an empty
+`<MetadataRuntimeDeltas/>`, and the reason is not that BC declined to describe them: **every one
+of the six declares only `Obsolete=Moved` or `Obsolete=Removed` fields** — fields that no longer
+exist at runtime to have a delta. A tableextension's live fields and keys are folded into the
+target table's own `MetaTable` document, which this harness already compares.
+
+So the runner's tableextension render is deliberately empty, and that is a measurement rather
+than a shortcut: emitting a `FieldAdd` there would disagree with BC on six of the eleven
+documents.
+
+<a id="deltas-required-attributes"></a>
+### Three attributes BC's reader requires, and how the set was measured
+
+`FromXml` `Enum.Parse`s several attributes and throws on a null, so a document missing one does
+not parse at all. Measured by stripping one attribute at a time from BC's own document for
+pageextension 774 and re-parsing:
+
+| | |
+|---|---|
+| wrapper `ParentContainer` | **required** |
+| wrapper `Operation` | **required** |
+| member `xsi:type` | **required** |
+| everything else — `SemanticKind`, `ControlGUID`, every `*TranslationKey`, … | not required |
+
+**Run that strip inside the `bc-engine-serial` collection.** The same strip run outside it reports
+*every* attribute as required, because the unstripped baseline already fails there on the
+`WindowsLanguageHelper` static-init fault — so each row measures the fault rather than the
+document. The give-away is the baseline check: `BC's own document parses: False`.
+
+Two further traps the render hit, both invisible to a namespace-aware reader:
+
+- **The `xsi` prefix is load-bearing.** `XmlDocument` invents a prefix at first use (`d3p1:type`),
+  which is namespace-equivalent and still wrong: `ElementDefinition.RuntimeTypeCtor` fails with
+  `InvalidOperationException("ActionBaseDefinition")` — the abstract base, because nothing told it
+  which concrete subtype to build. Declare `xmlns:xsi` on the root with that exact prefix.
+- **`ParentContainer` is an enum**, not free text. Across all 111 delta elements in the four
+  cached builds the observed set is `{Prompting, ContentArea, ViewActions, ActionItems, Promoted,
+  RelatedInformation}`. Passing an AL anchor through verbatim raised
+  `ArgumentException: Requested value 'Processing' was not found`, which loses the whole document.
+  **The anchor is in a different vocabulary from the attribute** — see below.
+
+<a id="deltas-anchor-vocabulary"></a>
+### The AL anchor and `ParentContainer` are two different vocabularies
+
+An AL `Anchor` names either an **area** or a **sibling member**, and only the first is a
+container — under BC's *runtime* spelling, which is a different word from AL's for five of the
+ten action areas and four of the five control areas. `addlast(Navigation)` is
+`ParentContainer="RelatedInformation"`.
+
+| AL source (`ActionAreaKind`, CodeAnalysis) | runtime (`ActionContainerType`, Types) |
+|---|---|
+| `Processing` | `ActionItems` |
+| `Reporting` | `Reports` |
+| `Navigation` | **`RelatedInformation`** |
+| `Creation` | **`NewDocumentItems`** |
+| `Embedding` | **`HomeItems`** |
+| `Sections` | **`ActivityButtons`** |
+| `Promoted`, `SystemActions`, `Prompting`, `PromptGuide` | same word |
+| `None` | *not a container* — BC's own mapper throws |
+
+| AL source (`AreaKind`) | runtime (`ControlContainerType`) |
+|---|---|
+| `Content` | `ContentArea` |
+| `FactBoxes` | **`FactBoxArea`** |
+| `RoleCenter` | **`RoleCenterArea`** |
+| `Prompt` | **`PromptArea`** |
+| `PromptOptions` | **`PromptOptionsArea`** |
+| `Navigation` | *not a container* — BC's own mapper throws |
+
+**Measured, not inferred**: both tables are BC's own
+`CodeAnalysis.Emit.MetadataEmitterHelper.GetContainerType` — the method its emitter applies —
+invoked for every member of both enums on 27.5.46862.53931. Corroborated in a *second* binary by
+`Ncl.dll`'s `NavDesignerUtil.ActionContainerTypeToAreaKind`, the same relation read backwards,
+which agrees on all seven pairs it covers.
+
+The runner keeps the table as a literal so the render takes no load-time dependency on
+`Microsoft.Dynamics.Nav.CodeAnalysis`; `ExtensionRuntimeDeltasBcMappingTests` holds it to BC's
+own method and fails when a BC version moves it.
+
+**An anchor naming a sibling member keeps the kind-implied fallback** (`ActionItems` /
+`ContentArea`) and is written as `AnchorName`. Measured over all 111 delta elements in the four
+cached builds' bundles: 32 carry an `AnchorName`, and not one of those 32 is an AL area name. The container BC writes for one of those is the
+*sibling's* own — pageextension 774's three view-anchored actions are `ViewActions`, not the
+fallback — and SymbolReference does not state it from the extension's side (#3926).
+
+<a id="deltas-declaration-order"></a>
+### Declaration order is load-bearing, because the differ pairs positionally
+
+BC emits deltas in AL declaration order and the equivalence differ pairs `AllDeltas` by position.
+A render sorted by member id therefore reports *correctly rendered* members as wrong ones.
+Measured: id order put pageextension 774's four controls in a different order from BC's and
+produced four `ControlDefinition.ID` / `.Name` differences on controls the runner had exactly
+right, and swapped ext 2515's two change contexts so their `ContainerType` and `OperationType`
+each read as wrong. Declaration order removes all of those.
+
+A residue of such positional differences remains, and it is *not* a wrong id either:
+pageextension 774's document opens with a `PagePropertiesChange` the runner does not emit, so
+every later element pairs one slot early. Producing the missing delta kinds removes them (#3926).
+
+**The same residue reaches four more members on 27.5 only.** System Application pageextension
+2516 `AppSourceMarketPlaceExtension` has a deltas document on 27.5 and none on 28.1, so only the
+27.5 legs compare it; its document is `[PagePropertiesChange, ActionAdd, ActionAdd]`, giving the
+same one-slot shift on `ActionDefinition.ID`/`.Name` and `ContentAddContext\`1.ContainerType`/
+`.OperationType`. Measured: splicing an empty `PagePropertiesChange` into the runner's own
+rendered document — changing nothing else — takes that object from 6 undeclared differences to 0
+and its total from 222 to 216, so all four are on content the runner renders correctly. The
+entries carry `versionContingent`, because the object's existence moves with the BC version
+(#3923).
+
+<a id="deltas-what-remains"></a>
+### What the comparison measures now
+
+869 differences across 77 members, of which 64 were newly declared in the allowlist and 13 were
+already covered by the translation-key entries. Every one is *BC states a value, the runner leaves
+it off* — no member is rendered with a wrong value derived from a right input. The three groups,
+and which is a defect, are on **#3926**.
 
 <a id="running-it"></a>
 ## Running it
