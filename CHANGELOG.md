@@ -6,6 +6,216 @@ All notable changes to this project are documented here. Format based on
 
 ## [Unreleased]
 
+### Added
+- **metadata:** track extension contributions addressably by the extension's own id
+- **provisioning:** content-verify the service-tier and platform-apps entry guards
+- **provisioning:** classify an artifact directory before a consumer opens it
+- **metadata:** trace which route produced a page's metadata
+- **hooks:** block git stash, backgrounded CI waits and bare grep over AlRunner C#
+- **app-loader:** read a runtime package, instead of silently answering false about one
+- **company-init:** a targeted opt-out for a knowingly-partial company, per-request server drain, collapsed duplicates
+- **codeunit-metadata:** answer four CodeUnit Metadata columns from BC's own document instead of defaulting them
+- **metadata:** a total equivalence harness for the SymbolReference derivation
+- **metadata:** keep BC's own metadata document for every object it emits, not three kinds
+
+### Fixed
+- **ci:** make the Part-of release job print its decision and stop racing add against remove
+- **page-metadata:** decode the page inherent-permission mask case-sensitively, so a lowercase letter answers the indirect bit
+- **metadata:** derive the three MetaReport properties SymbolReference.json states
+- **skeleton-tenant:** seed the null lock objects and IC-replication flag, and delete the 7 orphaned NavDataTransfer hooks
+- **metadata:** derive the eight MetaQuery properties BC states, and settle Caption against BC's reader
+- **metadata:** derive ALNamespace and both Inherent masks for codeunits from SymbolReference.json
+- **ordering:** break the test-codeunit object-id tie on an ordinal type name, not the GetTypes() index
+- **metadata:** PermissionSet Assignable defaults to false when the property is absent, as BC's own reader does
+- **dap:** honour linesStartAt1, and report the frame column in the client's base
+- **enum:** state Extensible and the implementation lists the enum derivation drops
+- **metadata:** an enum value's absent Ordinal means zero, not the previous ordinal plus one
+- **testpage:** resolve an expression-bound property on a precompiled page by joining on the live binding's Name
+- **deps:** fail loudly when a dependency compile emits only some of its objects
+- **coverage:** report the sources the scan could not read instead of mapping them as object-free
+- **dep-page-metadata:** reconstruct the action tree for a precompiled page
+- **deps:** Base Application's metadata emit is a cost question, not a hard blocker
+- **dap:** arm every statement a breakpoint line resolves to, not the first one found
+- **deps:** follow a Microsoft platform app's own Platform floor so System Application and Business Foundation compile against System.app
+- **preflight:** reap a merged worktree whose only dirt is the retired corpus gitlink
+- **record:** AreFieldsLoaded answers from the materialised buffer, as BC does
+- **record:** AreFieldsLoaded refuses a null field list instead of answering true
+- **exit-codes:** a count-baseline mismatch outranks a concurrent test failure
+- **preflight:** make the corpus-baseline guards able to fail
+- **diagnostics:** the missing-codeunit message names --package-cache, not a v1 bucket stub
+- **tests:** scope the --no-cache leak assertion to this test's own throwaway root
+- **dap:** resolve setBreakpoints against a built source map whatever order the client asks in
+- **tests:** decide the skippable-attribute guard from code, not from comments
+- **scratch:** own DependencyMetadataProducer's compile scratch directory so a killed run's copy is reclaimable
+- **tests:** fail rather than skip when the bc-engine-serial prerequisites are absent
+- **coverage:** extension objects reach the source map, so their executed statements are visible
+- **metadata:** build skeleton metadata for precompiled xmlports
+- **iterations:** convert a span line to the file's coordinates before matching parser positions
+- **bccompiler:** align .NET probing paths so System Application emits
+- **coverage:** measure the file preamble over every object, not just the mapped ones
+- **docs:** one <summary> per doc block, plus a guard that keeps it that way
+- **testpage:** a precompiled page's control Editable must not answer true by default
+- **dap:** decode a statement's line against its own object, not the file
+- **deps:** a floor is a real dependency, with a real version, on both sides
+- **metadata:** read the page properties the symbol file states, and stop hardcoding Extensible=1
+- **deps:** follow a resolved package's own Platform/Application floor, so Library Assert compiles
+- **cli:** write stdout as UTF-8, so a redirected consumer reads the bytes the runner wrote
+- **coverage:** report every object of a multi-object .al file, on its file lines
+- **metadata:** read the members the symbol file already carries
+- **metadata:** the form, report and query builders must not swallow a construction refusal
+- **shim:** accept Text.Split with several separator arguments
+- **dep-metadata:** never swallow a METADATA-* failure into service-tier dispatch
+- **metadata:** make a BuildNCLMetaTable construction failure attributable
+- **dep-metadata:** dependencies get their table metadata from BC's emitter, not the hand-derivation
+- **install-seed:** seed Company, Published Application and Access Control before install triggers
+- **testpage:** flush the page's PARTS before TestPage.Close() raises OnQueryClosePage
+- **testpage:** a property bound to a procedure call answers false, as BC does (AL0573)
+- **session-user:** decide adoption before dependency install triggers
+- **suites:** compile a suite from its root when .al files sit outside src/, app*/ and test/
+- **testpage:** answer the in-place page-mode switch, and Visible/Enabled from what a service tier measured
+- **testpage:** evaluate a live property expression against the current row (#3693 regression)
+- **nav-app-extra:** refuse a partial BC provider answer instead of latching it as complete
+- **reload:** clear the app-identity memos and the permission-metadata latch on reload
+- **testpage:** flush the page's PARTS before the handler-driven close raises OnQueryClosePage
+- **metadata:** refuse a failed SystemPackage registration instead of returning normally
+- **company-seed:** decide the once-per-bundle latch per exit, not on line 2
+- **permissions:** serve the Permission table (2000000005) from BC's own provider
+- **metadata:** make an enum-typed field's enum resolvable, then state its id
+- **asserterror:** tear through a corrupt-dependency symbol read, do not swallow it
+- **flowfields:** refuse by name when the computed-provider guard cannot read its own discriminator
+- **install-seed:** decide session-user adoption before the bundle's own install triggers
+- **testaction:** refuse a disabled action's Invoke, and follow an action group's Visible
+- **transaction:** count BC's own Begin/EndTransaction so an XmlPort.Import may write under TransactionModel::None
+- **page-control-field:** refuse a failed Editable lookup instead of answering 'editable'
+- **testpage:** the handler's OK().Invoke() is a close attempt, so a refused RunModal close delivers its message twice
+- **query:** refuse a failed ColumnFilters read instead of yielding no static filters
+- **page-control-field:** run BC's own SolveEditable, not the raw document attribute
+- **query-join:** refuse a failed reflection lookup instead of answering FiltersAndMarks.Empty
+- **rules:** extract agent_stdio.py too, and say so when it is missing
+- **testpage:** discard a refused write's Rec mutations, as BC does
+- **table-metadata:** answer NCLMetaTable's Is<Trigger>Defined flags from the table and its tableextensions
+- **query:** refuse a failed reflection lookup instead of yielding no filters
+- **tools:** print through UTF-8 so a tool cannot die on the console codec
+- **report-metadata:** resolve Sorting Fields for a precompiled-dependency report, paid once per run
+- **testpage:** dispatch OnAssistEdit, on a base control and in a modify() block
+- **query:** honour DataItemTableFilter and every DataItemLink equality in a precompiled dep
+- **metadata:** refuse an unparseable DataClassification instead of defaulting to CustomerContent
+- **metadata:** apply tableextension modify(...) deltas from BC's document, and match the enum keyword case-insensitively
+- **testpage:** dispatch a pageextension modify(control) block's triggers
+- **page-control-field:** merge a pageextension's added controls from BC's own delta document
+- **tests:** delete the now-dead NotAMatrixClaim entry for codeunit-metadata-from-bc.md
+- **tests:** waive the historical BC version list in codeunit-metadata-from-bc.md
+- **testpage:** report TryEvaluateThroughBc's two pre-invoke declines as runner shape gaps
+- **date-virtual-table:** serve 2000000007 from BC's own DateDataProvider, and answer a FlowField over it the way BC does
+- **permission-set:** read a source-compiled permission set from BC's own document, not a regex over AL source
+- **page-control-field:** answer the control tree from BC's document, not parsed AL
+- **shadow:** never prune an ncl-shadow dir a live process is running from, and refuse an incomplete one
+- **report-metadata:** answer Sorting Fields and Request Filter Fields from BC's document
+- **report-metadata:** answer Report Metadata and Report Data Items from BC's document
+- **query:** build a compiled query's MetaQuery from BC's own document, not four constants
+- **page-metadata:** answer eleven defaulted Properties-derived columns from BC's own document
+- **table-metadata:** relax the tableextension guard for same-app add-only extensions
+- **metadata-loader:** serve every captured kind from the seam, not four
+- **symbols:** read Editable and a field's effective DataClassification from the symbol file
+- **testpage:** report the close BC actually performs after a [MessageHandler] consumes it
+- **table-metadata:** build a compiled table's metadata from BC's own document, not from parsed AL
+- **tools:** decode subprocess text as UTF-8, not the locale codec
+- **page-metadata:** answer NCLMetaForm's Is<Trigger>Defined flags from the page and its pageextensions
+- **transactions:** let a report and a page field validate write under TransactionModel::None
+- **integer-virtual-table:** serve 2000000026 from BC's own IntegerDataProvider
+- **company-init:** record a partially initialized company as a run-level result
+- **allobj:** answer the *extension kinds' Object Subtype with the target object's id
+- **testpage:** a temporal bind failure and an unwrapped Invoke fault must not be swallowable by asserterror
+- **report-metadata:** refuse a data-item loop the runner has no metadata for, instead of running it unbounded
+- **testpage:** do not raise a part page's OnNewRecord for a row that is already there
+- **transactions:** give a TransactionModel::None test body the no-transaction world BC gives it
+- **codeunit-metadata:** make the unresolved-TableNo warning survive the default log filter
+- **testpage:** refresh xRec after a page-driven write, and insert a new row when its key is complete
+- **allobj:** answer AllObjWithCaption's Object Subtype per object kind
+- **codeunit-metadata:** read a quoted Subtype as the identifier it is, and contain a refusal to its own row
+- **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
+
+### Documentation
+- drop the 3 KB rule-size figure; the shape is the bar
+- **skill:** arming does not require a green verdict
+- **rules:** origin/main is a local ref, and a stale one stages merges as deletions
+- **rules:** commit search-for-the-same-defect-first, finished to the convention
+- **tdd:** choose the mutation to test a property, not to produce a red
+- a private member in another file is usually still reachable
+- a foreign-authored commit blocks the merge with every check green
+- **rules:** two ways a correct comment still produces a wrong belief
+- **skill:** a non-blocking review finding waits for the gating leg
+- **rules:** say what makes a "Part of #N" line non-standalone
+- **tdd:** a filter or mutation target matching the WRONG thing beats one matching nothing
+- **impl-agent:** run the repository's own guards before pushing
+- **verify:** the wrong-subject instance that travels is a coordinator's correction
+- **ci:** the count baseline is one number per group plus absentOn, not a per-version count
+- **local-test-scope:** the warm-run exception is about caches you are BEHIND, not caches you edit
+- **verify:** the fourth instrument failure is a correct tool reading the WRONG SUBJECT
+- **reuse:** ask whether the runtime already holds the data, not only whether MS ships it
+- **guards:** the same absence can be a legitimate skip locally and a red leg on CI
+- **tdd:** confirm the mutation landed — a failed mutation leaves the test GREEN
+- **agents:** the proving-test check is a mutation to run, not a question to ask
+- **tdd:** require running the mutation, not asking whether a test would pass without the fix
+- **rules:** say how you captured a surprising exit code when you report it
+- **skills:** --auto can lose a race to GitHub's mergeability cache; verify by re-reading state
+- **rules:** the skipped confirmation is always on the instrument
+- **rules:** a pipeline replaces ci-wait.py's exit code with 0
+- list_contexts' registeredAliases is not evidence a context was loaded
+- **rules:** say why a citation must be right, not only that it must be followable
+- **testpage:** correct two false "TestPageClient is not present" comments
+- **rules:** name the instrument for "is my tree clean?" in the no-stash table
+- **bundle-gate:** correct two comments that justified correct code wrongly
+- **rules:** reuse what Microsoft ships before re-implementing it
+- **metadata:** name the three shipping shapes and where each gets its metadata
+- **rules:** every rule as claim + citation + trap; incident narrative moved to docs/incidents/; one home per instruction (S5)
+- **orchestrator:** corpus-PR state before arming, labels cleaned on merge, one CI read per sweep, coordinator rotation (S4)
+- **impl-agent:** a draft PR at claim time, session-scoped paths, and a tool-call budget with a checkpoint hand-back (S2)
+- **triage:** idempotent filing, the ready queue's age in every cycle summary, oldest-first, drift fixes owned by the orchestrator (S1)
+- **review:** a fixed verdict line ends every review comment, and arming reads it (S3)
+- **rules:** name all five die_undetermined cases, and stop claiming they share a cause
+- **rules:** name the class -- every guard needs a third state, distinct from success
+- **page-control-field:** name the control attribute correctly in two prose sites
+- **metadata:** identify the 40 unaccounted fields as extension-added, and state the rule for them
+- **manual:** user-facing documentation in a directory of its own
+- **codeunit-metadata:** correct the RequiredTestIsolation mechanism, which was wrong
+- **rules:** add GitHub's owner/repo#N shorthand to the rejected Corpus-PR forms
+- **instructions:** correct six statements the instruction files make that are no longer true
+- **rules:** label a corpus PR to get a Windows verdict, rather than dispatching it
+- **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
+
+### Changed
+- **metadata:** pin what the codeunit method table is made of, and why the symbol file cannot supply it
+- **enum-sidecar:** drive the SaveSidecar/LoadSidecar round trip for Extensible and both implementation fallbacks
+- **compiler:** drive ReadEnumExtensible and ReadEnumImplementationFallback from a compiled AL enum
+- **corpus:** get a verdict on TableRelation = T.SystemRowVersion
+- **phase-log:** bound app stages against the span they decompose, not an absolute 50ms
+- **guard:** production scratch directories under AlRunner/ get their own ownership guard
+- **guard:** the scratch-dir ownership guard must see Directory.CreateTempSubdirectory
+- **metadata-equivalence:** compare Report, PermissionSet, Enum and MetadataRuntimeDeltas
+- **metadata-equivalence:** compare Query and XmlPort, steps 3 and 4 of 8
+- **metadata-equivalence:** compare CodeUnit, step 2 of 8
+- **metadata-equivalence:** compare PageDefinition, step 1 of 8
+- **page-mode:** pin that every live TestPage knows its PageType; the #3735 refusal is unreachable
+- **gate:** fail a pull request whose diff carries CHANGELOG.md
+- **corpus:** refuse to arm auto-merge while the cited corpus PR is not mergeable
+- **corpus:** resolve tests/al-language per run instead of pinning it
+- **patches:** split RecordPatches.cs and MockTestPage.cs into partials by surface
+- **project-process:** gate an undeclared branch issue, strip labels on close, relabel Part-of issues
+- debounced floor run after a merge, and main's floor verdict beside the PR verdict
+- **runner-extras:** pin the precompiled implicit-return defect behind #3347's four Azure ML failures
+- **corpus:** record why the pin cannot advance past 3ad4c340
+- **gates:** port the matrix-doc drift and worktree-path guards to tools/test_*.py
+- **testpage:** guard the modal close route's part flush, which two redundant calls hid
+- **gates:** refuse a submodule path that names nothing, in both gate scripts that hardcoded one
+- **patches:** ratchet the silent-reflection-lookup population at 125
+- **count-baseline:** fail a corpus pin bump that writes no history.md entry
+- **report-metadata:** arm the sorting-clause guard the naive first-) rule slipped past
+- **metadata:** serialize every in-process AlObjectMetadataRegistry user, and correct a false comment
+- **corpus:** advance the pin to c9d5f656, a clean catch-up bump
+- **metadata:** declare the thirteenth kind, so the count is pinned not asserted
+- **record-link:** delete the dead third link store and version the install-baseline format
+
 ## [2.11.0] - 2026-09-08
 
 ### Added
