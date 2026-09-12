@@ -111,7 +111,8 @@ public static partial class RecordPatches
         rec.SetFieldValue(FieldByNameOn(m, "User SID").FieldNo, userSid);
         Set("User ID", userName!);
         // BC's own mapping (SessionEventTableHandler.TranslateToClientType) over the session's
-        // own ClientConnectionType — the same property CurrentClientType() switches on.
+        // ClientConnectionType. That property is never set on the skeleton and the mapping has no
+        // entry for it, so this answers Unknown: a constant, pinned by the ActiveSessionTable fixture.
         Set("Client Type", TranslateSkeletonClientType(session));
         // BC stores DateTime.UtcNow; SkeletonSessionLoginTime is the same instant in host-local
         // time (see its doc), so Session's GetDatePart/GetTimePart view of this value matches the

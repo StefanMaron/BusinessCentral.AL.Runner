@@ -75,6 +75,8 @@ public sealed class ActiveSessionTableTests
                 // One login instant across Session and Active Session.
                 Assert.Contains("PASS  Codeunit70581.ActiveSession_Row_LoginDatetimeIsTheSessionTablesLoginInstant", stdout);
                 Assert.Contains("PASS  Codeunit70581.ActiveSession_Row_CarriesASessionUniqueId", stdout);
+                // Client Type is BC's own mapping of the (unset) skeleton connection type: a constant.
+                Assert.Contains("PASS  Codeunit70581.ActiveSession_Row_ClientTypeIsBcsMappingOfTheSkeletonConnectionType", stdout);
                 // Negative; passes against an empty table too, so not sufficient alone.
                 Assert.Contains("PASS  Codeunit70581.ActiveSession_GetOnASessionIdThatIsNoSession_ReturnsFalse", stdout);
                 Assert.DoesNotContain("FAIL", stdout);

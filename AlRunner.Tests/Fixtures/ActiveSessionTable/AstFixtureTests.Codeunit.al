@@ -59,6 +59,21 @@ codeunit 70581 "AST Fixture Tests"
     end;
 
     [Test]
+    procedure ActiveSession_Row_ClientTypeIsBcsMappingOfTheSkeletonConnectionType()
+    // A CONSTANT, not an observation: the skeleton session's ClientConnectionType is never set,
+    // and BC's own SessionEventTableHandler.TranslateToClientType has no entry for that value,
+    // so it answers Unknown. Pinned so a change to either side is noticed. Not compared against
+    // CurrentClientType(): that maps the same value to Windows through a different switch, and
+    // the option captions differ by construction.
+    var
+        ActiveSession: Record "Active Session";
+    begin
+        ActiveSession.Get(ServiceInstanceId(), SessionId());
+        Assert.AreEqual('Unknown', Format(ActiveSession."Client Type"),
+            'Client Type must be BC''s TranslateToClientType of the skeleton connection type');
+    end;
+
+    [Test]
     procedure ActiveSession_GetOnASessionIdThatIsNoSession_ReturnsFalse()
     var
         ActiveSession: Record "Active Session";

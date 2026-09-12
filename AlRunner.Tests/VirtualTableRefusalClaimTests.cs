@@ -107,6 +107,7 @@ public sealed class VirtualTableRefusalClaimTests
     /// <summary>factory name → (api, surface anchor, doc link). One row per corrected surface.</summary>
     public static IEnumerable<object[]> Surfaces() => new[]
     {
+        new object[] { "ActiveSessionShapeGap",          "Active Session (system table 2000000110)",            "active-session-row",                      GapDoc },
         new object[] { "AggregatePermissionSetShapeGap", "Aggregate Permission Set (virtual table 2000000167)", "aggregate-permission-set-virtual-table", GapDoc },
         new object[] { "AllObjShapeGap",                 "AllObj (virtual table 2000000038)",                   "allobj-virtual-table",                   GapDoc },
         new object[] { "AllObjWithCaptionShapeGap",      "AllObjWithCaption (virtual table 2000000058)",        "allobjwithcaption-virtual-table",         GapDoc },

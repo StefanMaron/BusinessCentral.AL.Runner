@@ -1751,9 +1751,11 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
 - **`Active Session` (2000000110) holds one row — the runner's own session — and three of its
   columns are blank.** On a tier the platform writes the row at login; the runner writes it once
   per app group, keyed by `(ServiceInstanceId(), SessionId())`, with `User ID`, `User SID`,
-  `Login Datetime` and `Session Unique ID` read back from the skeleton session, `Client Type`
-  through BC's own `SessionEventTableHandler.TranslateToClientType`, and `Server Computer Name`
-  from the host. `Server Instance Name`, `Client Computer Name` and `Database Name` keep BC's
+  `Login Datetime` and `Session Unique ID` read back from the skeleton session, and `Server
+  Computer Name` from the host. **`Client Type` always reports `Unknown`** — read it as a
+  constant: it is BC's own `SessionEventTableHandler.TranslateToClientType` applied to the
+  skeleton session's `ClientConnectionType`, which is never set and which that mapping does not
+  list (`CurrentClientType()` maps the same value to `Windows` through a different switch). `Server Instance Name`, `Client Computer Name` and `Database Name` keep BC's
   default: the runner has no server instance, client machine or database to name. A dependency's
   install code does not see the row — it is written after the cached dependency snapshot, so a
   snapshot never replays another process's login instant
