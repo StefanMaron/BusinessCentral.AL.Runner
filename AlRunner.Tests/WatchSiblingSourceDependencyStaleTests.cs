@@ -134,13 +134,24 @@ public class WatchSiblingSourceDependencyStaleTests
             Assert.True(cycle2.Contains("WSS dependency answered 99"),
                 "cycle 2 did not run the edited sibling dependency:\n" + cycle2);
 
-            // Back to 42: both caches HIT for content this process already compiled.
-            WriteDepSource(depDir, 42);
+            // Negative: only the test bundle changes, so the dependency is served from its
+            // content-keyed workspace directory, not re-synthesised — and still answers 99.
             WriteTestSource(testDir, "cycle 3");
             int m3 = await WaitForMarkerAfter(m2 + 1);
             var cycle3 = Segment(m2 + 1, m3);
-            Assert.True(cycle3.Contains("PASS"), "cycle 3 did not go back to passing:\n" + cycle3);
-            Assert.DoesNotContain("FAIL", cycle3);
+            Assert.True(cycle3.Contains("[source-dep] cache HIT Watch Sibling Dep WSS "),
+                "cycle 3 did not serve the unchanged dependency from cache:\n" + cycle3);
+            Assert.DoesNotContain("[source-dep] WROTE Watch Sibling Dep WSS ", cycle3);
+            Assert.True(cycle3.Contains("WSS dependency answered 99"),
+                "cycle 3 did not run the edited sibling dependency:\n" + cycle3);
+
+            // Back to 42: both caches HIT for content this process already compiled.
+            WriteDepSource(depDir, 42);
+            WriteTestSource(testDir, "cycle 4");
+            int m4 = await WaitForMarkerAfter(m3 + 1);
+            var cycle4 = Segment(m3 + 1, m4);
+            Assert.True(cycle4.Contains("PASS"), "cycle 4 did not go back to passing:\n" + cycle4);
+            Assert.DoesNotContain("FAIL", cycle4);
         }
         finally
         {

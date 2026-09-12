@@ -5,8 +5,8 @@
 // The dependency answers Twice(21); the test asserts 42 and names the value it saw, so a PASS after
 // the source changed to `Value * 3` means an earlier request's compile executed.
 //
-// Sibling of ServerPackagedDependencyReplacementTests (#3974), which supplies the dependency as a
-// packaged .app instead.
+// Same AppId and version throughout: a version bump additionally needs the displaced module
+// retired, which is #3974's fix (PR #4008), not this one.
 
 using System.Text.Json;
 using Xunit;
@@ -40,7 +40,15 @@ public sealed class ServerSiblingSourceDependencyReloadTests
           "runtime": "14.0"
         }
         """);
-        File.WriteAllText(Path.Combine(testsDir, "Tests.Codeunit.al"), $$"""
+        var f = new Fixture(root, subjectDir, testsDir, cacheDir);
+        WriteTests(f, tag, idBase, "request 1");
+        return f;
+    }
+
+    /// <summary>The test bundle; <paramref name="marker"/> lets a request change only this bundle.</summary>
+    private static void WriteTests(Fixture f, string tag, int idBase, string marker) =>
+        File.WriteAllText(Path.Combine(f.TestsDir, "Tests.Codeunit.al"), $$"""
+        // {{marker}}
         codeunit {{idBase + 5}} "Repro4025 Tests {{tag}}"
         {
             Subtype = Test;
@@ -57,8 +65,6 @@ public sealed class ServerSiblingSourceDependencyReloadTests
             end;
         }
         """);
-        return new Fixture(root, subjectDir, testsDir, cacheDir);
-    }
 
     /// <summary>Write the (version, multiplier) variant of the sibling dependency's source.</summary>
     private static void WriteSubject(Fixture f, string subjectAppId, string tag, int idBase, string version, int multiplier)
@@ -144,6 +150,16 @@ public sealed class ServerSiblingSourceDependencyReloadTests
                     WriteSubject(f, subjectId, tag, idBase, cold[i].Version, cold[i].Multiplier);
                     await AssertRequest(server, f, $"cold {i + 1} (v{cold[i].Version}, *{cold[i].Multiplier})", Expect(cold[i].Multiplier));
                 }
+
+                // Negative arm: only the TEST bundle changes. Rebuilding from the base caches
+                // every request must still serve the unchanged dependency from its content-keyed
+                // workspace directory rather than re-synthesising it.
+                var mark = server.StdErrMark;
+                WriteTests(f, tag, idBase, "tests-only edit");
+                await AssertRequest(server, f, "cold, tests-only edit", Expect(cold[^1].Multiplier));
+                var slice = await server.StdErrSinceAsync(mark, $"→ Repro4025_Repro4025_Subject_{tag}_");
+                Assert.Contains($"[source-dep] cache HIT Repro4025 Subject {tag} ", slice);
+                Assert.DoesNotContain($"[source-dep] WROTE Repro4025 Subject {tag} ", slice);
             }
 
             // Fresh process, same --cache root.
@@ -163,12 +179,6 @@ public sealed class ServerSiblingSourceDependencyReloadTests
             try { Directory.Delete(f.CacheDir, recursive: true); } catch { }
         }
     }
-
-    [SkippableFact]
-    public Task SiblingSourceChangedWithAVersionBump_ExecutesTheNewCode_ColdAndWarm() =>
-        RunSequence("V", "4025a000-0000-4000-8000-00000000a001", "4025a000-0000-4000-8000-00000000a002", 64030,
-            cold: new[] { ("1.0.0.0", 2), ("1.0.0.1", 3), ("1.0.0.2", 2) },
-            warm: new[] { ("1.0.0.1", 3), ("1.0.0.2", 2), ("1.0.0.1", 3) });
 
     [SkippableFact]
     public Task SiblingSourceChangedAtTheSameVersion_ExecutesTheNewCode_ColdAndWarm() =>
