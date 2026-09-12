@@ -1256,12 +1256,15 @@ of rows that should not have existed:
 A `--test-data` backup's rows still land: 2000000001 has no branch in `GetDataAccessForTableCore`
 any more and takes the generic fall-through, which is the same `GetOrCreateHydratedDataAccess`
 call the deleted branch made, minus the populate, with the same #2788 hand-out ordering. It is
-consequently captured into and restored from the install baseline like its sibling 2000000071,
-rather than being excluded from it: #2875's exclusion existed to stop a *projection* being
+consequently captured into and restored from the install baseline, rather than being excluded
+from it: #2875's exclusion existed to stop a *projection* being
 replayed into a fresh provider and read back as a backup's rows, and there is no projection to
 mistake. The provenance recorder #2875 introduced stays — `TestDataProvisioner.LoadOnDemand` is
-the only place that fact exists, and **issue #3236** is its named consumer for the same
-wrong-shaped question on Object Metadata.
+the only place that fact exists, and Object Metadata (2000000071) consumes it: that table DOES
+have a projection, so the capture leaves it out unless a backup owns its rows
+(`IsProjectionOwnedSystemTableId`, #3236). Captured, a replay of the synthesised rows read as a
+backup's and switched off the payload-column refusal; `tests/runner-extras/object-metadata-baseline-replay`
+pins that it stays on across a boundary.
 
 `tests/runner-extras/object-system-table` asserts the runner-side behaviour — that the emptiness
 is a per-table policy rather than a missing inventory (`AllObj` is read in the same session and
