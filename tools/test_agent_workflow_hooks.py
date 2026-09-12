@@ -223,6 +223,13 @@ NAV_ALLOWED = [
     ("searching markdown", "rg --hidden 'clean status' .claude"),
     ("searching AL sources", "command grep -n 'SaveAsXml' tests/al-language/foo.al"),
     ("build output trimmed with tail", "dotnet build AlRunner -c Release | tail -5"),
+    # tdd.md asks for the `Total:` line from every mutation run, and the natural
+    # way to get it is a grep over `dotnet test` stdout. That greps no file (#3994).
+    ("test output filtered with grep",
+     "dotnet test AlRunner.Tests --filter X 2>&1 | command grep -E 'Failed:'"),
+    ("test output filtered by project path",
+     "dotnet test AlRunner.Tests/AlRunner.Tests.csproj --no-build | command grep Total"),
+    ("dotnet run output filtered", "dotnet run --project AlRunner | command grep PASS"),
     ("writing a C# file with a heredoc", "cat > AlRunner/New.cs <<EOF\nclass X {}\nEOF"),
     ("git log over the C# tree", "git log --oneline -5 -- AlRunner"),
 ]
