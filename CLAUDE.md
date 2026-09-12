@@ -54,7 +54,7 @@ derivation behind it"). A new rule is done when it carries that shape — claim,
 its derivation moved out and its incidents file present. **Keep it short, and treat length as a
 symptom rather than a bar**: a rule that has grown long is usually carrying a derivation that
 belongs in `docs/incidents/`, so move that and the length follows. There is deliberately no byte
-figure here; the one this sentence used to carry was met by 2 of the 14 rules its own introducing
+figure here; the one this sentence used to carry was met by 2 of the 15 rules its own introducing
 commit rewrote (#3952), so it cost an argument per rule and settled nothing.
 
 ## Code navigation: use these before grepping
