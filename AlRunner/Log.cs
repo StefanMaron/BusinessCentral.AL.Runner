@@ -62,17 +62,11 @@ public static class Log
     // word, so `[dep]` is exempt and `[deps]` is a different tag that is not (deliberately —
     // see #2750). Two further properties of the pattern are easy to misread:
     //
-    //   * the tag character class `[A-Za-z0-9._+]` has NO HYPHEN, so every hyphenated tag —
-    //     `[test-data]`, `[provision-gap]`, `[count-baseline]`, `[dep-load-fail]`, … — fails
-    //     the pattern and passes through whether or not anyone intended it. That is
-    //     load-bearing and pinned by LogUserFacingTagsTests; do not "tidy" the class.
-    //     It is ALSO accidental for most of them: punctuation, not intent, decides. #2257
-    //     owns that — it tracks the whole set and the per-tag decision each one needs, and
-    //     it is where the count lives, so this comment does not carry a number that would
-    //     rot here. Re-measured 2026-09-06 for that issue: 30 distinct hyphenated tags
-    //     across 83 console-output call sites, several plainly internal (`[type-index]`,
-    //     `[emit-timing]`, `[mem-census]`, `[instrumentation-counters]`, `[DIAG-RETRY]`).
-    //     Retagging that set is #2257's job, deliberately not this change's.
+    //   * the tag character class `[A-Za-z0-9._+]` has NO HYPHEN, so a hyphenated tag is never
+    //     filtered and its call site alone decides visibility. Do not add `-`: it would hide
+    //     every failure line using one and silence every AL_RUNNER_TRACE_*-style switch, which
+    //     does not set Verbose. LogHyphenatedTagContractTests classifies each such call site
+    //     (see docs/log-filter.md#hyphenated-tags); a new one fails there until classified.
     //   * only the START of the value is examined, so a multi-line WriteLine is decided
     //     entirely by its first line.
     //

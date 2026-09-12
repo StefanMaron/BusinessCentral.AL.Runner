@@ -259,23 +259,37 @@ fi
 
 branch_issue=""
 if [ -n "$PR_HEAD_REF" ]; then
-  branch_issue=$(printf '%s' "$PR_HEAD_REF" | command grep -oP '^agent/[^/]+/issue-\K[0-9]+$' || true)
+  # A suffix after the number (issue-N-codeunit) is allowed (#3792); the
+  # lookahead keeps issue-36780 from reading as 3678 and issue-3678abc from
+  # reading as an issue branch. issue-label-hygiene.yml carries the same regex.
+  branch_issue=$(printf '%s' "$PR_HEAD_REF" | command grep -oP '^agent/[^/]+/issue-\K[0-9]+(?![0-9A-Za-z])' || true)
 fi
 
 part_of_declared=""
+part_of_malformed=""
 if [ -n "$branch_issue" ] && ! is_declared "$branch_issue"; then
-  # Anchored to its own line, exactly like CANONICAL_LINE_RE, and for the same
-  # reason: a declaration a reviewer can see at a glance, not a phrase buried
-  # in a sentence ("this is part of #N, landing the first half" is prose about
-  # the issue, not a statement that the issue stays open on purpose).
-  PART_REF="(?:(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#${branch_issue}|https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:issues|pull)/${branch_issue})"
-  PART_OF_LINE_RE="^[[:space:]]*Part of${SEP}${PART_REF}[[:space:]]*[.]?[[:space:]]*\$"
+  # The marker must START its line, so "this is part of #N, landing the first
+  # half" is prose about the issue, not a declaration. Prose AFTER the number
+  # is allowed (#3934); part_of_references.sh must accept the same shape.
+  PART_REF="(?:(?:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#${branch_issue}|https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/(?:issues|pull)/${branch_issue})(?![0-9A-Za-z_])"
+  PART_OF_LINE_RE="^[[:space:]]*Part of${SEP}${PART_REF}"
+  # The same reference anywhere on a line: present but not a declaration, which
+  # is reported as malformed rather than absent -- the remedies differ.
+  PART_OF_MENTION_RE="Part of${SEP}${PART_REF}"
   while IFS= read -r line; do
     if printf '%s' "$line" | command grep -qiP "$PART_OF_LINE_RE"; then
       part_of_declared="1"
       break
     fi
+    if [ -z "$part_of_malformed" ] && printf '%s' "$line" | command grep -qiP "$PART_OF_MENTION_RE"; then
+      part_of_malformed="$(printf '%s' "$line" | tr -d '\r')"
+    fi
   done <<< "$PR_BODY"
+
+  if [ -z "$part_of_declared" ] && [ -n "$part_of_malformed" ]; then
+    echo "::error::This PR's head branch is '$PR_HEAD_REF', so it names issue $branch_issue. The body mentions it with 'Part of', but the line is malformed: 'Part of #$branch_issue' must START its own line to count as a declaration (prose after the number is fine). The line found was: $part_of_malformed" >&2
+    exit 1
+  fi
 
   if [ -z "$part_of_declared" ]; then
     echo "::error::This PR's head branch is '$PR_HEAD_REF', so it names issue $branch_issue, but the body neither closes that issue nor says it stays open. Add ONE of these two lines, on its own line, to the PR BODY: 'Closes #$branch_issue' if this PR finishes the issue, or 'Part of #$branch_issue' if it lands only part of it and the issue stays open. 'Part of' carries no closing keyword, so it does not close anything -- it is what tells the merge pass to put issue $branch_issue back on the ready queue instead of leaving it labelled in-progress forever. This is the missing direction of #2121 seen from the branch: 31 merged PRs sat on a branch named issue-N while declaring nothing about N, and 12 of those issues were left open and invisible to the ready queue. If the branch name is simply wrong -- it names an issue this PR has nothing to do with -- rename the branch." >&2

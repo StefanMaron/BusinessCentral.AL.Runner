@@ -67,6 +67,11 @@ Ordinary prose about #456."
 
 assert_out "an empty body prints nothing" "" ""
 
+# #3934: the gate accepts prose after the number, so this must extract it.
+assert_out "prose after the number is extracted" "3678" \
+  "Part of #3678 — the NavDataTransfer cluster (7 of 69)."
+assert_out "a number glued to letters is NOT extracted" "" "Part of #3678abc"
+
 # --- the pair: what the gate accepts, this must extract ----------------------
 #
 # Both halves read the same convention out of the same PR body, so a shape
@@ -86,6 +91,15 @@ if gate_rc "$body" && [ "$(PR_BODY="$body" bash "$SCRIPT")" = "3678" ]; then
   pass=$((pass + 1))
 else
   echo "FAIL - gate/extractor disagree on a standalone Part of line"
+  fail=$((fail + 1))
+fi
+
+body="Part of #3678 — the first half; the rest stays open."
+if gate_rc "$body" && [ "$(PR_BODY="$body" bash "$SCRIPT")" = "3678" ]; then
+  echo "ok   - the gate accepts and the extractor reports a Part of line with trailing prose"
+  pass=$((pass + 1))
+else
+  echo "FAIL - gate/extractor disagree on a Part of line with trailing prose"
   fail=$((fail + 1))
 fi
 

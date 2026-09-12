@@ -1165,8 +1165,46 @@ public sealed class DependencyLoader
         if (excludedDiagnostics.Count > 0)
             sb.Append(" AL diagnostics that identified the dropped object(s): ")
               .Append(string.Join(" | ", excludedDiagnostics));
+        var attributed = AttributeToUnobtainableType(excludedDiagnostics);
+        if (attributed != null) sb.Append(' ').Append(attributed);
         return sb.ToString();
     }
+
+    /// <summary>
+    /// CLAIM: some AL0185 drops name a .NET type Microsoft ships in NO artifact, so they are
+    /// permanent and identical on every run and every BC version — not a provisioning fault a
+    /// reader should go looking for. Saying which turns a recurring report into a bounded,
+    /// attributable one; every other AL0185 keeps the unattributed text, because an
+    /// unrecognised one may well be fixable.
+    ///
+    /// CITATION: docs/limitations.md#unobtainable-dotnet-types, which carries the scan and the
+    /// positive control. Returns null when nothing matches — an unknown drop must never be
+    /// dressed up as a known one (guards-need-a-third-state.md).
+    ///
+    /// TRAP: match on the TYPE NAME the diagnostic quotes, never on the object or file name.
+    /// One type is referenced by four Microsoft test apps (#3890), so keying on the codeunit
+    /// would attribute one of them and silently leave the other three unexplained.
+    /// </summary>
+    internal static string? AttributeToUnobtainableType(IReadOnlyList<string> excludedDiagnostics)
+    {
+        if (excludedDiagnostics == null) return null;
+        foreach (var type in UnobtainableDotNetTypes)
+            foreach (var d in excludedDiagnostics)
+                if (d != null && d.Contains($"'{type}'", StringComparison.Ordinal)
+                    && d.Contains("AL0185", StringComparison.Ordinal))
+                    return $"DotNet '{type}' ships in none of Business Central's artifacts — it is a "
+                         + "test-harness type the service tier injects, so this drop is permanent and "
+                         + "expected here rather than a provisioning gap to chase; see "
+                         + "docs/limitations.md#unobtainable-dotnet-types (#3890).";
+        return null;
+    }
+
+    /// <summary>Types measured absent from every shipped artifact. Deliberately a short,
+    /// evidence-backed list rather than a pattern: an entry asserts a scan was run.</summary>
+    internal static readonly string[] UnobtainableDotNetTypes =
+    {
+        "MockAzureKeyVaultSecretProvider",
+    };
 
     /// <summary>
     /// True for the stages <see cref="DependencyMetadataProducer"/> raises. Matched on the

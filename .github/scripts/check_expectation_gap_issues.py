@@ -152,6 +152,13 @@ from dataclasses import dataclass
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 DEFAULT_MANIFEST_DIR = os.path.join(REPO_ROOT, "tests", "expectations")
+# The metadata-equivalence allowlist is a SECOND issue-citing manifest, one
+# directory down and with a different schema (#3975). load_known_gap_entries()
+# lists MANIFEST_DIR non-recursively, so nothing here could see it: 193 of its
+# entries cited an issue and 44 of those issues were closed, invisible to every
+# check in this file. See docs/metadata-equivalence.md#allowlist-issue-hygiene.
+ALLOWLIST_SUBDIR = "metadata-equivalence"
+ALLOWLIST_NAME = "allowlist.json"
 DEFAULT_REPO = "StefanMaron/BusinessCentral.AL.Runner"
 
 # --------------------------------------------------------------------------
@@ -304,6 +311,113 @@ def load_known_gap_entries(manifest_dir: str) -> list[GapEntry]:
     return entries
 
 
+@dataclass(frozen=True)
+class AllowlistEntry:
+    """One `differences` entry of the metadata-equivalence allowlist citing an issue.
+
+    Shaped to substitute for GapEntry in the two consumers below, so the sweep
+    and the gate treat both manifests identically rather than growing a second
+    copy of either.
+    """
+    source_file: str
+    member: str
+    issue: str
+    owner: str
+    repo: str
+    number: int
+
+    @property
+    def key(self) -> tuple[str, str, int]:
+        return (self.owner.lower(), self.repo.lower(), self.number)
+
+    # The gate's message names an entry as "<codeunit>.<method>"; an allowlist
+    # entry is identified by its member instead. Presenting it through the same
+    # two attributes keeps one formatting path rather than branching on type.
+    @property
+    def codeunit(self) -> str:
+        return "member"
+
+    @property
+    def method(self) -> str:
+        return self.member
+
+
+def load_allowlist_entries(manifest_dir: str) -> list[AllowlistEntry]:
+    """Every issue-citing `differences` entry of the metadata-equivalence allowlist.
+
+    Three states, deliberately distinct (guards-need-a-third-state.md):
+
+      * the file is ABSENT          -> [] , a pass. A checkout predating the
+                                       metadata harness legitimately has none,
+                                       and failing on it would be a false red.
+      * the file is UNREADABLE      -> ManifestError (exit 2). Folding this into
+                                       the row above would put the broken case
+                                       back on the exit-0 path.
+      * an entry cites NO issue     -> skipped, a pass. Measured on the shipped
+                                       file: 77 of 270 entries carry no `issue`
+                                       and every one carries `outOfScope` or
+                                       `oracleLimitation` instead. The file's own
+                                       comment block declares four mutually
+                                       exclusive reason KINDS, of which `issue`
+                                       is one -- so absence is a different valid
+                                       kind, never a finding.
+
+    An `issue` that is PRESENT and unresolvable is the fourth case and raises:
+    a citation nothing can resolve tracks nothing, and silently skipping it is
+    how an entry stops being checked without anyone deciding that it should.
+    """
+    path = os.path.join(manifest_dir, ALLOWLIST_SUBDIR, ALLOWLIST_NAME)
+    if not os.path.isfile(path):
+        return []
+
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ManifestError(
+            f"{ALLOWLIST_SUBDIR}/{ALLOWLIST_NAME}: could not be read as JSON ({exc}). The "
+            "file is present, so this is a broken manifest rather than an absent one -- "
+            "refusing to report a pass without having read it.") from exc
+
+    if not isinstance(doc, dict):
+        raise ManifestError(
+            f"{ALLOWLIST_SUBDIR}/{ALLOWLIST_NAME}: top level must be a JSON object with a "
+            f"'differences' array (got {type(doc).__name__}).")
+    diffs = doc.get("differences")
+    if not isinstance(diffs, list):
+        raise ManifestError(
+            f"{ALLOWLIST_SUBDIR}/{ALLOWLIST_NAME}: 'differences' must be a JSON array (got "
+            f"{type(diffs).__name__}). Without it there is nothing to check, and reporting "
+            "a pass would assert something this run never read.")
+
+    entries: list[AllowlistEntry] = []
+    rel = f"{ALLOWLIST_SUBDIR}/{ALLOWLIST_NAME}"
+    for i, raw in enumerate(diffs):
+        if not isinstance(raw, dict):
+            raise ManifestError(f"{rel}: differences[{i}] is not a JSON object.")
+        issue = raw.get("issue")
+        if issue is None:
+            continue
+        member = str(raw.get("member") or f"differences[{i}]")
+        if not isinstance(issue, (str, int)) or not str(issue).strip():
+            raise ManifestError(
+                f"{rel}: entry '{member}' has an empty or non-scalar 'issue'. An entry either "
+                "cites a tracked issue or declares another reason kind (outOfScope, "
+                "oracleLimitation, cannotExpress) -- an empty citation is neither.")
+        # A bare number is how this file cites: "issue": 3784.
+        text = str(issue).strip()
+        ref = text if text.startswith(("#", "http")) or "/" in text else f"#{text}"
+        triple = _parse_ref(ref, *default_owner_repo())
+        if triple is None:
+            raise ManifestError(
+                f"{rel}: entry '{member}' has issue '{text}', which is not a resolvable "
+                "GitHub issue reference (expected a number, #N, owner/repo#N, or a full "
+                ".../issues/N URL). A citation nothing can resolve tracks nothing.")
+        entries.append(AllowlistEntry(rel, member, text, *triple))
+
+    return entries
+
+
 # --------------------------------------------------------------------------
 # The non-blocking sweep -- the only part that touches the network
 # --------------------------------------------------------------------------
@@ -338,14 +452,29 @@ def issue_state(owner: str, repo: str, number: int) -> str | None:
         return None
 
 
-def report_closed_issues(entries: list[GapEntry]) -> int:
-    """Warn about entries linking an already-closed issue. NEVER fails the job."""
-    if not entries:
+def _describe(entry) -> str:
+    """'file (what)' for either manifest kind, so one message path serves both."""
+    if isinstance(entry, AllowlistEntry):
+        return f"{entry.source_file} ({entry.member})"
+    return f"{entry.source_file} ({entry.codeunit}.{entry.method})"
+
+
+def report_closed_issues(entries: list[GapEntry],
+                         allow_entries: list[AllowlistEntry] | None = None) -> int:
+    """Warn about entries linking an already-closed issue. NEVER fails the job.
+
+    Sweeps both issue-citing manifests together: an entry is an entry, and the
+    remedy a reader needs is the same in each -- check whether the declaration
+    still holds, then delete it or re-target it at open work.
+    """
+    allow_entries = list(allow_entries or [])
+    combined = list(entries) + allow_entries
+    if not combined:
         print("No expect-fail-known-gap entries in the manifest -- nothing to sweep.")
         return 0
 
-    by_issue: dict[tuple[str, str, int], list[GapEntry]] = {}
-    for e in entries:
+    by_issue: dict[tuple[str, str, int], list] = {}
+    for e in combined:
         by_issue.setdefault(e.key, []).append(e)
 
     closed = unresolved = 0
@@ -353,7 +482,7 @@ def report_closed_issues(entries: list[GapEntry]) -> int:
         group = by_issue[key]
         owner, repo, number = group[0].owner, group[0].repo, group[0].number
         state = issue_state(owner, repo, number)
-        where = ", ".join(sorted({f"{e.source_file} ({e.codeunit}.{e.method})" for e in group}))
+        where = ", ".join(sorted({_describe(e) for e in group}))
         if state is None:
             unresolved += 1
             print(f"::warning::Could not determine the state of {owner}/{repo}#{number}, so "
@@ -363,14 +492,15 @@ def report_closed_issues(entries: list[GapEntry]) -> int:
         elif state == "closed":
             closed += 1
             print(f"::warning::{owner}/{repo}#{number} is CLOSED, but {len(group)} "
-                  f"expect-fail-known-gap entr{'y' if len(group) == 1 else 'ies'} still link "
+                  f"expectation entr{'y' if len(group) == 1 else 'ies'} still link "
                   f"it: {where}. A closed issue does not by itself prove the entry is stale "
                   "(#2858: it may have closed as a duplicate, or with the gap still open), so "
                   "this is a lead and not a verdict -- check whether the test now passes, then "
                   "either delete the entry or re-target it at the issue tracking what remains.")
 
-    print(f"Swept {len(by_issue)} linked issue(s) across {len(entries)} entr"
-          f"{'y' if len(entries) == 1 else 'ies'}: {closed} closed, {unresolved} unresolved.")
+    print(f"Swept {len(by_issue)} linked issue(s) across {len(entries)} expect-fail-known-gap "
+          f"and {len(allow_entries)} allowlist entr"
+          f"{'y' if len(combined) == 1 else 'ies'}: {closed} closed, {unresolved} unresolved.")
     return 0
 
 
@@ -384,12 +514,13 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         entries = load_known_gap_entries(manifest_dir)
+        allow_entries = load_allowlist_entries(manifest_dir)
     except ManifestError as exc:
         print(f"::error::{exc}", file=sys.stderr)
         return 2
 
     if report:
-        return report_closed_issues(entries)
+        return report_closed_issues(entries, allow_entries)
 
     title = os.environ.get("PR_TITLE", "")
     body = os.environ.get("PR_BODY", "")
@@ -408,10 +539,24 @@ def main(argv: list[str] | None = None) -> int:
     for triple, source, line in refs:
         closing.setdefault((triple[0].lower(), triple[1].lower(), triple[2]), (source, line))
 
-    offenders = [(e, closing[e.key]) for e in entries if e.key in closing]
+    offenders = [(e, closing[e.key]) for e in entries + allow_entries if e.key in closing]
 
     if offenders:
         for entry, (source, line) in offenders:
+            if isinstance(entry, AllowlistEntry):
+                print(
+                    f"::error file=tests/expectations/{entry.source_file}::This PR closes "
+                    f"{entry.owner}/{entry.repo}#{entry.number} (from the PR {source}: "
+                    f"\"{line}\"), but tests/expectations/{entry.source_file} still declares "
+                    f"member '{entry.member}' as a difference citing that same issue. An "
+                    "allowlist entry's 'issue' is what makes it a TRACKED gap rather than a "
+                    "permanent exemption (#3975), so closing the issue while the entry stands "
+                    "converts one into the other silently. Settle it here: delete the entry if "
+                    "this fix removes the difference, re-target it at the OPEN issue tracking "
+                    "what remains, rewrite the reason as outOfScope/oracleLimitation if it is "
+                    "genuinely permanent, or drop the closing reference.",
+                    file=sys.stderr)
+                continue
             print(
                 f"::error file=tests/expectations/{entry.source_file}::This PR closes "
                 f"{entry.owner}/{entry.repo}#{entry.number} (from the PR {source}: "
@@ -427,13 +572,13 @@ def main(argv: list[str] | None = None) -> int:
                 "PR does not actually close the issue.",
                 file=sys.stderr)
         one = len(offenders) == 1
-        print(f"::error::{len(offenders)} expect-fail-known-gap entr{'y' if one else 'ies'} "
+        print(f"::error::{len(offenders)} expectation entr{'y' if one else 'ies'} "
               f"link{'s' if one else ''} an issue this PR closes.", file=sys.stderr)
         return 1
 
-    print(f"Checked {len(entries)} expect-fail-known-gap entr"
-          f"{'y' if len(entries) == 1 else 'ies'} in {manifest_dir} against "
-          f"{len(closing)} closing reference(s) declared by this PR: no overlap.")
+    print(f"Checked {len(entries)} expect-fail-known-gap and {len(allow_entries)} allowlist "
+          f"entr{'y' if len(entries) + len(allow_entries) == 1 else 'ies'} in {manifest_dir} "
+          f"against {len(closing)} closing reference(s) declared by this PR: no overlap.")
     return 0
 
 

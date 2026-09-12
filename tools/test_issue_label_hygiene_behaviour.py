@@ -226,6 +226,17 @@ rc, out, calls = release("Part of #42", open_issue, head="feature/some-work")
 check("a branch outside the agent/<id>/issue-N shape relabels nothing",
       rc == 0 and calls == [], f"{calls} {out}")
 
+# #3792 / #3934: the gate accepts both of these, so the merge-time reader must too.
+rc, out, calls = release("Part of #42", open_issue, head="agent/fbk-2/issue-42-codeunit")
+check("a suffixed agent/<id>/issue-N-<step> branch still releases issue N",
+      rc == 0 and len([c for c in calls if c.startswith("issue edit 42 ")]) == 1,
+      f"{calls} {out}")
+
+rc, out, calls = release("Part of #42 — the first half; the rest stays open.", open_issue)
+check("a Part of line with prose after the number releases the issue",
+      rc == 0 and len([c for c in calls if c.startswith("issue edit 42 ")]) == 1,
+      f"{calls} {out}")
+
 rc, out, calls = release("Closes #123\n\nThis is part of #42, landing half.", open_issue)
 check("an INLINE part-of mention is not a declaration and relabels nothing",
       rc == 0 and not [c for c in calls if c.startswith("issue edit")], f"{calls} {out}")

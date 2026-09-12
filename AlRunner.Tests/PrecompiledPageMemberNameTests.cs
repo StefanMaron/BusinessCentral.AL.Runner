@@ -73,6 +73,14 @@ public class EmittedIdentifierTests
     // The keyword check runs on the MANGLED result — "New Item" mangles to New_Item, which is
     // no keyword, so no prefix.
     [InlineData("New Item", "New_Item")]
+    // Every name BC's compiler allows on a systemaction (AL0810: PromptDialog and
+    // ConfigurationDialog) mangles to itself. RecordPatches.ParseMemberNames relies on this to
+    // leave systemactions out of its walk (#2200); a new allowed name that mangles breaks that.
+    [InlineData("Attach", "Attach")]
+    [InlineData("Cancel", "Cancel")]
+    [InlineData("Generate", "Generate")]
+    [InlineData("Ok", "Ok")]
+    [InlineData("Regenerate", "Regenerate")]
     public void EmittedIdentifier_MatchesBcsOwnEmitter(string declaredName, string expected)
         => Assert.Equal(expected, RunnerPageInstance.EmittedIdentifier(declaredName));
 }

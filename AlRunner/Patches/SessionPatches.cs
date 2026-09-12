@@ -330,16 +330,6 @@ public static partial class BcRuntime
     private static int _alRunnerSessionCounter;
 
     /// <summary>
-    /// In-scope (§3.9) replacement entry point for every ALSession.ALStartSession overload.
-    /// The real implementation enqueues an async session via NavCurrentThread/Diagnostics
-    /// which NRE on the skeleton runtime. Our model is "inline-synchronous execution":
-    /// look up the codeunit by id, instantiate it under the skeleton tree-root, invoke
-    /// OnRun once, then return true with a fresh non-zero session id. Failures under
-    /// DataError.TrapError swallow the exception and return false (matching BC semantics
-    /// where a trapped StartSession returns false without rethrowing).
-    /// </summary>
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    /// <summary>
     /// BC's refusal for <c>StartSession</c> called inside a test codeunit under any isolation mode
     /// other than <c>Disabled</c> (#2805), carried as <c>NavNCLDialogException</c> — the AL
     /// <c>Error()</c> carrier, so AL <c>asserterror</c> traps it and <c>GetLastErrorText</c>
@@ -371,6 +361,120 @@ public static partial class BcRuntime
             if (ctor != null) return (System.Exception)ctor.Invoke(new object[] { msg });
         }
         return new System.InvalidOperationException(msg);
+    }
+
+    /// <summary>
+    /// BC's validation arm for <c>StartSession</c>'s timeout argument (#3291): an effective
+    /// timeout above <see cref="int.MaxValue"/> milliseconds raises
+    /// <c>NavNCLArgumentOutOfRangeException</c> carrying BC's own message.
+    ///
+    /// <para>AUDIT — observably equivalent because the exception TYPE, the boundary and the text
+    /// are all BC's rather than approximations of it. The type is loaded from the shipped
+    /// <c>Microsoft.Dynamics.Nav.Types</c> and the message from
+    /// <c>Lang.TooLargeTimeoutALStartSession</c> in the shipped
+    /// <c>Microsoft.Dynamics.Nav.Language</c>, so neither can drift from what a service tier
+    /// says. Citation: <c>ALSession.ALStartSessionAsyncImpl</c>, whose body compares
+    /// <c>timeoutTs.TotalMilliseconds &gt; 2147483647.0</c>; issue #3291.</para>
+    ///
+    /// <para>TRAP — the comparison is strictly greater-than, so <c>int.MaxValue</c> itself is
+    /// legal; and <paramref name="timeoutMs"/> null means "no argument supplied", which BC
+    /// null-coalesces to <c>NavSession.DefaultBackgroundTimeout</c> — far below the cap, so it
+    /// can never raise. Both directions are pinned in
+    /// <c>AlRunner.Tests/StartSessionTimeoutValidationTests.cs</c>.</para>
+    ///
+    /// <para>TRAP — this throw sits where BC's does, INSIDE the try, so <c>TrapError</c> turns it
+    /// into <c>false</c>. That depends on the exception deriving from <c>NavBaseException</c>,
+    /// which it does; it is the opposite of the #2805 isolation guard, which precedes the try and
+    /// is deliberately not trappable. Do not move this call outside the try.</para>
+    /// </summary>
+    public static void ValidateStartSessionTimeoutMs(long? timeoutMs)
+    {
+        // No argument supplied → BC uses DefaultBackgroundTimeout, which is below the cap.
+        if (timeoutMs == null) return;
+        if (timeoutMs.Value <= int.MaxValue) return;
+
+        throw MakeStartSessionTimeoutTooLargeException(timeoutMs.Value);
+    }
+
+    /// <summary>
+    /// Builds BC's <c>NavNCLArgumentOutOfRangeException</c> for an oversized
+    /// <c>StartSession</c> timeout, preferring Microsoft's own resource string and exception
+    /// type over any copy of them (<c>precompiled-dll-respect.md</c> § "Reuse before you
+    /// re-implement").
+    /// </summary>
+    internal static System.Exception MakeStartSessionTimeoutTooLargeException(long timeoutMs)
+    {
+        // BC formats with {0} = the offered timeout in ms and {1} = int.MaxValue, using
+        // CurrentCulture. TotalMilliseconds is a double in BC, and a whole-millisecond value
+        // formats identically either way for every value that can reach here.
+        var format = TooLargeTimeoutFormat
+            // Fallback text, used only if the shipped resource cannot be read. Byte-identical
+            // to Lang.TooLargeTimeoutALStartSession as measured on the two distinct
+            // Language.dll binaries in the artifact set (27.0/27.5 and 28.4).
+            ?? "The specified timeout of {0} ms is longer than the maximum supported timeout "
+               + "in StartSession, which is {1} ms.";
+
+        var msg = string.Format(CultureInfo.CurrentCulture, format, timeoutMs, int.MaxValue);
+
+        var t = System.Type.GetType(
+            "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLArgumentOutOfRangeException, "
+            + "Microsoft.Dynamics.Nav.Types");
+        if (t != null)
+        {
+            // BC uses the (PrivacyClassification, string) overload. Resolve the enum by name so
+            // this does not need a compile-time reference to the classification type.
+            var pc = System.Type.GetType(
+                "Microsoft.Dynamics.Nav.Types.PrivacyClassification, Microsoft.Dynamics.Nav.Types");
+            if (pc != null)
+            {
+                var ctor = t.GetConstructor(new[] { pc, typeof(string) });
+                if (ctor != null)
+                {
+                    object? systemMetadata = null;
+                    try { systemMetadata = System.Enum.Parse(pc, "SystemMetadata"); }
+                    catch { /* unexpected enum shape → fall through to the (string) ctor */ }
+                    if (systemMetadata != null)
+                        return (System.Exception)ctor.Invoke(new[] { systemMetadata, (object)msg });
+                }
+            }
+
+            var strCtor = t.GetConstructor(new[] { typeof(string) });
+            if (strCtor != null)
+                return (System.Exception)strCtor.Invoke(new object[] { msg });
+        }
+
+        return new System.ArgumentOutOfRangeException("timeout", msg);
+    }
+
+    private static string? _tooLargeTimeoutFormat;
+    private static bool _tooLargeTimeoutFormatResolved;
+
+    /// <summary>
+    /// <c>Lang.TooLargeTimeoutALStartSession</c>, read from the shipped
+    /// <c>Microsoft.Dynamics.Nav.Language</c> assembly. Null when it cannot be resolved, which
+    /// the caller answers with the measured literal rather than a different sentence.
+    /// </summary>
+    private static string? TooLargeTimeoutFormat
+    {
+        get
+        {
+            if (_tooLargeTimeoutFormatResolved) return _tooLargeTimeoutFormat;
+            _tooLargeTimeoutFormatResolved = true;
+            try
+            {
+                var lang = System.Type.GetType(
+                    "Microsoft.Dynamics.Nav.Common.Language.Lang, Microsoft.Dynamics.Nav.Language");
+                var p = lang?.GetProperty(
+                    "TooLargeTimeoutALStartSession",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                _tooLargeTimeoutFormat = p?.GetValue(null) as string;
+            }
+            catch
+            {
+                _tooLargeTimeoutFormat = null;
+            }
+            return _tooLargeTimeoutFormat;
+        }
     }
 
     /// <summary>
@@ -465,14 +569,34 @@ public static partial class BcRuntime
         Microsoft.Dynamics.Nav.Runtime.NavDuration timeout,
         object invokeRunAsync)
         => new System.Threading.Tasks.ValueTask<bool>(
-            AlRunnerStartSession(errorLevel, sessionId, objectId, companyName, record));
+            AlRunnerStartSession(
+                errorLevel, sessionId, objectId, companyName, record, TimeoutMs(timeout)));
 
+    /// <summary>
+    /// BC's <c>timeout?.Value</c>: the argument's milliseconds, or null when no timeout was
+    /// supplied. <c>NavDuration</c> is a reference type on this seam, so a null argument is how
+    /// an omitted AL parameter arrives.
+    /// </summary>
+    private static long? TimeoutMs(Microsoft.Dynamics.Nav.Runtime.NavDuration? timeout)
+        => timeout?.Value;
+
+    /// <summary>
+    /// In-scope (§3.9) replacement entry point for every ALSession.ALStartSession overload.
+    /// The real implementation enqueues an async session via NavCurrentThread/Diagnostics
+    /// which NRE on the skeleton runtime. Our model is "inline-synchronous execution":
+    /// look up the codeunit by id, instantiate it under the skeleton tree-root, invoke
+    /// OnRun once, then return true with a fresh non-zero session id. Failures under
+    /// DataError.TrapError swallow the exception and return false (matching BC semantics
+    /// where a trapped StartSession returns false without rethrowing).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.NoInlining)]
     public static bool AlRunnerStartSession(
         Microsoft.Dynamics.Nav.Types.DataError errorLevel,
         Microsoft.Dynamics.Nav.Runtime.ByRef<int> sessionId,
         int objectId,
         string? companyName,
-        Microsoft.Dynamics.Nav.Runtime.NavRecord? record)
+        Microsoft.Dynamics.Nav.Runtime.NavRecord? record,
+        long? timeoutMs = null)
     {
         // #2805 — BC's TestIsolation guard, and it goes FIRST, outside the try, exactly where BC
         // puts it. Decompiled from ALSession.ALStartSessionAsyncImpl (bc281):
@@ -510,6 +634,12 @@ public static partial class BcRuntime
         bool trap = errorLevel == Microsoft.Dynamics.Nav.Types.DataError.TrapError;
         try
         {
+            // #3291 — BC's timeout validation, and its position is load-bearing in two ways.
+            // It is INSIDE the try, so TrapError turns it into false exactly as BC does; and it
+            // precedes the session-id allocation below, so a refused call leaves the caller's
+            // by-ref untouched, which is the same ordering the #2805 guard above depends on.
+            ValidateStartSessionTimeoutMs(timeoutMs);
+
             var cuType = FindCodeunitTypePublic(objectId);
             if (cuType == null)
             {

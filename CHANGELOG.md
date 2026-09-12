@@ -19,6 +19,8 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **guard:** the metadata-equivalence allowlist's cited issues must be open
+- **session:** StartSession validates its timeout argument as BC does
 - **ci:** make the Part-of release job print its decision and stop racing add against remove
 - **page-metadata:** decode the page inherent-permission mask case-sensitively, so a lowercase letter answers the indirect bit
 - **metadata:** derive the three MetaReport properties SymbolReference.json states
@@ -136,6 +138,8 @@ All notable changes to this project are documented here. Format based on
 - **integer-vt:** judge a half-open range against the base window, not the envelope-widened span
 
 ### Documentation
+- **scope:** record MockAzureKeyVaultSecretProvider as an unobtainable DotNet type
+- 87879acb rewrote 15 rules, not 14
 - drop the 3 KB rule-size figure; the shape is the bar
 - **skill:** arming does not require a green verdict
 - **rules:** origin/main is a local ref, and a stale one stages merges as deletions
@@ -185,6 +189,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **testpage:** pin the RunPageLink count-mismatch refusal in LinksFromSymbols
 - **metadata:** pin what the codeunit method table is made of, and why the symbol file cannot supply it
 - **enum-sidecar:** drive the SaveSidecar/LoadSidecar round trip for Extensible and both implementation fallbacks
 - **compiler:** drive ReadEnumExtensible and ReadEnumImplementationFallback from a compiled AL enum
