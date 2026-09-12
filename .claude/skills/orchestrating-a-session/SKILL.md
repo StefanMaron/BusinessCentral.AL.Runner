@@ -146,6 +146,15 @@ at that instant.
 gh pr merge <N> --repo <owner>/<repo> --squash --auto
 ```
 
+**Arming does NOT require a green verdict, and a brief that demands one is wrong.** `--auto` exists
+for the not-yet-green case: it holds the PR at `BLOCKED` until every required check passes, and a
+red aggregate means no merge. So `ci-wait.py` exit **2** — checks still running, nothing failing —
+is a perfectly good moment to arm, and insisting on exit 0 forces a second round trip in which the
+verdict goes stale, which is the cost this whole section exists to avoid. Exit **0 or 2** arms;
+exit **1**, **3** or **4** does not. Measured on PR #3959, where a reviewer armed at exit 2, said
+so prominently rather than quietly, and was right — the coordinator's brief had over-specified the
+condition, not the reviewer's judgement (#3961).
+
 Arm **only** when all of these hold. Any one missing means report it to the coordinator instead:
 
 - **The PR is on a branch this loop owns.** Check the **branch prefix**, never the author field
