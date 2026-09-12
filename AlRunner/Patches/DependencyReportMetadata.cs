@@ -259,6 +259,7 @@ public static partial class RecordPatches
             }
             if (!string.IsNullOrEmpty(report.WordMergeDataItem))
                 w.WriteElementString("WordMergeDataItem", report.WordMergeDataItem);
+            WriteDefaultLayout(w, report);
             w.WriteElementString("MetadataVersion", "130000");
             w.WriteElementString("ID", report.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
             w.WriteElementString("Name", report.Name);
@@ -266,6 +267,19 @@ public static partial class RecordPatches
 
             foreach (var di in report.DataItems)
                 WriteDataItem(w, di, sourceExprByColumn);
+
+            if (report.Layouts is { Count: > 0 })
+            {
+                w.WriteStartElement("Layouts");
+                foreach (var layout in report.Layouts)
+                {
+                    w.WriteStartElement("Layout");
+                    w.WriteElementString("Name", layout.Name);
+                    w.WriteElementString("LayoutFriendlyName", layout.Name);
+                    w.WriteEndElement();
+                }
+                w.WriteEndElement();
+            }
 
             w.WriteEndElement();
         }
@@ -287,6 +301,30 @@ public static partial class RecordPatches
     /// element BC deserializes into a whole MetaPageDefinition. That is the other half of
     /// #3808 and stays open — see docs/metadata-equivalence.md#reports.</para>
     /// </summary>
+    /// <summary>
+    /// The default-layout pair BC's <c>DefaultLayoutInternal</c> reads (#2297), in the element
+    /// shape BC's own emit writes for a source-compiled report: rendering syntax gives
+    /// <c>DefaultLayoutName</c> + <c>DefaultRenderingLayoutType</c> (the Type of the layout that
+    /// name selects), legacy syntax gives <c>DefaultLayout</c>. Absent either way leaves BC's
+    /// own RDLC fallback, which is what it answers for a report stating neither.
+    /// Trap: legacy syntax also gets a compiler-derived DefaultLayoutName (the layout FILE
+    /// path); the symbol file does not state it, so it is not written here.
+    /// </summary>
+    private static void WriteDefaultLayout(XmlWriter w, BcAppSymbolCache.ReportSymbol report)
+    {
+        if (!string.IsNullOrEmpty(report.DefaultRenderingLayout))
+        {
+            var chosen = report.Layouts?.FirstOrDefault(l =>
+                string.Equals(l.Name, report.DefaultRenderingLayout, StringComparison.OrdinalIgnoreCase));
+            w.WriteElementString("DefaultLayoutName", report.DefaultRenderingLayout);
+            if (!string.IsNullOrEmpty(chosen?.Type))
+                w.WriteElementString("DefaultRenderingLayoutType", chosen.Type);
+            return;
+        }
+        if (!string.IsNullOrEmpty(report.LegacyDefaultLayout))
+            w.WriteElementString("DefaultLayout", report.LegacyDefaultLayout);
+    }
+
     private static void WriteDerivableReportProperties(XmlWriter w, BcAppSymbolCache.ReportSymbol report)
     {
         if (!string.IsNullOrEmpty(report.ALNamespace))
