@@ -393,6 +393,47 @@ What still holds, and is BC's rule rather than the runner's:
 `docs/scope.md` §3.14 listed the AL `DotNet` surface as out of scope for the same stale
 reason; it is corrected alongside this section.
 
+### DotNet types Microsoft ships in no artifact — permanent `AL0185` drops
+
+<a id="unobtainable-dotnet-types"></a>
+
+The section above covers a `DotNet` type that fails to *resolve*. This one covers a narrower
+and permanent case: a type Microsoft's own AL references that is present in **no shipped
+artifact at all**, so there is nothing to provision and no host on which it resolves.
+
+| AL type | Referenced by | Status |
+|---|---|---|
+| `MockAzureKeyVaultSecretProvider` | Microsoft's `Tests-TestLibraries` (`Library - Azure KV Mock Mgmt.`), and `Tests-Integration`, `Tests-Misc` directly | Ships nowhere; permanently dropped |
+
+**Measured** (#3890), on the full artifact tree rather than its top level:
+
+- `MockAzureKeyVaultSecretProvider` appears in **0** of the **501** DLLs of
+  `28.4.53241.54407`, and 0 of 501 in `28.1.49838.54308` — two independent binary sets.
+- Positive control, because a zero from a pattern one chose is not evidence:
+  `FileExtensionContentTypeProvider` returns **3** assemblies in each. The instrument works.
+- The 108 shipped `.app` packages embed **no** DLLs at all, so it is not hiding in one.
+- Only two test-helper assemblies ship — `Microsoft.Dynamics.Nav.Client.TestPageClient.dll`
+  and `Microsoft.Dynamics.Nav.PermissionTestHelper.dll` — and neither carries it.
+
+**Why it cannot be staged.** `Ncl.dll` declares the *interface*
+`Microsoft.Dynamics.Nav.Runtime.Encryption.IAzureKeyVaultSecretProvider`, and **no** type whose
+name contains `Mock` exists anywhere in it (checked on 28.4 and 27.5, which are different
+binaries). The implementation is supplied by Microsoft's own test host, not by the artifacts.
+
+The decisive detail is in the AL itself: `Tests-TestLibraries/dotnet.al` declares
+`PermissionTestHelper` against a real shipped assembly — and that one resolves — while
+**nothing anywhere declares an `assembly(...)` block for the mock**. A `DotNet` variable with
+no declaration block is exactly what `AL0185` reports, so this is not a missing reference pack
+the runner could add; the reference does not exist to be satisfied.
+
+**What the runner does.** The object is dropped, and `DependencyLoader` reports the drop at
+default verbosity and again in the run summary, on cold runs and cache hits alike (#2247,
+#3882), naming this record so the reader can stop looking. It does **not** refuse the load:
+`Tests-TestLibraries` provides 202 of its 203 objects, the survivors are what the provisioning
+chain depends on, and refusing would take down work that passes today — the same over-refusal
+#3476 removed from the bundle path. AL that actually touches the dropped codeunit still fails
+loudly, with `NavNCLMissingMethodException`.
+
 ### `System.Drawing` — Windows-only in .NET 8, so it never runs on a Linux or macOS host
 
 <a id="system-drawing"></a>
