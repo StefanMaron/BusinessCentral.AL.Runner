@@ -91,6 +91,20 @@ symbol you edited is the one the test path calls before concluding the test is w
 is red within minutes; one that passes when it should fail is caught only if somebody looks,
 and until then it reads as coverage while protecting nothing.
 
+**Choose the mutation to test a property, not to produce a red.** A mutation that reds *everything*
+proves coverage exists; one that reds *exactly the right subset* proves the tests discriminate — and
+only the second is worth anything on a coverage PR. Measured on PR #3947, where a reviewer replaced
+both of the author's mutations and each replacement established something the original could not:
+returning `null` from a `bool?` reader reds all three tests, while **inverting** the boolean preserves
+`null`, so the absent-case test correctly stays GREEN — which is what proves that test is pinned to
+`null` rather than riding along. And `? null : null` on a reader reds its tests whatever the fixture
+holds, while making the reader **read the wrong one of two properties** produced
+`Expected: [90502] / Actual: [90501]`, validating that the fixture's two ids are actually distinct —
+a fixture with one id repeated would have passed the author's mutation and looked covered.
+
+**Corollary: re-running the author's mutation is the weakest check a reviewer can make.** It tests
+the same hypothesis by the same route. Pick your own.
+
 A required step, not a tool: no framework, no CI job. One rebuild.
 
 ## Sister rules
