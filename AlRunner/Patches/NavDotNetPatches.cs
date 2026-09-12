@@ -52,8 +52,8 @@ public static class NavDotNetPatches
     /// exceptions still reach BC's catch blocks as TargetInvocationException.
     /// Observably equivalent: <c>NavUserAccountHelper.IsUserSuperInAllCompanies()</c> reads the null
     /// <c>Session.Permissions</c>; the answer is the decision BC's
-    /// <c>NavUserPermissions.IsSuperForAllCompanies</c> makes, from the same Access Control rows
-    /// (corpus al-language-onprem codeunit 61203).
+    /// <c>NavUserPermissions.IsSuperForAllCompanies</c> makes (bc284 decompile), from the same Access
+    /// Control rows. No corpus verdict: the corpus tier cannot compile DotNet (#3174, corpus PR 330).
     /// </summary>
     public static object? InvokeReflectedMember(System.Reflection.MethodBase method, object? target, object?[]? arguments)
     {
