@@ -50,8 +50,12 @@ a governance tool lands before the prose that cites it; and the incident that pr
 written to `docs/incidents/<rule>.md`, never into the rule. What stays in the rule is claim +
 citation + trap — what to do, what settled it, and the thing a later editor gets wrong
 (`.claude/rules/loud-failures.md` § "The justification is a claim plus a citation, not the
-derivation behind it"). A new rule is done when `.claude/rules/<name>.md` is under 3 KB and its
-incidents file is present.
+derivation behind it"). A new rule is done when it carries that shape — claim, citation, trap — with
+its derivation moved out and its incidents file present. **Keep it short, and treat length as a
+symptom rather than a bar**: a rule that has grown long is usually carrying a derivation that
+belongs in `docs/incidents/`, so move that and the length follows. There is deliberately no byte
+figure here; the one this sentence used to carry was met by 2 of the 14 rules its own introducing
+commit rewrote (#3952), so it cost an argument per rule and settled nothing.
 
 ## Code navigation: use these before grepping
 
