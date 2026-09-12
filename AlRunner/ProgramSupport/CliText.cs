@@ -671,7 +671,9 @@ internal static partial class ProgramSupport
         w.WriteLine("                               (docs/partial-company-initialization.md)");
         w.WriteLine("                            3  a bundle could not compile");
         w.WriteLine("                            4  --count-baseline: a suite's test or app-group count did");
-        w.WriteLine("                               not exactly match its declared baseline (see --count-baseline)");
+        w.WriteLine("                               not exactly match its declared baseline (see --count-baseline),");
+        w.WriteLine("                               or under --count-baseline-require-all a declared suite");
+        w.WriteLine("                               produced no bucket");
         w.WriteLine("                            5  --expectations-require-match: an expectations entry matched");
         w.WriteLine("                               no test in this run");
         w.WriteLine("  --no-strict-exit        Always exit 0 regardless of test outcome, so callers can");
@@ -724,6 +726,14 @@ internal static partial class ProgramSupport
         w.WriteLine("                          this never auto-activates. A mismatch in EITHER direction");
         w.WriteLine("                          (growth or drop) fails and prints a diagnostic naming");
         w.WriteLine("                          expected vs actual — bump the baseline in the same PR.");
+        w.WriteLine("  --count-baseline-require-all");
+        w.WriteLine("                          Also fail (exit 4) when a suite the --count-baseline file");
+        w.WriteLine("                          declares produced no bucket in this run, naming the key");
+        w.WriteLine("                          and the file (#3130). Without it such a suite is only");
+        w.WriteLine("                          reported as \"not checked\", because a baseline may name");
+        w.WriteLine("                          suites another invocation covers. Refused without");
+        w.WriteLine("                          --count-baseline, with a baseline declaring no suites, and");
+        w.WriteLine("                          with a --jobs fan-out (no one worker sees every suite).");
         w.WriteLine("  --count-out PATH        Write what this run actually ran, per suite, as JSON:");
         w.WriteLine("                          { \"bcVersion\": \"27.0\", \"suites\": { \"<suite>\":");
         w.WriteLine("                          { \"tests\": N, \"appGroups\": M } } }. The same tally");

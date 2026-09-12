@@ -451,6 +451,11 @@ bool expectationsRequireMatch = false;
 // xmlport-isolation CI leg passes --test against the SAME al-language root), so this
 // only ever activates when the caller explicitly opts in.
 string? countBaselinePath = null;
+// --count-baseline-require-all (#3130): every suite the baseline declares must produce a
+// bucket in this run. Opt-in for the same reason as --expectations-require-match: the flag
+// is public and a baseline may name suites another invocation covers, so only the caller
+// knows whether this invocation covers them all.
+bool countBaselineRequireAll = false;
 // `--count-out <path>` writes what this run actually ran, per suite, as JSON (#3675).
 // Independent of --count-baseline: it REPORTS a count rather than judging one, and CI
 // judges it against the last count a main run recorded, because the corpus is resolved per
@@ -559,6 +564,7 @@ for (int i = 0; i < args.Length; i++)
     if (args[i] == "--expectations" && i + 1 < args.Length) { expectationsDirArg = args[++i]; continue; }
     if (args[i] == "--expectations-require-match") { expectationsRequireMatch = true; continue; }
     if (args[i] == "--count-baseline" && i + 1 < args.Length) { countBaselinePath = args[++i]; continue; }
+    if (args[i] == "--count-baseline-require-all") { countBaselineRequireAll = true; continue; }
     if (args[i] == "--count-out" && i + 1 < args.Length) { countOutPath = args[++i]; continue; }
     // #1821: the SAME --cache value also becomes the isolation root for every other
     // cache CacheRoots redirects (compiled-deps/workspace-deps/ncl-cecil/bc-symbols/
@@ -973,6 +979,22 @@ if (countBaselinePath != null)
         Console.Error.WriteLine(ex.Message);
         return 2;
     }
+}
+// #3130: the flag asserts coverage of a declared set, so with no set to cover it could only
+// ever pass vacuously. Refused before any test runs.
+if (countBaselineRequireAll && countBaseline == null)
+{
+    Console.Error.WriteLine(
+        "--count-baseline-require-all was given with no --count-baseline manifest, so there is "
+        + "no declared suite to require. Pass --count-baseline PATH, or drop the flag.");
+    return 2;
+}
+if (countBaselineRequireAll && countBaseline!.Suites.Count == 0)
+{
+    Console.Error.WriteLine(
+        $"--count-baseline-require-all was given but {countBaselinePath} declares 0 suites, so "
+        + "the flag would pass without checking anything. Check the --count-baseline path.");
+    return 2;
 }
 // --output-json: stdout must be JSON-only, matching the documented contract ("Replace
 // the normal text output with per-test JSON on stdout") and the convention --server
@@ -1632,6 +1654,16 @@ if (jobs > 1 && bundles.Count > 1 && !watchMode && !serverMode && !dapMode)
             "--count-out cannot be combined with a --jobs fan-out: each shard would write its "
             + "own counts to the same path and the last shard to finish would be recorded as "
             + "the whole run. Run the counted invocation without --jobs, or drop --count-out.");
+        return 2;
+    }
+    // #3130: each worker sees only its shard's bundles, so no single process can decide that
+    // every declared suite produced a bucket; forwarding the flag would fail every shard.
+    if (countBaselineRequireAll)
+    {
+        Console.Error.WriteLine(
+            "--count-baseline-require-all cannot be combined with a --jobs fan-out: each worker "
+            + "sees only its own shard's suites, so every shard would report the others as missing. "
+            + "Run the covering invocation without --jobs, or drop the flag.");
         return 2;
     }
     return AlRunner.Infrastructure.ParallelFanOut.Run(bundles, args, jobs);
@@ -4236,6 +4268,37 @@ if (countBaseline != null)
                 drops = drops.Where(f => f.Metric != "appGroups").ToList();
                 growths = growths.Where(f => f.Metric != "appGroups").ToList();
             }
+        }
+
+        // #3130: a declared suite with no bucket was compared against nothing above. Without
+        // --count-baseline-require-all that stays a pass (another invocation may cover it),
+        // but never a silent one.
+        var missingSuites = AlRunner.Infrastructure.CountBaselineCheck.MissingSuites(countBaseline, actualBySuite);
+        if (missingSuites.Count > 0 && countBaselineRequireAll && carryIncomplete)
+        {
+            // A carried attempt was lost, so a suite it ran would read as missing here. The
+            // run already exits 2 for the lost attempt, so standing down suppresses nothing.
+            Console.Error.WriteLine(
+                "[count-baseline] suite coverage check skipped: a carried attempt file could not be "
+                + "read, so a suite absent from this run's results may simply have been lost.");
+        }
+        else if (missingSuites.Count > 0 && countBaselineRequireAll)
+        {
+            countBaselineMismatch = true;
+            var ran = actualBySuite.Count == 0 ? "none" : string.Join(", ", actualBySuite.Keys.OrderBy(k => k, StringComparer.Ordinal));
+            foreach (var m in missingSuites)
+                Console.Error.WriteLine(
+                    $"[count-baseline] MISSING: suite '{m}' is declared in {countBaselinePath} but this run "
+                    + $"produced no bucket for it (suites that ran: {ran}). Either the suite stopped being "
+                    + "discovered, it was not passed as a bundle root, or the key is misspelled.");
+        }
+        else
+        {
+            foreach (var m in missingSuites)
+                Console.Error.WriteLine(
+                    $"[count-baseline] not checked: suite '{m}' is declared in {countBaselinePath} but this "
+                    + "run produced no bucket for it. Pass --count-baseline-require-all where this "
+                    + "invocation must cover every declared suite.");
         }
 
         // Growth is also a hard failure, not just a notice — see the header comment

@@ -296,9 +296,9 @@ public sealed class CountBaselineManifest
 /// growths (actual above expected) — purely for message wording ("shrank" vs "grew").
 /// BOTH are mismatches that must fail the run: see the header comment on why growth
 /// is not exempted. A suite the manifest does not mention imposes no expectation; a
-/// suite the manifest mentions but this run did not touch is silently skipped (a
-/// baseline written for CI's two legs must not fire when someone points the runner
-/// at an unrelated bundle).
+/// suite the manifest mentions but this run did not touch is skipped by <see cref="Evaluate"/>
+/// (a baseline file may name suites another invocation covers) and reported by
+/// <see cref="MissingSuites"/>, which --count-baseline-require-all turns into a failure (#3130).
 /// </summary>
 public static class CountBaselineCheck
 {
@@ -322,6 +322,19 @@ public static class CountBaselineCheck
 
         return (drops, growths);
     }
+
+    /// <summary>
+    /// Declared suite keys this run produced no bucket for, sorted ordinally. A key here was
+    /// compared against nothing by <see cref="Evaluate"/>: either another invocation covers it,
+    /// or the suite vanished / the key is misspelled — only the caller knows which (#3130).
+    /// </summary>
+    public static IReadOnlyList<string> MissingSuites(
+        CountBaselineManifest manifest,
+        IReadOnlyDictionary<string, SuiteCountActual> actualBySuite) =>
+        manifest.Suites.Keys
+            .Where(suite => !actualBySuite.ContainsKey(suite))
+            .OrderBy(suite => suite, StringComparer.Ordinal)
+            .ToList();
 
     private static void Compare(string suite, string metric, int expected, int actual, string? bcVersionKey,
         List<CountBaselineFinding> drops, List<CountBaselineFinding> growths)
