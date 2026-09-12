@@ -1520,6 +1520,67 @@ value, the runner's. It is the working specification for the reader work.
 
 `AL_RUNNER_METADATA_GROUND_TRUTH` overrides where bundles are read from and written to.
 
+<a id="allowlist-issue-hygiene"></a>
+## An entry's `issue` must stay OPEN, and a guard now says so
+
+An allowlist entry carries exactly one KIND of reason, and `issue` is the kind that means
+*tracked defect, expected to go away*. The other three — `outOfScope`, `oracleLimitation`,
+`cannotExpress` — mean the difference is permanent and correct. So a closed `issue` is not a
+small inaccuracy: it silently converts the first kind into the second, with the entry still
+reading like tracked work.
+
+Nothing caught that until #3975. `MetadataEquivalenceHarnessTests.No_allowlist_entry_has_gone_stale`
+exists and works, and it answers a **different** question: whether the declared difference still
+*occurs*. An entry whose difference is alive and whose issue is dead is, to that guard, perfectly
+healthy — which is why the gap was invisible while a green tick sat next to it.
+
+Measured on 2026-09-12: 193 of the file's 270 entries cite an `issue`, across 9 distinct issues,
+of which **four were closed, accounting for 44 entries** — #3784 (33), #3798 (4), #3806 (4),
+#3807 (3).
+
+### Where the check lives
+
+`.github/scripts/check_expectation_gap_issues.py`, which already did this for
+`tests/expectations/known-gaps-*.json` and could not see the allowlist: it lists the manifest
+directory **non-recursively**, and the allowlist is one directory down with a different schema.
+Extending that script rather than writing a second one means both manifests get the same two
+halves, already placed:
+
+| half | workflow | gates? |
+|---|---|---|
+| this PR closes issue N and an entry cites N | `pr-gate.yml` | yes (pending-required) — offline, deterministic |
+| an entry cites an already-closed issue | `pr-check.yml --report-closed-issues` | **no**, advisory on purpose |
+
+The sweep is advisory because it reads `api.github.com`, and `ci-verdicts.md` is explicit that a
+required context which can go red on a third-party outage blocks every merge in the repository
+for something no author can fix. The second reason is #2858's: a closed issue does not by itself
+prove an entry is stale — it can close as a duplicate, or with the gap still open — so this is a
+lead, never a verdict.
+
+### The three states
+
+`load_allowlist_entries()` separates the ways the *measurement* can fail from the ways the
+subject can be broken (`.claude/rules/guards-need-a-third-state.md`):
+
+| the file / entry | verdict | why |
+|---|---|---|
+| allowlist absent | **pass** | a checkout predating the metadata harness legitimately has none |
+| present, unreadable | **exit 2** | folding this into the row above puts the broken case back on the exit-0 path |
+| entry cites no `issue` | **pass** | a different, valid reason kind — see below |
+| `issue` present but unresolvable | **exit 2** | a citation nothing can resolve tracks nothing |
+| issue state unreadable | **warning, rc 0** | not "open", and not a failure of the allowlist either |
+
+**A missing `issue` is legitimate, and that was established by reading the file rather than
+assumed**: 77 of the 270 entries carry none, and every one of them carries `outOfScope` or
+`oracleLimitation` instead. A guard failing on absence would be a false red on 77 correct
+entries.
+
+### The 44 are not fixed by this
+
+Deliberately. Each needs a live issue, or a reason rewritten to say why it is a permanent
+exemption — judgement per cluster, not a sweep. The guard lands first so the drift does not
+resume the day after they are fixed.
+
 <a id="a-single-unresolved-dotnet-reference-costs-the-whole-app"></a>
 ## A single unresolved .NET reference costs the whole app
 
