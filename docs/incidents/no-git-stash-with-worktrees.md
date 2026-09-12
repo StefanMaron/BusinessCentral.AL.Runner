@@ -39,3 +39,59 @@ pattern, including the outer tool shell that ran your command, so `pgrep -f <pat
 still matches and the loop still spins. `grep -v $$` is a substring filter besides — with `$$`
 of `123` it also drops PIDs `1234` and `4123`; `grep -vx` fixes that half and not the ancestor
 half. Use `$!` on a job you started, or `wait`. Better: don't poll, run it in the foreground.
+
+## `git reset --soft origin/main` against a stale ref (#3907)
+
+A coordinator was reworking a docs-only branch so its **commit message** would satisfy the
+closing-reference gate — the gate reads commit messages as well as the PR body, so rewording
+required rebuilding the commit. It ran `git reset --soft origin/main` and committed.
+
+PR #3902 had merged as `d9c6f8f0` minutes earlier. The local `origin/main` predated it, so the
+reset captured that merge's whole contribution as deletions:
+
+```
+12 files changed, 60 insertions(+), 1032 deletions(-)
+  AlRunner/Infrastructure/EngineClosure.cs           |  74 -----
+  AlRunner.Tests/PlatformAppsEntryGuardTests.cs      | 343 ---------------------
+  docs/provisioning.md                               | 149 ---------
+```
+
+on a branch whose only intended change was +22/-1 in one markdown file. It was force-pushed
+before being noticed, and caught only because `--stat` happened to be in the terminal afterwards.
+
+**Why the ordinary guards all passed.** `--force-with-lease` protects against someone else's
+push to your branch, and nobody had pushed — the branch content was the problem, not a race.
+`git status` was clean, because the deletions were committed rather than sitting in the working
+tree. And the same-tree check (`ci-verdicts.md` §5) passed.
+
+**A correction to the first version of this account**, which claimed preserving the old tree *is*
+the revert and that the same-tree check therefore confirms the defect. A reviewer built four
+scratch repositories (both stale-ref orderings × `--soft`/`--hard`) and could not reproduce a
+merge that reverts: `git merge-tree --write-tree` kept the other PR's files in all four. So the
+guards are **silent** on this class, not confirming — a milder and more defensible claim, and the
+one the evidence supports. The damage to the *diff* was real and is documented above; the claim
+about what would have landed on merge was not measured and should not have been stated.
+
+**The remedy line was also wrong**, and this is the more useful finding: the first version said to
+read `git diff --stat origin/main...HEAD`. Three dots diffs against the **merge base**, and a soft
+reset moves the merge base back with it, so re-added content reads as insertions and the command
+prints a clean `1 file changed`. Measured in the same four repositories and reproduced
+independently afterwards:
+
+```
+three-dot:  1 file changed, 1 insertion(+)
+two-dot:    2 files changed, 1 insertion(+), 50 deletions(-)
+```
+
+**Use two dots.** A rule's recipe is prose that no CI job executes — a docs-only PR is green by
+construction — so a recipe written from a correct memory of the *incident* can carry a command
+that does not detect it. Nothing here forces a rule's recipe to be run once, the way `tdd.md`
+forces a mutation.
+
+CI would probably have caught it, but as a red leg on a docs-only PR — where the natural reading
+is "unrelated flake", not "this PR deletes a merged feature".
+
+**What generalises:** `origin/main` is local state wearing a remote-looking name. Every
+command that treats it as authoritative — `reset`, `rebase`, `merge-tree`, `diff origin/main...`
+— inherits however stale it is, silently, and the staleness window is exactly as long as the
+interval since the last fetch.
