@@ -105,6 +105,18 @@ public sealed class DependencyLoader
     }
 
     /// <summary>
+    /// Every write that replaces or evicts an AppId's module retires the one it displaces, so an
+    /// AL object lookup cannot bind to it (#3974). The by-name registry alone misses a Tier-3
+    /// module whose replacement carries a different version in its name.
+    /// </summary>
+    private static void RetireGeneration(IReadOnlyList<Assembly> previous, IReadOnlyList<Assembly>? keep)
+    {
+        foreach (var old in previous)
+            if (keep == null || !keep.Contains(old))
+                BcRuntime.RetireAssemblyGeneration(old);
+    }
+
+    /// <summary>
     /// True when <paramref name="name"/>/<paramref name="publisher"/>/<paramref name="version"/>
     /// match the identity already cached for an AppId — i.e. this is the SAME app being
     /// resolved a second time (own-bundle + dependency, or two sibling bundles that both
@@ -125,18 +137,6 @@ public sealed class DependencyLoader
     /// a source suite) omits `publisher` — both paths, both fields missing at once. If you
     /// change either default, keep the other in sync or this comparison silently drifts.
     /// </summary>
-    /// <summary>
-    /// Every write that replaces or evicts an AppId's module retires the one it displaces, so an
-    /// AL object lookup cannot bind to it (#3974). The by-name registry alone misses a Tier-3
-    /// module whose replacement carries a different version in its name.
-    /// </summary>
-    private static void RetireGeneration(IReadOnlyList<Assembly> previous, IReadOnlyList<Assembly>? keep)
-    {
-        foreach (var old in previous)
-            if (keep == null || !keep.Contains(old))
-                BcRuntime.RetireAssemblyGeneration(old);
-    }
-
     private static bool IdentityMatches(LoadedAppEntry entry, string name, string publisher, string version)
         => string.Equals(entry.Name, name, StringComparison.OrdinalIgnoreCase)
         && string.Equals(entry.Publisher, publisher, StringComparison.OrdinalIgnoreCase)
