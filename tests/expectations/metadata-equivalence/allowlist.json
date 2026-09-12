@@ -35,10 +35,17 @@
     "would be a number nobody measured. Direction narrows categorically instead.",
     "",
     "Measured on BC 28.1.49838.53910 over Business Foundation (12 tables) and System Application",
-    "(138 tables): 67,344 differences across 65 members. #3568 removed six of them -- 688",
-    "differences on MetaKey.KeyName / Clustered / Unique / SumIndexFields, MetaKey.DebuggerDisplay",
-    "and FieldMetadataRelation.Name -- see docs/metadata-equivalence.md#keys. Per-member counts",
-    "and examples are on issue #3568.",
+    "(138 tables): 64,494 differences across 63 members. #3568 has removed twelve members so far.",
+    "Six were the KEY cluster -- 688 differences on MetaKey.KeyName / Clustered / Unique /",
+    "SumIndexFields, MetaKey.DebuggerDisplay and FieldMetadataRelation.Name, see",
+    "docs/metadata-equivalence.md#keys. Four more were the PLATFORM-FIELD cluster, 2,850",
+    "differences: MetaField.TestRelations (900) and MetaField.ValidateRelation (300) are now zero",
+    "and their entries are gone, while MetaField.AllowInCustomizations fell 755 -> 5 and",
+    "MetaField.ClrType 1,888 -> 988, both keeping an entry for their DECLARED-field half. The",
+    "runner appends BC's six platform fields itself and built them through MetaField's POSITIONAL",
+    "ctor, whose defaults differ from the XmlNode ctor BC's SystemFieldsHelper uses; it now copies",
+    "those four members off BC's own instance rather than restating them, so a BC version that",
+    "changes one moves both sides together. Per-member counts and examples are on issue #3568.",
     "",
     "PageDefinition was added to the comparison by #3782 step 1, and the 117 entries below are the",
     "result. Measured on BC 28.1.49838.53910 over Business Foundation and System Application (235",
@@ -240,7 +247,7 @@
     },
     {
       "member": "MetaField.ClrType",
-      "reason": "BC states the field's real CLR type and the runner states the empty string on all 1,888 fields. ClrType is not an XML attribute at all — BC derives it itself — and it is a PURE FUNCTION of Datatype, which the symbol file does carry and the runner already reads: measured over 988 observations, all 16 Datatypes map to exactly one ClrType each (BigInteger->System.Int64, GUID->System.Guid, Code/Text/DateFormula->System.String, Option/Integer->System.Int32, BLOB/RecordID->System.Byte[], Media->NSMediaWrapper, and so on). Recoverable with no app data.",
+      "reason": "BC states the field's real CLR type and the runner states the empty string on the 988 DECLARED fields. ClrType is not an XML attribute at all - BC derives it itself in MetaField's ctor via CommonTypeInformation.ResolveClrType(Type) - and it is a PURE FUNCTION of Datatype, which the symbol file does carry and the runner already reads: measured over 988 observations, all 16 Datatypes map to exactly one ClrType each (BigInteger->System.Int64, GUID->System.Guid, Code/Text/DateFormula->System.String, Option/Integer->System.Int32, BLOB/RecordID->System.Byte[], Media->NSMediaWrapper, and so on). Recoverable with no app data. The 900 PLATFORM-field occurrences are gone (#3568), copied from BC's own SystemFieldsHelper instance; ResolveClrType is public and static, so the declared fields are reachable the same way rather than by transcribing the table above.",
       "issue": 3568
     },
     {
@@ -325,13 +332,8 @@
       "issue": 3568
     },
     {
-      "member": "MetaField.TestRelations",
-      "reason": "BC answers true on a field with no declared TestTableRelation; the runner answers false. AL's real default, not the constructor's.",
-      "issue": 3568
-    },
-    {
       "member": "MetaField.AllowInCustomizations",
-      "reason": "BC answers AsReadOnly where the runner answers ToBeClassified. The symbol file states AllowInCustomizations only where it is non-default, so this is the AL default being wrong rather than a value being lost.",
+      "reason": "BC answers AsReadOnly where the runner answers ToBeClassified, on the 5 DECLARED fields whose AL states it. The symbol file states AllowInCustomizations only where it is non-default, so this is the AL default being wrong rather than a value being lost. The 750 PLATFORM-field occurrences are gone (#3568): MetaField's own ctor sets AsReadOnly from `Id >= 2000000000`, and the runner now copies the value off BC's own SystemFieldsHelper instance rather than leaving the positional ctor's ToBeClassified default standing.",
       "issue": 3568
     },
     {
@@ -339,11 +341,6 @@
       "reason": "BC gives SystemCreatedBy and SystemModifiedBy a TableRelation to User (2000000120); the runner gives them none. This is the difference already observable from plain AL as FieldRef.Relation() answering 0 — see #3549. Direction-scoped to BC-present / runner-absent; the runner inventing a relation BC does not have would be a different defect and is not covered.",
       "issue": 3568,
       "direction": "bc-only"
-    },
-    {
-      "member": "MetaField.ValidateRelation",
-      "reason": "BC answers false on the platform-added system fields; the runner answers true. Restricted to the fields BC adds, not to declared ones.",
-      "issue": 3568
     },
     {
       "member": "MetaKey.ALNamespace",

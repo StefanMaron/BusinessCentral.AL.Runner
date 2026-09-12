@@ -750,9 +750,51 @@ public static partial class RecordPatches
             // resolves to true), so only the explicit opt-out needs passing. It matters even
             // when the relation itself was not captured — the flag alone is what suppresses
             // rename propagation on a field whose relation a tableextension adds later.
+            //
+            // #3568 — on a PLATFORM field the declaration is Microsoft's, not the AL author's:
+            // BC's boilerplate states ValidateTableRelation="0" for SystemCreatedBy and
+            // SystemModifiedBy and "1" for the other four, so BC's own value wins over the
+            // ParsedField default. 300 differences across the 150 measured tables.
+            if (p.Name == "validateRelation"
+                && BcPlatformFieldValue(f.FieldId, "ValidateRelation") is bool bcValidateRelation)
+            {
+                args[i] = (bool?)bcValidateRelation;
+                continue;
+            }
             if (p.Name == "validateRelation" && !f.RelationValidate)
             {
                 args[i] = (bool?)false;
+                continue;
+            }
+            // #3568 — three further members BC computes for its own platform fields and the
+            // positional ctor defaults instead. Each is copied from BC's instance rather than
+            // restated, so a BC version that changes one moves both sides together:
+            //   testRelations          BC's shared attribute block states TestTableRelation="1"
+            //                          on all six; the ctor default is false (900 differences).
+            //   allowInCustomizations  MetaField's ctor sets AsReadOnly from `Id >= 2000000000`,
+            //                          leaving the id-0 timestamp ToBeClassified (750).
+            //   clrType                MetaField's ctor computes it via
+            //                          CommonTypeInformation.ResolveClrType(Type); the
+            //                          positional ctor defaults it to "" (750 of ClrType's 1,888).
+            // A field that is NOT one of the six is unaffected: BcPlatformFieldValue answers
+            // null and the argument falls through to the ctor default exactly as before.
+            if (p.Name == "testRelations"
+                && BcPlatformFieldValue(f.FieldId, "TestRelations") is bool bcTestRelations)
+            {
+                args[i] = bcTestRelations;
+                continue;
+            }
+            if (p.Name == "allowInCustomizations"
+                && BcPlatformFieldValue(f.FieldId, "AllowInCustomizations") is { } bcAllowInCustomizations)
+            {
+                args[i] = bcAllowInCustomizations;
+                continue;
+            }
+            if (p.Name == "clrType"
+                && BcPlatformFieldValue(f.FieldId, "ClrType") is string bcClrType
+                && !string.IsNullOrEmpty(bcClrType))
+            {
+                args[i] = bcClrType;
                 continue;
             }
             if (p.Name == "optionString" && !string.IsNullOrEmpty(f.OptionMembers))
@@ -1258,6 +1300,76 @@ public static partial class RecordPatches
         new ParsedField(2000000004, "SystemModifiedBy", "Guid",     0,
             Editable: false, DataClassificationName: "EndUserPseudonymousIdentifiers"),
     };
+
+    /// <summary>
+    /// BC's OWN six platform <c>MetaField</c>s, keyed by field id, read once out of
+    /// <c>SystemFieldsHelper</c> in <c>Microsoft.Dynamics.Nav.Types</c>.
+    ///
+    /// <para>These fields are Microsoft's, not this runner's, so their metadata is read from
+    /// Microsoft rather than restated here (precompiled-dll-respect.md, "reuse before you
+    /// re-implement"). <c>SystemFieldsHelper</c> builds them by parsing boilerplate XML through
+    /// <c>MetaField(XmlNode, string)</c>; the runner builds its own through MetaField's
+    /// POSITIONAL constructor, whose defaults differ from what that XML produces. Four members
+    /// were therefore the positional ctor's default rather than BC's answer on every table
+    /// (#3568): <c>TestRelations</c>, <c>AllowInCustomizations</c>, <c>ValidateRelation</c> and
+    /// <c>ClrType</c>. Copying them from BC's instance keeps the two in step across BC
+    /// versions, where six transcribed constants would not.</para>
+    ///
+    /// <para>Null when the helper cannot be reached — an older or reshaped
+    /// <c>Types.dll</c>. Callers leave the ctor defaults standing in that case, which is
+    /// exactly the pre-#3568 behaviour, so a missing helper degrades rather than throwing.</para>
+    /// </summary>
+    private static IReadOnlyDictionary<int, object>? BcPlatformMetaFields =>
+        _bcPlatformMetaFields ??= LoadBcPlatformMetaFields();
+
+    private static IReadOnlyDictionary<int, object>? _bcPlatformMetaFields;
+
+    private static IReadOnlyDictionary<int, object>? LoadBcPlatformMetaFields()
+    {
+        try
+        {
+            var helper = _tMetaField?.Assembly
+                .GetType("Microsoft.Dynamics.Nav.Types.Metadata.SystemFieldsHelper");
+            if (helper == null || _tMetaField == null) return null;
+
+            const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static;
+            var idProp = _tMetaField.GetProperty("Id", BindingFlags.Public | BindingFlags.Instance);
+            if (idProp == null) return null;
+
+            var map = new Dictionary<int, object>();
+            foreach (var propertyName in new[] { "SystemIdField", "SystemRowVersionField", "AuditFields" })
+            {
+                var value = helper.GetProperty(propertyName, flags)?.GetValue(null);
+                if (value == null) continue;
+                foreach (var field in value is Array array ? array.Cast<object>() : new[] { value })
+                    if (field != null && idProp.GetValue(field) is int id) map[id] = field;
+            }
+            return map.Count > 0 ? map : null;
+        }
+        catch
+        {
+            // A reflection failure here is not a reason to fail table construction: every
+            // member it feeds has a working pre-#3568 default. It IS worth a verbose line,
+            // because the symptom otherwise is four metadata members quietly reverting.
+            Console.Error.WriteLine(
+                "[RecordPatches] SystemFieldsHelper is not readable; the platform fields keep "
+                + "MetaField's own ctor defaults for TestRelations / AllowInCustomizations / "
+                + "ValidateRelation / ClrType (#3568).");
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The value BC's own platform <c>MetaField</c> carries for <paramref name="property"/>, or
+    /// null when this is not one of the six or the helper was unreadable.
+    /// </summary>
+    private static object? BcPlatformFieldValue(int fieldId, string property)
+    {
+        if (BcPlatformMetaFields is not { } map || !map.TryGetValue(fieldId, out var field))
+            return null;
+        return _tMetaField?.GetProperty(property, BindingFlags.Public | BindingFlags.Instance)
+            ?.GetValue(field);
+    }
 
     /// <summary>
     /// BC's SIXTH system field, which is not shaped like the other five and must not be
