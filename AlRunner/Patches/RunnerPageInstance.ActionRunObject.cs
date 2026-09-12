@@ -219,26 +219,6 @@ internal sealed partial class RunnerPageInstance
     /// </summary>
     internal static void RunPageThroughBcFrontDoor(int pageId, NavRecord? record)
     {
-        if (TargetPageOpensModally(pageId))
-        {
-            // isInLookupTrigger / isLookup both false — the shape the AL compiler emits for a
-            // plain `Page.RunModal(id, Rec)`, and the one RunnerModalDispatch already serves.
-            //
-            // Deliberately NOT given the unattended-open treatment below. BC parts here too —
-            // NavTestExecution.ShowDialog asks FindHandler with throwIfNotFound: FALSE and then
-            // raises NavTestPageInvokedWithoutHandlerException, which IS a NavTestBaseException
-            // and therefore IS rethrown into AL by NavOpenTaskPageAction.ShowForm's first catch
-            // arm. So a dialog target with nothing bound raises in real BC, where a non-modal
-            // one does not. No service tier has measured that arm — corpus codeunit 60285's
-            // targets are both PageType = Card — so the modal route keeps refusing loudly
-            // rather than being changed on a reading. Tracked by issue #3223.
-            if (record != null)
-                NavForm.RunModalAsync(false, false, pageId, record).AsTask().GetAwaiter().GetResult();
-            else
-                NavForm.RunModalAsync(false, false, pageId).AsTask().GetAwaiter().GetResult();
-            return;
-        }
-
         // BC's own static NavForm.RunAsync(formId, record, fieldNo), spelled out so the form
         // instance is in reach before anything runs — the unattended open below has to register
         // and open THIS instance, and NavForm's constructor is where a RunPageOnRec or
@@ -266,12 +246,37 @@ internal sealed partial class RunnerPageInstance
             NavGlobal.NCLMetadata.GetMetaFormById(pageId, requireCompiled: true).CreateObjectInstance(record));
         var form = handle.Target;
 
+        if (TargetPageOpensModally(pageId))
+        {
+            if (HasHandler(session, form, NavHandlerType.ModalPage))
+            {
+                // The body of BC's static NavForm.RunModalAsync(isInLookupTrigger: false,
+                // isLookup: false, formId, record, fieldNo: 0) — the shape a plain
+                // `Page.RunModal(id, Rec)` compiles to — on the instance already built above, so
+                // the probe and the run see one form. Its lookup write-back is unreachable with
+                // isLookup false.
+                form.LookupMode = false;
+                form.RunModalAsync(record, 0).AsTask().GetAwaiter().GetResult();
+                return;
+            }
+
+            // Nothing bound for a dialog target: BC's NavTestExecution.ShowDialog asks
+            // FindHandler(ModalPage, form, throwIfNotFound: false) on a form the client layer has
+            // already opened, then throws NavTestPageInvokedWithoutHandlerException — a
+            // NavTestBaseException, which NavOpenTaskPageAction.ShowForm rethrows into AL. So
+            // the target opens and AL gets that exception, not "Unhandled UI". Corpus codeunit
+            // 60285 arms 7-9 (issue #3223) put this in front of a service tier.
+            OpenTargetUnattended(session, form);
+            throw NavTestPageInvokedWithoutHandlerException.Create(
+                System.Globalization.CultureInfo.CurrentCulture, pageId);
+        }
+
         // Ask BC, before running anything, whether this page is answered at all — the same
         // question TestHandleForm asks and in the same order: a TestPage.Trap() short-circuits
         // the handler lookup there, so it short-circuits here too. The probe itself leaves no
         // trace either way (see HasPageHandler), so the ordering is about asking the same
         // question BC asks, not about damage control.
-        if (HasTrapForPage(session, form) || HasPageHandler(session, form))
+        if (HasTrapForPage(session, form) || HasHandler(session, form, NavHandlerType.Page))
         {
             form.RunAsync(record, 0).AsTask().GetAwaiter().GetResult();
             return;
@@ -371,7 +376,7 @@ internal sealed partial class RunnerPageInstance
     /// supports (checked on 27.0 and 28.1). If it ever is not, this throws rather than probing
     /// with an uncontrolled side effect.</para>
     /// </summary>
-    private static bool HasPageHandler(NavSession session, NavForm form)
+    private static bool HasHandler(NavSession session, NavForm form, NavHandlerType handlerType)
     {
         var testExecution = session.TestExecution;
         var findHandler = testExecution.GetType().GetMethod(
@@ -407,7 +412,7 @@ internal sealed partial class RunnerPageInstance
         {
             return findHandler.Invoke(
                 testExecution,
-                new object?[] { NavHandlerType.Page, form, false, null }) is MethodInfo;
+                new object?[] { handlerType, form, false, null }) is MethodInfo;
         }
         catch (TargetInvocationException ex)
         {
