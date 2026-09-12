@@ -465,8 +465,8 @@ public sealed class ExpectationManifest
             foreach (var e in byFile[name])
                 if (e.Mode != promised.Value)
                     violations.Add($"{name}: {e.CodeunitName}.{e.Method} has Mode={ModeName(e.Mode)} but the "
-                        + $"file name promises {ModeName(promised.Value)}; move the entry to a "
-                        + $"{FilePrefixes.First(p => p.Mode == e.Mode).Prefix}<area>.json file");
+                        + $"file name promises {ModeName(promised.Value)}; move the entry to "
+                        + $"{FilePrefixes.First(p => p.Mode == e.Mode).Prefix}<area>.json");
         }
         return violations;
     }

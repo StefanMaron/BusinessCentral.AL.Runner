@@ -39,9 +39,11 @@ exemption: the run that owns the suite still audits the entry in full. See
 
 The file prefix and the entry's `Mode` must agree — the prefix is what a human
 scanning the directory reads. Moving an entry between modes means moving it
-between files. A `known-gaps-*.json` holding entries that are not
-`expect-fail-known-gap` fails the guard below, because that disagreement would
-silence the whole file for it.
+between files. `AlRunner.Tests/ExpectationFilePrefixTests.cs` checks every entry
+against its file's prefix, and fails on a file name carrying none of the five
+prefixes; a recognised file left holding `[]` is fine (#3114). Separately, a
+`known-gaps-*.json` none of whose entries is `expect-fail-known-gap` fails the
+guard below, because that disagreement would silence the whole file for it.
 
 ## A PR that closes a gap issue must delete or re-target its entry
 
