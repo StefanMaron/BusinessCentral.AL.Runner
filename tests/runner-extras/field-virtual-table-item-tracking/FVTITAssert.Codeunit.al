@@ -1,4 +1,4 @@
-codeunit 61100 "FVTIT Assert"
+codeunit 61300 "FVTIT Assert"
 {
     procedure IsTrue(Condition: Boolean; Msg: Text)
     begin

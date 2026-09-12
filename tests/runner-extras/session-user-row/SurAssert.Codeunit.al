@@ -1,5 +1,5 @@
 // Standalone Assert — this suite does not import from tests/al-language.
-codeunit 65560 "SUR Assert"
+codeunit 65590 "SUR Assert"
 {
     procedure AreEqual(Expected: Variant; Actual: Variant; Msg: Text)
     begin

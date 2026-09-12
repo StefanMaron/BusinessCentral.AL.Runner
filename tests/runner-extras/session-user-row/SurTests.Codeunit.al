@@ -26,7 +26,7 @@
 // SurRelationRefusesAnUnknownSecurityId is the negative control, and it PASSED before the fix.
 // It is what stops "insert the missing row" from being quietly replaced by "stop validating":
 // a security id that belongs to nobody must still be refused.
-codeunit 65561 "SUR Tests"
+codeunit 65591 "SUR Tests"
 {
     Subtype = Test;
     TestPermissions = Disabled;

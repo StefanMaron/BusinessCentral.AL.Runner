@@ -37,6 +37,10 @@ namespace AlRunner.Tests;
 /// over parsed JSON: two closed intervals overlap or they do not, and no comment or string
 /// literal can change the answer.
 ///
+/// The exception is the KnownOverlaps debt below: inside a range two groups already share, only
+/// an object-level scan can see a collision, so one runs too (#3160). It blanks comments and
+/// string literals before matching headers, and reports a file it cannot parse as unmeasured.
+///
 /// Endpoints are INCLUSIVE at both ends — measured, not assumed. The runner itself never reads
 /// idRanges; the AL compiler enforces them. AlRunner.Tests/TestPagePartAdoptedFromHostTests.cs
 /// declares a fixture with <c>{ "from": 62410, "to": 62413 }</c> containing both
@@ -158,11 +162,8 @@ public sealed class RunnerExtrasIdRangeGuardTests
     /// genuinely share a range, which so far nothing does — the right move for a new overlap is
     /// to pick a free range.
     ///
-    /// Three of them are not merely latent: those app groups ALREADY declare the same object,
-    /// which is exactly the #2969 failure sitting dormant because no suite happens to read
-    /// those rows out of the global Object table. Renumbering them is tracked in #3160 and is
-    /// deliberately not folded into the PR that adds this guard, because moving AL object IDs
-    /// is a change with its own blast radius.
+    /// None of them may hide a shared object: NoTwoAppGroups_InTheSameBundleRoot_DeclareTheSameObject
+    /// checks every (kind, id) across groups, so a range entry here never permits a collision (#3160).
     /// </summary>
     private static readonly Dictionary<string, string> KnownOverlaps = new(StringComparer.Ordinal)
     {
@@ -178,10 +179,6 @@ public sealed class RunnerExtrasIdRangeGuardTests
         ["tests/runner-extras: dep-tableext-invoke-main | standalone-suites"] =
             "60750..60799 — standalone-suites declares the block and uses nothing in it. No live "
             + "collision.",
-
-        ["tests/runner-extras: field-virtual-table-item-tracking | report-precompiled-dep-metadata"] =
-            "61100..61199 — LIVE COLLISION: both define codeunit 61100 and codeunit 61101. Dormant "
-            + "only because no suite reads those Object rows. Renumbering tracked in #3160.",
 
         ["tests/runner-extras: field-virtual-table-item-tracking-ext | navapp-moduleinfo-dep"] =
             "61230..61239 — field-virtual-table-item-tracking-ext declares 61200-61249 and uses "
@@ -208,18 +205,9 @@ public sealed class RunnerExtrasIdRangeGuardTests
             "60710..60719 — standalone-suites declares the block and uses nothing in it. No live "
             + "collision.",
 
-        ["tests/runner-extras: microsoft-test-library | standalone-suites"] =
-            "62200..62209 — LIVE COLLISION: both define codeunit 62200. #1847 folded sixteen "
-            + "standalone suites into standalone-suites and it kept a range microsoft-test-library "
-            + "still claims. Renumbering tracked in #3160.",
-
         ["tests/runner-extras: server-multibundle-dep | standalone-suites"] =
             "64300..64309 — both use id 64300, but as table and codeunit respectively, and the Object "
             + "table keys on (Type, ID). No live collision, and a narrow miss.",
-
-        ["tests/runner-extras: session-user-row | testpage-lookup-tablerelation-oos"] =
-            "65560..65569 — LIVE COLLISION: both define codeunit 65560. This is the pair #3040 was "
-            + "filed about. Renumbering tracked in #3160.",
 
         ["tests/runner-extras: testpage-promoted-actionref | windows-language-license-stub"] =
             "64546..64555 — testpage-promoted-actionref has report 64546, "
@@ -402,5 +390,210 @@ public sealed class RunnerExtrasIdRangeGuardTests
     public void AGroupDeclaringNoRanges_IsNotAConflict()
     {
         Assert.Empty(FindConflicts(new[] { Group("empty"), Group("other", (60000, 60099)) }));
+    }
+
+    // ---------------------------------------------------------------- object-level collisions (#3160)
+    //
+    // KnownOverlaps permits a shared RANGE; nothing above notices when two groups inside one of
+    // those ranges then declare the same object. This scan does, keyed on (object kind, id): a
+    // codeunit and a table may share an id, and the Object table keys on (Type, ID).
+
+    internal readonly record struct ObjectKey(string Kind, int Id)
+    {
+        public override string ToString() => $"{Kind} {Id}";
+    }
+
+    internal sealed record ObjectCollision(ObjectKey Key, IReadOnlyList<string> Groups)
+    {
+        public override string ToString() => $"{Key} declared by {string.Join(" and ", Groups)}";
+    }
+
+    internal enum ObjectScanVerdict { Clean, Collisions, CouldNotMeasure }
+
+    internal sealed record ObjectScan(
+        int FilesRead,
+        IReadOnlyList<string> Unmeasured,
+        IReadOnlyList<ObjectCollision> Collisions)
+    {
+        public ObjectScanVerdict Verdict =>
+            FilesRead == 0 || Unmeasured.Count > 0 ? ObjectScanVerdict.CouldNotMeasure
+            : Collisions.Count > 0 ? ObjectScanVerdict.Collisions
+            : ObjectScanVerdict.Clean;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex CommentsAndStrings = new(
+        @"'(?:[^']|'')*'|/\*.*?\*/|//[^\n]*",
+        System.Text.RegularExpressions.RegexOptions.Singleline);
+
+    private static readonly System.Text.RegularExpressions.Regex NumberedHeader = new(
+        @"^\s*(table|tableextension|page|pageextension|codeunit|report|reportextension|query|xmlport"
+        + @"|enum|enumextension|permissionset|permissionsetextension)\s+(\d+)\b",
+        System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    // Objects AL declares without an id. A file holding only these is measured, not unparsed.
+    private static readonly System.Text.RegularExpressions.Regex IdLessHeader = new(
+        @"^\s*(interface|profile|controladdin|entitlement|pagecustomization|dotnet)\b",
+        System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    /// <summary>
+    /// The numbered object declarations in one AL source, or <c>null</c> when the file declares no
+    /// object this parser recognises — the "could not measure" answer, never an empty list.
+    /// Comments and string literals are blanked first, so a commented-out header is not a declaration.
+    /// </summary>
+    internal static IReadOnlyList<ObjectKey>? ParseObjectDeclarations(string source)
+    {
+        var code = CommentsAndStrings.Replace(source, m => m.Value.StartsWith('\'') ? "''" : " ");
+        var keys = NumberedHeader.Matches(code)
+            .Select(m => new ObjectKey(m.Groups[1].Value.ToLowerInvariant(), int.Parse(m.Groups[2].Value)))
+            .ToList();
+        if (keys.Count == 0 && !IdLessHeader.IsMatch(code))
+            return null;
+        return keys;
+    }
+
+    /// <summary>
+    /// Every .al file under <paramref name="bundleDir"/>, attributed to its nearest enclosing
+    /// app.json (the app group). A file with no enclosing manifest, or no recognisable object
+    /// header, is reported as unmeasured rather than skipped.
+    /// </summary>
+    internal static ObjectScan ScanObjectCollisions(string bundleDir)
+    {
+        var unmeasured = new List<string>();
+        var declaredBy = new Dictionary<ObjectKey, SortedSet<string>>();
+        var files = Directory.Exists(bundleDir)
+            ? Directory.EnumerateFiles(bundleDir, "*.al", SearchOption.AllDirectories)
+                .OrderBy(p => p, StringComparer.Ordinal).ToList()
+            : new List<string>();
+
+        foreach (var file in files)
+        {
+            var rel = Path.GetRelativePath(bundleDir, file).Replace('\\', '/');
+            var dir = Path.GetDirectoryName(file)!;
+            while (!File.Exists(Path.Combine(dir, "app.json"))
+                   && Path.GetRelativePath(bundleDir, dir) is var r && r != "." && !r.StartsWith(".."))
+                dir = Path.GetDirectoryName(dir)!;
+            if (!File.Exists(Path.Combine(dir, "app.json")))
+            {
+                unmeasured.Add($"{rel}: no enclosing app.json, so it belongs to no app group");
+                continue;
+            }
+
+            var keys = ParseObjectDeclarations(File.ReadAllText(file));
+            if (keys is null)
+            {
+                unmeasured.Add($"{rel}: no object declaration recognised");
+                continue;
+            }
+
+            var group = Path.GetRelativePath(bundleDir, dir).Replace('\\', '/');
+            foreach (var key in keys)
+            {
+                if (!declaredBy.TryGetValue(key, out var groups))
+                    declaredBy[key] = groups = new SortedSet<string>(StringComparer.Ordinal);
+                groups.Add(group);
+            }
+        }
+
+        var collisions = declaredBy
+            .Where(kv => kv.Value.Count > 1)
+            .OrderBy(kv => kv.Key.Id).ThenBy(kv => kv.Key.Kind, StringComparer.Ordinal)
+            .Select(kv => new ObjectCollision(kv.Key, kv.Value.ToList()))
+            .ToList();
+        return new ObjectScan(files.Count, unmeasured, collisions);
+    }
+
+    [Fact]
+    public void NoTwoAppGroups_InTheSameBundleRoot_DeclareTheSameObject()
+    {
+        foreach (var root in BundleRoots)
+        {
+            var scan = ScanObjectCollisions(Path.Combine(RepoRoot, root.Replace('/', Path.DirectorySeparatorChar)));
+
+            Assert.True(scan.Verdict != ObjectScanVerdict.CouldNotMeasure,
+                $"COULD NOT MEASURE {root}: read {scan.FilesRead} .al file(s); unmeasured:\n  "
+                + string.Join("\n  ", scan.Unmeasured)
+                + "\nThis is not a pass. Teach ParseObjectDeclarations the header, or put the file under an app.json.");
+
+            Assert.True(scan.Verdict == ObjectScanVerdict.Clean,
+                $"These objects are declared by more than one app group in {root}:\n  "
+                + string.Join("\n  ", scan.Collisions)
+                + "\n\nOne root is one process, one database and one global Object table, so both rows "
+                + "exist and a suite reading that table sees two (#2969, #3040). Renumber one side into "
+                + "a range no other app group in the root claims.");
+        }
+    }
+
+    private static string TempBundle(params (string Path, string Content)[] files)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "rx-objscan-" + Guid.NewGuid().ToString("N"));
+        foreach (var (p, c) in files)
+        {
+            var full = Path.Combine(dir, p);
+            Directory.CreateDirectory(Path.GetDirectoryName(full)!);
+            File.WriteAllText(full, c);
+        }
+        return dir;
+    }
+
+    [Fact]
+    public void SameKindAndId_InTwoGroups_IsACollision_NamingBothGroups()
+    {
+        var dir = TempBundle(
+            ("a/app.json", "{}"), ("a/X.al", "codeunit 65560 \"A Assert\"\n{\n}\n"),
+            ("b/app.json", "{}"), ("b/Y.al", "codeunit 65560 \"B Assert\"\n{\n}\n"));
+        try
+        {
+            var scan = ScanObjectCollisions(dir);
+            Assert.Equal(ObjectScanVerdict.Collisions, scan.Verdict);
+            var c = Assert.Single(scan.Collisions);
+            Assert.Equal(new ObjectKey("codeunit", 65560), c.Key);
+            Assert.Equal(new[] { "a", "b" }, c.Groups);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    /// <summary>The control: server-multibundle-dep's table 64300 beside standalone-suites' codeunit 64300.</summary>
+    [Fact]
+    public void SameIdDifferentKind_OrSameObjectInOneGroup_IsNotACollision()
+    {
+        var dir = TempBundle(
+            ("a/app.json", "{}"), ("a/T.al", "table 64300 \"T\"\n{\n}\n"),
+            ("b/app.json", "{}"), ("b/C.al", "codeunit 64300 \"C\"\n{\n}\n"),
+            ("b/sub/D.al", "Codeunit 64301 \"D\"\n{\n}\n"),
+            ("b/E.al", "// codeunit 64300 \"commented out\"\n/* table 64300 */\nenum 64301 \"E\"\n{\n}\n"));
+        try
+        {
+            var scan = ScanObjectCollisions(dir);
+            Assert.Equal(ObjectScanVerdict.Clean, scan.Verdict);
+            Assert.Equal(4, scan.FilesRead);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void AnUnrecognisedFile_OrAnEmptyRoot_IsCouldNotMeasure_NotClean()
+    {
+        var dir = TempBundle(
+            ("a/app.json", "{}"), ("a/X.al", "codeunit 60000 \"X\"\n{\n}\n"),
+            ("a/Weird.al", "futureobjectkind 60001 \"W\"\n{\n}\n"),
+            ("Loose.al", "codeunit 60002 \"L\"\n{\n}\n"));
+        try
+        {
+            var scan = ScanObjectCollisions(dir);
+            Assert.Equal(ObjectScanVerdict.CouldNotMeasure, scan.Verdict);
+            Assert.Equal(2, scan.Unmeasured.Count);
+            Assert.Contains(scan.Unmeasured, u => u.StartsWith("a/Weird.al: no object declaration"));
+            Assert.Contains(scan.Unmeasured, u => u.StartsWith("Loose.al: no enclosing app.json"));
+        }
+        finally { Directory.Delete(dir, true); }
+
+        Assert.Equal(ObjectScanVerdict.CouldNotMeasure,
+            ScanObjectCollisions(Path.Combine(Path.GetTempPath(), "rx-objscan-missing-" + Guid.NewGuid().ToString("N"))).Verdict);
+    }
+
+    [Fact]
+    public void AProfileOnlyFile_IsMeasured_AndDeclaresNoNumberedObject()
+    {
+        Assert.Empty(ParseObjectDeclarations("profile \"Bad Profile\"\n{\n    RoleCenter = \"Nope\";\n}\n")!);
     }
 }

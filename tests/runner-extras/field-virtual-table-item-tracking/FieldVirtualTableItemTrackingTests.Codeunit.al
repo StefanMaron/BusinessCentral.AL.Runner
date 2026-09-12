@@ -12,7 +12,7 @@
 // GREEN (after the fix): the lookup completes and returns a truthful, empty
 // result set (no reservation entries seeded), proving the Field virtual-table
 // provider initializes on this Base-App-backed path.
-codeunit 61101 "FVTIT Tests"
+codeunit 61301 "FVTIT Tests"
 {
     Subtype = Test;
 
