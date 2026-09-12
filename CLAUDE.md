@@ -184,6 +184,24 @@ where an agent deleted a stale waiver recording exactly this hazard and then mad
 waiver had described.
 
 
+**2d. A `private` member in another file is usually still reachable — the file is not the class.**
+
+`RecordPatches` is ONE `partial class` spread over **94 files**; `BcRuntime` over 24,
+`NclCecilRewrite` and `ProgramSupport` over 9 each, `LiveNavTestPage` 8, `RunnerPageInstance` 4. So
+a `private` member declared in one of those files is accessible from every other file declaring the
+same class, and "it is private, and it is in a different file" is two true statements whose
+conjunction implies something false.
+
+Measured cost: issue #3933 advised widening a `private` decoder to `internal` or moving it, and the
+coordinator repeated that in a dispatch brief; the calling file declared the same `partial class`
+and had access all along (#3945). Nothing contradicts the reading until someone tries the call, and
+the edit it argues for — widening visibility, or a new shared location — is a real diff in a hot
+file.
+
+```bash
+command grep -n "partial class" <the-calling-file>   # same class? then you already have access
+```
+
 **3. `grep` here is a shell function, and it fails silently.**
 
 `grep` resolves to a shell **function**, not `/usr/bin/grep`. It rejects `-E`, `--include` and
