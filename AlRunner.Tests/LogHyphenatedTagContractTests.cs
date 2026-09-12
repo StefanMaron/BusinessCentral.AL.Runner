@@ -23,7 +23,7 @@ public sealed class LogHyphenatedTagContractTests
     public enum Kind { Loud, OptIn, VerboseGated }
 
     /// <param name="Anchor">Required when one file carries the tag at sites of different kinds.</param>
-    /// <param name="Gate">OptIn only: the switch that must appear within <see cref="GateWindow"/> lines above.</param>
+    /// <param name="Gate">OptIn only: a regex for the switch an `if (` line within <see cref="GateWindow"/> lines above must test.</param>
     public sealed record Site(string File, string Tag, Kind Kind, string? Anchor = null, string? Gate = null);
 
     private const int GateWindow = 40;
@@ -64,21 +64,21 @@ public sealed class LogHyphenatedTagContractTests
         // --- OptIn: printed only when a switch the user set asks for it.
         new("AlRunner/BcCompiler.cs", "BcCompiler-diag", Kind.OptIn, Gate: "BCCOMPILER_DIAG"),
         new("AlRunner/BcCompiler.cs", "DIAG-RETRY", Kind.OptIn, Gate: "AL_RUNNER_DIAG_EMITRETRY"),
-        new("AlRunner/Program.cs", "FCE-NRE", Kind.OptIn, Gate: "AL_RUNNER_TRACE_NRE"),
+        new("AlRunner/Program.cs", "FCE-NRE", Kind.OptIn, Gate: @"\btraceNre\b"),
         new("AlRunner/Patches/RecordPatches.AggregatePermissionSetVirtualTable.cs", "aggregate-permission-set", Kind.OptIn, Gate: "AL_RUNNER_TRACE_AGGREGATE_PERMISSION_SET"),
         new("AlRunner/Patches/RecordPatches.AllProfileVirtualTable.cs", "all-profile", Kind.OptIn, Gate: "AL_RUNNER_TRACE_ALL_PROFILE"),
         new("AlRunner/Infrastructure/AlDapSession.cs", "dap-step-trace", Kind.OptIn, Gate: "_traceEnabled"),
-        new("AlRunner/DependencyMetadataProducer.cs", "dep-metadata", Kind.OptIn, Anchor: "{message}", Gate: "AL_RUNNER_TRACE_DEP_METADATA"),
-        new("AlRunner/BcAssembler.cs", "emit-timing", Kind.OptIn, Gate: "timing"),
-        new("AlRunner/BcCompiler.cs", "emit-timing", Kind.OptIn, Gate: "BCCOMPILER_TIMING"),
-        new("AlRunner/BcCompiler.Incremental.cs", "emit-timing", Kind.OptIn, Gate: "BCCOMPILER_TIMING"),
+        new("AlRunner/DependencyMetadataProducer.cs", "dep-metadata", Kind.OptIn, Anchor: "{message}", Gate: @"\bt == ""[12]"""),
+        new("AlRunner/BcAssembler.cs", "emit-timing", Kind.OptIn, Gate: @"\btiming\b"),
+        new("AlRunner/BcCompiler.cs", "emit-timing", Kind.OptIn, Gate: @"BCCOMPILER_TIMING|\b_timing\b"),
+        new("AlRunner/BcCompiler.Incremental.cs", "emit-timing", Kind.OptIn, Gate: @"\btiming\b"),
         new("AlRunner/Program.cs", "first-chance", Kind.OptIn, Gate: "fcFilter"),
         new("AlRunner/Infrastructure/JmpHook.cs", "hook-audit", Kind.OptIn, Gate: "_audit"),
         new("AlRunner/Program.cs", "instrumentation-counters", Kind.OptIn, Gate: "AL_RUNNER_DUMP_INSTRUMENTATION_COUNTERS"),
         new("AlRunner/MemoryCensus.cs", "mem-census", Kind.OptIn, Gate: "Enabled"),
-        new("AlRunner/Patches/ObjectMetadataRegistry.cs", "object-metadata", Kind.OptIn, Gate: "AL_RUNNER_TRACE_OBJECT_METADATA"),
-        new("AlRunner/Patches/RunnerPageInstance.cs", "option-captions", Kind.OptIn, Gate: "AL_RUNNER_TRACE_PAGE_METADATA"),
-        new("AlRunner/Patches/PageMetadataRegistry.cs", "page-metadata", Kind.OptIn, Gate: "AL_RUNNER_TRACE_PAGE_METADATA"),
+        new("AlRunner/Patches/ObjectMetadataRegistry.cs", "object-metadata", Kind.OptIn, Gate: @"\btrace == "),
+        new("AlRunner/Patches/RunnerPageInstance.cs", "option-captions", Kind.OptIn, Gate: @"\(trace\)"),
+        new("AlRunner/Patches/PageMetadataRegistry.cs", "page-metadata", Kind.OptIn, Gate: @"\btrace == "),
         new("AlRunner/Patches/RecordPatches.PageControlFieldFromBcDocument.cs", "page-metadata", Kind.OptIn, Gate: "AL_RUNNER_TRACE_PAGE_METADATA_SOURCE"),
         new("AlRunner/Patches/RecordPatches.RealPageMetadata.cs", "page-metadata", Kind.OptIn, Gate: "AL_RUNNER_TRACE_PAGE_METADATA"),
         new("AlRunner/Patches/RecordPatches.PageTriggerMetadata.cs", "page-trigger-audit", Kind.OptIn, Gate: "Enabled"),
@@ -89,11 +89,11 @@ public sealed class LogHyphenatedTagContractTests
         new("AlRunner/Patches/RecordPatches.PermissionSystemTable.cs", "permission-table", Kind.OptIn, Gate: "AL_RUNNER_TRACE_PERMISSION_TABLE"),
         new("AlRunner/Patches/RecordPatches.MetaQueryFromBcDocument.cs", "query-metadata", Kind.OptIn, Gate: "AL_RUNNER_TRACE_QUERY_METADATA_SOURCE"),
         new("AlRunner/Patches/RecordPatches.ReportMetadataVirtualTable.cs", "report-metadata", Kind.OptIn, Gate: "AL_RUNNER_TRACE_REPORT_METADATA"),
-        new("AlRunner/BcCompiler.cs", "shared-refs", Kind.OptIn, Gate: "BCCOMPILER_TIMING"),
-        new("AlRunner/Patches/RecordPatches.NclMetaTableFromBcDocument.cs", "table-metadata", Kind.OptIn, Gate: "AL_RUNNER_TRACE_TABLE_METADATA_SOURCE"),
-        new("AlRunner/Patches/RecordPatches.TableMetadataVirtualTable.cs", "table-metadata", Kind.OptIn, Gate: "AL_RUNNER_TRACE_TABLE_METADATA"),
+        new("AlRunner/BcCompiler.cs", "shared-refs", Kind.OptIn, Gate: @"\btiming\b"),
+        new("AlRunner/Patches/RecordPatches.NclMetaTableFromBcDocument.cs", "table-metadata", Kind.OptIn, Gate: @"\blevel != "),
+        new("AlRunner/Patches/RecordPatches.TableMetadataVirtualTable.cs", "table-metadata", Kind.OptIn, Gate: @"\btrace\b"),
         new("AlRunner/Patches/RecordPatches.RealXmlPortMetadata.cs", "xmlport-metadata", Kind.OptIn, Gate: "AL_RUNNER_TRACE_XMLPORT_METADATA"),
-        new("AlRunner/Patches/XmlPortMetadataRegistry.cs", "xmlport-metadata", Kind.OptIn, Gate: "AL_RUNNER_TRACE_XMLPORT_METADATA"),
+        new("AlRunner/Patches/XmlPortMetadataRegistry.cs", "xmlport-metadata", Kind.OptIn, Gate: @"\btrace == "),
 
         // --- VerboseGated: internal chatter on a healthy run. Hidden by its own call-site gate.
         new("AlRunner/Infrastructure/AssemblyTypeIndex.cs", "type-index", Kind.VerboseGated, Anchor: "falling back to Assembly.GetTypes()"),
@@ -207,8 +207,13 @@ public sealed class LogHyphenatedTagContractTests
         var ungated = ScanProductionSource()
             .Select(f => (f, site: Resolve(f)))
             .Where(x => x.site is { Kind: Kind.OptIn })
-            .Where(x => !Window(x.f, GateWindow, 0).Any(l => l.Contains(x.site!.Gate!, StringComparison.Ordinal)))
-            .Select(x => $"{x.f.File}:{x.f.Line + 1} [{x.f.Tag}] expected gate '{x.site!.Gate}'")
+            // The token must sit in an `if (` line: a field or local declaring the switch nearby
+            // is not a gate, and matching it alone let a deleted `if (!_audit) return;` pass.
+            .Where(x => !Window(x.f, GateWindow, 0).Any(l =>
+                !l.TrimStart().StartsWith("//", StringComparison.Ordinal)
+                && l.Contains("if (", StringComparison.Ordinal)
+                && Regex.IsMatch(l, x.site!.Gate!)))
+            .Select(x => $"{x.f.File}:{x.f.Line + 1} [{x.f.Tag}] expected an `if (` testing '{x.site!.Gate}'")
             .ToList();
         Assert.True(ungated.Count == 0,
             "an OptIn trace lost its switch and now prints on every run:\n  " + string.Join("\n  ", ungated));
