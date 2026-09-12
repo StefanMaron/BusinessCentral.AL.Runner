@@ -185,4 +185,37 @@ public sealed class ServerSiblingSourceDependencyReloadTests
         RunSequence("S", "4025b000-0000-4000-8000-00000000b001", "4025b000-0000-4000-8000-00000000b002", 64040,
             cold: new[] { ("1.0.0.0", 2), ("1.0.0.0", 3), ("1.0.0.0", 2) },
             warm: new[] { ("1.0.0.0", 3), ("1.0.0.0", 2), ("1.0.0.0", 3) });
+
+    /// <summary>
+    /// A request for an unrelated workspace between two requests for P must not make the server
+    /// forget where P's dependency module came from (the previous-path map is merged per AppId,
+    /// not replaced). Written from the reviewer's probe on PR #4027.
+    /// </summary>
+    [SkippableFact]
+    public async Task InterveningRequestForAnotherWorkspace_DoesNotForgetTheDependency()
+    {
+        TestArtifacts.SkipIfMissing();
+        const string pSubject = "4025e000-0000-4000-8000-00000000e001", pTests = "4025e000-0000-4000-8000-00000000e002";
+        const string qSubject = "4025f000-0000-4000-8000-00000000f001", qTests = "4025f000-0000-4000-8000-00000000f002";
+        var p = Create("P", pSubject, pTests, 64060);
+        var q = Create("Q", qSubject, qTests, 64070);
+        try
+        {
+            await using var server = await CliServer.StartAsync(new[] { "--cache", p.CacheDir, "--verbose" });
+            WriteSubject(p, pSubject, "P", 64060, "1.0.0.0", 2);
+            await AssertRequest(server, p, "P request 1 (*2)", null);
+            WriteSubject(q, qSubject, "Q", 64070, "1.0.0.0", 2);
+            await AssertRequest(server, q, "Q request (other workspace)", null);
+            WriteSubject(p, pSubject, "P", 64060, "1.0.0.0", 3);
+            await AssertRequest(server, p, "P request 2 (*3) after an intervening request", 63);
+        }
+        finally
+        {
+            foreach (var f in new[] { p, q })
+            {
+                try { Directory.Delete(f.Root, recursive: true); } catch { }
+                try { Directory.Delete(f.CacheDir, recursive: true); } catch { }
+            }
+        }
+    }
 }
