@@ -67,6 +67,12 @@ public class SingleInstanceResetLeakTests
 
             BcRuntime.ResetSingleInstanceCache();
 
+            int now = sessionTree.Children.Count;
+            Assert.True(now == before,
+                $"cycle {cycle}: session tree children before={before} after reset={now} " +
+                $"delta={now - before}. A delta of {2 * (cycle + 1)} is the #2181 leak " +
+                "(instance + keep-alive handle per reset).");
+
             // The reset invalidated the only AL handle holding it, so BC's refcount reaches
             // zero and disposes it.
             Assert.True(((ITreeObject)instance).Tree.IsDisposed,
@@ -101,6 +107,10 @@ public class SingleInstanceResetLeakTests
         var bound = new NavCodeunitHandle(root, ProbeId);
         var instance = Assert.IsType<Codeunit69001>(bound.Target);
         instance.Token = "HELD";
+
+        // The safety of disposing only the keep-alive handle rests on the instance being
+        // refcounted (TreeSharedObjectHandler); a Normal tree object never counts references.
+        Assert.Equal(TreeObjectType.Shared, ((ITreeObject)instance).Type);
 
         // NavCodeunitHandle(ITreeObject, NavCodeunit): assigns Target directly, bypassing
         // CreateTarget — the same shape as a copied handle.
