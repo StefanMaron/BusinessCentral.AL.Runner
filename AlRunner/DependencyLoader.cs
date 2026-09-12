@@ -1356,6 +1356,21 @@ public sealed class DependencyLoader
     }
 
     /// <summary>
+    /// #3250: attach the registering bundle's registry replay to the entry holding
+    /// <paramref name="asm"/>. Does nothing when the entry for <paramref name="appId"/> holds a
+    /// different module, so a replay can never be paired with code it was not captured from.
+    /// </summary>
+    internal static void RecordOwnBundleReplay(Guid appId, Assembly asm, OwnBundleRegistryReplay replay)
+    {
+        if (_cache.TryGetValue(appId, out var entry) && ReferenceEquals(entry.Asm, asm))
+            _cache[appId] = entry with { OwnBundleReplay = replay };
+    }
+
+    /// <summary>The replay recorded for <paramref name="asm"/> under <paramref name="appId"/>, or null.</summary>
+    internal static OwnBundleRegistryReplay? TryGetOwnBundleReplay(Guid appId, Assembly asm)
+        => _cache.TryGetValue(appId, out var entry) && ReferenceEquals(entry.Asm, asm) ? entry.OwnBundleReplay : null;
+
+    /// <summary>
     /// Record that <paramref name="asm"/> is the loaded module for AL app identity
     /// <paramref name="appId"/> — used by the bundle loop's own-AppGroup compile path
     /// (Program.cs) so an app compiled as ITS OWN bundle is visible here too, not just
@@ -1381,21 +1396,6 @@ public sealed class DependencyLoader
     /// each rerun's freshly-compiled module must become the one a LATER sibling
     /// bundle in a subsequent request resolves to, not whatever compiled first.
     /// </summary>
-    /// <summary>
-    /// #3250: attach the registering bundle's registry replay to the entry holding
-    /// <paramref name="asm"/>. Does nothing when the entry for <paramref name="appId"/> holds a
-    /// different module, so a replay can never be paired with code it was not captured from.
-    /// </summary>
-    internal static void RecordOwnBundleReplay(Guid appId, Assembly asm, OwnBundleRegistryReplay replay)
-    {
-        if (_cache.TryGetValue(appId, out var entry) && ReferenceEquals(entry.Asm, asm))
-            _cache[appId] = entry with { OwnBundleReplay = replay };
-    }
-
-    /// <summary>The replay recorded for <paramref name="asm"/> under <paramref name="appId"/>, or null.</summary>
-    internal static OwnBundleRegistryReplay? TryGetOwnBundleReplay(Guid appId, Assembly asm)
-        => _cache.TryGetValue(appId, out var entry) && ReferenceEquals(entry.Asm, asm) ? entry.OwnBundleReplay : null;
-
     public static void RegisterLoaded(Guid appId, Assembly asm, string name, string publisher, string version, string sourcePath)
     {
         var newEntry = new LoadedAppEntry(asm, name, publisher, version, sourcePath);
