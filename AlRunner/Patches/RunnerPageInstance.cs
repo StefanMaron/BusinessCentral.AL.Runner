@@ -772,7 +772,8 @@ internal sealed partial class RunnerPageInstance
     /// The page's DECLARED <c>Editable</c> property — <c>MasterPage.PageProperties.Editable</c>,
     /// the value BC's <c>NavForm.InitializeFromMetadata</c> seeds <see cref="PageEditable"/> from
     /// before any trigger can move it. Falls back to <see cref="PageEditable"/> for a form with
-    /// no page metadata. What <c>TestPage.Editable()</c> and the new-row line follow (#4066).
+    /// no page metadata. It narrows what <c>TestPage.Editable()</c> and the new-row line answer
+    /// for a page handed to a handler (#4066).
     /// </summary>
     internal bool DeclaredPageEditable
         => _form is not NavForm form

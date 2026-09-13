@@ -159,7 +159,7 @@ internal partial class LiveNavTestPage
     {
         _opened = true;
         _staticEditableOverride = viewMode != Microsoft.Dynamics.Nav.Types.Metadata.ViewMode.View
-                                  && DeclaredPageEditable;
+                                  && (_page?.PageEditable ?? true);
     }
 
     // Set only by MarkOpened — i.e. only for a page the TEST opened, where the open MODE is
@@ -187,7 +187,8 @@ internal partial class LiveNavTestPage
     /// </summary>
     private bool _staticEditable
         => TestPageNewRowLineRule.ResolveStaticEditable(
-            _staticEditableOverride, _editabilityHost?._staticEditable, DeclaredPageEditable, _page?.LookupMode == true);
+            _staticEditableOverride, _editabilityHost?._staticEditable,
+            (_page?.PageEditable ?? true) && (_page?.DeclaredPageEditable ?? true), _page?.LookupMode == true);
 
     /// <summary>
     /// Bind a subpage part to its host for editability. Deliberately does NOT touch _opened:

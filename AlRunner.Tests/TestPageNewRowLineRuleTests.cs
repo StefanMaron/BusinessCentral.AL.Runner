@@ -69,9 +69,9 @@ public sealed class TestPageNewRowLineRuleTests
     [InlineData(true, true, false)]
     [InlineData(false, false, false)]
     [InlineData(false, true, false)]
-    public void NoOpenMode_LookupMode_IsNotEditable(bool declaredPageEditable, bool lookupMode, bool expected)
+    public void NoOpenMode_LookupMode_IsNotEditable(bool pageEditable, bool lookupMode, bool expected)
         => Assert.Equal(expected,
-            TestPageNewRowLineRule.ResolveStaticEditable(null, hostStaticEditable: null, declaredPageEditable, lookupMode));
+            TestPageNewRowLineRule.ResolveStaticEditable(null, hostStaticEditable: null, pageEditable, lookupMode));
 
     // The open mode of a page the test opened still wins outright; lookup mode cannot arise
     // there, and must not be read as overriding it.
