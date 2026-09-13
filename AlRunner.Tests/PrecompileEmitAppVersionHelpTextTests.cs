@@ -44,7 +44,7 @@ public sealed class PrecompileEmitAppVersionHelpTextTests
     [Fact]
     public void Help_EmitAppEntry_SaysItCompilesNothingAndSelectsNoVersion()
     {
-        var entry = Entry(FlatHelp(), "  --emit-app <bundleDir> <outPath> [--package-cache PATH ...] ");
+        var entry = Entry(FlatHelp(), "  --emit-app <bundleDir> <outPath> ");
 
         Assert.DoesNotContain("Compile a bundle dir", entry);
         Assert.Contains("Compiles nothing and selects no BC version", entry);

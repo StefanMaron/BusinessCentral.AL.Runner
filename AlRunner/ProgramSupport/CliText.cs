@@ -369,7 +369,7 @@ internal static partial class ProgramSupport
         w.WriteLine("  al-runner --server [--package-cache PATH ...] [--cache DIR]");
         w.WriteLine("  al-runner --dap [PORT|stdio] <bundle-dir>");
         w.WriteLine("  al-runner --precompile <input.app> --out <output.dll> [--package-cache PATH ...]");
-        w.WriteLine("  al-runner --emit-app <bundleDir> <outPath> [--package-cache PATH ...]");
+        w.WriteLine("  al-runner --emit-app <bundleDir> <outPath>");
         w.WriteLine("  al-runner --guide      (operating manual for automated callers)");
         w.WriteLine("  al-runner --version   (also: -v, -V, version)");
         w.WriteLine("  al-runner --help");
@@ -776,7 +776,7 @@ internal static partial class ProgramSupport
         w.WriteLine("                          directory exists. On a multi-variant install it then");
         w.WriteLine("                          picks the matching engine variant, or exits 2 when none");
         w.WriteLine("                          is shipped for that version.");
-        w.WriteLine("  --emit-app <bundleDir> <outPath> [--package-cache PATH ...]");
+        w.WriteLine("  --emit-app <bundleDir> <outPath>");
         w.WriteLine("                          Package a bundle dir's app.json identity and *.al sources");
         w.WriteLine("                          as a .app, without running tests. Compiles nothing and");
         w.WriteLine("                          selects no BC version, so no BC artifacts are needed.");
