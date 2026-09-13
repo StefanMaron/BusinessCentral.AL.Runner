@@ -2275,3 +2275,19 @@ Measured 6P/0F/0E on the whole bundle, cold and warm against one cache root, not
 the diff.
 
 Written by an agent (Claude, `stma-auto2-6`).
+
+## runner-extras `session-company-default` NEW, 4 (#3400)
+
+A new bundle pinning the runner's chosen session company. `CompanyName()` answers the literal
+`My Company`, seeded onto the skeleton `NavCompany` in `AlRunner/BcRuntime.cs`; the suite asserts
+that literal, that `Record.CurrentCompany()` reports it too, that the Company (2000000006) row the
+runner seeds from that name is found under it and is the only company, and -- the negative
+control -- that `Company.Get` does not find a company the runner never seeded. No `absentOn`: the
+bundle declares `"platform": "27.0.0.0"` and names only the Company system table.
+
+`GuiAllowed() = true`, the issue's other half, adds no tests here: real BC answers true in a test
+session too, and corpus codeunit 60173 `GuiAllowed_InTestContext_ReturnsTrue` asserts it.
+
+Measured 4P/0F/0E on the whole bundle, not computed from the diff.
+
+Written by an agent (Claude, `stma-auto2-4`).

@@ -715,10 +715,10 @@ the exact value will see different results.
 
 | AL call | Real BC | al-runner |
 |---|---|---|
-| `CompanyName()` | Active company name | `"My Company"` (fixed default, not currently configurable) |
+| `CompanyName()` | Active company name | `"My Company"` (fixed default, not currently configurable). Pinned by `tests/runner-extras/session-company-default`, together with the Company row and `Record.CurrentCompany()` |
 | `UserId()` | Authenticated user | `"TESTUSER"` (fixed default, not currently configurable) |
 | `IsSessionActive(id)` | True while session runs | Always `false` |
-| `GuiAllowed()` | True in a client session, false in a background session | `true` — `ALSystemOperatingSystem.get_ALGuiAllowed` is Cecil-rewritten to `true` (`NclCecilRewrite.Forms.cs`), because the runner dispatches UI to test handlers and AL that checks `GuiAllowed()` before raising UI must reach them. This row said `false` until the 2026-09 audit. |
+| `GuiAllowed()` | True in a client session and in a test session (corpus `session/TestBCPlatformContracts.al`, `GuiAllowed_InTestContext_ReturnsTrue`, green on all eight cloud legs), false in a background session | `true` — `ALSystemOperatingSystem.get_ALGuiAllowed` is Cecil-rewritten to `true` (`NclCecilRewrite.Forms.cs`), because the runner dispatches UI to test handlers and AL that checks `GuiAllowed()` before raising UI must reach them. This row said `false` until the 2026-09 audit. In a test session that matches BC, and the corpus test above pins it through the runner on every leg. The rewrite is unconditional, so a `StartSession` worker (reachable under `--isolation disabled`, where it runs inline) also answers `true` where a background session on a service tier answers `false`; that case is unmeasured, because the corpus runs under `TestIsolation = Codeunit` and BC refuses `StartSession` from a test there (corpus codeunit 60397). |
 | `GetFilter(field)` | Serialised filter expression | Returns serialised filter expression (functional) |
 | Field `InitValue` | Applied on `Init()` | Applied — BC's own `Init()` over the compiled table metadata (the `TableInitValueRegistry` this row used to cite was v1 and no longer exists) |
 | `FieldRef.Caption` / `.Name` | Field metadata from schema | Real values, read from the compiled metadata for both the bundle's tables and precompiled dependency tables. A `"FieldNN"` placeholder name survives in `BcAppSymbolCache` only for a symbol-reference entry that carries no name at all — not observed on any supported artifact; unverified beyond that code reading |
