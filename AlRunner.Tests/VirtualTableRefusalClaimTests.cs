@@ -434,8 +434,9 @@ public sealed class VirtualTableRefusalClaimTests
         // DataAccessSource with no skeleton session, without which BC's own
         // PermissionDataProvider cannot be constructed. Its own file,
         // RecordPatches.PermissionSystemTable.cs, raises two more that this count does not see:
-        // CoveredFiles is a hard-coded list (#3118) and the new file is deliberately not on it,
-        // so those two are outside the scanned set. The delta is therefore +1, not +3.
+        // the new file is deliberately not on CoveredFiles, so those two are counted instead by
+        // EveryRefusalSiteOutsideTheCount_IsInADeclaredFile_WithItsOwnExactCount (#3118).
+        // The delta is therefore +1, not +3.
         // 76 was READ OUT of this test's own failure message ("Expected: 75, Actual: 76"), and
         // independently confirmed by counting the same regex across CoveredFiles ∪ SiblingFiles
         // on origin/main (75) and on this branch (76): the ONLY per-file movement is
@@ -459,6 +460,59 @@ public sealed class VirtualTableRefusalClaimTests
         // CodeunitMetadataShapeGap like every other refusal in that file.
         // 79 was READ OUT of this test's own failure message ("Expected: 77, Actual: 79").
         Assert.Equal(79, total);
+    }
+
+    private static readonly Regex RefusalSite = new(@"throw (RecordPatches\.)?[A-Za-z]+(?<!Bc)ShapeGap\(");
+
+    /// <summary>
+    /// Files that raise the same refusals but sit outside the count above, each with its own
+    /// exact count (#3118). A narrowing that is asserted, not assumed: a deletion here reds the
+    /// file's own row, and a refusal in a file on no list reds the membership check below.
+    /// </summary>
+    /// Read each number out of this test's failure message, never by adding a delta by hand.
+    private static readonly Dictionary<string, int> DeclaredOutsideTheCount = new(StringComparer.Ordinal)
+    {
+        // ActiveSessionShapeGap (#3233): its surface is in Surfaces(), its file not on CoveredFiles.
+        ["RecordPatches.ActiveSessionSystemTable.cs"] = 6,
+        // CodeunitMetadataShapeGap, reached from the equivalence projection and the BC-document reader.
+        ["RecordPatches.CodeunitMetadataEquivalence.cs"] = 1,
+        ["RecordPatches.CodeunitMetadataFromBcDocument.cs"] = 3,
+        // ObjectMetadataShapeGap: #2894's own factory, scoped out of #2945's count by design.
+        ["RecordPatches.NoSourceColumns.cs"] = 1,
+        ["RecordPatches.ObjectMetadataSystemTable.cs"] = 10,
+        // PermissionSetSystemTableShapeGap / PermissionSystemTableShapeGap (the latter joined at #3695).
+        ["RecordPatches.PermissionSetSystemTable.cs"] = 1,
+        ["RecordPatches.PermissionSystemTable.cs"] = 2,
+    };
+
+    [Fact]
+    public void EveryRefusalSiteOutsideTheCount_IsInADeclaredFile_WithItsOwnExactCount()
+    {
+        var files = Directory
+            .EnumerateFiles(Path.Combine(RepoRoot, "AlRunner"), "*.cs", SearchOption.AllDirectories)
+            .Where(p => !p.Split(Path.DirectorySeparatorChar).Any(s => s is "bin" or "obj"))
+            .ToList();
+        // Third state: a discovery that reads nothing must not pass as "nothing undeclared".
+        Assert.True(files.Count > 0, $"discovered no .cs files under {Path.Combine(RepoRoot, "AlRunner")}");
+
+        var perFile = files
+            .Select(p => (Name: Path.GetFileName(p), Count: RefusalSite.Matches(File.ReadAllText(p)).Count))
+            .Where(f => f.Count > 0)
+            .ToList();
+        var counted = new HashSet<string>(CoveredFiles.Concat(SiblingFiles), StringComparer.Ordinal);
+
+        // And a regex that stopped matching reads as zero everywhere; the counted set alone holds 79.
+        var insideTotal = perFile.Where(f => counted.Contains(f.Name)).Sum(f => f.Count);
+        Assert.True(insideTotal >= 79, $"the counted files yield {insideTotal} sites — the scan is not reading what the count above reads");
+
+        var outside = perFile.Where(f => !counted.Contains(f.Name))
+                             .ToDictionary(f => f.Name, f => f.Count, StringComparer.Ordinal);
+        static string Render(IEnumerable<KeyValuePair<string, int>> rows) =>
+            string.Join("\n", rows.OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => $"  {kv.Key} = {kv.Value}"));
+        var actual = Render(outside);
+        var expected = Render(DeclaredOutsideTheCount);
+        Assert.True(expected == actual,
+            $"refusal sites outside CoveredFiles ∪ SiblingFiles do not match DeclaredOutsideTheCount.\ndeclared:\n{expected}\nfound:\n{actual}");
     }
 
 
