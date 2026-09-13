@@ -425,6 +425,23 @@ public sealed partial class BcCompiler
         }
     }
 
+    /// <summary>Replays one raw enum snapshot entry the way emit registered it.</summary>
+    internal static void ReplayRadEnumEntry(AlEnumMetadataRegistry.Entry e, int? extendsTargetId)
+    {
+        if (extendsTargetId is not { } targetId)
+        {
+            AlEnumMetadataRegistry.Register(e.Id, e.Name, e.Options, e.Indexes, e.Implementations, e.Captions,
+                e.DefaultImplementations, e.UnknownImplementations, e.Extensible);
+            return;
+        }
+        // RegisterExtension APPENDS, and after a RAD delta the changed extension is already
+        // live — registering it again would leave two entries for one enumextension.
+        if (AlEnumMetadataRegistry.SnapshotRaw(new[] { targetId })
+            .Any(r => r.ExtendsTargetId == targetId && string.Equals(r.Entry.Name, e.Name, StringComparison.Ordinal)))
+            return;
+        AlEnumMetadataRegistry.RegisterExtension(targetId, e.Name, e.Options, e.Indexes, e.Implementations, e.Captions);
+    }
+
     private static void CaptureRadReport(
         Dictionary<int, string> reports, Dictionary<int, AlReportLayoutInfo[]> layouts, int id)
     {
@@ -446,20 +463,7 @@ public sealed partial class BcCompiler
                 AlObjectMetadataRegistry.Register(e.Kind, e.Id, e.Name, e.Xml);
         if (_radEnumMetadataByModule.TryGetValue(moduleName, out var enums))
             foreach (var (e, target) in enums.Values)
-            {
-                if (target is { } targetId)
-                {
-                    // RegisterExtension APPENDS, and after a delta the changed extension is
-                    // already live — skip it rather than register it twice.
-                    if (AlEnumMetadataRegistry.SnapshotRaw(new[] { targetId })
-                        .Any(r => r.ExtendsTargetId == targetId && string.Equals(r.Entry.Name, e.Name, StringComparison.Ordinal)))
-                        continue;
-                    AlEnumMetadataRegistry.RegisterExtension(targetId, e.Name, e.Options, e.Indexes, e.Implementations, e.Captions);
-                }
-                else
-                    AlEnumMetadataRegistry.Register(e.Id, e.Name, e.Options, e.Indexes, e.Implementations, e.Captions,
-                        e.DefaultImplementations, e.UnknownImplementations, e.Extensible);
-            }
+                ReplayRadEnumEntry(e, target);
         if (_radReportMetadataByModule.TryGetValue(moduleName, out var reports))
             foreach (var (id, xml) in reports) AlReportMetadataRegistry.Register(id, xml);
         if (_radReportLayoutsByModule.TryGetValue(moduleName, out var layouts))
