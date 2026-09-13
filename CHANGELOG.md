@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **test-data:** hydrate TableFilter columns from the backup instead of refusing them
 - **cli:** a --test pattern that selects no test fails the run instead of exiting 0
 - **allobj:** AllObj and Table Metadata in one app group list another app group's objects
 - **isolation:** ResetSingleInstanceCache leaks the instance and its keep-alive handle into the session tree
