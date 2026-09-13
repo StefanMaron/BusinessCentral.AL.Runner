@@ -641,7 +641,41 @@ internal static partial class BcAppSymbolCache
     internal sealed record ObjectSymbol(string Kind, int Id, string Name, string? Caption = null,
         string? TableNo = null, bool SingleInstance = false, string? Subtype = null,
         string? TargetObjectName = null, string? ALNamespace = null,
-        string? InherentEntitlements = null, string? InherentPermissions = null);
+        string? InherentEntitlements = null, string? InherentPermissions = null,
+        List<CodeunitMethodSymbol>? AttributedMethods = null);
+
+    /// <summary>
+    /// One method BC's <c>ObjectMetadataEmitter</c> writes as a <c>&lt;Method&gt;</c>, as
+    /// SymbolReference.json states it: the compiler-assigned <c>Id</c> BC writes as the element's
+    /// <c>ID</c> attribute, the AL name, and which of the emitted kinds it is.
+    ///
+    /// <para>Only ATTRIBUTED methods are carried, because only those are emitted — of 326
+    /// <c>&lt;Method&gt;</c> elements across System Application + Business Foundation
+    /// 28.1.49838.53910, zero carry no attribute (#3963). The order is the symbol file's, which
+    /// is BC's document order: measured 70/70 on the codeunits with two or more emitted methods.
+    /// </para>
+    ///
+    /// <para><b>Incomplete by construction for a codeunit with subscribers.</b> The symbol file
+    /// is an app's consumer-facing API surface, so it states no <c>local</c> method, and an AL
+    /// event subscriber is always local — of the 140 subscribers BC emits for System
+    /// Application, it states 0, by id and by name. Whether this list is complete for a given
+    /// codeunit is decided by the assembly witness, never by this list's own contents; see
+    /// <c>RecordPatches.RegisterCodeunitSubscriberWitness</c> (#3788).</para>
+    /// </summary>
+    /// <param name="Kind">The <c>MethodAttributes</c> child element BC's emitter writes —
+    /// <c>EventPublisherAttribute</c> or <c>InherentPermissionsMethodAttribute</c>.</param>
+    /// <param name="AttributeName">The AL attribute identifier the symbol file states
+    /// (<c>IntegrationEvent</c>, <c>InternalEvent</c>, <c>BusinessEvent</c>,
+    /// <c>InherentPermissions</c>), which BC writes as that element's <c>Name</c>.
+    /// <b>Not optional:</b> BC's own <c>MetaCodeunit(XmlNode)</c> throws
+    /// <c>NullReferenceException</c> on an attribute element with no <c>Name</c> — measured
+    /// against the live constructor, where a bare element threw and `Name` alone sufficed.</param>
+    /// <param name="IncludeSender">The publisher's <c>IncludeSender</c>, which BC writes on the
+    /// <c>EventPublisherAttribute</c> element. False for every non-publisher kind.</param>
+    /// <param name="Isolated">The publisher's <c>Isolated</c>, same element.</param>
+    internal sealed record CodeunitMethodSymbol(
+        int Id, string Name, string Kind, string AttributeName,
+        bool IncludeSender = false, bool Isolated = false);
 
     // SymbolReference.json container name → the AllObj "Object Type" option name the
     // objects inside it map to. Matched against the live option string by name, so a
@@ -1123,7 +1157,8 @@ internal static partial class BcAppSymbolCache
                         Subtype: string.IsNullOrWhiteSpace(cuSubtype) ? null : cuSubtype.Trim(),
                         ALNamespace: alNamespace,
                         InherentEntitlements: string.IsNullOrWhiteSpace(cuEntitlements) ? null : cuEntitlements.Trim(),
-                        InherentPermissions: string.IsNullOrWhiteSpace(cuPermissions) ? null : cuPermissions.Trim()));
+                        InherentPermissions: string.IsNullOrWhiteSpace(cuPermissions) ? null : cuPermissions.Trim(),
+                        AttributedMethods: ReadAttributedMethods(el)));
                     continue;
                 }
                 objects.TryAdd((kind, objId), new ObjectSymbol(kind, objId, objName, objCaption,
@@ -2549,6 +2584,122 @@ internal static partial class BcAppSymbolCache
             if (int.TryParse(t, out var id)) ids.Add(id);
         }
         return ids.Count > 0 ? ids : null;
+    }
+
+    /// <summary>
+    /// The AL method attributes that make BC's <c>ObjectMetadataEmitter</c> write a
+    /// <c>&lt;Method&gt;</c>, mapped to the <c>MethodAttributes</c> child element it writes.
+    /// Read off the symbol file's own <c>Attributes</c> array, whose <c>Name</c> is the AL
+    /// attribute identifier the compiler recorded.
+    ///
+    /// <para>The three event kinds all emit <c>EventPublisherAttribute</c> — BC's document does
+    /// not distinguish integration from internal from business at this level. The fourth kind BC
+    /// emits, <c>EventSubscriberAttribute</c>, is deliberately absent from this table because the
+    /// symbol file never states it: see <see cref="CodeunitMethodSymbol"/> (#3788).</para>
+    /// </summary>
+    private static readonly Dictionary<string, string> EmittedMethodAttributeKinds =
+        new(StringComparer.Ordinal)
+        {
+            ["IntegrationEvent"] = "EventPublisherAttribute",
+            ["InternalEvent"] = "EventPublisherAttribute",
+            ["BusinessEvent"] = "EventPublisherAttribute",
+            ["InherentPermissions"] = "InherentPermissionsMethodAttribute",
+        };
+
+    /// <summary>
+    /// <c>IncludeSender</c> and <c>Isolated</c> off a publisher attribute's POSITIONAL argument
+    /// list, which is how SymbolReference.json states them — AL's own signatures:
+    /// <c>IntegrationEvent(IncludeSender, GlobalVarAccess[, Isolated])</c> and
+    /// <c>InternalEvent(GlobalVarAccess[, Isolated])</c>, the latter having no sender argument
+    /// at all. <c>BusinessEvent</c> follows <c>IntegrationEvent</c>'s shape.
+    ///
+    /// <para>Validated against BC's own emitter rather than against AL's documentation: over
+    /// System Application 28.1.49838.53910, this mapping reproduces the <c>IncludeSender</c> and
+    /// <c>Isolated</c> attributes BC writes for <b>149 of 149</b> publishers, with zero
+    /// disagreements. A missing trailing argument means the AL default, which is false for both
+    /// — the same value BC's own reader applies to an absent attribute.</para>
+    /// </summary>
+    private static void ReadPublisherFlags(
+        string attributeName, JsonElement attribute, out bool includeSender, out bool isolated)
+    {
+        includeSender = false;
+        isolated = false;
+        if (attributeName == "InherentPermissions") return;
+
+        var args = new List<string>();
+        if (attribute.TryGetProperty("Arguments", out var arguments)
+            && arguments.ValueKind == JsonValueKind.Array)
+            foreach (var argument in arguments.EnumerateArray())
+                args.Add(argument.TryGetProperty("Value", out var v) ? v.GetString() ?? "" : "");
+
+        static bool True(List<string> a, int i)
+            => i < a.Count && string.Equals(a[i], "True", StringComparison.OrdinalIgnoreCase);
+
+        if (attributeName == "InternalEvent")
+        {
+            // No IncludeSender argument exists on this form, so it stays false — which is what
+            // BC writes for every InternalEvent publisher measured.
+            isolated = True(args, 1);
+            return;
+        }
+
+        includeSender = True(args, 0);
+        isolated = True(args, 2);
+    }
+
+    /// <summary>
+    /// The codeunit's attributed methods, in the symbol file's own array order — which is BC's
+    /// document order, and which is load-bearing because <c>MetadataObjectDiff</c> pairs
+    /// <c>Methods</c> positionally (#3963).
+    ///
+    /// <para>Returns null when the codeunit states no attributed method at all, so "states none"
+    /// stays distinct from "states an empty list" for the consumer: BC omits the
+    /// <c>&lt;Methods&gt;</c> element rather than writing an empty one, and 396 of System
+    /// Application 28.1's 533 codeunits are in that state.</para>
+    /// </summary>
+    private static List<CodeunitMethodSymbol>? ReadAttributedMethods(JsonElement codeunit)
+    {
+        if (!codeunit.TryGetProperty("Methods", out var methods) || methods.ValueKind != JsonValueKind.Array)
+            return null;
+
+        List<CodeunitMethodSymbol>? result = null;
+        foreach (var method in methods.EnumerateArray())
+        {
+            if (!method.TryGetProperty("Attributes", out var attributes)
+                || attributes.ValueKind != JsonValueKind.Array)
+                continue;
+
+            // First match wins, and the ORDER of the check is the array's rather than this
+            // table's: a method carrying both an event attribute and InherentPermissions is one
+            // <Method> element in BC's document, not two.
+            string? kind = null;
+            string? attributeName = null;
+            bool includeSender = false, isolated = false;
+            foreach (var attribute in attributes.EnumerateArray())
+            {
+                if (!attribute.TryGetProperty("Name", out var attrName)) continue;
+                var name = attrName.GetString();
+                if (name is null) continue;
+                if (EmittedMethodAttributeKinds.TryGetValue(name, out var emitted))
+                {
+                    kind = emitted;
+                    attributeName = name;
+                    ReadPublisherFlags(name, attribute, out includeSender, out isolated);
+                    break;
+                }
+            }
+            if (kind is null || attributeName is null) continue;
+
+            if (!method.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var methodId))
+                continue;
+            var methodName = method.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
+            if (string.IsNullOrEmpty(methodName)) continue;
+
+            (result ??= new List<CodeunitMethodSymbol>()).Add(
+                new CodeunitMethodSymbol(methodId, methodName, kind, attributeName,
+                    includeSender, isolated));
+        }
+        return result;
     }
 
     private static Dictionary<string, string> SymbolProperties(JsonElement element)

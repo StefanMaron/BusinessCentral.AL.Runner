@@ -406,6 +406,13 @@ public sealed class DependencyLoader
     private static void RegisterAppAssemblies(IReadOnlyList<Assembly> assemblies, AppManifest m, string appPath)
     {
         var version = m.Version.ToString();
+        // #3788: which of this app's codeunits declare an AL event subscriber, read off the
+        // assemblies THIS call already has in hand. Nothing is loaded for it — the scan reads
+        // the ECMA-335 metadata of assemblies the loop above just loaded — and it is driven
+        // here because this is the one place that holds (assemblies, appPath) together, which
+        // is the pairing the codeunit metadata derivation needs and cannot reconstruct from a
+        // .app path alone. See RecordPatches.CodeunitSubscriberWitness.cs.
+        AlRunner.Patches.RecordPatches.WitnessCodeunitSubscribers(assemblies, appPath);
         foreach (var asm in assemblies)
         {
             _byName[asm.GetName().Name ?? ""] = asm;
