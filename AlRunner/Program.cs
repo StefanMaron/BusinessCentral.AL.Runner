@@ -3523,8 +3523,9 @@ foreach (var bundle in bundles)
                     .Concat(allPaths.Where(Directory.Exists)
                         .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")))
                     .Distinct()
+                    // Only the active #if branches: the compile leaves the rest out (#4076).
                     .SelectMany(f => System.Text.RegularExpressions.Regex.Matches(
-                        File.ReadAllText(f),
+                        AlRunner.Infrastructure.AlMemberSyntaxIndex.BlankInactivePreprocessorBranches(File.ReadAllText(f), f),
                         @"^(table|codeunit|page|report|query|enum|xmlport|tableextension|pageextension|permissionset)\s+\d+\s+""?([^""\r\n]+?)""?\s*$",
                         System.Text.RegularExpressions.RegexOptions.Multiline))
                     .Select(m => m.Groups[2].Value.Trim())

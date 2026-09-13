@@ -133,6 +133,49 @@ public sealed class AlMemberSyntaxIndex
             .ToList();
     }
 
+    /// <summary>The nearest app.json in the directory of <paramref name="filePath"/> or an
+    /// ancestor, or null — the manifest whose preprocessorSymbols the compile used for it.</summary>
+    internal static string? NearestAppJson(string filePath)
+    {
+        for (var d = Path.GetDirectoryName(Path.GetFullPath(filePath)); d != null; d = Path.GetDirectoryName(d))
+        {
+            var candidate = Path.Combine(d, "app.json");
+            if (File.Exists(candidate)) return candidate;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// <paramref name="source"/> with every inactive <c>#if</c> branch overwritten by spaces
+    /// (line breaks kept), under the symbol union the compile uses for
+    /// <paramref name="filePath"/>'s app. For text scans that must see only what compiles
+    /// (#4076). Returns <paramref name="source"/> unchanged when the parse throws.
+    /// </summary>
+    internal static string BlankInactivePreprocessorBranches(string source, string filePath)
+    {
+        try
+        {
+            var parseOpts = new NavCA.ParseOptions(
+                runtimeVersion: null!,
+                preprocessorSymbols: PreprocessorSymbols(NearestAppJson(filePath)),
+                documentationMode: NavCA.DocumentationMode.None);
+            var root = NavSyntax.SyntaxTree.ParseObjectText(source, path: filePath, encoding: null!, parseOpts, default).GetRoot();
+            char[]? chars = null;
+            foreach (var trivia in root.DescendantTrivia(descendIntoTrivia: true))
+            {
+                if (trivia.Kind != NavCA.SyntaxKind.DisabledTextTrivia) continue;
+                chars ??= source.ToCharArray();
+                for (var i = trivia.FullSpan.Start; i < trivia.FullSpan.End; i++)
+                    if (chars[i] is not ('\r' or '\n')) chars[i] = ' ';
+            }
+            return chars is null ? source : new string(chars);
+        }
+        catch
+        {
+            return source;
+        }
+    }
+
     private static string NormalizePath(string path) => path.Replace('\\', '/');
 
     private static string MemberName(NavSyntax.MethodOrTriggerDeclarationSyntax member) =>

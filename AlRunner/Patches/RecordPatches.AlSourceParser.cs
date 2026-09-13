@@ -28,26 +28,45 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    // Matches BcCompiler.Emit's options so this parse sees the same source the emit does —
-    // notably the CLEANSCHEMA1..25 preprocessor symbols, which gate real field declarations
-    // in the BaseApp, PLUS whatever the caller passed via --define / --preprocessor-symbols.
-    // NOT the app.json preprocessorSymbols BcCompiler.BuildParseOptions also adds (#4071).
-    // DocumentationMode.None: doc comments are trivia we never read.
-    //
-    // This MUST be a property recomputed on every call, not a `static readonly` field.
-    // BcCompiler.SetExtraPreprocessorSymbols(...) runs at Program.cs:727, after this type
-    // may already have been touched elsewhere in the same process — a `static readonly`
-    // field would freeze at type-init with the empty symbol set, and a `.Concat(...)`
-    // bolted onto that frozen field would look like a fix while changing nothing (#1900:
-    // the compiler's two ParseOptions sites already merge `_extraPreprocessorSymbols` per
-    // call; this parser was the one site that didn't). GetExtraPreprocessorSymbols() is
-    // cheap (a lock plus a sorted copy of a handful of strings), so recomputing it per
-    // parse call costs nothing worth caching.
-    private static NavCA.ParseOptions AlParseOptions => new(
+    // The same symbol union BcCompiler.Emit parses with: CLEANSCHEMA1..25, --define, and the
+    // owning app.json's preprocessorSymbols (#4071). `symbols` is the part that varies, and it
+    // is ALSO the tree-cache key in ParseAlObjects — build both from one array, or a cached tree
+    // parsed under one symbol set is served for another (#1900).
+    // Never a `static readonly`: --define is registered after this type may be touched (#1900).
+    private static NavCA.ParseOptions AlParseOptionsFor(string[] symbols) => new(
         runtimeVersion: null!,
-        preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}")
-            .Concat(AlRunner.BcCompiler.GetExtraPreprocessorSymbols()),
+        preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}").Concat(symbols),
         documentationMode: NavCA.DocumentationMode.None);
+
+    // app.json preprocessorSymbols of the file ParseSourceFileIntoAllExtractors is currently
+    // feeding the extractors. Empty for text with no owning file (synthesized table text,
+    // dependency .app source), which keeps those parses on --define alone, as before.
+    private static string[] _currentFileManifestSymbols = [];
+
+    // Directory -> manifest preprocessorSymbols of the nearest app.json. Cleared by
+    // ResetForReload beside _owningAppByDir, so a --watch edit to app.json is re-read.
+    private static readonly Dictionary<string, string[]> _manifestSymbolsByDir = new(StringComparer.OrdinalIgnoreCase);
+
+    private static string[] ManifestPreprocessorSymbolsFor(string? filePath)
+    {
+        if (filePath is null) return [];
+        var dir = Path.GetDirectoryName(Path.GetFullPath(filePath));
+        if (dir is null) return [];
+        if (_manifestSymbolsByDir.TryGetValue(dir, out var memo)) return memo;
+        var symbols = AlRunner.BcCompiler.ReadManifestCompilerInputs(
+            AlRunner.Infrastructure.AlMemberSyntaxIndex.NearestAppJson(filePath)).PreprocessorSymbols.ToArray();
+        _manifestSymbolsByDir[dir] = symbols;
+        return symbols;
+    }
+
+    private static string[] ActiveParseSymbols()
+    {
+        var extra = AlRunner.BcCompiler.GetExtraPreprocessorSymbols();
+        return _currentFileManifestSymbols.Length == 0
+            ? extra.ToArray()
+            : extra.Concat(_currentFileManifestSymbols).Distinct(StringComparer.Ordinal)
+                .OrderBy(s => s, StringComparer.Ordinal).ToArray();
+    }
 
     // Field type text still yields its length by pattern (`Code[10]` → 10). The type is one
     // token's text with no nesting, so there is nothing structural for a tree to add here.
@@ -247,7 +266,7 @@ public static partial class RecordPatches
     // back-to-back — RecordPatches.ParseSourceFileIntoAllExtractors is the shared call
     // site both AddSourceDirs and Register() route every file through — so remembering
     // only the LAST parse turns 8 identical tree builds per file into 1 real build plus 7
-    // cache hits, with no change to AlParseOptions, to any TryParse*File signature, or to
+    // cache hits, with no change to AlParseOptionsFor, to any TryParse*File signature, or to
     // the eight extractors' own code.
     //
     // The key is (text, symbols), never text alone. #1900 was exactly a parser that
@@ -255,7 +274,7 @@ public static partial class RecordPatches
     // preprocessor set at type-init before BcCompiler.SetExtraPreprocessorSymbols ran). A
     // memo keyed on text alone would reproduce that bug through a different door: two
     // calls for the same text under two different --define sets would incorrectly share
-    // one cached tree. AlParseOptions (see above) is still recomputed on every miss:
+    // one cached tree. AlParseOptionsFor (see above) is still recomputed on every miss:
     // caching here changes WHEN a tree is (re)built, never what determines whether it
     // must be.
     private static string? _lastParsedText;
@@ -371,11 +390,9 @@ public static partial class RecordPatches
     {
         if (string.IsNullOrWhiteSpace(text)) return [];
 
-        // GetExtraPreprocessorSymbols() is a lock plus a sorted copy of a handful of
-        // strings (see AlParseOptions above) — cheap enough to call on every ParseAlObjects
-        // invocation just to test the memo key, including on the 7-out-of-8 calls that end
-        // up being cache hits.
-        var symbols = AlRunner.BcCompiler.GetExtraPreprocessorSymbols().ToArray();
+        // A lock plus a sorted copy of a handful of strings — cheap enough to compute on every
+        // call just to test the memo key, including the 7-out-of-8 calls that are cache hits.
+        var symbols = ActiveParseSymbols();
         if (_lastParsedText == text && _lastParsedSymbols != null &&
             symbols.AsSpan().SequenceEqual(_lastParsedSymbols))
         {
@@ -399,7 +416,7 @@ public static partial class RecordPatches
         {
             ParseObjectTextCallCount++;
             var tree = NavSyntax.SyntaxTree.ParseObjectText(
-                text, path: "", encoding: null!, AlParseOptions, default);
+                text, path: "", encoding: null!, AlParseOptionsFor(symbols), default);
             IReadOnlyList<NavCA.SyntaxNode> objects = tree.GetRoot() is NavSyntax.CompilationUnitSyntax root
                 ? root.ChildNodes().ToList()
                 : Array.Empty<NavCA.SyntaxNode>();

@@ -428,6 +428,7 @@ public static partial class RecordPatches
         // this one only re-reads the declarations, not who owns them. Cost: one app.json
         // walk-up per source directory per cycle (measured in #3226's PR body).
         _owningAppByDir.Clear();
+        _manifestSymbolsByDir.Clear();   // same reason, for app.json preprocessorSymbols (#4071)
         _metaFormCache.Clear();
         // #1957: the "already (successfully|un-)loaded" bookkeeping is a statement about
         // the NCLMetaForm instances _metaFormCache.Clear() just discarded — it must go
@@ -522,6 +523,13 @@ public static partial class RecordPatches
     /// </para>
     /// </summary>
     private static void ParseSourceFileIntoAllExtractors(string text, string? filePath = null)
+    {
+        _currentFileManifestSymbols = ManifestPreprocessorSymbolsFor(filePath);
+        try { ParseSourceFileIntoAllExtractorsCore(text, filePath); }
+        finally { _currentFileManifestSymbols = []; }
+    }
+
+    private static void ParseSourceFileIntoAllExtractorsCore(string text, string? filePath)
     {
         // Table and tableextension need the file PATH too, same reason as the profile/
         // permission-set calls below: #3600's table-metadata-source guard has to tell a
