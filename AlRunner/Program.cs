@@ -1619,6 +1619,15 @@ FlushDeferredStartupLines();
 
 // Prints the queue once and empties it, so the crash-path flushes above and this one cannot
 // print a line twice.
+// A loop inside a catch/finally in <Main>$ makes the JIT compile all of Main FullOpts, in every
+// process generation. Keep handler loops in helpers like this one; HandlerLoopJitTierGuardTests
+// pins it. See docs/startup-cost.md#main-jit-tier.
+static void WriteRemainingInnerExceptions(AggregateException flat)
+{
+    foreach (var inner in flat.InnerExceptions.Skip(1))
+        Console.Error.WriteLine($"  → {inner.GetType().Name}: {inner.Message}");
+}
+
 void FlushDeferredStartupLines()
 {
     foreach (var deferredLine in deferredStartupLines) deferredLine();
@@ -3489,8 +3498,7 @@ foreach (var bundle in bundles)
                 Console.Error.WriteLine($"<bundled>: EMIT-FAIL — {rootEx.GetType().Name}: {rootEx.Message}");
                 if (rootEx.StackTrace is { } st) Console.Error.WriteLine(st);
                 if (flat.InnerExceptions.Count > 1)
-                    foreach (var inner in flat.InnerExceptions.Skip(1))
-                        Console.Error.WriteLine($"  → {inner.GetType().Name}: {inner.Message}");
+                    WriteRemainingInnerExceptions(flat);
                 bundleErrors.Add($"<bundled>: EMIT-FAIL: {rootEx.Message.Split('\n')[0]}");
             }
             catch (Exception ex)
@@ -4107,8 +4115,7 @@ if (watchUi)
     }
     finally
     {
-        foreach (var w in watchers) { w.EnableRaisingEvents = false; w.Dispose(); }
-        signal.Dispose();
+        WatchSource.DisposeWatch(signal, watchers);
     }
     if (!changed) return 0;
     PaintWatchRunning(); // flip the header to "⟳ running…" while the next cycle compiles
