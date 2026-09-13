@@ -118,6 +118,8 @@ public static class RunnerTestPageState
                 // already positioned on a specific row must not be silently reset to the
                 // table's own first row.
                 live.MoveFirstDuringOpen();
+            // BC's TestPageProxy activates the initial control once the page is open (#4062).
+            live.FocusInitialControl();
         }
         // Issue #2677: EagerlyBuildParts + Loaded's own part-refresh can now run AL trigger
         // code (a subpage part's OnAfterGetRecord/OnAfterGetCurrRecord, and whatever that

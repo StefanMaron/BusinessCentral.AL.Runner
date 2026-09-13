@@ -1146,6 +1146,22 @@ internal sealed partial class RunnerPageInstance
     /// from ordinary AL — <c>GetField(Rec.FieldNo(X))</c> confuses the two spaces — and it is
     /// what corpus codeunit 60346 measures.</para>
     /// </summary>
+    /// <summary>Every control the page declares, in page-tree order, with a literal-true QuickEntry flag.</summary>
+    internal IReadOnlyList<(int Id, bool QuickEntry)> ControlIdsInPageOrder()
+    {
+        if (_form is not NavForm form || form.MasterPage is not { } masterPage)
+            return Array.Empty<(int, bool)>();
+        var result = new List<(int, bool)>();
+        foreach (var element in masterPage.FindAll(e => e is Microsoft.Dynamics.Nav.Types.Metadata.ControlDefinition))
+        {
+            var control = (Microsoft.Dynamics.Nav.Types.Metadata.ControlDefinition)element;
+            var quickEntry = string.Equals(control.QuickEntry, "true", StringComparison.OrdinalIgnoreCase)
+                             || control.QuickEntry == "1";
+            result.Add((control.ID, quickEntry));
+        }
+        return result;
+    }
+
     internal bool DeclaresControl(int controlId)
         => _form is NavForm form && form.MetadataHelper.TryGetControlDefinitionById(controlId, out _);
 
@@ -2551,19 +2567,12 @@ internal sealed partial class RunnerPageInstance
            && form.MasterPage?.PageProperties?.SourceObject?.DelayedInsert == true;
 
     /// <summary>
-    /// Whether the page writes ROWS — a repeater the cursor moves through — rather than one
-    /// record it saves when it is left. Read off <c>MasterPage.PageProperties.PageType</c>, the
-    /// same property <c>NavTestExecution.FindPageType</c> reads.
-    ///
-    /// Both directions are measured on real BC and adjudicated upstream. A List inserts the row
-    /// as soon as its key is complete (corpus codeunit 60636
-    /// <c>NewAndInsertRecordEvents_PageDrivenInsert_FireForTheKeyOnly</c>); a Card does not —
-    /// its row does not exist until the page is closed, which corpus codeunit 60844
-    /// <c>Close_WithoutOK_StillPersistsTheNewRow</c> asserts by name ("this assertion catches a
-    /// test environment where the record was already inserted eagerly on SetValue"). ListPart
-    /// and Worksheet are the other two repeater page types and ride the same client mechanism;
-    /// no corpus test distinguishes them from List, and none contradicts them either. See
-    /// MockTestPage.InsertOnCompletePrimaryKey.
+    /// Whether the page shows ROWS in a repeater rather than one record — List, ListPart,
+    /// Worksheet, read off <c>MasterPage.PageProperties.PageType</c> (what
+    /// <c>NavTestExecution.FindPageType</c> reads). The insert-on-focus model uses it for BC's
+    /// repeater-only rules (a row change never inserts; the initial control skips QuickEntry);
+    /// a linked part uses it to gate the key-complete insert. See
+    /// LiveNavTestPage.ActivateControl and docs/testpage-write-buffer.md#insert-on-focus.
     /// </summary>
     internal bool WritesRowsAsTheyAreCompleted
         => _form is NavForm form
