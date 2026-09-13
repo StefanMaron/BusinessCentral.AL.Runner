@@ -169,7 +169,9 @@ public class LayeredPrePassVisibilityTests
     {
         Assert.True(run.Exit != 0,
             $"{what}: an app using an object of an app it does not depend on must not compile (exit {run.Exit}):\n{run.Output}");
-        Assert.Contains("AL0185 Codeunit 'PPV Twin A Api' is missing", run.Output);
+        // Pre-pass and per-bundle compiles format the diagnostic differently ("AL0185 ..." vs
+        // "error AL0185: ..."); the claim is that it is refused, whichever compile refuses it.
+        Assert.Matches(@"AL0185:? Codeunit 'PPV Twin A Api' is missing", run.Output);
     }
 
     // ── The filter itself, no runner spawn ────────────────────────────────────
