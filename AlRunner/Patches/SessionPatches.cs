@@ -514,7 +514,7 @@ public static partial class BcRuntime
     /// which is faithful for this runtime: the runner drives AL synchronously, and BC's own
     /// callers await the result before reading <c>sessionId</c>.</para>
     ///
-    /// <para>SCOPE AUDIT — two things BC's body does that this one does not
+    /// <para>SCOPE AUDIT — two things BC's body does, and where each is handled here
     /// (.claude/rules/loud-failures.md asks for each to be named rather than left implicit):</para>
     ///
     /// <para>1. <c>timeout</c> IS DROPPED, and it is not purely decorative in BC. BC turns it
@@ -532,32 +532,8 @@ public static partial class BcRuntime
     /// caller passing a sane timeout. Tracked as <b>#3291</b>, which stays open after this
     /// merges — the divergence is real and is not fixed here.</para>
     ///
-    /// <para>2. BC REFUSES StartSession outright during an install or upgrade. Its body has,
-    /// before any of the work above:</para>
-    ///
-    /// <code>
-    ///   if (session.AppInstallationContext != null || session.AppUpgradeContext != null)
-    ///   {
-    ///       // trace: "StartSession ignored due to ongoing installation/upgrade
-    ///       //         to avoid inconsistent data in case of rollback"
-    ///       return false;
-    ///   }
-    /// </code>
-    ///
-    /// <para>That is not reproduced here, and it is worth being precise about why rather than
-    /// claiming equivalence. The runner has no <c>AppInstallationContext</c> — its install pass
-    /// is its own mechanism and never populates BC's field — so the guard has nothing to read
-    /// even if it were copied in, and it would be dead code that looked like coverage. The
-    /// consequence is real and observable: the very call this patch was written for
-    /// (<c>Codeunit8705.UpdateFeatureUptakeStatus</c>, reached from a Base App install trigger)
-    /// runs its worker here where a real tier would skip it and return false. Modelling the
-    /// install context faithfully is a separate piece of work; it is filed as <b>#3292</b>
-    /// rather than guessed at, because "run the worker" and "skip the worker" are different
-    /// answers to an AL-visible question and picking one by assumption is what
-    /// .claude/rules/no-assumption-fixes.md rules out. #3292 stays open after this merges, and
-    /// it is related to #3268 (install-trigger ordering) by the same missing state: the runner's
-    /// install pass does not record that an install is in progress, which is what both would
-    /// read.</para>
+    /// <para>2. BC refuses StartSession during an install or upgrade. That arm lives in
+    /// <see cref="AlRunnerStartSession"/>, reading the runner's install-pass flag (#3292).</para>
     /// </summary>
     public static System.Threading.Tasks.ValueTask<bool> ALSession_ALStartSessionAsyncImpl(
         Microsoft.Dynamics.Nav.Runtime.NavSession session,
@@ -630,6 +606,14 @@ public static partial class BcRuntime
         // [Test] body — `execute` mode, an install trigger, a report — nothing is refused.
         if (InTestExecutionScope && TestExecutor.ActiveIsolation != TestIsolation.Disabled)
             throw MakeStartSessionNotAllowedInTestException();
+
+        // #3292 — BC's install/upgrade refusal, next in BC's order: after the TestIsolation guard,
+        // before the try (so no error under either errorLevel) and before sessionId is written.
+        // BC reads session.AppInstallationContext, which the runner never populates; its own
+        // install pass is InstallTriggerRunner, so that is the state read here. Corpus 60449.
+        // BC's AppUpgradeContext arm has no counterpart: the runner has no upgrade pass.
+        if (InstallTriggerRunner.InInstallPass)
+            return false;
 
         bool trap = errorLevel == Microsoft.Dynamics.Nav.Types.DataError.TrapError;
         try

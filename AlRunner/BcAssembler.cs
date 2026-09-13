@@ -429,7 +429,8 @@ public sealed class BcAssembler
         // they NRE'd only because NavDatabase.Tenant was null on the skeleton, and that is now
         // populated (RecordPatches.Register), so BC's own bodies run and compute the answer —
         // including Install / Uninstall / Upgrade from session.AppInstallationContext and
-        // session.AppUpgradeContext, which a hardcoded Normal got wrong inside an install trigger.
+        // session.AppUpgradeContext (still Normal inside a runner install trigger: the runner does
+        // not populate AppInstallationContext, #4049).
         // ALSession.ALSendTraceTag NREs via session.Diagnostics; telemetry is a no-op here.
         ("ALSession.ALSendTraceTag(",  "global::AlRunnerShim.NavRuntimeHelpersShim.ALSession_SendTraceTag("),
         // ALSessionInformation static properties NRE via session.SqlDebuggingStatisticsCheckPoint.

@@ -1,8 +1,6 @@
-// The worker an install trigger starts. A Normal codeunit, source-compiled in this bundle:
-// the claim here is about the GUARD, not about resolving the async OnRunAsync flavour BC's
-// compiler emits for precompiled codeunits — that is issue #2826's suite, which needs a real
-// Base Application worker and its own isolation-disabled invocation. Keeping this one
-// source-compiled means this bundle needs no Base App and costs nothing extra.
+// The worker the install trigger asks StartSession to run. The install pass refuses the call
+// (#3292), so on a correct runner this OnRun never executes from there; its FROM-INSTALL row is
+// the evidence if it does. Source-compiled, so this bundle needs no Base App.
 codeunit 60717 "ITS Session Worker"
 {
     trigger OnRun()

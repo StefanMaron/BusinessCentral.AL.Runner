@@ -131,8 +131,34 @@ public static class InstallTriggerRunner
         return string.Join("|", ordered.Select(a => a.ManifestModule.ModuleVersionId.ToString("N")));
     }
 
+    private static int _installPassDepth;
+
+    /// <summary>True while an install pass is running — the runner's stand-in for BC's
+    /// <c>NavSession.AppInstallationContext</c>, which the runner never populates (measured
+    /// null inside FireAll, #3292). Read by <see cref="BcRuntime.AlRunnerStartSession"/>.</summary>
+    internal static bool InInstallPass => System.Threading.Volatile.Read(ref _installPassDepth) > 0;
+
+    /// <summary>Marks an install pass for the lifetime of the returned scope. Dispose is what
+    /// clears it, so a throwing trigger cannot leave every later StartSession refused.</summary>
+    internal static IDisposable EnterInstallPass()
+    {
+        System.Threading.Interlocked.Increment(ref _installPassDepth);
+        return new InstallPassScope();
+    }
+
+    private sealed class InstallPassScope : IDisposable
+    {
+        private int _disposed;
+        public void Dispose()
+        {
+            if (System.Threading.Interlocked.Exchange(ref _disposed, 1) == 0)
+                System.Threading.Interlocked.Decrement(ref _installPassDepth);
+        }
+    }
+
     private static void FireAll(IEnumerable<Assembly> asms)
     {
+        using var installPass = EnterInstallPass();
         foreach (var asm in asms)
             foreach (var cu in Scan(asm))
             {
