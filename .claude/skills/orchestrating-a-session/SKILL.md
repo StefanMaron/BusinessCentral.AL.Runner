@@ -514,7 +514,7 @@ Otherwise the next agent starts from the wrong premise — which has happened he
 
 - `tools/context-pack.py <Name>...` — definition + source + call sites, one round trip.
 - `tools/lsp-query.py callers|symbol <Name>` — exit 2 means the server failed, **not** "none".
-- `mcp__bc-decompiler__*` — BC's own code. Contexts `bc260` … `bc284` are pre-registered;
+- `mcp__bc-decompiler__*` — BC's own code. Contexts `bc270` … `bc284` are pre-registered;
   `search_members` → `memberId` → `get_decompiled_source` / `find_callers`.
   `compare_symbols` diffs a method between BC versions, which is how a Cecil rewrite that
   stopped being reached gets caught.

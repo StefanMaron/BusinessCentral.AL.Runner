@@ -379,11 +379,12 @@ Settling "what does BC actually do" means reading `Microsoft.Dynamics.Nav.Ncl.dl
 
 | alias | | alias | |
 |---|---|---|---|
-| `bc260` | 26.0 | `bc281` | 28.1 (current) |
-| `bc270` | 27.0 | `bc282` | 28.2 |
-| `bc273` | 27.3 | `bc283` | 28.3 |
-| `bc275` | 27.5 | `bc284` | 28.4 |
-| `bc280` | 28.0 | | |
+| `bc270` | 27.0 | `bc281` | 28.1 (current) |
+| `bc273` | 27.3 | `bc282` | 28.2 |
+| `bc275` | 27.5 | `bc283` | 28.3 |
+| `bc280` | 28.0 | `bc284` | 28.4 |
+
+One alias per version in `.github/bc-versions.txt`; `tools/preflight.py` expects exactly that set.
 
 Always **find the id, then use it**:
 

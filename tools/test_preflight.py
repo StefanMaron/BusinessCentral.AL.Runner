@@ -902,6 +902,12 @@ check("--json documents what the exit code means",
 # constructed here rather than arranged on the box -- the same reason the disk and
 # memory thresholds are proven against captured `df` output.
 
+REPO_ROOT = os.path.dirname(HERE)
+# The expected decompiler contexts come from .github/bc-versions.txt, read from this
+# checkout (#3264). Read once so every healthy state below uses the same set.
+_EXPECTED_ALIASES, _EXPECTED_ERR = pf.read_expected_decompiler_aliases(REPO_ROOT)
+
+
 def nav_states():
     """A healthy state for each of the three checks, to mutate one field at a time."""
     lsp = pf.LspState(script=True, server_on_path=True, fixture_ok=True, rc=0,
@@ -914,7 +920,8 @@ def nav_states():
     # the classifier ever sees them, so a healthy state carries no trace of either.
     dec = pf.DecompilerState(config="/repo/.mcp.json", registered=True,
                              target="/opt/DecompilerServer.dll", target_exists=True,
-                             probe_rc=0, aliases=list(pf.DECOMPILER_ALIASES))
+                             probe_rc=0, aliases=list(_EXPECTED_ALIASES),
+                             expected=list(_EXPECTED_ALIASES))
     return lsp, graph, dec
 
 
@@ -1161,9 +1168,80 @@ check("a registered server that does not answer is not reported as PASS",
 check("the non-answering server's error is shown",
       "did not respond" in " ".join(r.detail), str(r.detail))
 
-r = dec_with(aliases=[a for a in pf.DECOMPILER_ALIASES if a != "bc284"])
+r = dec_with(aliases=[a for a in _EXPECTED_ALIASES if a != "bc284"])
 check("a missing BC context is reported", r.status == "WARN", r.summary)
 check("the missing BC context is named", "bc284" in r.summary, r.summary)
+
+# ---- #3264: the expected contexts are .github/bc-versions.txt, not a second list
+def _versions_file_prefixes():
+    out = []
+    with open(os.path.join(REPO_ROOT, ".github", "bc-versions.txt"), encoding="utf-8") as fh:
+        for line in fh:
+            if not line.lstrip().startswith("#"):
+                out.extend(line.split())
+    return out
+
+
+_prefixes = _versions_file_prefixes()
+check("bc-versions.txt: the file this check derives from lists versions at all",
+      len(_prefixes) > 0, str(_prefixes))
+check("bc-versions.txt: expected aliases were read without error",
+      _EXPECTED_ERR == "", _EXPECTED_ERR)
+check("bc-versions.txt: every listed version has exactly one expected context",
+      sorted(_EXPECTED_ALIASES) == sorted("bc" + p.replace(".", "") for p in _prefixes)
+      and len(set(_EXPECTED_ALIASES)) == len(_prefixes),
+      f"expected={_EXPECTED_ALIASES} prefixes={_prefixes}")
+check("bc-versions.txt: BC 26 is not expected, because the repository does not test it",
+      "bc260" not in _EXPECTED_ALIASES, str(_EXPECTED_ALIASES))
+
+_parsed, _err = pf.decompiler_aliases_from_versions("# header\n27.0 27.5\n# x\n28.4\n")
+check("the versions parser maps prefixes to aliases and skips comments",
+      _parsed == ["bc270", "bc275", "bc284"] and _err == "", f"{_parsed} {_err!r}")
+_parsed, _err = pf.decompiler_aliases_from_versions("# only a header\n")
+check("a versions file listing nothing is an error, not an empty expected set",
+      _parsed is None and "no BC versions" in _err, f"{_parsed} {_err!r}")
+_parsed, _err = pf.decompiler_aliases_from_versions("27.0 28\n")
+check("a malformed version prefix is an error naming the token",
+      _parsed is None and "'28'" in _err, f"{_parsed} {_err!r}")
+_parsed, _err = pf.read_expected_decompiler_aliases(tempfile.mkdtemp())
+check("an absent bc-versions.txt is an error, not an empty expected set",
+      _parsed is None and "bc-versions.txt" in _err, f"{_parsed} {_err!r}")
+
+# A context registered for a version the repo does not test is extra, not a finding:
+# this box has bc260 registered, and it must not start warning the other way.
+r = dec_with(aliases=list(_EXPECTED_ALIASES) + ["bc260"])
+check("an extra registered context (bc260) does not stop the check passing",
+      r.status == "PASS", r.summary)
+r = dec_with(aliases=["bc260"] + [a for a in _EXPECTED_ALIASES if a != "bc273"])
+check("bc260 being registered does not stand in for a missing tested version",
+      r.status == "WARN" and "bc273" in r.summary and "bc260" not in r.summary, r.summary)
+
+# The third state: the expected set could not be established. Never PASS, and the
+# message names the file rather than claiming "all 0 contexts are registered".
+for _exp, _why in ((None, "bc-versions.txt unreadable"), ([], "empty expected set")):
+    r = dec_with(expected=_exp, expected_error=_why)
+    check(f"expected contexts unknown ({_why}) is not reported as PASS",
+          r.status == "WARN", f"{r.status} {r.summary}")
+    check(f"expected contexts unknown ({_why}) names bc-versions.txt",
+          "bc-versions.txt" in r.summary, r.summary)
+
+# Docs that name a decompiler alias must name one the repository tests.
+_alias_re = re.compile(r"\bbc(\d{3})\b")
+_doc_hits, _silent_docs = {}, []
+for _rel in (".claude/agents/impl-agent.md", ".claude/agents/triager.md",
+             ".claude/skills/orchestrating-a-session/SKILL.md", "CLAUDE.md",
+             "tools/setup-bc-decompiler.sh"):
+    with open(os.path.join(REPO_ROOT, _rel), encoding="utf-8") as fh:
+        _found = list(_alias_re.finditer(fh.read()))
+    if not _found:
+        _silent_docs.append(_rel)
+    for _m in _found:
+        _doc_hits.setdefault("bc" + _m.group(1), set()).add(_rel)
+check("every scanned doc yields at least one alias (a zero here is a broken pattern or a moved table)",
+      not _silent_docs, str(_silent_docs))
+_stray = {a: sorted(f) for a, f in _doc_hits.items() if a not in _EXPECTED_ALIASES}
+check("every decompiler alias the docs name is a version in bc-versions.txt",
+      not _stray, str(_stray))
 
 check("the passing decompiler report says a .mcp.json change needs a session restart",
       "SESSION RESTART" in " ".join(pf.classify_decompiler(_dec).detail),
