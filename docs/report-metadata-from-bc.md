@@ -270,3 +270,123 @@ is a per-population cost, and this is not one.
 states names, so what the parser produced was not a partial answer that a better one improved
 on — it was a value of the wrong kind, and a caller reading `Description` out of a column whose
 contract is `2` had no way to tell. Nothing else read the field.
+
+<a id="request-page"></a>
+
+## The `<RequestPage>` subtree on the dependency path (#3808)
+
+`DependencyReportMetadata.WriteRequestPageXml` emits this; the claim and its citation are at
+that method, and the derivation is here.
+
+### Why the element decides whether a `[RequestPageHandler]` is reachable
+
+One `if`, in `MetaReport.CreateMasterPage` (`Microsoft.Dynamics.Nav.Types`, 28.1.49838.53910):
+
+```csharp
+if (requestPageDefinition != null && createRequestForm != null)
+    masterPage = createRequestForm(requestPageDefinition, captionML, Id);
+```
+
+`requestPageDefinition` is assigned in exactly one place — the `REQUESTPAGE` arm of
+`MetaReport..ctor`, as `DeserializePageDefinition(val.FirstChild, ObjectType.Report, Name)`.
+So with no `<RequestPage>` element the field stays null, `masterPage` stays null, and
+`NavReportSync` falls back to `BuildRequestPageStubMasterPage`, whose own stderr reads *"its
+[RequestPageHandler] will not be reachable"*.
+
+BC takes `val.FirstChild`, not a child located by name, so the `PageDefinition` must be the
+**first** child of `<RequestPage>`.
+
+### What BC emits, and how stable it is
+
+Measured on the ground-truth documents for report 9810 across four BC builds — 27.5.46862.53931,
+28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407. That is **two distinct `Ncl.dll`
+binaries**, not four independent measurements. All four subtrees are identical:
+
+```xml
+<RequestPage>
+  <PageDefinition MetadataVersion="130000" ID="0" Name="Change Password" …>
+    <Properties ReportID="9810" PageType="ReportProcessingOnly" … Editable="1">
+      <SourceObject />
+    </Properties>
+    <Content>
+      <Containers xsi:type="ControlContainerDefinition" ContainerType="RequestPageFilters" />
+    </Content>
+    <Expressions />
+  </PageDefinition>
+</RequestPage>
+```
+
+### What the symbol file states, and where it disagrees
+
+Walking the `Namespaces` tree of every `.app` in 28.1.49838.53910 — Base Application 659 plus
+System Application 1; both flat top-level `Reports` arrays are empty:
+
+| | count |
+|---|---|
+| reports declaring a `RequestPage` node | **660 of 660** |
+| …including those stating `UseRequestPage = 0` | **24 of 24** |
+| nodes stating `Controls` | 466 |
+| nodes stating `Properties` | 473 |
+| nodes carrying only `Id` + `Name` | 100 |
+
+Two fields are stated and deliberately **not** read, because BC's document disagrees with both:
+
+| field | symbol file | BC's document |
+|---|---|---|
+| `Id` | `0` on all 660 | `ID="0"` — agrees, so nothing is gained by reading it |
+| `Name` | the literal `"RequestOptionsPage"` on all 660 | the **report's** name (`Change Password`) |
+
+Copying the node's own `Name` is the natural move and is wrong on every report.
+
+### Why the control tree is not transcribed
+
+The symbol file does carry one: 2,938 control nodes over those 466 reports, with 1,891
+`SourceExpression` values. They are **AL text** — `NewCompanyName`,
+`DataExchLineDef."Data Exch. Def Code"` (247 of them record-qualified) — not the compiled
+`DataColumnName` bindings the real document carries. This is the same reason
+`DependencyPageMetadataXml` omits ordinary page field controls: a request-page control's value
+binding is registered from the report's **own IL** at `RunModal` time
+(`RunnerFormInit.MarkSourceExpressionsWanted` → `NavForm.RegisterSourceExpression`), never read
+from this XML.
+
+**Omitting them costs none of the built-in controls**, which is what makes the frame sufficient
+rather than partial. `MetadataProvider.CreateRequestPage` ignores the document's `PageType`
+entirely:
+
+```csharp
+internal MasterPage CreateRequestPage(MetaPageDefinition pageDefinition, MultiLanguage captionML, int id)
+    => CreatePage(pageDefinition, captionML, id, PageType.ReportPreview);
+```
+
+`CreatePage` then calls `GetMasterPage(PageType.ReportPreview)`, which loads BC's own
+`MasterPageReportPreview` template, and `ModifyReportRequestPage` merges the document into it
+with `MasterPageMergeHelper.MergeMasterPageAndPage`. Every built-in control — `ObjectOptions`,
+`PrinterName`, `LayoutName`, the Advanced group, `ReportTimeout`, `ReportMaxRows` — comes from
+that template.
+
+### Why `PageType` is written at all, given BC overrides it
+
+Because BC's emitter writes it, and this document is compared against BC's. It does not drive
+handler routing in either direction: `NavTestExecution.FindPageType` maps `ReportPreview`,
+`ReportProcessingOnly` **and** `XmlPort` alike to `NavHandlerType.RequestPage`.
+
+```csharp
+switch (form.MasterPage.PageProperties.PageType) {
+  case PageType.ReportPreview:
+  case PageType.ReportProcessingOnly:
+  case PageType.XmlPort:     return NavHandlerType.RequestPage;
+  case PageType.FilterPage:  return NavHandlerType.FilterPage;
+  default:                   return NavHandlerType.ModalPage;
+}
+```
+
+### The two present-but-empty elements
+
+Both are dereferenced by BC without a null check, and `MetaPageDefinition` deserializes a
+*missing* element to null rather than to an empty one — the same trap
+`DependencyPageMetadataXml` documents three times over:
+
+- `<SourceObject/>` — `ModifyReportRequestPage` reads
+  `pageDefinition.Properties.SourceObject.SaveValues` as one of its first acts.
+- `<Expressions/>` — `MetadataProvider.LoadExpressionRelationTables` iterates
+  `masterPage.Expressions`.
