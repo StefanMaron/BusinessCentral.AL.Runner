@@ -432,4 +432,76 @@ public class InstallBaselineDiskCacheTests
             try { Directory.Delete(root, true); } catch { }
         }
     }
+
+    // ── 5. the dependency-set term on its own (#3254) ──────────────────────────────────
+
+    /// <summary>
+    /// #3254: pins <c>InstallTriggerRunner.CurrentDependencySetKey()</c> specifically, which
+    /// the scoping tests above cannot. Bundle order is the whole trick: the bundle WITH the extra
+    /// dependency runs first, so by the time the seed-only bundle runs, the process-global
+    /// registered .app set already holds both apps and
+    /// <c>RecordPatches.RegisteredBcAppSymbolStateKey()</c> is the same for both app groups.
+    /// Only the dependency-set term tells them apart.
+    ///
+    /// <para>The extra app's install trigger adds a third row to the seed table, so the two
+    /// baselines differ by value: a key that collapsed them hands the seed-only group a
+    /// three-row baseline, and its AL test fails on the row count.</para>
+    ///
+    /// <para>The second process, on the same cache root, checks the other direction: identical
+    /// inputs restore both entries from disk with no recomputation.</para>
+    /// </summary>
+    [SkippableFact]
+    public void DependencySetTermAlone_SeparatesBaselines_AndIdenticalInputsHitAcrossProcesses()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var root = TestScratch.Dir("al-runner-ib-disk-depset");
+        try
+        {
+            var (seedOnly, _, _) = InstallSeedClosure.WriteSharedClosure(root, "ds", 62120);
+            var withExtra = InstallSeedClosure.WriteBundleWithSeedingExtraDependency(root, "dx", 62140, "ds");
+
+            // ── process 1: the dependency set shrinks between the two app groups ──
+            var (out1, exit1) = RunRunner(null, withExtra, seedOnly);
+
+            // [THEN] Both AL tests passed: the extra-dependency group saw 3 rows and the
+            // seed-only group saw 2. Under a key that ignores the dependency set, the seed-only
+            // group restores the 3-row baseline and fails with "expected 2 seeded row(s), found 3".
+            Assert.True(Count(out1, "1P/0F/0E") >= 2,
+                $"expected both app groups to pass, got:\n{out1}");
+            Assert.Equal(0, exit1);
+
+            // [THEN] Two fresh computations, no reuse of either kind, two distinct entries.
+            Assert.Equal(2, Count(out1, "InstallBaseline.DepCompanyCache MISS"));
+            Assert.Equal(0, Count(out1, "InstallBaseline.DepCompanyCache HIT"));
+            Assert.Equal(0, Count(out1, "InstallBaseline.DepCompanyCache DISK-HIT"));
+            var written = WriteDigests(out1);
+            Assert.Equal(2, written.Count);
+            Assert.Equal(2, WrittenPaths(out1).Count);
+
+            // ── process 2: same inputs, same cache root ──
+            var (out2, exit2) = RunRunner(null, withExtra, seedOnly);
+
+            Assert.True(Count(out2, "1P/0F/0E") >= 2,
+                $"expected both app groups to pass on the warm run, got:\n{out2}");
+            Assert.Equal(0, exit2);
+
+            // [THEN] Nothing recomputed or rewritten; both entries restored from disk with the
+            // digests process 1 recorded.
+            Assert.Equal(0, Count(out2, "InstallBaseline.DepCompanyCache MISS"));
+            Assert.Equal(0, Count(out2, "InstallBaseline.DepCompanyCache HIT"));
+            Assert.Empty(WriteDigests(out2));
+            var hits = HitDigests(out2);
+            Assert.Equal(2, hits.Count);
+            foreach (var (key, digest) in written)
+            {
+                Assert.True(hits.ContainsKey(key), $"key {key} was written but not restored:\n{out2}");
+                Assert.Equal(digest, hits[key]);
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(root, true); } catch { }
+        }
+    }
 }

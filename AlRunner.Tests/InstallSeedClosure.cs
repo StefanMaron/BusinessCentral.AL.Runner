@@ -84,7 +84,7 @@ internal static class InstallSeedClosure
         var seedName = $"Seed {tag}";
 
         WriteSeedApp(seedDir, tag, baseId, seedId, seedName, marker);
-        WriteBundle(mainDir, tag, baseId, marker, ($"{seedId}", seedName));
+        WriteBundle(mainDir, tag, baseId, marker, SeededRowCount, ($"{seedId}", seedName));
         return new Closure(mainDir, seedDir, marker);
     }
 
@@ -107,8 +107,8 @@ internal static class InstallSeedClosure
         WriteSeedApp(Path.Combine(parent, "seed"), tag, baseId, seedId, seedName, marker);
         var a = Path.Combine(parent, "main-a");
         var b = Path.Combine(parent, "main-b");
-        WriteBundle(a, tag + "A", baseId, marker, (seedId, seedName));
-        WriteBundle(b, tag + "B", baseId + 10, marker, (seedId, seedName));
+        WriteBundle(a, tag + "A", baseId, marker, SeededRowCount, (seedId, seedName));
+        WriteBundle(b, tag + "B", baseId + 10, marker, SeededRowCount, (seedId, seedName));
         return (a, b, marker);
     }
 
@@ -152,7 +152,63 @@ internal static class InstallSeedClosure
         """);
 
         var mainDir = Path.Combine(parent, "main-" + tag);
-        WriteBundle(mainDir, tag, baseId + 5, marker, (seedId, seedName), (extraId, extraName));
+        WriteBundle(mainDir, tag, baseId + 5, marker, SeededRowCount, (seedId, seedName), (extraId, extraName));
+        return mainDir;
+    }
+
+    /// <summary>
+    /// #3254: like <see cref="WriteBundleWithExtraDependency"/>, but the extra app DEPENDS ON the
+    /// seed and its own install trigger inserts a third row into the seed's table. A baseline
+    /// computed for this closure therefore holds <see cref="SeededRowCount"/> + 1 rows, and a
+    /// bundle whose closure is the seed alone can tell it apart by count. The bundle's test
+    /// asserts the three rows.
+    /// </summary>
+    internal static string WriteBundleWithSeedingExtraDependency(
+        string root, string tag, int baseId, string seedTag)
+    {
+        var parent = Path.Combine(root, seedTag);
+        var seedName = $"Seed {seedTag}";
+        var seedId = ReadAppId(Path.Combine(parent, "seed", "app.json"));
+        var marker = ReadMarker(Path.Combine(parent, "seed", "Seed.al"));
+
+        var extraId = Guid.NewGuid().ToString();
+        var extraName = $"Extra {tag}";
+        var extraDir = Path.Combine(parent, "extra-" + tag);
+        Directory.CreateDirectory(extraDir);
+        File.WriteAllText(Path.Combine(extraDir, "app.json"), $$"""
+        {
+          "id": "{{extraId}}",
+          "name": "{{extraName}}",
+          "publisher": "AL Runner Install Seed",
+          "version": "1.0.0.0",
+          "dependencies": [
+            { "id": "{{seedId}}", "name": "{{seedName}}", "publisher": "AL Runner Install Seed", "version": "1.0.0.0" }
+          ],
+          "platform": "1.0.0.0",
+          "idRanges": [ { "from": {{baseId}}, "to": {{baseId + 4}} } ],
+          "runtime": "14.0"
+        }
+        """);
+        File.WriteAllText(Path.Combine(extraDir, "Extra.al"), $$"""
+        codeunit {{baseId}} "Extra {{tag}} Install"
+        {
+            Subtype = Install;
+
+            trigger OnInstallAppPerCompany()
+            var
+                SeedRow: Record "Seed {{seedTag}} Table";
+            begin
+                SeedRow.Init();
+                SeedRow.Code := 'EXTRA-1';
+                SeedRow.Description := 'extra {{tag}}';
+                SeedRow.Amount := 1;
+                SeedRow.Insert(true);
+            end;
+        }
+        """);
+
+        var mainDir = Path.Combine(parent, "main-" + tag);
+        WriteBundle(mainDir, tag, baseId + 5, marker, SeededRowCount + 1, (seedId, seedName), (extraId, extraName));
         return mainDir;
     }
 
@@ -238,7 +294,7 @@ internal static class InstallSeedClosure
     /// than merely being fast.
     /// </summary>
     private static void WriteBundle(
-        string dir, string tag, int baseId, string marker, params (string Id, string Name)[] deps)
+        string dir, string tag, int baseId, string marker, int expectedRows, params (string Id, string Name)[] deps)
     {
         Directory.CreateDirectory(dir);
         var depJson = string.Join(",\n    ", deps.Select(d =>
@@ -276,8 +332,8 @@ internal static class InstallSeedClosure
                 // present, with the values it wrote. Asserted value-by-value rather than as a
                 // bare Get(), so a cache tier that restored an empty or partial snapshot fails
                 // here instead of passing quietly.
-                if SeedRow.Count() <> {{SeededRowCount}} then
-                    Error('expected {{SeededRowCount}} seeded row(s), found %1', SeedRow.Count());
+                if SeedRow.Count() <> {{expectedRows}} then
+                    Error('expected {{expectedRows}} seeded row(s), found %1', SeedRow.Count());
 
                 SeedRow.Get('SEED-1');
                 if SeedRow.Description <> '{{marker}}' then
