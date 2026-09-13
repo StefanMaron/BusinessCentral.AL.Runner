@@ -570,9 +570,12 @@ public sealed class AppLoaderManifestIndexIdentityTests
         var appPath = Path.Combine(dir, "Runtime.app");
         // The directory of a runtime package lives inside an RC4 layer, so there is no plain
         // central directory to read: the identity is the full-content hash, as before #4050.
+        // The body ENDS in bytes shaped like an empty zip's EOCD record, so a reader that skipped
+        // the .NEA check would find a "directory" in RC4 output and key on it.
         var payload = new byte[4096];
         new Random(4050).NextBytes(payload);
-        byte[] nea = [0x2E, 0x4E, 0x45, 0x41, 0x00, 0x00, 0x00, 0x01, .. payload];
+        byte[] fakeEocd = [0x50, 0x4B, 0x05, 0x06, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0];
+        byte[] nea = [0x2E, 0x4E, 0x45, 0x41, 0x00, 0x00, 0x00, 0x01, .. payload, .. fakeEocd];
         File.WriteAllBytes(appPath, Navx(nea));
 
         using var s = File.OpenRead(appPath);
