@@ -26,6 +26,7 @@ public static class TddSupport
 {
     // Mirrors BcCompiler's own ParseOptions (CLEANSCHEMA1..25 + whatever --define /
     // --preprocessor-symbols supplied) so this re-parse sees exactly the same source
+    // -- except the app.json preprocessorSymbols, which BuildParseOptions also adds (#4071) --
     // the original (failed) emit attempt saw — same rule RecordPatches.AlSourceParser
     // follows for the same reason (see its AlParseOptions doc comment). Recomputed per
     // call rather than cached: BcCompiler.SetExtraPreprocessorSymbols can run after
