@@ -445,7 +445,9 @@ public sealed class JUnitCollateralFailureTests : IDisposable
     {
         // Written against a checked-in expected document rather than a second call to the same
         // method: comparing WriteJUnit to itself would be satisfied by any change applied to both
-        // sides. This is the shape the emitter produced before #2919.
+        // sides. This is the shape the emitter produced before #2919, plus #2502's per-suite seed
+        // property, pinned to a fixed run seed so the document stays byte-stable.
+        Infrastructure.RunSeed.Set(4271833);
         var path = P("clean.xml");
         JUnitReport.WriteJUnit(path, new[] { CleanBucketWithFailures() });
 
@@ -454,14 +456,23 @@ public sealed class JUnitCollateralFailureTests : IDisposable
             "<?xml version=\"1.0\" encoding=\"utf-8\"?>",
             "<testsuites tests=\"3\" failures=\"1\" errors=\"1\" skipped=\"0\" time=\"0.013\">",
             "  <testsuite name=\"Codeunit60100\" tests=\"1\" failures=\"0\" errors=\"0\" skipped=\"0\" time=\"0.003\">",
+            "    <properties>",
+            "      <property name=\"seed\" value=\"4271833\" />",
+            "    </properties>",
             "    <testcase name=\"Healthy_StillPasses\" classname=\"Codeunit60100\" time=\"0.003\" />",
             "  </testsuite>",
             "  <testsuite name=\"Codeunit60391\" tests=\"1\" failures=\"0\" errors=\"1\" skipped=\"0\" time=\"0.005\">",
+            "    <properties>",
+            "      <property name=\"seed\" value=\"4271833\" />",
+            "    </properties>",
             "    <testcase name=\"RightOuterJoin_IsOutOfScope_ThrowsNamedReason\" classname=\"Codeunit60391\" time=\"0.005\">",
             "      <error message=\"object not found\">object not found</error>",
             "    </testcase>",
             "  </testsuite>",
             "  <testsuite name=\"Codeunit64535\" tests=\"1\" failures=\"1\" errors=\"0\" skipped=\"0\" time=\"0.005\">",
+            "    <properties>",
+            "      <property name=\"seed\" value=\"4271833\" />",
+            "    </properties>",
             "    <testcase name=\"JoinWithLeftOuterJoin_ReturnsRows\" classname=\"Codeunit64535\" time=\"0.005\">",
             "      <failure message=\"Assert.AreEqual failed\">Assert.AreEqual failed</failure>",
             "    </testcase>",

@@ -88,6 +88,30 @@ public class RunSeedTests
         Assert.NotEqual(a, Values(unseeded.Output, "A_Plain"));
     }
 
+    /// <summary>
+    /// --jobs workers are separate processes: each must use the parent's run seed, not generate
+    /// its own, or the one printed seed reproduces nothing.
+    /// </summary>
+    [SkippableFact]
+    public void Jobs_WorkersShareOneGeneratedRunSeed()
+    {
+        TestArtifacts.SkipIfMissing();
+        const int otherId = 62503;
+        var r = RunRunner($"--jobs 2 \"{WriteFixture()}\" \"{WriteFixture(otherId)}\"");
+
+        var seeds = Regex.Matches(r.Output, @"^seed: (-?\d+)\r?$", RegexOptions.Multiline)
+            .Select(m => int.Parse(m.Groups[1].Value)).ToList();
+        Assert.True(seeds.Count == 2, $"expected one seed line per worker, got {seeds.Count}:\n{r.Output}");
+        Assert.Single(seeds.Distinct());
+        var reported = Regex.Matches(r.Output, @"A_Plain=values:(\d+),(\d+),(\d+)")
+            .Select(m => string.Join(",", m.Groups[1].Value, m.Groups[2].Value, m.Groups[3].Value))
+            .Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList();
+        var expected = new[] { CodeunitId, otherId }
+            .Select(id => string.Join(",", Expected(RunSeed.Derive(seeds[0], id, "A_Plain"))))
+            .OrderBy(x => x, StringComparer.Ordinal).ToList();
+        Assert.Equal(expected, reported);
+    }
+
     [Fact]
     public void Seed_NotAWholeNumber_ExitsTwo()
     {
@@ -109,25 +133,25 @@ public class RunSeedTests
         return new[] { int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value), int.Parse(m.Groups[3].Value) };
     }
 
-    private static string WriteFixture()
+    private static string WriteFixture(int codeunitId = CodeunitId)
     {
         var root = TestScratch.Dir("al-runner-run-seed-2502");
         Directory.CreateDirectory(root);
-        File.WriteAllText(Path.Combine(root, "app.json"), """
+        File.WriteAllText(Path.Combine(root, "app.json"), $$"""
         {
-          "id": "b2502000-0000-4000-8000-000000002502",
-          "name": "RunSeed2502",
+          "id": "b2502000-0000-4000-8000-0000000{{codeunitId}}",
+          "name": "RunSeed{{codeunitId}}",
           "publisher": "Repro2502",
           "version": "1.0.0.0",
           "dependencies": [],
           "platform": "1.0.0.0",
-          "idRanges": [ { "from": 62502, "to": 62502 } ],
+          "idRanges": [ { "from": {{codeunitId}}, "to": {{codeunitId}} } ],
           "runtime": "14.0"
         }
         """);
         // Each test fails on purpose: its Error() text is how the drawn values reach the output.
-        File.WriteAllText(Path.Combine(root, "RunSeedProbe.al"), """
-        codeunit 62502 "Run Seed Probe"
+        File.WriteAllText(Path.Combine(root, "RunSeedProbe.al"), $$"""
+        codeunit {{codeunitId}} "Run Seed Probe {{codeunitId}}"
         {
             Subtype = Test;
 

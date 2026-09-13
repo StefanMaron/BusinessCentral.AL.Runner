@@ -2058,7 +2058,8 @@ public static partial class NclCecilRewrite
             throw new InvalidOperationException(
                 $"[Cecil] ALSystemNumeric.ALRandomize(): expected one `new Random()`, found {ctorCalls.Count} — Ncl shape changed; do not commit");
         var helper = typeof(RunSeed).GetMethod(nameof(RunSeed.CreateRandomizeRandom),
-            BindingFlags.Public | BindingFlags.Static)!;
+            BindingFlags.Public | BindingFlags.Static)
+            ?? throw new InvalidOperationException("[Cecil] RunSeed.CreateRandomizeRandom not found");
         ctorCalls[0].OpCode = OpCodes.Call;
         ctorCalls[0].Operand = nclMod.ImportReference(helper);
         Console.Error.WriteLine("[Cecil] Rewrote ALSystemNumeric.ALRandomize() → Session.Random = RunSeed.CreateRandomizeRandom() (#2502)");
