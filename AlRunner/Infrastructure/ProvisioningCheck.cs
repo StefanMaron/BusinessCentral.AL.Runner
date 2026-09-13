@@ -278,6 +278,46 @@ public static class ProvisioningCheck
     /// </summary>
     public static string ResolveProvisionMajorMinor(string selectedVersion) => MajorMinorOf(selectedVersion);
 
+    /// <summary>
+    /// Issue #2226: the 4-part build to download platform apps / the test toolkit for, so one
+    /// invocation provisions exactly one BC build. A 4-part <paramref name="selectedVersion"/>
+    /// is targeted as-is while the CDN publishes it (or cannot be asked — held, as #2981 holds
+    /// the engine tier); only a build the CDN answers NotPublished for (withdrawn, #2010) falls
+    /// back to the latest build of its major.minor, and says so. A shorter prefix resolves to
+    /// that latest build, as before. Null when nothing could be resolved.
+    /// </summary>
+    /// <remarks>
+    /// Skew between the engine and the R2R platform apps is observed to run (the #2226 report,
+    /// and warm reuse of another build in the minor relies on it) but was never measured to be
+    /// safe, so a fresh download does not choose it.
+    /// </remarks>
+    public static string? ResolveManifestAppsBuildCore(string selectedVersion,
+        Func<string, AlRunner.Provisioning.CdnProbeResult> probeExact,
+        Func<string, AlRunner.Provisioning.CdnPrefixResult> resolvePrefix,
+        Action<string> log)
+    {
+        var mm = MajorMinorOf(selectedVersion);
+        if (selectedVersion.Split('.').Length == 4 && Version.TryParse(selectedVersion, out _))
+        {
+            var probe = probeExact(selectedVersion);
+            if (probe.IsPublished || probe.IsUndetermined)
+                return selectedVersion;
+            var fallback = resolvePrefix(mm);
+            if (fallback.IsResolved)
+                log($"BC {selectedVersion} is not published on the CDN; fetching BC {fallback.Version} " +
+                    $"instead, so these apps are a different build than the selected engine {selectedVersion}.");
+            return fallback.Version;
+        }
+        return resolvePrefix(mm).Version;
+    }
+
+    /// <summary>Real-network wrapper around <see cref="ResolveManifestAppsBuildCore"/>.</summary>
+    public static string? ResolveManifestAppsBuild(string selectedVersion, Action<string> log)
+        => ResolveManifestAppsBuildCore(selectedVersion,
+            v => AlRunner.Provisioning.ArtifactDownloader.ProbeVersion(v, log),
+            p => AlRunner.Provisioning.ArtifactDownloader.ProbeVersionPrefix(p, log),
+            log);
+
     /// <summary>Shared major.minor extraction used by the Derive*/Resolve* helpers above.</summary>
     private static string MajorMinorOf(string version)
     {

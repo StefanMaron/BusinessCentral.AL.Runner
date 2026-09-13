@@ -1775,10 +1775,10 @@ if (!provisionSubcommand)
                 ? FindWarmProvisionedVersion(
                     AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir, mm,
                     decision.RequiredPlatformApps, decision.ShouldDownloadTest,
-                    versionFloors, m => Console.Error.WriteLine(m))
+                    versionFloors, m => Console.Error.WriteLine(m), preferredVersion: version)
                 : null)
-            ?? AlRunner.Provisioning.ArtifactDownloader.ResolveVersion(
-                mm, m => Console.Error.WriteLine($"[provision] {m}"));
+            ?? AlRunner.Infrastructure.ProvisioningCheck.ResolveManifestAppsBuild(
+                version, m => Console.Error.WriteLine($"[provision] {m}"));
         if (full == null)
         {
             Console.Error.WriteLine($"[provision] could not resolve a full BC artifact version for '{mm}'; cannot continue.");
