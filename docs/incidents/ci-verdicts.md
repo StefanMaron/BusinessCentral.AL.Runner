@@ -213,3 +213,35 @@ front of it. The declaration was wrong and the mechanism surfaced it on its firs
 
 Same shape as the three-dot `origin/main...HEAD` recipe that founded #3955: valid bash, exit 0,
 a plausible answer to a different question.
+
+## A paged count reported as a queue depth (2026-09-13, #4110)
+
+Through a six-hour Actions stall I reported the backlog three times from
+
+```bash
+gh api ".../actions/runs?per_page=100" --jq '[.workflow_runs[]|.status]|group_by(.)|...'
+```
+
+giving 74, 75, 81, 90. Every one was the composition of **page one**, capped at 100 by the query.
+The real figure, from the same response:
+
+```
+per_page=1 &status=queued  -> total_count: 438
+per_page=100&status=queued -> [.workflow_runs[]]|length: 100     <- pinned at the page size
+```
+
+Two consequences, and the second is the expensive one:
+
+- the depth was understated roughly five-fold;
+- the number **moved between reads** — 76 → 40 at one point — as the status mix on page one turned
+  over. I published that as "the queue is draining", which it was not.
+
+The tell was present in every reading and I did not look at it: **a count that brushes its own
+page size**. 90 out of a 100-row page is a paging artefact until `total_count` says otherwise.
+
+The SHA-filtered recipes in this rule are not exposed to it — one commit never accumulates 100
+runs — and that exemption was verified rather than assumed: `head_sha=<main>` returns
+`paged=25 total=25`.
+
+Same class as the `[36;1m` source echo recorded above: a correct instrument answering a question
+nobody asked, returning a plausible number that nothing downstream contradicts.
