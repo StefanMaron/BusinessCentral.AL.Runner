@@ -229,6 +229,13 @@ internal static partial class ProgramSupport
 
         w.WriteLine("TROUBLESHOOTING — failure signature, meaning, action");
         w.WriteLine();
+        w.WriteLine("  \"error AL0185: Codeunit 'X' is missing\" (or Table, Page, ...) naming another app's object");
+        w.WriteLine("      Meaning: your app references an object from an app it does not declare. An app");
+        w.WriteLine("      sees only its own app.json dependencies, plus what those dependencies propagate —");
+        w.WriteLine("      the same rule BC's compiler applies (issue #4096). Older runner versions accepted it.");
+        w.WriteLine("      Action: add the app that declares X to app.json \"dependencies\", or set");
+        w.WriteLine("      \"propagateDependencies\": true on the app you depend on that depends on it.");
+        w.WriteLine();
         w.WriteLine("  \"NavNCLMissingMethodException: Function ID <n> was called. The object with");
         w.WriteLine("   ID 0 does not have a member with that ID.\"");
         w.WriteLine("      Meaning: the call resolved against a module whose AL objects have no IDs —");
