@@ -1,0 +1,18 @@
+{
+  "id": "3b0e6f52-7a1d-4c38-9e25-1f6d8a4c2600",
+  "name": "Runner Extras - App Group Visibility A",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #2279, app group A of three: declares one table and no dependencies. Neither B nor C may appear in its object inventory.",
+  "description": "Issue #2279. Every app group under one bundle root compiles as its own module but runs in one process, and the runner's parsed-object registries hold every group's objects. AllObj, AllObjWithCaption and Table Metadata must list only the objects of the executing app group and of the apps it declares as dependencies (transitively), never those of an unrelated sibling group. Runner-specific: the corpus runs one app set per service tier, so it cannot express a second, unrelated app group in the same process.",
+  "dependencies": [],
+  "idRanges": [
+    {
+      "from": 62600,
+      "to": 62609
+    }
+  ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "Cloud"
+}
