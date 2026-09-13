@@ -1578,6 +1578,65 @@ public sealed class ProvisioningCheckTests : IDisposable
         new DependencyRef(Guid.Empty, "System", "Microsoft", Version.Parse(version), Optional: true),
     };
 
+    // ── CanDeferPlatformApps (#2232) ────────────────────────────────────────────────
+
+    private static bool CanDefer(IEnumerable<DependencyRef> roots, IReadOnlyList<string> dirs)
+    {
+        var legacy = ProvisioningCheck.CheckPlatformApps("28.1.49838.53910", dirs);
+        var decision = ProvisioningCheck.DecideManifestProvisioning(roots, legacy, dirs);
+        return ProvisioningCheck.CanDeferPlatformApps(roots, decision, legacy);
+    }
+
+    [Fact]
+    public void CanDeferPlatformApps_ImplicitRootsOnly_ColdCache_Defers()
+    {
+        Assert.True(CanDefer(ImplicitMicrosoftRoots(), Array.Empty<string>()));
+        Assert.True(CanDefer(ImplicitMicrosoftRoots().Skip(1).ToArray(), Array.Empty<string>()));
+    }
+
+    [Fact]
+    public void CanDeferPlatformApps_ImplicitRootsPlusThirdPartyDependency_Defers()
+    {
+        var roots = ImplicitMicrosoftRoots().Append(
+            new DependencyRef(Guid.NewGuid(), "Some ISV App", "Contoso", new Version(1, 0, 0, 0))).ToArray();
+        Assert.True(CanDefer(roots, Array.Empty<string>()));
+    }
+
+    [Fact]
+    public void CanDeferPlatformApps_ExplicitBaseApplicationRoot_DoesNotDefer()
+    {
+        var roots = ImplicitMicrosoftRoots().Append(
+            new DependencyRef(Guid.NewGuid(), "Base Application", "Microsoft", new Version(27, 0, 0, 0), Optional: true)).ToArray();
+        Assert.False(CanDefer(roots, Array.Empty<string>()));
+    }
+
+    [Fact]
+    public void CanDeferPlatformApps_TestToolkitRoot_DoesNotDefer()
+    {
+        var roots = ImplicitMicrosoftRoots().Append(
+            new DependencyRef(Guid.NewGuid(), "Library Assert", "Microsoft", new Version(27, 0, 0, 0))).ToArray();
+        Assert.False(CanDefer(roots, Array.Empty<string>()));
+    }
+
+    [Fact]
+    public void CanDeferPlatformApps_NothingMissing_DoesNotDefer()
+    {
+        var dir = Path.Combine(_dir, "defer-warm");
+        Directory.CreateDirectory(dir);
+        WriteR2RApp(dir, "application.app", Guid.NewGuid().ToString(), "Application", "Microsoft", "28.1.49838.53910");
+        WriteR2RApp(dir, "system.app", Guid.NewGuid().ToString(), "System", "Microsoft", "28.0.53872.0");
+        Assert.False(CanDefer(ImplicitMicrosoftRoots(), new[] { dir }));
+    }
+
+    [Fact]
+    public void CanDeferPlatformApps_SymbolOnlyPlatformAppPresent_DoesNotDefer()
+    {
+        var dir = Path.Combine(_dir, "defer-symbolonly");
+        Directory.CreateDirectory(dir);
+        WriteSymbolOnlyApp(dir, "sysapp.app", Guid.NewGuid().ToString(), "System Application", "Microsoft", "28.1.49838.53910");
+        Assert.False(CanDefer(ImplicitMicrosoftRoots(), new[] { dir }));
+    }
+
     [Fact]
     public void DetermineManifestNeeds_ImplicitMicrosoftRoots_RequireTheAppsTheyName()
     {
