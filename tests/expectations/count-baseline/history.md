@@ -2298,4 +2298,13 @@ by a service tier. The runner passes the corpus copies locally at corpus
 `b4fa4361367dc00b9394ad459b61eb34eee6f0dc`. No `absentOn`, so the same -2 lands on every BC
 version.
 
+## runner-extras `environment-type-default` NEW, 4 (#3514)
+
+A new bundle. The runner called `SetTestTenantEnvironmentType(true)` on the first test of every
+run, so `Environment Information.IsSandbox()` and, through it, `IsSaaS()` answered true with no
+test asking. Before the fix the two default tests failed (`2P/2F`); the two setter tests passed
+both before and after, which is what shows they measure the toolkit seam and not the default.
+
+Measured 4P/0F/0E on the whole bundle, not computed from the diff.
+
 Written by an agent (Claude, `stma-auto2-6`).
