@@ -161,6 +161,7 @@ def check_cs_pointers() -> None:
 
 RELOCATIONS = [
     ("docs/blob-store-isolation.md", "AlRunner/Patches/BlobStoreIsolationPatches.cs"),
+    ("docs/bc-symbol-cache-versions.md", "AlRunner/Patches/BcAppSymbolCache.cs"),
 ]
 
 
