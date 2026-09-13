@@ -221,6 +221,107 @@ So a service tier reports `UnitTest` for a test codeunit that declares nothing, 
 derivation rather than a stated value. Reproducing it is a separate claim about BC needing its
 own corpus test, and is deliberately not part of #3606.
 
+<a id="the-method-table"></a>
+
+## The method table: what BC emits, and which half the symbol file can supply
+
+`MetaRuntimeInfo.Methods` (and `#methodsDictionary`, the same collection under a second
+signature) is the `<Methods>` subtree of a `<CodeUnit>` document. The runner derives it for a
+codeunit whose loaded assembly proves the derivation is complete, and omits it otherwise
+(#3788, after #3963 established why the symbol file alone cannot).
+
+### BC emits the ATTRIBUTED methods, not the methods
+
+Measured on BC 28.1.49838.53910 over System Application + Business Foundation, 558 codeunit
+documents:
+
+| | |
+|---|---:|
+| documents with a `<Methods>` subtree | 145 |
+| `<Method>` elements | 326 |
+| …carrying **no** attribute | **0** |
+| `EventPublisherAttribute` | 169 |
+| `EventSubscriberAttribute` | 140 |
+| `InherentPermissionsMethodAttribute` | 17 |
+
+### One of the three kinds is invisible to `SymbolReference.json`
+
+`SymbolReference.json` is an app's consumer-facing API surface, so it states no `local` method
+— and an AL event subscriber is always `local`. Of the 140 subscriber methods BC emits for
+System Application, the symbol file states **0**, by id *and* by name. The same applies to the
+`InherentPermissions` methods BC emits for local methods (codeunits 306, 307, 309, 8705).
+
+The publishers, by contrast, reproduce **exactly**: measured per codeunit on 28.1, the symbol
+file's publisher list equals BC's publisher subsequence — id, name and order — for **70 of 70**
+codeunits that have one.
+
+### Why a short subtree is worse than no subtree
+
+`MetadataObjectDiff` pairs `Methods` **positionally**: it is absent from `PairByIdMembers`, and
+`MetaMethod` spells its id `MethodId`, which `IdPropertyNames` does not list. So a subtree
+missing the subscribers does not merely under-report — from the first missing element on it
+puts a *different* method in BC's slot, which is the runner asserting an association it has no
+evidence for (`.claude/rules/loud-failures.md`).
+
+Modelled over both apps at 28.1:
+
+| policy | codeunits emitted | methods | exact | **fabricated slots** | one-directional absences |
+|---|---:|---:|---:|---:|---:|
+| absence (before #3788) | 0 | 0 | — | 0 | 326 |
+| symbol file alone | 76 | 168 | 66 | **8** | 133 |
+| **symbol file + assembly witness** | 66 | 152 | 66 | **0** | 174 |
+
+### The assembly is a witness, not a data source
+
+The dependency's own R2R assembly carries `[NavEventSubscriberAttribute]` on exactly the methods
+the symbol file cannot see, and `MethodIdAttribute` reproduces BC's `<Method ID>` for 140 of 140
+subscribers. What it cannot supply is BC's **order**.
+
+BC's document order is the **AL source declaration order** — measured 70 of 70 against the `.al`
+sources shipped inside the `.app`, on the codeunits with two or more emitted methods. The
+assembly's metadata-table order is alphabetical. Every ordering hypothesis tried scored at best
+22 of 70:
+
+| hypothesis | matches |
+|---|---:|
+| alphabetical | 22 / 70 |
+| assembly metadata-table order | 22 / 70 |
+| kind-grouped, then table order | 20 / 70 |
+| `MethodId` ascending (signed) | 18 / 70 |
+| `MethodId` ascending (unsigned) | 17 / 70 |
+| **AL source declaration order** | **70 / 70** |
+
+Recovering source order would mean parsing the AL shipped in the `.app`, which is the parser
+treadmill #3491 describes. So the assembly answers only the question it answers exactly and
+cheaply — *does this codeunit declare a subscriber?* — and the symbol file supplies the data for
+the codeunits it answers completely.
+
+**Cost: no new load.** `DependencyLoader.LoadAll` runs before the `AddBcAppPath` loop at both
+`Program.cs` call sites, so the assemblies are already in the AppDomain;
+`RegisterAppAssemblies` is the one place holding `(assemblies, appPath)` together and is where
+the scan is driven from. The scan reads already-mapped metadata through `AssemblyTypeIndex` —
+**34-35 ms** for System Application's 17 MiB assembly and its 533 `Codeunit` types, once per
+assembly per process.
+
+### Cross-version
+
+The policy was modelled on three builds — two genuinely distinct binaries, across the 27.x/28.x
+boundary:
+
+| build | emitted | methods | exact | fabricated | absences (was) |
+|---|---:|---:|---:|---:|---:|
+| 27.5.46862.53931 | 66 | 151 | 66 | **0** | 169 (320) |
+| 28.1.49838.53910 | 66 | 152 | 66 | **0** | 174 (326) |
+| 28.4.53241.54407 | 66 | 153 | 66 | **0** | 175 (328) |
+
+### The third state
+
+The witness answers yes / no / **unknown**, and unknown is deliberately not spelled as no. An
+app whose assemblies never loaded — a platform symbol-only app, or a load that fell back to
+service-tier DLL dispatch — has measured nothing about its subscribers, and reading that
+silence as "no subscribers" restores exactly the 8 fabrications above
+(`.claude/rules/guards-need-a-third-state.md`). Unknown abstains.
+
 <a id="what-adjudicated-this"></a>
 
 ## What adjudicated this

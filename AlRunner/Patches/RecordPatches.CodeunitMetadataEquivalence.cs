@@ -26,12 +26,14 @@
 //   533 exact against BC's attribute on System Application 28.1.49838.53910), the two masks from
 //   the object's own Properties bag.
 //
+//   Plus the <Methods> subtree, CONDITIONALLY — see AppendMethodsSubtree below. It is written
+//   only for a codeunit whose loaded assembly proves the symbol file's view of it is complete,
+//   and omitted for every other, including every codeunit of an app that was never scanned.
+//
 //   What is still ABSENT is absent honestly, because the symbol file does not state it:
-//   TestIsolation, EventSubscriberInstance, MetadataVersion, and the whole <Methods> subtree —
-//   which is only PARTLY derivable (BC emits event-publisher and internal methods the symbol
-//   file omits for 73 of 558 codeunits), so it stays tracked on #3788 rather than half-landed.
-//   The harness reports each as a difference and the allowlist declares why, which is the point
-//   of the exercise. Writing BC's own value into any of them would manufacture agreement.
+//   TestIsolation, EventSubscriberInstance and MetadataVersion. The harness reports each as a
+//   difference and the allowlist declares why, which is the point of the exercise. Writing BC's
+//   own value into any of them would manufacture agreement.
 //
 // See docs/metadata-equivalence.md#codeunits and tests/expectations/metadata-equivalence/.
 
@@ -85,7 +87,51 @@ public static partial class RecordPatches
         if (TryDecodePermissionMaskLetters(row.InherentPermissions, out var permissions))
             root.SetAttribute("InherentPermissions", permissions.ToString(CultureInfo.InvariantCulture));
 
+        AppendMethodsSubtree(doc, root, row);
+
         return doc.OuterXml;
+    }
+
+    /// <summary>
+    /// The <c>&lt;Methods&gt;</c> subtree — BC's emitted method table — written only when the
+    /// runner can prove its view of it is COMPLETE, and omitted entirely otherwise.
+    ///
+    /// <para><b>The gate is the assembly witness, never the list's own length</b> (#3788).
+    /// SymbolReference.json states every event PUBLISHER exactly — by id, by name and in BC's
+    /// document order — and no event SUBSCRIBER at all, because the file is an app's
+    /// consumer-facing API surface and an AL subscriber is always <c>local</c>. So the symbol
+    /// file cannot tell a complete list from a short one, and a short one is worse than none:
+    /// <c>MetadataObjectDiff</c> pairs <c>Methods</c> POSITIONALLY, so the first missing element
+    /// puts every later one in a different method's slot — the runner asserting an association
+    /// it has no evidence for (loud-failures.md).</para>
+    ///
+    /// <para>Measured with this gate over three BC builds — 27.5.46862.53931, 28.1.49838.53910
+    /// and 28.4.53241.54407 — 66 codeunits render on each, all exact, zero wrong slots; without
+    /// it, 28.1 renders 76 codeunits of which 8 carry a wrong slot. See
+    /// docs/codeunit-metadata-from-bc.md#the-method-table.</para>
+    /// </summary>
+    private static void AppendMethodsSubtree(XmlDocument doc, XmlElement root, CodeunitMetaRow row)
+    {
+        // Three conditions, all required, and the middle one is the third state: an app whose
+        // assemblies were never scanned proves nothing, which is not the same as proving there
+        // are no subscribers (guards-need-a-third-state.md).
+        if (!row.MethodsProvenComplete) return;
+        if (row.AttributedMethods is not { Count: > 0 }) return;
+
+        var methods = doc.CreateElement("Methods", root.NamespaceURI);
+        root.AppendChild(methods);
+        foreach (var method in row.AttributedMethods)
+        {
+            var element = doc.CreateElement("Method", root.NamespaceURI);
+            element.SetAttribute("ID", method.Id.ToString(CultureInfo.InvariantCulture));
+            element.SetAttribute("Name", method.Name);
+            // BC writes the attribute kind as a child element of <MethodAttributes>, not as an
+            // attribute of <Method> — the shape MetaMethod's own reader expects.
+            var attributes = doc.CreateElement("MethodAttributes", root.NamespaceURI);
+            attributes.AppendChild(doc.CreateElement(method.Kind, root.NamespaceURI));
+            element.AppendChild(attributes);
+            methods.AppendChild(element);
+        }
     }
 
     /// <summary>

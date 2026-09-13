@@ -641,7 +641,28 @@ internal static partial class BcAppSymbolCache
     internal sealed record ObjectSymbol(string Kind, int Id, string Name, string? Caption = null,
         string? TableNo = null, bool SingleInstance = false, string? Subtype = null,
         string? TargetObjectName = null, string? ALNamespace = null,
-        string? InherentEntitlements = null, string? InherentPermissions = null);
+        string? InherentEntitlements = null, string? InherentPermissions = null,
+        List<CodeunitMethodSymbol>? AttributedMethods = null);
+
+    /// <summary>
+    /// One method BC's <c>ObjectMetadataEmitter</c> writes as a <c>&lt;Method&gt;</c>, as
+    /// SymbolReference.json states it: the compiler-assigned <c>Id</c> BC writes as the element's
+    /// <c>ID</c> attribute, the AL name, and which of the emitted kinds it is.
+    ///
+    /// <para>Only ATTRIBUTED methods are carried, because only those are emitted — of 326
+    /// <c>&lt;Method&gt;</c> elements across System Application + Business Foundation
+    /// 28.1.49838.53910, zero carry no attribute (#3963). The order is the symbol file's, which
+    /// is BC's document order: measured 70/70 on the codeunits with two or more emitted methods.
+    /// </para>
+    ///
+    /// <para><b>Incomplete by construction for a codeunit with subscribers.</b> The symbol file
+    /// is an app's consumer-facing API surface, so it states no <c>local</c> method, and an AL
+    /// event subscriber is always local — of the 140 subscribers BC emits for System
+    /// Application, it states 0, by id and by name. Whether this list is complete for a given
+    /// codeunit is decided by the assembly witness, never by this list's own contents; see
+    /// <c>RecordPatches.RegisterCodeunitSubscriberWitness</c> (#3788).</para>
+    /// </summary>
+    internal sealed record CodeunitMethodSymbol(int Id, string Name, string Kind);
 
     // SymbolReference.json container name → the AllObj "Object Type" option name the
     // objects inside it map to. Matched against the live option string by name, so a
@@ -1123,7 +1144,8 @@ internal static partial class BcAppSymbolCache
                         Subtype: string.IsNullOrWhiteSpace(cuSubtype) ? null : cuSubtype.Trim(),
                         ALNamespace: alNamespace,
                         InherentEntitlements: string.IsNullOrWhiteSpace(cuEntitlements) ? null : cuEntitlements.Trim(),
-                        InherentPermissions: string.IsNullOrWhiteSpace(cuPermissions) ? null : cuPermissions.Trim()));
+                        InherentPermissions: string.IsNullOrWhiteSpace(cuPermissions) ? null : cuPermissions.Trim(),
+                        AttributedMethods: ReadAttributedMethods(el)));
                     continue;
                 }
                 objects.TryAdd((kind, objId), new ObjectSymbol(kind, objId, objName, objCaption,
@@ -2549,6 +2571,72 @@ internal static partial class BcAppSymbolCache
             if (int.TryParse(t, out var id)) ids.Add(id);
         }
         return ids.Count > 0 ? ids : null;
+    }
+
+    /// <summary>
+    /// The AL method attributes that make BC's <c>ObjectMetadataEmitter</c> write a
+    /// <c>&lt;Method&gt;</c>, mapped to the <c>MethodAttributes</c> child element it writes.
+    /// Read off the symbol file's own <c>Attributes</c> array, whose <c>Name</c> is the AL
+    /// attribute identifier the compiler recorded.
+    ///
+    /// <para>The three event kinds all emit <c>EventPublisherAttribute</c> — BC's document does
+    /// not distinguish integration from internal from business at this level. The fourth kind BC
+    /// emits, <c>EventSubscriberAttribute</c>, is deliberately absent from this table because the
+    /// symbol file never states it: see <see cref="CodeunitMethodSymbol"/> (#3788).</para>
+    /// </summary>
+    private static readonly Dictionary<string, string> EmittedMethodAttributeKinds =
+        new(StringComparer.Ordinal)
+        {
+            ["IntegrationEvent"] = "EventPublisherAttribute",
+            ["InternalEvent"] = "EventPublisherAttribute",
+            ["BusinessEvent"] = "EventPublisherAttribute",
+            ["InherentPermissions"] = "InherentPermissionsMethodAttribute",
+        };
+
+    /// <summary>
+    /// The codeunit's attributed methods, in the symbol file's own array order — which is BC's
+    /// document order, and which is load-bearing because <c>MetadataObjectDiff</c> pairs
+    /// <c>Methods</c> positionally (#3963).
+    ///
+    /// <para>Returns null when the codeunit states no attributed method at all, so "states none"
+    /// stays distinct from "states an empty list" for the consumer: BC omits the
+    /// <c>&lt;Methods&gt;</c> element rather than writing an empty one, and 396 of System
+    /// Application 28.1's 533 codeunits are in that state.</para>
+    /// </summary>
+    private static List<CodeunitMethodSymbol>? ReadAttributedMethods(JsonElement codeunit)
+    {
+        if (!codeunit.TryGetProperty("Methods", out var methods) || methods.ValueKind != JsonValueKind.Array)
+            return null;
+
+        List<CodeunitMethodSymbol>? result = null;
+        foreach (var method in methods.EnumerateArray())
+        {
+            if (!method.TryGetProperty("Attributes", out var attributes)
+                || attributes.ValueKind != JsonValueKind.Array)
+                continue;
+
+            // First match wins, and the ORDER of the check is the array's rather than this
+            // table's: a method carrying both an event attribute and InherentPermissions is one
+            // <Method> element in BC's document, not two.
+            string? kind = null;
+            foreach (var attribute in attributes.EnumerateArray())
+            {
+                if (!attribute.TryGetProperty("Name", out var attrName)) continue;
+                var name = attrName.GetString();
+                if (name is null) continue;
+                if (EmittedMethodAttributeKinds.TryGetValue(name, out var emitted)) { kind = emitted; break; }
+            }
+            if (kind is null) continue;
+
+            if (!method.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var methodId))
+                continue;
+            var methodName = method.TryGetProperty("Name", out var nameProp) ? nameProp.GetString() : null;
+            if (string.IsNullOrEmpty(methodName)) continue;
+
+            (result ??= new List<CodeunitMethodSymbol>()).Add(
+                new CodeunitMethodSymbol(methodId, methodName, kind));
+        }
+        return result;
     }
 
     private static Dictionary<string, string> SymbolProperties(JsonElement element)
