@@ -2931,6 +2931,18 @@ internal sealed partial class RunnerPageInstance
     private static Type? FindPageExtensionType(int extensionId)
     {
         var name = "PageExtension" + extensionId;
+        // #4100: the executing bundle's own type first, as BcRuntime.FindFormType does — a
+        // foreign workspace's same-id PageExtension{id} is not stale and would otherwise answer.
+        var current = BcRuntime.CurrentTestAssembly;
+        if (current != null)
+        {
+            try
+            {
+                var own = AlRunner.Infrastructure.AssemblyTypeIndex.For(current).FindFirst(name, typeof(Microsoft.Dynamics.Nav.Runtime.Extensions.NavFormExtension).IsAssignableFrom);
+                if (own != null) return own;
+            }
+            catch { }
+        }
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             try
@@ -3235,6 +3247,18 @@ internal sealed partial class RunnerPageInstance
     private static Type? FindPageType(int pageId)
     {
         var name = "Page" + pageId;
+        // #4100: the executing bundle's own type first, as BcRuntime.FindFormType does — a
+        // foreign workspace's same-id Page{id} is not stale and would otherwise answer.
+        var current = BcRuntime.CurrentTestAssembly;
+        if (current != null)
+        {
+            try
+            {
+                var own = AlRunner.Infrastructure.AssemblyTypeIndex.For(current).FindFirst(name, typeof(NavForm).IsAssignableFrom);
+                if (own != null) return own;
+            }
+            catch { }
+        }
         // Metadata-backed lookup — see AlRunner/Infrastructure/AssemblyTypeIndex.cs.
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
