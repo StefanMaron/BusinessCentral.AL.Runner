@@ -56,8 +56,11 @@ internal static class TestDataOptions
     /// 5 — #2270 and #2268: Blob, Media, MediaSet, RecordId and Duration rebuilt, and a DB
     ///     NULL answered for every column type instead of only Text/Code. A version-4 baseline
     ///     deserialises fine and is silently missing every table one of those used to veto —
-    ///     29 of the 41 still refusing after #2259.</summary>
-    internal const int HydrationSchemaVersion = 5;
+    ///     29 of the 41 still refusing after #2259.
+    /// 6 — #2271: TableFilter rebuilt. A version-5 baseline is missing every table a
+    ///     TableFilter column used to veto. None does in CRONUS: its only populated one,
+    ///     Permission, is company-less and so never in scope.</summary>
+    internal const int HydrationSchemaVersion = 6;
 
     /// <summary>Off unless --test-data was passed. Absent the flag NOTHING here runs: no
     /// backup is opened, no reader is located, and CacheIdentity() returns the empty string
