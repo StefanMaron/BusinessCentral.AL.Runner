@@ -58,7 +58,8 @@ internal static class TestDataOptions
     ///     deserialises fine and is silently missing every table one of those used to veto —
     ///     29 of the 41 still refusing after #2259.
     /// 6 — #2271: TableFilter rebuilt. A version-5 baseline is missing every table a
-    ///     TableFilter column used to veto (Permission, in CRONUS).</summary>
+    ///     TableFilter column used to veto. None does in CRONUS: its only populated one,
+    ///     Permission, is company-less and so never in scope.</summary>
     internal const int HydrationSchemaVersion = 6;
 
     /// <summary>Off unless --test-data was passed. Absent the flag NOTHING here runs: no
