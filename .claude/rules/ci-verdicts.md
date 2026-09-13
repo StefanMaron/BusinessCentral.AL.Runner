@@ -335,8 +335,18 @@ point; two commits with different trees are not the same code however closely re
 (corpus PR 2639). Confirm the trees match before comparing across commits:
 
 ```bash
-[ "$(git rev-parse <sha1>^{tree})" = "$(git rev-parse <sha2>^{tree})" ] && echo "same tree"
+a=$(git rev-parse --verify -q "<sha1>^{tree}") &&
+b=$(git rev-parse --verify -q "<sha2>^{tree}") &&
+[ "$a" = "$b" ] && echo "same tree"
 ```
+
+**`--verify -q` is not optional, and the plain form fails in BOTH directions.** Without it,
+`git rev-parse` on a SHA this clone does not have **echoes the argument back on stdout** and
+exits 128, so the `[ ]` compares two echoed strings and the `fatal:` goes to stderr where a
+capture never sees it. Measured: the same unknown SHA twice prints **`same tree` for a commit
+git has never heard of**; and in a shallow clone, two commits with byte-identical trees print
+*nothing* when one SHA is unfetched — the false negative, which is this section's actual use
+case, since it judges flakes across CI run SHAs on branches you have not fetched.
 
 ### A red you inherited from the corpus is not a flake — count it per codeunit
 
