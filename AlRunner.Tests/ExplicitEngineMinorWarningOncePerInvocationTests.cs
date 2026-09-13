@@ -79,6 +79,68 @@ public sealed class ExplicitEngineMinorWarningOncePerInvocationTests
         return (root, selected);
     }
 
+    /// <summary>
+    /// Same alias, but a real directory whose entries symlink to the engine's artifacts
+    /// except Microsoft.Dynamics.Nav.Ncl.dll, which is random bytes. That stands in for a
+    /// different minor whose Ncl the Cecil rewrite cannot read: the run crashes before the
+    /// queued startup lines are flushed, which is when the warning matters most.
+    /// </summary>
+    private static (string Root, Version Selected) BuildArtifactsRootWithACorruptNcl(Version engineVersion)
+    {
+        var realHome = TestArtifacts.HomeDir()
+            ?? throw new InvalidOperationException("Cannot determine this machine's HOME.");
+        var realEngineDir = Path.Combine(TestArtifacts.StandardCacheDir(realHome), engineVersion.ToString());
+        TestArtifacts.SkipIfDirectoryMissing(realEngineDir, $"BC {engineVersion} artifacts");
+
+        var root = TestScratch.Dir("al-runner-explicit-minor-warning-corrupt-ncl");
+        var selected = new Version(engineVersion.Major, engineVersion.Minor + 50, engineVersion.Build, engineVersion.Revision);
+        var aliasDir = Path.Combine(root, selected.ToString());
+        Directory.CreateDirectory(aliasDir);
+        const string NclName = "Microsoft.Dynamics.Nav.Ncl.dll";
+        foreach (var entry in Directory.EnumerateFileSystemEntries(realEngineDir))
+        {
+            var name = Path.GetFileName(entry);
+            if (name == NclName) continue;
+            var link = Path.Combine(aliasDir, name);
+            if (Directory.Exists(entry)) Directory.CreateSymbolicLink(link, entry);
+            else File.CreateSymbolicLink(link, entry);
+        }
+        var garbage = new byte[64 * 1024];
+        new Random(4038).NextBytes(garbage);
+        File.WriteAllBytes(Path.Combine(aliasDir, NclName), garbage);
+        return (root, selected);
+    }
+
+    [SkippableFact]
+    public void ExplicitDifferentMinor_RunCrashesBeforeFlush_StillPrintsWarning_ExactlyOnce()
+    {
+        var engineVersion = BcArtifacts.EngineBuiltVersion();
+        TestArtifacts.SkipIf(engineVersion == null,
+            "no baked-in BcEngineVersion on this build — nothing to compare a selection against.");
+        TestArtifacts.SkipIf(EngineVariants.Discover(AppContext.BaseDirectory).Count > 0,
+            "this install ships engine variants, and the warning is gated off for that shape (#2037).");
+
+        var (root, selected) = BuildArtifactsRootWithACorruptNcl(engineVersion!);
+        var cacheDir = TestScratch.Dir("al-runner-explicit-minor-warning-corrupt-ncl-cache");
+        try
+        {
+            var (exit, output) = Run(root, cacheDir, "--no-auto-provision", "--bc-version", selected.ToString());
+
+            Assert.True(exit != 0, $"a random-bytes Ncl.dll must not run cleanly. exit={exit}\n{output}");
+            Assert.Contains("BadImageFormatException", output, StringComparison.Ordinal);
+
+            var count = Regex.Matches(output, Regex.Escape(WarningFragment)).Count;
+            Assert.True(count == 1,
+                $"the KNOWN-DEGRADED warning must print exactly once even when the run crashes before the " +
+                $"startup flush; printed {count} time(s). exit={exit}\n{output}");
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+            try { Directory.Delete(cacheDir, recursive: true); } catch { }
+        }
+    }
+
     [SkippableFact]
     public void ExplicitDifferentMinor_PrintsKnownDegradedWarning_ExactlyOnce()
     {
