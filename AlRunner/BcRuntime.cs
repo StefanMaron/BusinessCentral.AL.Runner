@@ -928,6 +928,22 @@ public static partial class BcRuntime
         Console.Error.WriteLine($"[BcRuntime] Ncl in AppDomain: Location='{ncl?.Location}' (empty = byte-array load OK)");
     }
 
+    // Kept out of ApplyAllPatches: a loop inside a catch makes the JIT compile the whole caller
+    // FullOpts (see docs/startup-cost.md#main-jit-tier; HandlerLoopJitTierGuardTests pins it).
+    private static void ReportNavEnvironmentCtorFailure(Exception ex)
+    {
+        var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+        Console.Error.WriteLine("[BcRuntime] NavEnvironment ctor THREW — falling back to skeleton:");
+        Console.Error.WriteLine($"  {inner.GetType().FullName}: {inner.Message}");
+        var st = new System.Diagnostics.StackTrace(inner, fNeedFileInfo: true);
+        for (int fi = 0; fi < st.FrameCount; fi++)
+        {
+            var frame = st.GetFrame(fi);
+            var m = frame?.GetMethod();
+            Console.Error.WriteLine($"    [{fi}] IL+0x{frame?.GetILOffset():X4} native+0x{frame?.GetNativeOffset():X4}  {m?.DeclaringType?.FullName}.{m?.Name}({string.Join(",", m?.GetParameters().Select(p=>p.ParameterType.Name) ?? Array.Empty<string>())})");
+        }
+    }
+
     private static void ApplyAllPatches(Assembly navNcl)
     {
         var envType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavEnvironment")
@@ -1034,16 +1050,7 @@ public static partial class BcRuntime
             }
             catch (Exception ex)
             {
-                var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
-                Console.Error.WriteLine("[BcRuntime] NavEnvironment ctor THREW — falling back to skeleton:");
-                Console.Error.WriteLine($"  {inner.GetType().FullName}: {inner.Message}");
-                var st = new System.Diagnostics.StackTrace(inner, fNeedFileInfo: true);
-                for (int fi = 0; fi < st.FrameCount; fi++)
-                {
-                    var frame = st.GetFrame(fi);
-                    var m = frame?.GetMethod();
-                    Console.Error.WriteLine($"    [{fi}] IL+0x{frame?.GetILOffset():X4} native+0x{frame?.GetNativeOffset():X4}  {m?.DeclaringType?.FullName}.{m?.Name}({string.Join(",", m?.GetParameters().Select(p=>p.ParameterType.Name) ?? Array.Empty<string>())})");
-                }
+                ReportNavEnvironmentCtorFailure(ex);
             }
         }
         if (!ctorOk && instField != null)

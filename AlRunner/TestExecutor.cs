@@ -358,6 +358,25 @@ public sealed class TestExecutor
          + AlRunner.Patches.RecordPatches.RegisteredBcAppSymbolStateKey()
          + AlRunner.Infrastructure.TestDataOptions.CacheIdentity();
 
+    // Kept out of Run: a loop inside a catch makes the JIT compile the whole caller FullOpts
+    // (see docs/startup-cost.md#main-jit-tier; HandlerLoopJitTierGuardTests pins it).
+    private static Type[] LoadableTypesAfterPartialLoadFailure(ReflectionTypeLoadException ex)
+    {
+        var types = ex.Types.Where(t => t != null).ToArray()!;
+        var reasons = ex.LoaderExceptions
+            .Where(e => e != null)
+            .Select(e => e!.Message)
+            .Distinct()
+            .Take(10)
+            .ToList();
+        Console.Error.WriteLine(
+            $"[test-exec] WARNING: {ex.LoaderExceptions.Length} type(s) in the test assembly " +
+            $"failed to load; continuing with {types.Length} loadable type(s). Causes:");
+        foreach (var r in reasons)
+            Console.Error.WriteLine($"    {r}");
+        return types!;
+    }
+
     /// <summary>
     /// Runs every [Test] method in <paramref name="assembly"/>. When
     /// <paramref name="onTestComplete"/> is supplied it fires synchronously right
@@ -401,18 +420,7 @@ public sealed class TestExecutor
             // one or more of the requested types". Surface the concrete loader failures (per
             // .claude/rules/loud-failures.md) and continue with the types that DID load — a
             // test codeunit that itself references the missing type will simply not appear.
-            types = ex.Types.Where(t => t != null).ToArray()!;
-            var reasons = ex.LoaderExceptions
-                .Where(e => e != null)
-                .Select(e => e!.Message)
-                .Distinct()
-                .Take(10)
-                .ToList();
-            Console.Error.WriteLine(
-                $"[test-exec] WARNING: {ex.LoaderExceptions.Length} type(s) in the test assembly " +
-                $"failed to load; continuing with {types.Length} loadable type(s). Causes:");
-            foreach (var r in reasons)
-                Console.Error.WriteLine($"    {r}");
+            types = LoadableTypesAfterPartialLoadFailure(ex);
         }
         typeSw.Stop();
         // #2801: Assembly.GetTypes() has no defined order, and this loop's order IS the

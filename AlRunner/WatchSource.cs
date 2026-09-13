@@ -252,9 +252,14 @@ internal static class WatchSource
         }
         finally
         {
-            foreach (var w in watchers) { w.EnableRaisingEvents = false; w.Dispose(); }
-            signal.Dispose();
+            DisposeWatch(signal, watchers);
         }
+    }
+
+    internal static void DisposeWatch(System.Threading.ManualResetEventSlim signal, List<FileSystemWatcher> watchers)
+    {
+        foreach (var w in watchers) { w.EnableRaisingEvents = false; w.Dispose(); }
+        signal.Dispose();
     }
 
     // The bucket-root walk-up (climb parent directories until an app.json is found).
