@@ -30,7 +30,7 @@ internal static class InstallExecutionContext
         // what BC passes for an app with no prior data (ALNavApp.GetDataVersionForInstall answers
         // 0.0.0.0 from it; ObsolescenceGuard reads it too).
         var context = NavAppInstallationContext.CreateForInstall(
-            session.Tenant, group, (Microsoft.Dynamics.Nav.Apps.Runtime.NavAppRuntimeMetadata)metadata, default!, activityId: string.Empty, hasData: false);
+            session.Tenant, group, metadata, default!, activityId: string.Empty, hasData: false);
 
         session.SetAppInstallationContext(context);
         return new Scope(session);
@@ -55,11 +55,9 @@ internal static class InstallExecutionContext
     /// ALNavApp.ALNavAppLoadPackageData — an install trigger calling NavApp.LoadPackageData
     /// reaches BC's package retriever instead of returning early.
     /// </summary>
-    private static object CreateRuntimeMetadata(Guid appId, string name, string publisher, string version)
+    private static Microsoft.Dynamics.Nav.Apps.Runtime.NavAppRuntimeMetadata CreateRuntimeMetadata(Guid appId, string name, string publisher, string version)
     {
-        var tMeta = typeof(NavAppInstallationContext).GetProperty(nameof(NavAppInstallationContext.AppBeingTargeted))!
-            .PropertyType;
-        var ctor = tMeta.GetConstructors(BindingFlags.Public | BindingFlags.Instance)
+        var ctor = typeof(Microsoft.Dynamics.Nav.Apps.Runtime.NavAppRuntimeMetadata).GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .OrderBy(c => c.GetParameters().Length)
             .First();
         var args = ctor.GetParameters().Select(p => p.Name switch
@@ -70,7 +68,7 @@ internal static class InstallExecutionContext
             "version" => System.Version.TryParse(version, out var v) ? v : new System.Version(1, 0, 0, 0),
             _ => p.ParameterType.IsValueType ? Activator.CreateInstance(p.ParameterType) : null,
         }).ToArray();
-        return ctor.Invoke(args);
+        return (Microsoft.Dynamics.Nav.Apps.Runtime.NavAppRuntimeMetadata)ctor.Invoke(args);
     }
 
     private static object ConvertGuid(Type target, Guid value)

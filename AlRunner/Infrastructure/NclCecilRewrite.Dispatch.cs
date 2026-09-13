@@ -727,7 +727,8 @@ public static partial class NclCecilRewrite
             ReplaceBodyWithHelper(asm.MainModule, mModuleCtx,
                 typeof(AlRunner.Patches.NavAppModuleInfoPatches).GetMethod(
                     nameof(AlRunner.Patches.NavAppModuleInfoPatches.NavSession_GetCurrentModuleExecutionContext),
-                    BindingFlags.Public | BindingFlags.Static)!);
+                    BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("[Cecil] NavAppModuleInfoPatches.NavSession_GetCurrentModuleExecutionContext not found"));
         }
 
         // ── ALSession.ALStartSessionAsyncImpl → BcRuntime.ALSession_ALStartSessionAsyncImpl ──
