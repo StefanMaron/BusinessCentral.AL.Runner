@@ -221,6 +221,8 @@ public static partial class BcRuntime
                 BindingFlags.NonPublic | BindingFlags.Instance);
             _fRecordImplementationMetaTable = recImplType.GetField("metaTable",
                 BindingFlags.NonPublic | BindingFlags.Instance);
+            _mRecordImplementationCalcAutoCalcFieldsAsync = recImplType.GetMethod("CalcAutoCalcFieldsAsync",
+                BindingFlags.NonPublic | BindingFlags.Instance, binder: null, new[] { typeof(bool) }, modifiers: null);
             var dataAccessType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.DataAccess");
             if (dataAccessType != null)
             {
@@ -366,7 +368,17 @@ public static partial class BcRuntime
                 var recBuffer = _pMrbResultRecordBuffer?.GetValue(resultObj);
                 _fRecordImplementationMutableRecordBuffer?.SetValue(self, recBuffer);
             }
-            if (found) return new System.Threading.Tasks.ValueTask<bool>(true);
+            if (found)
+            {
+                // BC's own body calls CalcAutoCalcFieldsAsync(calculateAll: true) here, after the
+                // buffer is installed; Get, Get(RecordId), GetBySystemId and RecordRef.Get only
+                // calculate SetAutoCalcFields through this call (#3578). Calling BC's method
+                // rather than re-deriving the field set is observably equivalent by construction:
+                // the body is unchanged across the 27.x and 28.4 binaries (compare_symbols).
+                if (calcAutoCalcFields)
+                    InvokeCalcAutoCalcFields(self, calculateAll: true);
+                return new System.Threading.Tasks.ValueTask<bool>(true);
+            }
 
             // Not found. BC's own body decides the failure mode RIGHT HERE from errorLevel —
             // nothing downstream re-checks — so returning false unconditionally silently turned
@@ -386,6 +398,17 @@ public static partial class BcRuntime
         }
     }
 
+
+    private static void InvokeCalcAutoCalcFields(object recordImplementation, bool calculateAll)
+    {
+        if (_mRecordImplementationCalcAutoCalcFieldsAsync == null)
+            throw new InvalidOperationException(
+                "RecordImplementation.CalcAutoCalcFieldsAsync(bool) not resolvable — a Get after " +
+                "SetAutoCalcFields would silently leave its FlowFields uncalculated.");
+        var vt = (System.Threading.Tasks.ValueTask)_mRecordImplementationCalcAutoCalcFieldsAsync
+            .Invoke(recordImplementation, new object[] { calculateAll })!;
+        vt.AsTask().GetAwaiter().GetResult();
+    }
 
     /// <summary>
     /// Replacement for NavRecord.InsertAsync(DataError, bool, bool, bool).

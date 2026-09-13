@@ -104,6 +104,7 @@ public static partial class BcRuntime
     private static FieldInfo? _fRecordImplementationMetaTable;          // RecordImplementation.metaTable
     private static FieldInfo? _fRecordImplementationMutableRecordBuffer; // RecordImplementation.mutableRecordBuffer
     private static MethodInfo? _mDataAccessTryGetByPrimaryKeyAsync;
+    private static MethodInfo? _mRecordImplementationCalcAutoCalcFieldsAsync; // RecordImplementation.CalcAutoCalcFieldsAsync(bool)
     private static PropertyInfo? _pMrbResultResult;     // MutableRecordBufferResult<bool>.Result
     private static PropertyInfo? _pMrbResultRecordBuffer;
 
