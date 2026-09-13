@@ -632,6 +632,55 @@ public static partial class RecordPatches
         return null;
     }
 
+    /// <summary>
+    /// Resolve a table NAME written inside <paramref name="referencingTable"/> — a TableRelation
+    /// target or a CalcFormula source — in the scope of the app that declared it (#4106).
+    /// A precompiled table's metadata carries the target's id, fixed when its own app compiled,
+    /// and that app cannot see the bundle under test; the symbol file keeps only the name. So
+    /// for a table read from a dependency's symbols the name is looked up among dependency
+    /// tables first (same .app preferred), and a bundle table sharing the name under another
+    /// namespace never takes over. Everything else keeps the original by-name lookup.
+    /// </summary>
+    internal static ParsedTable? ResolveTableNameInDeclaringScope(string tableName, ParsedTable? referencingTable)
+    {
+        if (string.IsNullOrEmpty(tableName)) return null;
+        // A bundle table carries the OwningAppId of its app.json; a symbol-read one never does,
+        // so this skips the index for the common bundle case.
+        if (referencingTable is { OwningAppId: null })
+        {
+            lock (_bcTableIndexLock)
+            {
+                EnsureBcSymbolTableIndex();
+                if (_bcSymbolTableIndex != null
+                    && _bcSymbolTableIndex.TryGetValue(referencingTable.TableId, out var declaring)
+                    && string.Equals(declaring.Table.TableName, referencingTable.TableName, StringComparison.OrdinalIgnoreCase))
+                {
+                    int? sameApp = null, otherApp = null;
+                    foreach (var (id, entry) in _bcSymbolTableIndex)
+                    {
+                        if (!string.Equals(entry.Table.TableName, tableName, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (string.Equals(entry.AppPath, declaring.AppPath, StringComparison.Ordinal))
+                        {
+                            sameApp = id;
+                            break;
+                        }
+                        otherApp ??= id;
+                    }
+                    if ((sameApp ?? otherApp) is int found)
+                    {
+                        if (!_parsedTables.ContainsKey(found))
+                            _parsedTables[found] = _bcSymbolTableIndex[found].Table;
+                        return _parsedTables[found];
+                    }
+                }
+            }
+        }
+        return _parsedTables.Values.FirstOrDefault(t =>
+                   string.Equals(t.TableName, tableName, StringComparison.OrdinalIgnoreCase))
+               ?? TryPopulateParsedTableByName(tableName);
+    }
+
     private static readonly Regex _rxAnyTableId = new(
         @"\btable\s+(\d+)\s+(?:""[^""]+""|[A-Za-z_]\w*)[^{]*?\{",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
