@@ -146,3 +146,31 @@ attempt. GitHub Actions concurrency is scoped per account, not per repository, s
 shared with every other repo and agent using the same account, not just this one. Nobody
 bypasses a red required check. The recipes above are for finding out whether a failure is
 real, not for making it go away.
+
+## The same-tree recipe printed "same tree" for a commit git had never seen (2026-09-13, PR #4140)
+
+§5's "same code means the same tree" check shipped as:
+
+```bash
+[ "$(git rev-parse <sha1>^{tree})" = "$(git rev-parse <sha2>^{tree})" ] && echo "same tree"
+```
+
+`git rev-parse` on a SHA the clone does not have **echoes the argument back on stdout** and exits
+128. The `[ ]` therefore compares two echoed strings, and the `fatal:` lands on stderr where a
+`$( )` capture never sees it. Both directions reproduce:
+
+- **false positive** — the same unknown SHA twice prints `same tree`, for a commit git has never
+  heard of;
+- **false negative** — a shallow clone with two byte-identical trees prints nothing when one SHA
+  is unfetched. That is this section's *actual* use case: judging a flake across two CI run SHAs,
+  routinely on branches nobody fetched.
+
+`git rev-parse --verify -q` collapses both: it prints nothing and fails rather than echoing.
+
+Found by a reviewer on PR #4140, which is the PR that *added a guard for exactly this class* —
+the recipe had been declared "unpinnable, the comparison itself is `git rev-parse` equality with
+nothing to get subtly wrong", and the act of writing that declaration is what put a reviewer in
+front of it. The declaration was wrong and the mechanism surfaced it on its first use.
+
+Same shape as the three-dot `origin/main...HEAD` recipe that founded #3955: valid bash, exit 0,
+a plausible answer to a different question.
