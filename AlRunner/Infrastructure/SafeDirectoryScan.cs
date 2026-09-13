@@ -39,9 +39,15 @@ namespace AlRunner.Infrastructure;
 /// each inside its own guard. Measured against this repository's checkout (94,740
 /// directories): 787 ms for the explicit walk versus 792 ms for the framework's native
 /// recursive enumerator — no measurable penalty, because both do the same number of
-/// <c>getdents</c> calls. Symlink loops terminate identically under both (verified: a
-/// self-referencing tree yields the same 41 results and the same 123 directories visited),
-/// so this introduces no new hazard.</para>
+/// <c>getdents</c> calls.</para>
+///
+/// <para><b>Symlink cycles are cut, which the framework enumerator does not do (issue
+/// #2219).</b> A subdirectory whose real path is already on the current descent chain is
+/// neither reported nor entered, so a link back to an ancestor yields each real directory once
+/// instead of once per spelling until <c>PATH_MAX</c> (41 hits for one <c>.alpackages</c>, and
+/// the final <c>ENAMETOOLONG</c> reported as an unreadable directory). A link to anything not on
+/// the chain is still followed, so two links to one directory still give two spellings.
+/// <c>SafeDirectoryScanSymlinkLoopTests</c> pins both directions.</para>
 ///
 /// <para>Matching is delegated to <see cref="FileSystemName.MatchesWin32Expression"/> with
 /// platform-default casing, which is exactly what <c>EnumerationOptions.Compatible</c>
@@ -156,18 +162,19 @@ public static class SafeDirectoryScan
 
         // Iterative rather than recursive: a deep tree (or a symlink chain) must not be able
         // to overflow the stack in a code path whose entire job is to survive hostile input.
-        var pending = new Stack<string>();
-        pending.Push(root);
+        var pending = new Stack<Frame>();
+        pending.Push(new Frame(root, BundleRootDeduplication.Canonicalize(root), null, CrossedLink: false));
 
         while (pending.Count > 0)
         {
-            var dir = pending.Pop();
+            var frame = pending.Pop();
+            var dir = frame.Path;
 
             // The whole point of this class: the listing is materialised INSIDE the guard,
             // so a denial on this directory is caught here and the walk continues with the
             // rest of the tree instead of unwinding out of the caller's foreach.
-            string[] subdirs;
-            try { subdirs = Directory.GetDirectories(dir); }
+            List<(string Path, string Name, bool IsLink)> subdirs;
+            try { subdirs = ListSubdirectories(dir); }
             catch (UnauthorizedAccessException) { denied.Add(dir); continue; }
             catch (DirectoryNotFoundException) { continue; }   // raced away mid-walk
             catch (IOException) { denied.Add(dir); continue; }
@@ -185,17 +192,65 @@ public static class SafeDirectoryScan
                         hits.Add(f);
             }
 
-            foreach (var sub in subdirs)
+            foreach (var (sub, name, isLink) in subdirs)
             {
-                if (!matchFiles && Matches(searchPattern, Path.GetFileName(sub)))
+                // Issue #2219: a subdirectory whose real path is already on this descent chain
+                // is a symlink cycle — neither reported nor entered. Only a chain that crossed
+                // a link can revisit anything, so a link-free chain pays nothing here.
+                // Keep the test "on the chain", never "is a symlink": a link to a directory
+                // not on the chain (a sibling, a vendored cache elsewhere) must still be walked.
+                var real = isLink
+                    ? BundleRootDeduplication.Canonicalize(Path.Combine(frame.RealPath, name))
+                    : Path.Combine(frame.RealPath, name);
+                var crossedLink = frame.CrossedLink || isLink;
+                if (crossedLink && frame.ChainContains(real)) continue;
+
+                if (!matchFiles && Matches(searchPattern, name))
                     hits.Add(sub);
                 // Recurse into it regardless of whether it matched: SearchOption.AllDirectories
                 // descends into matching directories too (a `.alpackages` nested inside another
                 // `.alpackages` is still reported by the call this replaces).
-                if (recurse) pending.Push(sub);
+                if (recurse) pending.Push(new Frame(sub, real, frame, crossedLink));
             }
         }
     }
+
+    /// <summary>A directory being walked: its spelled path, its real path, and its parent frame.</summary>
+    private sealed record Frame(string Path, string RealPath, Frame? Parent, bool CrossedLink)
+    {
+        public bool ChainContains(string realPath)
+        {
+            for (var f = this; f != null; f = f.Parent)
+                if (string.Equals(f.RealPath, realPath, PathComparison)) return true;
+            return false;
+        }
+    }
+
+    private static readonly StringComparison PathComparison =
+        IgnoreCase ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+
+    // Directory.GetDirectories' result, plus whether each entry is itself a link, read from the
+    // same directory listing (no extra stat per entry). Fully materialised by the caller's guard.
+    // AttributesToSkip = None is load-bearing: the EnumerationOptions default skips Hidden, and
+    // on Unix every dot-directory — `.alpackages` included — is Hidden.
+    private static readonly EnumerationOptions ListOptions = new()
+    {
+        AttributesToSkip = 0,
+        IgnoreInaccessible = false,
+        RecurseSubdirectories = false,
+        ReturnSpecialDirectories = false,
+        MatchType = MatchType.Win32,
+        MatchCasing = MatchCasing.PlatformDefault,
+    };
+
+    private static List<(string Path, string Name, bool IsLink)> ListSubdirectories(string dir)
+        => new FileSystemEnumerable<(string, string, bool)>(
+                dir,
+                (ref FileSystemEntry e) => (e.ToSpecifiedFullPath(), e.FileName.ToString(),
+                                            (e.Attributes & FileAttributes.ReparsePoint) != 0),
+                ListOptions)
+            { ShouldIncludePredicate = (ref FileSystemEntry e) => e.IsDirectory }
+            .ToList();
 
     private static bool Matches(string pattern, string name)
         => FileSystemName.MatchesWin32Expression(pattern, name, IgnoreCase);
