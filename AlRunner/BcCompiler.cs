@@ -57,10 +57,13 @@ public sealed record EmittedSource(string Name, string Code);
 /// The AL diagnostics (alc-style: <c>path(line,col): error ALXXXX: message</c>) that
 /// caused THIS object specifically to be excluded — not the whole module's diagnostics.
 /// </param>
+/// <param name="ManifestAppJsonPath">The app.json the compile that excluded it read, or null for
+/// none — a re-parse of <paramref name="FilePath"/> must use the same one (#4071).</param>
 public sealed record TddExcludedObjectDetail(
     string FilePath,
     string ObjectDisplayName,
-    IReadOnlyList<string> Diagnostics);
+    IReadOnlyList<string> Diagnostics,
+    string? ManifestAppJsonPath = null);
 
 /// <summary>
 /// Output of <see cref="BcCompiler.Emit"/>: emitted C# sources plus any AL-level
@@ -117,7 +120,10 @@ public sealed record BcEmitOutput(
     // labels alone cannot answer that, because the emit-retry loop's second branch labels an
     // object by its FILE NAME rather than its AL name. Same list instance as
     // TddExcludedDetails when --tdd is on; a plain empty list when nothing was excluded.
-    IReadOnlyList<TddExcludedObjectDetail>? ExcludedObjectDetails = null);
+    IReadOnlyList<TddExcludedObjectDetail>? ExcludedObjectDetails = null,
+    // #4076: the app.json this compile read (BcCompiler.ResolveManifestAppJson), or null for
+    // none. A text scan over the same files must blank the #if branches THIS manifest disabled.
+    string? ManifestAppJsonPath = null);
 
 public sealed partial class BcCompiler
 {
@@ -1763,9 +1769,7 @@ public sealed partial class BcCompiler
         // "real" app root — see the doc comment above); fall back to scanning `dirs` the
         // way EmitDepSymbols always has, for callers that don't have a separate app root
         // (appRootDir is null but one of alFolders already IS the app root).
-        var manifestAppJsonPath = (appRootDir != null && File.Exists(Path.Combine(appRootDir, "app.json")))
-            ? Path.Combine(appRootDir, "app.json")
-            : dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
+        var manifestAppJsonPath = ResolveManifestAppJson(appRootDir, dirs);
         var manifestInputs = ReadManifestCompilerInputs(manifestAppJsonPath);
 
         var parseOpts = BuildParseOptions(manifestInputs);
@@ -2083,7 +2087,7 @@ public sealed partial class BcCompiler
                                 ? locatedDiagsForFile
                                 : new List<string> { $"emit-crash: {label} — {caught.Message.Split('\n', 2)[0]}" };
                             excludedObjectDiagnosticsList.AddRange(diagsForThisObject);
-                            excludedObjectDetails.Add(new TddExcludedObjectDetail(alFiles[i], label, diagsForThisObject));
+                            excludedObjectDetails.Add(new TddExcludedObjectDetail(alFiles[i], label, diagsForThisObject, manifestAppJsonPath));
                         }
                         else
                             nextKeepIdx.Add(i);
@@ -2127,7 +2131,7 @@ public sealed partial class BcCompiler
                             if (objDiags.Count == 0)
                                 objDiags = DiagnosticsForFile(i);
                             excludedObjectDiagnosticsList.AddRange(objDiags);
-                            excludedObjectDetails.Add(new TddExcludedObjectDetail(alFiles[i], label, objDiags));
+                            excludedObjectDetails.Add(new TddExcludedObjectDetail(alFiles[i], label, objDiags, manifestAppJsonPath));
                         }
                         else
                             nextKeepIdx.Add(i);
@@ -2359,7 +2363,8 @@ public sealed partial class BcCompiler
 
         var emitOutput = new BcEmitOutput(
             outputter.Captured, alDiags, excludedObjects, _tddMode ? excludedObjectDetails : null,
-            _tddMode ? tddGeneratedMembers : null, excludedObjectDiagnostics, excludedObjectDetails);
+            _tddMode ? tddGeneratedMembers : null, excludedObjectDiagnostics, excludedObjectDetails,
+            ManifestAppJsonPath: manifestAppJsonPath);
 
         // #1902: only a CLEAN success (nothing excluded, every source captured) is trustworthy
         // as a RAD baseline — a module that only compiled after dropping broken objects must
@@ -2618,9 +2623,7 @@ public sealed partial class BcCompiler
         // omitting noImplicitWith would compile cleanly off a parent that declares it, and one
         // declaring it would fail off a parent that does not). Pinned by
         // ManifestFeaturesSubprocessTests' two SourceDependency cases.
-        var foundAppJson = (appRootDir != null && File.Exists(Path.Combine(appRootDir, "app.json")))
-            ? Path.Combine(appRootDir, "app.json")
-            : dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
+        var foundAppJson = ResolveManifestAppJson(appRootDir, dirs);
         var manifestInputs = ReadManifestCompilerInputs(foundAppJson);
 
         // This dep's OWN manifest symbols, never the consuming bundle's: foundAppJson is the dep's app.json.
@@ -2882,6 +2885,17 @@ public sealed partial class BcCompiler
             "|" + (int)CompilerFeatures + "|" + ContextSensitiveHelpUrl +
             "|" + (int)EffectiveTarget;
     }
+
+    /// <summary>
+    /// The app.json a compile of <paramref name="dirs"/> reads its manifest inputs from:
+    /// <paramref name="appRootDir"/>'s, else the first of <paramref name="dirs"/> holding one, else
+    /// none. Never an ancestor directory's (#2542). Runner-side re-parses of the same AL resolve
+    /// through this too, so they pick the <c>#if</c> branches the compile picked (#4071).
+    /// </summary>
+    internal static string? ResolveManifestAppJson(string? appRootDir, IEnumerable<string> dirs) =>
+        appRootDir != null && File.Exists(Path.Combine(appRootDir, "app.json"))
+            ? Path.Combine(appRootDir, "app.json")
+            : dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
 
     /// <summary>
     /// The ParseOptions every compile path uses — Emit, EmitDepSymbols and the incremental fast

@@ -28,43 +28,39 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    // The same symbol union BcCompiler.Emit parses with: CLEANSCHEMA1..25, --define, and the
-    // owning app.json's preprocessorSymbols (#4071). `symbols` is the part that varies, and it
-    // is ALSO the tree-cache key in ParseAlObjects — build both from one array, or a cached tree
-    // parsed under one symbol set is served for another (#1900).
-    // Never a `static readonly`: --define is registered after this type may be touched (#1900).
-    private static NavCA.ParseOptions AlParseOptionsFor(string[] symbols) => new(
-        runtimeVersion: null!,
-        preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}").Concat(symbols),
-        documentationMode: NavCA.DocumentationMode.None);
+    // The manifest the compile of the file being parsed reads (BcCompiler.ResolveManifestAppJson,
+    // recorded per registered source dir). Empty for text with no registered dir (synthesized
+    // table text, dependency .app source): those parse on CLEANSCHEMA + --define, as before.
+    // Options and tree-cache key both derive from this one value — a key without its symbols
+    // serves one app's cached tree to another app with identical text (#4071, #1900).
+    private static AlRunner.BcCompiler.ManifestCompilerInputs _currentManifestInputs =
+        AlRunner.BcCompiler.ManifestCompilerInputs.Empty;
 
-    // app.json preprocessorSymbols of the file ParseSourceFileIntoAllExtractors is currently
-    // feeding the extractors. Empty for text with no owning file (synthesized table text,
-    // dependency .app source), which keeps those parses on --define alone, as before.
-    private static string[] _currentFileManifestSymbols = [];
+    // Registered source dir -> the app.json its compile reads (null: none). Cleared with
+    // _sourceDirs in ResetForReload.
+    private static readonly Dictionary<string, string?> _compileManifestByDir = new(StringComparer.OrdinalIgnoreCase);
 
-    // Directory -> manifest preprocessorSymbols of the nearest app.json. Cleared by
-    // ResetForReload beside _owningAppByDir, so a --watch edit to app.json is re-read.
-    private static readonly Dictionary<string, string[]> _manifestSymbolsByDir = new(StringComparer.OrdinalIgnoreCase);
+    // app.json path -> its compiler inputs, read once per reload (cleared in ResetForReload, so a
+    // --watch edit to app.json is re-read).
+    private static readonly Dictionary<string, AlRunner.BcCompiler.ManifestCompilerInputs> _manifestInputsByPath =
+        new(StringComparer.OrdinalIgnoreCase);
 
-    private static string[] ManifestPreprocessorSymbolsFor(string? filePath)
+    private static AlRunner.BcCompiler.ManifestCompilerInputs CompileManifestInputsForDir(string dir)
     {
-        if (filePath is null) return [];
-        var dir = Path.GetDirectoryName(Path.GetFullPath(filePath));
-        if (dir is null) return [];
-        if (_manifestSymbolsByDir.TryGetValue(dir, out var memo)) return memo;
-        var symbols = AlRunner.BcCompiler.ReadManifestCompilerInputs(
-            AlRunner.Infrastructure.AlMemberSyntaxIndex.NearestAppJson(filePath)).PreprocessorSymbols.ToArray();
-        _manifestSymbolsByDir[dir] = symbols;
-        return symbols;
+        if (!_compileManifestByDir.TryGetValue(dir, out var appJson) || appJson is null)
+            return AlRunner.BcCompiler.ManifestCompilerInputs.Empty;
+        if (!_manifestInputsByPath.TryGetValue(appJson, out var inputs))
+            _manifestInputsByPath[appJson] = inputs = AlRunner.BcCompiler.ReadManifestCompilerInputs(appJson);
+        return inputs;
     }
 
     private static string[] ActiveParseSymbols()
     {
         var extra = AlRunner.BcCompiler.GetExtraPreprocessorSymbols();
-        return _currentFileManifestSymbols.Length == 0
+        var manifest = _currentManifestInputs.PreprocessorSymbols;
+        return manifest.Count == 0
             ? extra.ToArray()
-            : extra.Concat(_currentFileManifestSymbols).Distinct(StringComparer.Ordinal)
+            : extra.Concat(manifest).Distinct(StringComparer.Ordinal)
                 .OrderBy(s => s, StringComparer.Ordinal).ToArray();
     }
 
@@ -266,7 +262,7 @@ public static partial class RecordPatches
     // back-to-back — RecordPatches.ParseSourceFileIntoAllExtractors is the shared call
     // site both AddSourceDirs and Register() route every file through — so remembering
     // only the LAST parse turns 8 identical tree builds per file into 1 real build plus 7
-    // cache hits, with no change to AlParseOptionsFor, to any TryParse*File signature, or to
+    // cache hits, with no change to the parse options, to any TryParse*File signature, or to
     // the eight extractors' own code.
     //
     // The key is (text, symbols), never text alone. #1900 was exactly a parser that
@@ -274,7 +270,7 @@ public static partial class RecordPatches
     // preprocessor set at type-init before BcCompiler.SetExtraPreprocessorSymbols ran). A
     // memo keyed on text alone would reproduce that bug through a different door: two
     // calls for the same text under two different --define sets would incorrectly share
-    // one cached tree. AlParseOptionsFor (see above) is still recomputed on every miss:
+    // one cached tree. The parse options are still recomputed on every miss:
     // caching here changes WHEN a tree is (re)built, never what determines whether it
     // must be.
     private static string? _lastParsedText;
@@ -416,7 +412,7 @@ public static partial class RecordPatches
         {
             ParseObjectTextCallCount++;
             var tree = NavSyntax.SyntaxTree.ParseObjectText(
-                text, path: "", encoding: null!, AlParseOptionsFor(symbols), default);
+                text, path: "", encoding: null!, AlRunner.BcCompiler.BuildParseOptions(_currentManifestInputs), default);
             IReadOnlyList<NavCA.SyntaxNode> objects = tree.GetRoot() is NavSyntax.CompilationUnitSyntax root
                 ? root.ChildNodes().ToList()
                 : Array.Empty<NavCA.SyntaxNode>();

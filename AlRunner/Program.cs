@@ -2747,13 +2747,10 @@ foreach (var bundle in bundles)
     // tests/runner-extras bundle).
     using (AlRunner.Infrastructure.PhaseLog.Stage("register-source-dirs"))
     {
-        var dirsToRegister = new List<string>();
-        foreach (var suite in suites)
-            // #3735: exactly what the compile reads. Deriving it a second time here is what let
-            // a page or table under test/ or app2/ compile and never be parsed — see
-            // ProgramSupport.SuiteRegistrationDirs.
-            dirsToRegister.AddRange(SuiteRegistrationDirs(suite, bucketRoot));
-        AlRunner.Patches.RecordPatches.AddSourceDirs(dirsToRegister);
+        // #3735: exactly the folders the compile reads (ProgramSupport.SuiteRegistrationDirs),
+        // each with the app.json that compile reads (#4071).
+        AlRunner.Patches.RecordPatches.AddSourceDirs(
+            SourceDirsWithCompileManifest(suites, bucketRoot, bundleAbs, bundledMode));
     }
 
     var bundleEmit = TimeSpan.Zero;
@@ -3130,6 +3127,7 @@ foreach (var bundle in bundles)
             }
             var et = System.Diagnostics.Stopwatch.StartNew();
             IReadOnlyList<EmittedSource> sources = Array.Empty<EmittedSource>();
+            string? emitManifestAppJsonPath = null;   // the app.json that compile read (#4076)
             IReadOnlyList<string> alDiagnostics = Array.Empty<string>();
             // --tdd only (issue #1997): count of objects the TDD-EXCLUDED branch below
             // deliberately kept `sources` short by. The PARTIAL-EMIT-DROP guard further
@@ -3254,6 +3252,7 @@ foreach (var bundle in bundles)
                 {
                     var emitOutput = emitTask.Result;
                     sources = emitOutput.Sources;
+                    emitManifestAppJsonPath = emitOutput.ManifestAppJsonPath;
                     alDiagnostics = emitOutput.Diagnostics;
                     // --tdd (issue #2001): collect regardless of whether anything ended up
                     // excluded afterward — generation can fully resolve an object with NO
@@ -3524,10 +3523,12 @@ foreach (var bundle in bundles)
                         .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")))
                     .Distinct()
                     .ToList();
+                var censusParseOptions = AlRunner.BcCompiler.BuildParseOptions(
+                    AlRunner.BcCompiler.ReadManifestCompilerInputs(emitManifestAppJsonPath));
                 List<string> CountDeclared(bool activeBranchesOnly) => censusFiles
                     .SelectMany(f => System.Text.RegularExpressions.Regex.Matches(
                         activeBranchesOnly
-                            ? AlRunner.Infrastructure.AlMemberSyntaxIndex.BlankInactivePreprocessorBranches(File.ReadAllText(f), f)
+                            ? AlRunner.Infrastructure.AlMemberSyntaxIndex.BlankInactivePreprocessorBranches(File.ReadAllText(f), f, censusParseOptions)
                             : File.ReadAllText(f),
                         @"^(table|codeunit|page|report|query|enum|xmlport|tableextension|pageextension|permissionset)\s+\d+\s+""?([^""\r\n]+?)""?\s*$",
                         System.Text.RegularExpressions.RegexOptions.Multiline))
@@ -5397,8 +5398,11 @@ return strictExitCode ? computedExitCode : 0;
             dirsToRegister.AddRange(suitePaths);
             allPaths.AddRange(suitePaths);
         }
-        AlRunner.Patches.RecordPatches.AddSourceDirs(dirsToRegister);
         allPaths = allPaths.Distinct().ToList();
+        // #4071: this path compiles every suite as ONE module rooted at bucketRoot, so every
+        // registered folder parses under that compile's manifest.
+        var serverCompileManifest = BcCompiler.ResolveManifestAppJson(bucketRoot, allPaths);
+        AlRunner.Patches.RecordPatches.AddSourceDirs(dirsToRegister.Select(d => (d, serverCompileManifest)));
         var fileHashes = ComputeServerFileHashes(allPaths);
 
         if (allPaths.Count == 0)

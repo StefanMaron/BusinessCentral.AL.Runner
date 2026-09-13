@@ -1,6 +1,6 @@
 // #4071: TddSupport re-reads an excluded object's source to name its [Test] procedures. That
-// re-parse must pick the same #if branch the compile picked, which includes the owning app's
-// app.json `preprocessorSymbols` — not only CLEANSCHEMA1..25 and --define.
+// re-parse must pick the same #if branch the compile picked, so it parses under the manifest the
+// compile read — carried on the detail — and never a manifest found by walking up from the file.
 using Xunit;
 
 namespace AlRunner.Tests;
@@ -14,15 +14,20 @@ public sealed class TddSupportManifestPreprocessorSymbolsTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
-    private string WriteApp(string name, string? preprocessorSymbolsJson)
+    private string WriteManifest(string dir, string? preprocessorSymbolsJson)
     {
-        var dir = Path.Combine(_root, name);
-        Directory.CreateDirectory(Path.Combine(dir, "src"));
+        Directory.CreateDirectory(dir);
         var symbols = preprocessorSymbolsJson is null ? "" : $", \"preprocessorSymbols\": {preprocessorSymbolsJson}";
-        File.WriteAllText(Path.Combine(dir, "app.json"),
-            $$"""{ "id": "00000000-0000-0000-0000-000000004071", "name": "{{name}}", "publisher": "P", "version": "1.0.0.0"{{symbols}} }""");
-        // Nested one directory below app.json: the owning manifest is found by walking up.
-        var file = Path.Combine(dir, "src", "Tdd.Codeunit.al");
+        var path = Path.Combine(dir, "app.json");
+        File.WriteAllText(path,
+            $$"""{ "id": "00000000-0000-0000-0000-000000004071", "name": "T", "publisher": "P", "version": "1.0.0.0"{{symbols}} }""");
+        return path;
+    }
+
+    private static string WriteTddCodeunit(string dir)
+    {
+        Directory.CreateDirectory(dir);
+        var file = Path.Combine(dir, "Tdd.Codeunit.al");
         File.WriteAllText(file, """
             codeunit 94071 "Manifest Symbol Tdd"
             {
@@ -50,25 +55,45 @@ public sealed class TddSupportManifestPreprocessorSymbolsTests : IDisposable
         return file;
     }
 
-    private static string[] TestNames(string file) =>
-        TddSupport.BuildFailedTests(new[] { new TddExcludedObjectDetail(file, "Tdd.Codeunit", new[] { "error AL0118" }) })
+    private static string[] TestNames(string file, string? compileManifest) =>
+        TddSupport.BuildFailedTests(new[]
+            {
+                new TddExcludedObjectDetail(file, "Tdd.Codeunit", new[] { "error AL0118" }, compileManifest),
+            })
             .Select(r => r.Method)
             .OrderBy(n => n, StringComparer.Ordinal)
             .ToArray();
 
     [Fact]
-    public void BuildFailedTests_ManifestDefinesSymbol_ReportsTheDefinedBranch()
+    public void BuildFailedTests_CompileManifestDefinesSymbol_ReportsTheDefinedBranch()
     {
-        var file = WriteApp("defined", "[\"PPX4071\"]");
+        var app = Path.Combine(_root, "defined");
+        var manifest = WriteManifest(app, "[\"PPX4071\"]");
+        // The AL sits under src/, the app.json at the app root: the compile reads it through
+        // appRootDir, so the detail names it even though src/ holds none.
+        var file = WriteTddCodeunit(Path.Combine(app, "src"));
 
-        Assert.Equal(new[] { "Broken", "OnlyDefinedTest" }, TestNames(file));
+        Assert.Equal(new[] { "Broken", "OnlyDefinedTest" }, TestNames(file, manifest));
     }
 
     [Fact]
-    public void BuildFailedTests_ManifestDoesNotDefineSymbol_ReportsTheElseBranch()
+    public void BuildFailedTests_CompileManifestDoesNotDefineSymbol_ReportsTheElseBranch()
     {
-        var file = WriteApp("undefined", preprocessorSymbolsJson: null);
+        var app = Path.Combine(_root, "undefined");
+        var manifest = WriteManifest(app, preprocessorSymbolsJson: null);
+        var file = WriteTddCodeunit(app);
 
-        Assert.Equal(new[] { "Broken", "OnlyUndefinedTest" }, TestNames(file));
+        Assert.Equal(new[] { "Broken", "OnlyUndefinedTest" }, TestNames(file, manifest));
+    }
+
+    [Fact]
+    public void BuildFailedTests_CompileReadNoManifest_IgnoresAParentFoldersManifest()
+    {
+        // A parent's app.json defines the symbol, but the compile of this folder read none
+        // (#2542: the compile never climbs to ../app.json). The re-parse must agree with it.
+        WriteManifest(_root, "[\"PPX4071\"]");
+        var file = WriteTddCodeunit(Path.Combine(_root, "no-manifest-folder"));
+
+        Assert.Equal(new[] { "Broken", "OnlyUndefinedTest" }, TestNames(file, compileManifest: null));
     }
 }

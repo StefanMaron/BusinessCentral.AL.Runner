@@ -572,9 +572,7 @@ public sealed partial class BcCompiler
         var dirs = alFolders.Where(Directory.Exists).Distinct().ToList();
         var alFiles = dirs.SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")).Distinct().ToList();
 
-        var manifestAppJsonPath = (appRootDir != null && File.Exists(Path.Combine(appRootDir, "app.json")))
-            ? Path.Combine(appRootDir, "app.json")
-            : dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
+        var manifestAppJsonPath = ResolveManifestAppJson(appRootDir, dirs);
         var manifestInputs = ReadManifestCompilerInputs(manifestAppJsonPath);
         var appId = _currentAppId ?? DeterministicGuid(moduleName);
         var publisher = _currentPublisher ?? "AlRunner";
@@ -950,7 +948,8 @@ public sealed partial class BcCompiler
         foreach (var kv in newByKey)
             if (!newSourceByKey.ContainsKey(kv.Key)) newSourceByKey[kv.Key] = kv.Value;
 
-        var output = new BcEmitOutput(unionedSources, Array.Empty<string>(), Array.Empty<string>());
+        var output = new BcEmitOutput(unionedSources, Array.Empty<string>(), Array.Empty<string>(),
+            ManifestAppJsonPath: manifestAppJsonPath);
 
         _radBaselines[moduleName] = new RadBaseline
         {
@@ -1030,9 +1029,7 @@ public sealed partial class BcCompiler
         var dirs = alFolders.Where(Directory.Exists).Distinct().ToList();
         var alFiles = dirs.SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")).Distinct().ToList();
 
-        var manifestAppJsonPath = (appRootDir != null && File.Exists(Path.Combine(appRootDir, "app.json")))
-            ? Path.Combine(appRootDir, "app.json")
-            : dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
+        var manifestAppJsonPath = ResolveManifestAppJson(appRootDir, dirs);
         var manifestInputs = ReadManifestCompilerInputs(manifestAppJsonPath);
 
         var currentHashes = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -1138,9 +1135,7 @@ public sealed partial class BcCompiler
         var dirs = alFolders.Where(Directory.Exists).Distinct().ToList();
         var alFiles = dirs.SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")).Distinct().ToList();
 
-        var manifestAppJsonPath = (appRootDir != null && File.Exists(Path.Combine(appRootDir, "app.json")))
-            ? Path.Combine(appRootDir, "app.json")
-            : dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
+        var manifestAppJsonPath = ResolveManifestAppJson(appRootDir, dirs);
         var manifestInputs = ReadManifestCompilerInputs(manifestAppJsonPath);
 
         var currentHashes = new Dictionary<string, string>(StringComparer.Ordinal);

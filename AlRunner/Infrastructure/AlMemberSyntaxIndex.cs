@@ -133,32 +133,16 @@ public sealed class AlMemberSyntaxIndex
             .ToList();
     }
 
-    /// <summary>The nearest app.json in the directory of <paramref name="filePath"/> or an
-    /// ancestor, or null — the manifest whose preprocessorSymbols the compile used for it.</summary>
-    internal static string? NearestAppJson(string filePath)
-    {
-        for (var d = Path.GetDirectoryName(Path.GetFullPath(filePath)); d != null; d = Path.GetDirectoryName(d))
-        {
-            var candidate = Path.Combine(d, "app.json");
-            if (File.Exists(candidate)) return candidate;
-        }
-        return null;
-    }
-
     /// <summary>
     /// <paramref name="source"/> with every inactive <c>#if</c> branch overwritten by spaces
-    /// (line breaks kept), under the symbol union the compile uses for
-    /// <paramref name="filePath"/>'s app. For text scans that must see only what compiles
-    /// (#4076). Returns <paramref name="source"/> unchanged when the parse throws.
+    /// (line breaks kept), under <paramref name="parseOpts"/> — the options the compile of this
+    /// file used (<c>BcCompiler.BuildParseOptions</c>). For text scans that must see only what
+    /// compiles (#4076). Returns <paramref name="source"/> unchanged when the parse throws.
     /// </summary>
-    internal static string BlankInactivePreprocessorBranches(string source, string filePath)
+    internal static string BlankInactivePreprocessorBranches(string source, string filePath, NavCA.ParseOptions parseOpts)
     {
         try
         {
-            var parseOpts = new NavCA.ParseOptions(
-                runtimeVersion: null!,
-                preprocessorSymbols: PreprocessorSymbols(NearestAppJson(filePath)),
-                documentationMode: NavCA.DocumentationMode.None);
             var root = NavSyntax.SyntaxTree.ParseObjectText(source, path: filePath, encoding: null!, parseOpts, default).GetRoot();
             char[]? chars = null;
             foreach (var trivia in root.DescendantTrivia(descendIntoTrivia: true))
