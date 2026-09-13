@@ -41,9 +41,18 @@ internal static class TestPageNewRowLineRule
     ///
     /// <paramref name="hostStaticEditable"/> is the host's answer for a subpage part, null for
     /// a top-level page. A part is only editable if the page hosting it is.
+    ///
+    /// <paramref name="declaredPageEditable"/> is the page's DECLARED <c>Editable</c>, never the
+    /// runtime <c>CurrPage.Editable</c>, and <paramref name="lookupMode"/> is
+    /// <c>Page.LookupMode(true)</c>: either makes a handler-driven page not editable. Corpus
+    /// codeunit 60309 (#4066), green on BC 27.0 and 28.2: a page declaring
+    /// <c>Editable = false</c> that sets <c>CurrPage.Editable := true</c> in OnOpenPage still
+    /// answers <c>Editable() = false</c> and has no new-row line. Trap: <c>Page.RunModal(0, Rec)</c>
+    /// is NOT lookup mode here — the same suite shows it keeps the new-row line.
     /// </summary>
-    internal static bool ResolveStaticEditable(bool? openModeEditable, bool? hostStaticEditable, bool pageEditable)
-        => openModeEditable ?? ((hostStaticEditable ?? true) && pageEditable);
+    internal static bool ResolveStaticEditable(
+        bool? openModeEditable, bool? hostStaticEditable, bool declaredPageEditable, bool lookupMode)
+        => openModeEditable ?? ((hostStaticEditable ?? true) && declaredPageEditable && !lookupMode);
 
     /// <summary>
     /// Whether the page shows the implicit new-row line. BOTH conditions gate it, and each was

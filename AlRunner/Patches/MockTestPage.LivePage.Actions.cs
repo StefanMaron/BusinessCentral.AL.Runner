@@ -333,7 +333,7 @@ internal partial class LiveNavTestPage
     }
 
     /// <summary>The page's declared <c>Editable</c>, true for a page with no metadata here.</summary>
-    internal bool DeclaredPageEditable => _page?.PageEditable ?? true;
+    internal bool DeclaredPageEditable => _page?.DeclaredPageEditable ?? true;
 
     /// <summary>This page's current static editability — what <c>TestPage.Editable()</c> answers.</summary>
     internal bool StaticEditableNow => _staticEditable;
