@@ -769,6 +769,17 @@ internal sealed partial class RunnerPageInstance
     internal bool PageEditable => _form is not NavForm form || form.Editable;
 
     /// <summary>
+    /// The page's DECLARED <c>Editable</c> property — <c>MasterPage.PageProperties.Editable</c>,
+    /// the value BC's <c>NavForm.InitializeFromMetadata</c> seeds <see cref="PageEditable"/> from
+    /// before any trigger can move it. Falls back to <see cref="PageEditable"/> for a form with
+    /// no page metadata. It narrows what <c>TestPage.Editable()</c> and the new-row line answer
+    /// for a page handed to a handler (#4066).
+    /// </summary>
+    internal bool DeclaredPageEditable
+        => _form is not NavForm form
+           || (form.MasterPage?.PageProperties is { } properties ? properties.Editable : form.Editable);
+
+    /// <summary>
     /// What a control DECLARES for one of the three boolean properties, whichever metadata
     /// states it — the merged runtime tree for a page the runner compiled, the declaring
     /// dependency's SymbolReference.json for one that ships precompiled (issue #3504).

@@ -187,7 +187,8 @@ internal partial class LiveNavTestPage
     /// </summary>
     private bool _staticEditable
         => TestPageNewRowLineRule.ResolveStaticEditable(
-            _staticEditableOverride, _editabilityHost?._staticEditable, _page?.PageEditable ?? true);
+            _staticEditableOverride, _editabilityHost?._staticEditable,
+            (_page?.PageEditable ?? true) && (_page?.DeclaredPageEditable ?? true), _page?.LookupMode == true);
 
     /// <summary>
     /// Bind a subpage part to its host for editability. Deliberately does NOT touch _opened:
