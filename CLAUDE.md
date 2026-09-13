@@ -190,7 +190,7 @@ waiver had described.
 
 **2d. A `private` member in another file is usually still reachable — the file is not the class.**
 
-`RecordPatches` is ONE `partial class` spread over **94 files**; `BcRuntime` over 24,
+`RecordPatches` is ONE `partial class` spread over **96 files**; `BcRuntime` over 24,
 `NclCecilRewrite` and `ProgramSupport` over 9 each, `LiveNavTestPage` 8, `RunnerPageInstance` 4. So
 a `private` member declared in one of those files is accessible from every other file declaring the
 same class, and "it is private, and it is in a different file" is two true statements whose

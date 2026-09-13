@@ -108,7 +108,8 @@ The four above are measurements you take. This one is a measurement **someone el
 repeat — and repeating is where the checking stops, because re-deriving a figure that arrived from
 someone who did the work feels redundant.
 
-Measured four times in one session, each caught only downstream:
+Measured six times, each caught only downstream — and the last two are the author of the
+re-derivation sentence failing to apply it:
 
 | the number | what it was | how far it travelled |
 |---|---|---|
@@ -116,6 +117,8 @@ Measured four times in one session, each caught only downstream:
 | "2 of the **14** rules" | **15** | an issue body, a PR body, a commit message, then merged into `CLAUDE.md` as measured fact (#3972) |
 | "I grepped diff **lines**" — an account of how the 14 arose | a line grep returns **69**; the real cause is unrecoverable | the correction's own issue and PR body |
 | "**two** distinct binaries" | **four** — all four hashes differ | a PR body and a coordinator comment praising it for binary-identity discipline |
+| "1,573 codeunit ids" | **1,690** — per-chunk 226/353/348/383/380, every chunk off by 17-35 | two issue comments, a PR comment, a 255-line test-file header (#4090) |
+| "four scratch repositories, both stale-ref orderings × `--soft`/`--hard`" | the dot-count claim those figures supported does not reproduce at all | **the shipped rule text on `main`** (#4059) |
 
 Every one reads correctly, arrives with provenance, and is cheap to check: **`sha256sum` on four
 files, `git diff --name-status | wc -l`, one `grep -c`.** The cost of re-deriving is seconds; the
@@ -127,6 +130,49 @@ a number you verified from one you forwarded.
 
 Note the fourth row errs *toward* caution, which is the safe direction for binary identity — but it
 is still wrong, and `CLAUDE.md` asks you to cite the binaries you measured, not a count of them.
+
+**Checking one component of a figure is not checking the figure.** The fifth row's author had
+verified one component — that the population came in five chunks, against the package — and
+repeated the rest as though the whole number had been measured. A partly-checked figure carries
+the full authority of a checked one, to its author most of all.
+
+**And a conclusion that survives the error is what removes the last chance of noticing.** Those
+wrong per-chunk figures gave "77.4% lost"; the true ones give **77.3%**. Nothing downstream looked
+wrong, because nothing downstream *was* wrong — so the number was published in four places. The
+corollary is uncomfortable and worth stating plainly: **a figure whose precision does not change
+any decision is the one least likely to be checked, and it is not therefore harmless** — it is
+what a later reader cites for a decision that *is* sensitive to it.
+
+**Re-derive, do not relay, a correction you are handed.** A correction arrives with the authority
+of someone who found an error, which is the last thing that gets re-tested. #4059's own brief
+carried one — that a claim's variable was "three-way, eight orderings" — and re-deriving it in
+three scratch repositories produced a *different and larger* correction: the dot-count remedy the
+figures decorated cannot work at all, because `git reset --soft origin/main` makes `origin/main`
+HEAD's parent, so the merge base **is** `origin/main` and three-dot equals two-dot by construction
+(measured, both `b6ce42df`). Relaying the brief would have published a second wrong number in the
+same sentence.
+
+### Does this want a tool? Mostly no — and the sweep says why
+
+#4059 asked. Measured on `775e3d02`: 295 raw numeric tokens across `.claude/rules/` and
+`CLAUDE.md`, of which 26 are countable claims. Re-deriving the cheaply checkable ones gave **one
+real drift and two false alarms of my own making** — `RecordPatches` "94 files" was genuinely 96,
+while "200 files" and "20 comments" were my grep reading a different subject than the sentence
+meant. That is the fourth mechanism above, fired by the checking tool itself, at a rate of two in
+three.
+
+**A guard that cannot tell which subject a sentence measures inherits that rate**, and a check
+wrong two times in three trains its readers to dismiss it. So the split is by what the number is
+*about*:
+
+| the figure is about | remedy |
+|---|---|
+| **the tree as it is now** — a file count, a call-site count, a member list | **pinnable**: one unambiguous query settles it, and it drifts silently. `tools/test_partial_class_counts.py` |
+| **a moment** — a run's output, a diff that no longer exists, an assembly hash | **citable only**: say what you ran, so the next reader can re-run it |
+
+The second is the population that travels, and citation is its whole remedy. `RecordPatches` was
+written as 94 on 2026-09-12 and was 96 by 2026-09-13 — wrong within a day, which is what a pin is
+for and what prose cannot fix.
 
 ## Which legs were ever going to run it
 

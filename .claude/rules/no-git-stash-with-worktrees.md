@@ -43,16 +43,25 @@ because the deletions are committed; and the same-tree check (`ci-verdicts.md` �
 `git merge-tree --write-tree` also keeps the other PR's files, so the damage is a wrong *diff*
 rather than a merge that reverts anything.
 
-**`git diff --stat origin/main...HEAD` does NOT catch it — use two dots.** Three-dot diffs
-against the **merge base**, and a soft reset moves the merge base back with it, so re-added
-content reads as insertions and the command prints a clean `1 file changed`. Measured in four
-scratch repositories (both stale-ref orderings × `--soft`/`--hard`), and reproduced
-independently: three-dot `1 file changed, 1 insertion(+)`; two-dot
-`2 files changed, 1 insertion(+), 50 deletions(-)`.
+**No dot-count saves you here, and an earlier version of this rule said one did** (#4059). After
+`git reset --soft origin/main`, `origin/main` *is* HEAD's parent, so `git merge-base origin/main
+HEAD` returns `origin/main` itself and three-dot and two-dot are identical **by construction** —
+measured in three scratch repositories covering both stale-ref orderings, merge base and
+`origin/main` both `b6ce42df`. The figures the old text cited (`1 file changed` against
+`2 files changed, … 50 deletions(-)`) do not reproduce, and the remedy they supported cannot work:
+both forms are diffed against the **stale** ref, which is the thing that is wrong.
 
-So: **`git fetch origin main` immediately before any command naming `origin/main` as a base** —
-`reset`, `rebase`, `merge-tree`, `diff` — and read **`git diff --stat origin/main..HEAD`**, two
-dots, **before** pushing a rewritten branch.
+So the fetch comes first and is not optional: **`git fetch origin main` immediately before any
+command naming `origin/main` as a base** — `reset`, `rebase`, `merge-tree`, `diff`. **Against a
+stale ref no dot-count helps**; against a fresh one the dots diverge and **two dots is the form
+that shows the damage** — the fetch moves `origin/main` forward while the merge base stays at the
+commit the soft reset used, so three-dot still prints a clean `1 file changed, 1 insertion(+)`
+while two-dot prints `2 files changed, 1 insertion(+), 50 deletions(-)`. Measured both ways, in
+the same scratch repository, before and after the fetch.
+
+Read `git diff --stat origin/main..HEAD` **after** fetching, and read the commit itself
+(`git show --stat HEAD`) before pushing a rewritten branch — it is the only view that does not
+depend on a ref being current at all.
 
 ## The RED-baseline recipe has two ways to destroy work
 
