@@ -3,6 +3,10 @@
 // ../app.json (#2542). The runner's own source parse and the PARTIAL-EMIT-DROP census must read
 // the same nothing, or they pick the other #if branch from the compile.
 //
+// The last case is the other direction: the app's OWN manifest defines the symbol, so the census
+// must count a codeunit guarded by it — reading no manifest would blank that codeunit and hide a
+// drop elsewhere.
+//
 // Runner-specific: real BC has one parse. No "application" dependency
 // (.claude/rules/no-base-app-in-csharp-tests.md); each test raises its own Error().
 using System.Diagnostics;
@@ -134,5 +138,57 @@ public sealed class ParentManifestNotReadSubprocessTests : IDisposable
 
         Assert.Contains("PARTIAL-EMIT-DROP", output);
         Assert.Contains("Parent Manifest Ghost", output);
+    }
+
+    [SkippableFact]
+    public void Census_OwnManifestDefinesSymbol_CountsTheGuardedCodeunit_SoADropStillFires()
+    {
+        TestArtifacts.SkipIfMissing();
+        var app = Path.Combine(_root, "own-manifest");
+        Directory.CreateDirectory(app);
+        File.WriteAllText(Path.Combine(app, "app.json"), """
+            {
+              "id": "b4071000-0000-4000-8000-000000004072",
+              "name": "OwnManifest4071",
+              "publisher": "Repro4071",
+              "version": "1.0.0.0",
+              "dependencies": [],
+              "platform": "1.0.0.0",
+              "idRanges": [ { "from": 64074, "to": 64079 } ],
+              "runtime": "14.0",
+              "preprocessorSymbols": [ "OWN_ONLY_4071" ]
+            }
+            """);
+        File.WriteAllText(Path.Combine(app, "Probe.Codeunit.al"), """
+            codeunit 64074 "Own Manifest Probe"
+            {
+                Subtype = Test;
+
+                [Test]
+                procedure Runs()
+                begin
+                end;
+            }
+            """);
+        // Compiled and emitted: the app's own manifest defines the symbol. No #else.
+        File.WriteAllText(Path.Combine(app, "Guarded.Codeunit.al"), """
+            #if OWN_ONLY_4071
+            codeunit 64075 "Own Manifest Guarded"
+            {
+            }
+            #endif
+            """);
+        // A declaration line the census counts and the compile never emits.
+        File.WriteAllText(Path.Combine(app, "Ghost.al"), """
+            /*
+            codeunit 64076 "Own Manifest Ghost"
+            */
+            """);
+
+        var (output, _) = RunRunner(app);
+
+        Assert.Contains("PARTIAL-EMIT-DROP", output);
+        Assert.Contains("Own Manifest Ghost", output);
+        Assert.Contains("Own Manifest Guarded", output);
     }
 }

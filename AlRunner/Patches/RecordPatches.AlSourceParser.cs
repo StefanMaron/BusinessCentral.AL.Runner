@@ -28,41 +28,50 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    // The manifest the compile of the file being parsed reads (BcCompiler.ResolveManifestAppJson,
-    // recorded per registered source dir). Empty for text with no registered dir (synthesized
-    // table text, dependency .app source): those parse on CLEANSCHEMA + --define, as before.
-    // Options and tree-cache key both derive from this one value — a key without its symbols
+    // The app.json the compile of the file being parsed reads (BcCompiler.ResolveManifestAppJson,
+    // recorded per registered source dir); null for text with no registered dir (synthesized
+    // table text, dependency .app source), which parses on CLEANSCHEMA + --define as before.
+    // Options and tree-cache key both derive from this one path — a key without its symbols
     // serves one app's cached tree to another app with identical text (#4071, #1900).
-    private static AlRunner.BcCompiler.ManifestCompilerInputs _currentManifestInputs =
-        AlRunner.BcCompiler.ManifestCompilerInputs.Empty;
+    // A PATH, never BcCompiler.ManifestCompilerInputs: a static field of a struct type carrying
+    // BC CodeAnalysis types loads that assembly when RecordPatches is first touched, before
+    // --bc-version is parsed, which selects the newest provisioned BC (#4071 review).
+    private static string? _currentManifestAppJsonPath;
 
     // Registered source dir -> the app.json its compile reads (null: none). Cleared with
     // _sourceDirs in ResetForReload.
     private static readonly Dictionary<string, string?> _compileManifestByDir = new(StringComparer.OrdinalIgnoreCase);
 
-    // app.json path -> its compiler inputs, read once per reload (cleared in ResetForReload, so a
-    // --watch edit to app.json is re-read).
-    private static readonly Dictionary<string, AlRunner.BcCompiler.ManifestCompilerInputs> _manifestInputsByPath =
-        new(StringComparer.OrdinalIgnoreCase);
+    // app.json path -> its preprocessorSymbols, read once per reload (cleared in ResetForReload,
+    // so a --watch edit to app.json is re-read).
+    private static readonly Dictionary<string, string[]> _manifestSymbolsByPath = new(StringComparer.OrdinalIgnoreCase);
 
-    private static AlRunner.BcCompiler.ManifestCompilerInputs CompileManifestInputsForDir(string dir)
-    {
-        if (!_compileManifestByDir.TryGetValue(dir, out var appJson) || appJson is null)
-            return AlRunner.BcCompiler.ManifestCompilerInputs.Empty;
-        if (!_manifestInputsByPath.TryGetValue(appJson, out var inputs))
-            _manifestInputsByPath[appJson] = inputs = AlRunner.BcCompiler.ReadManifestCompilerInputs(appJson);
-        return inputs;
-    }
+    private static string? CompileManifestForDir(string dir) =>
+        _compileManifestByDir.TryGetValue(dir, out var appJson) ? appJson : null;
 
     private static string[] ActiveParseSymbols()
     {
         var extra = AlRunner.BcCompiler.GetExtraPreprocessorSymbols();
-        var manifest = _currentManifestInputs.PreprocessorSymbols;
-        return manifest.Count == 0
+        var manifest = ManifestPreprocessorSymbols(_currentManifestAppJsonPath);
+        return manifest.Length == 0
             ? extra.ToArray()
             : extra.Concat(manifest).Distinct(StringComparer.Ordinal)
                 .OrderBy(s => s, StringComparer.Ordinal).ToArray();
     }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static string[] ManifestPreprocessorSymbols(string? appJsonPath)
+    {
+        if (appJsonPath is null) return [];
+        if (!_manifestSymbolsByPath.TryGetValue(appJsonPath, out var symbols))
+            _manifestSymbolsByPath[appJsonPath] = symbols =
+                AlRunner.BcCompiler.ReadManifestCompilerInputs(appJsonPath).PreprocessorSymbols.ToArray();
+        return symbols;
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static NavCA.ParseOptions ParseOptionsForManifest(string? appJsonPath) =>
+        AlRunner.BcCompiler.BuildParseOptions(AlRunner.BcCompiler.ReadManifestCompilerInputs(appJsonPath));
 
     // Field type text still yields its length by pattern (`Code[10]` → 10). The type is one
     // token's text with no nesting, so there is nothing structural for a tree to add here.
@@ -412,7 +421,7 @@ public static partial class RecordPatches
         {
             ParseObjectTextCallCount++;
             var tree = NavSyntax.SyntaxTree.ParseObjectText(
-                text, path: "", encoding: null!, AlRunner.BcCompiler.BuildParseOptions(_currentManifestInputs), default);
+                text, path: "", encoding: null!, ParseOptionsForManifest(_currentManifestAppJsonPath), default);
             IReadOnlyList<NavCA.SyntaxNode> objects = tree.GetRoot() is NavSyntax.CompilationUnitSyntax root
                 ? root.ChildNodes().ToList()
                 : Array.Empty<NavCA.SyntaxNode>();

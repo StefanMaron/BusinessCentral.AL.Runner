@@ -84,4 +84,37 @@ public sealed class ProgramMustNotNameNavCaValueTypesTests
             "crashes every cold-artifact-cache path. Project it to a plain shape (see AffectedObjectId). " +
             "Offenders: " + string.Join("; ", offenders));
     }
+
+    /// <summary>
+    /// The static-field half (#4071 review): a static field whose type is, or is generic over, a
+    /// value type carrying a Microsoft.Dynamics.Nav field loads BC's CodeAnalysis assembly when
+    /// its class is first touched. RecordPatches is touched at startup, and two such fields there
+    /// selected the newest provisioned BC before --bc-version was parsed. The end-to-end proof is
+    /// OlderBcVersionSelectionWithNewerProvisionedTests.
+    /// </summary>
+    [Fact]
+    public void RunnerTypesDeclareNoStaticFieldOfANavCaBearingValueType()
+    {
+        static bool CarriesNavCa(System.Type t)
+        {
+            if (t.IsGenericType && t.GetGenericArguments().Any(CarriesNavCa)) return true;
+            if (!t.IsValueType) return false;
+            return t.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .Any(f => (f.FieldType.Assembly.GetName().Name ?? "")
+                    .StartsWith("Microsoft.Dynamics.Nav", System.StringComparison.Ordinal));
+        }
+
+        var offenders = new[] { "Program", "RecordPatches", "ProgramSupport", "AlMemberSyntaxIndex", "TddSupport" }
+            .Select(name => RunnerAssembly.GetTypes().FirstOrDefault(x => x.Name == name))
+            .Select(t => { Assert.NotNull(t); return t!; })
+            .SelectMany(t => t.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static)
+                .Where(f => CarriesNavCa(f.FieldType))
+                .Select(f => $"{t.Name}.{f.Name}: {f.FieldType}"))
+            .ToList();
+
+        Assert.True(offenders.Count == 0,
+            "A static field names a value type carrying a Microsoft.Dynamics.Nav field. Its class loads " +
+            "BC's CodeAnalysis assembly when first touched, before --bc-version is parsed. Store a plain " +
+            "shape (a path, a string[]) and resolve in a NoInlining method. Offenders: " + string.Join("; ", offenders));
+    }
 }

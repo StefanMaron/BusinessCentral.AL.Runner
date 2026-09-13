@@ -3523,12 +3523,10 @@ foreach (var bundle in bundles)
                         .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")))
                     .Distinct()
                     .ToList();
-                var censusParseOptions = AlRunner.BcCompiler.BuildParseOptions(
-                    AlRunner.BcCompiler.ReadManifestCompilerInputs(emitManifestAppJsonPath));
                 List<string> CountDeclared(bool activeBranchesOnly) => censusFiles
                     .SelectMany(f => System.Text.RegularExpressions.Regex.Matches(
                         activeBranchesOnly
-                            ? AlRunner.Infrastructure.AlMemberSyntaxIndex.BlankInactivePreprocessorBranches(File.ReadAllText(f), f, censusParseOptions)
+                            ? AlRunner.Infrastructure.AlMemberSyntaxIndex.BlankInactivePreprocessorBranches(File.ReadAllText(f), f, emitManifestAppJsonPath)
                             : File.ReadAllText(f),
                         @"^(table|codeunit|page|report|query|enum|xmlport|tableextension|pageextension|permissionset)\s+\d+\s+""?([^""\r\n]+?)""?\s*$",
                         System.Text.RegularExpressions.RegexOptions.Multiline))

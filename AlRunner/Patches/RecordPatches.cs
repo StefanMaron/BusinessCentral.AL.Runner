@@ -464,7 +464,7 @@ public static partial class RecordPatches
         ResetXmlPortMetadataForReload();
         _sourceDirs.Clear();
         _compileManifestByDir.Clear();
-        _manifestInputsByPath.Clear();   // a --watch edit to app.json is re-read (#4071)
+        _manifestSymbolsByPath.Clear();   // a --watch edit to app.json is re-read (#4071)
         _installBaseline = null;
         SetActiveDepCompanyBaseline(null);
         _isolatedStorageBaseline = null;
@@ -525,9 +525,9 @@ public static partial class RecordPatches
     /// </summary>
     private static void ParseSourceFileIntoAllExtractors(string text, string filePath, string registeredDir)
     {
-        _currentManifestInputs = CompileManifestInputsForDir(registeredDir);
+        _currentManifestAppJsonPath = CompileManifestForDir(registeredDir);
         try { ParseSourceFileIntoAllExtractorsCore(text, filePath); }
-        finally { _currentManifestInputs = AlRunner.BcCompiler.ManifestCompilerInputs.Empty; }
+        finally { _currentManifestAppJsonPath = null; }
     }
 
     private static void ParseSourceFileIntoAllExtractorsCore(string text, string? filePath)
