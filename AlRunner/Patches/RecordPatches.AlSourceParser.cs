@@ -31,6 +31,7 @@ public static partial class RecordPatches
     // Matches BcCompiler.Emit's options so this parse sees the same source the emit does —
     // notably the CLEANSCHEMA1..25 preprocessor symbols, which gate real field declarations
     // in the BaseApp, PLUS whatever the caller passed via --define / --preprocessor-symbols.
+    // NOT the app.json preprocessorSymbols BcCompiler.BuildParseOptions also adds (#4071).
     // DocumentationMode.None: doc comments are trivia we never read.
     //
     // This MUST be a property recomputed on every call, not a `static readonly` field.
