@@ -930,6 +930,18 @@ jobs:
               missing=1
             fi
           done
+          # The markers print at parse time, so they appear even when no test runs. With no
+          # --count-baseline here, these PASS lines are what catches a suite whose tests vanished.
+          for t in \
+              Codeunit65277.ValidateAfterTableExtEviction_FieldTriggerStillFires \
+              Codeunit65277.UnrelatedRecordWithoutEviction_FieldTriggerFiresNormally \
+              Codeunit65527.SubscribersFireAfterTableExtEviction \
+              Codeunit65527.UnrelatedRecordWithoutEviction_SubscribersFireNormally; do
+            if ! command grep -qE "^PASS +${t//./\\.}( |$)" tableext-eviction.log; then
+              echo "::error::no 'PASS $t' line: the eviction ran but this test did not pass in this step, so nothing asserted on it (#4079)."
+              missing=1
+            fi
+          done
           exit "$missing"
 
       - name: Phase-log report (runner-extras)

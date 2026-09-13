@@ -25,5 +25,9 @@ The step runs with `--verbose` and fails, with its own message, unless the log c
 `[TableExt] evicted stale NCLMetaTable 65270` and `... 65520`. Tests passing without those lines
 is the defect this directory exists to prevent, not a pass.
 
+The markers print at parse time, so they appear even when no test runs. The step therefore also
+requires an anchored `PASS` line for each of the four test names; with no `--count-baseline`
+here, that is what catches a suite whose tests stopped running.
+
 No `--count-baseline`, for the same reason as `tests/runner-extras-isolation-disabled`; `--strict`
 plus the marker check is the gate.
