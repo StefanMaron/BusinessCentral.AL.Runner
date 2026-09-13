@@ -15,9 +15,13 @@ namespace AlRunner;
 /// <c>InfopartPageDefinition.SubFormLink</c>: the PART's field it constrains, the kind, and
 /// either the PARENT's field number (FIELD) or the compiled literal / filter expression
 /// (CONST / FILTER) — see <c>MockTestPage.SubPageLinks</c> for the representation.
+/// <paramref name="FilterGroup"/> is the metadata's own group, 4 (<c>PredefinedFilterGroupNo.Link</c>)
+/// as the compiler writes it; BC's client applies each link in that group
+/// (<c>NavFilterHelper.AddSubFormLinkFilter</c> passes <c>filterDefinition.FilterGroup</c>, #4156).
 /// </summary>
 internal readonly record struct SubPageLinkEntry(
-    int PartFieldNo, Microsoft.Dynamics.Nav.Types.Metadata.FilterType Kind, int ParentFieldNo, string Value);
+    int PartFieldNo, Microsoft.Dynamics.Nav.Types.Metadata.FilterType Kind, int ParentFieldNo, string Value,
+    int FilterGroup);
 
 /// <summary>
 /// A subpage part driven live: its own page over its own source table, showing only the
@@ -108,21 +112,34 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
         var record = RequireRecord("subpage link");
         foreach (var link in _links)
         {
-            switch (link.Kind)
+            // In the link's own filter group (4), never the current one: a part reading its link
+            // under FilterGroup(4) must see it, and group 0 stays the part's own (#4156). Groups
+            // AND together, so the rowset is unchanged. Restored in a finally, as BC's own
+            // NavForm.ApplySourceTableView does for group 2.
+            var saved = record.ALFilterGroup;
+            record.ALFilterGroup = link.FilterGroup;
+            try
             {
-                case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FIELD:
-                    record.ALSetRange(link.PartFieldNo, _parentRecord!.GetFieldValue(link.ParentFieldNo));
-                    break;
-                case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.CONST:
-                    record.ALSetFilter(link.PartFieldNo, ConstFilterExpression(record, link.PartFieldNo, link.Value));
-                    break;
-                case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FILTER:
-                    // Already in BC's filter grammar (the compiler wrote option members as
-                    // ordinals; DependencyPageMetadataXml re-quoted AL identifiers) — BC's own
-                    // filter parser, the one SetFilter uses, reads it. A malformed expression
-                    // raises BC's own NavInvalidFilterExpressionException naming the text.
-                    record.ALSetFilter(link.PartFieldNo, link.Value);
-                    break;
+                switch (link.Kind)
+                {
+                    case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FIELD:
+                        record.ALSetRange(link.PartFieldNo, _parentRecord!.GetFieldValue(link.ParentFieldNo));
+                        break;
+                    case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.CONST:
+                        record.ALSetFilter(link.PartFieldNo, ConstFilterExpression(record, link.PartFieldNo, link.Value));
+                        break;
+                    case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FILTER:
+                        // Already in BC's filter grammar (the compiler wrote option members as
+                        // ordinals; DependencyPageMetadataXml re-quoted AL identifiers) — BC's own
+                        // filter parser, the one SetFilter uses, reads it. A malformed expression
+                        // raises BC's own NavInvalidFilterExpressionException naming the text.
+                        record.ALSetFilter(link.PartFieldNo, link.Value);
+                        break;
+                }
+            }
+            finally
+            {
+                record.ALFilterGroup = saved;
             }
         }
     }
@@ -357,7 +374,9 @@ internal sealed class LiveNavTestPart : LiveNavTestPage, ITestPart
                     stamped.Add((link.PartFieldNo, linked));
                     break;
                 default:
-                    if (TryGetSingleFilterValue(record, link.PartFieldNo, out var single))
+                    // GetRangeMin/Max read the CURRENT group, and ApplyLink put this filter in
+                    // the link's group — read it back there, or nothing is stamped.
+                    if (TryGetSingleFilterValueInGroup(record, link.PartFieldNo, link.FilterGroup, out var single))
                     {
                         record.SetFieldValue(link.PartFieldNo, single);
                         stamped.Add((link.PartFieldNo, single));

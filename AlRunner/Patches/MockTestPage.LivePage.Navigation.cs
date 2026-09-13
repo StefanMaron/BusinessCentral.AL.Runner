@@ -309,7 +309,10 @@ internal partial class LiveNavTestPage
                 {
                     var keyFieldNo = primaryKey.KeyFieldsList[i].FieldNo;
                     record.ClearFieldValue(keyFieldNo);
-                    if (TryGetSingleFilterValue(record, keyFieldNo, out var fromFilter))
+                    // Group 0 or the Link group 4, where a part's SubPageLink lives (#4156);
+                    // BC's InitRecordFromFilters combines every group.
+                    if (TryGetSingleFilterValue(record, keyFieldNo, out var fromFilter)
+                        || TryGetSingleFilterValueInGroup(record, keyFieldNo, LinkFilterGroup, out fromFilter))
                         record.SetFieldValue(keyFieldNo, fromFilter);
                 }
         }
@@ -372,6 +375,19 @@ internal partial class LiveNavTestPage
     /// about a SubPageLink — so reading it off the filters covers const/filter/field links and
     /// a plain filtered page with one mechanism, and answers "nothing to copy" for an
     /// unfiltered page without needing a special case.</summary>
+    /// <summary><c>PredefinedFilterGroupNo.Link</c> (internal to Ncl): the group a SubPageLink lands in.</summary>
+    private protected const int LinkFilterGroup = 4;
+
+    /// <summary><see cref="TryGetSingleFilterValue"/> read in <paramref name="filterGroup"/>, restoring the
+    /// record's current group afterwards.</summary>
+    private protected static bool TryGetSingleFilterValueInGroup(NavRecord record, int fieldNo, int filterGroup, out NavValue value)
+    {
+        var saved = record.ALFilterGroup;
+        record.ALFilterGroup = filterGroup;
+        try { return TryGetSingleFilterValue(record, fieldNo, out value); }
+        finally { record.ALFilterGroup = saved; }
+    }
+
     private protected static bool TryGetSingleFilterValue(NavRecord record, int fieldNo, out NavValue value)
     {
         try
