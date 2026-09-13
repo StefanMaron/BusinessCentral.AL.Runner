@@ -70,6 +70,19 @@ editing code structure, and read the error text before believing a red.
 number. A failed *search* returns nothing and looks like a finding; a failed *mutation* returns
 green and looks like the system working.
 
+**Trap: a mutation can LAND, EXECUTE, and still change nothing — because the system absorbs
+it.** The traps above are mutations that never reached the code. This one reaches it and runs,
+and the green is still not about your test. Measured in review of #4003: duplicating an
+`insertRow` call left all 4 tests passing, which reads as "the `Company.Count()` assertion proves
+nothing". An AL probe printed `company count = 1` — BC's provider `Insert` is **primary-key
+idempotent**, so the second call was a genuine no-op and no second row ever existed. A mutation
+seeding a *distinct* company gave `Failed: 1, Passed: 3`, and the test was sound all along.
+
+So step 2's landing check is necessary and not sufficient: confirm the mutation changed the
+**observable the assertion reads**, not merely the source. Prefer mutating a value the assertion
+consumes over duplicating or removing a call whose effect the system may deduplicate, clamp,
+cache or ignore.
+
 **Trap: a filter that matches nothing is a silent pass.** `dotnet test --filter
 "FullyQualifiedName~SomeTests"` prints `No test matches the given testcase filter` and **exits
 0**. Measured on #3882, where the filename and the four class names inside it differ. So quote
