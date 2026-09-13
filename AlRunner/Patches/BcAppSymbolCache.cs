@@ -662,7 +662,20 @@ internal static partial class BcAppSymbolCache
     /// codeunit is decided by the assembly witness, never by this list's own contents; see
     /// <c>RecordPatches.RegisterCodeunitSubscriberWitness</c> (#3788).</para>
     /// </summary>
-    internal sealed record CodeunitMethodSymbol(int Id, string Name, string Kind);
+    /// <param name="Kind">The <c>MethodAttributes</c> child element BC's emitter writes —
+    /// <c>EventPublisherAttribute</c> or <c>InherentPermissionsMethodAttribute</c>.</param>
+    /// <param name="AttributeName">The AL attribute identifier the symbol file states
+    /// (<c>IntegrationEvent</c>, <c>InternalEvent</c>, <c>BusinessEvent</c>,
+    /// <c>InherentPermissions</c>), which BC writes as that element's <c>Name</c>.
+    /// <b>Not optional:</b> BC's own <c>MetaCodeunit(XmlNode)</c> throws
+    /// <c>NullReferenceException</c> on an attribute element with no <c>Name</c> — measured
+    /// against the live constructor, where a bare element threw and `Name` alone sufficed.</param>
+    /// <param name="IncludeSender">The publisher's <c>IncludeSender</c>, which BC writes on the
+    /// <c>EventPublisherAttribute</c> element. False for every non-publisher kind.</param>
+    /// <param name="Isolated">The publisher's <c>Isolated</c>, same element.</param>
+    internal sealed record CodeunitMethodSymbol(
+        int Id, string Name, string Kind, string AttributeName,
+        bool IncludeSender = false, bool Isolated = false);
 
     // SymbolReference.json container name → the AllObj "Object Type" option name the
     // objects inside it map to. Matched against the live option string by name, so a
@@ -2594,6 +2607,47 @@ internal static partial class BcAppSymbolCache
         };
 
     /// <summary>
+    /// <c>IncludeSender</c> and <c>Isolated</c> off a publisher attribute's POSITIONAL argument
+    /// list, which is how SymbolReference.json states them — AL's own signatures:
+    /// <c>IntegrationEvent(IncludeSender, GlobalVarAccess[, Isolated])</c> and
+    /// <c>InternalEvent(GlobalVarAccess[, Isolated])</c>, the latter having no sender argument
+    /// at all. <c>BusinessEvent</c> follows <c>IntegrationEvent</c>'s shape.
+    ///
+    /// <para>Validated against BC's own emitter rather than against AL's documentation: over
+    /// System Application 28.1.49838.53910, this mapping reproduces the <c>IncludeSender</c> and
+    /// <c>Isolated</c> attributes BC writes for <b>149 of 149</b> publishers, with zero
+    /// disagreements. A missing trailing argument means the AL default, which is false for both
+    /// — the same value BC's own reader applies to an absent attribute.</para>
+    /// </summary>
+    private static void ReadPublisherFlags(
+        string attributeName, JsonElement attribute, out bool includeSender, out bool isolated)
+    {
+        includeSender = false;
+        isolated = false;
+        if (attributeName == "InherentPermissions") return;
+
+        var args = new List<string>();
+        if (attribute.TryGetProperty("Arguments", out var arguments)
+            && arguments.ValueKind == JsonValueKind.Array)
+            foreach (var argument in arguments.EnumerateArray())
+                args.Add(argument.TryGetProperty("Value", out var v) ? v.GetString() ?? "" : "");
+
+        static bool True(List<string> a, int i)
+            => i < a.Count && string.Equals(a[i], "True", StringComparison.OrdinalIgnoreCase);
+
+        if (attributeName == "InternalEvent")
+        {
+            // No IncludeSender argument exists on this form, so it stays false — which is what
+            // BC writes for every InternalEvent publisher measured.
+            isolated = True(args, 1);
+            return;
+        }
+
+        includeSender = True(args, 0);
+        isolated = True(args, 2);
+    }
+
+    /// <summary>
     /// The codeunit's attributed methods, in the symbol file's own array order — which is BC's
     /// document order, and which is load-bearing because <c>MetadataObjectDiff</c> pairs
     /// <c>Methods</c> positionally (#3963).
@@ -2619,14 +2673,22 @@ internal static partial class BcAppSymbolCache
             // table's: a method carrying both an event attribute and InherentPermissions is one
             // <Method> element in BC's document, not two.
             string? kind = null;
+            string? attributeName = null;
+            bool includeSender = false, isolated = false;
             foreach (var attribute in attributes.EnumerateArray())
             {
                 if (!attribute.TryGetProperty("Name", out var attrName)) continue;
                 var name = attrName.GetString();
                 if (name is null) continue;
-                if (EmittedMethodAttributeKinds.TryGetValue(name, out var emitted)) { kind = emitted; break; }
+                if (EmittedMethodAttributeKinds.TryGetValue(name, out var emitted))
+                {
+                    kind = emitted;
+                    attributeName = name;
+                    ReadPublisherFlags(name, attribute, out includeSender, out isolated);
+                    break;
+                }
             }
-            if (kind is null) continue;
+            if (kind is null || attributeName is null) continue;
 
             if (!method.TryGetProperty("Id", out var idProp) || !idProp.TryGetInt32(out var methodId))
                 continue;
@@ -2634,7 +2696,8 @@ internal static partial class BcAppSymbolCache
             if (string.IsNullOrEmpty(methodName)) continue;
 
             (result ??= new List<CodeunitMethodSymbol>()).Add(
-                new CodeunitMethodSymbol(methodId, methodName, kind));
+                new CodeunitMethodSymbol(methodId, methodName, kind, attributeName,
+                    includeSender, isolated));
         }
         return result;
     }

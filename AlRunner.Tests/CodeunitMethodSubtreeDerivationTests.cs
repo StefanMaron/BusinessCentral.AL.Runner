@@ -249,6 +249,30 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
             .ToList();
     }
 
+    /// <summary>The <c>MethodAttributes</c> child element name of each method, in document
+    /// order — which of BC's three attribute kinds the runner wrote.</summary>
+    private static List<string> AttributeKinds(XmlElement codeunit)
+        => AttributeElements(codeunit).Select(e => e.LocalName).ToList();
+
+    /// <summary>The <c>Name</c> of each attribute element — the AL attribute identifier, which
+    /// BC's own reader requires (see the test that pins it).</summary>
+    private static List<string> AttributeNames(XmlElement codeunit)
+        => AttributeElements(codeunit).Select(e => e.GetAttribute("Name")).ToList();
+
+    private static IEnumerable<XmlElement> AttributeElements(XmlElement codeunit)
+    {
+        var methods = codeunit.GetElementsByTagName("Methods", MetaNs).OfType<XmlElement>().FirstOrDefault();
+        if (methods is null) yield break;
+        foreach (var method in methods.ChildNodes.OfType<XmlElement>())
+        {
+            if (method.LocalName != "Method") continue;
+            var attributes = method.ChildNodes.OfType<XmlElement>()
+                .FirstOrDefault(e => e.LocalName == "MethodAttributes");
+            var kind = attributes?.ChildNodes.OfType<XmlElement>().FirstOrDefault();
+            if (kind is not null) yield return kind;
+        }
+    }
+
     /// <summary>
     /// The positive case: a witnessed codeunit with no subscriber renders exactly the symbol
     /// file's attributed methods, with their stated ids, in the symbol file's order — which is
@@ -271,16 +295,55 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
     /// <summary>
     /// A non-local InherentPermissions method is one of the three kinds BC emits and the symbol
     /// file states it, so it belongs in the subtree — interleaved with the publishers in the
-    /// symbol file's order rather than grouped after them.
+    /// symbol file's order rather than grouped after them, and under its own attribute element
+    /// rather than the publishers'.
     /// </summary>
     [Fact]
     public void A_stated_InherentPermissions_method_is_carried_alongside_the_publishers()
     {
         Register();
 
+        var projection = Projection(InherentPermissionsMethod);
         Assert.Equal(
             new[] { (666, "OnBeforeGuarded"), (777, "GuardedProcedure") },
-            Methods(Projection(InherentPermissionsMethod)));
+            Methods(projection));
+
+        // The two carry DIFFERENT attribute elements, so the kind is read per method rather
+        // than assumed from the codeunit.
+        Assert.Equal(
+            new[] { "EventPublisherAttribute", "InherentPermissionsMethodAttribute" },
+            AttributeKinds(projection));
+    }
+
+    /// <summary>
+    /// Every attribute element carries a <c>Name</c>, and omitting it is not a difference but a
+    /// CRASH: BC's own <c>MetaCodeunit(XmlNode)</c> throws <c>NullReferenceException</c> on an
+    /// attribute element that has none.
+    ///
+    /// <para>Measured against the live constructor rather than reasoned: a bare
+    /// <c>&lt;EventPublisherAttribute /&gt;</c> threw, <c>Name</c> alone was enough, and BC's own
+    /// fuller form (<c>IncludeSender</c>, <c>GlobalVarAccess</c>) also parsed. It reached the
+    /// metadata-equivalence harness as "the runner produced no comparable metadata for CodeUnit
+    /// 310 'No. Series'" — a whole object dropped from the comparison, not a member reported
+    /// wrong, which is why this is asserted here and not left to the difference count.</para>
+    ///
+    /// <para>The value is the AL attribute identifier the symbol file states, so
+    /// <c>IntegrationEvent</c>, <c>InternalEvent</c> and <c>BusinessEvent</c> all render under
+    /// <c>EventPublisherAttribute</c> — BC's document does not distinguish them at the element
+    /// level — while keeping their own names.</para>
+    /// </summary>
+    [Fact]
+    public void Every_attribute_element_states_the_AL_attribute_name_BCs_reader_requires()
+    {
+        Register();
+
+        Assert.Equal(
+            new[] { "IntegrationEvent", "InternalEvent", "BusinessEvent" },
+            AttributeNames(Projection(PublishersOnly)));
+
+        Assert.Equal(
+            new[] { "IntegrationEvent", "InherentPermissions" },
+            AttributeNames(Projection(InherentPermissionsMethod)));
     }
 
     /// <summary>

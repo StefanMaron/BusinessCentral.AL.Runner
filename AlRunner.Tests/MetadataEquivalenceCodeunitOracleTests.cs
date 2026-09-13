@@ -22,6 +22,9 @@ namespace AlRunner.Tests;
 [Collection(BcEngineCollection.Name)]
 public sealed class MetadataEquivalenceCodeunitOracleTests
 {
+    /// <summary>BC's own emitter namespace, which the projection renders into.</summary>
+    private const string MetaNs = "urn:schemas-microsoft-com:dynamics:NAV:MetaObjects";
+
     private readonly BcEngineFixture _engine;
 
     public MetadataEquivalenceCodeunitOracleTests(BcEngineFixture engine) => _engine = engine;
@@ -171,10 +174,32 @@ public sealed class MetadataEquivalenceCodeunitOracleTests
                 "derives. Stating it would manufacture agreement with the ground truth and " +
                 "turn a real gap into a silent pass.");
 
-        Assert.False(root.HasChildNodes,
-            "the runner's projection carries a child element. It derives no methods and no " +
-            "triggers, so a subtree here would be BC's own emitter output rather than the " +
-            "runner's derivation.");
+        // The ONLY child element the runner derives is <Methods>, and only for a codeunit whose
+        // loaded code proves the symbol file's view of it is complete (#3788). Anything else
+        // here would be BC's own emitter output rather than the runner's derivation, which is
+        // the failure this guard exists to catch — so the check is narrowed to that one name
+        // rather than dropped.
+        foreach (var child in root.ChildNodes.OfType<XmlElement>())
+            Assert.True(child.LocalName == "Methods",
+                $"the runner's projection carries a <{child.LocalName}> child. It derives no " +
+                "triggers and no subtree other than <Methods>, so this would be BC's own " +
+                "emitter output rather than the runner's derivation.");
+
+        // Codeunit 26 declares exactly one attributed method — the IntegrationEvent
+        // OnBeforeGuiAllowed, stated by SymbolReference.json with its compiler-assigned id —
+        // and carries no event subscriber, so the witness clears it and the subtree is
+        // derived. Asserted by VALUE rather than by presence: the id and name come from the
+        // symbol file, and a projection that had started echoing BC's captured document would
+        // be indistinguishable on presence alone.
+        var methods = root.GetElementsByTagName("Methods", MetaNs).OfType<XmlElement>().Single();
+        var method = methods.ChildNodes.OfType<XmlElement>().Single();
+        Assert.Equal("Method", method.LocalName);
+        Assert.Equal("550275561", method.GetAttribute("ID"));
+        Assert.Equal("OnBeforeGuiAllowed", method.GetAttribute("Name"));
+        Assert.Equal(
+            "EventPublisherAttribute",
+            method.GetElementsByTagName("MethodAttributes", MetaNs).OfType<XmlElement>()
+                .Single().ChildNodes.OfType<XmlElement>().Single().LocalName);
     }
 
     /// <summary>

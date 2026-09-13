@@ -127,8 +127,35 @@ public static partial class RecordPatches
             element.SetAttribute("Name", method.Name);
             // BC writes the attribute kind as a child element of <MethodAttributes>, not as an
             // attribute of <Method> — the shape MetaMethod's own reader expects.
+            //
+            // Name is REQUIRED, and its absence is not a difference but a crash: BC's own
+            // MetaCodeunit(XmlNode) throws NullReferenceException on an attribute element that
+            // has none. Measured against the live constructor — a bare <EventPublisherAttribute>
+            // threw, Name alone was enough, and BC's own fuller form (IncludeSender,
+            // GlobalVarAccess) also parsed. The value is the AL attribute identifier the symbol
+            // file states, so it is carried rather than reconstructed.
             var attributes = doc.CreateElement("MethodAttributes", root.NamespaceURI);
-            attributes.AppendChild(doc.CreateElement(method.Kind, root.NamespaceURI));
+            var kind = doc.CreateElement(method.Kind, root.NamespaceURI);
+            kind.SetAttribute("Name", method.AttributeName);
+            if (method.Kind == "EventPublisherAttribute")
+            {
+                // Both come from the attribute's POSITIONAL arguments in the symbol file and
+                // reproduce BC's own values for 149 of 149 publishers — see
+                // BcAppSymbolCache.ReadPublisherFlags, which owns the mapping and its
+                // measurement. Written unconditionally, in BC's own "True"/"False" spelling,
+                // because BC's emitter writes them on every publisher element rather than
+                // omitting the false case.
+                // IncludeSender unconditionally, Isolated ONLY when true. That asymmetry is
+                // BC's, measured on System Application 28.1: its emitter writes IncludeSender on
+                // all 149 publisher elements and Isolated on only 9 (8 True, 1 False). Writing
+                // Isolated="False" on the other 140 would state a value where BC states absence
+                // — the manufactured-agreement failure this projection exists to avoid — and the
+                // deserialized object reads the same either way, because BC's own reader
+                // defaults an absent Isolated to false.
+                kind.SetAttribute("IncludeSender", method.IncludeSender ? "True" : "False");
+                if (method.Isolated) kind.SetAttribute("Isolated", "True");
+            }
+            attributes.AppendChild(kind);
             element.AppendChild(attributes);
             methods.AppendChild(element);
         }

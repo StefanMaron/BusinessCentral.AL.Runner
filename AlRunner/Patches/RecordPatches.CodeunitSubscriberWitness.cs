@@ -30,14 +30,28 @@
 //   binaries across the 27.x/28.x boundary): 66 codeunits emitted on every build, all exact,
 //   ZERO fabricated slots, and the honest-absence count falls from 326 to 174 on 28.1.
 //
-// COST, AND WHY NO NEW LOAD HAPPENS
-//   Nothing is loaded here. DependencyLoader.LoadAll runs BEFORE the AddBcAppPath loop at both
-//   Program.cs call sites, so every registered .app whose assemblies loaded at all has them in
-//   the AppDomain by the time any metadata path can run; RegisterAppAssemblies is the one place
-//   that holds (assemblies, appPath) together and is where the scan is driven from. The scan
-//   itself reads the already-mapped metadata through AssemblyTypeIndex, the same instrument
-//   EventSubscriberPatches drives over every dependency on every run: 34-35 ms for System
-//   Application's 17 MiB assembly and its 533 Codeunit types, once per assembly per process.
+// TWO ROUTES TO THE SAME ANSWER, AND WHY BOTH ARE NEEDED
+//   Nothing is LOADED by either. They read the same bytes' ECMA-335 metadata by two paths:
+//
+//     registration  DependencyLoader.RegisterAppAssemblies, which is the one place holding
+//                   (assemblies, appPath) together. LoadAll runs BEFORE the AddBcAppPath loop at
+//                   both Program.cs call sites, so in a real run the assemblies are already in
+//                   the AppDomain and the scan reads their already-mapped metadata through
+//                   AssemblyTypeIndex — the same instrument EventSubscriberPatches drives over
+//                   every dependency on every run. 34-35 ms for System Application's 17 MiB
+//                   assembly and its 533 Codeunit types, once per assembly per process.
+//
+//     on demand     EnsureCodeunitSubscriberWitness, from the R2R chunks the .app package itself
+//                   carries, via AppLoader.ExtractAllDllPaths (content-addressed, cached on
+//                   disk) and PEReader.
+//
+//   The second is not redundant. A caller can register a .app WITHOUT loading it — the
+//   metadata-equivalence harness does exactly that — and with only the first route the
+//   derivation never fires there, so the harness would measure a feature that does not run and
+//   report green (verify-execution-not-the-tick.md). Measured, and this is why the fallback
+//   exists rather than as a precaution: registration-only gave 0 emitted subtrees and 326
+//   absences over the harness's 558 codeunits; with the fallback, 66 codeunits / 152 methods /
+//   174 absences, matching the model exactly.
 //
 // THE THIRD STATE IS THE POINT (guards-need-a-third-state.md)
 //   Yes / no / UNKNOWN, and unknown is deliberately not spelled as no. An app whose assembly
@@ -48,6 +62,8 @@
 
 using System.Collections.Concurrent;
 using System.Reflection;
+// GetMetadataReader() is an extension method on PEReader declared here, not an instance member.
+using System.Reflection.Metadata;
 
 namespace AlRunner.Patches;
 
@@ -170,20 +186,149 @@ public static partial class RecordPatches
     }
 
     /// <summary>
-    /// Whether the loaded assemblies PROVE codeunit <paramref name="codeunitId"/> of
+    /// Whether the app's own code PROVES codeunit <paramref name="codeunitId"/> of
     /// <paramref name="appPath"/> declares no event subscriber — so the symbol file's view of
     /// its emitted methods is complete.
     ///
-    /// <para>False for all three of: the codeunit declares one, no witness exists for this app,
-    /// and the scan never saw this codeunit. The last two are the UNKNOWN state and they answer
-    /// false on purpose: the caller's next step is to emit a method table, and doing that on an
-    /// unmeasured codeunit is how a fabricated association gets made.</para>
+    /// <para>False for all three of: the codeunit declares one, no witness could be established
+    /// for this app, and the scan never saw this codeunit. The last two are the UNKNOWN state
+    /// and they answer false on purpose: the caller's next step is to emit a method table, and
+    /// doing that on an unmeasured codeunit is how a fabricated association gets made.</para>
     /// </summary>
     internal static bool AssemblyProvesNoSubscriber(string appPath, int codeunitId)
-        => !string.IsNullOrEmpty(appPath)
-           && _codeunitSubscriberWitness.TryGetValue(Path.GetFullPath(appPath), out var witness)
-           && witness.ScannedCodeunitIds.Contains(codeunitId)
-           && !witness.SubscriberCodeunitIds.Contains(codeunitId);
+    {
+        var witness = EnsureCodeunitSubscriberWitness(appPath);
+        return witness is not null
+               && witness.ScannedCodeunitIds.Contains(codeunitId)
+               && !witness.SubscriberCodeunitIds.Contains(codeunitId);
+    }
+
+    /// <summary>
+    /// The witness for one app: the one the loader registered, or — when nothing registered one
+    /// — derived on demand from the R2R assemblies the <c>.app</c> package itself carries.
+    ///
+    /// <para><b>Why the package and not only the loaded assembly.</b> The loader's registration
+    /// covers a real run, where <c>LoadAll</c> has run before <c>AddBcAppPath</c>. It does not
+    /// cover a caller that registers a <c>.app</c> without loading it — the metadata-equivalence
+    /// harness does exactly that — and without this fallback the derivation would be measured on
+    /// a path where it never fires, which is a green measurement of nothing
+    /// (verify-execution-not-the-tick.md). Measured: the harness reported 0 emitted subtrees and
+    /// 326 absences with the registration-only witness, and 66 / 152 / 174 with this one.</para>
+    ///
+    /// <para>Reads through <see cref="AppLoader.ExtractAllDllPaths"/>, which is content-addressed
+    /// and cached on disk, and then through <c>PEReader</c> — the package's ECMA-335 metadata,
+    /// never a load. Both routes answer the same question about the same bytes, so a run where
+    /// both are available cannot get two answers.</para>
+    /// </summary>
+    private static CodeunitSubscriberWitness? EnsureCodeunitSubscriberWitness(string appPath)
+    {
+        if (string.IsNullOrEmpty(appPath)) return null;
+        string key;
+        try { key = Path.GetFullPath(appPath); }
+        catch { return null; }
+
+        if (_codeunitSubscriberWitness.TryGetValue(key, out var existing)) return existing;
+        if (!File.Exists(key)) return null;
+
+        var subscribers = new HashSet<int>();
+        var scanned = new HashSet<int>();
+        try
+        {
+            foreach (var dllPath in AppLoader.ExtractAllDllPaths(key))
+                ScanPackageAssembly(dllPath, subscribers, scanned);
+        }
+        catch (Exception ex)
+        {
+            // Loud, and NOT cached as a clear scan: an app whose code could not be read has
+            // measured nothing, and recording that as "no subscribers" is the silent wrong
+            // answer this design exists to avoid (loud-failures.md).
+            Console.Error.WriteLine(
+                $"[warn] RecordPatches: could not read the R2R assemblies of '{Path.GetFileName(key)}' to "
+                + "decide which of its codeunits declare event subscribers, so their method tables stay "
+                + $"absent rather than being derived from an incomplete view: {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
+
+        // A package carrying no readable Codeunit type witnessed nothing — a source-only app, or
+        // one whose chunks did not extract. Not cached, so a later run that CAN read it is not
+        // held to this answer.
+        if (scanned.Count == 0) return null;
+
+        var witness = new CodeunitSubscriberWitness(subscribers, scanned);
+        return _codeunitSubscriberWitness.GetOrAdd(key, witness);
+    }
+
+    /// <summary>
+    /// One R2R chunk's <c>Codeunit&lt;N&gt;</c> types and which of them carry a
+    /// <c>[NavEventSubscriber]</c> method, read straight out of the TypeDef / CustomAttribute
+    /// tables. No <c>Type</c> is resolved and nothing is loaded.
+    /// </summary>
+    private static void ScanPackageAssembly(string dllPath, HashSet<int> subscribers, HashSet<int> scanned)
+    {
+        using var stream = File.OpenRead(dllPath);
+        using var pe = new System.Reflection.PortableExecutable.PEReader(stream);
+        if (!pe.HasMetadata) return;
+        var md = pe.GetMetadataReader();
+
+        foreach (var handle in md.TypeDefinitions)
+        {
+            var type = md.GetTypeDefinition(handle);
+            if (!TryParseCodeunitTypeId(md.GetString(type.Name), out var id)) continue;
+            scanned.Add(id);
+            if (subscribers.Contains(id)) continue;
+
+            foreach (var methodHandle in type.GetMethods())
+            {
+                var method = md.GetMethodDefinition(methodHandle);
+                var found = false;
+                foreach (var attributeHandle in method.GetCustomAttributes())
+                {
+                    if (AttributeTypeName(md, md.GetCustomAttribute(attributeHandle))
+                        != "NavEventSubscriberAttribute") continue;
+                    found = true;
+                    break;
+                }
+                if (!found) continue;
+                subscribers.Add(id);
+                break;
+            }
+        }
+    }
+
+    /// <summary>The simple name of a custom attribute's type, or null when the constructor
+    /// handle is neither a MemberReference nor a MethodDefinition — the two forms a compiler
+    /// emits, and the pair <c>AssemblyTypeIndex.FindAttributedMethods</c> already handles.</summary>
+    private static string? AttributeTypeName(
+        System.Reflection.Metadata.MetadataReader md,
+        System.Reflection.Metadata.CustomAttribute attribute)
+    {
+        switch (attribute.Constructor.Kind)
+        {
+            case System.Reflection.Metadata.HandleKind.MemberReference:
+            {
+                var member = md.GetMemberReference(
+                    (System.Reflection.Metadata.MemberReferenceHandle)attribute.Constructor);
+                return member.Parent.Kind switch
+                {
+                    System.Reflection.Metadata.HandleKind.TypeReference => md.GetString(
+                        md.GetTypeReference(
+                            (System.Reflection.Metadata.TypeReferenceHandle)member.Parent).Name),
+                    System.Reflection.Metadata.HandleKind.TypeDefinition => md.GetString(
+                        md.GetTypeDefinition(
+                            (System.Reflection.Metadata.TypeDefinitionHandle)member.Parent).Name),
+                    _ => null,
+                };
+            }
+            case System.Reflection.Metadata.HandleKind.MethodDefinition:
+            {
+                var ctor = md.GetMethodDefinition(
+                    (System.Reflection.Metadata.MethodDefinitionHandle)attribute.Constructor);
+                return md.GetString(md.GetTypeDefinition(ctor.GetDeclaringType()).Name);
+            }
+            default:
+                return null;
+        }
+    }
 
     /// <summary>Test seam: forget every witness, so a test can drive the unknown state without
     /// depending on what an earlier test in the same process registered.</summary>
