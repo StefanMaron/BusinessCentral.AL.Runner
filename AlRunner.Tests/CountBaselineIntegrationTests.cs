@@ -168,12 +168,15 @@ public sealed class CountBaselineIntegrationTests : IDisposable
     private (string output, int exit) RunRunner(params string[] extraArgs) =>
         RunRunnerOn(_root, extraArgs);
 
-    private (string output, int exit) RunRunnerOn(string bundleRoot, params string[] extraArgs)
+    private (string output, int exit) RunRunnerOn(string bundleRoot, params string[] extraArgs) =>
+        Spawn(withBaseline: true, bundleRoot, extraArgs);
+
+    private (string output, int exit) Spawn(bool withBaseline, string bundleRoot, params string[] extraArgs)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(ProjectPath));
         args.Append(TestBuildConfig.BcVersionArg);
         args.Append(" --strict");
-        args.Append($" --count-baseline \"{_baselinePath}\"");
+        if (withBaseline) args.Append($" --count-baseline \"{_baselinePath}\"");
         args.Append($" \"{bundleRoot}\"");
         foreach (var a in extraArgs) args.Append($" {a}");
         var psi = new ProcessStartInfo
@@ -392,5 +395,107 @@ public sealed class CountBaselineIntegrationTests : IDisposable
         Assert.DoesNotContain("[count-baseline] DROP", output);
         Assert.DoesNotContain("[count-baseline] GROWTH", output);
         Assert.Equal(1, exit);
+    }
+
+    // #3130: a declared suite that produced no bucket. The fixture suite matches exactly, so
+    // the only thing that can separate these runs' exit codes is the vanished key.
+    private const string VanishedSuite = "vanished-suite-3130";
+
+    private string BaselineWithVanishedSuite() =>
+        $$"""
+        { "suites": {
+            "{{_suiteKey}}": { "tests": { "default": 2 } },
+            "{{VanishedSuite}}": { "tests": { "default": 5 } }
+        } }
+        """;
+
+    /// <summary>#3130 RED: under --count-baseline-require-all a declared suite with no bucket fails with exit 4, named, and distinct from a DROP.</summary>
+    [SkippableFact]
+    public void RequireAll_DeclaredSuiteThatProducedNoBucket_Exits4NamingTheKeyAndFile()
+    {
+        TestArtifacts.SkipIfMissing();
+        WriteBaseline(BaselineWithVanishedSuite());
+
+        var (output, exit) = RunRunner("--count-baseline-require-all");
+
+        Assert.Equal(4, exit);
+        Assert.Contains("[count-baseline] MISSING", output);
+        Assert.Contains($"suite '{VanishedSuite}'", output);
+        Assert.Contains(_baselinePath, output);
+        // A suite that never ran is not "a smaller count" — the message must not say DROP,
+        // and the suite that did run matched, so nothing else can have caused the 4.
+        Assert.DoesNotContain("[count-baseline] DROP", output);
+        Assert.DoesNotContain("[count-baseline] GROWTH", output);
+    }
+
+    /// <summary>#3130: without the flag the same run stays a pass (another invocation may cover the key), but says what it did not check.</summary>
+    [SkippableFact]
+    public void WithoutRequireAll_DeclaredSuiteThatProducedNoBucket_StaysAPassButSaysSo()
+    {
+        TestArtifacts.SkipIfMissing();
+        WriteBaseline(BaselineWithVanishedSuite());
+
+        var (output, exit) = RunRunner();
+
+        Assert.Equal(0, exit);
+        Assert.Contains("[count-baseline] not checked", output);
+        Assert.Contains($"suite '{VanishedSuite}'", output);
+        Assert.DoesNotContain("[count-baseline] MISSING", output);
+    }
+
+    /// <summary>#3130: the flag does not false-positive when every declared suite ran.</summary>
+    [SkippableFact]
+    public void RequireAll_EveryDeclaredSuiteRan_Passes()
+    {
+        TestArtifacts.SkipIfMissing();
+        WriteBaseline(TestsBaseline(testsDefault: 2));
+
+        var (output, exit) = RunRunner("--count-baseline-require-all");
+
+        Assert.Equal(0, exit);
+        Assert.DoesNotContain("[count-baseline] MISSING", output);
+        Assert.DoesNotContain("[count-baseline] not checked", output);
+    }
+
+    /// <summary>#3130 third state: the flag with no baseline to hold the run to is refused, never a vacuous pass.</summary>
+    [SkippableFact]
+    public void RequireAll_WithoutCountBaseline_IsRefused()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (output, exit) = Spawn(withBaseline: false, _root, "--count-baseline-require-all");
+
+        Assert.Equal(2, exit);
+        Assert.Contains("--count-baseline-require-all", output);
+        Assert.Contains("no --count-baseline", output);
+    }
+
+    /// <summary>#3130 third state: a baseline declaring zero suites gives the flag nothing to require, so it is refused.</summary>
+    [SkippableFact]
+    public void RequireAll_WithABaselineDeclaringNoSuites_IsRefused()
+    {
+        TestArtifacts.SkipIfMissing();
+        WriteBaseline("""{ "suites": { } }""");
+
+        var (output, exit) = RunRunner("--count-baseline-require-all");
+
+        Assert.Equal(2, exit);
+        Assert.Contains("declares 0 suites", output);
+    }
+
+    /// <summary>
+    /// #3130 third state: under a --jobs fan-out each worker sees only its shard's bundles, so
+    /// "every declared suite produced a bucket" cannot be decided by any one process. Refused.
+    /// </summary>
+    [SkippableFact]
+    public void RequireAll_WithAJobsFanOut_IsRefused()
+    {
+        TestArtifacts.SkipIfMissing();
+        WriteBaseline(TestsBaseline(testsDefault: 2));
+
+        var (output, exit) = RunRunner($"\"{_failRoot}\"", "--jobs 2", "--count-baseline-require-all");
+
+        Assert.Equal(2, exit);
+        Assert.Contains("--count-baseline-require-all cannot be combined with a --jobs fan-out", output);
     }
 }

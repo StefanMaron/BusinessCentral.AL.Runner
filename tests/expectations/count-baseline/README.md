@@ -21,6 +21,14 @@ has to be just as hard, or a stale baseline sits under a passing run nobody read
 of, and a later real drop lands above the stale number and passes unnoticed (#1880, and PR
 #1882's review).
 
+**A suite this file declares but the run never produced** is compared against nothing. With
+`--count-baseline-require-all` — which the `runner-extras` step passes, because it is the one
+invocation covering every suite declared here — that fails with exit 4 and a `MISSING` line
+naming the key and this file, so a vanished suite or a misspelled key cannot stand down
+silently (#3130). Without the flag the runner prints `not checked` for it and passes, because
+`--count-baseline` is a public flag and a caller's baseline may name suites another invocation
+covers.
+
 Nothing about this file is a floor, a tolerance, or auto-updated. If your PR changes a count,
 you edit it, and CI prints the exact numbers to use.
 

@@ -250,6 +250,38 @@ public sealed class CountBaselineCheckTests
         Assert.Empty(drops);
         Assert.Empty(growths);
     }
+
+    /// <summary>#3130: the suite Evaluate skipped is the one MissingSuites names — and only that one.</summary>
+    [Fact]
+    public void MissingSuites_NamesExactlyTheDeclaredSuitesWithNoBucket()
+    {
+        var manifest = ManifestWith("""
+        "runner-extras": { "tests": { "default": 116 } },
+        "al-language": { "tests": { "default": 2073 } },
+        "al-language-onprem": { "tests": { "default": 55 } }
+        """);
+        // Ran, but with a count of zero: present-and-empty is a DROP, never "missing".
+        var actual = Actual(("al-language", Tests: 2073, Groups: 1), ("runner-extras", Tests: 0, Groups: 0),
+                            ("some-other-suite", Tests: 3, Groups: 1));
+
+        Assert.Equal(new[] { "al-language-onprem" }, CountBaselineCheck.MissingSuites(manifest, actual));
+    }
+
+    /// <summary>#3130: a misspelled key joins to nothing, so it is reported rather than silently guarding nothing.</summary>
+    [Fact]
+    public void MissingSuites_AMisspelledKeyIsReported_AndEveryCoveredRunIsEmpty()
+    {
+        var misspelled = ManifestWith("""
+        "runner-extra": { "tests": { "default": 116 } }
+        """);
+        var correct = ManifestWith("""
+        "runner-extras": { "tests": { "default": 116 } }
+        """);
+        var actual = Actual(("runner-extras", Tests: 116, Groups: 60));
+
+        Assert.Equal(new[] { "runner-extra" }, CountBaselineCheck.MissingSuites(misspelled, actual));
+        Assert.Empty(CountBaselineCheck.MissingSuites(correct, actual));
+    }
 }
 
 /// <summary>

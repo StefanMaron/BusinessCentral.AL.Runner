@@ -62,7 +62,7 @@ al-runner [OPTIONS] <bundle-dir>...
 | `1` | At least one test failed or errored. |
 | `2` | A bundle could not execute — a process-level error, or a bad invocation such as an unknown flag or a path that does not exist. |
 | `3` | A bundle could not compile. |
-| `4` | A suite's test or app-group count did not match its declared baseline (`--count-baseline`). |
+| `4` | A suite's test or app-group count did not match its declared baseline (`--count-baseline`), or a declared suite produced no bucket (`--count-baseline-require-all`). |
 | `5` | An expectations entry matched no test in this run (`--expectations-require-match`). |
 
 A run can hold several of these at once, and reports the most fundamental: **`3` > `2` > `4` >
