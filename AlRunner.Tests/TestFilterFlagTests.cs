@@ -276,6 +276,45 @@ public sealed class TestFilterFlagTests : IDisposable
     }
 
     /// <summary>
+    /// #4055: the audit counts what the PATTERN selected, not what ran. `Alpha` selects
+    /// AlphaCheck and --exclude-test then removes it, so 0 tests run — that is an exclusion, not
+    /// a typo, and must stay exit 0 with no "selected no test" line. A count that never
+    /// increments would report this run as exit 6.
+    /// </summary>
+    [SkippableFact]
+    public void TestFlag_MatchRemovedByExcludeTest_IsNotANoMatch()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (output, exit) = RunRunner("--test Alpha", "--exclude-test Codeunit62142.AlphaCheck");
+
+        Assert.True(exit == 0, output);
+        Assert.DoesNotContain("PASS  Codeunit62142.AlphaCheck", output);
+        Assert.DoesNotContain("Codeunit62143.BetaCheck", output);
+        Assert.Contains("Tests:         0 total", output);
+        Assert.DoesNotContain("selected no test", output);
+    }
+
+    /// <summary>
+    /// #4055, the same property under --jobs: each worker's reported count, not its test total,
+    /// is what the parent sums.
+    /// </summary>
+    [SkippableFact]
+    public void Jobs_MatchRemovedByExcludeTest_IsNotANoMatch()
+    {
+        TestArtifacts.SkipIfMissing();
+        var (alpha, beta) = WriteTwoBundles();
+
+        var (output, exit) = RunRunnerOn(new[] { alpha, beta },
+            "--jobs 2", "--test Alpha", "--exclude-test Codeunit62146.AlphaOnly");
+
+        Assert.True(exit == 0, output);
+        Assert.Contains("jobs: 2 bundle(s) across 2 worker process(es)", output);
+        Assert.DoesNotContain("PASS  Codeunit62146.AlphaOnly", output);
+        Assert.DoesNotContain("selected no test", output);
+    }
+
+    /// <summary>
     /// #4055: an interior '*' is matched literally, so `Alpha*Check` selects nothing even
     /// though "AlphaCheck" exists. The failure message says why, which is the part a user
     /// cannot work out from "0 total".

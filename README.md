@@ -265,9 +265,10 @@ table is a copy and the CLI is the authority.
 | `3` | A bundle could not compile |
 | `4` | `--count-baseline`: a suite's test or app-group count did not exactly match its declared baseline, or under `--count-baseline-require-all` a declared suite produced no bucket |
 | `5` | `--expectations-require-match`: an expectations entry matched no test in this run |
+| `6` | `--test PATTERN` selected no test in this run (under `--jobs`, summed across workers; not applied in `--watch`/`--server`) |
 
 When a run holds several of these at once it reports the most fundamental, in the order
-**`3` > `2` > `4` > `1` > `5`**. The boundary that matters is between `3`/`2`/`4` — *this
+**`3` > `2` > `4` > `6` > `1` > `5`**. The boundary that matters is between `3`/`2`/`4`/`6` — *this
 report cannot be trusted, because the run did not measure what it claims to* — and `1`/`5`,
 which are statements about the AL the run did measure. So a run that both fails a test and
 measured the wrong number of tests reports `4`: fixing the failing test would otherwise turn
