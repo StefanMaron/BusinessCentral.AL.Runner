@@ -1818,14 +1818,11 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   - Date, DateTime, Time and DateFormula values are rebuilt
     ([#2259](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2259)), as are
     Blob, Media, MediaSet, RecordId and Duration
-    ([#2270](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2270)) and a DB
+    ([#2270](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2270)), TableFilter
+    ([#2271](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2271)) and a DB
     NULL in any column type
     ([#2268](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2268)). Each
     mirrors BC's own SQL-cell reader case for case.
-  - TableFilter values are still refused: BC's reader has a case for them, but no table in the
-    shipped demo data stores one, so the shape the backup reader emits has never been measured
-    and the codec will not invent it —
-    [#2271](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2271).
   - BC's system columns (`SystemId`, `SystemCreatedAt`, …) are not hydrated —
     [#2260](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2260).
   - A table whose AL name is declared by two installed apps in the same company is refused

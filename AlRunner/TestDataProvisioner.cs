@@ -104,7 +104,7 @@
 //      table carries a Date somewhere), and no longer does: #2259 took Date/DateTime/Time/
 //      DateFormula, #2270 took Blob/Media/MediaSet/RecordId/Duration and #2268 took a DB NULL
 //      in any column type. Measured on BC 28.1's W1 CRONUS, all 12 remaining refusals are
-//      case 5 below, not a value type at all. TableFilter is the one type left — #2271.
+//      case 5 below, not a value type at all. #2271 took TableFilter, the last reader case.
 //   3. Tables the READER itself fails on. Reported per table, with the reader's own text, and
 //      NEVER fatal to the rest of the hydration. No table is currently known to fail this way,
 //      and the tolerance is not speculative: before it existed, one reader exit-1 on a single
