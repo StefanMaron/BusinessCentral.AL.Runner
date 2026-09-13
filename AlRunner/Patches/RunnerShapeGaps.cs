@@ -108,6 +108,10 @@
 //     No form registered under the handle the [ModalPageHandler] is being handed. The runner's
 //     own form registry did not have it; BC's client session would.
 //
+//   NavReportSync.RunRequestPage.cs (1, BindRequestPageOpenedByBc, #4067).
+//     A request page BC's own report engine opened whose Parent is not a NavReport. Added
+//     after this sweep, with the factory from the start.
+//
 //   NavReportSync.cs (2, SyncRunRequestPage / SyncStaticRun).
 //     These two already LED with "not-yet-implemented", so they already tore through a
 //     [TryFunction] correctly — but they appended "See docs/scope.md" by hand, which
@@ -236,6 +240,10 @@ internal static class RunnerShapeGap
     /// <summary>The runner's own modal/page dispatch was handed an incomplete context.</summary>
     internal static RunnerOutOfScopeException ModalDispatchContext(string api, string surface, string detail)
         => Build(api, surface, detail, RuntimeDoc);
+
+    /// <summary>A request page BC's own report engine opened could not be tied back to its report (#4067).</summary>
+    internal static RunnerOutOfScopeException RequestPageReport(string api, string detail)
+        => Build(api, "request-page-report", detail, RuntimeDoc);
 
     /// <summary>The runner could not construct the report object to run it.</summary>
     internal static RunnerOutOfScopeException ReportConstruction(string api, string detail)

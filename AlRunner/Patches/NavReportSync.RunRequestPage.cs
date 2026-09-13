@@ -137,6 +137,45 @@ public static partial class NavReportSync
         }
     }
 
+    /// <summary>
+    /// The request-page surface for a request page that BC's own report engine opened, rather
+    /// than <see cref="RunRequestPageForHandler"/>. Precompiled AL calls the async entry points
+    /// (<c>NavReport.RunAsync(NavSession, int)</c> and siblings), which the sync-wrapper Cecil
+    /// rewrite never sees, so nothing bound the form before BC dispatched it to the handler
+    /// (#4067). BC's <c>RunRequestPageCoreAsync</c> reads the page's FormResult itself on
+    /// that path, so no confirmation read-back is needed here.
+    /// </summary>
+    /// <param name="parent">The form's <c>RequestPageBase.Parent</c> — the report it belongs to.</param>
+    internal static AlRunner.Patches.RequestPageTestPage BindRequestPageOpenedByBc(object requestPageForm, object? parent)
+    {
+        // Parent is null because NclCecilRewrite.Reports.cs rewrites the RequestPageBase ctors
+        // past the assignment; the compiled Report<N>+RequestPage keeps its report in CurrReport.
+        parent ??= requestPageForm.GetType()
+            .GetField("CurrReport", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?
+            .GetValue(requestPageForm);
+        Type? navReportBase = parent?.GetType();
+        while (navReportBase != null && navReportBase.Name != "NavReport")
+            navReportBase = navReportBase.BaseType;
+        if (parent == null || navReportBase == null)
+            throw AlRunner.Patches.RunnerShapeGap.RequestPageReport(
+                "TestRequestPage (" + requestPageForm.GetType().FullName + ")",
+                "the request page's owner is not a report: neither its Parent nor a CurrReport field "
+                + "is a NavReport (found " + (parent?.GetType().FullName ?? "null") + "; an XmlPort's "
+                + "request page reaches here too), so the runner cannot tell which data items and "
+                + "built-in actions the [RequestPageHandler] is driving");
+
+        int reportId = TryGetObjectId(parent, navReportBase);
+        // offersOk mirrors RunRequestPageForReportRun: ProcessingOnly decides it for a Run.
+        // A RunRequestPageAsync caller (ReportIntent.Parameters, #3505) would offer OK on every
+        // report; the intent is not readable off the form, so that caller still gets BC's
+        // "OK is not found" on a report that renders.
+        var page = AlRunner.Patches.RequestPageTestPage.Bind(
+            requestPageForm, parent, reportId, offersOk: IsProcessingOnly(parent, navReportBase));
+        if (Environment.GetEnvironmentVariable("AL_RUNNER_DIAG_RP") == "1")
+            Console.Error.WriteLine($"[NavReportSync] request page for report {reportId} opened by BC's report engine — bound on dispatch");
+        return page;
+    }
+
     // ── the test dataset (TestRequestPage.SaveAsXml) ──────────────────────────
 
     private static Type? _reportSaveAsXmlRendererType;
