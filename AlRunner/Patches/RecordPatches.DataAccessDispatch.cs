@@ -217,6 +217,15 @@ public static partial class RecordPatches
                 return GetIntegerVirtualDataAccess(self, table);
             }
 
+            // ── Table Relations Metadata system virtual table (2000000141) ──────────────
+            // Served by BC's OWN TableRelationDataProvider, like Integer and Date above: rows are
+            // computed per request from NCLMetaField.FieldRelations (#4088).
+            // See RecordPatches.TableRelationsMetadataVirtualTable.cs.
+            if (IsTableRelationsMetadataVirtualTable(table))
+            {
+                return GetTableRelationsMetadataVirtualDataAccess(self, table);
+            }
+
             // ── All Profile system virtual table (2000000178) ────────────────────────────
             // Virtual on the service tier too: AllProfileDataProvider's rows are every
             // profile every published app declares plus the tenant-owned ones. It is the

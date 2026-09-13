@@ -975,6 +975,17 @@ public static partial class NclCecilRewrite
             // ExistsAsync: BC's own DateDataProvider answers all three since #3506, so there is
             // no materialised window for a guard to widen.
 
+            // ── TableRelationDataProvider.GetValuesWithinRangeForKeyField (2000000141) ──────
+            // Key field 1 of BC's own provider enumerates NCLMetadata.GetSnapshotOfAllObjects,
+            // which this rewrite empties, so Table Relations Metadata answered no rows for any
+            // table (#4088). Replaced (not prepended) because the switch returns the iterator;
+            // the private GetTableIDs is a tiny stub R2R can inline past. The helper forwards
+            // key fields 2..4 to BC's own iterators. See RecordPatches.TableRelationsMetadataVirtualTable.cs.
+            ReplaceBodyWithHelper(nclMod,
+                ByParams(Rt + "TableRelationDataProvider", "GetValuesWithinRangeForKeyField",
+                    "NCLMetaField", "ReadOnlyRecordBuffer", "Range", "SortOrder", "FilterFieldDictionary"),
+                H(recordPatches, "TableRelationDataProvider_GetValuesWithinRangeForKeyField"));
+
             // ── DataAccess.CountAsync — virtual Field table (2000000041) on-demand populate ──
             // Same gap, one table over. The Field table's rows for a given TableNo are built on
             // demand, and until #2792 the ONLY place that happened for a table nothing else had
