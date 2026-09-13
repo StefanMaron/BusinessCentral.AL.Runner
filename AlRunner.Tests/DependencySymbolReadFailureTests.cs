@@ -243,7 +243,10 @@ public sealed class DependencySymbolReadFailureTests : IDisposable
         BcAppSymbolCache.PageSymbol p => p.Id == PageId,
         // EnumerateBcAppReportSymbols
         BcAppSymbolCache.ReportSymbol r => r.Id == ReportId,
-        // EnumerateBcAppCodeunitSymbols
+        // EnumerateBcAppCodeunitSymbols — (AppPath, ObjectSymbol) since #3788: the .app path
+        // rides along so the method-table derivation can ask the witness about THIS app's
+        // codeunit. The bare ObjectSymbol arm stays for any walk that still yields one.
+        ValueTuple<string, BcAppSymbolCache.ObjectSymbol> co => FixtureObjectIds.Contains(co.Item2.Id),
         BcAppSymbolCache.ObjectSymbol o => FixtureObjectIds.Contains(o.Id),
         // EnumerateBcAppProfileSymbols — (AppId, AppName, ProfileSymbol)
         ValueTuple<Guid, string, BcAppSymbolCache.ProfileSymbol> pr =>

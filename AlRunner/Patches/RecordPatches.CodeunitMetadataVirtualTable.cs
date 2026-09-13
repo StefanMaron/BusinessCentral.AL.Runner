@@ -106,8 +106,19 @@ public static partial class RecordPatches
     /// default, so the projection must be able to omit it too (#3788). The two masks are the AL
     /// LETTER spelling, decoded case-sensitively where they are rendered.</para>
     /// </summary>
+    /// <param name="AttributedMethods">The methods BC's emitter writes as <c>&lt;Method&gt;</c>,
+    /// as SymbolReference.json states them, in its order — null when the codeunit states none,
+    /// or when it was source-parsed rather than read from a dependency .app. Whether this list
+    /// is COMPLETE is <paramref name="MethodsProvenComplete"/>'s job, never this list's own
+    /// length (#3788).</param>
+    /// <param name="MethodsProvenComplete">True only when the app's loaded assemblies were
+    /// scanned AND saw this codeunit AND found no <c>[NavEventSubscriber]</c> on it. False
+    /// covers the codeunit having one and the scan never having happened, which are different
+    /// facts with the same correct consequence: do not render a subtree that may be short.</param>
     private sealed record CodeunitMetaRow(int Id, string Name, int TableNo, bool SingleInstance, string Subtype,
-        string? ALNamespace = null, string? InherentEntitlements = null, string? InherentPermissions = null);
+        string? ALNamespace = null, string? InherentEntitlements = null, string? InherentPermissions = null,
+        List<BcAppSymbolCache.CodeunitMethodSymbol>? AttributedMethods = null,
+        bool MethodsProvenComplete = false);
 
     private static List<CodeunitMetaRow>? _codeunitMetaRows;
     // The .app term is RecordPatches' registration EPOCH, never _bcAppPaths.Count (#2888):
@@ -433,7 +444,7 @@ public static partial class RecordPatches
             }
 
             // 2. Codeunits declared by precompiled dependency .app packages.
-            foreach (var symbol in EnumerateBcAppCodeunitSymbols())
+            foreach (var (appPath, symbol) in EnumerateBcAppCodeunitSymbols())
             {
                 if (rows.ContainsKey(symbol.Id)) continue;   // source-compiled wins
                 rows[symbol.Id] = new CodeunitMetaRow(
@@ -443,7 +454,13 @@ public static partial class RecordPatches
                     symbol.Subtype ?? "Normal",
                     symbol.ALNamespace,
                     symbol.InherentEntitlements,
-                    symbol.InherentPermissions);
+                    symbol.InherentPermissions,
+                    symbol.AttributedMethods,
+                    // The app path is carried only this far: the witness is asked HERE, while
+                    // the .app that produced the symbol is still known, and the row keeps the
+                    // verdict rather than the path. A consumer holding the row cannot then ask
+                    // the question against the wrong app.
+                    AssemblyProvesNoSubscriber(appPath, symbol.Id));
             }
 
             // Loud, never silent (#3540). This is the runner answering a column WRONG on
@@ -478,12 +495,16 @@ public static partial class RecordPatches
     /// surface AllObj does, through the same walk, so the two tables cannot now disagree
     /// about which dependency contributed codeunits either.
     /// </remarks>
-    private static IEnumerable<BcAppSymbolCache.ObjectSymbol> EnumerateBcAppCodeunitSymbols()
+    private static IEnumerable<(string AppPath, BcAppSymbolCache.ObjectSymbol Symbol)>
+        EnumerateBcAppCodeunitSymbols()
     {
-        foreach (var (_, symbols) in EnumerateRegisteredBcAppSymbols("objects (CodeUnit Metadata)"))
+        // The .app path rides along because the method-table derivation needs to ask the
+        // assembly witness about THIS app's codeunit, and a codeunit id alone cannot pick the
+        // app out again once the symbol has left the walk (#3788).
+        foreach (var (appPath, symbols) in EnumerateRegisteredBcAppSymbols("objects (CodeUnit Metadata)"))
             foreach (var o in symbols.Objects)
                 if (o.Id > 0 && NormalizeObjectTypeName(o.Kind) == "codeunit")
-                    yield return o;
+                    yield return (appPath, o);
     }
 
     /// <summary>
