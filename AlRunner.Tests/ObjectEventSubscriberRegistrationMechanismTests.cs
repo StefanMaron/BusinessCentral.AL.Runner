@@ -95,6 +95,7 @@ public class Codeunit99989ObjectEventMechanismFixture
 /// xUnit's cross-class parallelization will interleave two tests' resets/scans of the
 /// same static dictionaries.
 /// </summary>
+[Collection(EventSubscriberRegistrySerialCollection.Name)]
 public class ObjectEventSubscriberRegistrationMechanismTests
 {
     [Theory]

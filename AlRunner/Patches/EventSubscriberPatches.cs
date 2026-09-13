@@ -196,11 +196,25 @@ public static partial class EventSubscriberPatches
         }
     }
     private static readonly HashSet<MethodInfo> _injectedSubscriberMethods = new();
-    private static int _lastScannedCount = 0;
+    // Discovery gate (#2369): AppDomain.AssemblyLoad bumps the epoch, and a scan pass records the
+    // epoch it covered. Replaces comparing GetAssemblies().Length, which allocated the whole
+    // assembly array on every call — and this runs on every record construction and every event
+    // lookup. Equivalent because nothing here unloads an assembly, and a handler runs after the
+    // loaded assembly is enumerable (EventSubscriberIndexTests pins that). Capture the epoch
+    // BEFORE GetAssemblies, so a load racing the scan leaves the gate open.
+    private static int _assemblyLoadEpoch;
+    private static int _scannedLoadEpoch = -1;
+    private static readonly bool _assemblyLoadHookInstalled = InstallAssemblyLoadHook();
+
+    private static bool InstallAssemblyLoadHook()
+    {
+        AppDomain.CurrentDomain.AssemblyLoad += (_, _) => Interlocked.Increment(ref _assemblyLoadEpoch);
+        return true;
+    }
 
     /// <summary>
     /// Assemblies whose [NavEventSubscriberAttribute] methods have already been discovered.
-    /// The <c>_lastScannedCount</c> gate only tells us that SOMETHING new loaded; without this
+    /// The assembly-load epoch gate only tells us that SOMETHING new loaded; without this
     /// set every re-scan re-walked every assembly, so the Base Application chunks were rescanned
     /// each time the AppDomain grew. Reference identity, deliberately: a reloaded bundle
     /// generation is a DIFFERENT Assembly object, so it is not in this set and IS scanned, while
@@ -467,7 +481,7 @@ public static partial class EventSubscriberPatches
     /// Drop the subscriber registries and per-bundle codeunit-type cache so a server
     /// reload of the same-identity bundle rebuilds them from the freshly-emitted
     /// assembly instead of accumulating (or double-firing) the previous run's
-    /// subscribers. Resetting <c>_lastScannedCount</c> forces a full re-scan; the
+    /// subscribers. Resetting the scanned load epoch forces a full re-scan; the
     /// stale previous bundle assembly is then skipped via
     /// <see cref="BcRuntime.IsStaleBundleAssembly"/>. The installed injection hook
     /// (<c>_registered</c>) and any reflection-failure latch are preserved.
@@ -489,7 +503,7 @@ public static partial class EventSubscriberPatches
             _injectedSubscriberMethods.Clear();
             _seededScopeTypes.Clear();
             _scannedAssemblies.Clear();
-            _lastScannedCount = 0;
+            _scannedLoadEpoch = -1;
             _registryVersion++;
         }
         AlRunner.BcRuntime.ResetManualBindingCacheForReload();
@@ -1054,7 +1068,7 @@ public static partial class EventSubscriberPatches
     /// Discovery: walk loaded assemblies for [NavEventSubscriberAttribute] methods, index
     /// by (publisher id, NavTriggerEventType ordinal).
     ///
-    /// Incremental in two layers: the cheap <c>_lastScannedCount</c> gate skips the whole
+    /// Incremental in two layers: the cheap assembly-load epoch gate skips the whole
     /// pass while no assembly has loaded since the last one, and <c>_scannedAssemblies</c>
     /// then makes each individual assembly's scan happen exactly ONCE for its lifetime.
     /// Before the boot-overhead perf pass this re-walked EVERY loaded assembly from scratch on every
@@ -1070,12 +1084,12 @@ public static partial class EventSubscriberPatches
     /// </summary>
     private static void EnsureRegistryFresh()
     {
-        var asms = AppDomain.CurrentDomain.GetAssemblies();
-        if (asms.Length == _lastScannedCount) return;
+        if (Volatile.Read(ref _assemblyLoadEpoch) == _scannedLoadEpoch) return;
         lock (_lock)
         {
-            asms = AppDomain.CurrentDomain.GetAssemblies();
-            if (asms.Length == _lastScannedCount) return;
+            int loadEpoch = Volatile.Read(ref _assemblyLoadEpoch);
+            if (loadEpoch == _scannedLoadEpoch) return;
+            var asms = AppDomain.CurrentDomain.GetAssemblies();
             _registryVersion++; // this pass may add or prune entries in both registries
 
             // A discovery scan can run BEFORE every app in the current cycle has
@@ -1253,7 +1267,7 @@ public static partial class EventSubscriberPatches
                         $"[Subscribers] {name}: {unreadable} of {subscriberMethods.Count} " +
                         "[NavEventSubscriber] attribute instance(s) could not be read — will re-scan.");
             }
-            _lastScannedCount = asms.Length;
+            _scannedLoadEpoch = loadEpoch;
             int total = _byKey.Values.Sum(v => v.Count);
             if (added > 0 || scannedAttrs == 0)
                 Console.Error.WriteLine(
