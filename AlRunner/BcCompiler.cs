@@ -1602,6 +1602,8 @@ public sealed partial class BcCompiler
                         new List<NavCA.ISymbolReferenceLoader> { _siblingSymbols, effectiveLoader });
             }
 
+            specs = NarrowToDeclaredReferences(specs, _currentAppId);
+
             _refSpecs = specs; // keep for any legacy callers that read _refSpecs directly
             return (effectiveLoader, specs);
         }
