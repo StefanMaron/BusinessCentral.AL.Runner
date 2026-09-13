@@ -155,7 +155,7 @@ public static class AppLoader
     }
 
     /// <summary>
-    /// The package's content hash, or null when it cannot be computed — the signal that this
+    /// The package's index identity, or null when it cannot be computed — the signal that this
     /// package gets NO shared index entry, in either direction (#2955's guard, same reasoning).
     ///
     /// <para>Keying on the <see cref="RunnerFingerprint.UnknownContentHash"/> sentinel instead
@@ -280,8 +280,8 @@ public static class AppLoader
         long zipStart = 0;
         if (ReadFully(package, navx) == 8 && navx[..4].SequenceEqual("NAVX"u8))
             zipStart = BitConverter.ToUInt32(navx[4..]);
-        // A zip start past the tail window leaves bytes between header and directory we would
-        // not hash; runtime packages (.NEA, #3537) keep their directory inside an RC4 layer.
+        // BC writes a 40-byte NAVX header; an offset past 4 KB is not a shape this reads. Runtime
+        // packages (.NEA, #3537) keep their directory inside an RC4 layer, so there is none here.
         if (zipStart > 4096 || zipStart + 22 > length || PayloadIsNeaContainer(package, zipStart))
             return fullContentIdentity();
 
