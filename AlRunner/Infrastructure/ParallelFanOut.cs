@@ -32,7 +32,7 @@ internal static class ParallelFanOut
         "--coverage-out", "--define", "--dump-csharp", "--expectations", "--filter",
         "--isolation", "--out", "--output-junit", "--package-cache", "--preprocessor-symbols",
         "--resolve-version", "--test", "--test-data-company", "--test-isolation",
-        "--test-timeout", "--jobs",
+        "--test-timeout", "--jobs", "--seed",
         // Both take a value and both must reach a worker: a shard that lost --exclude-test would
         // walk straight back into the hang the parent already excluded, and one that lost
         // --resume-aborts would fall back to the default budget and start its own resume chain.

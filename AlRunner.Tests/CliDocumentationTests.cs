@@ -297,6 +297,8 @@ public sealed class CliDocumentationTests
         // against, so two runs differing only by this flag produce different pass/fail counts.
         // That is squarely "what gets executed", not "how the result is reported".
         "--test-data-normalize-company",
+        // Issue #2502: --seed changes the Random() values the run executes against.
+        "--seed",
     };
 
     /// <summary>Negative: an unknown documentation flag must not be silently accepted.</summary>
