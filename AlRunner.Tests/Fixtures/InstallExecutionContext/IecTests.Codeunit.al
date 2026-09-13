@@ -39,4 +39,19 @@ codeunit 70902 "IEC Tests"
         // Outside install BC's own first line returns; the #4061 refusal is install-only.
         NavApp.LoadPackageData(Database::"IEC Observation");
     end;
+
+    [Test]
+    procedure IecStartSessionInsideInstallWasRefused()
+    var
+        Observation: Record "IEC Observation";
+    begin
+        if not Observation.Get('INSTALL') then
+            Error('the install trigger did not run');
+        if Observation."Start Session Result" then
+            Error('StartSession inside the install trigger answered true');
+        if Observation."Session Id After" <> 777 then
+            Error('StartSession inside the install trigger wrote SessionId %1', Observation."Session Id After");
+        if Observation.Get('WORKER') then
+            Error('the StartSession worker ran from the install trigger');
+    end;
 }

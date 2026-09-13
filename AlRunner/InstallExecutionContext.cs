@@ -33,16 +33,19 @@ internal static class InstallExecutionContext
             session.Tenant, group, metadata, default!, activityId: string.Empty, hasData: false);
 
         session.SetAppInstallationContext(context);
-        return new Scope(session);
+        return new Scope(session.ClearAppInstallationContext);
     }
 
-    private sealed class Scope(NavSession session) : IDisposable
+    /// <summary>Runs <paramref name="clear"/> once, on the first Dispose. FireAll disposes it with
+    /// <c>using</c>, so a throwing install trigger still clears the context; left set, every later
+    /// StartSession would be refused and GetExecutionContext would answer Install at test time.</summary>
+    internal sealed class Scope(Action clear) : IDisposable
     {
         private int _disposed;
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) == 0)
-                session.ClearAppInstallationContext();
+                clear();
         }
     }
 
