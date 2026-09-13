@@ -18,13 +18,13 @@ internal static class InstallExecutionContext
     {
         var session = NavCurrentThread.Session
             ?? throw new InvalidOperationException(
-                "[install-trigger] no NavCurrentThread.Session while firing install triggers; "
+                "InstallExecutionContext: no NavCurrentThread.Session while firing install triggers; "
                 + "cannot set NavSession.AppInstallationContext");
 
         var (appId, name, publisher, version) = BcRuntime.GetModuleAppInfoFor(appAssembly);
         var metadata = CreateRuntimeMetadata(appId, name, publisher, version);
         var group = (NavAppGroup)(BcRuntime.NavSession_NavAppGroup(session)
-            ?? throw new InvalidOperationException("[install-trigger] NavAppGroup.BaseGroup unresolved"));
+            ?? throw new InvalidOperationException("InstallExecutionContext: NavAppGroup.BaseGroup unresolved"));
 
         // hasData: false — the runner models a fresh install into an empty database, which is
         // what BC passes for an app with no prior data (ALNavApp.GetDataVersionForInstall answers
@@ -64,7 +64,7 @@ internal static class InstallExecutionContext
         foreach (var required in new[] { "appId", "name", "publisher", "version" })
             if (!names.Contains(required))
                 throw new InvalidOperationException(
-                    $"[install-trigger] NavAppRuntimeMetadata constructor has no '{required}' parameter; "
+                    $"InstallExecutionContext: NavAppRuntimeMetadata constructor has no '{required}' parameter; "
                     + "the install context would name the wrong app (#4049)");
         var args = ctor.GetParameters().Select(p => p.Name switch
         {
@@ -84,7 +84,7 @@ internal static class InstallExecutionContext
                 && m.GetParameters() is [{ ParameterType: var pt }] && pt == typeof(Guid));
         if (implicitOp != null) return implicitOp.Invoke(null, new object[] { value })!;
         var ctor = target.GetConstructor(new[] { typeof(Guid) })
-            ?? throw new InvalidOperationException($"[install-trigger] cannot build {target.FullName} from a Guid");
+            ?? throw new InvalidOperationException($"InstallExecutionContext: cannot build {target.FullName} from a Guid");
         return ctor.Invoke(new object[] { value });
     }
 }
