@@ -4450,7 +4450,7 @@ if (expectationsRequireMatch)
 // parent decides (TestSelectionAudit). A bundle that did not compile or execute, a sliced
 // resume attempt or a lost carry file makes the zero unattributable, so those stand down.
 bool testSelectionEmpty = false;
-if (testFilter != null && !willResume && !carryIncomplete)
+if (testFilter != null && !watchMode && !willResume && !carryIncomplete)
 {
     var selected = executor.FilterSelectedCount + carriedResults.Sum(b => (long)b.Tests.Count);
     if (AlRunner.Infrastructure.TestSelectionAudit.IsWorker)
