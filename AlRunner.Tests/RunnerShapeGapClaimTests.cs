@@ -117,6 +117,11 @@ public sealed class RunnerShapeGapClaimTests
             ["report-metadata-unavailable"] = (
                 () => Invoke("ReportMetadataUnavailable", "NavReport.Run(Report 50100)", "the probe detail"),
                 "NavReport.Run(Report 50100)", "report-metadata-unavailable", RuntimeDoc),
+            // #4067. A request page BC's own report engine opened, whose Parent / CurrReport is
+            // not a NavReport — so which report's data items and built-in actions apply is unknown.
+            ["request-page-report"] = (
+                () => Invoke("RequestPageReport", "TestRequestPage (Report50100+RequestPage)", "the probe detail"),
+                "TestRequestPage (Report50100+RequestPage)", "request-page-report", RuntimeDoc),
         };
 
     public static IEnumerable<object[]> SiteNames() => Sites.Keys.Select(k => new object[] { k });
@@ -142,6 +147,7 @@ public sealed class RunnerShapeGapClaimTests
         "UserTableTriggerPatches.cs",
         "RecordPatches.InstallBaseline.cs",
         "RunnerModalDispatch.cs",
+        "NavReportSync.RunRequestPage.cs",   // #4067, added with the factory from the start
     };
 
     /// <summary>
@@ -348,7 +354,8 @@ public sealed class RunnerShapeGapClaimTests
         // and its doc link, and puts it through the [TryFunction] arm — so a refusal cannot be
         // added here without someone stating what it claims. This assertion only holds the
         // floor.
-        Assert.Equal(19, total);
+        // 19 -> 20 (#4067): NavReportSync.BindRequestPageOpenedByBc, with its Sites entry above.
+        Assert.Equal(20, total);
     }
 
     // ── The nine sites the issue's own measurement could not see ─────────────────────────
