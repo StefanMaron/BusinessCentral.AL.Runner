@@ -2616,11 +2616,13 @@ foreach (var bundle in bundles)
                 // for the .app scanner) so the loader can resolve the Microsoft platform
                 // specs (Base App etc.) on CI, where compilerPackageDirs is otherwise empty.
                 var compilerDirs = bundlePkgDirs.Concat(compilerPackageDirs).Distinct().ToList();
+                // Only the workspace dirs of this bundle's resolved closure (#2237).
+                var bundleWorkspaceDirs = WorkspaceDirsInClosure(layeredWorkspaceDirs, ordered);
                 using (AlRunner.Infrastructure.PhaseLog.Stage("dep-symbols"))
                 {
                     BcCompiler.SetResolvedDeps(ordered, compilerDirs);
-                    if (layeredWorkspaceDirs.Count > 0)
-                        BcCompiler.SetExtraSymbolDirs(layeredWorkspaceDirs);
+                    if (bundleWorkspaceDirs.Count > 0)
+                        BcCompiler.SetExtraSymbolDirs(bundleWorkspaceDirs);
                 }
                 // Not stage-timed as one block: LoadAll times each dependency separately
                 // as `dep-load:<Name>` (see DependencyLoader.LoadAll). Wrapping it here too
@@ -2642,8 +2644,8 @@ foreach (var bundle in bundles)
                     // BcCompiler too, which updates the process-wide reference state. Restore
                     // this bundle's dependency symbols before emitting the bundle itself.
                     BcCompiler.SetResolvedDeps(ordered, compilerDirs);
-                    if (layeredWorkspaceDirs.Count > 0)
-                        BcCompiler.SetExtraSymbolDirs(layeredWorkspaceDirs);
+                    if (bundleWorkspaceDirs.Count > 0)
+                        BcCompiler.SetExtraSymbolDirs(bundleWorkspaceDirs);
                     // Register dep .app paths with RecordPatches so the NCLMetaTable
                     // populator can fall back to the AL source shipped inside the .app
                     // (NAVX zip) for tables defined in compiled BC dependencies — the
@@ -5347,14 +5349,28 @@ return strictExitCode ? computedExitCode : 0;
                 var resolver = new DependencyResolver(resolverDirs, AlRunner.Infrastructure.CacheRoots.SourceBuiltPackageDirs());
                 ordered = resolver.Resolve(roots);
                 AlRunner.Infrastructure.PhaseLog.NoteDepsResolved(ordered.Count);
-                BcCompiler.SetResolvedDeps(ordered, resolverDirs);
+                // Same split as the CLI loop: workspace dirs reach the compiler only as the
+                // *.symbols.json of this bundle's resolved closure, never through the package
+                // scan, which would make every source app built this session a reference (#2237).
+                var compilerDirs = resolverDirs
+                    .Where(d => !IsUnderDirectory(Path.GetFullPath(d), workspaceDepsRoot))
+                    .ToList();
+                var bundleWorkspaceDirs = WorkspaceDirsInClosure(
+                    resolverDirs.Where(d => IsUnderDirectory(Path.GetFullPath(d), workspaceDepsRoot)), ordered);
+                void SetBundleCompileReferences()
+                {
+                    BcCompiler.SetResolvedDeps(ordered, compilerDirs);
+                    if (bundleWorkspaceDirs.Count > 0)
+                        BcCompiler.SetExtraSymbolDirs(bundleWorkspaceDirs);
+                }
+                SetBundleCompileReferences();
                 var loaded = depLoader.LoadAll(ordered, bucketRoot);
                 AlRunner.Infrastructure.PhaseLog.NoteDepAssembliesLoaded(loaded.Count);
                 // New bundle in the server session: replace (not inherit) the
                 // install-trigger registrations, then register this bundle's deps.
                 AlRunner.InstallTriggerRunner.ResetForNewBundle();
                 AlRunner.InstallTriggerRunner.SetDependencyAssemblies(loaded);
-                BcCompiler.SetResolvedDeps(ordered, resolverDirs);
+                SetBundleCompileReferences();
                 foreach (var (_, appPath) in ordered)
                     AlRunner.Patches.RecordPatches.AddBcAppPath(appPath);
                 AlRunner.Patches.RecordPatches.RegisterBundleSymbolApps(bucketRoot);
