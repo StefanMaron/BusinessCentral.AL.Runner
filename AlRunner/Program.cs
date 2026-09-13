@@ -1327,11 +1327,9 @@ var shippedVariants = AlRunner.Infrastructure.EngineVariants.Discover(AppContext
 try
 {
     AlRunner.Infrastructure.BcArtifacts.SelectVersion(bcVersionArg, artifactPathArg);
-    // Consistency guard: the engine DLLs baked into bin/ are built for a fixed BC
-    // major.minor; if the selected version's major.minor differs, dependency symbols
-    // and the engine can disagree — fail loud rather than crash deep in BC. Patch-level
-    // skew (28.1.x build vs 28.1.y cache) is tolerated.
-    AlRunner.Infrastructure.BcArtifacts.VerifyEngineConsistency(AppContext.BaseDirectory);
+    // Consistency guard: a single-build runner refuses a BC major it was not built for.
+    // --precompile applies the same guard (SiblingCompile.RunPrecompile).
+    AlRunner.Infrastructure.BcArtifacts.VerifyEngineConsistency(shippedVariants.Count);
     // #2008's root cause: VerifyEngineConsistency only catches a MAJOR mismatch (Ncl.dll's
     // own AssemblyVersion is always major.0.0.0, so it cannot see a same-major
     // different-minor selection). The auto-select default path above already warns about

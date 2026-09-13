@@ -65,6 +65,19 @@ internal static partial class ProgramSupport
             AlRunner.Infrastructure.BcArtifacts.ArtifactsRootDir,
             AlRunner.Infrastructure.BcArtifacts.SelectedVersion.ToString());
 
+        // #4031: the bundle run's engine-major guard, before the shadow hop or the Ncl rewrite
+        // can act on a selection this build cannot run.
+        try
+        {
+            AlRunner.Infrastructure.BcArtifacts.VerifyEngineConsistency(
+                AlRunner.Infrastructure.EngineVariants.Discover(AppContext.BaseDirectory).Count);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Console.Error.WriteLine($"BC version selection failed: {ex.Message}");
+            return 2;
+        }
+
         // #2156 (found while adding #2152's proving test for this subcommand): --precompile
         // dispatches before the main run flow's own "Cecil-rewrite Ncl.dll in place" step ever
         // runs (that block lives much further down in Main, past the `--precompile` early
