@@ -39,8 +39,9 @@ public static partial class BcRuntime
     // null and the next access NRE'd with no message inside BC (measured: Base App codeunit
     // 347 "Auto Format".GetGLSetup; `tree=DISPOSED` logged immediately before the NRE).
     // Real BC does not hit zero because the session itself holds a SingleInstance codeunit;
-    // this handle is that reference, and it is parented on the session so it lives exactly as
-    // long as the cache entry does.
+    // this handle is that reference, and it is parented on the session. Dropping the
+    // dictionary entry does NOT release it — the session tree still holds the handle — so
+    // ResetSingleInstanceCache disposes each handle, which is what decrements the count (#2181).
     private static readonly ConcurrentDictionary<int, Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle> _singleInstanceKeepAlive = new();
 
     // Every AL variable handle that has already resolved a SingleInstance codeunit through
@@ -81,9 +82,24 @@ public static partial class BcRuntime
     private static void TrackSingleInstanceBinding(Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle handle)
     {
         lock (_singleInstanceBoundHandlesLock)
+        {
+            // Under --isolation disabled no reset ever clears the list (#2185), so compact it
+            // whenever it doubles past what was live at the last compaction.
+            if (_singleInstanceBoundHandles.Count >= _singleInstanceBoundHandlesCompactAt)
+            {
+                // IsDisposed, not only a dead WeakReference: a disposed handle is still
+                // reachable until a GC runs, and the invalidation loop skips it anyway.
+                _singleInstanceBoundHandles.RemoveAll(w => !w.TryGetTarget(out var h) || h.IsDisposed);
+                _singleInstanceBoundHandlesCompactAt =
+                    Math.Max(SingleInstanceBoundHandlesMinCompactAt, _singleInstanceBoundHandles.Count * 2);
+            }
             _singleInstanceBoundHandles.Add(
                 new WeakReference<Microsoft.Dynamics.Nav.Runtime.NavCodeunitHandle>(handle));
+        }
     }
+
+    private const int SingleInstanceBoundHandlesMinCompactAt = 64;
+    private static int _singleInstanceBoundHandlesCompactAt = SingleInstanceBoundHandlesMinCompactAt;
 
     /// <summary>
     /// Drop every cached SingleInstance codeunit instance. Must run at the per-test-isolation
@@ -92,12 +108,23 @@ public static partial class BcRuntime
     /// </summary>
     public static void ResetSingleInstanceCache()
     {
-        // Invalidate the per-handle copies FIRST — see _singleInstanceBoundHandles. Doing it
-        // before the dictionaries are cleared matters only for readability; what matters for
-        // correctness is that no handle is left holding an instance the cache no longer has.
+        // Invalidate the per-handle copies FIRST — see _singleInstanceBoundHandles — so no
+        // handle is left holding an instance the cache no longer has.
         InvalidateBoundSingleInstanceHandles();
-        // Release the keep-alive references first: dropping them is what lets BC's refcount
-        // fall to zero and dispose the instances, which is the per-test cleanup real BC does.
+        // Only AFTER the invalidation above: until now the keep-alive handle is what stops
+        // those ClearReference calls from disposing the instance mid-loop.
+        //
+        // Dispose the keep-alive HANDLE, never the instance. Disposing the handle unlinks it
+        // from the session and drops its reference; BC's own refcount then disposes and
+        // unlinks the instance only if nothing else references it. A handle that copied the
+        // target without CreateTarget (CloneReference/ALAssign/ALByValue) is untracked, still
+        // counts, and keeps a LIVE instance rather than the disposed one described on
+        // _singleInstanceKeepAlive. Pinned by SingleInstanceResetLeakTests (#2181).
+        foreach (var keepAlive in _singleInstanceKeepAlive.Values)
+        {
+            if (!keepAlive.IsDisposed)
+                keepAlive.Dispose();
+        }
         _singleInstanceKeepAlive.Clear();
         _singleInstanceCache.Clear();
     }
@@ -130,6 +157,7 @@ public static partial class BcRuntime
                 handle.ClearReference();
             }
             _singleInstanceBoundHandles.Clear();
+            _singleInstanceBoundHandlesCompactAt = SingleInstanceBoundHandlesMinCompactAt;
         }
     }
 
