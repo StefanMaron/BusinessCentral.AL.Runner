@@ -75,3 +75,123 @@ are green for unrelated reasons. So on a cloud-app corpus PR, eight zeros are th
 answer and eight non-zeros are the finding; reading the OnPrem zeros as "half the matrix
 did not run my tests" is a false alarm, and `corpus-pass-count.py` labels them `not-run`
 for exactly that reason.
+
+## The fifth mechanism, round two: six more instances, and why it stays prose (#4059)
+
+The "a number that travels" section landed with four instances. Six more followed, two of them
+by the author of the sentence telling people to re-derive. #4059 asked whether prose is enough.
+
+### The six
+
+| the number | what it was | how far it travelled |
+|---|---|---|
+| "1,573 codeunit ids" | **1,690** — per-chunk 226/353/348/383/380, every chunk off by 17-35 | two issue comments, one PR comment, a 255-line test-file header (#4090, #4078, #4134) |
+| "four scratch repositories, both stale-ref orderings x `--soft`/`--hard`" | the orderings are not a two-way variable, and `--hard` is not an axis | **the shipped rule text on `main`** (`no-git-stash-with-worktrees.md`) |
+
+plus the four already in the rule's table.
+
+### Why the 1,573 row is the instructive one
+
+The wrong figures gave "77.4% lost". The true ones give **77.3%**. The conclusion was insensitive
+to the error by a tenth of a percentage point, so nothing downstream looked wrong, and the number
+was published in four places.
+
+One component *had* been checked -- the "five chunks" claim, against the package -- and the rest
+was repeated as though the whole figure had been. **Checking one component of a figure is not
+checking the figure**, and a conclusion that survives the error removes the last chance of
+noticing: a number that changed the answer would have been caught by whoever disbelieved the
+answer.
+
+### The sweep #4059 asked for, and what it found
+
+The issue's own "Not measured" section named the deciding experiment: how many figures currently
+in `.claude/rules/` and `CLAUDE.md` are second-hand. Measured on `775e3d02`:
+
+* 295 raw numeric tokens across 23 files;
+* 26 of those are *countable claims* (a number adjacent to a counting noun), the rest exit codes,
+  version numbers and list ordinals.
+
+Re-deriving the cheaply checkable ones produced **three different outcomes from three checks**,
+and that spread is the finding:
+
+| claim | re-derived | what the gap was |
+|---|---|---|
+| `RecordPatches` "**94 files**" | **96**, confirmed by `command grep -rl` and `rg --hidden` | a true measurement that **drifted** -- written 2026-09-12 (#3946), wrong within a day |
+| `graphify update .` "~2 seconds, **200 files**" | 355 `.cs` files under `AlRunner/` | **my instrument read the wrong subject** -- graphify's index is not every `.cs` file |
+| "**20 comments** use brace shorthand" | 37 | **my instrument read the wrong subject** -- my grep matched generics and `{x,` anywhere, not comment member-shorthand |
+
+Five of the six sibling `partial class` counts on the same line were exactly right.
+
+**Two of three "failures" were mine, not the document's.** That ratio is the argument against a
+general guard: an automated sweep over prose numbers would have reported all three, and two of
+the three reports would have been wrong in precisely the way the fourth mechanism describes -- a
+correct instrument reading a different subject. A guard whose false-positive rate is 2/3 trains
+its readers to dismiss it, which is worse than no guard.
+
+### The sixth row, re-derived rather than relayed
+
+The dispatch brief for #4059 asserted the shipped claim's variable is "three-way (eight
+orderings)" and that `--hard` is not an axis. Re-deriving rather than relaying it -- which is the
+rule under discussion -- gave a **different and larger** correction.
+
+Three scratch repositories, covering branch-based-on-new-main/ref-stale,
+branch-based-on-old-main/ref-fresh, and the recomputed-merge-base case:
+
+```
+### branch based on NEW main, origin/main ref STALE (behind):
+  commit content: 2 files changed, 51 insertions(+)
+  three-dot:      2 files changed, 51 insertions(+)
+  two-dot:        2 files changed, 51 insertions(+)
+### branch based on OLD main, origin/main ref FRESH (ahead):
+  commit content: 2 files changed, 1 insertion(+), 50 deletions(-)
+  three-dot:      2 files changed, 1 insertion(+), 50 deletions(-)
+  two-dot:        2 files changed, 1 insertion(+), 50 deletions(-)
+```
+
+The second ordering reproduces the documented damage. But **three-dot and two-dot agree in every
+ordering**, and the reason is structural rather than incidental: after `git reset --soft
+origin/main`, HEAD's parent *is* `origin/main`, so `git merge-base origin/main HEAD` returns
+`origin/main` itself (measured: both `b6ce42df`) and the two diff forms are identical **by
+construction**.
+
+So the rule's operative instruction -- "`git diff --stat origin/main...HEAD` does NOT catch it --
+use two dots", with figures `1 file changed, 1 insertion(+)` against `2 files changed, 1
+insertion(+), 50 deletions(-)` -- does not reproduce, and the "use two dots" remedy cannot help.
+The surviving true half is the one the figures were decoration on: **`git fetch origin main`
+before any command naming `origin/main` as a base**, which is what makes the stale ref fresh and
+is the only step that changes the outcome.
+
+The brief's correction and this one disagree; this one is written from three runs whose transcript
+is above, which is the standard the rule asks for. The dot-count claim is removed from the rule
+rather than re-stated with better numbers, because a remedy that cannot work should not be carried
+at any precision.
+
+### Why no general guard
+
+A number in prose has no schema. `test_matrix_docs_drift.py` is the precedent for pinning a prose
+claim, and it works because every claim it pins has a **machine-readable source of truth** --
+`.github/bc-versions.txt`, a workflow YAML, a rendered path template. It also enforces
+`guards-need-a-third-state.md` on itself: *"Every check must see a non-empty match set, so a regex
+that drifts to match nothing fails instead of passing vacuously."*
+
+None of the ten instances has such a source:
+
+* "seven orphaned registrations", "1,573 codeunit ids", "two distinct binaries" are measurements
+  of a moment, not of a file in the tree;
+* "2 of the 14 rules" counts a diff that no longer exists;
+* the scratch-repository claim measures behaviour reproduced outside the repository entirely.
+
+A guard able to check any of them would have to know which subject each sentence measures -- the
+exact thing the fourth mechanism says goes wrong -- and the sweep above measured the cost of
+guessing at 2/3.
+
+**The one exception, which is why a guard is added and not zero.** `RecordPatches` "94 files" is
+different in kind: its source of truth is the tree itself, the query is unambiguous
+(`partial class <Name>` over `AlRunner/**/*.cs`), and it drifted within a day of being written. It
+is checkable exactly because it is *not* second-hand -- it is a first-hand measurement of a
+present-tense fact. That is the population a guard can serve: prose numbers whose subject is the
+current tree. `tools/test_partial_class_counts.py` pins those six counts and nothing else.
+
+The distinction worth carrying: **a figure about the tree can be pinned; a figure about a moment
+can only be cited.** The second is the one that travels, and citation -- not automation -- is its
+remedy.
