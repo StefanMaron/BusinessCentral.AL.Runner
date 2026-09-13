@@ -20,6 +20,11 @@
 
 set -uo pipefail
 
+# Scratch commits must not reach the user's global/system config: a signing box
+# otherwise fails or blocks on every commit below (#4001).
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
+unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPT="$SCRIPT_DIR/pr_changed_files.sh"
 WORKFLOW_DIR="$(cd "$SCRIPT_DIR/../workflows" && pwd)"
