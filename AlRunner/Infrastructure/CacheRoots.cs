@@ -66,6 +66,33 @@ public static class CacheRoots
     public const string NoCacheRootEnvVar = "AL_RUNNER_NO_CACHE_ROOT";
 
     /// <summary>
+    /// Environment variable that relocates the runner's cache tree (issue #2768), the sibling
+    /// of <see cref="BcArtifacts.ArtifactsRootEnvVar"/>. It replaces only the HOME-rooted
+    /// default: <c>--cache</c> and <c>--no-cache</c> still win for the run they are passed to.
+    /// Resolved like the artifacts root (<see cref="BcArtifacts.ResolveRoot"/>), and read by
+    /// every consumer of the default through <see cref="DefaultRoot"/> — the named caches here,
+    /// <c>Program.cs</c>'s AL-output directory, <c>ServiceTierDllIndex</c> and the backup reader
+    /// probe (<c>HomeRootedPathReadSiteGuardTests</c> holds that).
+    /// </summary>
+    public const string CacheRootEnvVar = "AL_RUNNER_CACHE_ROOT";
+
+    private static string? _defaultRoot;
+
+    internal static string ResolveDefaultRoot(string? envOverride, Func<string> userHome)
+        => BcArtifacts.ResolveRoot(envOverride, userHome, Path.Combine(".cache", "al-runner"));
+
+    /// <summary>
+    /// <c>~/.cache/al-runner</c>, or <see cref="CacheRootEnvVar"/> when set. Memoised on first
+    /// success so a relative value is rooted once, against the working directory at startup —
+    /// re-rooting per call would move a live run's cache when the CWD moves (the #3084 trap).
+    /// Throws when the home directory cannot be resolved (#2114) or the value cannot be rooted.
+    /// </summary>
+    public static string DefaultRoot =>
+        _defaultRoot ??= ResolveDefaultRoot(
+            Environment.GetEnvironmentVariable(CacheRootEnvVar),
+            static () => AlRunnerPaths.UserHome);
+
+    /// <summary>
     /// Sets the process-global cache-root override for this run. Pass the exact value
     /// Program.cs's <c>--cache &lt;dir&gt;</c> parsing assigned to <c>alCacheDir</c>, or
     /// <c>null</c> for the bare-default (no <c>--cache</c>, no <c>--no-cache</c>) case.
@@ -201,7 +228,7 @@ public static class CacheRoots
     {
         // AlRunnerPaths.UserHome throws loudly (issue #2114) rather than silently handing
         // back a relative path when $HOME names a directory that does not exist.
-        var root = _override ?? Path.Combine(AlRunnerPaths.UserHome, ".cache", "al-runner");
+        var root = _override ?? DefaultRoot;
         // #3084: the invariant, restated where it is consumed. Both writers of _override
         // root what they store, so this cannot fire through SetOverride/DisableForRun —
         // it fires for a THIRD writer added later that forgets to. Stated here, and not
@@ -339,6 +366,7 @@ public static class CacheRoots
     {
         _override = null;
         _throwawayRoot = null;
+        _defaultRoot = null;
     }
 
     /// <summary>

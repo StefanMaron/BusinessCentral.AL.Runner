@@ -18,7 +18,7 @@ namespace AlRunner.Infrastructure;
 /// assemblies under <c>apps/assembly/release/&lt;ver&gt;/&lt;sha256&gt;.dll</c> — content-addressed,
 /// where the assembly name equals the file name (the sha256 hash) and cross-app
 /// references are by the same hash names. Extracted once into
-/// <c>~/.cache/al-runner/servicetier-dlls/&lt;ver&gt;/</c>, those DLLs expose the normal
+/// <c>&lt;cache root&gt;/servicetier-dlls/&lt;ver&gt;/</c> (<see cref="CacheRoots.DefaultRoot"/>), those DLLs expose the normal
 /// BC type convention (<c>Codeunit{id}</c>, <c>Page{id}</c>, …), so the runner can run
 /// the <b>real</b> Microsoft code instead of recompiling it.
 ///
@@ -115,10 +115,10 @@ public static class ServiceTierDllIndex
         // data (BcArtifacts.ArtifactsRoot, CacheRoots.Resolve) still throw loud; a broken
         // $HOME surfaces there instead, deterministically, without this optional cache
         // taking the whole process down first.
-        string home;
-        try { home = AlRunnerPaths.UserHome; }
-        catch (InvalidOperationException) { return null; }
-        var root = Path.Combine(home, ".cache/al-runner/servicetier-dlls");
+        // #2768: the cache root may also be an AL_RUNNER_CACHE_ROOT that cannot be rooted.
+        string root;
+        try { root = Path.Combine(CacheRoots.DefaultRoot, "servicetier-dlls"); }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or ArgumentException) { return null; }
         if (!Directory.Exists(root)) return null;
         return Directory.EnumerateDirectories(root)
             .Select(d => (Dir: d, Ver: System.Version.TryParse(Path.GetFileName(d), out var v) ? v : null))

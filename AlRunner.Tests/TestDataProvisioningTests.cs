@@ -351,7 +351,7 @@ public sealed class TestDataProvisioningTests : IDisposable
     [Fact]
     public void MissingReader_ThrowsAndNamesEveryProbedLocation()
     {
-        var candidates = BackupReaderTool.CandidateExecutables("/nowhere/bcbak", "/home/nobody");
+        var candidates = BackupReaderTool.CandidateExecutables("/nowhere/bcbak", Path.Combine("/home/nobody", ".cache", "al-runner"));
         Assert.Contains("/nowhere/bcbak", candidates);
         Assert.Contains(Path.Combine("/nowhere/bcbak", "bcbak"), candidates);
         Assert.Contains(Path.Combine("/home/nobody", ".cache", "al-runner", "bcbak", "bcbak"), candidates);
