@@ -2841,7 +2841,8 @@ foreach (var bundle in bundles)
         // chain them into the compiler. Only sibling-dependency TARGETS are compiled here —
         // this is an extra compile per app, and most bundles (the corpus: one app) have none.
         using (AlRunner.Infrastructure.PhaseLog.Stage("sibling-symbols"))
-            EmitSiblingSymbols(appGroups, bundleAbs, bundleResolvedDeps);
+            EmitSiblingSymbols(appGroups, bundleAbs, bundleResolvedDeps,
+                announcePath: watchMode || AlRunner.Log.Verbose);
 
         var loadedAssemblies = new List<Assembly>();
         // SetTestAssembly re-runs its full body (incl. NavAppResourcePatches.RegisterTestAssembly)

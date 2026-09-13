@@ -1209,7 +1209,8 @@ internal static partial class ProgramSupport
     /// </summary>
     internal static void EmitSiblingSymbols(
         List<AlRunner.AppGroup> appGroups, string bundleAbs,
-        IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> bundleResolvedDeps)
+        IReadOnlyList<(AlRunner.AppManifest Manifest, string AppPath)> bundleResolvedDeps,
+        bool announcePath)
     {
         BcCompiler.SetSiblingSymbolsDir(null);
         // Not a dictionary: two suites in the same tree can (and in tests/runner-extras do)
@@ -1264,9 +1265,12 @@ internal static partial class ProgramSupport
                         group.Paths, group.ModuleName, group.AppId.Value,
                         group.Publisher ?? "AlRunner", version,
                         symbolsPath, group.SuiteDir, out var tookFastPath, out var fallbackReason);
-                    Console.WriteLine(tookFastPath
-                        ? $"[sibling-symbols] {group.ModuleName} {version}: RAD incremental (fast path)"
-                        : $"[sibling-symbols] {group.ModuleName} {version}: full compile ({fallbackReason})");
+                    // --watch or --verbose only: a one-shot run has no baseline, so it would print
+                    // "full compile (no incremental baseline yet ...)" for every sibling on every run.
+                    if (announcePath)
+                        Console.WriteLine(tookFastPath
+                            ? $"[sibling-symbols] {group.ModuleName} {version}: RAD incremental (fast path)"
+                            : $"[sibling-symbols] {group.ModuleName} {version}: full compile ({fallbackReason})");
                 }
                 // The dependency closure this app compiled against, so BC's ReferenceManager can
                 // link types from it that appear in the sibling's public surface — same reason as

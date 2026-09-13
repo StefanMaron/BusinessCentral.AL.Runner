@@ -69,15 +69,12 @@ public class WatchSiblingSymbolsIncrementalTests
             end;
         """;
 
-    [SkippableFact]
-    public async Task Watch_SiblingDependency_TakesTheFastPath_AndTheDependentSeesItsCurrentSurface()
+    /// <summary>A parent directory holding the dependency app and the test app that depends on it.</summary>
+    private static (string Root, string DepDir, string TestDir) CreateFixture(string tag)
     {
-        TestArtifacts.SkipIfMissing();
-
-        var root = TestScratch.Dir("al-runner-watch-sibling-symbols-2672");
+        var root = TestScratch.Dir($"al-runner-sibling-symbols-2672-{tag}");
         var depDir = Path.Combine(root, "wsi-dep");
         var testDir = Path.Combine(root, "wsi-tests");
-        var cacheDir = TestScratch.Dir("al-runner-watch-sibling-symbols-2672-cache");
         Directory.CreateDirectory(depDir);
         Directory.CreateDirectory(testDir);
         File.WriteAllText(Path.Combine(depDir, "app.json"), $$"""
@@ -97,6 +94,52 @@ public class WatchSiblingSymbolsIncrementalTests
         """);
         WriteDep(depDir, "");
         WriteTests(testDir, "cycle 1", "Answer.Value()", 42);
+        return (root, depDir, testDir);
+    }
+
+    // A one-shot run has no baseline to reuse, so the path line is noise there and stays off (#2672).
+    [SkippableFact]
+    public void Cli_SiblingDependency_DoesNotAnnounceTheSymbolCompilePath()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (root, _, _) = CreateFixture("cli");
+        var cacheDir = TestScratch.Dir("al-runner-cli-sibling-symbols-2672-cache");
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg
+                    + $" \"{root}\" --cache \"{cacheDir}\"",
+                RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
+            };
+            using var p = Process.Start(psi)!;
+            var stderrTask = p.StandardError.ReadToEndAsync();
+            var stdout = p.StandardOutput.ReadToEnd();
+            p.WaitForExit();
+            var output = stdout + "\n" + stderrTask.Result;
+            Assert.True(p.ExitCode == 0, $"exit {p.ExitCode}:\n{output}");
+            // The sibling symbols were really built: the dependent compiled and its test ran.
+            Assert.Contains("PASS", output);
+            Assert.DoesNotContain("WSI answered", output);
+            Assert.DoesNotContain("[sibling-symbols]", output);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+            try { Directory.Delete(cacheDir, recursive: true); } catch { }
+        }
+    }
+
+    [SkippableFact]
+    public async Task Watch_SiblingDependency_TakesTheFastPath_AndTheDependentSeesItsCurrentSurface()
+    {
+        TestArtifacts.SkipIfMissing();
+
+        var (root, depDir, testDir) = CreateFixture("watch");
+        var cacheDir = TestScratch.Dir("al-runner-watch-sibling-symbols-2672-cache");
 
         var lines = new List<CapturedLine>();
         var psi = new ProcessStartInfo
@@ -105,7 +148,7 @@ public class WatchSiblingSymbolsIncrementalTests
             // The parent directory is the bundle: that is what routes the dependency through
             // EmitSiblingSymbols rather than BuildSiblingSourceDeps.
             Arguments = TestBuildConfig.RunArgs(ProjectPath) + TestBuildConfig.BcVersionArg
-                + $" \"{root}\" --watch --verbose --cache \"{cacheDir}\"",
+                + $" \"{root}\" --watch --cache \"{cacheDir}\"",
             RedirectStandardOutput = true, RedirectStandardError = true,
             UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = RepoRoot,
         };
