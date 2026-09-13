@@ -259,6 +259,20 @@ public sealed partial class BcCompiler
     private readonly Dictionary<string, string> _radQuerySymbolsPathByModule =
         new(StringComparer.Ordinal);
 
+    // #2655 — the same shadow copy for the three remaining emit-only registries that
+    // ResetForNewBundleReload clears. Enum entries are RAW (base, or an enumextension's own
+    // values with the base id it targets), keyed by RadEnumSnapshotKey: an enumextension's
+    // registry slot is its TARGET's id, so it is matched by name, never by id. Replaying a
+    // merged entry through Register clobbers base/extension (#2709; SnapshotRaw).
+    private readonly Dictionary<string, Dictionary<string, (AlEnumMetadataRegistry.Entry Entry, int? ExtendsTargetId)>> _radEnumMetadataByModule =
+        new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Dictionary<int, string>> _radReportMetadataByModule =
+        new(StringComparer.Ordinal);
+    // Per report id, never AlReportLayoutRegistry.Snapshot(): that also carries layouts other
+    // modules registered this cycle.
+    private readonly Dictionary<string, Dictionary<int, AlReportLayoutInfo[]>> _radReportLayoutsByModule =
+        new(StringComparer.Ordinal);
+
     /// <summary>Full (re)capture — called after a clean full Emit, when every object this app
     /// declares is known and the live registries already hold its current metadata.</summary>
     private void CaptureRadMetadataSnapshotFull(
@@ -268,8 +282,13 @@ public sealed partial class BcCompiler
         var pages = new Dictionary<int, string>();
         var xmlPorts = new Dictionary<int, string>();
         var objects = new Dictionary<string, AlObjectMetadataEntry>(StringComparer.Ordinal);
+        var enums = new Dictionary<string, (AlEnumMetadataRegistry.Entry, int?)>(StringComparer.Ordinal);
+        var reports = new Dictionary<int, string>();
+        var layouts = new Dictionary<int, AlReportLayoutInfo[]>();
+        var rawEnums = AlEnumMetadataRegistry.SnapshotRaw().ToList();
         foreach (var sym in declared)
         {
+            CaptureRadEnumEntries(enums, rawEnums, sym.Kind, (sym as NavCA.ISymbolWithId)?.Id, sym.Name);
             var id = (sym as NavCA.ISymbolWithId)?.Id;
             // #3548 — the general capture covers every kind, including the id-less ones the
             // two id-keyed snapshots below cannot represent, so it is taken first and does
@@ -288,10 +307,15 @@ public sealed partial class BcCompiler
                 pages[id.Value] = pageXml;
             else if (sym.Kind == NavCA.SymbolKind.XmlPort && AlXmlPortMetadataRegistry.TryGet(id.Value, out var xpXml))
                 xmlPorts[id.Value] = xpXml;
+            else if (sym.Kind == NavCA.SymbolKind.Report)
+                CaptureRadReport(reports, layouts, id.Value);
         }
         _radPageMetadataByModule[moduleName] = pages;
         _radXmlPortMetadataByModule[moduleName] = xmlPorts;
         _radObjectMetadataByModule[moduleName] = objects;
+        _radEnumMetadataByModule[moduleName] = enums;
+        _radReportMetadataByModule[moduleName] = reports;
+        _radReportLayoutsByModule[moduleName] = layouts;
 
         // #2939: the query-symbol source file THIS module's own full compile just wrote, or
         // null when it wrote none (it declares no query, or it is not the bundle-emit path at
@@ -340,25 +364,73 @@ public sealed partial class BcCompiler
         if (!_radObjectMetadataByModule.TryGetValue(moduleName, out var objects))
             _radObjectMetadataByModule[moduleName] = objects =
                 new Dictionary<string, AlObjectMetadataEntry>(StringComparer.Ordinal);
+        if (!_radEnumMetadataByModule.TryGetValue(moduleName, out var enums))
+            _radEnumMetadataByModule[moduleName] = enums =
+                new Dictionary<string, (AlEnumMetadataRegistry.Entry, int?)>(StringComparer.Ordinal);
+        if (!_radReportMetadataByModule.TryGetValue(moduleName, out var reports))
+            _radReportMetadataByModule[moduleName] = reports = new Dictionary<int, string>();
+        if (!_radReportLayoutsByModule.TryGetValue(moduleName, out var layouts))
+            _radReportLayoutsByModule[moduleName] = layouts = new Dictionary<int, AlReportLayoutInfo[]>();
 
         foreach (var v in vacatedIds)
         {
             objects.Remove(RadObjectMetadataKey(v));
+            if (RadEnumSnapshotKey(v.Kind, v.Id, v.Name) is { } enumKey) enums.Remove(enumKey);
             if (v.Id is not { } id) continue;
             if (v.Kind == NavCA.SymbolKind.Page) pages.Remove(id);
             else if (v.Kind == NavCA.SymbolKind.XmlPort) xmlPorts.Remove(id);
+            else if (v.Kind == NavCA.SymbolKind.Report) { reports.Remove(id); layouts.Remove(id); }
         }
+        var rawEnums = AlEnumMetadataRegistry.SnapshotRaw().ToList();
         foreach (var c in changedIds)
         {
             var objKey = RadObjectMetadataKey(c);
             if (AlObjectMetadataRegistry.TryGetByKey(objKey, out var objEntry))
                 objects[objKey] = objEntry;
+            CaptureRadEnumEntries(enums, rawEnums, c.Kind, c.Id, c.Name);
             if (c.Id is not { } id) continue;
             if (c.Kind == NavCA.SymbolKind.Page && AlPageMetadataRegistry.TryGet(id, out var pageXml))
                 pages[id] = pageXml;
             else if (c.Kind == NavCA.SymbolKind.XmlPort && AlXmlPortMetadataRegistry.TryGet(id, out var xpXml))
                 xmlPorts[id] = xpXml;
+            else if (c.Kind == NavCA.SymbolKind.Report)
+                CaptureRadReport(reports, layouts, id);
         }
+    }
+
+    private static string? RadEnumSnapshotKey(NavCA.SymbolKind kind, int? id, string? name) => kind switch
+    {
+        NavCA.SymbolKind.Enum when id is { } enumId => $"enum:{enumId}",
+        NavCA.SymbolKind.EnumExtension when !string.IsNullOrEmpty(name) => $"enumext:{name}",
+        _ => null,
+    };
+
+    /// <summary>Reads this declared enum's (or enumextension's) raw registry entry into
+    /// <paramref name="enums"/>, dropping a stale one when the live registry holds none.</summary>
+    private static void CaptureRadEnumEntries(
+        Dictionary<string, (AlEnumMetadataRegistry.Entry, int?)> enums,
+        List<(AlEnumMetadataRegistry.Entry Entry, int? ExtendsTargetId)> rawEnums,
+        NavCA.SymbolKind kind, int? id, string? name)
+    {
+        if (RadEnumSnapshotKey(kind, id, name) is not { } key) return;
+        enums.Remove(key);
+        foreach (var raw in rawEnums)
+        {
+            bool match = kind == NavCA.SymbolKind.Enum
+                ? raw.ExtendsTargetId == null && raw.Entry.Id == id
+                : raw.ExtendsTargetId != null && string.Equals(raw.Entry.Name, name, StringComparison.Ordinal);
+            if (!match) continue;
+            enums[key] = raw;
+            return;
+        }
+    }
+
+    private static void CaptureRadReport(
+        Dictionary<int, string> reports, Dictionary<int, AlReportLayoutInfo[]> layouts, int id)
+    {
+        if (AlReportMetadataRegistry.TryGet(id, out var xml)) reports[id] = xml; else reports.Remove(id);
+        var own = AlReportLayoutRegistry.Get(id);
+        if (own.Count > 0) layouts[id] = own.ToArray(); else layouts.Remove(id);
     }
 
     /// <summary>Replays this app's shadow snapshot into the live process-wide registries.
@@ -372,6 +444,26 @@ public sealed partial class BcCompiler
         if (_radObjectMetadataByModule.TryGetValue(moduleName, out var objects))
             foreach (var e in objects.Values)
                 AlObjectMetadataRegistry.Register(e.Kind, e.Id, e.Name, e.Xml);
+        if (_radEnumMetadataByModule.TryGetValue(moduleName, out var enums))
+            foreach (var (e, target) in enums.Values)
+            {
+                if (target is { } targetId)
+                {
+                    // RegisterExtension APPENDS, and after a delta the changed extension is
+                    // already live — skip it rather than register it twice.
+                    if (AlEnumMetadataRegistry.SnapshotRaw(new[] { targetId })
+                        .Any(r => r.ExtendsTargetId == targetId && string.Equals(r.Entry.Name, e.Name, StringComparison.Ordinal)))
+                        continue;
+                    AlEnumMetadataRegistry.RegisterExtension(targetId, e.Name, e.Options, e.Indexes, e.Implementations, e.Captions);
+                }
+                else
+                    AlEnumMetadataRegistry.Register(e.Id, e.Name, e.Options, e.Indexes, e.Implementations, e.Captions,
+                        e.DefaultImplementations, e.UnknownImplementations, e.Extensible);
+            }
+        if (_radReportMetadataByModule.TryGetValue(moduleName, out var reports))
+            foreach (var (id, xml) in reports) AlReportMetadataRegistry.Register(id, xml);
+        if (_radReportLayoutsByModule.TryGetValue(moduleName, out var layouts))
+            foreach (var layout in layouts.Values.SelectMany(l => l)) AlReportLayoutRegistry.Register(layout);
         // #2939. RegisterBundleQuerySymbolsJson is itself idempotent AND always invalidates the
         // derived index (the file is rewritten in place by each full Emit), so replaying an
         // already-registered path is correct rather than merely harmless.
