@@ -243,14 +243,17 @@ public static class AppLoader
     internal static string ComputeManifestIndexIdentity(string fullPath)
     {
         using var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1, useAsync: false);
-        return ComputeManifestIndexIdentityCore(fs, () =>
-        {
-            var full = RunnerFingerprint.ComputeFileContentHashMemoized(fullPath);
-            return string.IsNullOrEmpty(full) || full == RunnerFingerprint.UnknownContentHash
-                ? RunnerFingerprint.UnknownContentHash
-                : "sha256-" + full;
-        });
+        return ComputeManifestIndexIdentityCore(
+            fs, () => FullContentIdentity(RunnerFingerprint.ComputeFileContentHashMemoized(fullPath)));
     }
+
+    /// <summary>The fallback identity. An unknown hash must stay the bare sentinel so
+    /// <see cref="TryPackageIdentity"/> refuses it; prefixed, every unreadable package would share
+    /// one <c>sha256-unknown</c> entry.</summary>
+    internal static string FullContentIdentity(string? contentHash)
+        => string.IsNullOrEmpty(contentHash) || contentHash == RunnerFingerprint.UnknownContentHash
+            ? RunnerFingerprint.UnknownContentHash
+            : "sha256-" + contentHash;
 
     // Largest EOCD comment a zip may carry, plus the fixed 22-byte record.
     private const int MaxEocdSearch = 22 + 0xFFFF;

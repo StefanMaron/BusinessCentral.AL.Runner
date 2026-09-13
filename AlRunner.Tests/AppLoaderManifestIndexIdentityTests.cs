@@ -585,6 +585,30 @@ public sealed class AppLoaderManifestIndexIdentityTests
             Path.GetFileName(AppLoader.ManifestIndexPathForTests(appPath)));
     }
 
+    [Fact]
+    public void FullContentFallback_UnknownHash_StaysTheRefusedSentinel_AndPublishesNothing()
+    {
+        Assert.Equal("sha256-abc123", AppLoader.FullContentIdentity("abc123"));
+        Assert.Equal(RunnerFingerprint.UnknownContentHash, AppLoader.FullContentIdentity(RunnerFingerprint.UnknownContentHash));
+        Assert.Equal(RunnerFingerprint.UnknownContentHash, AppLoader.FullContentIdentity(""));
+
+        WithCacheRoot(cacheRoot =>
+        {
+            var dir = NewDir("manifest-identity-fallback-unknown-");
+            var depId = new Guid("14141414-1414-1414-1414-141414141414");
+            var pathA = Path.Combine(dir, "A.app");
+            var pathB = Path.Combine(dir, "B.app");
+            File.WriteAllBytes(pathA, BuildApp(new Guid("1a1a1a1a-1a1a-1a1a-1a1a-1a1a1a1a1a1a"), "AAA", "Pub", "1.0.0.0", depId, "Dep", true, 0));
+            File.WriteAllBytes(pathB, BuildApp(new Guid("1b1b1b1b-1b1b-1b1b-1b1b-1b1b1b1b1b1b"), "BBB", "Pub", "1.0.0.0", depId, "Dep", true, 0));
+
+            // The default provider's fallback half, with the full-content hash unavailable.
+            static string Unreadable(string _) => AppLoader.FullContentIdentity(RunnerFingerprint.UnknownContentHash);
+            Assert.Equal("AAA", AppLoader.ReadManifestCore(pathA, Unreadable)!.Name);
+            Assert.Equal("BBB", AppLoader.ReadManifestCore(pathB, Unreadable)!.Name);
+            Assert.Empty(IndexEntries(cacheRoot));
+        });
+    }
+
     private sealed class CountingStream(Stream inner) : Stream
     {
         public long BytesRead { get; private set; }
