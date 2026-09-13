@@ -67,9 +67,18 @@ before reading a floor run as a verdict** — `gh api repos/<o>/<r>/actions/runs
 '.jobs[]|"\(.name): \(.conclusion)"'` — and treat `skipped` as "no new measurement", never as green.
 
 **Beside every verdict it prints one line about `main` itself** — `main floor: RED on 8b6885f4
-(main-verdict-floor.yml, 1h ago)` (#3679), so a PR branched during a red window is visible as
-inheriting a failure it did not cause. It is a report: it never changes the exit code, and a
-read that did not happen prints `unavailable`, never a verdict.
+(main-verdict-floor.yml, 1h ago, 6 commits behind main)` (#3679, #4111), so a PR branched during
+a red window is visible as inheriting a failure it did not cause. It is a report: it never
+changes the exit code, and a read that did not happen prints `unavailable`, never a verdict.
+
+**Read the distance, not only the age** (#4111): the age says when the verdict was taken, the
+distance says what it still covers. A correct green about a `main` eight merges back is still
+not a verdict about the commit under suspicion — measured live at filing, `GREEN on d50d41fd`
+beside a true distance of 8. Three spellings, and the third is deliberately not either of the
+first two: `on main's current head`, `N commits behind main`, and `distance unknown: <why>` when
+the comparison could not be read. The count comes from GitHub's compare API rather than a local
+`git rev-list`, because a stale worktree under-reports — the direction that makes a stale verdict
+look current.
 
 **And one line per corpus PR the body cites** — `corpus PR #226: NOT-MERGEABLE (head 321ac71a)`
 (#3674), from `.github/scripts/corpus_pr_state.py`, the same module `pr-gate.yml`'s
