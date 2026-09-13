@@ -153,7 +153,7 @@ public sealed class CodeunitSubscriberWitnessMultiChunkTests : IDisposable
 
     /// <summary>
     /// Five chunks, matching what Microsoft actually ships for Base Application, each clearing a
-    /// disjoint set of ids — the measured shape: 1,573 ids partitioned across five chunks with no
+    /// disjoint set of ids — the measured shape: 1,690 ids partitioned across five chunks with no
     /// id in two of them.
     ///
     /// <para>Two-chunk cover would pass for a merge that keeps only the FIRST and the LAST
