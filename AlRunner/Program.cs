@@ -3518,18 +3518,26 @@ foreach (var bundle in bundles)
             // suite's tests with no trace.
             if (sources.Count > 0 && alDiagnostics.Count == 0)
             {
-                var declaredObjects = allPaths
+                var censusFiles = allPaths
                     .Where(File.Exists)
                     .Concat(allPaths.Where(Directory.Exists)
                         .SelectMany(d => AlRunner.Infrastructure.SafeDirectoryScan.Files(d, "*.al")))
                     .Distinct()
-                    // Only the active #if branches: the compile leaves the rest out (#4076).
+                    .ToList();
+                List<string> CountDeclared(bool activeBranchesOnly) => censusFiles
                     .SelectMany(f => System.Text.RegularExpressions.Regex.Matches(
-                        AlRunner.Infrastructure.AlMemberSyntaxIndex.BlankInactivePreprocessorBranches(File.ReadAllText(f), f),
+                        activeBranchesOnly
+                            ? AlRunner.Infrastructure.AlMemberSyntaxIndex.BlankInactivePreprocessorBranches(File.ReadAllText(f), f)
+                            : File.ReadAllText(f),
                         @"^(table|codeunit|page|report|query|enum|xmlport|tableextension|pageextension|permissionset)\s+\d+\s+""?([^""\r\n]+?)""?\s*$",
                         System.Text.RegularExpressions.RegexOptions.Multiline))
                     .Select(m => m.Groups[2].Value.Trim())
                     .ToList();
+                // Raw text first: blanking inactive #if branches only removes declarations, so the
+                // raw count is an upper bound and the parse is paid only when it could fire (#4076).
+                var declaredObjects = CountDeclared(activeBranchesOnly: false);
+                if (declaredObjects.Count > sources.Count + tddExcludedCount + safeExcludedCount)
+                    declaredObjects = CountDeclared(activeBranchesOnly: true);
                 // #1997: the gap is not silent when it exactly matches tddExcludedCount — the
                 // TDD-EXCLUDED branch above already reported those objects loudly, with a
                 // synthetic FAILED test each. Only a gap BEYOND that is the unexplained,
