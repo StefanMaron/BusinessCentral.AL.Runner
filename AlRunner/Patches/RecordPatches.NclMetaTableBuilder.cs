@@ -750,9 +750,51 @@ public static partial class RecordPatches
             // resolves to true), so only the explicit opt-out needs passing. It matters even
             // when the relation itself was not captured — the flag alone is what suppresses
             // rename propagation on a field whose relation a tableextension adds later.
+            //
+            // #3568 — on a PLATFORM field the declaration is Microsoft's, not the AL author's:
+            // BC's boilerplate states ValidateTableRelation="0" for SystemCreatedBy and
+            // SystemModifiedBy and "1" for the other four, so BC's own value wins over the
+            // ParsedField default. 300 differences across the 150 measured tables.
+            if (p.Name == "validateRelation"
+                && BcPlatformFieldValue(f.FieldId, "ValidateRelation") is bool bcValidateRelation)
+            {
+                args[i] = (bool?)bcValidateRelation;
+                continue;
+            }
             if (p.Name == "validateRelation" && !f.RelationValidate)
             {
                 args[i] = (bool?)false;
+                continue;
+            }
+            // #3568 — three further members BC computes for its own platform fields and the
+            // positional ctor defaults instead. Each is copied from BC's instance rather than
+            // restated, so a BC version that changes one moves both sides together:
+            //   testRelations          BC's shared attribute block states TestTableRelation="1"
+            //                          on all six; the ctor default is false (900 differences).
+            //   allowInCustomizations  MetaField's ctor sets AsReadOnly from `Id >= 2000000000`,
+            //                          leaving the id-0 timestamp ToBeClassified (750).
+            //   clrType                MetaField's ctor computes it via
+            //                          CommonTypeInformation.ResolveClrType(Type); the
+            //                          positional ctor defaults it to "" (750 of ClrType's 1,888).
+            // A field that is NOT one of the six is unaffected: BcPlatformFieldValue answers
+            // null and the argument falls through to the ctor default exactly as before.
+            if (p.Name == "testRelations"
+                && BcPlatformFieldValue(f.FieldId, "TestRelations") is bool bcTestRelations)
+            {
+                args[i] = bcTestRelations;
+                continue;
+            }
+            if (p.Name == "allowInCustomizations"
+                && BcPlatformFieldValue(f.FieldId, "AllowInCustomizations") is { } bcAllowInCustomizations)
+            {
+                args[i] = bcAllowInCustomizations;
+                continue;
+            }
+            if (p.Name == "clrType"
+                && BcPlatformFieldValue(f.FieldId, "ClrType") is string bcClrType
+                && !string.IsNullOrEmpty(bcClrType))
+            {
+                args[i] = bcClrType;
                 continue;
             }
             if (p.Name == "optionString" && !string.IsNullOrEmpty(f.OptionMembers))
@@ -1258,6 +1300,94 @@ public static partial class RecordPatches
         new ParsedField(2000000004, "SystemModifiedBy", "Guid",     0,
             Editable: false, DataClassificationName: "EndUserPseudonymousIdentifiers"),
     };
+
+    /// <summary>
+    /// BC's OWN six platform <c>MetaField</c>s, keyed by field id, read once out of
+    /// <c>SystemFieldsHelper</c> in <c>Microsoft.Dynamics.Nav.Types</c>.
+    ///
+    /// <para>These fields are Microsoft's, not this runner's, so their metadata is read from
+    /// Microsoft rather than restated here (precompiled-dll-respect.md, "reuse before you
+    /// re-implement"). <c>SystemFieldsHelper</c> builds them by parsing boilerplate XML through
+    /// <c>MetaField(XmlNode, string)</c>; the runner builds its own through MetaField's
+    /// POSITIONAL constructor, whose defaults differ from what that XML produces. Four members
+    /// were therefore the positional ctor's default rather than BC's answer on every table
+    /// (#3568): <c>TestRelations</c>, <c>AllowInCustomizations</c>, <c>ValidateRelation</c> and
+    /// <c>ClrType</c>. Copying them from BC's instance keeps the two in step across BC
+    /// versions, where six transcribed constants would not.</para>
+    ///
+    /// <para>Null only when the <b>type</b> is absent — an older or reshaped
+    /// <c>Types.dll</c> that ships no <c>SystemFieldsHelper</c> at all. Callers leave the ctor
+    /// defaults standing then, which is exactly the pre-#3568 behaviour. A helper that IS
+    /// present but whose members have moved refuses instead: see
+    /// <see cref="LoadBcPlatformMetaFields"/>.</para>
+    /// </summary>
+    private static IReadOnlyDictionary<int, object>? BcPlatformMetaFields =>
+        _bcPlatformMetaFields ??= LoadBcPlatformMetaFields();
+
+    private static IReadOnlyDictionary<int, object>? _bcPlatformMetaFields;
+
+    /// <summary>
+    /// Reads the six platform <c>MetaField</c>s, or refuses.
+    ///
+    /// <para>Absence of the helper TYPE is a legitimate answer and returns null; every member
+    /// lookup below is an explicit refusal, because absence there is a defect rather than an
+    /// answer. Measured on both distinct <c>Types.dll</c> binaries the CI legs cover —
+    /// 27.5.46862.48827 (sha256 <c>f79286e9…</c>) and 28.4.53241.54447 (<c>ba117ca1…</c>) —
+    /// <c>SystemFieldsHelper</c> declares exactly these three properties and no others, each
+    /// holding a non-null value, and <c>MetaField</c> declares <c>Id</c>. So a null here means
+    /// Microsoft moved a member, and absorbing it would silently restore the ctor defaults this
+    /// method exists to replace — the "answer WRONG instead of failing" shape of #3663
+    /// (#3647/#3656/#3660 for what it costs).</para>
+    /// </summary>
+    private static IReadOnlyDictionary<int, object>? LoadBcPlatformMetaFields()
+    {
+        const string Surface = "platform field metadata (SystemId / SystemRowVersion / audit fields)";
+
+        var helper = _tMetaField?.Assembly
+            .GetType("Microsoft.Dynamics.Nav.Types.Metadata.SystemFieldsHelper");
+        if (helper == null || _tMetaField == null) return null;
+
+        const BindingFlags flags = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static;
+        var idProp = BcShape.Property(
+            _tMetaField, "Id", BindingFlags.Public | BindingFlags.Instance, Surface,
+            "the platform MetaFields cannot be keyed by field id without it (#3568)");
+
+        var map = new Dictionary<int, object>();
+        foreach (var propertyName in new[] { "SystemIdField", "SystemRowVersionField", "AuditFields" })
+        {
+            var value = BcShape.Property(helper, propertyName, flags, Surface,
+                            "BC's own value for TestRelations / AllowInCustomizations / "
+                            + "ValidateRelation / ClrType is read from it (#3568)")
+                        .GetValue(null)
+                ?? throw new BcShapeGapException(
+                    Surface, $"SystemFieldsHelper.{propertyName}",
+                    "read as null, so BC's own platform-field metadata cannot be read — it holds "
+                    + "a MetaField on every BC build the runner has seen (#3568)");
+
+            foreach (var field in value is Array array ? array.Cast<object>() : new[] { value })
+                if (field != null && idProp.GetValue(field) is int id) map[id] = field;
+        }
+        return map.Count > 0 ? map : null;
+    }
+
+    /// <summary>
+    /// The value BC's own platform <c>MetaField</c> carries for <paramref name="property"/>, or
+    /// null when this is not one of the six or <c>SystemFieldsHelper</c> is absent entirely.
+    /// A <c>MetaField</c> property that has MOVED refuses rather than answering null, for the
+    /// reason on <see cref="LoadBcPlatformMetaFields"/>.
+    /// </summary>
+    private static object? BcPlatformFieldValue(int fieldId, string property)
+    {
+        if (BcPlatformMetaFields is not { } map || !map.TryGetValue(fieldId, out var field)
+            || _tMetaField == null)
+            return null;
+
+        return BcShape.Property(
+            _tMetaField, property, BindingFlags.Public | BindingFlags.Instance,
+            "platform field metadata (SystemId / SystemRowVersion / audit fields)",
+            "BC's own value for this member is copied onto the runner's platform MetaField (#3568)")
+            .GetValue(field);
+    }
 
     /// <summary>
     /// BC's SIXTH system field, which is not shaped like the other five and must not be
