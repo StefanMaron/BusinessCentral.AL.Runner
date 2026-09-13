@@ -5,21 +5,11 @@ using Xunit;
 namespace AlRunner.Tests;
 
 /// <summary>
-/// #4096 — a source-compiled app sees the objects of the apps it DECLARES, plus the
-/// dependencies those apps propagate, and nothing else. Chain: test -&gt; middle -&gt; base.
-///
-/// BC's rule, measured with alc 17.0.34.45391: the test app declaring only the middle app
-/// and naming a base-app codeunit fails with <c>error AL0185: Codeunit '...' is missing</c>;
-/// with <c>"propagateDependencies": true</c> on the middle app it compiles. The mechanism is
-/// <c>ReferenceManager.ResolveDirectReferences</c> in Microsoft.Dynamics.Nav.CodeAnalysis,
-/// which adds a declared reference's own dependencies only when they are propagated.
-///
-/// Each shape the runner compiles source apps through is driven separately, because each
-/// pre-pass reaches the compiler with its own reference state: sibling discovery (one bundle
-/// argument), the layered pre-pass (three bundle arguments), and a single bundle holding all
-/// three apps.
-///
-/// Spawns the real runner; needs the BC artifact cache. Skips (visibly) when absent.
+/// #4096 — chain test -&gt; middle -&gt; base. The test app may name the base codeunit only when
+/// the middle app sets <c>propagateDependencies</c>; otherwise BC refuses with AL0185 (measured
+/// with alc 17.0.34.45391). Each source-app compile shape is driven: sibling discovery, the
+/// layered pre-pass, and one bundle holding all three apps. Spawns the real runner; skips
+/// visibly without the BC artifact cache.
 /// </summary>
 public class TransitiveDependencyVisibilityTests
 {

@@ -1,16 +1,7 @@
-// BcCompiler.DeclaredReferences — which dependencies a source-compiled app may reference (#4096).
-//
-// BC's compiler sees the references an app DECLARES (app.json `dependencies`, plus the
-// `application` and `platform` floors) and, for each of those, the dependencies it
-// propagates (`propagateDependencies: true`). Nothing else: an undeclared transitive
-// dependency is AL0185. Measured with alc 17.0.34.45391, and decided in
-// Microsoft.Dynamics.Nav.CodeAnalysis by ReferenceManager.ResolveDirectReferences, which adds
-// a reference's own dependencies only when IsPropagated.
-//
-// The runner hands the compiler the whole resolved closure (and every sibling / JSON symbol
-// module it knows), so the spec list is narrowed here. Only the SPEC list: the loader keeps
-// answering for every module, because BC walks loader.GetDependencies to build each module's
-// ReferenceModules.
+// BcCompiler.DeclaredReferences — an app compiles against what it declares, plus what those
+// declarations propagate; an undeclared transitive dependency is AL0185 (#4096; BC's rule is
+// CodeAnalysis ReferenceManager.ResolveDirectReferences). Narrow the SPEC list only: the loader
+// must keep serving every module, because BC builds ReferenceModules through loader.GetDependencies.
 using System.Collections.Concurrent;
 using AlRunner.Infrastructure;
 using NavCA = Microsoft.Dynamics.Nav.CodeAnalysis;
