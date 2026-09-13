@@ -110,3 +110,31 @@ Found by a reviewer agent on PR #4086, which had handed back before the nightly 
 PR's author had already corrected the code at the current head by removing the
 `[HandlerFunctions]` — so the failures *confirmed* its BC claim — but nothing in the PR body
 recorded it, leaving a reader who found that run unable to reconstruct what happened.
+
+### Why the job succeeds, measured rather than read (2026-09-13, PR #4109)
+
+The first version of the rule section said the test step "catches the failure and downgrades it
+to a `::warning::`". A reviewer checked run `34736501961` and found **zero**
+`::warning::Run-TestsInBcContainer` lines in a run whose own summary reports five failures. I
+confirmed it: the single grep hit is the `run:` block echoed **as source**, carrying the
+`[36;1m` colour escape.
+
+The real mechanism is one line above the `catch`:
+
+```powershell
+Run-TestsInBcContainer ... -detailed -returnTrueIfAllPassed | Out-Null
+```
+
+`-returnTrueIfAllPassed` makes a failing suite **return `$false`** instead of throwing, and
+`| Out-Null` discards the return value. Nothing reads it, so PowerShell's success stream stays
+clean and the job concludes `success`. The `catch` is real and its justification is sound — it
+keeps one suite's failure from aborting the other — but it covers exceptions, which failing
+tests do not raise.
+
+Practical consequence, and the reason this is worth a paragraph: a reader who knows the job
+swallows failures will look for the warning that swallowed them. There is none, and its absence
+reads as "nothing was swallowed".
+
+The misattribution is itself an instance of the `[36;1m` trap this repository has now recorded
+three times in one session: an Actions log prints the `run:` block as source before any stdout,
+so grepping for a string that appears in the script finds the script.

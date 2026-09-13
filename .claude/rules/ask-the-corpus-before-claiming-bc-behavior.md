@@ -99,11 +99,13 @@ independent mechanisms put it there** — only the second explains the conclusio
 
 - the workflow is **deliberately not a required status context** (its header says so in
   capitals), so a red never blocks a merge;
-- the test step **catches the failure and downgrades it to a `::warning::`**
-  (`nightly-windows.yml`, the `Run-TestsInBcContainer` call), so the *job* succeeds. Its reason
-  is at the line: *"A failing test must not abort the other suite — the artifact is the
-  deliverable."* Two suites run per job, and a failure in the first must not deny you the
-  second's results.
+- the test step **never fails in the first place**: `Run-TestsInBcContainer` is called with
+  `-returnTrueIfAllPassed`, so a failing test makes it **return `$false`** rather than throw —
+  and the call is piped to `| Out-Null`, which discards that return value. The job therefore
+  succeeds. There is a `catch` beside it, but it covers a genuine exception and **does not fire
+  on failing tests**: measured on run `34736501961`, whose summary reports five failures and
+  whose log contains **zero** `::warning::Run-TestsInBcContainer` lines. Do not go looking for a
+  warning to detect swallowed failures — there is none.
 
 Both are intended. The header states the cost the design accepts: *"if the license drifts, it
 re-reports those as failures forever and everyone learns to ignore it."* Measured on run `34736501961`
