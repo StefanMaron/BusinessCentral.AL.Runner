@@ -131,15 +131,15 @@ inside a whole cold `BcAppSymbolCache.Parse`, even with instruction counts. The 
 removes most repeat parses.
 
 Measured on runner `775e3d02` (Release build), Base Application `28.1.49838.53910`, on a
-12-core box under load average 13 to 23. Every row is five fresh processes; the table gives the
-median.
+12-core box under load average 13 to 23. Unless a row says otherwise, it is five fresh processes, each doing one pass, and the table
+gives the median.
 
 | what | tree builds (`ParseObjectTextCallCount`) | instructions (user) | wall |
 |---|---|---|---|
 | Normal-class fields carrying a `TableRelation` | 7,583 fields, 1,113 distinct texts | | |
 | all 7,583 texts through `TryParseRelationArmsText`, cold process | **1,113** | **2.5 G** over an empty-process baseline (paired: 2.83, 2.92, 2.52, 1.35, 2.11) | 387 ms (319 to 654) |
 | the same, `AL_RUNNER_PARSE_TREE_CACHE_BYTES=0` (3 runs) | 6,715 | 6.8 G (paired: 7.19, 6.83, 4.93) | 712 ms (442 to 1382) |
-| the same, second pass in one process | 0 | not measured | 38 ms |
+| the same texts again in the same process (served by the in-process keyed tree cache, not a second cold read) | 0 | not measured | 38 ms |
 | whole cold `BcAppSymbolCache.Parse` of Base Application | 2,668 | 30.5 G (whole process) | 2,151 ms |
 | the same with the relation parse returning `null` | 1,555 | 29.8 G | 1,973 ms |
 
@@ -152,8 +152,9 @@ Read the rows this way:
   instruction deltas for the last two rows were -0.35, 0.14, 0.03, 6.55 and 1.57 G, on about
   30 G per process. The isolated row is the upper bound. It includes JIT-compiling BC's parser,
   and the real read has already paid that for `CalcFormula`.
-- **The cost is paid once per cache root and app content hash.** For scale: loading the Base
-  Application closure costs about 70 s cold per invocation (`.claude/rules/no-base-app-in-csharp-tests.md`).
+- **The cost is paid once per cache root and app content hash.** A warm read is a `bc-symbols`
+  cache HIT and never reaches the parser. The honest scale is the whole cold read of the same
+  app, measured above at about 2.2 s.
 - **#4094 adds little.** It extends the parse to FlowFilter and FlowField relations: 204 fields
   and 78 distinct texts, 17 of which are new. That is 17 more tree builds.
 
