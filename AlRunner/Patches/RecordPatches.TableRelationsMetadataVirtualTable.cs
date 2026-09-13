@@ -6,6 +6,7 @@
 using System.Reflection;
 using Microsoft.Dynamics.Nav.Runtime;
 using Microsoft.Dynamics.Nav.Types;
+using AlRunner.Infrastructure;
 
 namespace AlRunner.Patches;
 
@@ -88,13 +89,20 @@ public static partial class RecordPatches
         if (_trmCreateEntry != null) return;
         const BindingFlags inst = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         var t = provider.GetType();
-        var getFieldNos = t.GetMethod("GetFieldNos", inst);
-        var getRelationNos = t.GetMethod("GetRelationNos", inst);
-        var getConditionNos = t.GetMethod("GetConditionNos", inst);
-        var createEntry = t.GetMethod("CreateNewTableRelationEntry", inst);
+        // BcShape.FindMethod, not Type.GetMethod: a name-only GetMethod hands back the
+        // most-derived declaration when BC `new`-hides a member, and drives the wrong one
+        // silently. FindMethod refuses on an ambiguity and returns null on absence, which is
+        // what the joint null-check below already expects (#3069).
+        const string Surface = "table-relations-metadata";
+        const string Detail = "BC shape changed; see #4088";
+        var getFieldNos = BcShape.FindMethod(t, "GetFieldNos", inst, Surface, "GetFieldNos", Detail);
+        var getRelationNos = BcShape.FindMethod(t, "GetRelationNos", inst, Surface, "GetRelationNos", Detail);
+        var getConditionNos = BcShape.FindMethod(t, "GetConditionNos", inst, Surface, "GetConditionNos", Detail);
+        var createEntry = BcShape.FindMethod(t, "CreateNewTableRelationEntry", inst, Surface, "CreateNewTableRelationEntry", Detail);
         var nclMetadata = t.GetProperty("NclMetadata", inst);
         var rangeType = getFieldNos?.GetParameters()[0].ParameterType;
-        var getBounds = rangeType?.GetMethod("GetInclusiveIntegerBounds", inst);
+        var getBounds = rangeType == null ? null
+            : BcShape.FindMethod(rangeType, "GetInclusiveIntegerBounds", inst, Surface, "GetInclusiveIntegerBounds", Detail);
         var tryGet = nclMetadata?.PropertyType.GetMethods(inst).FirstOrDefault(m =>
             m.Name == "TryGetMetaTableById" && m.GetParameters().Length == 4
             && m.GetParameters()[0].ParameterType == typeof(int));
