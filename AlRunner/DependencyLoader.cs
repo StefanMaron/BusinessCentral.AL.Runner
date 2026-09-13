@@ -55,7 +55,11 @@ public sealed class DependencyLoader
         // across all of them, so a cache hit has to hand back the whole set — re-registering
         // only Asm would put the later app groups in a run back into the pre-fix state that
         // LoadAll's registration loop exists to prevent.
-        IReadOnlyList<Assembly>? Assemblies = null)
+        IReadOnlyList<Assembly>? Assemblies = null,
+        // #3250: what RunBundleForServer replays when it hands this module to a bundle at a
+        // DIFFERENT directory — the registering bundle's own emit-derived registries, which
+        // ResetForNewBundleReload clears every request. Recorded for THIS Asm only.
+        OwnBundleRegistryReplay? OwnBundleReplay = null)
     {
         /// <summary>Every assembly of this app, primary first; never empty.</summary>
         internal IReadOnlyList<Assembly> AllAssemblies => Assemblies ?? new[] { Asm };
@@ -1374,6 +1378,21 @@ public sealed class DependencyLoader
     }
 
     /// <summary>
+    /// #3250: attach the registering bundle's registry replay to the entry holding
+    /// <paramref name="asm"/>. Does nothing when the entry for <paramref name="appId"/> holds a
+    /// different module, so a replay can never be paired with code it was not captured from.
+    /// </summary>
+    internal static void RecordOwnBundleReplay(Guid appId, Assembly asm, OwnBundleRegistryReplay replay)
+    {
+        if (_cache.TryGetValue(appId, out var entry) && ReferenceEquals(entry.Asm, asm))
+            _cache[appId] = entry with { OwnBundleReplay = replay };
+    }
+
+    /// <summary>The replay recorded for <paramref name="asm"/> under <paramref name="appId"/>, or null.</summary>
+    internal static OwnBundleRegistryReplay? TryGetOwnBundleReplay(Guid appId, Assembly asm)
+        => _cache.TryGetValue(appId, out var entry) && ReferenceEquals(entry.Asm, asm) ? entry.OwnBundleReplay : null;
+
+    /// <summary>
     /// Record that <paramref name="asm"/> is the loaded module for AL app identity
     /// <paramref name="appId"/> — used by the bundle loop's own-AppGroup compile path
     /// (Program.cs) so an app compiled as ITS OWN bundle is visible here too, not just
@@ -1420,4 +1439,18 @@ public sealed class DependencyLoader
                 appId, existing.Name, existing.Publisher, existing.Version, existing.SourcePath,
                 name, publisher, version, sourcePath);
     }
+}
+
+/// <summary>
+/// #3250: the files that put a bundle's emit-derived registries back after
+/// <c>BcRuntime.ResetForNewBundleReload</c>. <see cref="EnumRegistrySidecar"/> is the
+/// <c>.enum-registry.json</c> shape, which carries the enum, report, report-layout, page,
+/// xmlport and object-metadata registries; <see cref="QuerySymbolsJson"/> is null for a bundle
+/// that declares no query. <see cref="CaptureFailure"/> is set, and the paths are null, when
+/// capturing failed: a reuse must refuse rather than read it as "nothing to replay", which is
+/// what a module <c>LoadAll</c> registered looks like.
+/// </summary>
+internal sealed record OwnBundleRegistryReplay(string? EnumRegistrySidecar, string? QuerySymbolsJson, string? CaptureFailure = null)
+{
+    internal static OwnBundleRegistryReplay Failed(string reason) => new(null, null, reason);
 }

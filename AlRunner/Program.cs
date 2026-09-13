@@ -5371,6 +5371,20 @@ return strictExitCode ? computedExitCode : 0;
                     $"  [server] {moduleName}: AppId {bundleId.AppId} already loaded earlier in " +
                     "this request/session — reusing that module instead of recompiling " +
                     "(see issue #1683/#1892).");
+            // #3250: this request's ResetForNewBundleReload cleared the registries the reused
+            // module's emit populated, and the cache block below is skipped on reuse. Null for a
+            // module DependencyLoader.LoadAll registered, which replays its own Tier-3 sidecars.
+            if (reusedAsm != null
+                && DependencyLoader.TryGetOwnBundleReplay(bundleId.AppId, reusedAsm) is { } ownReplay)
+            {
+                try { ApplyOwnBundleReplay(ownReplay); }
+                catch (Exception ex)
+                {
+                    return ServerRunResult.Failure(2, moduleName,
+                        $"reused module's registry replay failed: {ex.Message} "
+                        + "— its enum, page, report, xmlport and query metadata would be missing (#3250)", fileHashes);
+                }
+            }
         }
 
         // #1888: one app row per server-mode module (this mode never groups several
@@ -5390,6 +5404,7 @@ return strictExitCode ? computedExitCode : 0;
             // the request, exactly like an AL-output cache hit.
             bool cached = reusedAsm != null;
             string? cacheKey = null, cachePath = null, sidecarPath = null, querySidecarPath = null;
+            bool? cacheGateDeclaresQuery = null;
             if (reusedAsm == null && alCacheDir != null)
             {
                 // See AlCacheSidecars: a query bundle without its query-symbols sidecar must
@@ -5417,6 +5432,7 @@ return strictExitCode ? computedExitCode : 0;
                 bool bundleDeclaresQuery;
                 using (AlRunner.Infrastructure.PhaseLog.AppStage("query-decl-probe"))
                     bundleDeclaresQuery = BcCompiler.BundleDeclaresQuery(allPaths);
+                cacheGateDeclaresQuery = bundleDeclaresQuery;
                 cacheKey = ComputeAlCacheKey(allPaths, moduleName,
                     ordered: serverDepIds.Terms, appRootDir: bucketRoot);
                 cachePath = Path.Combine(alCacheDir, cacheKey + ".dll");
@@ -5630,6 +5646,28 @@ return strictExitCode ? computedExitCode : 0;
                         // that check and this registration — see loud-failures.md.
                         return ServerRunResult.Failure(3, moduleName, $"FATAL: {ex.Message}", fileHashes);
                     }
+                    // #3250: capture what a later request reusing this module from another
+                    // directory must replay. The probe re-reads AL text only on a compile, which
+                    // has just read all of it; a HIT reuses the cache gate's answer.
+                    OwnBundleRegistryReplay ownReplayCapture;
+                    try
+                    {
+                        bool declaresQuery = cacheGateDeclaresQuery ?? BcCompiler.BundleDeclaresQuery(allPaths);
+                        ownReplayCapture = CaptureOwnBundleReplay(
+                            bundleId.AppId, moduleName, sidecarPath,
+                            declaresQuery ? BcCompiler.BundleQuerySymbolsPathFor(moduleName) : null,
+                            querySidecarPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        // Recorded, not dropped: with nothing recorded a later reuse cannot tell
+                        // this module from one LoadAll registered, and runs without replaying.
+                        ownReplayCapture = OwnBundleRegistryReplay.Failed(ex.Message);
+                        Console.Error.WriteLine(
+                            $"  [server] {moduleName}: could not capture the registry replay for a later "
+                            + $"cross-bundle reuse of this module ({ex.Message}); that reuse will refuse (#3250).");
+                    }
+                    DependencyLoader.RecordOwnBundleReplay(bundleId.AppId, asm, ownReplayCapture);
                 }
             }
 
