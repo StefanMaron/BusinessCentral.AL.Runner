@@ -483,6 +483,10 @@ public sealed class VirtualTableRefusalClaimTests
         // PermissionSetSystemTableShapeGap / PermissionSystemTableShapeGap (the latter joined at #3695).
         ["RecordPatches.PermissionSetSystemTable.cs"] = 1,
         ["RecordPatches.PermissionSystemTable.cs"] = 2,
+        // CheckInventoryScope's app-group-visibility gap (#2279): an in-memory store populated
+        // under one app group and read under another cannot drop the first group's rows, so it
+        // refuses rather than let the second group see them.
+        ["RecordPatches.AppGroupObjectVisibility.cs"] = 1,
     };
 
     [Fact]
