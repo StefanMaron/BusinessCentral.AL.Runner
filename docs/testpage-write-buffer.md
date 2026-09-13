@@ -169,6 +169,53 @@ local function would have kept the old test green while hiding the ordering mark
 the hazard caught only by the ordering test failing for a reason that does not name it.
 Verified by applying exactly that rewrite: the old shape passed, the current one fails.
 
+## Insert on focus
+
+When a started new row (`OpenNew()`, `New()`, or a draft line a write promoted) is written to
+the table is decided by focus, not by the key being complete (issue #4062).
+
+**What BC does.** Read from the client, `Microsoft.Dynamics.Nav.Client.UI` 28.4:
+
+- `AutoInsertPattern` is bound only when the page's `DelayedInsert` is false.
+- `OnActiveControlChangedOnDraftRow` inserts the draft row (`TransactionManager.Save(row,
+  SaveDraft)`, no changed-values gate) when focus moves from a field control to a field or group
+  control that is **not a key control**, the form is editable and has no validation errors.
+- `ActiveControlChanged` ignores a change that also changed the row, unless the page is bound
+  to a single entity (a Card). So on a repeater, focus arriving on a new line from another line
+  does not insert.
+- `TestFieldProxy.Value`'s setter calls `Activate()` before it writes, so `SetValue` on a
+  non-key control inserts first and writes second. Reading `Value` does not activate.
+- `TestPageProxy`'s constructor activates the form's initial control
+  (`InitialActiveControlStrategy`: first visible editable QuickEntry field, then first editable
+  key field in key order, then first editable field; a repeater skips the QuickEntry step).
+
+**What measured it.** Corpus codeunit 60576 "TPBK Tests" (StefanMaron/BusinessCentral.AL.Language.Tests#340):
+a blank-key Card row is numbered by `OnInsert` right after the first non-key `SetValue`, and
+`OnInsert` sees that control still blank; `Activate()` alone inserts on a non-key control and
+not on the key; `DelayedInsert = true` waits for `Close()`; a List behaves the same, and a
+second line's first write does not insert. It also agrees with the two older claims: typing
+only the key of a Card inserts nothing (60844), and a List insert sees the next control blank
+(60636).
+
+**How the runner does it.** `LiveNavTestPage.ActivateControl`, called from
+`LiveNavTestField.Activate()` and at the start of `LiveNavTestField.Write`;
+`FocusInitialControl` at the end of `RunnerTestPageState.MarkOpened`; a row change is
+`InsertEmptyRow` bumping `_rowEpoch`. `AlRunner.Tests/TestPageInsertOnFocusTests.cs` has one AL
+test per rule, and removing any one rule reds only its test.
+
+**Not modelled.**
+
+- **Parts.** A linked part keeps #3441's key-complete insert (`InsertOnCompletePrimaryKey`).
+  In BC a control in a part moves focus across forms (`HostedForm_ActiveControlChanged`
+  inserts the *host's* draft row), which the runner does not track.
+- **Page-variable controls** do not count as field controls either way; no corpus test
+  measures them.
+- **Actions.** BC's `TestActionProxy.Invoke` activates the action control too, so a field
+  control activated right after an action has no field control to come from and does not
+  insert. The runner does not move focus on an action.
+- BC dedupes activation per TestPage session (`session.FocusedControl`); the runner tracks
+  focus per page.
+
 ## Sister documents
 
 - `.claude/rules/ask-the-corpus-before-claiming-bc-behavior.md` — why the tier's eight legs

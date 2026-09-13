@@ -1126,6 +1126,22 @@ internal sealed partial class RunnerPageInstance
         => path?.OfType<Microsoft.Dynamics.Nav.Types.Metadata.ActionGroupBaseDefinition>()
            ?? Array.Empty<Microsoft.Dynamics.Nav.Types.Metadata.ActionGroupBaseDefinition>();
 
+    /// <summary>Every control the page declares, in page-tree order, with a literal-true QuickEntry flag.</summary>
+    internal IReadOnlyList<(int Id, bool QuickEntry)> ControlIdsInPageOrder()
+    {
+        if (_form is not NavForm form || form.MasterPage is not { } masterPage)
+            return Array.Empty<(int, bool)>();
+        var result = new List<(int, bool)>();
+        foreach (var element in masterPage.FindAll(e => e is Microsoft.Dynamics.Nav.Types.Metadata.ControlDefinition))
+        {
+            var control = (Microsoft.Dynamics.Nav.Types.Metadata.ControlDefinition)element;
+            var quickEntry = string.Equals(control.QuickEntry, "true", StringComparison.OrdinalIgnoreCase)
+                             || control.QuickEntry == "1";
+            result.Add((control.ID, quickEntry));
+        }
+        return result;
+    }
+
     /// <summary>
     /// Whether <paramref name="controlId"/> names a control this page DECLARES at all — the
     /// question "is this id in the page's control-id space", asked of the page's own merged
@@ -1146,22 +1162,6 @@ internal sealed partial class RunnerPageInstance
     /// from ordinary AL — <c>GetField(Rec.FieldNo(X))</c> confuses the two spaces — and it is
     /// what corpus codeunit 60346 measures.</para>
     /// </summary>
-    /// <summary>Every control the page declares, in page-tree order, with a literal-true QuickEntry flag.</summary>
-    internal IReadOnlyList<(int Id, bool QuickEntry)> ControlIdsInPageOrder()
-    {
-        if (_form is not NavForm form || form.MasterPage is not { } masterPage)
-            return Array.Empty<(int, bool)>();
-        var result = new List<(int, bool)>();
-        foreach (var element in masterPage.FindAll(e => e is Microsoft.Dynamics.Nav.Types.Metadata.ControlDefinition))
-        {
-            var control = (Microsoft.Dynamics.Nav.Types.Metadata.ControlDefinition)element;
-            var quickEntry = string.Equals(control.QuickEntry, "true", StringComparison.OrdinalIgnoreCase)
-                             || control.QuickEntry == "1";
-            result.Add((control.ID, quickEntry));
-        }
-        return result;
-    }
-
     internal bool DeclaresControl(int controlId)
         => _form is NavForm form && form.MetadataHelper.TryGetControlDefinitionById(controlId, out _);
 
