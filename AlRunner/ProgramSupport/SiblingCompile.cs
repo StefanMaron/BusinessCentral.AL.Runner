@@ -273,24 +273,27 @@ internal static partial class ProgramSupport
     }
 
     // ── --emit-app subcommand ──────────────────────────────────────────────────
-    // Usage: --emit-app <bundleDir> <outPath> [--package-cache PATH ...]
+    // Usage: --emit-app <bundleDir> <outPath>
     // Emits the bundle dir as a real NAVX .app package using PackageModuleOutputter.
     // Useful as a standalone debug tool and as the core of the layered pre-pass.
     internal static int RunEmitApp(string[] args)
     {
         if (args.Length < 2)
         {
-            Console.Error.WriteLine("Usage: al-runner --emit-app <bundleDir> <outPath> [--package-cache PATH ...]");
+            Console.Error.WriteLine("Usage: al-runner --emit-app <bundleDir> <outPath>");
+            return 2;
+        }
+        // #4032: the packager reads only app.json and *.al, so any further argument would be
+        // accepted and ignored. Refuse before the identity read, which also exits 2.
+        if (args.Length > 2)
+        {
+            Console.Error.WriteLine(args[2] == "--package-cache"
+                ? "--emit-app: --package-cache has no effect (--emit-app packages app.json and the *.al sources and reads no package cache); remove it."
+                : $"--emit-app: unexpected argument '{args[2]}'. Usage: al-runner --emit-app <bundleDir> <outPath>");
             return 2;
         }
         var bundleDir = Path.GetFullPath(args[0]);
         var outPath = Path.GetFullPath(args[1]);
-        var caches = new List<string>();
-        for (int i = 2; i < args.Length; i++)
-        {
-            if ((args[i] == "--package-cache") && i + 1 < args.Length)
-                caches.Add(args[++i]);
-        }
 
         var appJsonPath = Path.Combine(bundleDir, "app.json");
         var identity = AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(appJsonPath);
