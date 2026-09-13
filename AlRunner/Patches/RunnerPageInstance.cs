@@ -2210,7 +2210,8 @@ internal sealed partial class RunnerPageInstance
         // built client-side page instance. Never on the first open — the object was just
         // constructed and is already at its defaults, and skipping it there keeps every
         // page's normal open path free of the extra scratch construction below.
-        if (_hasOpenedBefore) ResetGlobalsForReopen();
+        var reopen = _hasOpenedBefore;
+        if (reopen) ResetGlobalsForReopen();
         _hasOpenedBefore = true;
 
         // A reopen un-closes the page, and the mark has to go with it. RunnerPageInstance keeps
@@ -2219,6 +2220,8 @@ internal sealed partial class RunnerPageInstance
         // CurrPage.Close() would have GetBuiltInAction refusing "The TestPage is not open."
         // forever, on a page BC considers open again.
         ClosedForms.Remove(_form);
+
+        RaiseOnInit();
 
         // BEFORE the trigger, exactly where BC puts it: NavForm.OpenFormAsync runs
         // ApplySourceTableViewAndSavedValuesAsync() and only then RaiseOnOpenPageAsync().
@@ -2239,6 +2242,22 @@ internal sealed partial class RunnerPageInstance
         // registered a binding between construction and here must be in the name index too, and
         // a memoized index (including its negatives) would keep answering from before OnOpenPage.
         _bindingsByName = null;
+    }
+
+    /// <summary>
+    /// Run the page's OnInit — before OnOpenPage, as BC does — see RunnerFormInit.RaiseOnInit.
+    /// </summary>
+    private void RaiseOnInit()
+    {
+        if (_form is not NavForm form) return;
+        BeginTrigger();
+        var completed = false;
+        try
+        {
+            RunnerFormInit.RaiseOnInit(form);
+            completed = true;
+        }
+        finally { EndTrigger(completed); }
     }
 
     /// <summary>

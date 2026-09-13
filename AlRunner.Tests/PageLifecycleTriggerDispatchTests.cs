@@ -57,6 +57,8 @@ public sealed class PageLifecycleTriggerDispatchTests
         { "RaiseOnNewRecordAsync",          new[] { typeof(bool) },        typeof(ValueTask) },
         { "RaiseOnInsertRecordAsync",       new[] { typeof(bool) },        typeof(ValueTask<bool>) },
         { "RaiseOnQueryClosePageAsync",     new[] { typeof(FormResult) },  typeof(ValueTask<bool>) },
+        // RunnerFormInit.RaiseOnInit (#4114), not InvokeRecordTrigger — it throws when this is gone.
+        { "RaiseOnInitAsync",               Type.EmptyTypes,               typeof(ValueTask) },
     };
 
     [SkippableTheory]

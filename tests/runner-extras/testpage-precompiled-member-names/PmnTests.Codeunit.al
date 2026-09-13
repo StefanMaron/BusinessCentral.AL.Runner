@@ -28,7 +28,7 @@
 // compiler's spelling (`p790p790PageEditable`), so the lookup missed and the read refused.
 // The arms cover both properties and both directions, so neither answer can be a default:
 //   - 790  "G/L Account Categories", five actions Enabled = PageEditable   -> true  (OpenEdit)
-//   - 9900 "Import Data", IncludeAllCompanies Editable = ContainsCompanies -> false (unset at open)
+//   - 348 "Import Item Pictures", ReplaceMode Editable = ReplaceModeEditable -> false (unset at open)
 //   - 1810 "Data Migration Entities", Selected Visible = not HideSelected  -> true  (COMPOUND)
 //        and Balance Visible = ShowBalance                                 -> false (same page)
 //   - 790  GetBalance Editable = false (literal)                           -> still false
@@ -154,19 +154,22 @@ codeunit 64571 "PMN Precompiled Member Tests"
     [Test]
     procedure ExpressionBoundEditable_OnPrecompiledBasePage_ReadsFalseWhenTheGlobalIsFalse()
     var
-        ImportData: TestPage "Import Data";
+        ImportItemPictures: TestPage "Import Item Pictures";
     begin
-        // [GIVEN] Base Application page 9900 "Import Data" opened. Its IncludeAllCompanies
-        // control declares `Editable = ContainsCompanies`, a page global that only
-        // OnAssistEdit/OnValidate assign - so at open it still holds Boolean's default.
-        ImportData.OpenEdit();
+        // [GIVEN] Base Application page 348 "Import Item Pictures" opened. Its ReplaceMode
+        // control declares `Editable = ReplaceModeEditable`, a page global only ZipFileName's
+        // OnAssistEdit assigns; the page has no OnInit or OnOpenPage, so at open it still holds
+        // Boolean's default. (Page 9900 "Import Data" was used here until #4114: its OnInit
+        // raises "supported only in Business Central on-premises" on SaaS, which the runner
+        // reached only once it started running OnInit.)
+        ImportItemPictures.OpenEdit();
 
         // [THEN] The control reads NOT editable. This is the arm that makes the pair prove
         // something: the same mechanism answers true for page 790's actions above and false
         // here, so it is reading the global rather than defaulting in either direction. It
         // also covers Editable, where the arm above covers Enabled.
-        Assert.IsFalse(ImportData.IncludeAllCompanies.Editable(),
-            'IncludeAllCompanies declares Editable = ContainsCompanies, false before any company is loaded');
+        Assert.IsFalse(ImportItemPictures.ReplaceMode.Editable(),
+            'ReplaceMode declares Editable = ReplaceModeEditable, false before a zip file is chosen');
     end;
 
     [Test]

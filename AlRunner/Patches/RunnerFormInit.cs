@@ -65,6 +65,45 @@ public static class RunnerFormInit
     }
 
     /// <summary>
+    /// Run the page's OnInit trigger the way BC's own <c>NavForm.InitializeFormAsync</c> does —
+    /// through <c>NavForm.RaiseOnInitAsync</c>, then <c>IsFormInitialized = true</c> — for a
+    /// form whose constructor-time <c>InitializeForm()</c> the guard above skipped.
+    ///
+    /// <para>Every page's generated constructor calls <c>InitializeForm()</c>, and every form
+    /// the runner marks is marked AFTER its constructor returned, so the guard is false there
+    /// for every page and OnInit never ran (#4114). Not <c>InitializeForm()</c> itself: that
+    /// needs the instance mark, which also widens <c>GetMasterPage</c> for a form the runner
+    /// has no metadata for. Observably equivalent: same dispatcher, same flag, and the runner's
+    /// session answers <c>IsCompanyOpen = true</c>, so BC's own company gate would have run it
+    /// too. Corpus codeunit 60488 "POI Tests" pins the AL-observable half.</para>
+    ///
+    /// <para>Unconditional: each caller is one open, and a TestPage REOPEN is served by BC with a
+    /// fresh instance whose OnInit runs again. No measured path reaches one form through both
+    /// callers; if one appears, corpus 60488's 'IO' trace reads 'IIO'.</para>
+    /// </summary>
+    internal static void RaiseOnInit(Microsoft.Dynamics.Nav.Runtime.NavForm form)
+    {
+        const System.Reflection.BindingFlags Flags = System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public;
+        var initialized = typeof(Microsoft.Dynamics.Nav.Runtime.NavForm).GetProperty("IsFormInitialized", Flags)
+            ?? throw new System.InvalidOperationException(
+                "NavForm.IsFormInitialized not found — Ncl shape changed; do not commit");
+        var raise = typeof(Microsoft.Dynamics.Nav.Runtime.NavForm).GetMethod(
+                "RaiseOnInitAsync", Flags, binder: null, types: System.Type.EmptyTypes, modifiers: null)
+            ?? throw new System.InvalidOperationException(
+                "NavForm.RaiseOnInitAsync not found — Ncl shape changed; a page's OnInit would silently not run");
+        try { RunnerPageInstance.AwaitTriggerResult(raise.Invoke(form, System.Array.Empty<object>())); }
+        catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            // An Error() in OnInit is AL's own outcome; rethrow it unwrapped.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw;
+        }
+
+        initialized.GetSetMethod(nonPublic: true)?.Invoke(form, new object[] { true });
+    }
+
+    /// <summary>
     /// Cecil-injected guard on NavForm.GetMasterPage specifically — deliberately WIDER than
     /// ShouldRunRealFormInit.
     ///
