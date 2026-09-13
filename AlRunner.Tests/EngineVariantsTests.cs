@@ -175,4 +175,64 @@ public sealed class EngineVariantsTests
     {
         Assert.Equal("(none)", EngineVariants.DescribeAvailable(Array.Empty<EngineVariants.Variant>()));
     }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Resolve (#2190: the one decision shared by the bundle run and --precompile)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private static EngineVariants.Variant V(string version) => new(Version.Parse(version), "/variants/" + version);
+
+    [Fact]
+    public void Resolve_NoVariants_ProceedsInPlaceWithNoSwapAndNoWarning()
+    {
+        var r = EngineVariants.Resolve(Array.Empty<EngineVariants.Variant>(), new Version(28, 4, 1, 1), new Version(28, 1, 0, 0));
+        Assert.Equal(EngineVariants.ResolutionKind.NoVariantsShipped, r.Kind);
+        Assert.Null(r.SwapDir);
+        Assert.Null(r.FailureMessage);
+        Assert.Null(r.DegradedWarning);
+    }
+
+    [Fact]
+    public void Resolve_NoVariantServesSelected_RefusesNamingSelectedAndAvailable()
+    {
+        var r = EngineVariants.Resolve(new[] { V("27.5.1.1") }, new Version(28, 4, 2, 2), new Version(27, 5, 1, 1));
+        Assert.Equal(EngineVariants.ResolutionKind.NoneSupported, r.Kind);
+        Assert.Null(r.SwapDir);
+        Assert.Equal(
+            "BC version selection failed: no shipped engine variant supports BC 28.4.2.2 (major 28). " +
+            "Available variants: 27.5.1.1. Select a cached BC version this install ships an engine for " +
+            "(--bc-version), or update al-runner.",
+            r.FailureMessage);
+    }
+
+    [Fact]
+    public void Resolve_ExactVariantIsRunningEngine_NoSwapNoWarning()
+    {
+        var r = EngineVariants.Resolve(new[] { V("28.4.2.2"), V("27.5.1.1") }, new Version(28, 4, 2, 2), new Version(28, 4, 2, 2));
+        Assert.Equal(EngineVariants.ResolutionKind.RunningEngineMatches, r.Kind);
+        Assert.Null(r.SwapDir);
+        Assert.False(r.Degraded);
+        Assert.Null(r.DegradedWarning);
+    }
+
+    [Fact]
+    public void Resolve_ExactVariantIsNotRunningEngine_SwapsWithoutWarning()
+    {
+        var r = EngineVariants.Resolve(new[] { V("28.4.2.2"), V("27.5.1.1") }, new Version(27, 5, 1, 1), new Version(28, 4, 2, 2));
+        Assert.Equal(EngineVariants.ResolutionKind.SwapRequired, r.Kind);
+        Assert.Equal("/variants/27.5.1.1", r.SwapDir);
+        Assert.Null(r.DegradedWarning);
+    }
+
+    [Fact]
+    public void Resolve_SameMinorDifferentBuild_SwapsAndWarnsNamingBothBuilds()
+    {
+        var r = EngineVariants.Resolve(new[] { V("28.4.0.0") }, new Version(28, 4, 2, 2), new Version(28, 4, 2, 2));
+        Assert.Equal(EngineVariants.ResolutionKind.SwapRequired, r.Kind);
+        Assert.Equal("/variants/28.4.0.0", r.SwapDir);
+        Assert.True(r.Degraded);
+        Assert.StartsWith(
+            "[bc] warning: the shipped 28.4 engine variant was built against 28.4.0.0, not the selected 28.4.2.2",
+            r.DegradedWarning);
+    }
 }

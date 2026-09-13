@@ -92,13 +92,20 @@ internal static partial class ProgramSupport
         // TryShadowReexec's own comment for the full reasoning, and
         // AlRunner.Tests/PrecompileNclShadowHopTests.cs for the proof in both directions.
         //
-        // Deliberately variantSwapDir: null — `--precompile` does not do per-BC-minor engine
-        // variant selection today (the main bundle-run flow computes variantSwapDir from
-        // EngineVariants long after this early dispatch), so passing null keeps this call to
-        // exactly the "Ncl.dll isn't shipped" half of the decision and changes nothing else
-        // about the subcommand's behaviour.
+        // #2190: the per-BC-minor engine variant is the other half of that decision, and must
+        // be resolved here, after SelectedVersion is settled above. Same resolver as the
+        // bundle-run flow, so a version no shipped variant serves is refused here too.
+        var variantResolution = AlRunner.Infrastructure.EngineVariants.Resolve(
+            AlRunner.Infrastructure.EngineVariants.Discover(AppContext.BaseDirectory),
+            AlRunner.Infrastructure.BcArtifacts.SelectedVersion,
+            AlRunner.Infrastructure.BcArtifacts.EngineBuiltVersion());
+        if (variantResolution.Kind == AlRunner.Infrastructure.EngineVariants.ResolutionKind.NoneSupported)
         {
-            var shadowChildExit = TryShadowReexec(variantSwapDir: null);
+            Console.Error.WriteLine(variantResolution.FailureMessage);
+            return 2;
+        }
+        {
+            var shadowChildExit = TryShadowReexec(variantResolution.SwapDir);
             if (shadowChildExit.HasValue) return shadowChildExit.Value;
         }
 
@@ -125,6 +132,11 @@ internal static partial class ProgramSupport
                 return child.ExitCode;
             }
         }
+
+        // Printed only here, in the generation that does the work: the shadow child resolves the
+        // same degraded variant again, so printing before either hop above shows it twice.
+        if (variantResolution.DegradedWarning != null)
+            Console.Error.WriteLine(variantResolution.DegradedWarning);
 
         // Apply BC patches before any BC type is touched (BcCompiler uses BC types).
         BcRuntime.EnsureApplied();
