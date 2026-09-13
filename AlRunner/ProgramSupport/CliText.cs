@@ -197,6 +197,12 @@ internal static partial class ProgramSupport
         w.WriteLine("  Date/DateTime/Time/DateFormula values are rebuilt; BLOB/media values are NOT yet,");
         w.WriteLine("  and a table carrying one is refused whole. Every skipped or refused table is named on");
         w.WriteLine("  stderr with the reason. See docs/limitations.md.");
+        w.WriteLine("  Random(): every run prints `seed: N`. Each [Test] starts from its own RNG, derived");
+        w.WriteLine("  from N, its codeunit id and its method name, so a test sees the same Random() values");
+        w.WriteLine("  alone or in the full suite. To replay a failure: al-runner --seed N --test <id> ...");
+        w.WriteLine("  Randomize(seed) is honored as in BC; Randomize() with no seed is reseeded from the");
+        w.WriteLine("  test's derived seed (stderr warns). CreateGuid(), and so Any's text values, stay");
+        w.WriteLine("  nondeterministic. See docs/run-seed.md.");
         w.WriteLine("  If a provisioning-gap message names a specific missing set, force just that one");
         w.WriteLine("  (bypasses need-detection entirely — useful when the default `provision` mis-detects,");
         w.WriteLine("  issue #2085):");
@@ -409,6 +415,10 @@ internal static partial class ProgramSupport
         w.WriteLine("                          the AL_RUNNER_TEST_TIMEOUT_SEC env var if set; this flag");
         w.WriteLine("                          takes precedence over both. On timeout the test fails with");
         w.WriteLine("                          \"Test exceeded {N}s timeout.\" (v1-compatible message text).");
+        w.WriteLine("  --seed N                Run seed for AL Random() (default: AL_RUNNER_SEED, else a");
+        w.WriteLine("                          fresh one). Printed as `seed: N`, and in --output-json and");
+        w.WriteLine("                          --output-junit; pass it back to replay a run's Random()");
+        w.WriteLine("                          values, even for one test alone. See docs/run-seed.md.");
         w.WriteLine();
         w.WriteLine("EXECUTION");
         w.WriteLine("  --jobs N, -j N          Run the given bundle dirs across N worker PROCESSES and");

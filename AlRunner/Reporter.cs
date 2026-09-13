@@ -766,6 +766,8 @@ public static class Reporter
             skipped = tests.Count(x => x.Test.Outcome == TestOutcome.Skipped),
             total = tests.Count,
             exitCode,
+            // #2502: pass it back as --seed to reproduce this run's Random() values.
+            seed = Infrastructure.RunSeed.Value,
             compilationErrors = compileErrors.Count > 0 ? compileErrors : null,
             executionErrors = executionErrors.Count > 0 ? executionErrors : null,
             suiteErrors = suiteErrors.Count > 0 ? suiteErrors : null,

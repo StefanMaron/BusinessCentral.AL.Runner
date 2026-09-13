@@ -2437,25 +2437,6 @@ public static partial class BcRuntime
         // NavSession.GetPermissionSet (both 3-arg overloads) is Cecil-owned (see
         // NclCecilRewrite.cs, Batch 8).
 
-        // ALSystemNumeric.ALRandomize/ALRandom — real impls reach NavCurrentThread.Session.Random
-        // (null on skeleton). Back with a process-static Random.
-        var alSysNumType = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.ALSystemNumeric");
-        if (alSysNumType != null)
-        {
-            var randomizeNoArg = alSysNumType.GetMethod("ALRandomize",
-                BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null);
-            if (randomizeNoArg != null)
-                Hook(randomizeNoArg, nameof(ALSystemNumeric_ALRandomize), "ALSystemNumeric.ALRandomize()");
-            var randomizeSeed = alSysNumType.GetMethod("ALRandomize",
-                BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(int) }, null);
-            if (randomizeSeed != null)
-                Hook(randomizeSeed, nameof(ALSystemNumeric_ALRandomize_Seed), "ALSystemNumeric.ALRandomize(int)");
-            var alRandom = alSysNumType.GetMethod("ALRandom",
-                BindingFlags.Public | BindingFlags.Static, null, new[] { typeof(int) }, null);
-            if (alRandom != null)
-                Hook(alRandom, nameof(ALSystemNumeric_ALRandom), "ALSystemNumeric.ALRandom(int)");
-        }
-
         // NavDialog.ALOpen — UI dialog open NREs reaching Tree.Session on skeleton. No-op.
         var navDialogType2 = navNcl.GetType("Microsoft.Dynamics.Nav.Runtime.NavDialog");
         if (navDialogType2 != null)

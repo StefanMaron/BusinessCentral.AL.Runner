@@ -1561,6 +1561,8 @@ public sealed class TestExecutor
         // uses on the wire (see AlCoverageTracker.BeginTest's doc comment) — always
         // called, cheap even when perTestCoverage was never requested.
         AlRunner.Infrastructure.AlCoverageTracker.BeginTest($"{codeunit}.{m.Name}");
+        // #2502: this test's Random() sequence depends only on the run seed and its own identity.
+        AlRunner.Infrastructure.RunSeed.BeginTest(codeunit, m.Name);
         // Enter BC's own "in test" scope for the duration of this test (mirrors
         // NavTestExecution.EnterTestCodeunit/LeaveTestCodeunit) — see BcRuntime.EnterTestExecutionScope
         // for why: it's what makes NavTenantSettingsHelper.IsSandbox()/IsProduction() (Codeunit 457

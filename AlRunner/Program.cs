@@ -630,6 +630,17 @@ for (int i = 0; i < args.Length; i++)
         testTimeoutSeconds = parsedTimeout;
         continue;
     }
+    if (args[i] == "--seed" && i + 1 < args.Length)
+    {
+        var rawSeed = args[++i];
+        if (!AlRunner.Infrastructure.RunSeed.TryParse(rawSeed, out var parsedSeed))
+        {
+            Console.Error.WriteLine($"--seed: '{rawSeed}' is not a whole number.");
+            return 2;
+        }
+        AlRunner.Infrastructure.RunSeed.Set(parsedSeed);
+        continue;
+    }
     if (args[i] == "--preprocessor-symbols" && i + 1 < args.Length)
     {
         foreach (var raw in args[++i].Split(','))
@@ -687,6 +698,9 @@ if (serverMode && watchMode)
     Console.Error.WriteLine("--server and --watch are mutually exclusive (both stay warm in-process; pick one).");
     return 2;
 }
+// #2502: resolve the run seed before anything can spawn a child, so every process shares it.
+try { _ = AlRunner.Infrastructure.RunSeed.Value; }
+catch (InvalidOperationException seedProblem) { Console.Error.WriteLine(seedProblem.Message); return 2; }
 // #2403: every file-producing flag's parent directory is created HERE, before the run,
 // because all three writers open their file only after it finishes — so a missing
 // directory used to cost the whole run (measured: 103s and 834 classified results, lost
@@ -4506,6 +4520,8 @@ int computedExitCode = 0;
 // Set when the --output-json document is owed to stdout, printed after the output writes
 // below have had their say on computedExitCode. See the branch that sets it.
 bool printJsonOutput = false;
+// #2502: the value that reproduces this run's Random() sequences. stdout is the JSON document in --output-json mode.
+(outputJson ? Console.Error : Console.Out).WriteLine($"seed: {AlRunner.Infrastructure.RunSeed.Value}");
 if (outputJson && willResume)
 {
     // The final attempt prints the whole run. If Rerun then fails to START that attempt it

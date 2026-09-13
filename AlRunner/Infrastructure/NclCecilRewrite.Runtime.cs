@@ -2031,6 +2031,37 @@ public static partial class NclCecilRewrite
         }
 
         RewriteExecutionSchedulerThreadToBackground(asm.MainModule);
+        RewriteNoSeedRandomizeToRunSeed(asm.MainModule);
+    }
+
+    /// <summary>
+    /// #2502 — <c>ALSystemNumeric.ALRandomize()</c> is <c>Session.Random = new Random()</c>.
+    /// Only the <c>newobj Random::.ctor()</c> is swapped for <see cref="RunSeed.CreateRandomizeRandom"/>;
+    /// BC's own session setter stays. The one imported memberRef is the same forwarding shape as
+    /// <c>NCLEnumMetadata.Create(int)</c> → <c>BcRuntime.NCLEnumMetadata_CreateByIdAlAware</c>.
+    /// <c>ALRandomize(int)</c> and <c>ALRandom(int)</c> are not touched.
+    /// </summary>
+    private static void RewriteNoSeedRandomizeToRunSeed(ModuleDefinition nclMod)
+    {
+        var numericT = nclMod.GetType("Microsoft.Dynamics.Nav.Runtime.ALSystemNumeric")
+            ?? throw new InvalidOperationException(
+                "[Cecil] ALSystemNumeric not found — Ncl shape changed; do not commit");
+        var randomize = numericT.Methods.FirstOrDefault(m =>
+                m.Name == "ALRandomize" && m.IsStatic && m.HasBody && m.Parameters.Count == 0)
+            ?? throw new InvalidOperationException(
+                "[Cecil] ALSystemNumeric.ALRandomize() not found — Ncl shape changed; do not commit");
+        var ctorCalls = randomize.Body.Instructions.Where(i => i.OpCode == OpCodes.Newobj
+            && i.Operand is MethodReference mr
+            && mr.DeclaringType.FullName == "System.Random"
+            && mr.Parameters.Count == 0).ToList();
+        if (ctorCalls.Count != 1)
+            throw new InvalidOperationException(
+                $"[Cecil] ALSystemNumeric.ALRandomize(): expected one `new Random()`, found {ctorCalls.Count} — Ncl shape changed; do not commit");
+        var helper = typeof(RunSeed).GetMethod(nameof(RunSeed.CreateRandomizeRandom),
+            BindingFlags.Public | BindingFlags.Static)!;
+        ctorCalls[0].OpCode = OpCodes.Call;
+        ctorCalls[0].Operand = nclMod.ImportReference(helper);
+        Console.Error.WriteLine("[Cecil] Rewrote ALSystemNumeric.ALRandomize() → Session.Random = RunSeed.CreateRandomizeRandom() (#2502)");
     }
 
     /// <summary>
@@ -2140,6 +2171,8 @@ public static partial class NclCecilRewrite
         // See the RewriteNcl block below for the detail. Additive: does not touch
         // NavForm.GetPart (#2600) or the page-background-task routing (#2628).
         set.Add("Microsoft.Dynamics.Nav.Runtime.Media.NavMediaFactory::ProcessMediaObject/3");
+        // #2502: the no-argument overload only; ALRandomize(int) stays BC's own.
+        set.Add("Microsoft.Dynamics.Nav.Runtime.ALSystemNumeric::ALRandomize/0");
     }
 
 }

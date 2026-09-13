@@ -663,31 +663,6 @@ public static partial class BcRuntime
         return shared;
     }
 
-    // ALSystemNumeric.ALRandomize / ALRandom — real impls hit NavCurrentThread.Session.Random
-    // which is null on the skeleton. Back the statics with a process-static Random.
-    private static System.Random _alRandom = new System.Random();
-    private static readonly object _alRandomLock = new object();
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void ALSystemNumeric_ALRandomize()
-    {
-        lock (_alRandomLock) _alRandom = new System.Random();
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static void ALSystemNumeric_ALRandomize_Seed(int seed)
-    {
-        lock (_alRandomLock) _alRandom = new System.Random(seed);
-    }
-
-    [MethodImpl(MethodImplOptions.NoInlining)]
-    public static int ALSystemNumeric_ALRandom(int maxNumber)
-    {
-        if (maxNumber < 0) maxNumber = -maxNumber;
-        if (maxNumber == 0) maxNumber = 1;
-        lock (_alRandomLock) return _alRandom.Next(maxNumber) + 1;
-    }
-
     // NavDialog.ALOpen — UI dialog open. Real impl reaches Tree.Session which is null.
     // No-op for skeleton tests; AL test code just needs the call to not throw.
     [MethodImpl(MethodImplOptions.NoInlining)]

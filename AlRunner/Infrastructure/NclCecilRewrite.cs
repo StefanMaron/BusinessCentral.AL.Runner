@@ -30,7 +30,7 @@ namespace AlRunner.Infrastructure;
 
 public static partial class NclCecilRewrite
 {
-    private const int CACHE_VERSION = 131;
+    private const int CACHE_VERSION = 132;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Cecil-owned skip registry (JmpHook→Cecil migration enabler).
