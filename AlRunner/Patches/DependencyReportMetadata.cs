@@ -264,6 +264,7 @@ public static partial class RecordPatches
             w.WriteElementString("ID", report.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
             w.WriteElementString("Name", report.Name);
             WriteDerivableReportProperties(w, report);
+            WriteRequestPageXml(w, report);
 
             // enclosing[d] = DataItemVarName of the innermost open data item at indentation d.
             var enclosing = new List<string>();
@@ -332,9 +333,8 @@ public static partial class RecordPatches
     /// DECODED NUMBER rather than the AL letter spelling — "X" is not a PermissionMask member
     /// and would throw where the value the symbol file states is perfectly readable.</para>
     ///
-    /// <para>Deliberately NOT written here: the <c>&lt;RequestPage&gt;</c> subtree, whose
-    /// element BC deserializes into a whole MetaPageDefinition. That is the other half of
-    /// #3808 and stays open — see docs/metadata-equivalence.md#reports.</para>
+    /// <para>The <c>&lt;RequestPage&gt;</c> subtree is the other half of #3808 and is written
+    /// by <see cref="WriteRequestPageXml"/> below.</para>
     /// </summary>
     private static void WriteDerivableReportProperties(XmlWriter w, BcAppSymbolCache.ReportSymbol report)
     {
@@ -351,6 +351,92 @@ public static partial class RecordPatches
         if (TryDecodePermissionMaskLetters(report.InherentPermissions, out var permissions))
             w.WriteElementString(
                 "InherentPermissions", permissions.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// The <c>&lt;RequestPage&gt;</c> subtree (#3808). Written for a report whose symbol file
+    /// states a <c>RequestPage</c> node — 660 of 660 across Base Application and System
+    /// Application at 28.1.49838.53910, including all 24 declaring <c>UseRequestPage = 0</c>.
+    ///
+    /// <para>WHY IT MATTERS, which is one <c>if</c> in BC's own code.
+    /// <c>MetaReport.CreateMasterPage</c> reads
+    /// <c>if (requestPageDefinition != null &amp;&amp; createRequestForm != null)</c> before
+    /// calling <c>createRequestForm</c>, and <c>requestPageDefinition</c> is set only by the
+    /// <c>REQUESTPAGE</c> arm of <c>MetaReport..ctor</c>. With no element the MasterPage stays
+    /// null and <c>NavReportSync</c> falls back to a stub whose own message is "its
+    /// [RequestPageHandler] will not be reachable" — so this element is what lets BC build the
+    /// real request page for a precompiled report.</para>
+    ///
+    /// <para>BC takes <c>val.FirstChild</c>, not a child found by name, so the
+    /// <c>PageDefinition</c> must be the FIRST child of <c>&lt;RequestPage&gt;</c>.</para>
+    ///
+    /// <para>ONLY THE FRAME IS DERIVED, and that is the whole shape rather than a shortfall:
+    /// <c>MetadataProvider.CreateRequestPage</c> ignores the document's <c>PageType</c> and
+    /// calls <c>CreatePage(…, PageType.ReportPreview)</c>, which loads BC's own
+    /// <c>MasterPageReportPreview</c> template and merges this document into it. Every
+    /// built-in control — ObjectOptions, PrinterName, LayoutName, the Advanced group — comes
+    /// from that template, not from here.</para>
+    ///
+    /// <para>The report's OWN controls are deliberately not transcribed, for the reason
+    /// <c>DependencyPageMetadataXml</c>'s header gives for ordinary page field controls: the
+    /// symbol file's <c>SourceExpression</c> is AL TEXT ("NewCompanyName",
+    /// <c>DataExchLineDef.Code</c>) rather than the compiled <c>DataColumnName</c> binding the
+    /// real document carries, and a request-page control's binding is registered from the
+    /// report's own IL at RunModal time (<c>RunnerFormInit.MarkSourceExpressionsWanted</c> →
+    /// <c>NavForm.RegisterSourceExpression</c>), never read from this XML. Measured: 466 of
+    /// 660 reports state a control tree, 2,938 nodes, 1,891 SourceExpression values, 247 of
+    /// them record-qualified. See docs/report-metadata-from-bc.md#request-page.</para>
+    /// </summary>
+    private static void WriteRequestPageXml(XmlWriter w, BcAppSymbolCache.ReportSymbol report)
+    {
+        if (!report.HasRequestPage) return;
+
+        w.WriteStartElement("RequestPage");
+        w.WriteStartElement("PageDefinition", MetaObjectsNamespace);
+        w.WriteAttributeString("MetadataVersion", "130000");
+        // ID="0" on every emitted document measured: a request page is not an object in its
+        // own right, and the symbol file agrees (Id 0 on all 660 nodes).
+        w.WriteAttributeString("ID", "0");
+        // The REPORT's name. The symbol file states the literal "RequestOptionsPage" for all
+        // 660 nodes, which is not what BC's emitter writes.
+        w.WriteAttributeString("Name", report.Name);
+
+        w.WriteStartElement("Properties", MetaObjectsNamespace);
+        w.WriteAttributeString(
+            "ReportID", report.Id.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        // The only two of BC's 22 PageTypes a report request page takes, and
+        // NavTestExecution.FindPageType routes BOTH to NavHandlerType.RequestPage — so this
+        // choice does not change handler routing, and is written to match BC's emit rather
+        // than to drive it.
+        w.WriteAttributeString("PageType", report.ProcessingOnly ? "ReportProcessingOnly" : "ReportPreview");
+        w.WriteAttributeString("Editable", "1");
+        // Present-but-empty, exactly as BC emits it, and load-bearing:
+        // MetadataProvider.ModifyReportRequestPage dereferences
+        // pageDefinition.Properties.SourceObject.SaveValues with no null check, and
+        // MetaPageDefinition deserializes a MISSING element to null rather than an empty one.
+        // Same reasoning as the three present-but-empty elements in DependencyPageMetadataXml.
+        w.WriteStartElement("SourceObject", MetaObjectsNamespace);
+        w.WriteEndElement();
+        w.WriteEndElement(); // Properties
+
+        w.WriteStartElement("Content", MetaObjectsNamespace);
+        // The filter container BC's emitter writes for every report. Empty, because the
+        // report's own controls are not transcribed (see the summary) — and an empty one is
+        // what BC's own document carries for report 9810 on all four builds measured.
+        w.WriteStartElement("Containers", MetaObjectsNamespace);
+        w.WriteAttributeString("xsi", "type", XsiNamespace, "ControlContainerDefinition");
+        w.WriteAttributeString("ContainerType", "RequestPageFilters");
+        w.WriteEndElement(); // Containers
+        w.WriteEndElement(); // Content
+
+        // Present-but-empty for the same reason as on a page:
+        // MetadataProvider.LoadExpressionRelationTables iterates masterPage.Expressions with
+        // no null check, one statement after the SourceObject read above.
+        w.WriteStartElement("Expressions", MetaObjectsNamespace);
+        w.WriteEndElement();
+
+        w.WriteEndElement(); // PageDefinition
+        w.WriteEndElement(); // RequestPage
     }
 
     private static void WriteDataItem(
