@@ -134,7 +134,7 @@ public static partial class RecordPatches
         // NREs in NCLMetaTable.get_PrimaryKey. LoadMetadata is what Populate would have
         // called; NCLMetaApplicationObject.LoadMetadata (the base call it starts with) has an
         // empty body, so nothing is skipped by entering one level down.
-        _mNclMetaTableLoadMetadata!.Invoke(built, Array.Empty<object?>());
+        LoadBcTableDocument(built);
 
         // The two bookkeeping assignments Populate() makes around LoadMetadata. metadataLoaded
         // is what stops NCLMetadata.GetMetaApplicationObjectInternal calling the no-op'd
@@ -256,7 +256,17 @@ public static partial class RecordPatches
         AlRunner.Infrastructure.FieldPoke.SetInstance(
             RequireObjectLoaderBackingField(built.GetType()),
             built, RunnerMetaApplicationObjectLoader.Instance);
+        LoadBcTableDocument(built);
+    }
+
+    private static void LoadBcTableDocument(NCLMetaTable built)
+    {
         _mNclMetaTableLoadMetadata!.Invoke(built, Array.Empty<object?>());
+        // BC's successfully loaded document replaces the derivation, including a field
+        // that now declares no relation (#3964). Retire only those superseded notes;
+        // a failed load or a different table must retain its unresolved-reference refusal.
+        foreach (var field in built.Fields)
+            ClearUnresolvedRelationReference(built.TableId, field.FieldNo);
     }
 
     private static FieldInfo? _fNclMetaAppObjObjectLoader;

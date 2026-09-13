@@ -92,6 +92,113 @@ public sealed class TableRelationUnresolvedRefusalTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch { /* best-effort cleanup */ }
     }
 
+    [SkippableTheory]
+    [InlineData(false, "relation")]
+    [InlineData(true, "relation")]
+    [InlineData(false, "plain")]
+    [InlineData(true, "plain")]
+    [InlineData(false, "invalid")]
+    [InlineData(true, "invalid")]
+    public void BcDocumentReplacement_DropsOnlySupersededRelationNotes(bool freshFactory, string documentKind)
+    {
+        TestArtifacts.SkipIf(!_engine.Ready, _engine.SkipReason ?? "BC engine unavailable");
+        var childTableId = 94210 + (freshFactory ? 3 : 0)
+            + (documentKind == "plain" ? 1 : documentKind == "invalid" ? 2 : 0);
+        RecordPatches.ResetForReload();
+        AlObjectMetadataRegistry.Clear();
+        try
+        {
+            var child = BuildChildTable(childTableId);
+            Assert.True(RecordPatches.TryGetUnresolvedRelationReference(childTableId, 3, out _));
+            Assert.True(child.TryGetFieldByNo(5, out var omittedField));
+            Assert.True(RecordPatches.TryGetUnresolvedRelationReference(childTableId, 5, out _));
+            const int untouchedId = 94202;
+            var otherDir = Path.Combine(_root, "other");
+            Directory.CreateDirectory(otherDir);
+            File.WriteAllText(Path.Combine(otherDir, "Other.al"), $$"""
+                table {{untouchedId}} "TRU Still Unresolved"
+                {
+                    fields {
+                        field(1; Code; Code[20]) { }
+                        field(3; Ref; Code[20]) { TableRelation = "TRU Absent Parent".Code; }
+                    }
+                    keys { key(PK; Code) { } }
+                }
+                """);
+            RecordPatches.AddSourceDir(otherDir);
+            var untouched = RecordPatches.GetOrBuildNCLMetaTable(untouchedId);
+            Assert.NotNull(untouched);
+            Assert.True(untouched.TryGetFieldByNo(3, out var stillUnresolved));
+            Assert.Contains("tablerelation-reference-unresolved",
+                Assert.Throws<RunnerOutOfScopeException>(() => EvaluateRelation(stillUnresolved)).Reason);
+
+            // BC 28.1 emitted shape, reduced from issue #3964's Subject.app. The numeric
+            // target identity arrives after derivation, as it does during sibling discovery.
+            var document = $$"""
+                <MetaTable MetadataVersion="130000" ID="{{childTableId}}" Name="TRU Child"
+                    DataPerCompany="1" xmlns="urn:schemas-microsoft-com:dynamics:NAV:MetaObjects">
+                  <Fields>
+                    <Field ID="1" Name="Entry No." Datatype="Integer" />
+                    <Field ID="3" Name="Unresolved Ref" Datatype="Code" DataLength="20" ValidateTableRelation="1">
+                      <TableRelations TableID="{{ParentTableId}}" TableName="TRU Parent" FieldID="1" />
+                    </Field>
+                  </Fields>
+                  <Keys><Key Key="Field1" KeyName="PK" Clustered="1" /></Keys>
+                  <FieldGroups />
+                </MetaTable>
+                """;
+            if (documentKind == "plain")
+                document = System.Text.RegularExpressions.Regex.Replace(document, "<TableRelations[^>]+/>", "");
+            if (documentKind == "invalid") document = "<invalid";
+            AlObjectMetadataRegistry.Register("Table", childTableId, "TRU Child", document);
+            var loadError = Record.Exception(() =>
+            {
+                if (freshFactory)
+                {
+                    var group = typeof(RecordPatches).GetMethod("ResolveNavAppBaseGroup",
+                        BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, null);
+                    child = (NCLMetaTable)typeof(RecordPatches).GetMethod("BuildNCLMetaTableFromBcDocument",
+                        BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, new object?[] { childTableId, group })!;
+                }
+                else
+                {
+                    RecordPatches.RebuildTablesFromBcMetadataAll();
+                    Assert.Same(child, RecordPatches.GetOrBuildNCLMetaTable(childTableId));
+                }
+            });
+            if (documentKind == "invalid")
+            {
+                Assert.IsType<TargetInvocationException>(loadError);
+                Assert.IsType<System.Xml.XmlException>(loadError!.GetBaseException());
+                Assert.True(RecordPatches.TryGetUnresolvedRelationReference(childTableId, 3, out _));
+            }
+            else
+            {
+                Assert.Null(loadError);
+                Assert.True(child.TryGetFieldByNo(3, out var resolved));
+                if (documentKind == "relation")
+                {
+                    Assert.Single(resolved.FieldRelations);
+                    Assert.Equal(ParentTableId, resolved.FieldRelations[0].SourceTableId);
+                }
+                else Assert.Empty(resolved.FieldRelations);
+                Assert.False(RecordPatches.TryGetUnresolvedRelationReference(childTableId, 3, out _));
+                // This pins the runner guard; the original server AL fixture proves validation.
+                RecordPatches.RecordImpl_UnresolvedRelationGuardForEvaluate(null, resolved);
+            }
+            Assert.True(RecordPatches.TryGetUnresolvedRelationReference(childTableId, 5, out _));
+            Assert.Contains("TRU Absent Parent",
+                Assert.Throws<RunnerOutOfScopeException>(() => EvaluateRelation(omittedField)).Message);
+            Assert.Contains("TRU Absent Parent",
+                Assert.Throws<RunnerOutOfScopeException>(() => EvaluateRelation(stillUnresolved)).Message);
+        }
+        finally
+        {
+            AlObjectMetadataRegistry.Clear();
+            RecordPatches.ResetForReload();
+        }
+    }
+
     [SkippableFact]
     public void EvaluateRelationOnAFieldWhoseRelationDidNotResolve_RefusesNamingTheTableAndTheField()
     {
@@ -178,7 +285,7 @@ public sealed class TableRelationUnresolvedRefusalTests : IDisposable
     /// looks like from the builder's point of view, and the only way to reach that state at all
     /// (AL that names an absent table does not compile) — and one declaring no relation.
     /// </summary>
-    private NCLMetaTable BuildChildTable()
+    private NCLMetaTable BuildChildTable(int childTableId = ChildTableId)
     {
         var srcDir = Path.Combine(_root, "src");
         Directory.CreateDirectory(srcDir);
@@ -193,7 +300,7 @@ public sealed class TableRelationUnresolvedRefusalTests : IDisposable
             }
             """);
         File.WriteAllText(Path.Combine(srcDir, "Child.al"), $$"""
-            table {{ChildTableId}} "TRU Child"
+            table {{childTableId}} "TRU Child"
             {
                 fields
                 {
@@ -207,6 +314,10 @@ public sealed class TableRelationUnresolvedRefusalTests : IDisposable
                         TableRelation = "TRU Absent Parent"."Code";
                     }
                     field({{NoRelationFieldId}}; "Plain Code"; Code[20]) { }
+                    field(5; "Omitted Ref"; Code[20])
+                    {
+                        TableRelation = "TRU Absent Parent".Code;
+                    }
                 }
                 keys { key(PK; "Entry No.") { Clustered = true; } }
             }
@@ -221,8 +332,8 @@ public sealed class TableRelationUnresolvedRefusalTests : IDisposable
         for (var attempt = 1; attempt <= 3; attempt++)
         {
             RecordPatches.AddSourceDir(srcDir);
-            child = RecordPatches.EnsureTableInMetadataCache(ChildTableId)
-                    ?? RecordPatches.NCLMetadata_GetMetaTableById(skeleton!, ChildTableId, false, 0);
+            child = RecordPatches.EnsureTableInMetadataCache(childTableId)
+                    ?? RecordPatches.NCLMetadata_GetMetaTableById(skeleton!, childTableId, false, 0);
             if (child != null
                 && child.TryGetFieldByNo(ResolvableRelationFieldId, out _)
                 && child.TryGetFieldByNo(UnresolvableRelationFieldId, out _)
@@ -231,7 +342,7 @@ public sealed class TableRelationUnresolvedRefusalTests : IDisposable
         }
 
         Assert.Fail(
-            $"table {ChildTableId} did not come back carrying all three fields after three "
+            $"table {childTableId} did not come back carrying all three fields after three "
             + "register-and-rebuild attempts; it has field(s): "
             + (child == null
                 ? "<no metatable at all>"
