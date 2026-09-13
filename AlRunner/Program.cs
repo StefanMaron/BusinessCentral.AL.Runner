@@ -2749,10 +2749,15 @@ foreach (var bundle in bundles)
     {
         var dirsToRegister = new List<string>();
         foreach (var suite in suites)
+        {
             // #3735: exactly what the compile reads. Deriving it a second time here is what let
             // a page or table under test/ or app2/ compile and never be parsed — see
             // ProgramSupport.SuiteRegistrationDirs.
-            dirsToRegister.AddRange(SuiteRegistrationDirs(suite, bucketRoot));
+            var suiteDirs = SuiteRegistrationDirs(suite, bucketRoot);
+            // #2279: which app group compiles each dir, for the object-inventory tables.
+            AlRunner.Patches.RecordPatches.RegisterAppGroupSourceDirs(suite, suiteDirs);
+            dirsToRegister.AddRange(suiteDirs);
+        }
         AlRunner.Patches.RecordPatches.AddSourceDirs(dirsToRegister);
     }
 
@@ -5391,6 +5396,7 @@ return strictExitCode ? computedExitCode : 0;
             // #3735: same one function as the CLI loop above, computed once and used for both
             // the compile's paths and the registration — they are the same set by construction.
             var suitePaths = SuiteRegistrationDirs(suite, bucketRoot);
+            AlRunner.Patches.RecordPatches.RegisterAppGroupSourceDirs(suite, suitePaths);
             dirsToRegister.AddRange(suitePaths);
             allPaths.AddRange(suitePaths);
         }

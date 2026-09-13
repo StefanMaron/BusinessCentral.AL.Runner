@@ -8,64 +8,96 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    // (normalized kind, id) -> the app whose app.json owns the .al file declaring it. Source-parsed
-    // objects only: a precompiled dependency .app never reaches ParseSourceFileIntoAllExtractors.
+    // (normalized kind, id) -> the app group that compiled the file declaring it. An id two
+    // different app groups declare is in _ambiguousSourceObjects instead and is never hidden.
     private static readonly Dictionary<(string Kind, int Id), Guid> _sourceObjectOwners = new();
-    // Source app id -> the app ids its app.json declares as dependencies (implicit floors excluded).
+    private static readonly HashSet<(string Kind, int Id)> _ambiguousSourceObjects = new();
+    // App group id -> the app ids its app.json declares as dependencies (implicit floors excluded).
     private static readonly Dictionary<Guid, Guid[]> _sourceAppDependencies = new();
-    private static readonly Dictionary<string, string?> _owningManifestByDir = new(StringComparer.OrdinalIgnoreCase);
-    // One app.json read per manifest, not per .al file.
-    private static readonly Dictionary<string, BundleIdentity?> _identityByManifest = new(StringComparer.OrdinalIgnoreCase);
+    // Full source dir -> the app group that compiles it; Guid.Empty when two groups share the dir
+    // or the group has no app id. Not the nearest app.json: a suite compiles a sub-folder carrying
+    // its own app.json into itself (CollectSuitePaths).
+    private static readonly Dictionary<string, Guid> _appGroupBySourceDir = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
-    /// Record which app declares every object in one source file, and that app's declared
-    /// dependencies. A file under no readable app.json records nothing, so its objects stay
-    /// visible everywhere, which is the behaviour before #2279.
+    /// Record that <paramref name="dirs"/> compile into the app group rooted at
+    /// <paramref name="suiteDir"/>. Call before <see cref="AddSourceDirs"/> parses them.
     /// </summary>
+    internal static void RegisterAppGroupSourceDirs(string suiteDir, IEnumerable<string> dirs)
+    {
+        var identity = InProcessAppPackager.ReadIdentity(Path.Combine(suiteDir, "app.json"));
+        var appId = identity?.AppId ?? Guid.Empty;
+        if (identity != null && appId != Guid.Empty)
+            _sourceAppDependencies[appId] = identity.Dependencies
+                .Select(d => d.AppId).Where(id => id != Guid.Empty).Distinct().ToArray();
+        foreach (var dir in dirs)
+        {
+            var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(dir));
+            _appGroupBySourceDir[full] = _appGroupBySourceDir.TryGetValue(full, out var existing) && existing != appId
+                ? Guid.Empty
+                : appId;
+        }
+    }
+
+    /// <summary>
+    /// The app group owning <paramref name="filePath"/>: the longest registered source dir
+    /// containing it. Guid.Empty when none is registered, or the dir is shared or unidentified.
+    /// </summary>
+    internal static Guid AppGroupOwningFile(string filePath, IReadOnlyDictionary<string, Guid> ownerByDir)
+    {
+        var bestLength = -1;
+        var owner = Guid.Empty;
+        var full = Path.GetFullPath(filePath);
+        foreach (var (dir, appId) in ownerByDir)
+        {
+            if (dir.Length <= bestLength) continue;
+            if (full.Length > dir.Length
+                && full.StartsWith(dir, StringComparison.OrdinalIgnoreCase)
+                && (full[dir.Length] == Path.DirectorySeparatorChar || full[dir.Length] == Path.AltDirectorySeparatorChar))
+            {
+                bestLength = dir.Length;
+                owner = appId;
+            }
+        }
+        return owner;
+    }
+
+    /// <summary>
+    /// Record <paramref name="appId"/> as the owner of one object, unless a DIFFERENT app already
+    /// claimed that (kind, id): then the object has no single owner and is never hidden.
+    /// </summary>
+    internal static void RecordObjectOwner(
+        Dictionary<(string Kind, int Id), Guid> owners, HashSet<(string Kind, int Id)> ambiguous,
+        (string Kind, int Id) key, Guid appId)
+    {
+        if (ambiguous.Contains(key)) return;
+        if (owners.TryGetValue(key, out var existing) && existing != appId)
+        {
+            owners.Remove(key);
+            ambiguous.Add(key);
+            return;
+        }
+        owners[key] = appId;
+    }
+
     private static void RecordSourceObjectOwners(string text, string filePath)
     {
-        var manifest = ResolveOwningManifest(filePath);
-        if (manifest == null) return;
-        if (!_identityByManifest.TryGetValue(manifest, out var identity))
-        {
-            identity = InProcessAppPackager.ReadIdentity(manifest);
-            _identityByManifest[manifest] = identity;
-            if (identity != null && identity.AppId != Guid.Empty)
-                _sourceAppDependencies[identity.AppId] = identity.Dependencies
-                    .Select(d => d.AppId).Where(id => id != Guid.Empty).Distinct().ToArray();
-        }
-        if (identity == null || identity.AppId == Guid.Empty) return;
-
+        var appId = AppGroupOwningFile(filePath, _appGroupBySourceDir);
+        if (appId == Guid.Empty) return;
         foreach (var obj in ParseAlObjects(text))
         {
             if (AlObjectKindName(obj) is not string kind) continue;
             if (ObjectIdOf(obj) is not int id || id <= 0) continue;
-            _sourceObjectOwners[(NormalizeObjectTypeName(kind), id)] = identity.AppId;
+            RecordObjectOwner(_sourceObjectOwners, _ambiguousSourceObjects, (NormalizeObjectTypeName(kind), id), appId);
         }
-    }
-
-    // Not ResolveOwningApp: that returns (id, name) only, and the dependencies need the manifest path.
-    private static string? ResolveOwningManifest(string filePath)
-    {
-        var dir = Path.GetDirectoryName(Path.GetFullPath(filePath));
-        if (dir == null) return null;
-        if (_owningManifestByDir.TryGetValue(dir, out var memo)) return memo;
-        string? found = null;
-        for (var probe = dir; probe != null; probe = Path.GetDirectoryName(probe))
-        {
-            var candidate = Path.Combine(probe, "app.json");
-            if (File.Exists(candidate)) { found = candidate; break; }
-        }
-        _owningManifestByDir[dir] = found;
-        return found;
     }
 
     private static void ResetAppGroupObjectVisibilityForReload()
     {
         _sourceObjectOwners.Clear();
+        _ambiguousSourceObjects.Clear();
         _sourceAppDependencies.Clear();
-        _owningManifestByDir.Clear();
-        _identityByManifest.Clear();
+        _appGroupBySourceDir.Clear();
         _scopeAssembly = null;
         _scopeAppId = Guid.Empty;
     }
