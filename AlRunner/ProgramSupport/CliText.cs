@@ -394,7 +394,11 @@ internal static partial class ProgramSupport
         w.WriteLine("  --test PATTERN, --filter PATTERN");
         w.WriteLine("                          Run only tests whose qualified name (CodeunitNNNN.Method)");
         w.WriteLine("                          contains PATTERN (case-insensitive). Leading/trailing '*'");
-        w.WriteLine("                          is accepted as a shell-friendly no-op.");
+        w.WriteLine("                          is accepted as a shell-friendly no-op; an interior '*' is");
+        w.WriteLine("                          matched literally (no glob). A PATTERN that selects no test");
+        w.WriteLine("                          in the whole invocation fails the run with exit 6 (under");
+        w.WriteLine("                          --jobs, summed across workers). Not applied in --watch or");
+        w.WriteLine("                          --server, where each cycle or request reports its own count.");
         w.WriteLine("  --isolation MODE, --test-isolation MODE");
         w.WriteLine("                          Test isolation:");
         w.WriteLine("                            codeunit  state shared inside a codeunit, reset between");
@@ -678,6 +682,7 @@ internal static partial class ProgramSupport
         w.WriteLine("                               produced no bucket");
         w.WriteLine("                            5  --expectations-require-match: an expectations entry matched");
         w.WriteLine("                               no test in this run");
+        w.WriteLine("                            6  --test PATTERN selected no test in this run");
         w.WriteLine("  --no-strict-exit        Always exit 0 regardless of test outcome, so callers can");
         w.WriteLine("                          parse the JSON output without the process failing the step.");
         w.WriteLine("  --dump-csharp DIR       Write the intermediate C# emitted by BC's Compilation.Emit");
