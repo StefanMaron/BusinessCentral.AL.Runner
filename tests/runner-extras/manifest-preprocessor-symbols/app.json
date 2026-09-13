@@ -1,0 +1,27 @@
+{
+  "id": "4071a2b9-8a4e-4d2c-9c7b-1e6f4a2c4071",
+  "name": "Runner Extras - Manifest Preprocessor Symbols",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Proves #4071 and #4076: the runner's own source reads (object declarations, captions, the declared-object census) pick the #if branch the compile picked when the symbol comes from app.json preprocessorSymbols.",
+  "description": "Runner-specific: real BC has one parse, so a disagreement between the compile and a secondary runner-side parse cannot be expressed in the corpus.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "idRanges": [
+    {
+      "from": 65960,
+      "to": 65969
+    }
+  ],
+  "platform": "1.0.0.0",
+  "runtime": "14.0",
+  "features": [],
+  "preprocessorSymbols": [
+    "RUNNER_EXTRAS_MPS"
+  ]
+}
