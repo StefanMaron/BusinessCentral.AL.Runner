@@ -25,8 +25,10 @@ bytes of native code. The runner JITs `Main` **in every process generation**: th
 re-exec parent (`docs/ncl-shadow-runtime.md`) and the child it starts both paid it.
 `BcRuntime.ApplyAllPatches` (10 KB of IL) and `TestExecutor.Run` (3.7 KB) had the same shape.
 
-A `leave` from a catch back to an enclosing loop's head does **not** trigger it (measured:
-`Instrumented Tier0`), so the guard ignores `leave` and `leave.s`.
+A `leave` from a catch back to a loop head **outside** every handler does not trigger it
+(measured: `Instrumented Tier0`), so the guard ignores that `leave`. A `leave` whose target is
+inside a handler is that handler's own loop (a retry loop with a try/catch body, sitting in a
+catch) and does trigger it, so the guard counts it.
 
 ### Measured (#2375)
 

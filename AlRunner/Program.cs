@@ -1619,6 +1619,12 @@ FlushDeferredStartupLines();
 
 // Prints the queue once and empties it, so the crash-path flushes above and this one cannot
 // print a line twice.
+void FlushDeferredStartupLines()
+{
+    foreach (var deferredLine in deferredStartupLines) deferredLine();
+    deferredStartupLines.Clear();
+}
+
 // A loop inside a catch/finally in <Main>$ makes the JIT compile all of Main FullOpts, in every
 // process generation. Keep handler loops in helpers like this one; HandlerLoopJitTierGuardTests
 // pins it. See docs/startup-cost.md#main-jit-tier.
@@ -1626,12 +1632,6 @@ static void WriteRemainingInnerExceptions(AggregateException flat)
 {
     foreach (var inner in flat.InnerExceptions.Skip(1))
         Console.Error.WriteLine($"  → {inner.GetType().Name}: {inner.Message}");
-}
-
-void FlushDeferredStartupLines()
-{
-    foreach (var deferredLine in deferredStartupLines) deferredLine();
-    deferredStartupLines.Clear();
 }
 
 // --jobs: fan out across worker processes (#2280). Deliberately placed HERE, after the

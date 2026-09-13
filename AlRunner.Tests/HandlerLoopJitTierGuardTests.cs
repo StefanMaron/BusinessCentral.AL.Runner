@@ -47,6 +47,9 @@ public sealed class HandlerLoopJitTierGuardTests
         Assert.Contains(scan.Offenders, o => o.StartsWith(Name(nameof(HandlerLoopShapes.LoopInFinally)) + " "));
         Assert.Contains(scan.Offenders, o => o.StartsWith(Name(nameof(HandlerLoopShapes.LoopInCatch)) + " "));
         Assert.Contains(scan.Offenders, o => o.StartsWith(Name(nameof(HandlerLoopShapes.LoopInFilteredCatch)) + " "));
+        // A retry loop whose body is a try/catch, inside a catch: its back edge is a leave, and the
+        // JIT still switches the method to FullOpts (measured in review of #4075).
+        Assert.Contains(scan.Offenders, o => o.StartsWith(Name(nameof(HandlerLoopShapes.TryCatchLoopInsideCatch)) + " "));
         // A `leave` out of a catch back to an enclosing loop's head does not force FullOpts
         // (measured: Instrumented Tier0), so it must not be reported.
         Assert.DoesNotContain(scan.Offenders, o => o.StartsWith(Name(nameof(HandlerLoopShapes.TryCatchInsideLoop)) + " "));
@@ -90,8 +93,9 @@ public sealed class HandlerLoopJitTierGuardTests
         // More than one line is legitimate (an OSR recompile of a hot loop adds one).
         var mainLines = File.ReadLines(jitLog).Where(l => l.Contains("Program:<Main>$(")).ToList();
         Assert.True(mainLines.Count > 0, "no JIT summary line for Program:<Main>$ in " + jitLog);
+        // Only the FullOpts switch is the defect; with DOTNET_TieredCompilation=0 every line reads FullOpts
+        // without the "switched" wording, so the tier itself is deliberately not asserted.
         Assert.DoesNotContain(mainLines, l => l.Contains("switched to FullOpts"));
-        Assert.Contains(mainLines, l => l.Contains("Tier0"));
     }
 }
 
@@ -119,6 +123,24 @@ internal static class HandlerLoopShapes
         int s = 0;
         try { s = xs[xs.Length]; }
         catch (Exception e) when (e is IndexOutOfRangeException) { foreach (var x in xs) s += x; }
+        return s;
+    }
+
+    internal static int TryCatchLoopInsideCatch(int[] xs)
+    {
+        int s = 0;
+        try { s = xs[xs.Length]; }
+        catch (IndexOutOfRangeException)
+        {
+            int i = 0;
+            while (true)
+            {
+                i++;
+                if (i > xs.Length) break;
+                try { s += 10 / xs[i - 1]; }
+                catch (DivideByZeroException) { s--; }
+            }
+        }
         return s;
     }
 
@@ -211,7 +233,10 @@ internal static class HandlerBackBranchScanner
                 }
 
                 if (target < 0 || target > start) continue;
-                if (op == OpCodes.Leave || op == OpCodes.Leave_S)
+                // A leave back to a loop head OUTSIDE every handler keeps Tier0 (RunDapLoop's shape);
+                // one whose target is inside a handler is that handler's own loop, and forces FullOpts.
+                if ((op == OpCodes.Leave || op == OpCodes.Leave_S)
+                    && !handlerRanges.Any(h => target >= h.Start && target < h.End))
                 {
                     leaveBacks[name] = leaveBacks.GetValueOrDefault(name) + 1;
                     continue;
