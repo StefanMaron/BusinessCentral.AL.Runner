@@ -223,6 +223,17 @@ public sealed class RunnerMetaApplicationObjectLoader : INCLMetaApplicationObjec
         }
     }
 
+    /// <summary>
+    /// Drop the MetaObjectCache on a bundle reload (#4100). It keys on the object owner's
+    /// runtime package id, which the runner's app group never supplies, so every app's page N
+    /// shares the key (Guid.Empty, N) and the first bundle's parsed definition answered every
+    /// later bundle. The next read rebuilds from the registries, which the reload repopulated.
+    /// </summary>
+    internal void ResetMetaObjectCache()
+    {
+        lock (_metaObjectCacheLock) _metaObjectCache = null;
+    }
+
     public INavAppClrTypeRetriever AppClrTypeRetriever =>
         throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             "INCLMetaApplicationObjectLoader.AppClrTypeRetriever",

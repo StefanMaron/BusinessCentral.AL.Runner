@@ -403,6 +403,9 @@ public static partial class RecordPatches
         // says it is avoiding, and the same shape as #2478 and #2755 in this same reset path.
         _objectRefConstIds.Clear();
         _fieldTriggersWiredTables.Clear();
+        // #4100: BC's page-definition cache keys on (owner package id, page id) and the runner
+        // supplies no owner, so every bundle's page N shares one key.
+        RunnerMetaApplicationObjectLoader.Instance.ResetMetaObjectCache();
         _parsedPages.Clear();
         _parsedPageExtensions.Clear();
         _parsedReports.Clear();
