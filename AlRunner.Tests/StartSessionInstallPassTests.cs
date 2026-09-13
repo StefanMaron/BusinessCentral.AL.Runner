@@ -15,7 +15,16 @@ using Xunit;
 
 namespace AlRunner.Tests;
 
-[Collection("InstallPassFlag")]
+// Serial: the install-pass flag is process-wide, and so is the TestIsolation state the #2805 guard
+// reads first. Any class running an install pass or an AL test concurrently would change what
+// these assertions see.
+[CollectionDefinition(Name, DisableParallelization = true)]
+public sealed class InstallPassFlagSerialCollection
+{
+    public const string Name = "InstallPassFlag";
+}
+
+[Collection(InstallPassFlagSerialCollection.Name)]
 public sealed class StartSessionInstallPassTests
 {
     // No loaded assembly declares this codeunit, so outside the install pass StartSession
