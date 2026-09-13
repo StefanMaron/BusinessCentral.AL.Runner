@@ -265,6 +265,18 @@ public class DependencyReportDataItemLinkTests
                           "Indentation": 1,
                           "Properties": [
                             { "Name": "DataItemLink", "Value": "\"Vendor No.\" = field(\"No.\")" }
+                          ],
+                          "DataItems": [
+                            {
+                              "Id": 6,
+                              "Name": "SecondDetail",
+                              "OwningDataItemName": "SecondJoin",
+                              "RelatedTable": "Detailed Vendor Ledg. Entry",
+                              "Indentation": 2,
+                              "Properties": [
+                                { "Name": "DataItemLink", "Value": "\"Vendor Ledger Entry No.\" = field(\"Entry No.\")" }
+                              ]
+                            }
                           ]
                         }
                       ]
@@ -300,6 +312,9 @@ public class DependencyReportDataItemLinkTests
             // After a deeper item has closed, the parent is still the enclosing item, not the
             // item written just before.
             Assert.Equal("Vendor", ReferenceOf("SecondJoin"));
+            // A second level-2 item under a different level-1 parent: the deeper levels opened
+            // under "Vendor Ledger Entry" must be closed, or this joins to the wrong item.
+            Assert.Equal("SecondJoin", ReferenceOf("SecondDetail"));
 
             // Negative: an item with no link acquires no reference.
             Assert.Null(ReferenceOf("Vendor"));
