@@ -7,6 +7,7 @@ All notable changes to this project are documented here. Format based on
 ## [Unreleased]
 
 ### Added
+- **paths:** relocation knobs for the symbols cache and ~/.cache/al-runner
 - **tools:** report armed pull requests that are not green
 - **cli:** reproducible Random() via a per-test derived seed and --seed
 - **ci-wait:** the main floor line reports its distance, not only its age
