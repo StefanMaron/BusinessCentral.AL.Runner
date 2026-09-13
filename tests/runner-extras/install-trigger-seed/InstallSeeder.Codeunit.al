@@ -19,6 +19,7 @@ codeunit 60711 "ITS Installer"
     trigger OnInstallAppPerCompany()
     var
         Seed: Record "Install Seed";
+        Marker: Record "ITS Session Marker";
     begin
         Seed.Init();
         Seed."Code" := 'COMPANY1';
@@ -30,13 +31,22 @@ codeunit 60711 "ITS Installer"
         Seed."Value" := 22;
         Seed.Insert();
 
-        // #2805's guard refuses StartSession from inside a [Test] unless the TestRunner
-        // declares TestIsolation = Disabled. An install trigger is NOT a test, so the guard
-        // must be inert here and this must dispatch normally. Nothing outside a [Test] had
-        // ever exercised it, and "inert by construction" (BcRuntime.InTestExecutionScope is
-        // false) is exactly the claim that stops being true when someone changes the
-        // construction. "ITS StartSession Outside Test" reads the row the worker writes.
-        StartSession(SessionId, Codeunit::"ITS Session Worker");
+        // StartSession from an install trigger. Two claims ride on it:
+        //   * #2805's guard refuses StartSession only inside a [Test]; an install trigger is not
+        //     one, so the guard must not throw here. If it did, this trigger would fail loudly
+        //     and the INSTALL-RESULT row below would never be written.
+        //   * BC skips StartSession while an install runs and returns false without writing
+        //     SessionId (#3292; the BC half is pinned upstream by corpus codeunit 60449). The
+        //     runner models that with its own install-pass flag, so the worker must not run.
+        // "ITS StartSession Outside Test" reads both back.
+        SessionId := 777;
+        Marker.Init();
+        Marker."Code" := 'INSTALL-RESULT';
+        if StartSession(SessionId, Codeunit::"ITS Session Worker") then
+            Marker."Value" := 1
+        else
+            Marker."Value" := SessionId;
+        Marker.Insert();
     end;
 
     var
