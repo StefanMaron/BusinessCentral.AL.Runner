@@ -639,7 +639,45 @@ public static partial class NavReportSync
                 null, Type.EmptyTypes, null);
         }
 
-        TryRunOrControlFlow(navReport, navReportBase);
+        // #2904: BC's RunReportCoreAsync decides BEFORE the request page whether this run
+        // enters a transaction world. Entering one is refused while a write is pending, and
+        // the report's own transaction then commits on return — the same Begin/End pair a
+        // guarded Codeunit.Run models, so the same two calls stand in for it.
+        // Observably equivalent: corpus 60040 Test04-Test08 on a real service tier.
+        if (!AlRunner.Patches.ALDatabasePatches.ReportRunEntersTransactionWorld(
+                ReadBoolProperty(navReport, "UseRequestForm", fallback: true),
+                ReadReportTransactionType(navReport)))
+        {
+            TryRunOrControlFlow(navReport, navReportBase);
+            return;
+        }
+
+        AlRunner.Patches.ALDatabasePatches.ThrowIfWriteTransactionStarted();
+        AlRunner.Patches.ALDatabasePatches.BeginGuardedRunTransaction();
+        try
+        {
+            TryRunOrControlFlow(navReport, navReportBase);
+        }
+        catch
+        {
+            // BC: EndTransaction(false) rolls the report's writes back before the error leaves.
+            AlRunner.Patches.ALDatabasePatches.EndGuardedRunTransaction(commit: false);
+            throw;
+        }
+        AlRunner.Patches.ALDatabasePatches.EndGuardedRunTransaction(commit: true);
+    }
+
+    /// <summary><c>Metadata.TransactionType</c> as its ordinal; 0 (UpdateNoLocks, the report
+    /// default) when the report carries no metadata at all.</summary>
+    private static int ReadReportTransactionType(object navReport)
+    {
+        var meta = FindProperty(navReport.GetType(), "Metadata")?.GetValue(navReport);
+        if (meta == null) return 0;
+        var p = FindProperty(meta.GetType(), "TransactionType")
+            ?? throw new AlRunner.Infrastructure.BcShapeGapException(
+                "NavReport.Run", "MetaReport.TransactionType",
+                "property not found, so whether the run enters a transaction world cannot be decided");
+        return Convert.ToInt32(p.GetValue(meta));
     }
 
     // Runs the full lifecycle (OnInitReport → OnPreReport → DataItems →
