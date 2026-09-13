@@ -14,8 +14,10 @@
 //
 // WHAT BC EMITS, which is what these assertions are written against
 //   Read off the ground-truth documents for report 9810 on FOUR BC builds — 27.5.46862.53931,
-//   28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407 (two distinct Ncl binaries, not
-//   four). All four are byte-identical in this subtree:
+//   28.1.49838.53910, 28.1.49838.54308 and 28.4.53241.54407. Those are FOUR distinct Ncl.dll
+//   binaries: sha256 affa03c9…, 49b11d9b…, 6f2cf682… and 108b8c6b… (#4057 re-derived this; the
+//   line here and in docs/report-metadata-from-bc.md both said "two", which understated the
+//   population). All four subtrees are identical:
 //       <RequestPage>
 //         <PageDefinition MetadataVersion="130000" ID="0" Name="Change Password" …>
 //           <Properties ReportID="9810" PageType="ReportProcessingOnly" … Editable="1">
@@ -242,6 +244,88 @@ public sealed class ReportRequestPageSubtreeTests
             // Expressions is present-but-empty for the same reason it is on a page:
             // MetadataProvider.LoadExpressionRelationTables iterates it with no null check.
             Assert.NotNull(pageDefinition.SelectSingleNode("*[local-name()='Expressions']"));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// <c>HelpLink</c> is written, as the constant BC's emitter supplies when AL declares none
+    /// (#4057). Asserted on the document text here; the next test measures the same value
+    /// through BC's own reader, which is the member the metadata-equivalence harness reports.
+    /// </summary>
+    [Fact]
+    public void TheRequestPagePropertiesCarryBcsDefaultHelpLink()
+    {
+        var dir = TestScratch.Dir("al-runner-report-requestpage-helplink");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            // Both reports, because the constant is unconditional: it does not follow
+            // ProcessingOnly, the control tree, or anything the symbol file states.
+            foreach (var id in new[] { ChangePassword, WithControls })
+            {
+                var properties = Assert.IsAssignableFrom<XmlElement>(
+                    Emit(Report(dir, id)).SelectSingleNode(
+                        "RequestPage/*[local-name()='PageDefinition']/*[local-name()='Properties']"));
+                Assert.Equal(
+                    "https://learn.microsoft.com/dynamics365/business-central/",
+                    properties.GetAttribute("HelpLink"));
+            }
+
+            // Negative, and it is what stops the assertion above being satisfied by writing the
+            // attribute everywhere: a report declaring NO request page gets no subtree at all,
+            // so there is no HelpLink anywhere in its document.
+            var noSubtree = Emit(Report(dir, NoRequestPageNode));
+            Assert.Null(noSubtree.SelectSingleNode("RequestPage"));
+            Assert.DoesNotContain("HelpLink", noSubtree.OuterXml, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// The same fact through BC's OWN reader: <c>MetaPageProperties.HelpLink</c> is the member
+    /// the metadata-equivalence harness compares, and #4057 measured it <c>&lt;null&gt;</c> on
+    /// the runner against BC's constant. Reading it back through
+    /// <c>MetaReport.RequestPageDefinition.Properties</c> is what proves the attribute lands
+    /// where BC looks for it, rather than merely appearing in the text.
+    /// </summary>
+    [SkippableFact]
+    public void BcsOwnReaderSeesTheHelpLinkOnTheRequestPageProperties()
+    {
+        var types = Type.GetType(
+            "Microsoft.Dynamics.Nav.Types.Metadata.MetaReport, Microsoft.Dynamics.Nav.Types");
+        Skip.If(types is null, "Microsoft.Dynamics.Nav.Types is not loadable on this box.");
+
+        var ctor = types!.GetConstructors().FirstOrDefault(
+            c => c.GetParameters() is { Length: 5 } ps && ps[0].ParameterType == typeof(XmlElement));
+        Assert.True(ctor is not null, "MetaReport has no (XmlElement, …) constructor.");
+        var requestPage = types.GetProperty("RequestPageDefinition",
+            BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        Assert.True(requestPage is not null, "MetaReport has no RequestPageDefinition property.");
+
+        var dir = TestScratch.Dir("al-runner-report-requestpage-helplink-reader");
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var parsed = ctor!.Invoke(new object?[] { Emit(Report(dir, ChangePassword)), null, 0, 0, null });
+            var definition = requestPage!.GetValue(parsed);
+            Assert.NotNull(definition);
+
+            var properties = definition!.GetType()
+                .GetProperty("Properties", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
+                .GetValue(definition);
+            Assert.NotNull(properties);
+
+            var helpLink = properties!.GetType()
+                .GetProperty("HelpLink", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)!
+                .GetValue(properties);
+            Assert.Equal("https://learn.microsoft.com/dynamics365/business-central/", helpLink);
         }
         finally
         {
