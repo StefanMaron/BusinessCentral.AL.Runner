@@ -64,8 +64,13 @@ immediately even when the parse has not caught up:
 
 ```bash
 gh pr list --repo <owner>/<repo> --state open --limit 100 --json number,body \
-  --jq '.[] | select(.body | test("(?i)\\b(closes|fixes|resolves) +#<N>\\b")) | .number'
+  --jq '.[] | select(.body | test("(?i)closes +#<N>\\b")) | .number'
 ```
+
+**Substitute the real issue number**; a pattern left generic matches any closing keyword
+anywhere in the text, including a body that merely *documents* one. Measured while adding this
+section: the generic form answered `true` on a pull request whose only declaration was
+`Part of #4059`, because the body quoted this very recipe.
 
 Same shape as every other trap in this repository: the call succeeds, the answer is
 well-formed, and it is about a moment rather than about the question you asked.
