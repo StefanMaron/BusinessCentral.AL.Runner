@@ -74,8 +74,7 @@ public static class AppLoader
     /// because such a package has no index entry in either direction (#2987).</summary>
     internal static string? ManifestIndexPathForTests(string appPath)
     {
-        var identity = TryPackageIdentity(
-            Path.GetFullPath(appPath), static p => RunnerFingerprint.ComputeFileContentHashMemoized(p));
+        var identity = TryPackageIdentity(Path.GetFullPath(appPath), ComputeManifestIndexIdentity);
         return identity == null ? null : ManifestIndexPath(identity);
     }
 
@@ -94,41 +93,19 @@ public static class AppLoader
     /// last-write-time-UTC). It cannot outlive the process, so the only thing it has to get
     /// right is noticing a file rewritten underneath it, which a stat does.</para>
     ///
-    /// <para><b>The on-disk index</b> is keyed on the SHA-256 of the package's own bytes, via
-    /// <see cref="RunnerFingerprint.ComputeFileContentHashMemoized"/> — the one memo shared
-    /// with the bc-symbols cache, the r2r-chunks cache (#2955) and the AL-output key's
-    /// dependency terms (#2847), so a package any of them has already hashed costs a
-    /// dictionary lookup here. It is persisted and read by other processes, so a stat is not
-    /// good enough: two runs can agree on (path, length, mtime) and disagree on the bytes —
-    /// a checkout, a rebuild landing on the same size, a copy preserving mtime — and the
-    /// loser then reads an entry describing a package it does not have. What it would read is
-    /// not a derived detail but the package's IDENTITY: Publisher, Name, Version, AppId and
-    /// the whole declared Dependencies list, feeding DependencyResolver. The comment that
-    /// used to sit here called that "not a correctness hazard, only a cache miss", citing a
-    /// test (AppLoaderManifestCacheTests.ReadManifest_TouchedMtime_IsReparsedNotServedStale)
-    /// that only ever covered the case where the stat MOVES.</para>
-    ///
-    /// <para><b>What it costs.</b> Hashing every scanned package is not free, and unlike
-    /// #2955's call site this one runs over every <c>.app</c> in every package-cache
-    /// directory during DependencyResolver.EnsureIndexed, including packages the run never
-    /// loads. Measured on this repo's own CI package set — <c>~/.al-runner/platform-apps</c>
-    /// plus <c>~/.al-runner/test-apps</c>, 108 packages, 143 MB, warm page cache,
-    /// instructions-retired over 3 runs each: the stat costs 221 M instructions (5.9 ms), the
-    /// content hash 643 M (100.6 ms), and the uncached parse this index exists to avoid
-    /// 1,112 M (157 ms). So the index still saves the larger half of what it always saved,
-    /// and the marginal cost in a REAL run is far below that 95 ms delta because the packages
-    /// a run actually loads are hashed by the caches above regardless — see the PR for #2987
-    /// for the end-to-end numbers.</para>
-    ///
-    /// <para>Entries are named <c>sha256-&lt;hash&gt;.json</c>. A pre-#2987 stat-keyed entry
-    /// name was also 64 lowercase hex characters plus <c>.json</c> — identical in shape,
-    /// meaning something else entirely — so the prefix is what stops a warm pre-fix cache
-    /// directory from being silently misread as a content-keyed one.</para>
+    /// <para><b>The on-disk index</b> is persisted and read by other processes, so a stat is
+    /// not good enough: two runs can agree on (path, length, mtime) and disagree on the bytes,
+    /// and the loser would read another package's Publisher/Name/Version/AppId/Dependencies
+    /// (#2987). It is keyed on <see cref="ComputeManifestIndexIdentity"/> — a hash of the
+    /// package's zip central directory, not of every byte, because this runs for every
+    /// <c>.app</c> in every package-cache directory whether the run loads it or not (#4050).
+    /// Never key it on a stat again; the arms in AppLoaderManifestIndexIdentityTests construct
+    /// the same-stat, different-bytes pairs.</para>
     /// </summary>
     public static AppManifest? ReadManifest(string appPath)
-        => ReadManifestCore(appPath, static p => RunnerFingerprint.ComputeFileContentHashMemoized(p));
+        => ReadManifestCore(appPath, ComputeManifestIndexIdentity);
 
-    internal static AppManifest? ReadManifestCore(string appPath, Func<string, string> contentHashOf)
+    internal static AppManifest? ReadManifestCore(string appPath, Func<string, string> identityOf)
     {
         string fullPath;
         long length;
@@ -153,7 +130,7 @@ public static class AppLoader
         if (_manifestMemo.TryGetValue(memoKey, out var memoized))
             return memoized;
 
-        var identity = TryPackageIdentity(fullPath, contentHashOf);
+        var identity = TryPackageIdentity(fullPath, identityOf);
         if (identity != null)
         {
             var indexed = TryReadManifestIndex(identity);
@@ -187,10 +164,10 @@ public static class AppLoader
     /// one's — the exact wrong-answer shape content addressing exists to remove, reintroduced
     /// by the fix. Costing a reparse is the only thing this branch can ever do.</para>
     /// </summary>
-    private static string? TryPackageIdentity(string fullPath, Func<string, string> contentHashOf)
+    private static string? TryPackageIdentity(string fullPath, Func<string, string> identityOf)
     {
         string hash;
-        try { hash = contentHashOf(fullPath); }
+        try { hash = identityOf(fullPath); }
         catch (Exception ex)
         {
             // Hashing reads the file; a package we cannot read is one we cannot identify.
@@ -250,13 +227,114 @@ public static class AppLoader
 
     // ── on-disk manifest index (issue #perf-B) ─────────────────────────────────
 
-    /// <summary>The entry for one package CONTENT (#2987). The <c>sha256-</c> prefix is load
-    /// bearing: a pre-fix entry name was 64 lowercase hex characters plus <c>.json</c> too,
-    /// and named the hash of a <c>path|length|mtime</c> string instead — indistinguishable by
-    /// shape from what this returns, so without the prefix a warm pre-fix cache directory
-    /// would be read as if its entries were content-keyed.</summary>
-    private static string ManifestIndexPath(string contentHash)
-        => Path.Combine(CacheRoots.Resolve("app-manifests"), "sha256-" + contentHash + ".json");
+    /// <summary>The entry for one package identity. The identity carries its scheme as a prefix
+    /// (<c>zipcd-</c> or <c>sha256-</c>, see <see cref="ComputeManifestIndexIdentityCore"/>), and
+    /// the prefix is load bearing: a pre-#2987 entry name was 64 bare hex characters naming a
+    /// stat, so an unprefixed name must never be produced here.</summary>
+    private static string ManifestIndexPath(string identity)
+        => Path.Combine(CacheRoots.Resolve("app-manifests"), identity + ".json");
+
+    /// <summary>
+    /// The index identity for the package at <paramref name="fullPath"/>: a hash of its central
+    /// directory where it has a plain one, the full-content hash where it does not. Returns
+    /// <see cref="RunnerFingerprint.UnknownContentHash"/> when neither can be computed, which
+    /// <see cref="TryPackageIdentity"/> refuses.
+    /// </summary>
+    internal static string ComputeManifestIndexIdentity(string fullPath)
+    {
+        using var fs = new FileStream(fullPath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 1, useAsync: false);
+        return ComputeManifestIndexIdentityCore(fs, () =>
+        {
+            var full = RunnerFingerprint.ComputeFileContentHashMemoized(fullPath);
+            return string.IsNullOrEmpty(full) || full == RunnerFingerprint.UnknownContentHash
+                ? RunnerFingerprint.UnknownContentHash
+                : "sha256-" + full;
+        });
+    }
+
+    // Largest EOCD comment a zip may carry, plus the fixed 22-byte record.
+    private const int MaxEocdSearch = 22 + 0xFFFF;
+
+    /// <summary>
+    /// <c>zipcd-</c> + SHA-256 over (a scheme tag, the file length, the bytes before the zip, and
+    /// every byte from the central directory's start to the end of the file) — about 1.5 KB of
+    /// Base Application's 98 MB (#4050).
+    ///
+    /// <para>Sound for the index payload because that payload is a function of entry names and
+    /// entry contents, and the directory records every entry's name, sizes and CRC-32; an R2R
+    /// package's nested manifest is one outer entry, so its CRC covers it. CRC-32 is a checksum:
+    /// a DELIBERATELY built same-size collision would get past it, the accidental rewrites #2987
+    /// is about (checkout, same-size rebuild, mtime-preserving copy) do not.</para>
+    ///
+    /// <para>Trap: hashing the EOCD record alone is NOT enough — two packages with equal entry
+    /// names and sizes have identical EOCDs (pinned by
+    /// <c>CentralDirectoriesDifferingOnlyInTheManifestsCrc32_AreTwoPackages</c>). Anything this
+    /// method cannot read as one plain, non-zip64 directory falls back to
+    /// <paramref name="fullContentIdentity"/>, never to a stat.</para>
+    /// </summary>
+    internal static string ComputeManifestIndexIdentityCore(Stream package, Func<string> fullContentIdentity)
+    {
+        long length = package.Length;
+        package.Position = 0;
+        Span<byte> navx = stackalloc byte[8];
+        long zipStart = 0;
+        if (ReadFully(package, navx) == 8 && navx[..4].SequenceEqual("NAVX"u8))
+            zipStart = BitConverter.ToUInt32(navx[4..]);
+        // A zip start past the tail window leaves bytes between header and directory we would
+        // not hash; runtime packages (.NEA, #3537) keep their directory inside an RC4 layer.
+        if (zipStart > 4096 || zipStart + 22 > length || PayloadIsNeaContainer(package, zipStart))
+            return fullContentIdentity();
+
+        int tailLength = (int)Math.Min(length - zipStart, MaxEocdSearch);
+        var tail = new byte[tailLength];
+        package.Position = length - tailLength;
+        if (ReadFully(package, tail) != tailLength) return fullContentIdentity();
+
+        int eocd = -1;
+        for (int i = tailLength - 22; i >= 0; i--)
+        {
+            if (tail[i] == 0x50 && tail[i + 1] == 0x4B && tail[i + 2] == 0x05 && tail[i + 3] == 0x06)
+            { eocd = i; break; }
+        }
+        if (eocd < 0) return fullContentIdentity();
+
+        ushort entries = BitConverter.ToUInt16(tail, eocd + 10);
+        uint cdSize = BitConverter.ToUInt32(tail, eocd + 12);
+        uint cdOffset = BitConverter.ToUInt32(tail, eocd + 16);
+        long eocdAbsolute = length - tailLength + eocd;
+        long cdStart = zipStart + cdOffset;
+        bool zip64 = entries == 0xFFFF || cdSize == 0xFFFFFFFF || cdOffset == 0xFFFFFFFF
+            || (eocd >= 20 && BitConverter.ToUInt32(tail, eocd - 20) == 0x07064b50);
+        if (zip64 || cdStart + cdSize > eocdAbsolute || length - cdStart > 64L * 1024 * 1024)
+            return fullContentIdentity();
+
+        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        sha.AppendData("al-runner app-manifests zipcd v1\n"u8);
+        Span<byte> len = stackalloc byte[8];
+        BitConverter.TryWriteBytes(len, length);
+        sha.AppendData(len);
+        var buffer = new byte[(int)Math.Max(zipStart, length - cdStart)];
+        package.Position = 0;
+        if (ReadFully(package, buffer.AsSpan(0, (int)zipStart)) != zipStart) return fullContentIdentity();
+        sha.AppendData(buffer, 0, (int)zipStart);
+        int directoryAndTail = (int)(length - cdStart);
+        package.Position = cdStart;
+        if (ReadFully(package, buffer.AsSpan(0, directoryAndTail)) != directoryAndTail) return fullContentIdentity();
+        sha.AppendData(buffer, 0, directoryAndTail);
+        return "zipcd-" + Convert.ToHexString(sha.GetHashAndReset()).ToLowerInvariant();
+    }
+
+    private static int ReadFully(Stream s, Span<byte> buffer)
+    {
+        int total = 0;
+        while (total < buffer.Length)
+        {
+            int n = s.Read(buffer[total..]);
+            if (n == 0) break;
+            total += n;
+        }
+        return total;
+    }
 
     private static AppManifest? TryReadManifestIndex(string contentHash)
         => TryReadIndexPayload(contentHash) is { } hit ? hit.Manifest : null;
@@ -368,7 +446,7 @@ public static class AppLoader
     /// <c>.app</c>. Asking them separately opened every package twice.</para>
     ///
     /// <para>Keyed exactly like <see cref="ReadManifest"/> — stat for the process memo, the
-    /// package's content hash for the persisted index (#2987). See that method for why the two
+    /// package identity for the persisted index (#2987, #4050). See that method for why the two
     /// differ, and note that the index entry is SHARED between them, so the two must never
     /// compute the identity differently.</para>
     ///
@@ -382,10 +460,10 @@ public static class AppLoader
     /// every process after the first. See issue #2607.</para>
     /// </summary>
     public static (AppManifest? Manifest, bool HasSymbolReference) ReadPackageMeta(string appPath)
-        => ReadPackageMetaCore(appPath, static p => RunnerFingerprint.ComputeFileContentHashMemoized(p));
+        => ReadPackageMetaCore(appPath, ComputeManifestIndexIdentity);
 
     internal static (AppManifest? Manifest, bool HasSymbolReference) ReadPackageMetaCore(
-        string appPath, Func<string, string> contentHashOf)
+        string appPath, Func<string, string> identityOf)
     {
         string fullPath;
         long length;
@@ -410,11 +488,11 @@ public static class AppLoader
             && _manifestMemo.TryGetValue(memoKey, out var memoManifest))
             return (memoManifest, memoFlag);
 
-        // Content-keyed exactly like ReadManifest's, and it MUST be the same key: the two
+        // Identified exactly like ReadManifest's, and it MUST be the same key: the two
         // methods read and write the same entries, so a package they identified differently
         // would have ReadManifest's entry (HasSymbolReference null) and ReadPackageMeta's
         // entry (the flag recorded) sitting under two names for the same bytes.
-        var identity = TryPackageIdentity(fullPath, contentHashOf);
+        var identity = TryPackageIdentity(fullPath, identityOf);
 
         // Only a FULL index entry can serve this: an entry written before the flag existed has
         // HasSymbolReference null, and null means "go and look", never false.
