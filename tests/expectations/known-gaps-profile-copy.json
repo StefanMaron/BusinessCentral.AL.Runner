@@ -1,0 +1,18 @@
+[
+  {
+    "codeunitId": 60908,
+    "CodeunitName": "Test Copy Profile",
+    "Method": "CopyProfile_NewId_CreatesTenantOwnedProfileWithNewCaptionAndSourceRoleCenter",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4124",
+    "Note": "Base Application's Conf./Personalization Mgt.CopyProfile calls NavDesignerALFunctions.CopyProfile, which the runner refuses by name with reason not-yet-implemented (DesignerProfileCopyPatches, #2324). BC's own designer copy (NavConfigurationCopyExtension) does not complete on the skeleton session; #4124 lists the measured break points. Before the refusal, the failure was swallowed into Base Application's generic 'The profile could not be copied.'. Why expect-fail-known-gap and not expect-oos as in oos-object-metadata.json: that entry rejected known-gap because its only candidate issue closed with its PR. Here the tracking issue #4124 stays open after #2324 merges, and the surface is one the runner intends to implement. The blind spot of this mode is that it absorbs any non-pass, so if the Cecil prepend stopped applying, BC's generic error would still classify green here. AlRunner.Tests DesignerProfileCopyRefusalTests.CopyProfile_OnTheRewrittenNcl_RefusesByNameInsteadOfReturningAFailedResponse covers that case; removing the prepend turns it red. Added by agent stma-auto2-1 with the #2324 fix; the fix for #4124 removes this file."
+  },
+  {
+    "codeunitId": 60908,
+    "CodeunitName": "Test Copy Profile",
+    "Method": "CopyProfile_TargetIdAlreadyExists_RaisesCouldNotCopy",
+    "Mode": "expect-fail-known-gap",
+    "Issue": "https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/4124",
+    "Note": "Same refusal as the sibling entry. The test's setup makes a first copy, and that copy raises the refusal before the duplicate-id assertion is reached. Both methods are named rather than using '*', because the codeunit has exactly these two tests and '*' would also claim any test added later."
+  }
+]
