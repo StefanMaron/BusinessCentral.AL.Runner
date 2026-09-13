@@ -371,6 +371,38 @@ command grep -E "^\S+Z *FAIL " <leg.log> | command grep -oE "Codeunit[0-9]+" | s
 **A docs-only PR going green beside a red BC-leg PR points at the corpus** — docs-only PRs run
 no legs, so they flow through the window untouched.
 
+### The same red, one phase later: the fix has MERGED and your branch predates it
+
+The section above covers a failing codeunit matched to an **open** runner PR — the fix has not
+landed, so you wait. This is the next phase of the same mechanism: **the fix has merged, and your
+branch does not contain it.** Waiting then achieves nothing, and a re-run reproduces the failure
+forever because it measures the same old code against the same new corpus.
+
+It does not change what an **unmatched** codeunit means — that warning stands exactly as above.
+What it adds is that a match against a *merged* runner PR is still a match, and its remedy is a
+rebase rather than a wait:
+
+```bash
+git merge-base --is-ancestor <that-PR's-merge-commit> <pr-head>   # false => rebase
+```
+
+Measured on #4092: corpus PR #336 and runner PR #4035 merged **four seconds apart** — the pair
+landing in one step, as `bc-behavior-tests-go-upstream.md` step 5 asks — and twelve open PRs went
+red on codeunit 60974 regardless, every one created before the pair. So the exposed population is
+each PR **already in flight** when a pair lands, not the gap between the two merges; a
+zero-length window bounds nothing.
+
+Then confirm the rebase preserved what a reviewer already read, so a standing verdict still
+applies. `git patch-id --stable` over `git diff origin/main...HEAD` is the cheap first check —
+but **`patch-id` hashes hunk context, so a changed id means "look", not "the content moved".**
+Resolve a difference by diffing the two diffs' added and removed lines; equal there is equal.
+Measured across thirteen rebases: twelve identical ids, one changed id whose added/removed lines
+differed in **zero** places.
+
+**A bulk rebase hides a real defect.** In that sweep of fifteen red PRs, two were red for their
+own reasons — `Failed: 1, Passed: 5641` and `Failed: 2, Passed: 5692` — and only the per-codeunit
+read separated them from the twelve. Rebasing everything red would have shipped both.
+
 ### Getting a second run of the same commit without `gh run rerun`
 
 Both options create a brand-new, separate workflow run and leave the original run and its log
@@ -425,33 +457,6 @@ the failing-leg set repeats identically on the second run, that is the code — 
 flake and go fix it. **Nobody bypasses a red required check**, and re-rolling CI hoping a
 failure will not recur is not sanctioned by any mechanism; Actions concurrency is scoped per
 account, so each attempt spends the whole account's shared queue (corpus PR #145).
-
-### A third possibility: the red is inherited, and the remedy is a REBASE, not a re-run
-
-Before treating a red as yours or as a flake, ask whether your branch is simply missing a fix
-that `main` already has. The corpus is **resolved per run, not pinned** (#3737), so a merged
-corpus commit reaches every open branch on its next run, while the runner fix it needs reaches a
-branch only by being *in* it. A PR that branched before that fix runs the new corpus test
-against old runner code — indefinitely, because re-running measures the same pair again.
-
-**The signature is a failing codeunit that matches no open runner PR**, shared across several
-unrelated PRs:
-
-```bash
-command grep -E "^\S+Z *FAIL " <leg.log> | command grep -oE "Codeunit[0-9]+" | sort | uniq -c
-git merge-base --is-ancestor <fix-merge-commit> <pr-head>   # false => needs a rebase
-```
-
-Then confirm the rebase preserved what a reviewer already read, so a standing verdict still
-applies. `git patch-id --stable` over `git diff origin/main...HEAD` is the cheap first check —
-but **`patch-id` hashes hunk context, so a changed id means "look", not "the content moved".**
-Resolve a difference by diffing the two diffs' added and removed lines directly; equal there is
-equal. Measured on thirteen PRs in one sweep: twelve identical, one changed id whose
-added/removed lines differed in **zero** places (#4092).
-
-Do not size this by leg count or failure count — they look like an ordinary red. One PR in that
-same sweep had a different failing codeunit and needed separate treatment, which only the
-per-codeunit read distinguished.
 
 ### Deliberately not in `tools/ci-wait.py`
 
