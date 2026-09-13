@@ -1,6 +1,7 @@
 // PageOnInitTriggerTests — issue #4114. A RUNNER-MECHANISM test: what BC does is settled
 // upstream by corpus codeunit 60488 "POI Tests"; this pins the runner's own dispatch of OnInit
-// on the three open paths it drives, plus an Error() raised in OnInit reaching the test.
+// at page construction on the paths it drives, plus an Error() raised in OnInit reaching the
+// test through the runner's construction catch sites.
 using System.Diagnostics;
 using System.Text;
 using Xunit;
@@ -66,6 +67,7 @@ public sealed class PageOnInitTriggerTests
             Assert.Contains("PASS  Codeunit71903.Reopen_RunsOnInitAgain", stdout);
             Assert.Contains("PASS  Codeunit71903.RunModal_RunsOnInitOnce", stdout);
             Assert.Contains("PASS  Codeunit71903.PageRun_RunsOnInitOnce", stdout);
+            Assert.Contains("PASS  Codeunit71903.SetterBeforeRunModal_RunsAfterOnInit", stdout);
             Assert.Contains("PASS  Codeunit71903.ErrorInOnInit_ReachesTheTest", stdout);
             Assert.DoesNotContain("FAIL", stdout);
         }

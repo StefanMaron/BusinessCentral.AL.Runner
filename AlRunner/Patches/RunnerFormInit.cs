@@ -65,42 +65,40 @@ public static class RunnerFormInit
     }
 
     /// <summary>
-    /// Run the page's OnInit trigger the way BC's own <c>NavForm.InitializeFormAsync</c> does —
-    /// through <c>NavForm.RaiseOnInitAsync</c>, then <c>IsFormInitialized = true</c> — for a
-    /// form whose constructor-time <c>InitializeForm()</c> the guard above skipped.
+    /// Cecil-injected guard on <c>NavForm.InitializeForm</c> — as wide as
+    /// <see cref="ShouldResolveMasterPage"/>, because the instance mark cannot reach it.
     ///
-    /// <para>Every page's generated constructor calls <c>InitializeForm()</c>, and every form
-    /// the runner marks is marked AFTER its constructor returned, so the guard is false there
-    /// for every page and OnInit never ran (#4114). Not <c>InitializeForm()</c> itself: that
-    /// needs the instance mark, which also widens <c>GetMasterPage</c> for a form the runner
-    /// has no metadata for. Observably equivalent: same dispatcher, same flag, and the runner's
-    /// session answers <c>IsCompanyOpen = true</c>, so BC's own company gate would have run it
-    /// too. Corpus codeunit 60488 "POI Tests" pins the AL-observable half.</para>
+    /// <para><c>InitializeForm</c> is what raises OnInit, and BC calls it from every generated
+    /// page constructor: once per instance, before AL can call a procedure on the page variable,
+    /// SetRecord or SetTableView. The runner marks a form only after its constructor returns, and
+    /// never marks one BC builds for <c>RunModal</c>/<c>Run</c>, so on the narrow gate OnInit never
+    /// ran (#4114). Raising it later, at open, overwrote what a setter called before RunModal had
+    /// set. Observably equivalent to BC: BC's own body runs, at BC's own point, and the runner's
+    /// session answers <c>IsCompanyOpen = true</c> so its company gate passes. Corpus codeunit
+    /// 60488 "POI Tests" pins both the order and the once-per-instance count.</para>
     ///
-    /// <para>Unconditional: each caller is one open, and a TestPage REOPEN is served by BC with a
-    /// fresh instance whose OnInit runs again. No measured path reaches one form through both
-    /// callers; if one appears, corpus 60488's 'IO' trace reads 'IIO'.</para>
+    /// <para>Request pages stay excluded, as in <see cref="ShouldResolveMasterPage"/>.</para>
     /// </summary>
-    internal static void RaiseOnInit(Microsoft.Dynamics.Nav.Runtime.NavForm form)
-    {
-        const System.Reflection.BindingFlags Flags = System.Reflection.BindingFlags.Instance
-            | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public;
-        var initialized = typeof(Microsoft.Dynamics.Nav.Runtime.NavForm).GetProperty("IsFormInitialized", Flags)
-            ?? throw new System.InvalidOperationException(
-                "NavForm.IsFormInitialized not found — Ncl shape changed; do not commit");
-        var raise = typeof(Microsoft.Dynamics.Nav.Runtime.NavForm).GetMethod(
-                "RaiseOnInitAsync", Flags, binder: null, types: System.Type.EmptyTypes, modifiers: null)
-            ?? throw new System.InvalidOperationException(
-                "NavForm.RaiseOnInitAsync not found — Ncl shape changed; a page's OnInit would silently not run");
-        try { RunnerPageInstance.AwaitTriggerResult(raise.Invoke(form, System.Array.Empty<object>())); }
-        catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
-        {
-            // An Error() in OnInit is AL's own outcome; rethrow it unwrapped.
-            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
-            throw;
-        }
+    public static bool ShouldInitializeForm(object form) => ShouldResolveMasterPage(form);
 
-        initialized.GetSetMethod(nonPublic: true)?.Invoke(form, new object[] { true });
+    /// <summary>
+    /// Whether <paramref name="ex"/> was raised by a page's OnInit — thrown out of
+    /// <c>NavForm.InitializeFormAsync</c>, which now runs inside the page constructor. The
+    /// runner's page-construction sites catch construction failures and fall back; an Error()
+    /// in OnInit is AL's own outcome and must reach the test instead, as it does on BC, so
+    /// those sites rethrow when this answers true (#4114).
+    /// </summary>
+    internal static bool IsRaisedFromOnInit(System.Exception ex)
+    {
+        var frames = new System.Diagnostics.StackTrace(ex, false).GetFrames();
+        foreach (var frame in frames)
+        {
+            var m = frame.GetMethod();
+            if (m?.DeclaringType == typeof(Microsoft.Dynamics.Nav.Runtime.NavForm)
+                && m.Name is "InitializeFormAsync" or "RaiseOnInitAsync")
+                return true;
+        }
+        return false;
     }
 
     /// <summary>

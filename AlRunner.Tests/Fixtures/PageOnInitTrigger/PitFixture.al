@@ -62,6 +62,12 @@ page 71901 "PIT Wizard"
         Trace += 'O';
     end;
 
+    procedure MarkSet()
+    begin
+        Trace += 'S';
+        NextEnabled := false;
+    end;
+
     var
         Trace: Text[10];
         NextEnabled: Boolean;
@@ -143,6 +149,20 @@ codeunit 71903 "PIT Tests"
         SeenTrace := '?';
         Page.Run(Page::"PIT Wizard");
         if SeenTrace <> 'IO' then Error('run Trace=%1', SeenTrace);
+    end;
+
+    [Test]
+    [HandlerFunctions('WizModalHandler')]
+    procedure SetterBeforeRunModal_RunsAfterOnInit()
+    var
+        Wiz: Page "PIT Wizard";
+    begin
+        SeenTrace := '?';
+        SeenNextEnabled := true;
+        Wiz.MarkSet();
+        Wiz.RunModal();
+        if SeenTrace <> 'ISO' then Error('setter Trace=%1', SeenTrace);
+        if SeenNextEnabled then Error('the setter''s Next=false must survive OnInit');
     end;
 
     [Test]

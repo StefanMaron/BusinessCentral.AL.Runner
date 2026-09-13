@@ -988,6 +988,15 @@ public static partial class NclCecilRewrite
                     ?? throw new InvalidOperationException(
                         "RunnerFormInit.ShouldRegisterSourceExpressions not found — do not commit"));
 
+                // InitializeForm gets its own gate too: it is the constructor-time call that raises
+                // OnInit, and the instance mark is only set after the constructor returns (#4114).
+                var shouldInitializeRef = asm.MainModule.ImportReference(
+                    typeof(AlRunner.Patches.RunnerFormInit).GetMethod(
+                        nameof(AlRunner.Patches.RunnerFormInit.ShouldInitializeForm),
+                        BindingFlags.Public | BindingFlags.Static)
+                    ?? throw new InvalidOperationException(
+                        "RunnerFormInit.ShouldInitializeForm not found — do not commit"));
+
                 int rewrites = 0;
                 foreach (var m in navFormT.Methods)
                 {
@@ -995,7 +1004,7 @@ public static partial class NclCecilRewrite
                     bool target = false;
                     var guardRef = shouldRunRef;
                     if (m.Name == "CallInitializeComponentExtensionMethod" && m.Parameters.Count == 0) target = true;
-                    else if (m.Name == "InitializeForm" && m.Parameters.Count == 0 && m.ReturnType.FullName == "System.Void") target = true;
+                    else if (m.Name == "InitializeForm" && m.Parameters.Count == 0 && m.ReturnType.FullName == "System.Void") { target = true; guardRef = shouldInitializeRef; }
                     else if (m.Name == "RegisterSourceExpression") { target = true; guardRef = shouldRegisterRef; }
                     if (!target) continue;
                     // NEVER rewrite an async ValueTask body (CoreCLR segfault risk).
