@@ -338,6 +338,39 @@ point; two commits with different trees are not the same code however closely re
 [ "$(git rev-parse <sha1>^{tree})" = "$(git rev-parse <sha2>^{tree})" ] && echo "same tree"
 ```
 
+### A red you inherited from the corpus is not a flake — count it per codeunit
+
+The commonest "is this red mine?" here is neither a flake nor your defect: the corpus is
+resolved per run, so a corpus PR merging ahead of the runner PR its tests need reddens every
+PR in flight, deterministically, until that runner PR lands. Measured four times on #3922 —
+one window held `main` red for 9h45m and blocked five PRs.
+
+None of §5's three tests applies, because it is not load-dependent: it reproduces on every
+run, and a re-run destroys the log while proving nothing. `tools/ci-wait.py` prints the answer
+beside the failing log it already fetched:
+
+```
+--- failing corpus codeunits (#3922: is this red mine?) ---
+  Codeunit60285  x2  <- open runner PR #3996 fixes this
+  Codeunit60976  x6  <- open runner PR #3985 fixes this
+```
+
+Every failing codeunit matched to an open runner PR ⇒ inherited; rebase once they land.
+**Anything unmatched is possibly the PR's own**, whatever the others say.
+
+**Match per codeunit; never on the total.** The inherited total shrinks as each foreign pair
+lands — measured 17 → 13 in twenty minutes when one of four merged — so "17 means inherited"
+is wrong within the hour, and it fails toward the dangerous side: a later run showing 13 reads
+as "fewer than inherited, so something here is mine". By hand, when you have a log rather than
+a PR number:
+
+```bash
+command grep -E "^\S+Z *FAIL " <leg.log> | command grep -oE "Codeunit[0-9]+" | sort | uniq -c
+```
+
+**A docs-only PR going green beside a red BC-leg PR points at the corpus** — docs-only PRs run
+no legs, so they flow through the window untouched.
+
 ### Getting a second run of the same commit without `gh run rerun`
 
 Both options create a brand-new, separate workflow run and leave the original run and its log

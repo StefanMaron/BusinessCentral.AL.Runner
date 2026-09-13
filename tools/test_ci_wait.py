@@ -1980,6 +1980,127 @@ check("#3674: ...and that module classifies a merged corpus PR as MERGED",
       and _real.classify({"state": "closed", "merged": True})[0] == "MERGED",
       repr(_real.classify({"state": "closed", "merged": True}) if _real else None))
 
+
+# --------------------------------------------------------------------------
+# #3922: name the corpus codeunits in a red leg, and match each to the open
+# runner PR that fixes it.
+# --------------------------------------------------------------------------
+
+# The two log spellings. 27.x prints `FAIL` with two spaces and no timing; 28.x
+# with one space and a duration (verify-execution-not-the-tick.md). A literal
+# run of spaces matches one major and silently returns zero for the other.
+_LOG_27 = "\n".join([
+    "2026-09-12T23:01:12.1084641Z FAIL  Codeunit60285.RunObjectRefused (4ms)",
+    "2026-09-12T23:01:12.1086594Z FAIL  Codeunit60285.RunObjectOpensFirst (3ms)",
+    "2026-09-12T23:01:12.1463421Z FAIL  Codeunit60976.ActiveSession_FindsIt (1ms)",
+    "2026-09-12T23:01:12.1500000Z PASS  Codeunit60999.SomethingElse (2ms)",
+])
+_LOG_28 = "\n".join([
+    "2026-09-12T23:01:12.1084641Z    FAIL Codeunit60989.AllObjPackageId 0.4s",
+    "2026-09-12T23:01:12.1086594Z    FAIL Codeunit60989.AllObjPackageIdTwo 0.3s",
+])
+
+_counts = cw.failing_codeunits(_LOG_27)
+check("#3922: 27.x log spelling -- per-codeunit counts, not a total",
+      _counts == {"60285": 2, "60976": 1}, repr(_counts))
+
+_counts28 = cw.failing_codeunits(_LOG_28)
+check("#3922: 28.x log spelling (one space, a duration) counts too",
+      _counts28 == {"60989": 2}, repr(_counts28))
+
+# A duplicated log line must not inflate a count: distinct test NAMES, never
+# lines (verify-execution-not-the-tick.md trap 1).
+_dupe = _LOG_27 + "\n" + _LOG_27.split("\n")[0]
+check("#3922: a duplicated FAIL line does not inflate the count",
+      cw.failing_codeunits(_dupe) == {"60285": 2, "60976": 1},
+      repr(cw.failing_codeunits(_dupe)))
+
+# An empty log body is a REFUSAL, not zero failures (ci-verdicts.md #3309).
+# Zero and "could not read" must not be the same answer.
+check("#3922: an empty log is unavailable, never zero failures",
+      cw.failing_codeunits("") is None, repr(cw.failing_codeunits("")))
+
+# A failure that is NOT a corpus codeunit -- a C# unit test, say -- must remain
+# visible as unmatched rather than vanishing from the table.
+_mixed = _LOG_27 + "\n2026-09-12T23:01:13.0Z FAIL  AlRunner.Tests.WatchTests.Edit (9ms)"
+check("#3922: a non-corpus failure does not silently disappear",
+      cw.failing_codeunits(_mixed) == {"60285": 2, "60976": 1},
+      repr(cw.failing_codeunits(_mixed)))
+
+# --- the corpus-codeunit -> runner-PR match -------------------------------
+#
+# The link is mechanical: an open runner PR declares `Corpus-PR: <url>`, and
+# that corpus PR's PATCH names the codeunit -- either as an added `codeunit
+# <id>` declaration (a new suite) or in a hunk header (tests appended to an
+# existing one). Both were measured on live data; see the function's docstring.
+
+_PATCH_NEW = "@@ -0,0 +1,20 @@\n+codeunit 60976 \"Active Session Tests\"\n+{\n"
+_PATCH_APPENDED = ("@@ -157,6 +161,8 @@ codeunit 60285 \"TPARONH Tests\"\n"
+                   "     // Held out of the suite (TestPageActionRunObject_Tests, codeunit 60455)\n"
+                   "+    procedure NewTest()\n")
+
+check("#3922: an added `codeunit <id>` declaration is the PR's codeunit",
+      cw.codeunits_in_patch(_PATCH_NEW) == {"60976"},
+      repr(cw.codeunits_in_patch(_PATCH_NEW)))
+
+# The property that matters, and the one a naive extractor gets wrong: a
+# codeunit MENTIONED in an unchanged comment line is not a codeunit this PR
+# changes. Measured on corpus PR #331, which mentions 60455 and changes 60285.
+check("#3922: a codeunit merely mentioned in unchanged context is NOT claimed",
+      cw.codeunits_in_patch(_PATCH_APPENDED) == {"60285"},
+      repr(cw.codeunits_in_patch(_PATCH_APPENDED)))
+
+# --- the report line ------------------------------------------------------
+
+def _fake_map(_open_prs=None):
+    return {"60976": "3985", "60989": "4004"}
+
+
+_lines = cw.inherited_red_lines(_LOG_27 + "\n" + _LOG_28, pr_map_fetch=_fake_map)
+_joined = "\n".join(_lines)
+check("#3922: every failing codeunit appears with its count",
+      "60285" in _joined and "60976" in _joined and "60989" in _joined, _joined)
+check("#3922: a matched codeunit names the open runner PR that fixes it",
+      "#3985" in _joined and "#4004" in _joined, _joined)
+# The dangerous direction: an UNMATCHED codeunit must be called out, because
+# that is the one that may be the PR's own failure.
+check("#3922: an unmatched codeunit is reported as possibly this PR's own",
+      any("60285" in l and ("no open" in l.lower() or "unmatched" in l.lower())
+          for l in _lines), _joined)
+check("#3922: a partial match is NOT reported as wholly inherited",
+      not any("entirely inherited" in l.lower() for l in _lines), _joined)
+
+# All matched -> the summary may say inherited.
+_all_matched = cw.inherited_red_lines(_LOG_28, pr_map_fetch=_fake_map)
+check("#3922: every codeunit matched reports the red as inherited",
+      any("inherit" in l.lower() for l in _all_matched), "\n".join(_all_matched))
+
+# A report may never raise and never gate.
+class _BoomMap:
+    def __call__(self, *a, **kw):
+        raise RuntimeError("network")
+
+
+_safe = cw.inherited_red_lines(_LOG_27, pr_map_fetch=_BoomMap())
+check("#3922: a failed PR-map read degrades to unavailable, never an exception",
+      any("unavailable" in l.lower() for l in _safe), "\n".join(_safe))
+check("#3922: ...and the per-codeunit table still prints without the match",
+      any("60285" in l for l in _safe), "\n".join(_safe))
+
+_none = cw.inherited_red_lines("", pr_map_fetch=_fake_map)
+check("#3922: an unreadable log says so rather than reporting zero failures",
+      any("unavailable" in l.lower() for l in _none), "\n".join(_none))
+
+_buf = io.StringIO()
+_stdout = sys.stdout
+try:
+    sys.stdout = _buf
+    _ret = cw.print_inherited_red("", pr_map_fetch=_fake_map)
+finally:
+    sys.stdout = _stdout
+check("#3922: printing the table returns nothing (it cannot change an exit code)",
+      _ret is None, repr(_ret))
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} check(s): {', '.join(FAILURES)}")
