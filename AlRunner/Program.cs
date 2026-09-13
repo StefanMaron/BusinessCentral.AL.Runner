@@ -6692,6 +6692,8 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
             }
 
             var requestDiscoveredTestsByBundle = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+            // #3337: null = no narrowing (every discovered test was selected).
+            var requestSelectedTestsByBundle = new Dictionary<string, HashSet<string>?>(StringComparer.Ordinal);
             var requestModuleByBundle = new Dictionary<string, string>(StringComparer.Ordinal);
             var requestEnvironmentByBundle = new Dictionary<string, string>(StringComparer.Ordinal);
             var selectionByBundle = new Dictionary<string, ServerSelection>(StringComparer.Ordinal);
@@ -6744,6 +6746,7 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                             activeForcedReason);
                     }
 
+                    requestSelectedTestsByBundle[activeBundleKey] = exactSelection;
                     var previousExact = executor.ExactTestFilter;
                     executor.ExactTestFilter = exactSelection;
                     try { return executor.Run(asm, OnTestComplete, cts.Token); }
@@ -6934,8 +6937,24 @@ int RunServerLoop(System.IO.TextReader input, System.IO.TextWriter output)
                         continue;
                     }
 
+                    // #3337: a test selection deliberately SKIPPED keeps its previous entry. Its
+                    // covered objects did not change, so the entry still holds; dropping it made
+                    // the next request rerun it as unknown, and narrow/full runs alternated. Only
+                    // a skip counts — a selected test with no result (cancelled, never reached)
+                    // stays unknown, or a stale entry would hide it from the change it missed.
+                    requestSelectedTestsByBundle.TryGetValue(bundlePath, out var selectedThisRequest);
+                    affectedCoverageByBundle.TryGetValue(bundlePath, out var previousCoverage);
                     foreach (var testKey in discoveredTests)
                     {
+                        if (selectedThisRequest != null
+                            && !selectedThisRequest.Contains(testKey)
+                            && previousCoverage != null
+                            && previousCoverage.TryGetValue(testKey, out var carried))
+                        {
+                            nextCoverage[testKey] = carried;
+                            continue;
+                        }
+
                         if (!resultByTest.TryGetValue(testKey, out var result)
                             || result.Outcome != TestOutcome.Pass
                             || result.TimedOut)
