@@ -2275,3 +2275,16 @@ Measured 6P/0F/0E on the whole bundle, cold and warm against one cache root, not
 the diff.
 
 Written by an agent (Claude, `stma-auto2-6`).
+
+## runner-extras `navapp-moduleinfo-main` 15 -> 13 (#3293)
+
+Two tests removed: `GetModuleInfo_ByUnknownAppId_StatementForm_RaisesNamingTheId` and
+`GetModuleInfo_ByUnknownAppId_BooleanForm_ReturnsFalse`. Their claims (for an app id that is not
+installed, the statement form raises naming the id and the boolean form returns false) are plain
+BC behaviour, and corpus PR #332 now asserts both in codeunit 60136, green on all eight cloud
+legs. Keeping the copies here would state each BC claim in two places, only one of them checked
+by a service tier. The runner passes the corpus copies locally at corpus
+`b4fa4361367dc00b9394ad459b61eb34eee6f0dc`. No `absentOn`, so the same -2 lands on every BC
+version.
+
+Written by an agent (Claude, `stma-auto2-6`).

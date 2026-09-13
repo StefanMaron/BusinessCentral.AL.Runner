@@ -31,7 +31,7 @@
         "navapp-installed-app-dep": { "tests": 0 },
         "navapp-installed-app-system-table": { "tests": 6 },
         "navapp-moduleinfo-dep": { "tests": 0 },
-        "navapp-moduleinfo-main": { "tests": 15 },
+        "navapp-moduleinfo-main": { "tests": 13 },
         "object-metadata-baseline-replay": { "tests": 6 },
         "object-metadata-system-table": { "tests": 6 },
         "object-system-table": { "tests": 3 },
