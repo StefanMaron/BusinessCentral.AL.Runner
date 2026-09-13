@@ -103,6 +103,42 @@ public static partial class RecordPatches
             if (!done.TryAdd((layout.ReportId, layout.Name), 0)) continue;
             InsertReportLayoutListRow(provider, metaTable, layout);
         }
+
+        // Reports in a precompiled dependency are never emitted, so the registry above cannot
+        // hold them (#2297). Compiled reports go first: a report both compiled and in a
+        // dependency keeps its compiled rows.
+        foreach (var layout in EnumerateDependencyReportLayouts())
+        {
+            if (!done.TryAdd((layout.ReportId, layout.Name), 0)) continue;
+            InsertReportLayoutListRow(provider, metaTable, layout);
+        }
+    }
+
+    /// <summary>
+    /// Every rendering-syntax layout a loaded dependency's SymbolReference.json declares, with
+    /// no ResolvedPath: the bytes live in the .app, and serving them is rendering (out of scope).
+    /// </summary>
+    internal static IEnumerable<AlReportLayoutInfo> DependencyReportLayouts(BcAppSymbolCache.ReportSymbol report)
+    {
+        if (report.Layouts == null) yield break;
+        foreach (var l in report.Layouts)
+            yield return new AlReportLayoutInfo(
+                ReportId: report.Id,
+                Name: l.Name,
+                LayoutType: l.Type ?? string.Empty,
+                MimeType: l.MimeType ?? string.Empty,
+                LayoutFile: l.LayoutFile ?? string.Empty,
+                ResolvedPath: string.Empty,
+                Caption: l.Caption ?? string.Empty,
+                Summary: l.Summary ?? string.Empty,
+                IsDefault: string.Equals(l.Name, report.DefaultRenderingLayout, System.StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static IEnumerable<AlReportLayoutInfo> EnumerateDependencyReportLayouts()
+    {
+        foreach (var report in EnumerateBcAppReportSymbols())
+            foreach (var layout in DependencyReportLayouts(report))
+                yield return layout;
     }
 
     private static void InsertReportLayoutListRow(object provider, NCLMetaTable metaTable, AlReportLayoutInfo layout)

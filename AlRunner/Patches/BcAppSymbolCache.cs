@@ -561,7 +561,17 @@ internal static partial class BcAppSymbolCache
         // reports states either mask, and it spells both "X". The decoder's indirect bits
         // are therefore unexercised on this kind, which is the reason to carry the letters
         // verbatim rather than rest on a population that happens not to need them.
-        string? InherentEntitlements = null, string? InherentPermissions = null);
+        string? InherentEntitlements = null, string? InherentPermissions = null,
+        // The `rendering { layout(Name) { … } }` declarations and the report's
+        // DefaultRenderingLayout, as the symbol file states them (#2297). Null Layouts means
+        // the report declares no rendering block; 62 of Base Application 28.1's 659 reports do.
+        List<ReportLayoutSymbol>? Layouts = null, string? DefaultRenderingLayout = null,
+        // The legacy `DefaultLayout = RDLC|Word|…` property, verbatim — the other 328 reports.
+        string? LegacyDefaultLayout = null);
+
+    /// <summary>One <c>layout(Name) { Type; MimeType; LayoutFile; Caption; Summary }</c>, verbatim.</summary>
+    internal sealed record ReportLayoutSymbol(
+        string Name, string? Type, string? MimeType, string? LayoutFile, string? Caption, string? Summary);
 
     /// <summary>One entry of a report's data-item tree, flattened in declaration order.</summary>
     internal sealed record ReportDataItemSymbol(
@@ -2005,11 +2015,34 @@ internal static partial class BcAppSymbolCache
             ? rsf.GetString()
             : null;
 
+        props.TryGetValue("DefaultRenderingLayout", out var defaultRenderingLayout);
+        props.TryGetValue("DefaultLayout", out var legacyDefaultLayout);
+
         return new ReportSymbol(reportId, name, caption, processingOnly, useRequestPage,
             wordMergeDataItem, dataItems, referenceSourceFileName,
             string.IsNullOrWhiteSpace(alNamespace) ? null : alNamespace.Trim(),
             string.IsNullOrWhiteSpace(inherentEntitlements) ? null : inherentEntitlements.Trim(),
-            string.IsNullOrWhiteSpace(inherentPermissions) ? null : inherentPermissions.Trim());
+            string.IsNullOrWhiteSpace(inherentPermissions) ? null : inherentPermissions.Trim(),
+            ReadReportLayouts(report),
+            string.IsNullOrWhiteSpace(defaultRenderingLayout) ? null : defaultRenderingLayout,
+            string.IsNullOrWhiteSpace(legacyDefaultLayout) ? null : legacyDefaultLayout.Trim());
+    }
+
+    private static List<ReportLayoutSymbol>? ReadReportLayouts(JsonElement report)
+    {
+        if (!report.TryGetProperty("Layouts", out var arr) || arr.ValueKind != JsonValueKind.Array)
+            return null;
+        var result = new List<ReportLayoutSymbol>();
+        foreach (var layout in arr.EnumerateArray())
+        {
+            var name = layout.TryGetProperty("Name", out var n) ? n.GetString() : null;
+            if (string.IsNullOrEmpty(name)) continue;
+            var p = SymbolProperties(layout);
+            string? Get(string key) => p.TryGetValue(key, out var v) && !string.IsNullOrEmpty(v) ? v : null;
+            result.Add(new ReportLayoutSymbol(name, Get("Type"), Get("MimeType"), Get("LayoutFile"),
+                Get("Caption"), Get("Summary")));
+        }
+        return result.Count == 0 ? null : result;
     }
 
     /// <summary>
