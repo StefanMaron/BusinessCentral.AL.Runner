@@ -20,6 +20,35 @@ public sealed partial class BcCompiler
         _declaredReferences[identity.AppId] = identity;
     }
 
+    /// <summary>Forget every recorded app.json. A --server request calls this first, so a
+    /// declaration read for an earlier request's workspace cannot answer for this one.</summary>
+    internal static void ResetDeclaredReferences() => _declaredReferences.Clear();
+
+    /// <summary>
+    /// The references <paramref name="appId"/> may see under the declarations recorded now, in
+    /// a stable form; null when its app.json was not recorded (nothing is narrowed then).
+    /// </summary>
+    internal static string? DeclaredVisibilitySignature(Guid appId)
+    {
+        if (!_declaredReferences.TryGetValue(appId, out var self)) return null;
+        return string.Join(";", AllowedReferences(self)
+            .Select(d => $"{d.AppId:N}|{d.Publisher.ToLowerInvariant()}|{d.Name.ToLowerInvariant()}")
+            .Distinct()
+            .OrderBy(x => x, StringComparer.Ordinal));
+    }
+
+    private static List<DependencyRef> AllowedReferences(BundleIdentity self)
+    {
+        var allowed = new List<DependencyRef>(self.Dependencies);
+        foreach (var dep in self.Dependencies)
+        {
+            var declared = FindRecordedIdentity(dep);
+            if (declared is { PropagateDependencies: true })
+                allowed.AddRange(declared.Dependencies);
+        }
+        return allowed;
+    }
+
     /// <summary>
     /// Keeps the specs <paramref name="currentAppId"/>'s app.json declares, plus the
     /// declarations of any declared source app that sets <c>propagateDependencies</c>.
@@ -33,14 +62,7 @@ public sealed partial class BcCompiler
         if (currentAppId is not Guid selfId || !_declaredReferences.TryGetValue(selfId, out var self))
             return specs;
 
-        var allowed = new List<DependencyRef>(self.Dependencies);
-        foreach (var dep in self.Dependencies)
-        {
-            var declared = FindRecordedIdentity(dep);
-            if (declared is { PropagateDependencies: true })
-                allowed.AddRange(declared.Dependencies);
-        }
-
+        var allowed = AllowedReferences(self);
         return specs.Where(s => IsAllowed(s, allowed)).ToArray();
     }
 

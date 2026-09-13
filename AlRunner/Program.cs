@@ -4910,6 +4910,8 @@ return strictExitCode ? computedExitCode : 0;
         // app-defined table died with "no NCLMetaTable for table N (AL source not
         // parsed)" while the identical CLI invocation passed.
         BcRuntime.ResetForNewBundleReload();
+        // #4096: each request narrows references from its own workspace's app.json files.
+        BcCompiler.ResetDeclaredReferences();
 
         // #2136, same defect as the CLI's positional arguments one call site over: a
         // `sourcePaths` array naming the same directory twice ran it twice and returned

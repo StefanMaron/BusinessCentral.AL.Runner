@@ -21,10 +21,17 @@ public class TransitiveDependencyVisibilityTests
 
     private sealed record Chain(string Root, string BaseDir, string MiddleDir, string TestDir);
 
-    private static Chain WriteChain(string scratch, bool middlePropagates, bool testReferencesBase)
+    private sealed record ChainIds(Guid Base, Guid Middle, Guid Test)
     {
-        Guid baseId = Guid.NewGuid(), middleId = Guid.NewGuid(), testId = Guid.NewGuid();
-        var root = Path.Combine(scratch, "chain");
+        public static ChainIds New() => new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid());
+    }
+
+    private static Chain WriteChain(string scratch, bool middlePropagates, bool testReferencesBase,
+        ChainIds? ids = null, string rootName = "chain")
+    {
+        ids ??= ChainIds.New();
+        Guid baseId = ids.Base, middleId = ids.Middle, testId = ids.Test;
+        var root = Path.Combine(scratch, rootName);
         var baseDir = Path.Combine(root, "base-app");
         var middleDir = Path.Combine(root, "middle-app");
         var testDir = Path.Combine(root, "test-app");
@@ -230,4 +237,66 @@ public class TransitiveDependencyVisibilityTests
 
         AssertRefused(output, exit);
     }
+
+    // ── --server: two workspaces sharing app ids, differing only in propagation ─
+
+    private static string ServerReq(string sourcePath) => System.Text.Json.JsonSerializer.Serialize(new
+    {
+        command = "runTests",
+        sourcePaths = new[] { sourcePath },
+        packagePaths = Array.Empty<string>(),
+    });
+
+    private static async Task<(bool Passed, string Text)> ServeAsync(CliServer server, string testDir)
+    {
+        var mark = server.StdErrMark;
+        var lines = await server.SendRequestStreamingAsync(ServerReq(testDir), TimeSpan.FromSeconds(300));
+        var (_, summary) = ProtocolV2Streaming.Split(lines);
+        var text = string.Join(" | ", lines);
+        if (summary.TryGetProperty("compilationErrors", out var groups))
+            text += " | " + string.Join(" | ", groups.EnumerateArray()
+                .SelectMany(g => g.GetProperty("errors").EnumerateArray().Select(e => e.GetString())));
+        text += "\n--- server stderr for this request ---\n" + server.StdErrSince(mark);
+        var passed = summary.GetProperty("exitCode").GetInt32() == 0
+            && summary.GetProperty("passed").GetInt32() == 1
+            && !text.Contains("AL0185");
+        return (passed, text);
+    }
+
+    /// <summary>
+    /// One server serves workspace A, then workspace B, then A again. Both hold the same three
+    /// app ids and the same AL; only the middle app's <c>propagateDependencies</c> differs. Each
+    /// request must be decided by its own workspace's app.json, never by the previous request's.
+    /// </summary>
+    private static async Task AssertEachRequestUsesItsOwnDeclarations(bool firstPropagates)
+    {
+        TestArtifacts.SkipIfMissing();
+        var scratch = TestScratch.Dir("tdv-server-" + (firstPropagates ? "w1-first" : "w2-first"));
+        var ids = ChainIds.New();
+        var first = WriteChain(scratch, firstPropagates, testReferencesBase: true, ids, "ws-first");
+        var second = WriteChain(scratch, !firstPropagates, testReferencesBase: true, ids, "ws-second");
+
+        await using var server = await CliServer.StartAsync(new[] { "--cache", Path.Combine(scratch, "al-out") });
+
+        foreach (var (chain, propagates, step) in new[]
+                 { (first, firstPropagates, "first"), (second, !firstPropagates, "second"), (first, firstPropagates, "first again") })
+        {
+            var (passed, text) = await ServeAsync(server, chain.TestDir);
+            if (propagates)
+                Assert.True(passed, $"{step} workspace propagates, so the test must compile and pass:\n{text}");
+            else
+            {
+                Assert.False(passed, $"{step} workspace does not propagate, so the test must not compile:\n{text}");
+                Assert.Contains($"AL0185: Codeunit '{BaseCodeunit}' is missing", text);
+            }
+        }
+    }
+
+    [SkippableFact]
+    public Task Server_PropagatingWorkspaceFirst_EachRequestUsesItsOwnDeclarations()
+        => AssertEachRequestUsesItsOwnDeclarations(firstPropagates: true);
+
+    [SkippableFact]
+    public Task Server_NonPropagatingWorkspaceFirst_EachRequestUsesItsOwnDeclarations()
+        => AssertEachRequestUsesItsOwnDeclarations(firstPropagates: false);
 }

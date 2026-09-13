@@ -59,7 +59,10 @@ public sealed class DependencyLoader
         // #3250: what RunBundleForServer replays when it hands this module to a bundle at a
         // DIFFERENT directory — the registering bundle's own emit-derived registries, which
         // ResetForNewBundleReload clears every request. Recorded for THIS Asm only.
-        OwnBundleRegistryReplay? OwnBundleReplay = null)
+        OwnBundleRegistryReplay? OwnBundleReplay = null,
+        // #4096: which references this module was compiled allowed to see. A different
+        // workspace with the same identity but different declarations must not reuse it.
+        string? VisibilitySignature = null)
     {
         /// <summary>Every assembly of this app, primary first; never empty.</summary>
         internal IReadOnlyList<Assembly> AllAssemblies => Assemblies ?? new[] { Asm };
@@ -323,7 +326,8 @@ public sealed class DependencyLoader
                 if (_cache.TryGetValue(m.AppId, out var superseded))
                     RetireGeneration(superseded.AllAssemblies, keep: appAssemblies);
                 _cache[m.AppId] = new LoadedAppEntry(
-                    asm, m.Name, m.Publisher, m.Version.ToString(), path, tier3CacheKey, appAssemblies);
+                    asm, m.Name, m.Publisher, m.Version.ToString(), path, tier3CacheKey, appAssemblies,
+                    VisibilitySignature: BcCompiler.DeclaredVisibilitySignature(m.AppId));
                 RegisterAppAssemblies(appAssemblies, m, path);
                 list.AddRange(appAssemblies);
             }
@@ -1383,6 +1387,8 @@ public sealed class DependencyLoader
             throw new AlRunner.Infrastructure.AppIdCollisionException(
                 appId, entry.Name, entry.Publisher, entry.Version, entry.SourcePath,
                 name, publisher, version, sourcePath);
+        if (!string.Equals(entry.VisibilitySignature, BcCompiler.DeclaredVisibilitySignature(appId), StringComparison.Ordinal))
+            return null;
         return entry.Asm;
     }
 
@@ -1429,7 +1435,8 @@ public sealed class DependencyLoader
     /// </summary>
     public static void RegisterLoaded(Guid appId, Assembly asm, string name, string publisher, string version, string sourcePath)
     {
-        var newEntry = new LoadedAppEntry(asm, name, publisher, version, sourcePath);
+        var newEntry = new LoadedAppEntry(asm, name, publisher, version, sourcePath,
+            VisibilitySignature: BcCompiler.DeclaredVisibilitySignature(appId));
         if (_cache.TryAdd(appId, newEntry)) return;
         var existing = _cache[appId];
         // #2556: SourcePath first, for the same reason as TryGetByAppId above — this is the
@@ -1437,7 +1444,11 @@ public sealed class DependencyLoader
         // whatever its version now says. Overwriting is what server mode's edit-and-rerun
         // contract needs: a later sibling bundle must resolve to THIS compile, not the one
         // that happened to run first.
-        if (string.Equals(existing.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase))
+        // #4096: a module compiled under different declarations is replaced the same way, so the
+        // next lookup does not keep finding the stale one and recompiling.
+        if (string.Equals(existing.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase)
+            || (IdentityMatches(existing, name, publisher, version)
+                && !string.Equals(existing.VisibilitySignature, newEntry.VisibilitySignature, StringComparison.Ordinal)))
         {
             RetireGeneration(existing.AllAssemblies, keep: new[] { asm });
             _cache[appId] = newEntry;
