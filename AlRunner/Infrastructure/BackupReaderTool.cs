@@ -54,7 +54,7 @@ internal static class BackupReaderTool
     /// <summary>Every location <see cref="Resolve"/> probes, in order. Public shape (a list,
     /// not a formatted string) so the failure message and the tests agree by construction
     /// rather than by two people spelling the same paths twice.</summary>
-    internal static IReadOnlyList<string> CandidateExecutables(string? envValue, string? home)
+    internal static IReadOnlyList<string> CandidateExecutables(string? envValue, string? cacheRoot)
     {
         var candidates = new List<string>();
         if (!string.IsNullOrWhiteSpace(envValue))
@@ -63,8 +63,8 @@ internal static class BackupReaderTool
             candidates.Add(trimmed);
             candidates.Add(Path.Combine(trimmed, ExecutableName));
         }
-        if (!string.IsNullOrEmpty(home))
-            candidates.Add(Path.Combine(home, ".cache", "al-runner", ExecutableName, ExecutableName));
+        if (!string.IsNullOrEmpty(cacheRoot))
+            candidates.Add(Path.Combine(cacheRoot, ExecutableName, ExecutableName));
         return candidates;
     }
 
@@ -76,8 +76,8 @@ internal static class BackupReaderTool
         if (_resolved != null) return _resolved;
 
         var env = Environment.GetEnvironmentVariable(ExecutableEnvVar);
-        var home = TryUserHome();
-        foreach (var candidate in CandidateExecutables(env, home))
+        var cacheRoot = TryDefaultCacheRoot();
+        foreach (var candidate in CandidateExecutables(env, cacheRoot))
             if (File.Exists(candidate))
                 return _resolved = Path.GetFullPath(candidate);
 
@@ -89,7 +89,7 @@ internal static class BackupReaderTool
         // message, so a "Probed:" list on line 3 never reached anyone. This message's whole
         // value is the list of places that were looked in and the env var that overrides them.
         var probed = string.Join(", ",
-            CandidateExecutables(env, home).Append($"<each PATH entry>/{ExecutableName}").Select(c => $"'{c}'"));
+            CandidateExecutables(env, cacheRoot).Append($"<each PATH entry>/{ExecutableName}").Select(c => $"'{c}'"));
         throw new BackupReaderException(
             $"--test-data needs the BC backup reader '{ExecutableName}', which was not found — "
             + $"probed {probed}. Set {ExecutableEnvVar} to the executable "
@@ -104,9 +104,11 @@ internal static class BackupReaderTool
         _identity = null;
     }
 
-    private static string? TryUserHome()
+    // The per-user cache root (CacheRoots.DefaultRoot, so AL_RUNNER_CACHE_ROOT moves this probe
+    // too); null when it cannot be resolved, which drops only that one candidate.
+    private static string? TryDefaultCacheRoot()
     {
-        try { return AlRunnerPaths.UserHome; }
+        try { return CacheRoots.DefaultRoot; }
         catch { return null; }
     }
 

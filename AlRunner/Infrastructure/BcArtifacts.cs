@@ -159,15 +159,56 @@ public static class BcArtifacts
     /// when the caller typed it.</para>
     /// </summary>
     internal static string ResolveArtifactsRoot(string? envOverride, Func<string> userHome)
+        => ResolveRoot(envOverride, userHome, ArtifactsRoot_Rel);
+
+    /// <summary>The shared core of every home-rooted root with an environment override
+    /// (<see cref="ResolveArtifactsRoot"/>, <see cref="ResolveSymbolsRoot"/>,
+    /// <c>CacheRoots.ResolveDefaultRoot</c>): one convention, not three.</summary>
+    internal static string ResolveRoot(string? envOverride, Func<string> userHome, string homeRelative)
     {
         if (string.IsNullOrWhiteSpace(envOverride))
             // AlRunnerPaths.UserHome throws loudly (issue #2114) rather than silently handing
             // back a relative path when $HOME names a directory that does not exist.
-            return Path.Combine(userHome(), ArtifactsRoot_Rel);
+            return Path.Combine(userHome(), homeRelative);
 
         // TrimEndingDirectorySeparator leaves a filesystem ROOT ("/", a drive root) alone,
         // unlike a bare TrimEnd, which turns "/" into "" and hands back a relative path.
         return Path.TrimEndingDirectorySeparator(Path.GetFullPath(envOverride.Trim()));
+    }
+
+    /// <summary>
+    /// Environment variable that relocates the curated symbols tree (issue #2768), the sibling
+    /// of <see cref="ArtifactsRootEnvVar"/>: the directory the per-version symbol subdirectories
+    /// live under. Resolved exactly as the artifacts root is — see
+    /// <see cref="ResolveArtifactsRoot"/> for blank handling, absolutization and why the home
+    /// provider is lazy. Read-only to the runner: nothing here downloads into it.
+    /// </summary>
+    public const string SymbolsRootEnvVar = "AL_RUNNER_SYMBOLS_ROOT";
+
+    public const string SymbolsRoot_Rel = ".local/share/al-runner/symbols";
+
+    internal static string ResolveSymbolsRoot(string? envOverride, Func<string> userHome)
+        => ResolveRoot(envOverride, userHome, SymbolsRoot_Rel);
+
+    /// <summary>The curated symbols root (<c>~/.local/share/al-runner/symbols</c>, or
+    /// <see cref="SymbolsRootEnvVar"/> when set). Every reader of that tree goes through
+    /// <see cref="CuratedSymbolsDir"/>; <c>HomeRootedPathReadSiteGuardTests</c> holds it.</summary>
+    public static string SymbolsRootDir =>
+        ResolveSymbolsRoot(
+            Environment.GetEnvironmentVariable(SymbolsRootEnvVar),
+            static () => AlRunnerPaths.UserHome);
+
+    /// <summary>The highest version directory under <see cref="SymbolsRootDir"/> matching
+    /// <paramref name="versionPrefix"/> (major.minor), or null when there is none — the tree is
+    /// optional augmentation of the artifact dir, never required.</summary>
+    public static string? CuratedSymbolsDir(string versionPrefix)
+        => CuratedSymbolsDirIn(SymbolsRootDir, versionPrefix);
+
+    internal static string? CuratedSymbolsDirIn(string root, string versionPrefix)
+    {
+        if (!Directory.Exists(root)) return null;
+        try { return SelectArtifactVersionDir(root, versionPrefix); }
+        catch (InvalidOperationException) { return null; }
     }
 
     /// <summary>The per-user artifacts root (<c>~/.local/share/al-runner/artifacts</c>, or

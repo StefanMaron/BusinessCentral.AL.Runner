@@ -79,4 +79,7 @@ discovered.
 name. `AL_RUNNER_BCBAK` points at the backup reader used by `--test-data`.
 `AL_RUNNER_ARTIFACTS_ROOT` moves the Business Central artifact cache off your
 home directory, which is useful when it has to live on another volume or on a CI
-runner's mounted path.
+runner's mounted path. `AL_RUNNER_CACHE_ROOT` does the same for the runner's cache
+tree (`~/.cache/al-runner`; `--cache` and `--no-cache` still take precedence), and
+`AL_RUNNER_SYMBOLS_ROOT` for the curated symbols tree
+(`~/.local/share/al-runner/symbols`).

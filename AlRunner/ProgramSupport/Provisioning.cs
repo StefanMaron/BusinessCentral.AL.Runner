@@ -158,7 +158,7 @@ internal static partial class ProgramSupport
     // Default cache: the selected BC version (BcArtifacts.SelectedVersion — latest in the
     // artifacts cache, or the --bc-version / --artifact-path override) under
     // ~/.bcartifacts.cache/sandbox/ + the curated symbol set under
-    // ~/.local/share/al-runner/symbols/. These two trees may carry a different *patch*
+    // ~/.local/share/al-runner/symbols/ (or AL_RUNNER_SYMBOLS_ROOT). These two trees may carry a different *patch*
     // level than the artifacts tree (e.g. sandbox 28.1.x vs artifacts 28.1.y), so we match
     // on the selected major.minor prefix and pick the highest such version (System.Version
     // sort — the old StringComparer.Ordinal sort mis-ordered e.g. "28.1.9" > "28.1.10").
@@ -196,8 +196,7 @@ internal static partial class ProgramSupport
             if (Directory.Exists(modernDev)) yield return modernDev;
         }
 
-        var symRoot = Path.Combine(home, ".local", "share", "al-runner", "symbols");
-        var symLatest = SelectVersionDirOrNull(symRoot, mmPrefix);
+        var symLatest = AlRunner.Infrastructure.BcArtifacts.CuratedSymbolsDir(mmPrefix);
         if (symLatest != null) yield return symLatest;
 
         // The provisioned MS test toolkit / platform R2R runtime apps (see

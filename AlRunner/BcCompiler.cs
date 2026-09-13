@@ -2987,7 +2987,7 @@ public sealed partial class BcCompiler
 
     /// <summary>
     /// Resolve symbol-package search dirs. Scans (in order):
-    ///   1. `~/.local/share/al-runner/symbols/<bc-ver>/` — the v2-curated set
+    ///   1. `~/.local/share/al-runner/symbols/<bc-ver>/` (or `AL_RUNNER_SYMBOLS_ROOT`) — the v2-curated set
     ///      (Application + Base + System Application).
     ///   2. `~/.bcartifacts.cache/sandbox/<bc-ver>/w1/Extensions/` — full set
     ///      from the BC W1 artifact (Business Foundation, Library Assert,
@@ -3008,40 +3008,35 @@ public sealed partial class BcCompiler
         var sel = AlRunner.Infrastructure.BcArtifacts.SelectedVersion;
         var mmPrefix = $"{sel.Major}.{sel.Minor}";
 
-        foreach (var rel in new[] { ".local/share/al-runner/symbols", ".bcartifacts.cache/sandbox" })
-        {
-            var root = Path.Combine(home, rel);
-            if (!Directory.Exists(root)) continue;
-            string bestVer;
-            try
-            {
-                bestVer = AlRunner.Infrastructure.BcArtifacts.SelectArtifactVersionDir(root, mmPrefix);
-            }
-            catch (InvalidOperationException)
-            {
-                continue; // optional cache without a matching version
-            }
+        // 1. The curated tree — through its one resolver, so AL_RUNNER_SYMBOLS_ROOT reaches here too.
+        var curated = AlRunner.Infrastructure.BcArtifacts.CuratedSymbolsDir(mmPrefix);
+        if (curated != null) yield return curated;
 
-            if (rel.StartsWith(".local"))
-            {
-                yield return bestVer;
-            }
-            else
-            {
-                // bcartifacts.cache/sandbox/<ver>/{<country>/Extensions, platform/Applications}
-                // Issue #2236: this is VS Code's AL-extension symbol cache (read-only to us),
-                // using the same sandbox/<ver>/<channel>/ layout as our own artifact CDN — one
-                // channel folder per country. Hardcoding "w1" here missed a machine that
-                // already has a country-localized project's symbols downloaded there. Scan the
-                // SELECTED country's own folder, not both w1 and the country's: mixing them
-                // would risk the same "which duplicate basename wins" ambiguity #2236's
-                // Extensions/-vs-Applications.<CC>/ fix exists to avoid for our own cache.
-                var localizedExt = Path.Combine(bestVer, AlRunner.Infrastructure.BcArtifacts.SelectedCountry, "Extensions");
-                if (Directory.Exists(localizedExt)) yield return localizedExt;
-                var platApps = Path.Combine(bestVer, "platform", "Applications");
-                if (Directory.Exists(platApps)) yield return platApps;
-            }
+        // 2. VS Code's sandbox cache: read-only to us, and its location is not ours to choose.
+        var sandboxRoot = Path.Combine(home, ".bcartifacts.cache", "sandbox");
+        if (!Directory.Exists(sandboxRoot)) yield break;
+        string bestVer;
+        try
+        {
+            bestVer = AlRunner.Infrastructure.BcArtifacts.SelectArtifactVersionDir(sandboxRoot, mmPrefix);
         }
+        catch (InvalidOperationException)
+        {
+            yield break; // optional cache without a matching version
+        }
+
+        // bcartifacts.cache/sandbox/<ver>/{<country>/Extensions, platform/Applications}
+        // Issue #2236: this is VS Code's AL-extension symbol cache (read-only to us),
+        // using the same sandbox/<ver>/<channel>/ layout as our own artifact CDN — one
+        // channel folder per country. Hardcoding "w1" here missed a machine that
+        // already has a country-localized project's symbols downloaded there. Scan the
+        // SELECTED country's own folder, not both w1 and the country's: mixing them
+        // would risk the same "which duplicate basename wins" ambiguity #2236's
+        // Extensions/-vs-Applications.<CC>/ fix exists to avoid for our own cache.
+        var localizedExt = Path.Combine(bestVer, AlRunner.Infrastructure.BcArtifacts.SelectedCountry, "Extensions");
+        if (Directory.Exists(localizedExt)) yield return localizedExt;
+        var platApps = Path.Combine(bestVer, "platform", "Applications");
+        if (Directory.Exists(platApps)) yield return platApps;
     }
 
     private static Guid DeterministicGuid(string seed)

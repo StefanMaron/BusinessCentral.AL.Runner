@@ -339,13 +339,16 @@ bool bundledMode = true;
 string? alCacheDir;
 try
 {
-    alCacheDir = Path.Combine(
-        AlRunner.Infrastructure.AlRunnerPaths.UserHome,
-        ".cache", "al-runner", "al-out");
+    alCacheDir = Path.Combine(AlRunner.Infrastructure.CacheRoots.DefaultRoot, "al-out");
 }
-catch (InvalidOperationException ex)
+catch (Exception ex) when (ex is InvalidOperationException or IOException or ArgumentException)
 {
-    Console.Error.WriteLine(ex.Message);
+    // #2768: an AL_RUNNER_CACHE_ROOT that cannot be rooted lands here too, not just #2114's HOME.
+    var cacheRootEnv = Environment.GetEnvironmentVariable(AlRunner.Infrastructure.CacheRoots.CacheRootEnvVar);
+    Console.Error.WriteLine(string.IsNullOrWhiteSpace(cacheRootEnv)
+        ? ex.Message
+        : AlRunner.Infrastructure.CacheRoots.BuildUnusableCacheRootMessage(
+            AlRunner.Infrastructure.CacheRoots.CacheRootEnvVar, cacheRootEnv, ex.Message));
     return 2;
 }
 // #1821/#2555: mirrors alCacheDir for the OTHER caches CacheRoots redirects — set by an
@@ -1470,9 +1473,14 @@ if (alCacheDir != null)
     }
     catch (Exception ex)
     {
+        // Name what supplied the root: the flag, the #2768 variable, or neither.
+        var fromCacheRootEnv = cacheRootOverride == null && !string.IsNullOrWhiteSpace(
+            Environment.GetEnvironmentVariable(AlRunner.Infrastructure.CacheRoots.CacheRootEnvVar));
         Console.Error.WriteLine(AlRunner.Infrastructure.CacheRoots.BuildUnusableCacheRootMessage(
-            cacheRootOverride != null ? "--cache" : "the default AL-output cache directory",
-            alCacheDir, ex.Message));
+            cacheRootOverride != null ? "--cache"
+                : fromCacheRootEnv ? AlRunner.Infrastructure.CacheRoots.CacheRootEnvVar
+                : "the default AL-output cache directory",
+            fromCacheRootEnv ? AlRunner.Infrastructure.CacheRoots.DefaultRoot : alCacheDir, ex.Message));
         return 2;
     }
 }

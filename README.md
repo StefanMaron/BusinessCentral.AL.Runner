@@ -234,9 +234,11 @@ symptom and not the cause. The runner prints the error it was reported in place 
 `[testpage]` note under the failure. What AL sees is unchanged: `asserterror` and
 `GetLastErrorText` still read only BC's message.
 
-Environment variables: `AL_RUNNER_VERBOSE=1`, `AL_RUNNER_SHOW_PASS=1`, `AL_RUNNER_TRACE_NRE=1` (logs every first-chance NRE before AL `asserterror` swallows it), `AL_RUNNER_BCBAK` (path to the `bcbak` backup reader used by `--test-data`), `AL_RUNNER_ARTIFACTS_ROOT` (see below).
+Environment variables: `AL_RUNNER_VERBOSE=1`, `AL_RUNNER_SHOW_PASS=1`, `AL_RUNNER_TRACE_NRE=1` (logs every first-chance NRE before AL `asserterror` swallows it), `AL_RUNNER_BCBAK` (path to the `bcbak` backup reader used by `--test-data`), `AL_RUNNER_ARTIFACTS_ROOT`, `AL_RUNNER_CACHE_ROOT` and `AL_RUNNER_SYMBOLS_ROOT` (see below).
 
 `AL_RUNNER_ARTIFACTS_ROOT=DIR` moves the BC artifact cache off the home directory — useful when it has to sit on a different volume, or on a mounted path on a CI runner. `DIR` is the root the per-version subdirectories live under (default `~/.local/share/al-runner/artifacts`), so `--bc-version`, latest-in-cache defaulting and provisioning keep working. That is what makes it different from `--artifact-path`, which pins one version's engine directory and skips version selection entirely. A relative value is resolved against the current directory. The build reads it too, so a relocated cache stays buildable from source. Moving `$HOME` instead would relocate every other runner path (`~/.cache/al-runner`, `~/.bcartifacts.cache`, `~/.local/share/al-runner/symbols`) along with it.
+
+The two runner-owned siblings have their own variables, resolved the same way (blank means the default, a relative value is resolved against the current directory): `AL_RUNNER_CACHE_ROOT=DIR` moves `~/.cache/al-runner` — the AL-output cache and every named cache beside it — while `--cache` and `--no-cache` still win for the run they are passed to, and a `DIR` that cannot be created exits 2 naming the variable. `AL_RUNNER_SYMBOLS_ROOT=DIR` moves the curated symbols tree `~/.local/share/al-runner/symbols`, which the runner only reads. `~/.bcartifacts.cache` is VS Code's AL-extension cache, not the runner's, so it has no variable.
 
 ## Test Corpus
 
