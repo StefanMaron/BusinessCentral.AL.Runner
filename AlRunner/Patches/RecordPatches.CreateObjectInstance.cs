@@ -241,7 +241,12 @@ public static partial class RecordPatches
 
     internal static Type? FindTableExtensionType(int extId)
     {
-        if (_tableExtensionTypeCache.TryGetValue(extId, out var cached)) return cached;
+        // Re-checked on a hit for the same reason as _recordTypeCache in FindRecordType (#4099).
+        if (_tableExtensionTypeCache.TryGetValue(extId, out var cached))
+        {
+            if (!BcRuntime.IsStaleBundleAssembly(cached.Assembly)) return cached;
+            _tableExtensionTypeCache.TryRemove(new KeyValuePair<int, Type>(extId, cached));
+        }
         var name = $"TableExtension{extId}";
         var preferred = BcRuntime.CurrentTestAssembly;
         if (preferred != null)
@@ -252,6 +257,8 @@ public static partial class RecordPatches
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             if (asm == preferred) continue;
+            // A previous server/watch generation of a dependency module (#1901, #4099).
+            if (BcRuntime.IsStaleBundleAssembly(asm)) continue;
             var hit = FindTableExtensionTypeIn(asm, name);
             if (hit != null) { _tableExtensionTypeCache[extId] = hit; return hit; }
         }

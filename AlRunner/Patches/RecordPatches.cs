@@ -1195,6 +1195,8 @@ public static partial class RecordPatches
     {
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
+            // A previous server/watch generation of this module (#1901, #4099).
+            if (BcRuntime.IsStaleBundleAssembly(asm)) continue;
             try
             {
                 var t = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm).FindFirst(name);

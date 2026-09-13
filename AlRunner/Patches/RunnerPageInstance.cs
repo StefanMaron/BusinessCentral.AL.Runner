@@ -2933,6 +2933,8 @@ internal sealed partial class RunnerPageInstance
         var name = "PageExtension" + extensionId;
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
+            // A previous server/watch generation of this module (#1901, #4099).
+            if (BcRuntime.IsStaleBundleAssembly(asm)) continue;
             try
             {
                 var t = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm)
@@ -3238,6 +3240,8 @@ internal sealed partial class RunnerPageInstance
         // Metadata-backed lookup — see AlRunner/Infrastructure/AssemblyTypeIndex.cs.
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
+            // A previous server/watch generation of this module (#1901, #4099).
+            if (BcRuntime.IsStaleBundleAssembly(asm)) continue;
             try
             {
                 var t = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm)
