@@ -162,7 +162,7 @@ public class AppGroupObjectVisibilityTests
     [Fact]
     public void AppGroupOwningFile_TakesTheLongestRegisteredDir_NotTheNearestAppJson()
     {
-        var root = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "agv-owner"));
+        var root = Path.GetFullPath(TestScratch.Dir("al-runner-app-group-visibility-owner"));
         var outer = Path.Combine(root, "outer");
         var owners = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase)
         {
