@@ -472,6 +472,8 @@ public sealed class VirtualTableRefusalClaimTests
     /// Read each number out of this test's failure message, never by adding a delta by hand.
     private static readonly Dictionary<string, int> DeclaredOutsideTheCount = new(StringComparer.Ordinal)
     {
+        // ActiveSessionShapeGap (#3233): its surface is in Surfaces(), its file not on CoveredFiles.
+        ["RecordPatches.ActiveSessionSystemTable.cs"] = 6,
         // CodeunitMetadataShapeGap, reached from the equivalence projection and the BC-document reader.
         ["RecordPatches.CodeunitMetadataEquivalence.cs"] = 1,
         ["RecordPatches.CodeunitMetadataFromBcDocument.cs"] = 3,
