@@ -1047,12 +1047,10 @@ public static partial class BcRuntime
             }
         }
         if (!ctorOk && instField != null)
-        {
-            var skel = RuntimeHelpers.GetUninitializedObject(envType);
-            var instLock = envType.GetField("lockObject", BindingFlags.NonPublic | BindingFlags.Instance);
-            if (instLock != null) instLock.SetValue(skel, new object());
-            instField.SetValue(null, skel);
-        }
+            AlRunner.Infrastructure.SkeletonFallback.InstallOrThrow(envType, instField,
+                "If the cause is WindowsIdentity.GetCurrent(), the loaded Microsoft.Dynamics.Nav.Ncl.dll lacks " +
+                "the Cecil rewrite that removes that call (NclCecilRewrite.Runtime.cs): this process loaded an " +
+                "un-rewritten copy. See #2064.");
         HookProperty(envType, "Instance", true, nameof(GetInstanceReplacement));
 
         // NavApplicationObjectBase.get_Session — real body is `=> session` (trivial readonly-field
