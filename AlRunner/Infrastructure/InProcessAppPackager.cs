@@ -40,7 +40,8 @@ public sealed record BundleIdentity(
     Version RuntimeVersion,
     IReadOnlyList<DependencyRef> Dependencies,
     Version? Application = null,
-    Version? Platform = null);
+    Version? Platform = null,
+    bool PropagateDependencies = false);
 
 public static class InProcessAppPackager
 {
@@ -134,7 +135,13 @@ public static class InProcessAppPackager
                 }
             }
 
-            return new BundleIdentity(appId, name, pub, ver, rtVer, deps, applicationFloor, platformFloor);
+            var propagate = root.TryGetProperty("propagateDependencies", out var ppd)
+                && ppd.ValueKind == JsonValueKind.True;
+
+            var identity = new BundleIdentity(appId, name, pub, ver, rtVer, deps, applicationFloor, platformFloor, propagate);
+            // #4096: the compile of this app may reference only what it declares.
+            AlRunner.BcCompiler.RecordDeclaredReferences(identity);
+            return identity;
         }
         catch (Exception ex)
         {
