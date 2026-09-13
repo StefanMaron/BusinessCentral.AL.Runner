@@ -32,4 +32,11 @@ codeunit 70902 "IEC Tests"
         if Session.GetCurrentModuleExecutionContext() <> ExecutionContext::Normal then
             Error('GetCurrentModuleExecutionContext() at test time answered %1', Format(Session.GetCurrentModuleExecutionContext()));
     end;
+
+    [Test]
+    procedure IecLoadPackageDataOutsideInstallReturns()
+    begin
+        // Outside install BC's own first line returns; the #4061 refusal is install-only.
+        NavApp.LoadPackageData(Database::"IEC Observation");
+    end;
 }

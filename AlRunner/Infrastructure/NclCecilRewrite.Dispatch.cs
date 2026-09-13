@@ -714,6 +714,20 @@ public static partial class NclCecilRewrite
                 }
             }
 
+            // ALNavApp.ALNavAppLoadPackageData: BC's early return outside install is kept; during
+            // install it refuses by name instead of failing inside BC's package retriever (#4061).
+            var mLoadPackageData = alNavAppModuleType?.Methods.FirstOrDefault(x =>
+                x.Name == "ALNavAppLoadPackageData" && x.Parameters.Count == 1 && x.IsStatic);
+            if (mLoadPackageData == null)
+                throw new InvalidOperationException(
+                    "[Cecil] ALNavApp.ALNavAppLoadPackageData(int) not found; NavApp.LoadPackageData "
+                    + "during install would fail without naming itself (#4061)");
+            ReplaceBodyWithHelper(asm.MainModule, mLoadPackageData,
+                typeof(AlRunner.Patches.NavAppPackageDataPatches).GetMethod(
+                    nameof(AlRunner.Patches.NavAppPackageDataPatches.ALNavApp_LoadPackageData),
+                    BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("[Cecil] NavAppPackageDataPatches.ALNavApp_LoadPackageData not found"));
+
             // NavSession.GetCurrentModuleExecutionContext resolves "which module" through
             // OwningApp metadata the runner does not have; route it through the same stack walk
             // as ALGetCurrentModuleInfo above (#4049).

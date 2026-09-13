@@ -1,0 +1,12 @@
+{
+  "id": "8c41d2e6-5b73-4a09-b2f8-6e1d9c07a354",
+  "name": "Runner Tests Fixture - Install LoadPackageData",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "#4061: NavApp.LoadPackageData from an install trigger refuses by name, and a TryFunction does not swallow the not-yet-implemented refusal.",
+  "description": "AlRunner#4061 / #4049: with BC's install context set, NavApp.LoadPackageData inside an install trigger reaches the package-data import the runner does not implement. The install trigger calls it through a TryFunction; the refusal is not-yet-implemented, which a TryFunction deliberately does not trap, so the bundle must fail naming the API.",
+  "idRanges": [ { "from": 70920, "to": 70939 } ],
+  "platform": "27.0.0.0",
+  "runtime": "15.0",
+  "target": "OnPrem"
+}

@@ -19,12 +19,17 @@ public sealed class InstallExecutionContextTests
     private static string BundleDir => Path.Combine(
         RepoRoot, "AlRunner.Tests", "Fixtures", "InstallExecutionContext");
 
-    private static (int ExitCode, string StdOut, string StdErr) Run(string cacheDir)
+    private static string LoadPackageDataBundleDir => Path.Combine(
+        RepoRoot, "AlRunner.Tests", "Fixtures", "InstallLoadPackageData");
+
+    private static (int ExitCode, string StdOut, string StdErr) Run(string cacheDir) => Run(cacheDir, BundleDir);
+
+    private static (int ExitCode, string StdOut, string StdErr) Run(string cacheDir, string bundleDir)
     {
         var args = new StringBuilder(TestBuildConfig.RunArgs(Path.Combine(RepoRoot, "AlRunner")));
         args.Append(TestBuildConfig.BcVersionArg);
         args.Append(" --package-cache \"").Append(TestArtifacts.PlatformAppsDir()).Append('"');
-        args.Append(' ').Append($"\"{BundleDir}\"");
+        args.Append(' ').Append($"\"{bundleDir}\"");
         args.Append(' ').Append($"--cache \"{cacheDir}\"");
 
         var psi = new ProcessStartInfo
@@ -67,7 +72,36 @@ public sealed class InstallExecutionContextTests
             Assert.Contains("PASS  Codeunit70902.IecInstallTriggerSawInstall", stdout);
             Assert.Contains("PASS  Codeunit70902.IecInstallTriggerModuleSawInstall", stdout);
             Assert.Contains("PASS  Codeunit70902.IecContextIsClearedAfterThePass", stdout);
+            // BC's early return outside install is kept by the #4061 patch.
+            Assert.Contains("PASS  Codeunit70902.IecLoadPackageDataOutsideInstallReturns", stdout);
             Assert.True(exit == 0, $"expected a clean run. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");
+        }
+        finally
+        {
+            try { Directory.Delete(cacheDir, recursive: true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// #4061: with the install context set, NavApp.LoadPackageData inside an install trigger
+    /// reaches package-data import, which the runner does not implement. It must refuse naming
+    /// the API and the reason. The fixture calls it through a [TryFunction]; a not-yet-implemented
+    /// refusal deliberately tears through one (TryFunctionOutOfScopeTrapTests), so the install
+    /// pass fails and the bundle reports EXEC-FAIL rather than a TryFunction answering false.
+    /// </summary>
+    [SkippableFact]
+    public void LoadPackageDataInsideInstallTrigger_RefusesNamingTheApiAndReason()
+    {
+        TestArtifacts.SkipIfMissing();
+        var cacheDir = TestScratch.Dir("al-runner-ilp");
+        try
+        {
+            var (exit, stdout, stderr) = Run(cacheDir, LoadPackageDataBundleDir);
+            var all = stdout + stderr;
+            Assert.NotEqual(0, exit);
+            Assert.Contains("RunnerOutOfScopeException: out-of-scope: NavApp.LoadPackageData — not-yet-implemented", all);
+            Assert.Contains("(#4061)", all);
+            Assert.DoesNotContain("Index (zero based)", all);
         }
         finally
         {
