@@ -84,17 +84,10 @@ public class Codeunit99989ObjectEventMechanismFixture
 /// lookup for all four kinds, proving the RED state. Post-fix it is GREEN.
 ///
 /// SHARED-STATE NOTE: ResetForReload() clears EventSubscriberPatches' global static
-/// registries process-wide. Safe today only because no other test SOURCE FILE touches
-/// EventSubscriberPatches (DispatchEventPublisherDeclTypeTests.cs only exercises the pure,
-/// state-free TryDecodeEventPublisherDeclType seam) and because xUnit here runs one test
-/// class's methods sequentially by default — this class isn't itself parallel-unsafe
-/// against itself. If a SECOND test class is ever added that also calls ResetForReload/
-/// EnsureRegistryFresh/GetObjectEventSubscribers (or any other EventSubscriberPatches
-/// registry accessor), both classes must join a shared serial xUnit collection (see
-/// BcEngineCollection.cs for the established DisableParallelization pattern) — otherwise
-/// xUnit's cross-class parallelization will interleave two tests' resets/scans of the
-/// same static dictionaries.
+/// registries process-wide, so every test class that resets or reads them in-process joins
+/// EventSubscriberRegistrySerialCollection (EventSubscriberIndexTests is the other one).
 /// </summary>
+[Collection(EventSubscriberRegistrySerialCollection.Name)]
 public class ObjectEventSubscriberRegistrationMechanismTests
 {
     [Theory]

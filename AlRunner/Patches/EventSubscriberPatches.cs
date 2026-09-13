@@ -84,6 +84,79 @@ public static partial class EventSubscriberPatches
     private static readonly Dictionary<ObjectEventKey, List<MethodInfo>> _byObjectEventKey = new();
     private static readonly List<ValidateSub> _validateSubs = new();
 
+    // _byKey and _validateSubs grouped by publisher table, for the injectors that run on every
+    // record construction (#2369). Derived, never written directly: GetSubscriberIndex rebuilds
+    // it when _registryVersion has moved. Bump _registryVersion, under _lock, anywhere either
+    // registry gains or loses an entry — a mutation that skips the bump leaves the injectors
+    // blind to that subscriber for the rest of the process. EnsureRegistryFresh bumps BEFORE it
+    // mutates; that is safe only because the rebuild takes _lock and so waits for the scan to end.
+    private sealed record SubscriberIndex(
+        int Version,
+        Dictionary<int, Key[]> TriggerKeysByTable,
+        Dictionary<int, ValidateSub[]> ValidateSubsByTable);
+
+    private static int _registryVersion;
+    private static SubscriberIndex _subscriberIndex = new(-1, new(), new());
+
+    private static SubscriberIndex GetSubscriberIndex()
+    {
+        var idx = _subscriberIndex;
+        if (idx.Version == Volatile.Read(ref _registryVersion)) return idx;
+        lock (_lock)
+        {
+            idx = _subscriberIndex;
+            int version = _registryVersion;
+            if (idx.Version == version) return idx;
+
+            var triggerKeys = new Dictionary<int, List<Key>>();
+            foreach (var key in _byKey.Keys)
+            {
+                if (!triggerKeys.TryGetValue(key.PublisherId, out var keys))
+                    triggerKeys[key.PublisherId] = keys = new List<Key>();
+                keys.Add(key);
+            }
+            var validateSubs = new Dictionary<int, List<ValidateSub>>();
+            foreach (var vs in _validateSubs)
+            {
+                if (!validateSubs.TryGetValue(vs.Handle.PublisherId, out var subs))
+                    validateSubs[vs.Handle.PublisherId] = subs = new List<ValidateSub>();
+                subs.Add(vs);
+            }
+            _subscriberIndex = idx = new SubscriberIndex(
+                version,
+                triggerKeys.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray()),
+                validateSubs.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray()));
+            return idx;
+        }
+    }
+
+    /// <summary>Test seam: the field-validate subscriber methods the per-construction injector
+    /// would consider for <paramref name="tableId"/>, in injection order.</summary>
+    internal static IReadOnlyList<MethodInfo> ValidateSubscriberMethodsForTable(int tableId)
+    {
+        EnsureRegistryFresh();
+        return GetSubscriberIndex().ValidateSubsByTable.TryGetValue(tableId, out var subs)
+            ? subs.Select(s => s.Handle.Method).ToArray()
+            : Array.Empty<MethodInfo>();
+    }
+
+    /// <summary>Test seam: the table-trigger subscriber methods (Insert/Modify/Delete/Rename
+    /// ordinals) the per-construction injector would consider for <paramref name="tableId"/>.</summary>
+    internal static IReadOnlyList<(int EventTypeOrdinal, MethodInfo Method)> TriggerSubscribersForTable(int tableId)
+    {
+        EnsureRegistryFresh();
+        lock (_lock)
+        {
+            if (!GetSubscriberIndex().TriggerKeysByTable.TryGetValue(tableId, out var keys))
+                return Array.Empty<(int, MethodInfo)>();
+            return keys
+                .SelectMany(k => _byKey.TryGetValue(k, out var l)
+                    ? l.Select(h => (k.EventTypeOrdinal, h.Method))
+                    : Enumerable.Empty<(int, MethodInfo)>())
+                .ToArray();
+        }
+    }
+
     /// <summary>
     /// Look up codeunit-event subscribers registered for a (publisherCodeunitId, eventMethodName).
     /// Called by CodeunitEventDispatcher at runtime from the Cecil-rewritten OnRunEventAsync.
@@ -124,11 +197,25 @@ public static partial class EventSubscriberPatches
         }
     }
     private static readonly HashSet<MethodInfo> _injectedSubscriberMethods = new();
-    private static int _lastScannedCount = 0;
+    // Discovery gate (#2369): AppDomain.AssemblyLoad bumps the epoch, and a scan pass records the
+    // epoch it covered. Replaces comparing GetAssemblies().Length, which allocated the whole
+    // assembly array on every call — and this runs on every record construction and every event
+    // lookup. Equivalent because nothing here unloads an assembly, and a handler runs after the
+    // loaded assembly is enumerable (EventSubscriberIndexTests pins that). Capture the epoch
+    // BEFORE GetAssemblies, so a load racing the scan leaves the gate open.
+    private static int _assemblyLoadEpoch;
+    private static int _scannedLoadEpoch = -1;
+    private static readonly bool _assemblyLoadHookInstalled = InstallAssemblyLoadHook();
+
+    private static bool InstallAssemblyLoadHook()
+    {
+        AppDomain.CurrentDomain.AssemblyLoad += (_, _) => Interlocked.Increment(ref _assemblyLoadEpoch);
+        return true;
+    }
 
     /// <summary>
     /// Assemblies whose [NavEventSubscriberAttribute] methods have already been discovered.
-    /// The <c>_lastScannedCount</c> gate only tells us that SOMETHING new loaded; without this
+    /// The assembly-load epoch gate only tells us that SOMETHING new loaded; without this
     /// set every re-scan re-walked every assembly, so the Base Application chunks were rescanned
     /// each time the AppDomain grew. Reference identity, deliberately: a reloaded bundle
     /// generation is a DIFFERENT Assembly object, so it is not in this set and IS scanned, while
@@ -395,7 +482,7 @@ public static partial class EventSubscriberPatches
     /// Drop the subscriber registries and per-bundle codeunit-type cache so a server
     /// reload of the same-identity bundle rebuilds them from the freshly-emitted
     /// assembly instead of accumulating (or double-firing) the previous run's
-    /// subscribers. Resetting <c>_lastScannedCount</c> forces a full re-scan; the
+    /// subscribers. Resetting the scanned load epoch forces a full re-scan; the
     /// stale previous bundle assembly is then skipped via
     /// <see cref="BcRuntime.IsStaleBundleAssembly"/>. The installed injection hook
     /// (<c>_registered</c>) and any reflection-failure latch are preserved.
@@ -417,7 +504,8 @@ public static partial class EventSubscriberPatches
             _injectedSubscriberMethods.Clear();
             _seededScopeTypes.Clear();
             _scannedAssemblies.Clear();
-            _lastScannedCount = 0;
+            _scannedLoadEpoch = -1;
+            _registryVersion++;
         }
         AlRunner.BcRuntime.ResetManualBindingCacheForReload();
     }
@@ -446,17 +534,15 @@ public static partial class EventSubscriberPatches
     {
         lock (_lock)
         {
-            foreach (var kv in _byKey)
-            {
-                if (kv.Key.PublisherId != tableId) continue;
-                foreach (var sub in kv.Value)
-                    _injectedSubscriberMethods.Remove(sub.Method);
-            }
-            foreach (var vs in _validateSubs)
-            {
-                if (vs.Handle.PublisherId != tableId) continue;
-                _injectedSubscriberMethods.Remove(vs.Handle.Method);
-            }
+            var idx = GetSubscriberIndex();
+            if (idx.TriggerKeysByTable.TryGetValue(tableId, out var keys))
+                foreach (var key in keys)
+                    if (_byKey.TryGetValue(key, out var subs))
+                        foreach (var sub in subs)
+                            _injectedSubscriberMethods.Remove(sub.Method);
+            if (idx.ValidateSubsByTable.TryGetValue(tableId, out var validateSubs))
+                foreach (var vs in validateSubs)
+                    _injectedSubscriberMethods.Remove(vs.Handle.Method);
         }
     }
 
@@ -644,15 +730,16 @@ public static partial class EventSubscriberPatches
         // built before the first bulk injection pass — e.g. a platform table built during runtime
         // bring-up, before EventSubscriberPatches.Register/EnsureRegistryFresh have ever run).
         try { EnsureRegistryFresh(); } catch { }
-        if (_byKey.Count == 0) return;
+        if (!GetSubscriberIndex().TriggerKeysByTable.ContainsKey(tableId)) return;
 
         lock (_lock)
         {
+            if (!GetSubscriberIndex().TriggerKeysByTable.TryGetValue(tableId, out var tableKeys)) return;
             int injected = 0, failed = 0;
-            foreach (var kv in _byKey)
+            foreach (var tableKey in tableKeys)
             {
-                if (kv.Key.PublisherId != tableId) continue;
-                int ord = kv.Key.EventTypeOrdinal;
+                if (!_byKey.TryGetValue(tableKey, out var tableSubs)) continue;
+                int ord = tableKey.EventTypeOrdinal;
 
                 var ordEnum = Enum.ToObject(_tNavTriggerEventType!, ord);
                 var createIfNotFound = Enum.ToObject(_tEventScopeGetOption!, 1); // CreateIfNotFound
@@ -663,14 +750,14 @@ public static partial class EventSubscriberPatches
                     var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
                     Console.Error.WriteLine($"[Subscribers] GetEventScope({tableId},{ord}) failed (lazy): " +
                         $"{inner.GetType().Name}: {inner.Message}");
-                    failed += kv.Value.Count(s => !_injectedSubscriberMethods.Contains(s.Method));
+                    failed += tableSubs.Count(s => !_injectedSubscriberMethods.Contains(s.Method));
                     continue;
                 }
-                if (scope == null) { failed += kv.Value.Count(s => !_injectedSubscriberMethods.Contains(s.Method)); continue; }
+                if (scope == null) { failed += tableSubs.Count(s => !_injectedSubscriberMethods.Contains(s.Method)); continue; }
 
                 var existing = (Array?)_fRegisteredSubscriptions!.GetValue(scope);
                 var newOnes = new List<object>();
-                foreach (var sub in kv.Value)
+                foreach (var sub in tableSubs)
                 {
                     if (_injectedSubscriberMethods.Contains(sub.Method)) continue;
                     object? subscription;
@@ -754,14 +841,14 @@ public static partial class EventSubscriberPatches
         // Ensure discovery has run so _validateSubs is populated (it may not have been if this
         // table is built before the first bulk injection pass).
         try { EnsureRegistryFresh(); } catch { }
-        if (_validateSubs.Count == 0) return;
+        if (!GetSubscriberIndex().ValidateSubsByTable.ContainsKey(tableId)) return;
 
         lock (_lock)
         {
+            if (!GetSubscriberIndex().ValidateSubsByTable.TryGetValue(tableId, out var tableSubs)) return;
             int injected = 0, failed = 0;
-            foreach (var vs in _validateSubs)
+            foreach (var vs in tableSubs)
             {
-                if (vs.Handle.PublisherId != tableId) continue;
                 if (_injectedSubscriberMethods.Contains(vs.Handle.Method)) continue;
                 TryInjectOneValidateSub(vs, metaTable, ref injected, ref failed);
             }
@@ -982,7 +1069,7 @@ public static partial class EventSubscriberPatches
     /// Discovery: walk loaded assemblies for [NavEventSubscriberAttribute] methods, index
     /// by (publisher id, NavTriggerEventType ordinal).
     ///
-    /// Incremental in two layers: the cheap <c>_lastScannedCount</c> gate skips the whole
+    /// Incremental in two layers: the cheap assembly-load epoch gate skips the whole
     /// pass while no assembly has loaded since the last one, and <c>_scannedAssemblies</c>
     /// then makes each individual assembly's scan happen exactly ONCE for its lifetime.
     /// Before the boot-overhead perf pass this re-walked EVERY loaded assembly from scratch on every
@@ -998,12 +1085,13 @@ public static partial class EventSubscriberPatches
     /// </summary>
     private static void EnsureRegistryFresh()
     {
-        var asms = AppDomain.CurrentDomain.GetAssemblies();
-        if (asms.Length == _lastScannedCount) return;
+        if (Volatile.Read(ref _assemblyLoadEpoch) == _scannedLoadEpoch) return;
         lock (_lock)
         {
-            asms = AppDomain.CurrentDomain.GetAssemblies();
-            if (asms.Length == _lastScannedCount) return;
+            int loadEpoch = Volatile.Read(ref _assemblyLoadEpoch);
+            if (loadEpoch == _scannedLoadEpoch) return;
+            var asms = AppDomain.CurrentDomain.GetAssemblies();
+            _registryVersion++; // this pass may add or prune entries in both registries
 
             // A discovery scan can run BEFORE every app in the current cycle has
             // (re)compiled — e.g. PopulateNclMetadataCache's own InjectAll call fires
@@ -1180,7 +1268,7 @@ public static partial class EventSubscriberPatches
                         $"[Subscribers] {name}: {unreadable} of {subscriberMethods.Count} " +
                         "[NavEventSubscriber] attribute instance(s) could not be read — will re-scan.");
             }
-            _lastScannedCount = asms.Length;
+            _scannedLoadEpoch = loadEpoch;
             int total = _byKey.Values.Sum(v => v.Count);
             if (added > 0 || scannedAttrs == 0)
                 Console.Error.WriteLine(
