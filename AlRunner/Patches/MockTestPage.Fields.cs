@@ -32,12 +32,17 @@ internal sealed class LiveNavTestField : ITestField
     // the row its keys.
     private readonly Action? _onBeforeEdit;
 
+    // Told when this control takes focus — LiveNavTestPage.ActivateControl, which is where a
+    // started new row is inserted (#4062). Called by Activate() and before every write.
+    private readonly Action<int>? _onActivate;
+
     public LiveNavTestField(NavRecord record, int fieldNo)
         : this(record, fieldNo, page: null, controlId: 0, onEdited: null, onBeforeEdit: null,
-               pageValidationErrors: null) { }
+               onActivate: null, pageValidationErrors: null) { }
 
     public LiveNavTestField(NavRecord record, int fieldNo, RunnerPageInstance? page, int controlId,
-        Action? onEdited, Action? onBeforeEdit, TestPageValidationErrors? pageValidationErrors)
+        Action? onEdited, Action? onBeforeEdit, Action<int>? onActivate,
+        TestPageValidationErrors? pageValidationErrors)
     {
         _record = record;
         _fieldNo = fieldNo;
@@ -45,6 +50,7 @@ internal sealed class LiveNavTestField : ITestField
         _controlId = controlId;
         _onEdited = onEdited;
         _onBeforeEdit = onBeforeEdit;
+        _onActivate = onActivate;
         _validationErrors = new TestFieldValidationErrors(pageValidationErrors);
     }
 
@@ -99,6 +105,10 @@ internal sealed class LiveNavTestField : ITestField
         // starting it is recorded and re-raised by BC's NavTestField.CheckError exactly as a
         // refusal of the value itself would be.
         _onBeforeEdit?.Invoke();
+
+        // BC's TestFieldProxy.Value setter activates the control before it writes, and focus
+        // arriving on a non-key control is what inserts a started new row (#4062).
+        _onActivate?.Invoke(_controlId);
 
         // #3640: everything from here on can mutate Rec — the field's own OnValidate, the
         // control's, and any pageextension modify() trigger around them — and real BC discards
@@ -255,7 +265,7 @@ internal sealed class LiveNavTestField : ITestField
     public bool ShowMandatory => false;
 
     public string GetValidationError(int index) => _validationErrors.Get(index);
-    public void Activate() { }
+    public void Activate() => _onActivate?.Invoke(_controlId);
 
     /// <summary>
     /// Run the control's OnLookup trigger — the AL a user's F4 would run. The base mock does

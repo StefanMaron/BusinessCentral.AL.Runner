@@ -45,6 +45,9 @@ internal partial class LiveNavTestPage
         // before touching any of the state below, rather than NRE-ing inside CaptureInsertPosition.
         RequireRecord("New()");
 
+        // A new row is a different row for focus: see ActivateControl.
+        _rowEpoch++;
+
         // New() from the new-row line starts the row explicitly; the draft bookkeeping is
         // superseded by the CaptureInsertPosition below, and its saved return position must
         // not survive to drag the cursor back off the row being created.
@@ -153,6 +156,12 @@ internal partial class LiveNavTestPage
         // THIS New()'s cursor, and leaving it armed would offer them to the next insert, which
         // may be on another row or another part entirely.
         if (!RowValuesChangedSinceLoad()) { _insertPositionCaptured = false; return; }
+        InsertPendingRow();
+    }
+
+    /// <summary>Write the started row, in BC's order. False when OnInsertRecord vetoed it.</summary>
+    private bool InsertPendingRow()
+    {
         // AutoSplitKey, in BC's own order: SplitKey, then OnInsertRecord, then the record's
         // Insert (NavForm.SaveRecordAsync / NavForm.InsertAsync(belowXRec) both do exactly
         // this). Skipping it left the last primary-key field at its Init() default, so a page
@@ -166,7 +175,7 @@ internal partial class LiveNavTestPage
         // is a veto — a page can refuse the insert outright. Running it and discarding the
         // answer would be worse than not running it: the row lands anyway, but now it also
         // carries whatever the trigger wrote on its way to saying no.
-        if (_page != null && !_page.RaiseOnInsertRecord(false)) return;
+        if (_page != null && !_page.RaiseOnInsertRecord(false)) return false;
         // runApplicationTrigger: true. Inserting a row from a page runs the table's OnInsert, the
         // same as Rec.Insert(true) — that trigger is where a table assigns its number series,
         // stamps its own derived fields, and enforces what it will not accept. Passing false
@@ -180,6 +189,7 @@ internal partial class LiveNavTestPage
         // next write on the same page instance would compare against, and report as xRec, the
         // blank row New() started (issue #3440).
         if (_record!.HasBeenInserted) SnapshotBeforeImage();
+        return true;
     }
 
     /// <summary>
@@ -532,39 +542,124 @@ internal partial class LiveNavTestPage
         // as well would try to Modify a row that does not exist yet.
         if (!_pendingNewRow) { _pendingModify = true; return; }
 
-        InsertOnCompletePrimaryKey();
+        // A top-level page inserts on FOCUS (ActivateControl), not here. A part keeps the
+        // key-complete insert until part focus is modelled — see docs/testpage-write-buffer.md#insert-on-focus.
+        if (this is LiveNavTestPart) InsertOnCompletePrimaryKey();
+    }
+
+    // ---- insert on focus (issue #4062) — see docs/testpage-write-buffer.md#insert-on-focus ----
+
+    private bool _focusInitialized;
+    private int _activeControlId;      // 0: no control holds focus
+    private int _rowEpoch;             // bumped by InsertEmptyRow
+    private int _activeRowEpoch;
+
+    /// <summary>
+    /// What BC's <c>TestPageProxy</c> constructor does when the page opens: activate the page's
+    /// initial control. Called at the end of RunnerTestPageState.MarkOpened; a page opened by
+    /// another route is focused lazily by its first <see cref="ActivateControl"/>.
+    /// </summary>
+    internal void FocusInitialControl()
+    {
+        _focusInitialized = true;
+        _activeRowEpoch = _rowEpoch;
+        _activeControlId = InitialActiveControlId();
     }
 
     /// <summary>
-    /// Write a page-driven insert as soon as the row's PRIMARY KEY is complete, rather than
-    /// holding it back until the page is left — issue #3441.
+    /// A control took focus — <c>TestField.Activate()</c>, and the first step of every
+    /// <c>SetValue</c> (BC's <c>TestFieldProxy.Value</c> setter activates before it writes).
     ///
-    /// Measured on real BC 28.4 and adjudicated on eight cloud legs (corpus codeunit 60636
-    /// <c>NewAndInsertRecordEvents_PageDrivenInsert_FireForTheKeyOnly</c>): typing the key of a
-    /// new row on a <c>DelayedInsert = false</c> list inserts the row THERE, so
-    /// <c>OnInsertRecord</c> and <c>OnInsertRecordEvent</c> see the key set and every later
-    /// control still blank, and the next control write is an ordinary page-driven MODIFY with
-    /// its own trigger and event. The runner deferred the whole thing to the flush, so the
-    /// insert trigger saw a finished row and the modify never happened at all.
-    ///
-    /// <para>Three limits. A page that saves one RECORD rather than rows keeps the
-    /// flush-on-leave timing — see RunnerPageInstance.WritesRowsAsTheyAreCompleted, where both
-    /// directions are measured. <c>DelayedInsert = true</c> keeps it too, which is that
-    /// property's own definition. And "complete" is BC's own emptiness test —
-    /// <c>NavValue.IsZeroOrEmpty</c>, what <c>NavForm.SplitKey</c> uses on the last key field —
-    /// so a page whose last key field is filled in BY <c>AutoSplitKey</c> reads as incomplete
-    /// while that field is still 0 and keeps the deferred path. Every editable line grid in BC
-    /// is that shape, and moving them would change insert timing for the draft-line tests
-    /// (corpus 60358/60648) on no evidence.</para>
+    /// Observably equivalent to BC's client <c>AutoInsertPattern.OnActiveControlChangedOnDraftRow</c>
+    /// (Microsoft.Dynamics.Nav.Client.UI, 28.4): on a started new row of a page whose
+    /// <c>DelayedInsert</c> is false, focus moving from a field control to a NON-KEY field
+    /// control inserts the row — with no changed-values gate, so a blank-key row the table's
+    /// OnInsert numbers is written — before the new control's value is. A repeater does not
+    /// insert when focus arrives on a different row. Adjudicated by corpus codeunit 60576
+    /// "TPBK Tests"; also consistent with 60844 (a key write alone does not insert a Card row)
+    /// and 60636 (a List insert sees the next control still blank).
+    /// </summary>
+    internal void ActivateControl(int controlId)
+    {
+        // Part focus crosses forms in BC (HostedForm_ActiveControlChanged), which is not modelled.
+        if (this is LiveNavTestPart || _page == null || controlId == 0) return;
+        if (!_focusInitialized) FocusInitialControl();
+
+        // TestPageProxy.ActivateControl skips a control that already has focus, even when the
+        // cursor has since moved to another row, so focus stays on the OLD row (corpus 60576,
+        // List_NewRow_*).
+        if (controlId == _activeControlId) return;
+        var rowChanged = _page.WritesRowsAsTheyAreCompleted && _activeRowEpoch != _rowEpoch;
+
+        var previous = _activeControlId;
+        _activeControlId = controlId;
+        _activeRowEpoch = _rowEpoch;
+        if (rowChanged) return;
+
+        if (!IsFieldControl(previous) || !IsFieldControl(controlId) || IsKeyControl(controlId)) return;
+        if (!_pendingNewRow || _page.DelaysInsertUntilTheRowIsLeft || !_page.PageEditable) return;
+        // InsertIfFormEditable: a form showing validation errors does not insert.
+        if (_validationErrors.Count > 0) return;
+
+        _pendingNewRow = false;
+        // A vetoed insert leaves the row a started draft, as the client's does.
+        if (!InsertPendingRow()) _pendingNewRow = true;
+    }
+
+    // BC's IsFieldControl needs a column binder and a row: a Rec-bound control. Page-variable
+    // controls are not counted — no corpus test measures them either way.
+    private bool IsFieldControl(int controlId)
+        => controlId != 0 && _controlIdToFieldNo.ContainsKey(controlId);
+
+    // ControlHelper.IsKeyControl: bound to a primary-key field of the source table.
+    private bool IsKeyControl(int controlId)
+    {
+        if (!_controlIdToFieldNo.TryGetValue(controlId, out var fieldNo)) return false;
+        var primaryKey = _record?.MetaTable?.PrimaryKey;
+        if (primaryKey == null) return false;
+        for (var i = 0; i < primaryKey.KeyFieldCount; i++)
+            if (primaryKey.KeyFieldsList[i].FieldNo == fieldNo) return true;
+        return false;
+    }
+
+    /// <summary>
+    /// BC's <c>InitialActiveControlStrategy</c>: the first visible editable QuickEntry field
+    /// (not on a repeater page, whose <c>InitialActiveControlInRepeaterStrategy</c> skips that
+    /// step), else the first editable primary-key field in key order, else the first editable
+    /// field preferring QuickEntry. 0 when the page has no editable field control.
+    /// </summary>
+    private int InitialActiveControlId()
+    {
+        if (_page == null) return 0;
+        var editable = _page.ControlIdsInPageOrder()
+            .Where(c => IsFieldControl(c.Id) && _page.ControlEditable(c.Id))
+            .ToList();
+
+        if (!_page.WritesRowsAsTheyAreCompleted)
+            foreach (var c in editable)
+                if (c.QuickEntry && _page.ControlVisible(c.Id)) return c.Id;
+
+        var primaryKey = _record?.MetaTable?.PrimaryKey;
+        if (primaryKey != null)
+            for (var i = 0; i < primaryKey.KeyFieldCount; i++)
+                foreach (var c in editable)
+                    if (_controlIdToFieldNo[c.Id] == primaryKey.KeyFieldsList[i].FieldNo) return c.Id;
+
+        foreach (var c in editable)
+            if (c.QuickEntry) return c.Id;
+        return editable.Count > 0 ? editable[0].Id : 0;
+    }
+
+    /// <summary>
+    /// A LINKED PART writes its row as soon as the primary key is complete — issue #3441, corpus
+    /// codeunit 60636. A top-level page uses <see cref="ActivateControl"/> instead, which agrees
+    /// with 60636 on a List. Limits: repeater part types only (WritesRowsAsTheyAreCompleted),
+    /// not <c>DelayedInsert = true</c>, and "complete" is <c>NavValue.IsZeroOrEmpty</c>, so an
+    /// AutoSplitKey line still at 0 keeps the deferred path (corpus 60358/60648).
     /// </summary>
     private void InsertOnCompletePrimaryKey()
     {
-        // No page: record-only mode has no DelayedInsert property to read and no page triggers
-        // to get the timing wrong, so it keeps the flush-time insert.
         if (_page == null || _page.DelaysInsertUntilTheRowIsLeft) return;
-        // A Card saves its one record when the page is left, not when its key is typed — corpus
-        // codeunit 60844 Close_WithoutOK_StillPersistsTheNewRow asserts the row is absent right
-        // up to Close(), and says in its own message that it is there to catch an eager insert.
         if (!_page.WritesRowsAsTheyAreCompleted) return;
         if (!PrimaryKeyIsComplete(_record!)) return;
         // The same call the flush points make, so the insert keeps BC's order — the write gate,

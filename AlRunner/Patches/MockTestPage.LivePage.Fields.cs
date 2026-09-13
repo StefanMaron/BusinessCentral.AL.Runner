@@ -52,7 +52,7 @@ internal partial class LiveNavTestPage
             if (!_fields.TryGetValue(id, out var field))
                 _fields[id] = field =
                     new LiveNavTestField(_record!, tableFieldNo, _page, id,
-                        MarkEdited, PromoteNewRowLineForWrite, _validationErrors);
+                        MarkEdited, PromoteNewRowLineForWrite, ActivateControl, _validationErrors);
             return field;
         }
 
