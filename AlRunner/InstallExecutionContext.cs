@@ -60,6 +60,12 @@ internal static class InstallExecutionContext
         var ctor = typeof(Microsoft.Dynamics.Nav.Apps.Runtime.NavAppRuntimeMetadata).GetConstructors(BindingFlags.Public | BindingFlags.Instance)
             .OrderBy(c => c.GetParameters().Length)
             .First();
+        var names = ctor.GetParameters().Select(p => p.Name).ToHashSet();
+        foreach (var required in new[] { "appId", "name", "publisher", "version" })
+            if (!names.Contains(required))
+                throw new InvalidOperationException(
+                    $"[install-trigger] NavAppRuntimeMetadata constructor has no '{required}' parameter; "
+                    + "the install context would name the wrong app (#4049)");
         var args = ctor.GetParameters().Select(p => p.Name switch
         {
             "appId" => ConvertGuid(p.ParameterType, appId),
