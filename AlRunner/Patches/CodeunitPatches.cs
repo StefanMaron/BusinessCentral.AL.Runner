@@ -828,7 +828,7 @@ public static partial class BcRuntime
                 var record = TestPageFactory.TryBuildBlankRecord(self, tableId, isTemporary, out var why);
                 if (record != null)
                 {
-                    var instance = twoArgCtor.Invoke(new object?[] { self, record });
+                    var instance = RunnerFormInit.ConstructPage(twoArgCtor, new object?[] { self, record });
                     BindPageSourceObjectId(instance, tableId);
 
                     // NavForm.SetSourceTable(record, clone: false) is BC's own binding
@@ -863,7 +863,7 @@ public static partial class BcRuntime
         if (ctor == null)
             throw new InvalidOperationException(
                 $"Page{id} has no single-arg ITreeObject constructor");
-        return ctor.Invoke(new object[] { self });
+        return RunnerFormInit.ConstructPage(ctor, new object[] { self });
     }
 
     /// <summary>

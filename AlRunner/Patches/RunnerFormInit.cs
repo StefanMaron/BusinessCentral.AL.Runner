@@ -65,6 +65,60 @@ public static class RunnerFormInit
     }
 
     /// <summary>
+    /// Cecil-injected guard on <c>NavForm.InitializeForm</c> — as wide as
+    /// <see cref="ShouldResolveMasterPage"/>, because the instance mark cannot reach it.
+    ///
+    /// <para><c>InitializeForm</c> is what raises OnInit, and BC calls it from every generated
+    /// page constructor: once per instance, before AL can call a procedure on the page variable,
+    /// SetRecord or SetTableView. The runner marks a form only after its constructor returns, and
+    /// never marks one BC builds for <c>RunModal</c>/<c>Run</c>, so on the narrow gate OnInit never
+    /// ran (#4114). Raising it later, at open, overwrote what a setter called before RunModal had
+    /// set. Observably equivalent to BC: BC's own body runs, at BC's own point, and the runner's
+    /// session answers <c>IsCompanyOpen = true</c> so its company gate passes. Corpus codeunit
+    /// 60488 "POI Tests" pins both the order and the once-per-instance count.</para>
+    ///
+    /// <para>Request pages stay excluded, as in <see cref="ShouldResolveMasterPage"/>.</para>
+    /// </summary>
+    public static bool ShouldInitializeForm(object form) => ShouldResolveMasterPage(form);
+
+    /// <summary>
+    /// Construct a page by reflection the way AL's own <c>new</c> would surface a failure: an
+    /// exception out of the constructor — an Error() in OnInit, which BC raises there — reaches
+    /// the caller as itself, not wrapped in <c>TargetInvocationException</c>, whose text
+    /// ("Exception has been thrown by the target of an invocation.") <c>GetLastErrorText</c>
+    /// would otherwise report. Corpus 60488 <c>POI_ErrorInOnInit_*</c> pins the text (#4114).
+    /// </summary>
+    internal static object ConstructPage(System.Reflection.ConstructorInfo ctor, object?[] args)
+    {
+        try { return ctor.Invoke(args); }
+        catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Whether <paramref name="ex"/> was raised by a page's OnInit — thrown out of
+    /// <c>NavForm.InitializeFormAsync</c>, which now runs inside the page constructor. The
+    /// runner's page-construction sites catch construction failures and fall back; an Error()
+    /// in OnInit is AL's own outcome and must reach the test instead, as it does on BC, so
+    /// those sites rethrow when this answers true (#4114).
+    /// </summary>
+    internal static bool IsRaisedFromOnInit(System.Exception ex)
+    {
+        var frames = new System.Diagnostics.StackTrace(ex, false).GetFrames();
+        foreach (var frame in frames)
+        {
+            var m = frame.GetMethod();
+            if (m?.DeclaringType == typeof(Microsoft.Dynamics.Nav.Runtime.NavForm)
+                && m.Name is "InitializeFormAsync" or "RaiseOnInitAsync")
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// Cecil-injected guard on NavForm.GetMasterPage specifically — deliberately WIDER than
     /// ShouldRunRealFormInit.
     ///

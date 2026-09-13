@@ -334,6 +334,8 @@ internal sealed partial class RunnerPageInstance
         catch (Exception ex)
         {
             var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+            if (RunnerFormInit.IsRaisedFromOnInit(inner))
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(inner).Throw();
             // Loud, but not fatal: the caller falls back to record-only behaviour, which is
             // strictly what it had before this existed. Silence here would turn a page-object
             // failure into "that control does not exist", which is a different and wronger
@@ -431,6 +433,8 @@ internal sealed partial class RunnerPageInstance
         catch (Exception ex)
         {
             var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
+            if (RunnerFormInit.IsRaisedFromOnInit(inner))
+                System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(inner).Throw();
             // `[warn]` — see the tag note in TryCreate. This is the exact line #2461 measured
             // as missing: page 977 took this path on every run and the log said nothing.
             Console.Out.WriteLine(
@@ -489,6 +493,7 @@ internal sealed partial class RunnerPageInstance
         try { subForm = host.GetPart(controlId); }
         catch (Exception ex)
         {
+            if (RunnerFormInit.IsRaisedFromOnInit(ex)) throw;
             if (trace) Console.Out.WriteLine($"[RunnerPageInstance] AdoptFromHost control {controlId} on host page {host.FormId}: GetPart threw {ex.GetType().Name}: {ex.Message}");
             return null;
         }
@@ -2328,10 +2333,10 @@ internal sealed partial class RunnerPageInstance
     /// constructor, and reproducing them by hand would silently diverge the moment a page
     /// declares a global whose AL default is not the CLR default. The scratch instance is
     /// deliberately NOT put through <see cref="RunnerFormInit.MarkRealInit"/> or
-    /// <c>SetSourceTable</c> — those are guarded to no-op without MarkRealInit (see
-    /// <see cref="TryCreateRecordless"/>'s note), so building one is side-effect-free, and this
-    /// method only ever reads its declared fields, never anything SetSourceTable would have
-    /// wired.
+    /// <c>SetSourceTable</c>, and this method only ever reads its declared fields. Its
+    /// constructor DOES run the page's OnInit (<see cref="RunnerFormInit.ShouldInitializeForm"/>),
+    /// which is what a reopen needs: BC's <c>NavTestPage.Open</c> asks the client session to
+    /// <c>CreatePage</c> on every open, so each open is a new instance with its own OnInit.
     /// </summary>
     private void ResetGlobalsForReopen()
     {
@@ -2349,6 +2354,12 @@ internal sealed partial class RunnerPageInstance
             {
                 field.SetValue(_form, field.GetValue(scratch));
             }
+        }
+        catch (TargetInvocationException tie) when (tie.InnerException != null && RunnerFormInit.IsRaisedFromOnInit(tie.InnerException))
+        {
+            // The scratch constructor ran the page's OnInit — the reopened instance's own — and
+            // an Error() there is the test's outcome.
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
         }
         catch
         {
