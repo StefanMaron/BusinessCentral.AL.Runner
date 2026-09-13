@@ -52,7 +52,8 @@ close on merge — not a grep of the body.
 
 **But the parse LAGS the PR's creation, so a fresh PR can read as claiming nothing.** Measured
 on PR #4119: created through the REST endpoint, `closingIssuesReferences` came back **empty**
-and resolved to `[4111]` about **twelve seconds** later, with a correct `Closes #4111` in the
+and resolved to `[4111]` about **twelve seconds** later, with a correct closing declaration for
+that issue in the
 body throughout. Nothing reports the pending state — an empty array is what a PR closing no
 issue also returns.
 
@@ -68,7 +69,11 @@ gh pr list --repo <owner>/<repo> --state open --limit 100 --json number,body \
 ```
 
 **Substitute the real issue number**; a pattern left generic matches any closing keyword
-anywhere in the text, including a body that merely *documents* one. Measured while adding this
+anywhere in the text, including a body that merely *documents* one. Even substituted it can
+over-report, because a PR quoting this rule carries the keyword too — which is why the check is
+a **confirmation of a zero**, never a claim on its own. It fails safe in that role: over-reporting
+"taken" costs a second look, while the false *negative* it exists to catch costs two agents one
+issue. Measured while adding this
 section: the generic form answered `true` on a pull request whose only declaration was
 `Part of #4059`, because the body quoted this very recipe.
 
