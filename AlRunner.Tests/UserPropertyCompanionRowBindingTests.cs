@@ -11,12 +11,13 @@
 // companion User Property (2000000121) row, and the runner bypasses BC's trigger dispatch on
 // insert (RecordWritePatches.NavRecord_InsertAsync), so nothing created that row. The fix
 // prepends UserTableTriggerPatches.OnBeforeUserInsert to
-// NavRecord.ALInsertAsync(DataError, bool, bool) — the single AL insert entry point
-// AssignAutoIncrement and StampSystemFieldsOnInsert are already prepended to.
+// NavRecord.InsertAsync(DataError, bool, bool, bool) — where AL's ALInsertAsync and a page's
+// NavForm.SaveRecordAsync (CurrPage.Update on a new record) both arrive. It used to sit on
+// ALInsertAsync(DataError, bool, bool), which the page route never calls (#4121).
 //
 // The same file now also carries the rest of BC's two `case 2000000120:` arms — the insert
 // arm's uniqueness refusals (#2983) and the delete arm's four table cascades (#2356) — so
-// there are TWO prepends to pin: OnBeforeUserInsert on ALInsertAsync(DataError, bool, bool)
+// there are TWO prepends to pin: OnBeforeUserInsert on InsertAsync(DataError, bool, bool, bool)
 // and OnAfterUserDelete on ALDeleteAsync(DataError, bool, bool). The delete one is the single
 // funnel for `Delete()` AND `DeleteAll()` on this table, because DeleteAllAsync's bulk path is
 // gated on CanUseBulkDeleteAll, which ends in !TableHasSystemDeleteTrigger, whose static switch
@@ -101,7 +102,7 @@ public sealed class UserPropertyCompanionRowBindingTests
     // in-process; a machine where it cannot (a cold Cecil cache, say) can still answer the
     // question these tests ask, and gating on it hid them behind an unrelated skip.
     [SkippableFact]
-    public void AlInsertEntryPoint_CallsTheCompanionRowHelperAsItsFirstAct()
+    public void InsertAsyncFunnel_CallsTheCompanionRowHelperAsItsFirstAct()
     {
         Skip.IfNot(File.Exists(RewrittenNclPath),
             $"the rewritten Ncl is not present at '{RewrittenNclPath}'.");
@@ -109,7 +110,8 @@ public sealed class UserPropertyCompanionRowBindingTests
         using var module = ModuleDefinition.ReadModule(RewrittenNclPath);
         var alInsert = NavRecordMethod(module, "ALInsertAsync", "DataError", "Boolean", "Boolean");
         SkipUnlessRewritten(alInsert);
-        var instructions = alInsert.Body.Instructions;
+        var insert = NavRecordMethod(module, "InsertAsync", "DataError", "Boolean", "Boolean", "Boolean");
+        var instructions = insert.Body.Instructions;
 
         // The prepend is `ldarg.0; call helper` inserted before the original body, so the
         // helper call must sit within the first few instructions — not merely somewhere in
@@ -122,7 +124,7 @@ public sealed class UserPropertyCompanionRowBindingTests
             .FirstOrDefault();
 
         Assert.True(helperIndex.HasValue,
-            "NavRecord.ALInsertAsync(DataError, bool, bool) does not call "
+            "NavRecord.InsertAsync(DataError, bool, bool, bool) does not call "
             + "UserTableTriggerPatches.OnBeforeUserInsert — the User Property row BC's "
             + "own User insert trigger creates would never be written, and every AL path that "
             + "reaches UserManagement.DirectSetUserFieldValue would fail with "
@@ -130,18 +132,32 @@ public sealed class UserPropertyCompanionRowBindingTests
 
         // It must be in the PREPENDED PREFIX, not merely somewhere in the method: the
         // companion row has to be written before the original body runs, exactly as BC's own
-        // OnBeforeInsertAsync does. Several prepends share this entry point (AutoIncrement,
-        // SystemFields, the rowversion write note, the All Profile guard, this one) and each
-        // contributes exactly `ldarg.0; call`, so the prefix is characterised by its SHAPE —
-        // nothing but those two opcodes ahead of us — rather than by a fixed index that a
-        // sixth prepend would invalidate.
+        // OnBeforeInsertAsync does. Each prepend contributes exactly `ldarg.0; call`, so the
+        // prefix is characterised by its SHAPE — nothing but those two opcodes ahead of us —
+        // rather than by a fixed index that another prepend would invalidate.
         Assert.Equal(OpCodes.Ldarg_0, instructions[helperIndex!.Value - 1].OpCode);
         for (var i = 0; i < helperIndex.Value; i++)
             Assert.True(
                 instructions[i].OpCode == OpCodes.Ldarg_0 || instructions[i].OpCode == OpCodes.Call,
-                $"instruction {i} of NavRecord.ALInsertAsync is {instructions[i].OpCode}, so the "
+                $"instruction {i} of NavRecord.InsertAsync is {instructions[i].OpCode}, so the "
                 + "companion-row helper is no longer inside the prepended prefix — it would run "
                 + "after part of the original body instead of before all of it.");
+    }
+
+    [SkippableFact]
+    public void AlInsertEntryPoint_DoesNotCallTheCompanionRowHelper()
+    {
+        // #4121. ALInsertAsync(DataError, bool, bool) forwards to InsertAsync(4), so a helper
+        // left on both would run twice per AL insert, and a helper on ALInsertAsync alone is
+        // the defect: NavForm.SaveRecordAsync calls InsertAsync(4) directly and skipped it.
+        Skip.IfNot(File.Exists(RewrittenNclPath),
+            $"the rewritten Ncl is not present at '{RewrittenNclPath}'.");
+
+        using var module = ModuleDefinition.ReadModule(RewrittenNclPath);
+        var alInsert = NavRecordMethod(module, "ALInsertAsync", "DataError", "Boolean", "Boolean");
+        SkipUnlessRewritten(alInsert);
+
+        Assert.DoesNotContain(HelperFullName, CalledMethods(alInsert));
     }
 
     [SkippableFact]
@@ -243,6 +259,8 @@ public sealed class UserPropertyCompanionRowBindingTests
         SkipUnlessRewritten(alInsert);
 
         Assert.DoesNotContain(DeleteHelperFullName, CalledMethods(alInsert));
+        Assert.DoesNotContain(DeleteHelperFullName, CalledMethods(
+            NavRecordMethod(module, "InsertAsync", "DataError", "Boolean", "Boolean", "Boolean")));
 
         var navRecord = module.GetType("Microsoft.Dynamics.Nav.Runtime.NavRecord");
         foreach (var method in navRecord!.Methods.Where(m => m.Name == "ALModifyAsync" && m.HasBody))
