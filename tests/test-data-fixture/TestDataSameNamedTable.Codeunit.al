@@ -2,10 +2,13 @@
 /// End-to-end proof for issue #2264: a table whose AL name another installed app also declares
 /// in the same company is hydrated from the physical table owned by the app this run resolved.
 ///
-/// "Dimension Set Entry" is the shipped case: Base Application declares table 480 and Power BI
-/// Report embeddings declares table 36950 under the same name. In the W1 CRONUS backup the Base
-/// Application one holds 89 rows and the Power BI one none, so the count below tells the two
-/// apart as well as the refused-and-empty state this replaced.
+/// "Dimension Set Entry" is the shipped case. The W1 CRONUS backup holds two physical tables of that
+/// name in one company: Base Application's (table 480, 89 rows) and Power BI Report embeddings'
+/// (0 rows). This fixture's closure does not include Power BI, so the catalog resolves only 480 and
+/// leaves the sibling unresolved, yet the reader still refuses the bare name
+/// (`ambiguous table ... $437dbf0e... | ...$e4e86220...`). So this proves the one-resolvable-candidate
+/// case: 89 rows instead of the refused-and-empty 0. Choosing between TWO resolvable candidates is
+/// proved by AlRunner.Tests/TestDataSameNamedTablesTests.cs.
 ///
 /// NOT RUN BY CI — see README.md in this directory.
 /// </summary>

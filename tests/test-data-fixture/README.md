@@ -32,9 +32,9 @@ back through ordinary AL `Record` calls with the right values.
   has 99,977 numbers left.
 
 - `TestDataSameNamedTable.Codeunit.al` (#2264) — "Dimension Set Entry", a name Base Application
-  and Power BI Report embeddings both declare in one company. Before #2264 the runner refused
-  both; now each is read with `--app` set to the app owning the AL table id it resolved. The
-  assertion is the exact count (89, all Base Application's) plus one row's values.
+  and Power BI Report embeddings both use in one company. Before #2264 the runner refused the
+  name; now the candidate the closure resolves (480) is read with `--app` set to its owning app.
+  The assertion is the exact count (89) plus one row's values.
 
 **CI does not run this bundle, and that is deliberate.** It only passes with `--test-data`
 and a BC sandbox backup on the machine (~1 GB, shipped inside the sandbox artifact). CI runs
