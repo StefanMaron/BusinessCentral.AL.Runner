@@ -1,0 +1,7 @@
+Test run for /repo/AlRunner.Tests/bin/Debug/net8.0/AlRunner.Tests.dll (.NETCoreApp,Version=v8.0)
+VSTest version 18.0.2-dev (x64)
+
+Starting test execution, please wait...
+A total of 1 test files matched the specified pattern.
+No test matches the given testcase filter `FullyQualifiedName~NoSuchClassXyz3957` in /repo/AlRunner.Tests/bin/Debug/net8.0/AlRunner.Tests.dll
+
