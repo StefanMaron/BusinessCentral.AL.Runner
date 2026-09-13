@@ -27,6 +27,7 @@ public static class TddSupport
     // The options the failed emit parsed this file with: the compile's own builder over the
     // manifest that compile read, carried on the detail (#4071). Per call, never `static
     // readonly`: --define is registered after this type may be touched (#1900).
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
     private static NavCA.ParseOptions ParseOptionsFor(TddExcludedObjectDetail detail) =>
         BcCompiler.BuildParseOptions(BcCompiler.ReadManifestCompilerInputs(detail.ManifestAppJsonPath));
 
