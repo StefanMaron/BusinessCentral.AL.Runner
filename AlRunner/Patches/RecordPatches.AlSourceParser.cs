@@ -507,8 +507,9 @@ public static partial class RecordPatches
         // behaviour (no propagation).
         List<ParsedRelationArm>? relationArms = null;
         bool relationValidate = !PropIs(props, "ValidateTableRelation", "false");
-        if (!isFlowField && !isFlowFilter
-            && PropValue(props, "TableRelation") is NavSyntax.TableRelationPropertyValueSyntax tr)
+        // Every field class (#2789): BC keeps a FlowFilter's / FlowField's relation and filters
+        // rename propagation on FieldClass itself.
+        if (PropValue(props, "TableRelation") is NavSyntax.TableRelationPropertyValueSyntax tr)
         {
             relationArms = ParseRelationArms(tr, fname, fromCompiledSource: true);
         }

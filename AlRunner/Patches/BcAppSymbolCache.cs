@@ -24,7 +24,7 @@ internal static partial class BcAppSymbolCache
     //
     // Every bump adds its row to docs/bc-symbol-cache-versions.md#version-history (why that
     // integer was taken); BcAppSymbolCacheVersionHistoryTests holds the page to this constant.
-    private const int CacheVersion = 42;
+    private const int CacheVersion = 43;
     private static readonly ConcurrentDictionary<string, AppSymbols> ProcessCache = new(StringComparer.OrdinalIgnoreCase);
     // Issue #1820's path -> content-hash memo now lives in
     // RunnerFingerprint._fileContentHashes (#2955), because AppLoader's persisted r2r-chunks
@@ -2275,23 +2275,11 @@ internal static partial class BcAppSymbolCache
                 // itself readable (Customer.City is exactly that shape), so the two properties
                 // are read independently — matching the AL-source path's own two lines.
                 props.TryGetValue("TableRelation", out var tableRelation);
-                // Gated on field class exactly as the AL-source path is
-                // (RecordPatches.AlSourceParser.cs's `if (!isFlowField && !isFlowFilter && ...)`).
-                // A FlowFilter's TableRelation is a LOOKUP hint for the filter's own UI, not a
-                // stored value's referential constraint, and in Base Application 28.1 that is 204
-                // fields (196 FlowFilter, 8 FlowField), ~144 of them with a relation this parser
-                // accepts — "Item Statistics Buffer"."Item Filter" -> Item, "Analysis
-                // Line"."Location Filter" -> Location, "Config. Line"."Company Filter" -> Company.
-                // ParsedField.RelationArms feeds BOTH the Validate check AND the reverse index
-                // NCLMetaTable_ComputeReferencingRelations builds for rename propagation, and that
-                // index filters only on TableId >= 2000000000, not on field class — so without
-                // this gate renaming an Item, Location or Company would pull FlowFilter
-                // pseudo-columns into the cascade. The invariant this whole change is for is that
-                // the source-parsed and symbol-read paths agree; ungated, they would disagree for
-                // exactly these 204 fields, and the source path is the one the corpus validates.
-                var relationArms = (!isFlowField && !isFlowFilter)
-                    ? RecordPatches.TryParseRelationArmsText(tableRelation, fieldName)
-                    : null;
+                // Read for every field class (#2789): BC keeps a FlowFilter's or FlowField's
+                // relation (Relation() answers it, Validate checks it) and excludes non-Normal
+                // fields from rename propagation at the consumer, by FieldClass — so do not gate
+                // here. Corpus codeunit 60483.
+                var relationArms = RecordPatches.TryParseRelationArmsText(tableRelation, fieldName);
                 var relationValidate = !(props.TryGetValue("ValidateTableRelation", out var vtr)
                     && (vtr == "0" || vtr.Equals("false", StringComparison.OrdinalIgnoreCase)));
                 // #3545 — Editable / DataClassification / the enum type. All three are stated

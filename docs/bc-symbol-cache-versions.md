@@ -119,6 +119,10 @@ v1 and v2 predate this record.
 
   42 was confirmed free immediately before pushing, per v39's own warning: origin/main read 41, and a sweep of every remote branch carrying this file found none above 41.
 
+- **v43**: a FlowFilter's or FlowField's TableRelation is read rather than dropped (#2789). The same trap as v35 through v42: ParsedField.RelationArms is a list either way, so PayloadShape cannot see that 196 FlowFilter and 8 FlowField fields of Base Application 28.1 (counted from its SymbolReference.json) went from no relation to one. Without the bump a warm box replays the gated parse and `FieldRef.Relation()` answers 0 on those fields, the exact pre-fix answer, from cache.
+
+  43 was confirmed free immediately before pushing: origin/main read 42, and a sweep of every remote branch carrying this file found none above 42.
+
 ## Changes that deliberately did not bump
 
 - No CacheVersion bump of its own for PageSymbol.TableView (#2820), deliberately — the numbered bumps above belong to other changes (v28 to #2518, v29 to #2973), and this one rides whatever the current integer is without moving it. That member is reachable from CachePayload, so PayloadShape (issue #2335, merged as #2856) already gives it a different cache key than any payload written without it — the stale-entry hazard every entry in the version history describes is closed by construction, and bumping as well would only be ceremony. CacheVersion means what RecordShapeFingerprint's own summary says it means: the PARSE changed while the SHAPE did not, which no structural hash can see — v28 and v29 are both exactly that case, and this change is the other one. Verified rather than assumed: a cold run of this build wrote fresh entries and a warm second run read them back, on the SHARED ~/.cache/al-runner/bc-symbols with no --cache isolation, and the precompiled-page corpus arm (Base App page 1710) passed in both.
