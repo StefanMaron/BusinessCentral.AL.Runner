@@ -35,6 +35,7 @@ SUITES = {
     "tools/test_corpus_checkout.py": "all corpus-checkout tests passed",
     "tools/test_preflight.py": "all checks passed",
     ".github/scripts/test_pr_changed_files.sh": "failed: 0",
+    ".github/scripts/test_sync_changelog_push.sh": "failed: 0",
 }
 
 FAILURES: list[str] = []

@@ -94,30 +94,14 @@ jobs:
       # never lost -- the next run recomputes it -- but main carried a failed run for a
       # reason unrelated to the commit under it, and a red main is not announced anywhere.
       #
-      # Recompute against origin/main rather than rebasing the commit: the section is
-      # derived from `git describe --tags`..HEAD, so what it should say depends on which
-      # commits are on main NOW, not on which were there when this run was scheduled.
+      # The retry, and the tree handling that #3231 fixed, now live in
+      # .github/scripts/sync_changelog_push.sh -- that file's header carries the
+      # reasoning, and test_sync_changelog_push.sh drives it against real remotes.
       - name: Commit and push if it changed
         if: steps.sync.outputs.changed == 'true'
-        run: |
-          for attempt in 1 2 3 4 5; do
-            git fetch origin main
-            git checkout -B sync-retry origin/main
-            out=$(python3 .github/scripts/generate_changelog.py --unreleased)
-            echo "$out"
-            case "$out" in
-              *changed=true*) ;;
-              *)
-                echo "nothing left to write against $(git rev-parse --short origin/main) — another run got there first"
-                exit 0
-                ;;
-            esac
-            git add CHANGELOG.md
-            git commit -m "chore: update changelog [skip ci]"
-            if git push origin HEAD:main; then
-              exit 0
-            fi
-            echo "main moved while pushing; recomputing (attempt $attempt of 5)"
-          done
-          echo "::error::main moved under this job 5 times running — something is pushing to main continuously"
-          exit 1
+        # The loop lives in a script rather than inline here so it can be tested
+        # against a real moving repository (.github/scripts/test_sync_changelog_push.sh,
+        # #3231). Inline in YAML it was reachable only by merging and hoping to
+        # lose a three-way race, which is why the tree-dirtying bug below
+        # survived the #2630 rewrite that introduced the retry.
+        run: bash .github/scripts/sync_changelog_push.sh
