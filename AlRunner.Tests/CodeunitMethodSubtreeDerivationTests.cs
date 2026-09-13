@@ -94,6 +94,11 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
     /// UNKNOWN, and unknown abstains rather than reading as "no subscribers".</summary>
     private const int PublishersButNoWitness = 61064;
 
+    /// <summary>Publishers whose attribute arguments exercise the POSITIONAL read: the two
+    /// signatures put IncludeSender and Isolated in different slots, and one of them has no
+    /// sender argument at all.</summary>
+    private const int PublisherFlags = 61065;
+
     private readonly string _root;
 
     public CodeunitMethodSubtreeDerivationTests()
@@ -178,6 +183,28 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
                     { "Id": 888, "Name": "OnBeforeUnwitnessed",
                       "Attributes": [ { "Name": "IntegrationEvent" } ] }
                   ]
+                },
+                {
+                  "Id": {{PublisherFlags}},
+                  "Name": "Publisher Flags",
+                  "Properties": [],
+                  "Methods": [
+                    { "Id": 901, "Name": "OnIntegrationPlain",
+                      "Attributes": [ { "Name": "IntegrationEvent", "Arguments": [
+                        { "Value": "False" }, { "Value": "False" } ] } ] },
+                    { "Id": 902, "Name": "OnIntegrationSender",
+                      "Attributes": [ { "Name": "IntegrationEvent", "Arguments": [
+                        { "Value": "True" }, { "Value": "False" } ] } ] },
+                    { "Id": 903, "Name": "OnIntegrationIsolated",
+                      "Attributes": [ { "Name": "IntegrationEvent", "Arguments": [
+                        { "Value": "False" }, { "Value": "False" }, { "Value": "True" } ] } ] },
+                    { "Id": 904, "Name": "OnInternalIsolated",
+                      "Attributes": [ { "Name": "InternalEvent", "Arguments": [
+                        { "Value": "False" }, { "Value": "True" } ] } ] },
+                    { "Id": 905, "Name": "OnInternalPlain",
+                      "Attributes": [ { "Name": "InternalEvent", "Arguments": [
+                        { "Value": "True" } ] } ] }
+                  ]
                 }
               ]
             }
@@ -217,7 +244,7 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
                 appPath,
                 new[] { PublishersAndSubscriber },
                 new[] { PublishersOnly, PublishersAndSubscriber, NoAttributedMethods,
-                        InherentPermissionsMethod });
+                        InherentPermissionsMethod, PublisherFlags });
         }
 
         return appPath;
@@ -391,6 +418,52 @@ public sealed class CodeunitMethodSubtreeDerivationTests : IDisposable
         Assert.Equal(
             new[] { (888, "OnBeforeUnwitnessed") },
             Methods(Projection(PublishersButNoWitness)));
+    }
+
+    /// <summary>
+    /// <c>IncludeSender</c> and <c>Isolated</c> come from the publisher attribute's POSITIONAL
+    /// arguments, and the two AL signatures put them in DIFFERENT slots:
+    /// <c>IntegrationEvent(IncludeSender, GlobalVarAccess[, Isolated])</c> and
+    /// <c>InternalEvent(GlobalVarAccess[, Isolated])</c>, the latter having no sender argument
+    /// at all.
+    ///
+    /// <para>This test exists because the real population does not discriminate the slots:
+    /// System Application 28.1 has 3 two-argument <c>InternalEvent</c>s and none carrying
+    /// <c>Isolated</c> at any index, so reading an <c>InternalEvent</c>'s isolation from
+    /// <c>IntegrationEvent</c>'s slot 2 left the metadata-equivalence harness GREEN over all 558
+    /// codeunits. Found by running that mutation, not by reading the code (tdd.md).</para>
+    ///
+    /// <para><c>Isolated</c> is asserted through presence rather than value because BC's own
+    /// emitter omits it when false — 9 of 149 elements carry it on 28.1 — so writing
+    /// <c>"False"</c> on the rest would state a value where BC states absence.</para>
+    /// </summary>
+    [Fact]
+    public void The_publisher_flags_are_read_from_each_signatures_own_argument_slots()
+    {
+        Register();
+
+        var flags = AttributeElements(Projection(PublisherFlags)).ToList();
+        Assert.Equal(5, flags.Count);
+
+        // IntegrationEvent: IncludeSender is slot 0, Isolated is slot 2.
+        Assert.Equal("False", flags[0].GetAttribute("IncludeSender"));
+        Assert.False(flags[0].HasAttribute("Isolated"));
+
+        Assert.Equal("True", flags[1].GetAttribute("IncludeSender"));
+        Assert.False(flags[1].HasAttribute("Isolated"));
+
+        Assert.Equal("False", flags[2].GetAttribute("IncludeSender"));
+        Assert.Equal("True", flags[2].GetAttribute("Isolated"));
+
+        // InternalEvent: NO sender argument, so IncludeSender is always False and Isolated is
+        // slot 1. This is the pair that discriminates the signatures — 904 states
+        // ("False", "True") and must read Isolated from slot 1, while 905 states ("True") alone,
+        // whose single argument is GlobalVarAccess and must NOT be read as either flag.
+        Assert.Equal("False", flags[3].GetAttribute("IncludeSender"));
+        Assert.Equal("True", flags[3].GetAttribute("Isolated"));
+
+        Assert.Equal("False", flags[4].GetAttribute("IncludeSender"));
+        Assert.False(flags[4].HasAttribute("Isolated"));
     }
 
     /// <summary>
