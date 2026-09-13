@@ -24,14 +24,11 @@ namespace AlRunner;
 
 public static class TddSupport
 {
-    // The symbol union the failed emit parsed this file with: CLEANSCHEMA1..25, --define, and
-    // the owning app.json's preprocessorSymbols (#4071). Per file, never `static readonly`:
-    // --define is registered after this type may be touched (#1900).
-    private static NavCA.ParseOptions ParseOptionsFor(string filePath) => new(
-        runtimeVersion: null!,
-        preprocessorSymbols: Infrastructure.AlMemberSyntaxIndex.PreprocessorSymbols(
-            Infrastructure.AlMemberSyntaxIndex.NearestAppJson(filePath)),
-        documentationMode: NavCA.DocumentationMode.None);
+    // The options the failed emit parsed this file with: the compile's own builder over the
+    // manifest that compile read, carried on the detail (#4071). Per call, never `static
+    // readonly`: --define is registered after this type may be touched (#1900).
+    private static NavCA.ParseOptions ParseOptionsFor(TddExcludedObjectDetail detail) =>
+        BcCompiler.BuildParseOptions(BcCompiler.ReadManifestCompilerInputs(detail.ManifestAppJsonPath));
 
     private static string Unquote(string s)
         => s.Length >= 2 && s[0] == '"' && s[^1] == '"' ? s[1..^1] : s;
@@ -87,7 +84,7 @@ public static class TddSupport
             }
 
             var tree = NavSyntax.SyntaxTree.ParseObjectText(
-                src, path: detail.FilePath, encoding: null!, ParseOptionsFor(detail.FilePath), default);
+                src, path: detail.FilePath, encoding: null!, ParseOptionsFor(detail), default);
             if (tree.GetRoot() is not NavSyntax.CompilationUnitSyntax root) continue;
 
             var diagText = string.Join("\n", detail.Diagnostics);
