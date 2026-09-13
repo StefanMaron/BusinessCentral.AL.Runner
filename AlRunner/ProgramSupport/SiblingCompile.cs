@@ -628,12 +628,13 @@ internal static partial class ProgramSupport
                     if (implResolveFailure != null)
                         implDeps = implResolver.Resolve(implId.Dependencies);
                     BcCompiler.SetResolvedDeps(implDeps, implSymbolDirs);
-                    // AFTER SetResolvedDeps, which resets _extraSymbolDirs. Passing an empty
-                    // list is not the same as not calling it at all — the previous impl's call
-                    // has already been cleared by SetResolvedDeps, so this is a no-op either way
-                    // and the guard is only here to avoid churning the loader signature.
-                    if (priorImplDirs.Count > 0)
-                        BcCompiler.SetExtraSymbolDirs(priorImplDirs);
+                    // AFTER SetResolvedDeps, which resets _extraSymbolDirs. Only the prior impls
+                    // this one actually depends on: every *.symbols.json in these dirs becomes a
+                    // reference, so a sibling it does not declare would collide (AL0197) or leak
+                    // (#2237). implResolveDirs above stays wide — resolution selects by identity.
+                    var visiblePriorImplDirs = WorkspaceDirsInClosure(priorImplDirs, implDeps);
+                    if (visiblePriorImplDirs.Count > 0)
+                        BcCompiler.SetExtraSymbolDirs(visiblePriorImplDirs);
                     // #2669: EmitDepSymbolsIncremental instead of a plain EmitDepSymbols on a
                     // throwaway `new BcCompiler()` — GetDepSymbolCompiler hands back the SAME
                     // instance this impl used last time (if any), so a re-synthesis after a small
@@ -736,6 +737,25 @@ internal static partial class ProgramSupport
             foreach (var ch in s) sb.Append(Array.IndexOf(bad, ch) >= 0 ? '_' : ch);
             return sb.ToString();
         }
+    }
+
+    /// <summary>
+    /// The workspace dirs a compile may see symbols from: those the dependency resolver picked a
+    /// package out of for this compile's declared closure. Every *.symbols.json in a dir handed
+    /// to <see cref="BcCompiler.SetExtraSymbolDirs"/> becomes a reference, so passing every dir
+    /// written so far made independent apps see each other (#2237). Keyed on the resolver's
+    /// answer rather than a second walk of app.json dependencies, so the two cannot disagree.
+    /// </summary>
+    internal static List<string> WorkspaceDirsInClosure(
+        IEnumerable<string> workspaceDirs,
+        IEnumerable<(AppManifest Manifest, string AppPath)> resolved)
+    {
+        static string Norm(string p) => Path.TrimEndingDirectorySeparator(Path.GetFullPath(p));
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (_, appPath) in resolved)
+            if (Path.GetDirectoryName(Path.GetFullPath(appPath)) is { } dir)
+                used.Add(Norm(dir));
+        return workspaceDirs.Where(d => used.Contains(Norm(d))).ToList();
     }
 
     // Topological sort: return items in dependency-first order.
@@ -959,9 +979,10 @@ internal static partial class ProgramSupport
             // sets _currentAppId so GetSharedReferences excludes the dep from its own specs
             // (self-ref guard). Reset by the per-bundle SetResolvedDeps below.
             BcCompiler.SetResolvedDeps(resolvedDepDeps, resolveDirs);
-            // AFTER SetResolvedDeps, which resets _extraSymbolDirs.
-            if (priorDepDirs.Count > 0)
-                BcCompiler.SetExtraSymbolDirs(priorDepDirs);
+            // AFTER SetResolvedDeps, which resets _extraSymbolDirs. Declared closure only (#2237).
+            var visiblePriorDepDirs = WorkspaceDirsInClosure(priorDepDirs, resolvedDepDeps);
+            if (visiblePriorDepDirs.Count > 0)
+                BcCompiler.SetExtraSymbolDirs(visiblePriorDepDirs);
             var symBase = Path.Combine(wsDir, $"{Sanitize(sid.Publisher)}_{Sanitize(sid.Name)}_{sid.Version.ToString().Replace('.', '_')}");
             var symbolsPath = symBase + ".symbols.json";
             var depsPath = symBase + ".symbols.deps.json";
