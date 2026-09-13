@@ -51,12 +51,17 @@ measured in three scratch repositories covering both stale-ref orderings, merge 
 `2 files changed, … 50 deletions(-)`) do not reproduce, and the remedy they supported cannot work:
 both forms are diffed against the **stale** ref, which is the thing that is wrong.
 
-So the fetch is not one of two precautions, it is the only one: **`git fetch origin main`
-immediately before any command naming `origin/main` as a base** — `reset`, `rebase`, `merge-tree`,
-`diff`. Against a *fresh* ref the damage is visible in either form; against a stale one, neither
-shows it. Read `git diff --stat origin/main..HEAD` after fetching, and read the commit itself
+So the fetch comes first and is not optional: **`git fetch origin main` immediately before any
+command naming `origin/main` as a base** — `reset`, `rebase`, `merge-tree`, `diff`. **Against a
+stale ref no dot-count helps**; against a fresh one the dots diverge and **two dots is the form
+that shows the damage** — the fetch moves `origin/main` forward while the merge base stays at the
+commit the soft reset used, so three-dot still prints a clean `1 file changed, 1 insertion(+)`
+while two-dot prints `2 files changed, 1 insertion(+), 50 deletions(-)`. Measured both ways, in
+the same scratch repository, before and after the fetch.
+
+Read `git diff --stat origin/main..HEAD` **after** fetching, and read the commit itself
 (`git show --stat HEAD`) before pushing a rewritten branch — it is the only view that does not
-depend on a ref being current.
+depend on a ref being current at all.
 
 ## The RED-baseline recipe has two ways to destroy work
 
