@@ -1003,9 +1003,12 @@ public sealed class FieldTriggerShapeGapCallSiteTests : IDisposable
         // 10 -> 11 / 13 -> 14 (#3375): NavReportSync.RefuseLoopOverSynthesizedDataItems, the
         // first of these guards whose absence was SILENT rather than a crash — an unbounded
         // data-item loop reads as a hang, which is how it survived to be found by profiling.
-        Assert.Equal(11, runnerShapeGapSites);
+        //
+        // 11 -> 12 / 14 -> 15 (#4067): NavReportSync.BindRequestPageOpenedByBc, a request page
+        // BC's own report engine opened whose owner is not a NavReport.
+        Assert.Equal(12, runnerShapeGapSites);
         Assert.Equal(3, installGapSites);
-        Assert.Equal(14, total);
+        Assert.Equal(15, total);
 
         var limitations = File.ReadAllText(Path.Combine(RepoRoot, "docs", "limitations.md"));
         Assert.Contains($"{total} further guards raise `RunnerOutOfScopeException`", limitations,
