@@ -75,7 +75,7 @@ public static class RunnerFormInit
     /// needs the instance mark, which also widens <c>GetMasterPage</c> for a form the runner
     /// has no metadata for. Observably equivalent: same dispatcher, same flag, and the runner's
     /// session answers <c>IsCompanyOpen = true</c>, so BC's own company gate would have run it
-    /// too. Corpus codeunit 60XXX pins the AL-observable half.</para>
+    /// too. Corpus codeunit 60488 "POI Tests" pins the AL-observable half.</para>
     ///
     /// <para>No-op when BC already initialised the form, so a form reaching two open paths
     /// (modal dispatch, then a TestPage over it) runs OnInit once. <paramref name="force"/> is

@@ -1,0 +1,12 @@
+{
+  "id": "4c9e2a17-5b3d-4f60-8e21-a7d4c3b9f105",
+  "name": "Runner Tests Fixture - Page OnInit Trigger",
+  "publisher": "AL Runner",
+  "version": "1.0.0.0",
+  "brief": "Issue #4114: a page's OnInit runs on every open path the runner drives, once, before OnOpenPage.",
+  "description": "Runner-mechanism fixture. What BC does is settled upstream by corpus codeunit 60488 \"POI Tests\"; this fixture pins the runner's own dispatch (RunnerFormInit.RaiseOnInit from RunnerPageInstance.RaiseOnOpenPage and RunnerModalDispatch.TryOpenForm) and the arm the corpus does not state: an Error() raised in OnInit reaches the test unwrapped. Declares no application floor.",
+  "dependencies": [],
+  "platform": "1.0.0.0",
+  "idRanges": [ { "from": 71900, "to": 71909 } ],
+  "runtime": "14.0"
+}
