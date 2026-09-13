@@ -365,16 +365,6 @@ internal partial class LiveNavTestPage
         _newRowLineRecordStarted = false;
     }
 
-    /// <summary>The one value a field's current filter selects, or false when the filter is
-    /// not a single value (BC's <c>GetRangeMin</c>/<c>GetRangeMax</c> raise for a filter that
-    /// is not a range; a range whose ends differ is not a single value either).
-    ///
-    /// On the base class rather than on <see cref="LiveNavTestPart"/> because BOTH users of
-    /// BC's filter-copy rule need it: the part's New() stamping, and
-    /// <see cref="EnterNewRowLine"/>'s draft line. The rule is about the record's FILTERS, not
-    /// about a SubPageLink — so reading it off the filters covers const/filter/field links and
-    /// a plain filtered page with one mechanism, and answers "nothing to copy" for an
-    /// unfiltered page without needing a special case.</summary>
     /// <summary><c>PredefinedFilterGroupNo.Link</c> (internal to Ncl): the group a SubPageLink lands in.</summary>
     private protected const int LinkFilterGroup = 4;
 
@@ -388,6 +378,16 @@ internal partial class LiveNavTestPage
         finally { record.ALFilterGroup = saved; }
     }
 
+    /// <summary>The one value a field's current filter selects, or false when the filter is
+    /// not a single value (BC's <c>GetRangeMin</c>/<c>GetRangeMax</c> raise for a filter that
+    /// is not a range; a range whose ends differ is not a single value either).
+    ///
+    /// On the base class rather than on <see cref="LiveNavTestPart"/> because BOTH users of
+    /// BC's filter-copy rule need it: the part's New() stamping, and
+    /// <see cref="EnterNewRowLine"/>'s draft line. The rule is about the record's FILTERS, not
+    /// about a SubPageLink — so reading it off the filters covers const/filter/field links and
+    /// a plain filtered page with one mechanism, and answers "nothing to copy" for an
+    /// unfiltered page without needing a special case.</summary>
     private protected static bool TryGetSingleFilterValue(NavRecord record, int fieldNo, out NavValue value)
     {
         try
