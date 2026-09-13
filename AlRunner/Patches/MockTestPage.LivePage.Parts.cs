@@ -275,7 +275,7 @@ internal partial class LiveNavTestPage
     /// than filtering on no field: an unfiltered part shows other rows' children, which is a
     /// wrong answer, not a missing one.
     /// </summary>
-    private static SubPageLinkEntry[] SubPageLinks(
+    internal static SubPageLinkEntry[] SubPageLinks(
         Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition definition, int partPageId)
     {
         var links = new List<SubPageLinkEntry>();
@@ -300,11 +300,11 @@ internal partial class LiveNavTestPage
                             $"TestPage part → page {partPageId} SubPageLink",
                             $"a FIELD link's value must be the parent's field number, "
                             + $"but this one is '{link.FilterValue}'");
-                    links.Add(new SubPageLinkEntry(link.FieldID, link.FilterType, parentFieldNo, string.Empty));
+                    links.Add(new SubPageLinkEntry(link.FieldID, link.FilterType, parentFieldNo, string.Empty, link.FilterGroup));
                     break;
                 case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.CONST:
                 case Microsoft.Dynamics.Nav.Types.Metadata.FilterType.FILTER:
-                    links.Add(new SubPageLinkEntry(link.FieldID, link.FilterType, 0, link.FilterValue ?? string.Empty));
+                    links.Add(new SubPageLinkEntry(link.FieldID, link.FilterType, 0, link.FilterValue ?? string.Empty, link.FilterGroup));
                     break;
                 default:
                     // A BC SHAPE GAP, not a scope claim and not a runner gap — the one site in
