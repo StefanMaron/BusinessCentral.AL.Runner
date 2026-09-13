@@ -117,3 +117,55 @@ the builder, so a parser-level drop is invisible there too. Not folded in: it is
 property with a different set of reaching shapes, and it needs its own reachability measurement
 before anyone converts it, and the provenance split above is the trap it has to avoid. Filed as
 **#3367**.
+
+## Cold symbol-read cost of the text parse (#4107)
+
+A precompiled field's `TableRelation` reaches the parser as property text from
+`SymbolReference.json`. `BcAppSymbolCache` passes it to `RecordPatches.TryParseRelationArmsText`,
+which wraps it in a probe table and parses it with BC's parser. That work happens only when the
+`bc-symbols` cache misses. A warm read skips it.
+
+**Verdict: too small to change.** On the Base Application the relation parse costs at most
+about a third of a second, measured on its own including parser JIT. It was too small to see
+inside a whole cold `BcAppSymbolCache.Parse`, even with instruction counts. The keyed tree cache from #2588 already
+removes most repeat parses.
+
+Measured on runner `775e3d02` (Release build), Base Application `28.1.49838.53910`, on a
+12-core box under load average 13 to 23. Every row is five fresh processes; the table gives the
+median.
+
+| what | tree builds (`ParseObjectTextCallCount`) | instructions (user) | wall |
+|---|---|---|---|
+| Normal-class fields carrying a `TableRelation` | 7,583 fields, 1,113 distinct texts | | |
+| all 7,583 texts through `TryParseRelationArmsText`, cold process | **1,113** | **2.5 G** over an empty-process baseline (paired: 2.83, 2.92, 2.52, 1.35, 2.11) | 387 ms (319 to 654) |
+| the same, `AL_RUNNER_PARSE_TREE_CACHE_BYTES=0` (3 runs) | 6,715 | 6.8 G (paired: 7.19, 6.83, 4.93) | 712 ms (442 to 1382) |
+| the same, second pass in one process | 0 | not measured | 38 ms |
+| whole cold `BcAppSymbolCache.Parse` of Base Application | 2,668 | 30.5 G (whole process) | 2,151 ms |
+| the same with the relation parse returning `null` | 1,555 | 29.8 G | 1,973 ms |
+
+Read the rows this way:
+
+- **The count is the load-independent number.** Skipping the relation parse removes exactly
+  1,113 tree builds, which equals the number of distinct relation texts. So the keyed tree
+  cache already de-duplicates by text, and adding another memo here would save nothing.
+- **Inside the real cold read, the difference cannot be separated from noise.** The paired
+  instruction deltas for the last two rows were -0.35, 0.14, 0.03, 6.55 and 1.57 G, on about
+  30 G per process. The isolated row is the upper bound. It includes JIT-compiling BC's parser,
+  and the real read has already paid that for `CalcFormula`.
+- **The cost is paid once per cache root and app content hash.** For scale: loading the Base
+  Application closure costs about 70 s cold per invocation (`.claude/rules/no-base-app-in-csharp-tests.md`).
+- **#4094 adds little.** It extends the parse to FlowFilter and FlowField relations: 204 fields
+  and 78 distinct texts, 17 of which are new. That is 17 more tree builds.
+
+**Trap: the de-duplication depends on the keyed cache's budget.** If
+`AL_RUNNER_PARSE_TREE_CACHE_BYTES` is set to 0, the builds go from 1,113 to 6,715. Only the
+single-slot memo remains, and it catches adjacent repeats only. The default 8 MiB budget
+holds all of these texts (mean 140 characters). A change that shrinks the budget, or keys the
+cache on something other than the text, should re-run the count.
+
+How it was measured: a throwaway xunit test, not committed. It called the private
+`BcAppSymbolCache.Parse` by reflection, and in a second mode it fed `TryParseRelationArmsText`
+the relation texts read out of the `.app`'s nested `SymbolReference.json`. It read
+`ParseObjectTextCallCount` before and after, and ran each process under
+`perf stat -e instructions:u`. The `null` variant came from a local, uncommitted early return
+in `TryParseRelationArmsText`.
