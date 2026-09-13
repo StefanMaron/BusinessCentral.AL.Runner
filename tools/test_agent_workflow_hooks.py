@@ -223,11 +223,32 @@ NAV_ALLOWED = [
     ("searching markdown", "rg --hidden 'clean status' .claude"),
     ("searching AL sources", "command grep -n 'SaveAsXml' tests/al-language/foo.al"),
     ("build output trimmed with tail", "dotnet build AlRunner -c Release | tail -5"),
+    # tdd.md asks for the `Total:` line from every mutation run, and the natural
+    # way to get it is a grep over `dotnet test` stdout. That greps no file (#3994).
+    ("test output filtered with grep",
+     "dotnet test AlRunner.Tests --filter X 2>&1 | command grep -E 'Failed:'"),
+    ("test output filtered by project path",
+     "dotnet test AlRunner.Tests/AlRunner.Tests.csproj --no-build | command grep Total"),
+    ("dotnet run output filtered", "dotnet run --project AlRunner | command grep PASS"),
     ("writing a C# file with a heredoc", "cat > AlRunner/New.cs <<EOF\nclass X {}\nEOF"),
     ("git log over the C# tree", "git log --oneline -5 -- AlRunner"),
 ]
+# The dotnet exemption is PIPE-connected only: `dotnet test` appearing anywhere in
+# the string would make the literal text an untraceable opt-out (#3994 review).
+NAV_BLOCKED_DESPITE_DOTNET = [
+    ("dotnet test in a trailing comment",
+     "command grep -rn 'Editable' AlRunner/ # after dotnet test"),
+    ("a read chained after a build",
+     "dotnet build AlRunner; sed -n '1,50p' AlRunner/Program.cs"),
+    ("a source grep chained with &&",
+     "dotnet test AlRunner.Tests && command grep -n 'Foo' AlRunner/Patches/Bar.cs"),
+]
 for name, cmd in NAV_ALLOWED:
     ok, d = allows(NAV, cmd, cwd=WORKTREE)
+    check(name, ok, d)
+
+for name, cmd in NAV_BLOCKED_DESPITE_DOTNET:
+    ok, d = blocks(NAV, cmd, "context-pack.py", cwd=WORKTREE)
     check(name, ok, d)
 
 print("\nboth hooks are actually registered -- a hook nothing invokes blocks nothing")

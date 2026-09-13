@@ -81,7 +81,20 @@ WRITES_CS = re.compile(r'<<|>>?\s*\S*\.cs\b|\bsed\s+(?:-\w+\s+)*-i\b')
 TARGETS_CS = re.compile(r'AlRunner[\w./-]*|--include[= ]\S*\.cs|\*\.cs|\.cs\b')
 # Things that are legitimately grep's job, not a symbol lookup.
 NOT_A_SYMBOL_LOOKUP = re.compile(
-    r'\.(log|json|trx|txt|md|xml|al)\b|/tmp/|scratchpad|git log|gh \w|dmesg|journalctl')
+    r'\.(log|json|trx|txt|md|xml|al)\b|/tmp/|scratchpad|git log|gh \w|dmesg|journalctl'
+    # A grep whose input is a BUILD OR TEST RUN filters that command's stdout, not
+    # source. `dotnet test AlRunner.Tests --filter X | command grep Total` is the
+    # shape tdd.md asks for on every mutation -- it requires quoting the `Total:`
+    # line -- and blocking it sent agents to `# hook:allow-grep`, an override whose
+    # name says "grep" for a command that greps no file. An override reached for
+    # routinely on false positives is one reached for reflexively on a true one (#3994).
+    # ...but ONLY when the search reads that command's STDOUT, i.e. the dotnet
+    # invocation is `|`-connected to it. Matching `dotnet test` anywhere in the
+    # string would exempt `grep ... AlRunner/ # after dotnet test` -- a plain-text
+    # opt-out with no name and, unlike `# hook:allow-grep`, no trace -- and
+    # `dotnet build AlRunner; sed -n 1,50p AlRunner/Program.cs`, a READ, which the
+    # docstring records as the dominant cost (533 of 940 calls).
+    r'|\bdotnet\s+(?:test|run|build|publish)\b(?:(?!;|&&)[^|])*\|')
 
 ADVISORY_HEADER = "Code-navigation reminder (advisory, nothing was blocked).\n"
 BLOCK_HEADER = (
