@@ -17,7 +17,7 @@
 // fields off the PurchaseLine parameter — it never re-fetches Purchase Header
 // or validates the line — so a raw, unvalidated PurchaseLine record is
 // faithful to what the procedure actually consumes.
-codeunit 61102 "FVTIT Whse Flow Tests"
+codeunit 61302 "FVTIT Whse Flow Tests"
 {
     Subtype = Test;
     EventSubscriberInstance = Manual;

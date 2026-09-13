@@ -33,7 +33,7 @@
 /// underlying isolated-storage contract, which for Module scope is already proven upstream.
 /// Same framing as single-site-orphaned-hooks-1883/SsohTests.Codeunit.al (see
 /// bc-behavior-tests-go-upstream.md).
-codeunit 62200 "IST Tests"
+codeunit 62150 "IST Tests"
 {
     Subtype = Test;
 
