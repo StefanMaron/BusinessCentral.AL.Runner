@@ -1,6 +1,6 @@
 // ExplicitEngineMinorWarningGatingTests — issue #2037.
 //
-// #2008's DescribeExplicitEngineMinorMismatch/WarnIfExplicitEngineMinorMismatch (see
+// #2008's DescribeExplicitEngineMinorMismatch/ExplicitEngineMinorMismatchWarning (see
 // EngineMinorMismatchWarningTests.cs) fire whenever this binary's OWN compiled-in engine
 // minor differs from the explicitly-selected BC version. That was correct for the
 // single-build install it was written for — there was only ever one engine, so a
@@ -8,7 +8,7 @@
 //
 // #2027 shipped per-BC-minor engine variants (variants/<build>/, see EngineVariants):
 // a packaged install now carries several engines and swaps to whichever one matches the
-// SELECTED version at startup. Program.cs called WarnIfExplicitEngineMinorMismatch
+// SELECTED version at startup. Program.cs called the warning
 // BEFORE that variant swap ran (line 748, swap at 771-801), comparing THIS PROCESS's
 // own compiled-in minor — which is irrelevant once a matching variant is about to be
 // swapped in. Reported live against the published 2.5.0 package: `--bc-version
@@ -36,7 +36,7 @@ public sealed class ExplicitEngineMinorWarningGatingTests
 
     /// <summary>
     /// Structural guard on Program.cs's own source: the call site that decides whether
-    /// to print WarnIfExplicitEngineMinorMismatch must route through
+    /// to print ExplicitEngineMinorMismatchWarning must route through
     /// ShouldWarnExplicitEngineMinorMismatch (which also inspects the shipped-variant
     /// count), not merely `!bcVersionAutoSelected`. A behavioural test on the pure
     /// function alone (the four cases above) would pass equally well whether Program.cs
@@ -48,8 +48,9 @@ public sealed class ExplicitEngineMinorWarningGatingTests
     public void ProgramCs_GatesTheWarnCall_OnShouldWarnExplicitEngineMinorMismatch()
     {
         var programSource = File.ReadAllText(Path.Combine(RepoRoot, "AlRunner", "Program.cs"));
-        var callIdx = programSource.IndexOf("WarnIfExplicitEngineMinorMismatch();", StringComparison.Ordinal);
-        Assert.True(callIdx >= 0, "WarnIfExplicitEngineMinorMismatch() call not found in Program.cs");
+        // #4038: the call now returns the message for the deferred startup queue.
+        var callIdx = programSource.IndexOf("ExplicitEngineMinorMismatchWarning();", StringComparison.Ordinal);
+        Assert.True(callIdx >= 0, "ExplicitEngineMinorMismatchWarning() call not found in Program.cs");
 
         // The `if` guarding the call must be within a short lookbehind window and must
         // name ShouldWarnExplicitEngineMinorMismatch, not just bcVersionAutoSelected alone.

@@ -1021,7 +1021,7 @@ if (artifactPathArg != null)
 // as a clear message instead of a deep failure. All of this stays overridable.
 // Tracks whether bcVersionArg/artifactPathArg came from the auto-select default
 // below, so the explicit-selection engine-minor-mismatch warning further down (see
-// BcArtifacts.WarnIfExplicitEngineMinorMismatch) does not double-warn a case the
+// BcArtifacts.ExplicitEngineMinorMismatchWarning) does not double-warn a case the
 // auto-select branch already covers with its own, richer message.
 bool bcVersionAutoSelected = false;
 if (bcVersionArg == null && artifactPathArg == null)
@@ -1320,9 +1320,18 @@ try
     // all (see ShouldWarnExplicitEngineMinorMismatch) — once any variant is shipped, the
     // variant-swap block below is the sole authority on whether the selection is
     // degraded, not this generic same-process-engine comparison.
+    //
+    // #4038: deferred — see `deferredStartupLines`' declaration above. The shadow child
+    // re-runs this block, so an immediate write printed once per generation. No exit
+    // between here and the flush is one this warning explains: the variant refusal
+    // cannot coexist with it (shippedVariants.Count == 0), and the rest name their own cause.
     if (AlRunner.Infrastructure.BcArtifacts.ShouldWarnExplicitEngineMinorMismatch(
             bcVersionAutoSelected, shippedVariants.Count))
-        AlRunner.Infrastructure.BcArtifacts.WarnIfExplicitEngineMinorMismatch();
+    {
+        var engineMinorMismatchWarning = AlRunner.Infrastructure.BcArtifacts.ExplicitEngineMinorMismatchWarning();
+        if (engineMinorMismatchWarning != null)
+            deferredStartupLines.Add(() => Console.Error.WriteLine(engineMinorMismatchWarning));
+    }
     // #2041/#2066: deferred — see `deferredStartupLines`' declaration above. Captured into
     // locals now (the values are fixed the instant SelectVersion above returns) so the
     // closure below reads exactly what THIS generation selected, not whatever the static
@@ -1515,7 +1524,9 @@ deferredStartupLines.Add(() => Console.WriteLine(serverMode
 // process's, so one re-exec covers both "Ncl.dll isn't shipped" and "a different BC-minor
 // engine variant is needed" — see the doc comment on EnsureShadowDir.
 {
-    var shadowChildExit = TryShadowReexec(variantSwapDir);
+    int? shadowChildExit;
+    try { shadowChildExit = TryShadowReexec(variantSwapDir); }
+    catch { FlushDeferredStartupLines(); throw; }
     if (shadowChildExit.HasValue) return shadowChildExit.Value;
 }
 
@@ -1526,7 +1537,12 @@ deferredStartupLines.Add(() => Console.WriteLine(serverMode
 {
     var srcDir = AlRunner.Infrastructure.BcArtifacts.ServiceTierDir;
     var binNcl = Path.Combine(AppContext.BaseDirectory, "Microsoft.Dynamics.Nav.Ncl.dll");
-    var didFreshRewrite = AlRunner.Infrastructure.NclCecilRewrite.RewriteInPlace(srcDir, binNcl);
+    // #4038: a throw here (e.g. an Ncl.dll of a different shape) ends the process before the
+    // flush below, so print the queued lines first — they include the engine-minor warning
+    // that explains the crash.
+    bool didFreshRewrite;
+    try { didFreshRewrite = AlRunner.Infrastructure.NclCecilRewrite.RewriteInPlace(srcDir, binNcl); }
+    catch { FlushDeferredStartupLines(); throw; }
 
     // A process that performs the Cecil rewrite and then loads the byte-identical
     // rewritten Ncl in-process intermittently dies with BadImageFormatException
@@ -1570,13 +1586,22 @@ deferredStartupLines.Add(() => Console.WriteLine(serverMode
 
 // #2041/#2066: this generation has now cleared BOTH re-exec decision points above (the
 // shadow hop and the Cecil-fresh-rewrite hop) without returning — it is the terminal
-// generation for this invocation, so this is the one and only point that flushes the
-// startup lines queued in `deferredStartupLines`, in the order they were queued
+// generation for this invocation, so this is the normal point that flushes the
+// startup lines queued in `deferredStartupLines` (the only other one is a throw from the shadow hop
+// or the Cecil rewrite above, #4038), in the order they were queued
 // (provisioning result, selected BC version, any degraded-variant warning, then the
 // running/watch/server-mode banner). Any earlier generation that instead re-exec'd
 // returned from inside one of those blocks and never reaches this line, so its own queued
 // entries are simply discarded — however many generations preceded this one.
-foreach (var deferredLine in deferredStartupLines) deferredLine();
+FlushDeferredStartupLines();
+
+// Prints the queue once and empties it, so the crash-path flushes above and this one cannot
+// print a line twice.
+void FlushDeferredStartupLines()
+{
+    foreach (var deferredLine in deferredStartupLines) deferredLine();
+    deferredStartupLines.Clear();
+}
 
 // --jobs: fan out across worker processes (#2280). Deliberately placed HERE, after the
 // deferred-startup flush, because that line marks the terminal generation — both re-exec
