@@ -459,10 +459,6 @@ public static partial class BcRuntime
     // keep its same-id objects from answering; a finder asks this set first instead.
     private static readonly List<Assembly> _currentBundleAssemblies = new();
 
-    /// <summary>
-    /// <see cref="CurrentTestAssembly"/>, then every other assembly registered for the bundle
-    /// now loading (its dependency modules), newest first. Empty before the first registration.
-    /// </summary>
     /// <summary>Add <paramref name="asm"/> to <see cref="CurrentBundleAssemblies"/> without
     /// re-registering its generation — for a dependency module reused as-is (#4100).</summary>
     internal static void NoteCurrentBundleAssembly(Assembly asm)
@@ -471,6 +467,10 @@ public static partial class BcRuntime
             if (!_currentBundleAssemblies.Contains(asm)) _currentBundleAssemblies.Add(asm);
     }
 
+    /// <summary>
+    /// <see cref="CurrentTestAssembly"/>, then every other assembly registered for the bundle
+    /// now loading (its dependency modules), newest first. Empty before the first registration.
+    /// </summary>
     internal static IReadOnlyList<Assembly> CurrentBundleAssemblies()
     {
         var ordered = new List<Assembly>();
