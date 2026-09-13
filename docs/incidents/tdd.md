@@ -205,3 +205,31 @@ where, and "somewhere" is exactly what a reader infers as "everywhere".
 Generalises past enums and codeunits: wherever a derivation feeds both an equivalence projection
 and an AL-observable surface — pages, queries, reports, permission sets — those are two
 observables and each owes its own red.
+
+
+## A red from the engine-bootstrap guard reads as a caught regression (2026-09-12, #3948 / #3957)
+
+`BcEngineUnbootstrappedGuard` (`AlRunner.Tests/BcEngineCollection.cs`) fails a `bc-engine-serial`
+test on a box that has BC artifacts but never ran `tools/engine-test-bootstrap.sh`. That is
+deliberate (#3078, #3835): the skip it replaced printed `Failed: 0, Passed: 0` and exit 0, a
+**false green**. The same design produces a **false red** during a mutation check.
+
+An agent running #3948's premise mutation — destroy a sidecar write, see whether the suite notices
+— got `Failed: 18, Passed: 163`, which reads as "already covered, close the issue". All 18 failed in
+under 1 ms with `REFUSING TO SKIP`. After a Release build, the bootstrap and
+`--settings engine.runsettings`, the same mutation gave `Failed: 0, Passed: 181, Skipped: 0` —
+nothing noticed, the opposite conclusion. Four more agents hit the guard locally the same day on
+`BcEngineReadinessGuardTests.Ready_IsTrue_WhenArtifactsAreProvisioned`, reproduced here at `bb66be98`
+as `Failed: 1, Passed: 3, Total: 4` with `[1 ms]`.
+
+Unlike the build break above, this shape **prints a `Total:` line**, so the missing-summary tell
+does not catch it.
+
+**Neither tell the issue proposed is enough on its own.** Inverting the guard's own
+`IsRecoverableLocally` check and running `BcEngineUnbootstrappedGuardTests` gave
+`Failed: 9, Passed: 20` — a genuine mutation RED — with five failures at `[< 1 ms]` and two
+carrying `REFUSING TO SKIP` under `Actual:`. What separates the two is where the text sits: the
+guard's failure puts it on the **first line** of `Error Message:`; a test asserting over the guard
+puts it inside an assertion's `Actual:`. `tools/mutation-verdict.py` keys on that, and
+`tools/test_mutation_verdict.py` holds both recordings; keying on the whole failure block instead
+reds exactly those two checks.
