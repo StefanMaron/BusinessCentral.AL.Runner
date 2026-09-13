@@ -38,16 +38,25 @@ gh issue list --label "status: ready" --state open --limit 500 --search "sort:cr
 
 **Skip any issue assigned to a user other than the bot's own account (`@me`)** — this is a public repo and a non-@me assignee means a human is already handling it. Eligible: no assignee, or exactly `@me`.
 
-Claim the eligible `status: ready` issue with no `agent:` label that the priority order in `autonomous-cycle` (§ Priority order) selects; when nothing separates two, the older `createdAt` (`orchestrating-a-session` § The ready queue) — label **and** assign in one shot:
+Claim the eligible `status: ready` issue with no `agent:` label that the priority order in `autonomous-cycle` (§ Priority order) selects; when nothing separates two, the older `createdAt` (`orchestrating-a-session` § The ready queue). **Two calls, additions first, and never one call carrying both kinds of label flag:**
 ```
-gh issue edit <N> --add-label "agent: <AGENT-ID>" --add-label "status: in-progress" --remove-label "status: ready" --add-assignee @me --repo StefanMaron/BusinessCentral.AL.Runner
+gh issue edit <N> --add-label "agent: <AGENT-ID>" --add-label "status: in-progress" --add-assignee @me --repo StefanMaron/BusinessCentral.AL.Runner
+gh issue edit <N> --remove-label "status: ready" --repo StefanMaron/BusinessCentral.AL.Runner
 ```
 
-**Immediately verify the claim** — two agents can race on the same issue:
+A single edit dispatches its label additions and its label removals as **two concurrent goroutines on one errgroup with no ordering between them** (cli/cli v2.98.0, `pkg/cmd/pr/shared/editable_http.go`: two `wg.Go` calls, `addLabelsToLabelable` and `removeLabelsFromLabelable`), and exits 0 whichever lands first. Measured on #1883, claimed with the old single-call form: its timeline records two `labeled` events at `20:05:42Z` and **zero `unlabeled`** — the remove was lost, so the issue carried `status: ready` and `status: in-progress` together, which is the state that later made the release job's own edit drop the label it meant to add (#3930, #3960).
+
+**Additions before the removal, because the two orders fail differently.** If the second call is lost, remove-then-add leaves the issue with **no** `status:` label — invisible to the ready queue and to every resume query, so nothing picks it up again. Add-then-remove leaves it carrying **both**, which is visible and self-correcting: another agent skips it (Step 2 skips a `status: ready` issue that already has an `agent:` label), and your own Step 1 resume query still finds it, because that query keys on `agent:` + `status: in-progress`.
+
+`--add-assignee` rides on the first call safely: assignees resolve to a single computed `AssigneeIDs` list in one `updateIssue` mutation, not to add/remove mutations, so they are not part of the race.
+
+**Immediately verify the claim** — two agents can race on the same issue, and a label edit reports success whether or not it landed:
 ```
 gh issue view <N> --json labels --repo StefanMaron/BusinessCentral.AL.Runner \
-  | jq '[.labels[].name | select(startswith("agent:"))]'
+  | jq '[.labels[].name | select(startswith("agent:") or startswith("status:"))]'
 ```
+Read **both** prefixes, not just `agent:`. Exactly one `agent:` label and exactly one `status:` label is the claim you meant to make. `status: ready` still present alongside `status: in-progress` means the removal did not land — re-run the removal call rather than leaving both, since a stale `status: ready` puts the issue back in front of the next agent to read the queue.
+
 **More than one** `agent:` label = you lost the race. Drop yours and pick a different issue, then repeat Step 2:
 ```
 gh issue edit <N> --remove-label "agent: <AGENT-ID>" --repo StefanMaron/BusinessCentral.AL.Runner
