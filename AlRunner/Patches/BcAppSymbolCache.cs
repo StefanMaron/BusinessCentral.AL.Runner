@@ -567,7 +567,16 @@ internal static partial class BcAppSymbolCache
         // the report declares no rendering block; 62 of Base Application 28.1's 659 reports do.
         List<ReportLayoutSymbol>? Layouts = null, string? DefaultRenderingLayout = null,
         // The legacy `DefaultLayout = RDLC|Word|…` property, verbatim — the other 328 reports.
-        string? LegacyDefaultLayout = null);
+        string? LegacyDefaultLayout = null,
+        // WHETHER the report declares a request page, not what is on it (#3808). The symbol
+        // file states a RequestPage node for 660 of 660 reports across Base Application and
+        // System Application at 28.1.49838.53910 — including all 24 that state
+        // UseRequestPage = 0 — so this is effectively always true on Microsoft's own apps and
+        // is carried anyway, because "states a node" is what decides whether
+        // DependencyReportMetadata emits the <RequestPage> element. The node's own contents
+        // are deliberately NOT parsed; see EmitRequestPageXml for why the control tree it
+        // carries cannot be transcribed faithfully.
+        bool HasRequestPage = false);
 
     /// <summary>One <c>layout(Name) { Type; MimeType; LayoutFile; Caption; Summary }</c>, verbatim.</summary>
     internal sealed record ReportLayoutSymbol(
@@ -2025,7 +2034,12 @@ internal static partial class BcAppSymbolCache
             string.IsNullOrWhiteSpace(inherentPermissions) ? null : inherentPermissions.Trim(),
             ReadReportLayouts(report),
             string.IsNullOrWhiteSpace(defaultRenderingLayout) ? null : defaultRenderingLayout,
-            string.IsNullOrWhiteSpace(legacyDefaultLayout) ? null : legacyDefaultLayout.Trim());
+            string.IsNullOrWhiteSpace(legacyDefaultLayout) ? null : legacyDefaultLayout.Trim(),
+            // Presence only. The node's Id is 0 and its Name the literal "RequestOptionsPage"
+            // on all 660 shipped reports, neither of which is what BC's document carries, so
+            // reading either would import a value the emitter must then discard.
+            report.TryGetProperty("RequestPage", out var requestPage)
+                && requestPage.ValueKind == JsonValueKind.Object);
     }
 
     private static List<ReportLayoutSymbol>? ReadReportLayouts(JsonElement report)
