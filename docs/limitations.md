@@ -1874,7 +1874,10 @@ https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues.
   1 ambiguous by name, 293 companion columns dropped for apps outside the closure. All 12
   remaining refusals are a bare column the backup holds that this build's AL table has no
   field for ([#2273](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2273)) —
-  none is a value type any more.
+  none is a value type any more. The one table skipped as ambiguous by name, Base Application's
+  `Dimension Set Entry` (89 rows), is read with `--app` since
+  [#2264](https://github.com/StefanMaron/BusinessCentral.AL.Runner/issues/2264): measured on the
+  same backup, the fixture's `Dimension Set Entry` count went from 0 to 89.
 
 <a id="precompiled-xmlport-node-schema"></a>
 
