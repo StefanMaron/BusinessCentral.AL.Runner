@@ -282,6 +282,8 @@ public static class RunnerModalDispatch
             BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance,
             binder: null, types: Type.EmptyTypes, modifiers: null);
         if (openForm == null) return false;
+        // OnInit first: BC ran it in the page's constructor, where the runner's guard skipped it.
+        if (form is NavForm navForm) RunnerFormInit.RaiseOnInit(navForm);
         Invoke(openForm, form, Array.Empty<object?>());
         return true;
     }
