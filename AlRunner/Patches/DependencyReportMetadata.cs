@@ -370,6 +370,11 @@ public static partial class RecordPatches
     /// <para>BC takes <c>val.FirstChild</c>, not a child found by name, so the
     /// <c>PageDefinition</c> must be the FIRST child of <c>&lt;RequestPage&gt;</c>.</para>
     ///
+    /// <para><c>HelpLink</c> is written unconditionally (#4057) and the four
+    /// <c>*TranslationKey</c> members deliberately are not — a translation key is a pair of
+    /// compiler-computed content hashes with no symbol-file source. See
+    /// docs/report-metadata-from-bc.md#request-page.</para>
+    ///
     /// <para>ONLY THE FRAME IS DERIVED, and that is the whole shape rather than a shortfall:
     /// <c>MetadataProvider.CreateRequestPage</c> ignores the document's <c>PageType</c> and
     /// calls <c>CreatePage(…, PageType.ReportPreview)</c>, which loads BC's own
@@ -387,6 +392,15 @@ public static partial class RecordPatches
     /// 660 reports state a control tree, 2,938 nodes, 1,891 SourceExpression values, 247 of
     /// them record-qualified. See docs/report-metadata-from-bc.md#request-page.</para>
     /// </summary>
+    /// <summary>
+    /// The <c>HelpLink</c> BC's emitter writes on every request page. Deliberately a second
+    /// copy of the literal in <c>RecordPatches.NclMetaQueryBuilder.cs</c> rather than a shared
+    /// constant: the two rest on separate measurements (7 of 7 queries there, 660 of 660
+    /// reports here), and sharing one would make a future measurement that splits them look
+    /// like a refactor rather than a finding.
+    /// </summary>
+    private const string RequestPageHelpLink = "https://learn.microsoft.com/dynamics365/business-central/";
+
     private static void WriteRequestPageXml(XmlWriter w, BcAppSymbolCache.ReportSymbol report)
     {
         if (!report.HasRequestPage) return;
@@ -410,6 +424,13 @@ public static partial class RecordPatches
         // than to drive it.
         w.WriteAttributeString("PageType", report.ProcessingOnly ? "ReportProcessingOnly" : "ReportPreview");
         w.WriteAttributeString("Editable", "1");
+        // BC's emitter default for a request page, written unconditionally because AL cannot
+        // override it HERE: HelpLink is a real page property (6 System Application pages declare
+        // one), but 0 of 660 reports state it at the report level or on their RequestPage node,
+        // so the constant is the only value this subtree ever takes. Identical on all four
+        // ground-truth builds, which are four distinct Ncl.dll binaries, and the same constant
+        // RecordPatches.NclMetaQueryBuilder.cs already writes for queries. #4057.
+        w.WriteAttributeString("HelpLink", RequestPageHelpLink);
         // Present-but-empty, exactly as BC emits it, and load-bearing:
         // MetadataProvider.ModifyReportRequestPage dereferences
         // pageDefinition.Properties.SourceObject.SaveValues with no null check, and
