@@ -1710,6 +1710,28 @@ public static partial class NclCecilRewrite
                 $"[Cecil] Prepended All Profile write guards -> {profileGuarded} NavRecord AL write entry point(s)");
         }
 
+        // -- NavDesignerALFunctions.CopyProfile refusal (#2324) ----------------------------
+        // Prepended at the ENTRY: BC's body runs the copy inside a catch (Exception) that turns
+        // any throw -- ours included -- into Base Application's generic "could not be copied".
+        // See AlRunner/Patches/DesignerProfileCopyPatches.cs.
+        {
+            var designerFunctions = asm.MainModule.GetType("Microsoft.Dynamics.Nav.Runtime.Designer.NavDesignerALFunctions")
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavDesignerALFunctions not found in Ncl - CopyProfile would fail with no runner signal");
+            var copyProfile = designerFunctions.Methods.SingleOrDefault(
+                                  m => m.Name == "CopyProfile" && m.IsStatic && m.HasBody && m.Parameters.Count == 4)
+                ?? throw new InvalidOperationException(
+                    "[Cecil] NavDesignerALFunctions.CopyProfile(4) not found in Ncl - the #2324 refusal has no entry to guard");
+            var refuse = asm.MainModule.ImportReference(
+                typeof(AlRunner.Patches.DesignerProfileCopyPatches).GetMethod(
+                    nameof(AlRunner.Patches.DesignerProfileCopyPatches.RefuseCopyProfile),
+                    BindingFlags.Public | BindingFlags.Static)
+                ?? throw new InvalidOperationException("DesignerProfileCopyPatches.RefuseCopyProfile not found"));
+            var il = copyProfile.Body.GetILProcessor();
+            il.InsertBefore(copyProfile.Body.Instructions[0], il.Create(OpCodes.Call, refuse));
+            Console.Error.WriteLine("[Cecil] Prepended profile-copy refusal -> NavDesignerALFunctions.CopyProfile");
+        }
+
         // -- Page background task write refusal (issue #2514) -----------------------------
         // A page background task's worker codeunit runs inline against the current session
         // (RunnerPageBackgroundTaskGap.cs), with NavSession.PageBackgroundTask set for the

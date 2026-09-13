@@ -1556,11 +1556,18 @@ public static partial class BcRuntime
             // exactly what the ctor would have produced — and it leaves BC's own getter,
             // setter and applicationAreaCache lookup (NCL @ 218102) running unchanged, so an
             // application area set by AL is the one AL reads back.
+            //
+            // The two string auto-properties below are the same shape (#2324): a null
+            // AbbreviatedLanguageName NREs BC's designer in SyntaxFactory.Identifier. Every
+            // string initializer of the ctor is held to this list by
+            // DesignerProfileCopyRefusalTests, which reads them out of Ncl's IL.
             foreach (var (fieldName, initial) in new (string, object)[]
                      {
                          ("applicationAreaCache", new Dictionary<string, bool>()),
                          ("applicationAreas", new[] { "#All" }),
                          ("applicationAreaString", string.Empty),
+                         ("<AbbreviatedLanguageName>k__BackingField", "ENU"),
+                         ("<SessionComment>k__BackingField", string.Empty),
                      })
             {
                 var f = sessType.GetField(fieldName, BindingFlags.NonPublic | BindingFlags.Instance);
@@ -1573,7 +1580,7 @@ public static partial class BcRuntime
                 {
                     Console.Error.WriteLine(
                         $"[BcRuntime] WARN: {fieldName} populate failed: {ex.GetType().Name}: {ex.Message} — "
-                        + "AL that sets the application area will NRE");
+                        + "BC code reading this NavSession field will see null");
                 }
             }
 
