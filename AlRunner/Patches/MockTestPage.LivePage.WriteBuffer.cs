@@ -788,8 +788,7 @@ internal partial class LiveNavTestPage
         // codeunit 60663's OK-press arms (#315). Issue #3708.
         //
         // Order is parts THEN row here, as at every other close point, because a part's
-        // OnValidate can touch the header; the OK route is row-then-parts only because
-        // Invoke() has already written this page's own row (#3701).
+        // OnValidate can touch the header (and a header OnModify reads the parts, #4146).
         //
         // It runs before the refusal branches below on purpose: BC's send-then-close order does
         // not depend on what the trigger answers, and the modal route already flushes ahead of
@@ -922,12 +921,11 @@ internal partial class LiveNavTestPage
         // Measured on a real service tier: corpus codeunit 60663 "Opf Ok Part Flush Tests"
         // (StefanMaron/BusinessCentral.AL.Language.Tests#315).
         //
-        // Order here is row THEN parts: Invoke() above has already flushed this page's own row.
-        // Close()/Dispose()/SaveCurrentRow() are parts-then-row because a part's OnValidate can
-        // touch the header. The repeat pass is a no-op -- FlushPendingNewRow/FlushPendingModify
-        // clear their flag on entry -- so nothing is written twice. Do not delete Invoke()'s
-        // FlushRow() on the strength of this call: FlushParts() does not write the host row, and
-        // no test here would catch its loss.
+        // For OK, Invoke() above has already flushed the parts and then this page's own row
+        // (#4146), so this pass is a no-op -- FlushPendingNewRow/FlushPendingModify clear their
+        // flag on entry. For LookupOK, Invoke() flushed only the host row, so this is its part
+        // flush. Do not delete Invoke()'s FlushRow() on the strength of this call: FlushParts()
+        // does not write the host row.
         FlushParts();
 
         // Both refusals leave the form OPEN and raise nothing here, which is what makes

@@ -126,8 +126,7 @@ public sealed class HandlerDrivenClosePartFlushOrderTests
         Assert.True(flushParts < flushRow,
             $"Close() flushes parts THEN the row (found FlushParts at {flushParts}, FlushRow at "
             + $"{flushRow}) — a part's OnValidate can touch the header, so the header write must "
-            + "come second. The OK route is row-then-parts only because Invoke() has already "
-            + "written the host row (#3701).");
+            + "come second.");
     }
 
     // ── The built-in OK on a page the TEST opened — issue #4146 ─────────────────────────────
@@ -140,7 +139,7 @@ public sealed class HandlerDrivenClosePartFlushOrderTests
     // FlushParts() would hide its loss from any modal-route test.
 
     [Fact]
-    public void BuiltInOkInvoke_FlushesTheRowThenTheParts()
+    public void BuiltInOkInvoke_FlushesThePartsThenTheRow()
     {
         var path = typeof(AlRunner.TestExecutor).Assembly.Location;
         var module = ModuleDefinition.ReadModule(path);
@@ -156,9 +155,11 @@ public sealed class HandlerDrivenClosePartFlushOrderTests
             "Invoke() must call FlushParts itself — AttemptHandlerDrivenClose skips its own for a "
             + "page the test opened, so without this OK drops a part row Close() saves (#4146).");
         Assert.True(attemptClose >= 0, "Invoke() must still make the handler-driven close attempt.");
-        Assert.True(flushRow < flushParts && flushParts < attemptClose,
-            $"Expected FlushRow < FlushParts < AttemptHandlerDrivenClose, found {flushRow}, "
-            + $"{flushParts}, {attemptClose}.");
+        // Parts first: a header OnModify reads the part's lines (corpus 60760,
+        // OkInvoke_HeaderOnModifySeesThePartRowSavedFirst).
+        Assert.True(flushParts < flushRow && flushRow < attemptClose,
+            $"Expected FlushParts < FlushRow < AttemptHandlerDrivenClose, found {flushParts}, "
+            + $"{flushRow}, {attemptClose}.");
     }
 
     // The counterpart to AttemptHandlerDrivenClose_FlushesPartsOnlyAfterItsGuards: a torn-down
