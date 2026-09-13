@@ -77,18 +77,17 @@ public static class RunnerFormInit
     /// session answers <c>IsCompanyOpen = true</c>, so BC's own company gate would have run it
     /// too. Corpus codeunit 60488 "POI Tests" pins the AL-observable half.</para>
     ///
-    /// <para>No-op when BC already initialised the form, so a form reaching two open paths
-    /// (modal dispatch, then a TestPage over it) runs OnInit once. <paramref name="force"/> is
-    /// for a TestPage REOPEN, which BC serves with a fresh instance whose OnInit runs again.</para>
+    /// <para>Unconditional: each caller is one open, and a TestPage REOPEN is served by BC with a
+    /// fresh instance whose OnInit runs again. No measured path reaches one form through both
+    /// callers; if one appears, corpus 60488's 'IO' trace reads 'IIO'.</para>
     /// </summary>
-    internal static void RaiseOnInit(Microsoft.Dynamics.Nav.Runtime.NavForm form, bool force = false)
+    internal static void RaiseOnInit(Microsoft.Dynamics.Nav.Runtime.NavForm form)
     {
         const System.Reflection.BindingFlags Flags = System.Reflection.BindingFlags.Instance
             | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public;
         var initialized = typeof(Microsoft.Dynamics.Nav.Runtime.NavForm).GetProperty("IsFormInitialized", Flags)
             ?? throw new System.InvalidOperationException(
-                "NavForm.IsFormInitialized not found — Ncl shape changed; a page's OnInit could run twice or never");
-        if (!force && initialized.GetValue(form) is true) return;
+                "NavForm.IsFormInitialized not found — Ncl shape changed; do not commit");
         var raise = typeof(Microsoft.Dynamics.Nav.Runtime.NavForm).GetMethod(
                 "RaiseOnInitAsync", Flags, binder: null, types: System.Type.EmptyTypes, modifiers: null)
             ?? throw new System.InvalidOperationException(
