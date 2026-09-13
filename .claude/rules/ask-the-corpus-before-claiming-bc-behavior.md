@@ -94,10 +94,19 @@ minutes apart are a deterministic fault, and another attempt spends an hour of t
 shared Actions queue reproducing it.
 
 **And the conclusion lies in BOTH directions, so read the run's own summary, never
-`conclusion`.** The nightly **reports; it does not gate** — deliberately, because some failures
-are properties of the tier rather than of BC, and this workflow's header says why: *"if the
-license drifts, it re-reports those as failures forever and everyone learns to ignore it."* So
-a `success` conclusion can sit directly above real BC failures. Measured on run `34736501961`
+`conclusion`.** A `success` conclusion can sit directly above real BC failures, and **two
+independent mechanisms put it there** — only the second explains the conclusion itself:
+
+- the workflow is **deliberately not a required status context** (its header says so in
+  capitals), so a red never blocks a merge;
+- the test step **catches the failure and downgrades it to a `::warning::`**
+  (`nightly-windows.yml`, the `Run-TestsInBcContainer` call), so the *job* succeeds. Its reason
+  is at the line: *"A failing test must not abort the other suite — the artifact is the
+  deliverable."* Two suites run per job, and a failure in the first must not deny you the
+  second's results.
+
+Both are intended. The header states the cost the design accepts: *"if the license drifts, it
+re-reports those as failures forever and everyone learns to ignore it."* Measured on run `34736501961`
 (corpus `6aaac721`, BC 28.4.53241.54606): both jobs `success`, and its own summary reads
 
 ```
