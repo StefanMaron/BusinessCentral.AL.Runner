@@ -102,6 +102,32 @@ before anyone checked it. **Re-derive a number you are about to hand someone as 
 the population THEY are working**, not the one your query happened to cover.
 
 
+### The fifth: a number that travels
+
+The four above are measurements you take. This one is a measurement **someone else took** that you
+repeat — and repeating is where the checking stops, because re-deriving a figure that arrived from
+someone who did the work feels redundant.
+
+Measured four times in one session, each caught only downstream:
+
+| the number | what it was | how far it travelled |
+|---|---|---|
+| "seven orphaned registrations" | **eight**, and one member name was invented by expanding a brace shorthand | a PR body and three dispatch briefs (#3940) |
+| "2 of the **14** rules" | **15** | an issue body, a PR body, a commit message, then merged into `CLAUDE.md` as measured fact (#3972) |
+| "I grepped diff **lines**" — an account of how the 14 arose | a line grep returns **69**; the real cause is unrecoverable | the correction's own issue and PR body |
+| "**two** distinct binaries" | **four** — all four hashes differ | a PR body and a coordinator comment praising it for binary-identity discipline |
+
+Every one reads correctly, arrives with provenance, and is cheap to check: **`sha256sum` on four
+files, `git diff --name-status | wc -l`, one `grep -c`.** The cost of re-deriving is seconds; the
+cost of not is that the figure reaches a rule file, where the next reader inherits it.
+
+**Re-derive a number before you repeat it in anything durable** — an issue, a PR body, a commit
+message, a rule. Passing one along unchecked makes you its second source, and a reader cannot tell
+a number you verified from one you forwarded.
+
+Note the fourth row errs *toward* caution, which is the safe direction for binary identity — but it
+is still wrong, and `CLAUDE.md` asks you to cite the binaries you measured, not a count of them.
+
 ## Which legs were ever going to run it
 
 The corpus runs 16 legs, eight cloud and eight OnPrem, and **only the eight cloud legs are the
