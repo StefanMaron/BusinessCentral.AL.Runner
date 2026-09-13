@@ -75,3 +75,36 @@ the capture is non-empty.
 Re-measure with `tools/agent-cost.py <tasks-dir>` rather than trusting that paragraph — the
 previous figure there ("63 greps + 50 file reads out of 180") sat stale for a long time because
 nobody re-ran it.
+
+## Backticks in `--body "..."` silently delete code spans (2026-09-13, #4110)
+
+Posting an issue comment with `--body` and a double-quoted shell string whose prose contained
+backticked code spans: the shell evaluated each span as command substitution before `gh` ever
+saw it.
+
+Published text:
+
+```
+Reading the oldest queued run's jobs (, queued since ):
+```
+
+Intended text named run `34738478169`, queued since `2026-09-13T04:41:30Z`. Both were consumed;
+`bash` wrote `34738478169: command not found` to stderr, `gh` exited 0 and printed the comment
+URL, and the comment was live and wrong.
+
+Three properties make it the same class as the `grep -E` and `rg --hidden` traps already in
+`CLAUDE.md`:
+
+- the command **succeeds** — exit 0, a real URL returned;
+- the loss is **invisible from the caller's side**, since the stderr line scrolls past among
+  tool output and the posted body is never echoed back;
+- it is only findable by **re-reading the artifact**, which is the same remedy those traps need.
+
+It is worse in one respect: the other two produce a wrong *answer* to yourself, and this
+produces a wrong *publication* to everyone else, already sent by the time you look.
+
+Caught here by re-reading the comment after noticing two `command not found` lines in the tool
+output. The remedy in the rule — a quoted heredoc to a file, then `--body-file` — also removes
+the neighbouring hazards (`$` expansion, `!` history), and is what every long body in this
+session already used; the failure came from the one that was written inline because it was
+"short".
