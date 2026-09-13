@@ -463,6 +463,8 @@ public static partial class RecordPatches
         // for the page-side failure this prevents.
         ResetXmlPortMetadataForReload();
         _sourceDirs.Clear();
+        _compileManifestByDir.Clear();
+        _manifestSymbolsByPath.Clear();   // a --watch edit to app.json is re-read (#4071)
         _installBaseline = null;
         SetActiveDepCompanyBaseline(null);
         _isolatedStorageBaseline = null;
@@ -521,7 +523,14 @@ public static partial class RecordPatches
     /// different <c>--define</c> sets are a genuinely different parse, not a cache hit.
     /// </para>
     /// </summary>
-    private static void ParseSourceFileIntoAllExtractors(string text, string? filePath = null)
+    private static void ParseSourceFileIntoAllExtractors(string text, string filePath, string registeredDir)
+    {
+        _currentManifestAppJsonPath = CompileManifestForDir(registeredDir);
+        try { ParseSourceFileIntoAllExtractorsCore(text, filePath); }
+        finally { _currentManifestAppJsonPath = null; }
+    }
+
+    private static void ParseSourceFileIntoAllExtractorsCore(string text, string? filePath)
     {
         // Table and tableextension need the file PATH too, same reason as the profile/
         // permission-set calls below: #3600's table-metadata-source guard has to tell a
@@ -559,7 +568,7 @@ public static partial class RecordPatches
     {
         foreach (var dir in _sourceDirs)
             foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.al"))
-                ParseSourceFileIntoAllExtractors(File.ReadAllText(file), file);
+                ParseSourceFileIntoAllExtractors(File.ReadAllText(file), file, dir);
     }
 
     /// <summary>
@@ -587,9 +596,19 @@ public static partial class RecordPatches
     /// </para>
     /// </summary>
     public static void AddSourceDirs(IEnumerable<string> dirs)
+        => AddSourceDirs(dirs.Select(d => (d, AlRunner.BcCompiler.ResolveManifestAppJson(d, new[] { d }))));
+
+    /// <summary>
+    /// <see cref="AddSourceDirs(IEnumerable{string})"/> with, per dir, the app.json the COMPILE of
+    /// that dir reads — <c>BcCompiler.ResolveManifestAppJson(appRootDir, paths)</c> with the same
+    /// arguments the caller's Emit gets. The source parse picks <c>#if</c> branches from it (#4071).
+    /// The plain overload assumes a dir compiled as its own app root, which is what
+    /// <c>Emit(new[] { dir }, name, dir)</c> reads.
+    /// </summary>
+    internal static void AddSourceDirs(IEnumerable<(string Dir, string? ManifestAppJsonPath)> dirs)
     {
         var parsedAny = false;
-        foreach (var dir in dirs)
+        foreach (var (dir, manifestAppJsonPath) in dirs)
         {
             if (!Directory.Exists(dir)) continue;
             // De-dup: BuildSiblingSourceDeps (Program.cs) can legitimately call this for the
@@ -604,6 +623,7 @@ public static partial class RecordPatches
             // TryParseTableExtensionFile.
             if (_sourceDirs.Contains(dir, StringComparer.OrdinalIgnoreCase)) continue;
             _sourceDirs.Add(dir);
+            _compileManifestByDir[dir] = manifestAppJsonPath;
             // If Register() already ran (it runs before the bucket loop), parse immediately.
             // The NCLMetadata cache is populated once below, after every dir in this batch
             // has been parsed — see the batching rationale on the doc comment above. Every
@@ -617,7 +637,7 @@ public static partial class RecordPatches
                 foreach (var file in AlRunner.Infrastructure.SafeDirectoryScan.Files(dir, "*.al"))
                 {
                     _diagFiles++;
-                    ParseSourceFileIntoAllExtractors(File.ReadAllText(file), file);
+                    ParseSourceFileIntoAllExtractors(File.ReadAllText(file), file, dir);
                 }
                 if (Environment.GetEnvironmentVariable("AL_RUNNER_TRACE_PARSE_COUNTS") == "1")
                     Console.Error.WriteLine(

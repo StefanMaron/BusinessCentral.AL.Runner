@@ -28,26 +28,50 @@ namespace AlRunner.Patches;
 
 public static partial class RecordPatches
 {
-    // Matches BcCompiler.Emit's options so this parse sees the same source the emit does —
-    // notably the CLEANSCHEMA1..25 preprocessor symbols, which gate real field declarations
-    // in the BaseApp, PLUS whatever the caller passed via --define / --preprocessor-symbols.
-    // NOT the app.json preprocessorSymbols BcCompiler.BuildParseOptions also adds (#4071).
-    // DocumentationMode.None: doc comments are trivia we never read.
-    //
-    // This MUST be a property recomputed on every call, not a `static readonly` field.
-    // BcCompiler.SetExtraPreprocessorSymbols(...) runs at Program.cs:727, after this type
-    // may already have been touched elsewhere in the same process — a `static readonly`
-    // field would freeze at type-init with the empty symbol set, and a `.Concat(...)`
-    // bolted onto that frozen field would look like a fix while changing nothing (#1900:
-    // the compiler's two ParseOptions sites already merge `_extraPreprocessorSymbols` per
-    // call; this parser was the one site that didn't). GetExtraPreprocessorSymbols() is
-    // cheap (a lock plus a sorted copy of a handful of strings), so recomputing it per
-    // parse call costs nothing worth caching.
-    private static NavCA.ParseOptions AlParseOptions => new(
-        runtimeVersion: null!,
-        preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}")
-            .Concat(AlRunner.BcCompiler.GetExtraPreprocessorSymbols()),
-        documentationMode: NavCA.DocumentationMode.None);
+    // The app.json the compile of the file being parsed reads (BcCompiler.ResolveManifestAppJson,
+    // recorded per registered source dir); null for text with no registered dir (synthesized
+    // table text, dependency .app source), which parses on CLEANSCHEMA + --define as before.
+    // Options and tree-cache key both derive from this one path — a key without its symbols
+    // serves one app's cached tree to another app with identical text (#4071, #1900).
+    // A PATH, never BcCompiler.ManifestCompilerInputs: a static field of a struct type carrying
+    // BC CodeAnalysis types loads that assembly when RecordPatches is first touched, before
+    // --bc-version is parsed, which selects the newest provisioned BC (#4071 review).
+    private static string? _currentManifestAppJsonPath;
+
+    // Registered source dir -> the app.json its compile reads (null: none). Cleared with
+    // _sourceDirs in ResetForReload.
+    private static readonly Dictionary<string, string?> _compileManifestByDir = new(StringComparer.OrdinalIgnoreCase);
+
+    // app.json path -> its preprocessorSymbols, read once per reload (cleared in ResetForReload,
+    // so a --watch edit to app.json is re-read).
+    private static readonly Dictionary<string, string[]> _manifestSymbolsByPath = new(StringComparer.OrdinalIgnoreCase);
+
+    private static string? CompileManifestForDir(string dir) =>
+        _compileManifestByDir.TryGetValue(dir, out var appJson) ? appJson : null;
+
+    private static string[] ActiveParseSymbols()
+    {
+        var extra = AlRunner.BcCompiler.GetExtraPreprocessorSymbols();
+        var manifest = ManifestPreprocessorSymbols(_currentManifestAppJsonPath);
+        return manifest.Length == 0
+            ? extra.ToArray()
+            : extra.Concat(manifest).Distinct(StringComparer.Ordinal)
+                .OrderBy(s => s, StringComparer.Ordinal).ToArray();
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static string[] ManifestPreprocessorSymbols(string? appJsonPath)
+    {
+        if (appJsonPath is null) return [];
+        if (!_manifestSymbolsByPath.TryGetValue(appJsonPath, out var symbols))
+            _manifestSymbolsByPath[appJsonPath] = symbols =
+                AlRunner.BcCompiler.ReadManifestCompilerInputs(appJsonPath).PreprocessorSymbols.ToArray();
+        return symbols;
+    }
+
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static NavCA.ParseOptions ParseOptionsForManifest(string? appJsonPath) =>
+        AlRunner.BcCompiler.BuildParseOptions(AlRunner.BcCompiler.ReadManifestCompilerInputs(appJsonPath));
 
     // Field type text still yields its length by pattern (`Code[10]` → 10). The type is one
     // token's text with no nesting, so there is nothing structural for a tree to add here.
@@ -247,7 +271,7 @@ public static partial class RecordPatches
     // back-to-back — RecordPatches.ParseSourceFileIntoAllExtractors is the shared call
     // site both AddSourceDirs and Register() route every file through — so remembering
     // only the LAST parse turns 8 identical tree builds per file into 1 real build plus 7
-    // cache hits, with no change to AlParseOptions, to any TryParse*File signature, or to
+    // cache hits, with no change to the parse options, to any TryParse*File signature, or to
     // the eight extractors' own code.
     //
     // The key is (text, symbols), never text alone. #1900 was exactly a parser that
@@ -255,7 +279,7 @@ public static partial class RecordPatches
     // preprocessor set at type-init before BcCompiler.SetExtraPreprocessorSymbols ran). A
     // memo keyed on text alone would reproduce that bug through a different door: two
     // calls for the same text under two different --define sets would incorrectly share
-    // one cached tree. AlParseOptions (see above) is still recomputed on every miss:
+    // one cached tree. The parse options are still recomputed on every miss:
     // caching here changes WHEN a tree is (re)built, never what determines whether it
     // must be.
     private static string? _lastParsedText;
@@ -371,11 +395,9 @@ public static partial class RecordPatches
     {
         if (string.IsNullOrWhiteSpace(text)) return [];
 
-        // GetExtraPreprocessorSymbols() is a lock plus a sorted copy of a handful of
-        // strings (see AlParseOptions above) — cheap enough to call on every ParseAlObjects
-        // invocation just to test the memo key, including on the 7-out-of-8 calls that end
-        // up being cache hits.
-        var symbols = AlRunner.BcCompiler.GetExtraPreprocessorSymbols().ToArray();
+        // A lock plus a sorted copy of a handful of strings — cheap enough to compute on every
+        // call just to test the memo key, including the 7-out-of-8 calls that are cache hits.
+        var symbols = ActiveParseSymbols();
         if (_lastParsedText == text && _lastParsedSymbols != null &&
             symbols.AsSpan().SequenceEqual(_lastParsedSymbols))
         {
@@ -399,7 +421,7 @@ public static partial class RecordPatches
         {
             ParseObjectTextCallCount++;
             var tree = NavSyntax.SyntaxTree.ParseObjectText(
-                text, path: "", encoding: null!, AlParseOptions, default);
+                text, path: "", encoding: null!, ParseOptionsForManifest(_currentManifestAppJsonPath), default);
             IReadOnlyList<NavCA.SyntaxNode> objects = tree.GetRoot() is NavSyntax.CompilationUnitSyntax root
                 ? root.ChildNodes().ToList()
                 : Array.Empty<NavCA.SyntaxNode>();

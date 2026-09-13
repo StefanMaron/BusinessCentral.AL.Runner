@@ -2275,3 +2275,15 @@ Measured 6P/0F/0E on the whole bundle, cold and warm against one cache root, not
 the diff.
 
 Written by an agent (Claude, `stma-auto2-6`).
+
+## runner-extras `manifest-preprocessor-symbols` NEW, 3 (#4071, #4076)
+
+A new bundle whose app.json declares `preprocessorSymbols: ["RUNNER_EXTRAS_MPS"]`: a page whose
+`Caption` sits under `#if`/`#else`, a codeunit under `#if RUNNER_EXTRAS_MPS` and one under
+`#if not RUNNER_EXTRAS_MPS`. Before the fix the whole bundle was `compile-fail` (the
+declared-object census counted the inactive codeunit, #4076); with only the census fixed, all
+three tests failed on the runner's source parse reading the other branch (#4071).
+
+Measured 3P/0F/0E on the bundle, twice against one cache root, not computed from the diff.
+
+Written by an agent (Claude, `stma-auto2-7`).

@@ -24,18 +24,12 @@ namespace AlRunner;
 
 public static class TddSupport
 {
-    // Mirrors BcCompiler's own ParseOptions (CLEANSCHEMA1..25 + whatever --define /
-    // --preprocessor-symbols supplied) so this re-parse sees exactly the same source
-    // -- except the app.json preprocessorSymbols, which BuildParseOptions also adds (#4071) --
-    // the original (failed) emit attempt saw — same rule RecordPatches.AlSourceParser
-    // follows for the same reason (see its AlParseOptions doc comment). Recomputed per
-    // call rather than cached: BcCompiler.SetExtraPreprocessorSymbols can run after
-    // this type is first touched, and a frozen `static readonly` would miss that.
-    private static NavCA.ParseOptions ParseOptions => new(
-        runtimeVersion: null!,
-        preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}")
-            .Concat(BcCompiler.GetExtraPreprocessorSymbols()),
-        documentationMode: NavCA.DocumentationMode.None);
+    // The options the failed emit parsed this file with: the compile's own builder over the
+    // manifest that compile read, carried on the detail (#4071). Per call, never `static
+    // readonly`: --define is registered after this type may be touched (#1900).
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static NavCA.ParseOptions ParseOptionsFor(TddExcludedObjectDetail detail) =>
+        BcCompiler.BuildParseOptions(BcCompiler.ReadManifestCompilerInputs(detail.ManifestAppJsonPath));
 
     private static string Unquote(string s)
         => s.Length >= 2 && s[0] == '"' && s[^1] == '"' ? s[1..^1] : s;
@@ -71,7 +65,6 @@ public static class TddSupport
         string prefix, string unreadableMethodName)
     {
         var results = new List<TestResult>();
-        var parseOpts = ParseOptions;
         foreach (var detail in details)
         {
             string src;
@@ -92,7 +85,7 @@ public static class TddSupport
             }
 
             var tree = NavSyntax.SyntaxTree.ParseObjectText(
-                src, path: detail.FilePath, encoding: null!, parseOpts, default);
+                src, path: detail.FilePath, encoding: null!, ParseOptionsFor(detail), default);
             if (tree.GetRoot() is not NavSyntax.CompilationUnitSyntax root) continue;
 
             var diagText = string.Join("\n", detail.Diagnostics);
