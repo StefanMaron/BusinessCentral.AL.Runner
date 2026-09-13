@@ -28,3 +28,25 @@ compare-and-swap on claiming — assign, then re-read, release if someone else's
 worked exactly as specified, in a design whose whole point is loops that share no state and
 never talk to each other. That design held. This rule widens the read; it does not replace the
 lock.
+
+## `closingIssuesReferences` lags PR creation (2026-09-13, PR #4119)
+
+An implementation agent created PR #4119 through the REST endpoint
+(`gh api .../pulls -X POST`, after `gh pr create` failed twice with a bare GraphQL 500 during
+the Actions outage of #4110). Its handback check read `closingIssuesReferences` immediately and
+got `[]`, despite a correct `Closes #4111` in the body. The field resolved to `[4111]` roughly
+**twelve seconds** later.
+
+Nothing distinguishes the pending state from the settled one: a PR that genuinely closes no
+issue returns the same empty array, and no field says "not parsed yet".
+
+The consequence is specific to this rule rather than cosmetic. The claiming check keys on
+exactly that field — a non-empty result means the issue is taken. An empty read on a
+seconds-old PR therefore reports **free** for an issue that was just claimed, and the
+compare-and-swap this rule sits inside cannot save you, because both agents read the same
+empty answer.
+
+Whether the lag is specific to REST-created pull requests or applies to `gh pr create` too was
+not established; the sample is one PR, created by the REST route because the GraphQL one was
+failing. The remedy in the rule does not depend on the answer: the body carries the declaration
+immediately either way, so a zero result confirmed against the body is correct under both.
