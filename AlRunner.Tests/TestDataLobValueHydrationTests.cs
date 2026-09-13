@@ -411,18 +411,92 @@ public sealed class TestDataLobValueHydrationTests
             Assert.Throws<TestDataHydrationRefusal>(() => Convert(Facts(DurationField), json));
     }
 
+    // ----------------------------------------------------------- TableFilter --
+
+    private static readonly ValueMetadata TableFilterField = new(NavNclType.NavTableFilter, NavType.TableFilter);
+
+    /// <summary>BC's layout, from NavTableFilter.EnsureBinaryWritten: int32 table no, int32
+    /// payload length, then (int32 field no, uint16 NavType, FilterExpression)* — zero-padded
+    /// to a fixed 504 bytes, which is also what GetSqlWritableValue stores.</summary>
+    private static byte[] TableFilterBytes(int tableNo, byte[] payload, int totalLength)
+    {
+        var bytes = new byte[totalLength];
+        BitConverter.GetBytes(tableNo).CopyTo(bytes, 0);
+        BitConverter.GetBytes(payload.Length).CopyTo(bytes, 4);
+        payload.CopyTo(bytes, 8);
+        return bytes;
+    }
+
+    [Fact]
+    public void TableFilter_HydratesTheExact504BytesItStores()
+    {
+        // Table 18, then arbitrary payload bytes standing in for a field entry. The codec does not parse them — BC's NavTableFilter does that lazily from
+        // the buffer — so what is proved is that the stored bytes reach it unaltered.
+        var payload = new byte[] { 1, 0, 0, 0, 0x00, 0x72, 0xAB, 0xCD, 0xEF };
+        var stored = TableFilterBytes(18, payload, NavTableFilter.ByteSize);
+
+        var filter = Assert.IsType<NavTableFilter>(Convert(Facts(TableFilterField), Hex(stored)));
+
+        Assert.Equal(stored, filter.GetBytes());
+        Assert.False(filter.IsZeroOrEmpty);
+    }
+
+    [Fact]
+    public void AnAllZeroTableFilter_IsTheBlankTableFilter_NotARefusal()
+    {
+        // The exact cell measured in the shipped CRONUS backup: all nine rows of Permission
+        // (2000000005)."Security Filter" arrive as "0x" + 1,008 zeros — the only TableFilter
+        // column in the database holding rows.
+        var measured = "\"0x" + new string('0', NavTableFilter.ByteSize * 2) + "\"";
+
+        var filter = Assert.IsType<NavTableFilter>(Convert(Facts(TableFilterField), measured));
+
+        Assert.True(filter.IsZeroOrEmpty);
+        Assert.Equal(new byte[NavTableFilter.ByteSize], filter.GetBytes());
+        Assert.Equal(NavTableFilter.Default, filter);
+    }
+
+    [Fact]
+    public void AShortTableFilterCell_IsPaddedTheWayBcPadsIt_NotRefused()
+    {
+        // BC reads into `new byte[504]` via SqlDataReader.GetBytes, which leaves the unread
+        // tail zero; NavTableFilter's own constructor throws for anything but 504 bytes, so the
+        // buffer is what makes a short varbinary cell a value rather than an exception.
+        var payload = new byte[] { 7, 0, 0, 0, 0x00, 0x87, 0x05 };
+        var shortCell = TableFilterBytes(27, payload, 8 + payload.Length);
+
+        var filter = Assert.IsType<NavTableFilter>(Convert(Facts(TableFilterField), Hex(shortCell)));
+
+        var expected = new byte[NavTableFilter.ByteSize];
+        shortCell.CopyTo(expected, 0);
+        Assert.Equal(expected, filter.GetBytes());
+        Assert.False(filter.IsZeroOrEmpty);
+
+        Assert.True(Assert.IsType<NavTableFilter>(Convert(Facts(TableFilterField), "\"0x\"")).IsZeroOrEmpty);
+    }
+
+    [Fact]
+    public void ATableFilterCellBcCouldNotHaveStored_RefusesTheTable()
+    {
+        var tooLong = "\"0x" + new string('0', (NavTableFilter.ByteSize + 1) * 2) + "\"";
+        var ex = Refusal(Facts(TableFilterField), tooLong);
+        Assert.Contains("504", ex.Message, StringComparison.Ordinal);
+
+        foreach (var json in new[] { "\"nope\"", "\"0xZZZZ\"", "\"0x000\"", "42", "true" })
+            Assert.Throws<TestDataHydrationRefusal>(() => Convert(Facts(TableFilterField), json));
+    }
+
     // ------------------------------------------------ refusal still works --
 
     [Fact]
-    public void TypesThisBuildStillCannotRebuild_KeepRefusing()
+    public void TypesBcsOwnReaderHasNoCaseFor_KeepRefusing()
     {
-        // Five more reasons to refuse were removed; the ABILITY to refuse was not. TableFilter
-        // has a case in BC's reader too — 504 raw bytes — but no CRONUS table stores one, so
-        // the shape the backup reader emits for it has never been measured here, and this
-        // codec does not invent one. #2271 tracks it.
+        // With TableFilter in, every case NavSqlCommand.CreateNavValueFromReader has is
+        // transcribed. Its `default:` throws NotSupportedException, and this codec's default
+        // still refuses by name rather than inventing a value.
         var ex = Refusal(
-            Facts(new ValueMetadata(NavNclType.NavTableFilter, NavType.TableFilter)), "\"0xDEADBEEF\"");
-        Assert.Contains(NavNclType.NavTableFilter.ToString(), ex.Message, StringComparison.Ordinal);
+            Facts(new ValueMetadata(NavNclType.NavBigText, NavType.BigText)), "\"0xDEADBEEF\"");
+        Assert.Contains(NavNclType.NavBigText.ToString(), ex.Message, StringComparison.Ordinal);
         Assert.Contains("Retention Policy Setup Line", ex.Message, StringComparison.Ordinal);
     }
 }

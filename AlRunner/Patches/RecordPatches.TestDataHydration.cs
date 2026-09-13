@@ -58,10 +58,10 @@
 //   actually stores one (Job Queue Entry."Job Timeout" = 43200000, a JSON number of
 //   milliseconds).
 //
-//   Still refused, and named when it is: TableFilter (BC's reader has a case — 504 raw bytes —
-//   but no CRONUS table stores one, so the shape the backup reader emits for it has never been
-//   measured here, #2271), and any column name that is not an AL field of the target table.
-//   Removing nine reasons to refuse did not remove the ability to.
+//   TableFilter followed (#2271): the reader emits its varbinary(504) cell as "0x" + hex,
+//   measured on Permission."Security Filter", so every case BC's reader has is now transcribed.
+//   Still refused, and named when it is: a type that reader has no case for, and any column
+//   name that is not an AL field of the target table.
 //
 // TABLE-EXTENSION FIELDS (issue #2261)
 //   BC splits an extended table across the base table and a `<table>$ext` companion. The
@@ -668,12 +668,32 @@ public static partial class RecordPatches
                 return CreateOrRefuse(() => new NavRecordId(buffer), Refuse);
             }
 
+            case NavNclType.NavTableFilter:
+            {
+                // BC:
+                //   byte[] a = new byte[504];
+                //   reader.GetBytes(columnIndex, 0L, a, 0, a.Length);
+                //   return new NavTableFilter(a);
+                //
+                // The buffer is load-bearing: NavTableFilter(byte[]) throws unless handed
+                // exactly 504 bytes, and GetBytes leaves a short cell's tail zero. The bytes are
+                // not parsed here — NavTableFilter.EnsureBinaryParsed does that lazily, as in BC.
+                // An all-zero cell is NOT swapped for NavTableFilter.Default; BC constructs
+                // unconditionally and IsZeroOrEmpty answers true for it anyway. Measured wire
+                // shape (#2271): Permission."Security Filter", nine cells of "0x" + 1,008 zeros.
+                var stored = ParseTestDataHexBytes(json, Refuse);
+                if (stored.Length > NavTableFilter.ByteSize)
+                    throw new TestDataHydrationRefusal(Refuse(
+                        $"the backup holds {stored.Length} bytes, more than the "
+                        + $"{NavTableFilter.ByteSize} BC reads into a TableFilter"));
+                var buffer = new byte[NavTableFilter.ByteSize];
+                Array.Copy(stored, buffer, stored.Length);
+                return CreateOrRefuse(() => new NavTableFilter(buffer), Refuse);
+            }
+
             default:
-                // TableFilter/…
-                // Not "unsupported forever" — unproven. BC's reader has a TableFilter case
-                // (504 raw bytes), but no table in the shipped CRONUS data stores one, so the
-                // shape the backup reader emits for it has never been measured here and this
-                // codec will not invent one. See #2271.
+                // NavSqlCommand.CreateNavValueFromReader's own default throws
+                // NotSupportedException; every case it has is transcribed above.
                 throw new TestDataHydrationRefusal(Refuse(
                     "this runner build cannot yet rebuild that AL type from a backup value"));
         }
