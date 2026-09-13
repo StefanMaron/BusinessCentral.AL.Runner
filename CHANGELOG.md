@@ -25,6 +25,7 @@ All notable changes to this project are documented here. Format based on
 - **metadata:** keep BC's own metadata document for every object it emits, not three kinds
 
 ### Fixed
+- **testpage:** apply SubPageLink filters in the Link filter group 4
 - **record:** honor SetAutoCalcFields on successful Get
 - **testpage:** action Enabled bound to a page variable set in OnInit reads false
 - **report:** precompiled REPORT.Run hands the request-page handler a page surface
