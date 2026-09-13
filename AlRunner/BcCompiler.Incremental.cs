@@ -466,7 +466,9 @@ public sealed partial class BcCompiler
     {
         var appJsonHash = manifestAppJsonPath != null && File.Exists(manifestAppJsonPath)
             ? HashFile(manifestAppJsonPath) : "<none>";
-        return $"{appId}|{publisher}|{version}|{manifestInputs.CacheKeyFragment}|{appJsonHash}";
+        // --define symbols pick #if branches like the manifest's do; a baseline parsed under another set cannot be reused (#4064).
+        var defines = string.Join(",", GetExtraPreprocessorSymbols());
+        return $"{appId}|{publisher}|{version}|{manifestInputs.CacheKeyFragment}|{defines}|{appJsonHash}";
     }
 
     /// <summary>
@@ -580,7 +582,7 @@ public sealed partial class BcCompiler
         var manifestFingerprint = RadManifestFingerprint(appId, publisher, version, manifestInputs, manifestAppJsonPath);
         if (manifestFingerprint != baseline.ManifestFingerprint)
         {
-            fallbackReason = "app.json (identity/version/preprocessor symbols/features/help url) changed since the last cycle";
+            fallbackReason = "app.json (identity/version/preprocessor symbols/features/help url) or the --define preprocessor symbols changed since the last cycle";
             return null;
         }
 
@@ -1443,10 +1445,7 @@ public sealed partial class BcCompiler
     /// <summary>Drops the current baseline for a bundle — used when a caller knows the next cycle must be a full rebuild regardless (e.g. a watched suite set changed).</summary>
     public void ClearIncrementalBaseline(string moduleName) => _radBaselines.Remove(moduleName);
 
-    private static NavCA.ParseOptions RadParseOptions(ManifestCompilerInputs manifestInputs) => new(
-        runtimeVersion: null!,
-        preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}"),
-        documentationMode: NavCA.DocumentationMode.None);
+    private static NavCA.ParseOptions RadParseOptions(ManifestCompilerInputs manifestInputs) => BuildParseOptions(manifestInputs);
 
     private static NavCA.CompilationOptions RadCompilationOptions(ManifestCompilerInputs manifestInputs) => new(
         continueBuildOnError: true,

@@ -341,7 +341,7 @@ public sealed partial class BcCompiler
     }
 
     // Extra preprocessor symbols supplied by the caller via --define / --preprocessor-symbols.
-    // Merged with the built-in CLEANSCHEMA1..25 set at both ParseOptions sites.
+    // Merged with the built-in CLEANSCHEMA1..25 set in BuildParseOptions.
     private static IReadOnlyList<string>? _extraPreprocessorSymbols;
 
     /// <summary>
@@ -1768,18 +1768,7 @@ public sealed partial class BcCompiler
             : dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
         var manifestInputs = ReadManifestCompilerInputs(manifestAppJsonPath);
 
-        // Preprocessor symbols: CLEANSCHEMA1..25 merged with any caller-supplied symbols
-        // (--define / --preprocessor-symbols) AND the app's own manifest `preprocessorSymbols`
-        // (#1943) — union, not override, so a manifest symbol never silently loses to a CLI
-        // one or vice versa. v1 computes per-source max from any #pragma the AL files set
-        // (Program.cs:1454-1462); we use the static 1..25 set v2 was already shipping —
-        // sufficient for the tests/ corpus.
-        var parseOpts = new NavCA.ParseOptions(
-            runtimeVersion: null!,
-            preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}")
-                .Concat(_extraPreprocessorSymbols ?? [])
-                .Concat(manifestInputs.PreprocessorSymbols),
-            documentationMode: NavCA.DocumentationMode.None);
+        var parseOpts = BuildParseOptions(manifestInputs);
 
         bool _timing = Environment.GetEnvironmentVariable("BCCOMPILER_TIMING") == "1";
         var _tw = System.Diagnostics.Stopwatch.StartNew();
@@ -2634,15 +2623,8 @@ public sealed partial class BcCompiler
             : dirs.Select(d => Path.Combine(d, "app.json")).FirstOrDefault(File.Exists);
         var manifestInputs = ReadManifestCompilerInputs(foundAppJson);
 
-        // Preprocessor symbols: same union as Emit() — CLEANSCHEMA1..25, any caller-supplied
-        // (--define) symbols, AND this dep's OWN manifest symbols (#1943) — never the
-        // consuming bundle's, since foundAppJson is this dep's own app.json.
-        var parseOpts = new NavCA.ParseOptions(
-            runtimeVersion: null!,
-            preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}")
-                .Concat(_extraPreprocessorSymbols ?? [])
-                .Concat(manifestInputs.PreprocessorSymbols),
-            documentationMode: NavCA.DocumentationMode.None);
+        // This dep's OWN manifest symbols, never the consuming bundle's: foundAppJson is the dep's app.json.
+        var parseOpts = BuildParseOptions(manifestInputs);
         var trees = new NavSyntax.SyntaxTree[alFiles.Count];
         Parallel.For(0, alFiles.Count, i =>
         {
@@ -2900,6 +2882,20 @@ public sealed partial class BcCompiler
             "|" + (int)CompilerFeatures + "|" + ContextSensitiveHelpUrl +
             "|" + (int)EffectiveTarget;
     }
+
+    /// <summary>
+    /// The ParseOptions every compile path uses — Emit, EmitDepSymbols and the incremental fast
+    /// path: CLEANSCHEMA1..25, the --define symbols, and the manifest's own
+    /// <c>preprocessorSymbols</c>, as a union (#1943). One builder, because the incremental path
+    /// once derived its own set and chose different <c>#if</c> branches than a cold build (#4064).
+    /// </summary>
+    internal static NavCA.ParseOptions BuildParseOptions(ManifestCompilerInputs manifestInputs) => new(
+        runtimeVersion: null!,
+        preprocessorSymbols: Enumerable.Range(1, 25).Select(n => $"CLEANSCHEMA{n}")
+            .Concat(GetExtraPreprocessorSymbols())
+            .Concat(manifestInputs.PreprocessorSymbols)
+            .ToList(),
+        documentationMode: NavCA.DocumentationMode.None);
 
     /// <summary>
     /// Read <c>preprocessorSymbols</c>, <c>features</c>, and <c>contextSensitiveHelpUrl</c>
