@@ -236,6 +236,25 @@ produce it, because it skips the mutation on a mergeable PR — does not follow,
 mergeable" there means *as cached at fetch time*, and the gap between the two reads is the race.
 `--auto` on a settled-green PR still merges on the spot (#3095); that is not in question.
 
+**A second cause reaches the same exit-0-but-unarmed state, and its fix is the opposite one.**
+The race above is a *clean-status* one, cleared by re-running **without** `--auto`. During an
+API degradation the call instead fails in transport — a bare **GraphQL 502 or 500** — and `gh`
+still exits 0 with the PR neither merged nor armed. There the state is *not* clean, so dropping
+`--auto` would be wrong; a plain retry of the same command takes. Measured three times on
+2026-09-13 while `gh pr create` was also failing with 502s and the REST endpoint was healthy.
+
+Telling them apart is cheap **when there is a message at all**: the clean-status error names
+`enablePullRequestAutoMerge`, a transport error names an HTTP status. But a degraded endpoint
+also returns an **empty body**, which parses as nothing — measured minutes later on this same
+outage, where two `gh api ... -X POST` calls produced `unexpected end of JSON input` from the
+*parser* rather than any status from GitHub, and the third attempt succeeded. So the absence of
+a recognisable error is not evidence of the clean-status race.
+
+When in doubt, retry the same command once and re-read; if it is the clean-status race, the
+retry fails the same way and *then* you drop `--auto`. **Retrying is the safe default**, because
+it cannot merge anything: the wrong guess costs one call, while dropping `--auto` on a PR that
+is not clean asks GitHub to merge on unpassed checks.
+
 **So the exit code is not the check — the PR's state is.** After any `gh pr merge`, re-read it:
 
 ```bash
