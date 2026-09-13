@@ -129,9 +129,12 @@ public static partial class RecordPatches
             ?? throw TableMetadataShapeGap("data access has no in-memory provider");
 
         var done = _tmvPopulatedByProvider.GetValue(provider, static _ => new ConcurrentDictionary<int, byte>());
+        // Filtered here, never in EnumerateKnownTableMetadata: that list is cached per process.
+        var visibleApps = PinInventoryScope(provider, "Table Metadata (virtual table 2000000136)");
 
         foreach (var row in EnumerateKnownTableMetadata())
         {
+            if (IsHiddenFromCurrentAppGroup("Table", row.Id, visibleApps)) continue;
             if (!done.TryAdd(row.Id, 0)) continue;
             InsertVirtualRow(provider, metaTable,
                 new object[] { TableMetadataVirtualTableId, row.Id, 0, 0 },

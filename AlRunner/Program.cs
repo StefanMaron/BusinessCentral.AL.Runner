@@ -2749,10 +2749,15 @@ foreach (var bundle in bundles)
     {
         var dirsToRegister = new List<string>();
         foreach (var suite in suites)
+        {
             // #3735: exactly what the compile reads. Deriving it a second time here is what let
             // a page or table under test/ or app2/ compile and never be parsed — see
             // ProgramSupport.SuiteRegistrationDirs.
-            dirsToRegister.AddRange(SuiteRegistrationDirs(suite, bucketRoot));
+            var suiteDirs = SuiteRegistrationDirs(suite, bucketRoot);
+            // #2279: which app group compiles each dir, for the object-inventory tables.
+            AlRunner.Patches.RecordPatches.RegisterAppGroupSourceDirs(suite, suiteDirs);
+            dirsToRegister.AddRange(suiteDirs);
+        }
         AlRunner.Patches.RecordPatches.AddSourceDirs(dirsToRegister);
     }
 
@@ -3934,6 +3939,12 @@ foreach (var bundle in bundles)
                 // is consistent whichever compile boundary --isolation chose.
                 using (AlRunner.Infrastructure.PhaseLog.AppStage("set-test-assembly"))
                 {
+                    // #2279: the suite is the app group here, so its assembly carries the suite's own
+                    // app identity, as the bundled loop's SetCurrentBundleInfo gives each app group.
+                    if (AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(Path.Combine(suite, "app.json"))
+                            is { } suiteIdentity && suiteIdentity.AppId != Guid.Empty)
+                        BcRuntime.SetCurrentBundleInfo(suiteIdentity.AppId, suiteIdentity.Name,
+                            suiteIdentity.Publisher, suiteIdentity.Version.ToString());
                     BcRuntime.SetTestAssembly(asm);
                     BcRuntime.RegisterTestAssemblyInfo(asm);
                 }
@@ -5385,6 +5396,7 @@ return strictExitCode ? computedExitCode : 0;
             // #3735: same one function as the CLI loop above, computed once and used for both
             // the compile's paths and the registration — they are the same set by construction.
             var suitePaths = SuiteRegistrationDirs(suite, bucketRoot);
+            AlRunner.Patches.RecordPatches.RegisterAppGroupSourceDirs(suite, suitePaths);
             dirsToRegister.AddRange(suitePaths);
             allPaths.AddRange(suitePaths);
         }
