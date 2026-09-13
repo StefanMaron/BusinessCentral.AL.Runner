@@ -42,4 +42,28 @@ public static class NavDotNetPatches
         if (ex is AlRunner.Infrastructure.RunnerOutOfScopeException oos)
             System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(oos).Throw();
     }
+
+    internal const string NavUserAccountHelperTypeName = "Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper";
+    internal const string IsUserSuperInAllCompaniesName = "IsUserSuperInAllCompanies";
+
+    /// <summary>
+    /// Stands in for the one <c>methodInfo.Invoke(instance, args)</c> in <c>NavDotNet.Invoke&lt;T&gt;</c>,
+    /// where every AL DotNet call ends (#3174). Any other member is invoked unchanged, so its
+    /// exceptions still reach BC's catch blocks as TargetInvocationException.
+    /// Observably equivalent: <c>NavUserAccountHelper.IsUserSuperInAllCompanies()</c> reads the null
+    /// <c>Session.Permissions</c>; the answer is the decision BC's
+    /// <c>NavUserPermissions.IsSuperForAllCompanies</c> makes (bc284 decompile), from the same Access
+    /// Control rows. No corpus verdict: the corpus tier cannot compile DotNet (#3174, corpus PR 330).
+    /// </summary>
+    public static object? InvokeReflectedMember(System.Reflection.MethodBase method, object? target, object?[]? arguments)
+    {
+        if (method.IsStatic
+            && method.Name == IsUserSuperInAllCompaniesName
+            && (arguments == null || arguments.Length == 0)
+            && method.DeclaringType?.FullName == NavUserAccountHelperTypeName)
+        {
+            return RecordPatches.IsUserSuperInAllCompanies(Microsoft.Dynamics.Nav.Runtime.NavCurrentThread.Session);
+        }
+        return method.Invoke(target, arguments);
+    }
 }
