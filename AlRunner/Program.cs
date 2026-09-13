@@ -246,7 +246,7 @@ if (args[0] == "--precompile")
 }
 
 // ── --emit-app subcommand (debug tool: emit a bundle dir as a .app in-process) ──
-// Usage: --emit-app <bundleDir> <outPath> [--package-cache PATH ...]
+// Usage: --emit-app <bundleDir> <outPath>
 if (args[0] == "--emit-app")
 {
     return RunEmitApp(args.Skip(1).ToArray());

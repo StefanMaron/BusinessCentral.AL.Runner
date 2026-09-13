@@ -121,8 +121,7 @@ Regenerate, from the repo root (AlRunner already built, -c Release):
   # 1. The .alpackages symbol/identity package. `--emit-app` writes src/*.al +
   #    NavxManifest.xml and NO SymbolReference.json, which is the whole point --
   #    see above.
-  ./AlRunner/bin/Release/net8.0/al-runner --emit-app /tmp/rsm-dep \
-      /tmp/rsm-dep/out/dep.app --package-cache "$HOME/.al-runner/platform-apps"
+  ./AlRunner/bin/Release/net8.0/al-runner --emit-app /tmp/rsm-dep /tmp/rsm-dep/out/dep.app
 
   # 2. The raw compiled DLL (Tier-1 target), by running the dep as a normal
   #    bundle once (bundled Emit+Compile writes a cache entry) and copying the
