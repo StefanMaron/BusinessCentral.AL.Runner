@@ -155,3 +155,53 @@ Subtype and is indistinguishable from the pre-fix behaviour.
 
 The BC-behaviour claim is adjudicated upstream in corpus codeunit 60802
 `"Test AllObj Virtual Table"`.
+
+## App group visibility
+
+Issue #2279. One runner process can compile and run several app groups: every app group under
+one bundle root, every bundle on one command line, and every `sourcePaths` entry of one
+`--server` request. The parsed-object registries behind `EnumerateKnownAlObjects` hold all of
+them at once, because source dirs are registered for the whole bundle before any app group
+runs, and resetting them per group breaks record access on app-defined tables (see
+`BcRuntime.ResetForNewBundleReload`).
+
+**This is a runner model, not measured BC behaviour.** On a real tenant AllObj is tenant-wide
+and lists every installed app's objects, related or not. The runner treats each app group as its
+own tenant holding that group and its declared dependencies, because unrelated app groups sharing
+one runner process is not a state a service tier has.
+
+So the three object-inventory tables filter at insert time instead:
+
+| table | populator |
+|---|---|
+| AllObj (2000000038) | `PopulateAllObjVirtualTable` |
+| AllObjWithCaption (2000000058) | `PopulateAllObjWithCaptionVirtualTable` |
+| Table Metadata (2000000136) | `PopulateTableMetadataVirtualTable` |
+
+An object is left out when **both** of these hold:
+
+1. Its owning app group is known. The run loops call `RegisterAppGroupSourceDirs` with each
+   suite's source dirs before parsing, and `RecordSourceObjectOwners` gives every object in a
+   file the app group whose registered dir contains it (the longest match). It is **not** the
+   nearest `app.json`: a suite compiles a sub-folder carrying its own `app.json` into itself, and
+   that app group's objects must stay listed for it. A dir shared by two groups, and a
+   `(kind, id)` declared by two different groups, have no owner and are always listed.
+2. That app is not the executing app group and not in its declared dependency closure.
+   The executing app group is the app id of `BcRuntime.CurrentTestAssembly`; the closure
+   follows each source app's `app.json` `dependencies` transitively.
+
+An object with no recorded owner is always listed. That covers precompiled dependency `.app`
+objects and platform objects, which this filter has no evidence about. Objects of a precompiled
+`.app` registered by a different bundle in the same process are therefore not filtered here.
+
+Table Metadata's cached row list (`EnumerateKnownTableMetadata`) stays process-wide; the filter
+runs on the way into each store, so one group's filtered view is never cached for another.
+
+Each store is pinned to the app group that first populated it (`PinInventoryScope`). The
+"already inserted" sets are add-only, so if a store were handed out to a second app group its
+rows would still carry the first group's objects. That case refuses with an
+`app-group-visibility` shape gap rather than answering with the wrong inventory. In measured
+CLI and `--server` runs each app group gets a fresh store, so the refusal has not fired.
+
+Proven by `tests/runner-extras/app-group-visibility-{a,b,c}` (C depends on A, so A's table is
+visible to C and B's is not) and `AlRunner.Tests/AppGroupObjectVisibilityTests`.

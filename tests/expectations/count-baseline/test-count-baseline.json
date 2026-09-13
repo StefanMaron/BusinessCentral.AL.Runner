@@ -3,6 +3,9 @@
   "suites": {
     "runner-extras": {
       "groups": {
+        "app-group-visibility-a": { "tests": 9 },
+        "app-group-visibility-b": { "tests": 9 },
+        "app-group-visibility-c": { "tests": 9 },
         "bundle-page-over-dep-table": { "tests": 2 },
         "date-virtual-table-window": { "tests": 8 },
         "db-trigger-inject-timing": { "tests": 2 },
