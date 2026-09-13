@@ -19,7 +19,29 @@ public class WatchSiblingSourceDependencyStaleTests
     private const string DepAppId = "4025c000-0000-4000-8000-00000000c001";
     private const string TestAppId = "4025c000-0000-4000-8000-00000000c002";
 
-    private static void WriteDepSource(string dir, int answer) =>
+    private static void WriteDepSource(string dir, int answer)
+    {
+        // #4099: a table trigger in the same dependency, whose generation is resolved by a
+        // different finder than the codeunit's. (The page half is covered in --server by
+        // ServerSiblingSourceDependencyPageReloadTests; in --watch a sibling dependency's
+        // page-variable control reads empty even on cycle 1, a separate gap.)
+        File.WriteAllText(Path.Combine(dir, "Answer.Page.al"), $$"""
+        table 64051 "WSS Answer Rec"
+        {
+            fields
+            {
+                field(1; "Code"; Code[10]) { }
+                field(2; Tag; Text[30]) { }
+            }
+            keys { key(PK; "Code") { } }
+
+            trigger OnInsert()
+            begin
+                Tag := 'table-{{answer}}';
+            end;
+        }
+
+        """);
         File.WriteAllText(Path.Combine(dir, "Answer.Codeunit.al"), $$"""
         codeunit 64050 "WSS Answer"
         {
@@ -29,6 +51,7 @@ public class WatchSiblingSourceDependencyStaleTests
             end;
         }
         """);
+    }
 
     // The watcher observes the requested bundle; each cycle's edit touches this file too.
     private static void WriteTestSource(string dir, string marker) =>
@@ -45,6 +68,18 @@ public class WatchSiblingSourceDependencyStaleTests
             begin
                 if Answer.Value() <> 42 then
                     Error('WSS dependency answered %1, expected 42', Answer.Value());
+            end;
+
+            [Test]
+            procedure DependencyTableTriggerAnswerIs42()
+            var
+                Rec: Record "WSS Answer Rec";
+            begin
+                Rec.Init();
+                Rec."Code" := 'K';
+                Rec.Insert(true);
+                if Rec.Tag <> 'table-42' then
+                    Error('WSS dependency table trigger answered %1, expected table-42', Rec.Tag);
             end;
         }
         """);
@@ -124,7 +159,7 @@ public class WatchSiblingSourceDependencyStaleTests
             int m1 = await WaitForMarkerAfter(0);
             var cycle1 = Segment(0, m1);
             Assert.True(cycle1.Contains("PASS"), "cycle 1 did not pass:\n" + cycle1);
-            Assert.DoesNotContain("FAIL", cycle1);
+            Assert.False(cycle1.Contains("FAIL"), "cycle 1 failed a test:\n" + cycle1);
 
             // Same AppId, same version, new answer: only the dependency's code moved.
             WriteDepSource(depDir, 99);
@@ -133,6 +168,8 @@ public class WatchSiblingSourceDependencyStaleTests
             var cycle2 = Segment(m1 + 1, m2);
             Assert.True(cycle2.Contains("WSS dependency answered 99"),
                 "cycle 2 did not run the edited sibling dependency:\n" + cycle2);
+            Assert.True(cycle2.Contains("WSS dependency table trigger answered table-99"),
+                "cycle 2 did not run the edited sibling dependency's table trigger (#4099):\n" + cycle2);
 
             // Negative: only the test bundle changes, so the dependency is served from its
             // content-keyed workspace directory, not re-synthesised — and still answers 99.
@@ -151,7 +188,7 @@ public class WatchSiblingSourceDependencyStaleTests
             int m4 = await WaitForMarkerAfter(m3 + 1);
             var cycle4 = Segment(m3 + 1, m4);
             Assert.True(cycle4.Contains("PASS"), "cycle 4 did not go back to passing:\n" + cycle4);
-            Assert.DoesNotContain("FAIL", cycle4);
+            Assert.False(cycle4.Contains("FAIL"), "cycle 4 failed a test:\n" + cycle4);
         }
         finally
         {

@@ -29,7 +29,13 @@ public static partial class RecordPatches
 
     internal static Type? FindRecordType(int id)
     {
-        if (_recordTypeCache.TryGetValue(id, out var cached)) return cached;
+        // A hit can be resolved before this request's dependency modules load and retire their
+        // previous generation, so a cached type is re-checked rather than trusted (#4099).
+        if (_recordTypeCache.TryGetValue(id, out var cached))
+        {
+            if (!BcRuntime.IsStaleBundleAssembly(cached.Assembly)) return cached;
+            _recordTypeCache.TryRemove(new KeyValuePair<int, Type>(id, cached));
+        }
         var name = $"Record{id}";
         // Prefer the current test assembly: on a server reload of the same bundle
         // a same-named Record<id> from the previous assembly is still loaded (.NET
@@ -44,6 +50,8 @@ public static partial class RecordPatches
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             if (asm == preferred) continue;
+            // A previous server/watch generation of a dependency module (#1901, #4099).
+            if (BcRuntime.IsStaleBundleAssembly(asm)) continue;
             var hit = FindRecordTypeIn(asm, name);
             if (hit != null) { _recordTypeCache[id] = hit; return hit; }
         }
