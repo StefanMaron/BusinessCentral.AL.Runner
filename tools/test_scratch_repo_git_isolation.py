@@ -34,6 +34,7 @@ SUITES = {
     "tools/test_agent_self_freshness.py": "all checks passed",
     "tools/test_corpus_checkout.py": "all corpus-checkout tests passed",
     "tools/test_preflight.py": "all checks passed",
+    "tools/test_stale_origin_main_diff_recipe.py": "recipe-execution checks passed",
     ".github/scripts/test_pr_changed_files.sh": "failed: 0",
 }
 

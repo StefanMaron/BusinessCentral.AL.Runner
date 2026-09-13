@@ -212,6 +212,7 @@ advisory on purpose** — `Required-context list must match the live branch rule
 repository for something no author can fix. So a red tick is not by itself proof the merge is
 blocked — ask the ruleset:
 
+<!-- Recipe-unpinned: reads the live branch ruleset from api.github.com; check_required_contexts.py is the executable half -->
 ```bash
 gh api repos/StefanMaron/BusinessCentral.AL.Runner/rules/branches/main \
   --jq '[.[]|select(.type=="required_status_checks")
@@ -337,6 +338,7 @@ point; two commits with different trees are not the same code however closely re
 ```bash
 [ "$(git rev-parse <sha1>^{tree})" = "$(git rev-parse <sha2>^{tree})" ] && echo "same tree"
 ```
+<!-- Recipe-unpinned: takes two commit SHAs of real runs; the comparison itself is git rev-parse equality with nothing to get subtly wrong -->
 
 ### A red you inherited from the corpus is not a flake — count it per codeunit
 
