@@ -130,6 +130,37 @@ public sealed class HandlerDrivenClosePartFlushOrderTests
             + "written the host row (#3701).");
     }
 
+    // ── The built-in OK on a page the TEST opened — issue #4146 ─────────────────────────────
+    //
+    // AttemptHandlerDrivenClose returns before its FlushParts() when the test opened the page
+    // (`_opened`), so `Card.OpenEdit(); Card.Lines.New(); ...SetValue(...); Card.OK().Invoke();`
+    // saved the host row and dropped the part row. The BC claim is corpus codeunit 60760
+    // "OKP Ok Part Row Tests" (StefanMaron/BusinessCentral.AL.Language.Tests#354), which also
+    // drives the behaviour; this pins where the flush lives, since the handler route's second
+    // FlushParts() would hide its loss from any modal-route test.
+
+    [Fact]
+    public void BuiltInOkInvoke_FlushesTheRowThenTheParts()
+    {
+        var path = typeof(AlRunner.TestExecutor).Assembly.Location;
+        var module = ModuleDefinition.ReadModule(path);
+        var action = module.GetTypes().Single(t => t.FullName == "AlRunner.LiveNavTestPage/RecordingBuiltInAction");
+        var invoke = action.Methods.Single(m => m.Name == "Invoke");
+
+        var flushRow = IndexOfCallTo(invoke, "FlushRow");
+        var flushParts = IndexOfCallTo(invoke, "FlushParts");
+        var attemptClose = IndexOfCallTo(invoke, "AttemptHandlerDrivenClose");
+
+        Assert.True(flushRow >= 0, "Invoke() must still flush the host page's own row.");
+        Assert.True(flushParts >= 0,
+            "Invoke() must call FlushParts itself — AttemptHandlerDrivenClose skips its own for a "
+            + "page the test opened, so without this OK drops a part row Close() saves (#4146).");
+        Assert.True(attemptClose >= 0, "Invoke() must still make the handler-driven close attempt.");
+        Assert.True(flushRow < flushParts && flushParts < attemptClose,
+            $"Expected FlushRow < FlushParts < AttemptHandlerDrivenClose, found {flushRow}, "
+            + $"{flushParts}, {attemptClose}.");
+    }
+
     // The counterpart to AttemptHandlerDrivenClose_FlushesPartsOnlyAfterItsGuards: a torn-down
     // page raises "The TestPage is not open." and flushes nothing, so the flush belongs after
     // that guard rather than at the very top of the method.

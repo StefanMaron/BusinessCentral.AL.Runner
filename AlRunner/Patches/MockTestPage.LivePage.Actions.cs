@@ -378,7 +378,16 @@ internal partial class LiveNavTestPage
             if (_result is FormResult.Cancel or FormResult.LookupCancel)
                 _page.DiscardPendingNewRow();
             else
+            {
                 _page.FlushRow();
+                // A confirming close also saves a row typed into a PART, whoever opened the page.
+                // AttemptHandlerDrivenClose's own FlushParts() is skipped for a page the test
+                // opened (`_opened`), so without this OK dropped the part row Close() keeps.
+                // Corpus codeunit 60760 "OKP Ok Part Row Tests"
+                // (StefanMaron/BusinessCentral.AL.Language.Tests#354); issue #4146.
+                if (_result is FormResult.OK or FormResult.LookupOK)
+                    _page.FlushParts();
+            }
 
             // On BC this invoke IS the close attempt -- see AttemptHandlerDrivenClose.
             _page.AttemptHandlerDrivenClose(_result);
