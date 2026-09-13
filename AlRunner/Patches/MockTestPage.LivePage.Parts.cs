@@ -275,7 +275,7 @@ internal partial class LiveNavTestPage
     /// than filtering on no field: an unfiltered part shows other rows' children, which is a
     /// wrong answer, not a missing one.
     /// </summary>
-    private static SubPageLinkEntry[] SubPageLinks(
+    internal static SubPageLinkEntry[] SubPageLinks(
         Microsoft.Dynamics.Nav.Types.Metadata.InfopartPageDefinition definition, int partPageId)
     {
         var links = new List<SubPageLinkEntry>();
