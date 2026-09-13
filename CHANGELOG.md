@@ -245,6 +245,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **watch:** EmitSiblingSymbols reuses the dep-symbol compiler and takes the RAD fast path
 - **permissions:** make the vanished-app warning test prove what its comment claims
 - **guards:** make a local unbootstrapped engine run a visible skip, not a false mutation RED
 - **rules:** execute a rule's detection recipe against the defect it claims to detect
