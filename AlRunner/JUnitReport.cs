@@ -121,12 +121,15 @@ public static class JUnitReport
             writer.WriteAttributeString("skipped", suiteSkipped.ToString());
             writer.WriteAttributeString("time", suiteSeconds.ToString("F3", CultureInfo.InvariantCulture));
             // #2502: the run seed that reproduces this suite's Random() values (--seed).
-            writer.WriteStartElement("properties");
-            writer.WriteStartElement("property");
-            writer.WriteAttributeString("name", "seed");
-            writer.WriteAttributeString("value", Infrastructure.RunSeed.Value.ToString(CultureInfo.InvariantCulture));
-            writer.WriteEndElement(); // property
-            writer.WriteEndElement(); // properties
+            if (Infrastructure.RunSeed.Resolved is { } seed)
+            {
+                writer.WriteStartElement("properties");
+                writer.WriteStartElement("property");
+                writer.WriteAttributeString("name", "seed");
+                writer.WriteAttributeString("value", seed.ToString(CultureInfo.InvariantCulture));
+                writer.WriteEndElement(); // property
+                writer.WriteEndElement(); // properties
+            }
 
             foreach (var (bucket, test) in suiteTests)
             {

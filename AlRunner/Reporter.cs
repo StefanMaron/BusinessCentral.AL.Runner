@@ -767,7 +767,7 @@ public static class Reporter
             total = tests.Count,
             exitCode,
             // #2502: pass it back as --seed to reproduce this run's Random() values.
-            seed = Infrastructure.RunSeed.Value,
+            seed = Infrastructure.RunSeed.Resolved,
             compilationErrors = compileErrors.Count > 0 ? compileErrors : null,
             executionErrors = executionErrors.Count > 0 ? executionErrors : null,
             suiteErrors = suiteErrors.Count > 0 ? suiteErrors : null,

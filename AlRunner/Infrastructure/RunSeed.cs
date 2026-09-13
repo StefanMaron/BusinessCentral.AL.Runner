@@ -20,8 +20,9 @@ public static class RunSeed
     private static int? _runSeed;
     private static PropertyInfo? _sessionRandom;
 
-    // The test currently executing, for the no-argument Randomize() rewrite. Tests run one at a
-    // time per process, so a plain static is enough.
+    // The test currently executing, for the no-argument Randomize() rewrite. Plain statics hold
+    // only while tests run one at a time per process: make them [ThreadStatic]/AsyncLocal before
+    // test codeunits run concurrently.
     private static string? _currentTest;
     private static int _currentTestSeed;
     private static string? _warnedFor;
@@ -38,6 +39,15 @@ public static class RunSeed
             _runSeed = seed;
             Environment.SetEnvironmentVariable(EnvVar, seed.ToString(CultureInfo.InvariantCulture));
         }
+    }
+
+    /// <summary>
+    /// The run seed if this process has resolved one, else null. Reporters read this rather than
+    /// <see cref="Value"/>, so writing a report never mints a seed nobody ran with.
+    /// </summary>
+    public static int? Resolved
+    {
+        get { lock (Gate) return _runSeed; }
     }
 
     /// <summary>
