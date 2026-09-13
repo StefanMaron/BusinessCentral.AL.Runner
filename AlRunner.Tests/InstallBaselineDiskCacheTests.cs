@@ -414,9 +414,9 @@ public class InstallBaselineDiskCacheTests
             // Measured by mutation (#2364): flattening the WHOLE
             // TestExecutor.CurrentInstallBaselineCacheKey() to a constant fails this test.
             // Flattening only its dependency-set component, or only its symbol-state
-            // component, does NOT — the two are redundant here (#3254), so this pins the key as a
-            // whole rather than the dependency set specifically. See the longer note in
-            // InstallSeedDepCompanyCacheTests.AppGroupWithOwnDependencyApp_*.
+            // component, does NOT — the two are redundant here, so this pins the key as a whole.
+            // The dependency-set term on its own is pinned by
+            // DependencySetTermAlone_SeparatesBaselines_AndIdenticalInputsHitAcrossProcesses (#3254).
             var written = WriteDigests(output);
             Assert.True(written.Count >= 2,
                 $"expected at least 2 distinct dependency-closure keys to be persisted, got "
