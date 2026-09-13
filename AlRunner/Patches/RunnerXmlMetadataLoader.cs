@@ -234,8 +234,6 @@ public sealed class RunnerMetaApplicationObjectLoader : INCLMetaApplicationObjec
         lock (_metaObjectCacheLock) _metaObjectCache = null;
     }
 
-    internal bool HasMetaObjectCacheForTests => _metaObjectCache != null;
-
     public INavAppClrTypeRetriever AppClrTypeRetriever =>
         throw new AlRunner.Infrastructure.RunnerOutOfScopeException(
             "INCLMetaApplicationObjectLoader.AppClrTypeRetriever",

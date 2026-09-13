@@ -443,6 +443,7 @@ public static partial class BcRuntime
     {
         var name = asm.GetName().Name;
         if (name != null) _latestGenerationByAssemblyName[name] = asm;
+        NoteCurrentBundleAssembly(asm);
         _retiredGenerations.TryRemove(asm, out _);
     }
 
@@ -452,6 +453,33 @@ public static partial class BcRuntime
     /// the name-keyed registry above cannot see a version bump as a new generation (#3974).
     /// </summary>
     private static readonly ConcurrentDictionary<Assembly, byte> _retiredGenerations = new();
+
+    // #4100: the assemblies registered since the last ResetForNewBundleReload, in order. A
+    // different workspace's module is not a stale generation, so IsStaleBundleAssembly cannot
+    // keep its same-id objects from answering; a finder asks this set first instead.
+    private static readonly List<Assembly> _currentBundleAssemblies = new();
+
+    /// <summary>
+    /// <see cref="CurrentTestAssembly"/>, then every other assembly registered for the bundle
+    /// now loading (its dependency modules), newest first. Empty before the first registration.
+    /// </summary>
+    /// <summary>Add <paramref name="asm"/> to <see cref="CurrentBundleAssemblies"/> without
+    /// re-registering its generation — for a dependency module reused as-is (#4100).</summary>
+    internal static void NoteCurrentBundleAssembly(Assembly asm)
+    {
+        lock (_currentBundleAssemblies)
+            if (!_currentBundleAssemblies.Contains(asm)) _currentBundleAssemblies.Add(asm);
+    }
+
+    internal static IReadOnlyList<Assembly> CurrentBundleAssemblies()
+    {
+        var ordered = new List<Assembly>();
+        if (_currentTestAssembly != null) ordered.Add(_currentTestAssembly);
+        lock (_currentBundleAssemblies)
+            for (var i = _currentBundleAssemblies.Count - 1; i >= 0; i--)
+                if (!ordered.Contains(_currentBundleAssemblies[i])) ordered.Add(_currentBundleAssemblies[i]);
+        return ordered;
+    }
 
     /// <summary>
     /// Mark <paramref name="asm"/> as no longer current, whatever its simple name; see
@@ -647,6 +675,7 @@ public static partial class BcRuntime
     public static void ResetForNewBundleReload()
     {
         _currentTestAssembly = null;
+        lock (_currentBundleAssemblies) _currentBundleAssemblies.Clear();
         // AL-output type caches that live on this partial class (CodeunitPatches,
         // XmlPortPatches). Their finders already prefer CurrentTestAssembly; the
         // caches just need dropping so the rebuild re-resolves against the new asm.
