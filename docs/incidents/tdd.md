@@ -212,8 +212,16 @@ A reviewer's first mutation on #4003 duplicated an `insertRow` call, expecting t
 `Company.Count()` assertion to go red. All 4 tests stayed green — the shape that reads as
 "this assertion proves nothing".
 
-It was not. An AL probe printed `company count = 1`: BC's provider `Insert` is primary-key
-idempotent, so inserting the same company twice yields one row. The mutation reached the code,
+It was not. An AL probe printed `company count = 1`: BC's provider `Insert` **refuses** a
+duplicate primary key — it returns `false` and adds no row, and the first row's payload
+survives while the second call's is discarded. `Insert(true)` behaves the same. So inserting
+the same company twice yields one row.
+
+The precision matters, and a reviewer supplied it against the first wording of this entry
+("primary-key idempotent"). Rejection and idempotence are indistinguishable through `Count()`
+and quite different through the return value: a reader taking "idempotent" literally would
+conclude that *no* observable moved and stop looking, when in fact the cheapest available
+diagnostic had moved all along. The mutation reached the code,
 compiled, and executed; the *system* absorbed it. A second mutation seeding a **distinct**
 company produced `Failed: 1, Passed: 3` with an `Assert` failure and the other three green, so
 the test discriminates exactly as intended.

@@ -74,8 +74,12 @@ green and looks like the system working.
 it.** The traps above are mutations that never reached the code. This one reaches it and runs,
 and the green is still not about your test. Measured in review of #4003: duplicating an
 `insertRow` call left all 4 tests passing, which reads as "the `Company.Count()` assertion proves
-nothing". An AL probe printed `company count = 1` — BC's provider `Insert` is **primary-key
-idempotent**, so the second call was a genuine no-op and no second row ever existed. A mutation
+nothing". An AL probe printed `company count = 1` — BC's provider `Insert` **refuses a
+duplicate primary key**, returning `false` rather than adding a row, so the second call was a
+genuine no-op *for the row count* and no second row ever existed. Note what that leaves: a
+rejected operation and an idempotent one are indistinguishable through `Count()` and quite
+different through the **return value**, which did move and would have diagnosed this more
+cheaply than the probe did. A mutation
 seeding a *distinct* company gave `Failed: 1, Passed: 3`, and the test was sound all along.
 
 So step 2's landing check is necessary and not sufficient: confirm the mutation changed the
