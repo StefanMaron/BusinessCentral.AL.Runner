@@ -14,6 +14,8 @@ public static partial class RecordPatches
     // Source app id -> the app ids its app.json declares as dependencies (implicit floors excluded).
     private static readonly Dictionary<Guid, Guid[]> _sourceAppDependencies = new();
     private static readonly Dictionary<string, string?> _owningManifestByDir = new(StringComparer.OrdinalIgnoreCase);
+    // One app.json read per manifest, not per .al file.
+    private static readonly Dictionary<string, BundleIdentity?> _identityByManifest = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Record which app declares every object in one source file, and that app's declared
@@ -24,11 +26,15 @@ public static partial class RecordPatches
     {
         var manifest = ResolveOwningManifest(filePath);
         if (manifest == null) return;
-        var identity = InProcessAppPackager.ReadIdentity(manifest);
+        if (!_identityByManifest.TryGetValue(manifest, out var identity))
+        {
+            identity = InProcessAppPackager.ReadIdentity(manifest);
+            _identityByManifest[manifest] = identity;
+            if (identity != null && identity.AppId != Guid.Empty)
+                _sourceAppDependencies[identity.AppId] = identity.Dependencies
+                    .Select(d => d.AppId).Where(id => id != Guid.Empty).Distinct().ToArray();
+        }
         if (identity == null || identity.AppId == Guid.Empty) return;
-
-        _sourceAppDependencies[identity.AppId] = identity.Dependencies
-            .Select(d => d.AppId).Where(id => id != Guid.Empty).Distinct().ToArray();
 
         foreach (var obj in ParseAlObjects(text))
         {
@@ -38,6 +44,7 @@ public static partial class RecordPatches
         }
     }
 
+    // Not ResolveOwningApp: that returns (id, name) only, and the dependencies need the manifest path.
     private static string? ResolveOwningManifest(string filePath)
     {
         var dir = Path.GetDirectoryName(Path.GetFullPath(filePath));
@@ -58,6 +65,9 @@ public static partial class RecordPatches
         _sourceObjectOwners.Clear();
         _sourceAppDependencies.Clear();
         _owningManifestByDir.Clear();
+        _identityByManifest.Clear();
+        _scopeAssembly = null;
+        _scopeAppId = Guid.Empty;
     }
 
     /// <summary>
@@ -91,8 +101,15 @@ public static partial class RecordPatches
     private static bool IsHiddenFromCurrentAppGroup(string kind, int id, HashSet<Guid>? visibleApps)
         => IsHiddenFromAppGroup(kind, id, visibleApps, _sourceObjectOwners);
 
-    private sealed class ProviderScope { public Guid? AppId; }
+    private sealed class ProviderScope
+    {
+        public Guid? AppId;
+        public HashSet<Guid>? VisibleApps;
+    }
     private static readonly ConditionalWeakTable<object, ProviderScope> _inventoryScopeByProvider = new();
+    // Last successful CurrentTestAssembly -> app id lookup; populators run on every data-access handout.
+    private static System.Reflection.Assembly? _scopeAssembly;
+    private static Guid _scopeAppId;
 
     /// <summary>
     /// The executing app group's app id, pinned to <paramref name="provider"/> on first use. The
@@ -101,15 +118,28 @@ public static partial class RecordPatches
     /// </summary>
     private static HashSet<Guid>? PinInventoryScope(object provider, string table)
     {
-        var asm = AlRunner.BcRuntime.CurrentTestAssembly;
-        Guid? current = null;
-        if (asm != null)
-            foreach (var (registered, appId) in AlRunner.BcRuntime.RegisteredModuleAssemblies())
-                if (ReferenceEquals(registered, asm)) { current = appId; break; }
-
-        var scope = _inventoryScopeByProvider.GetValue(provider, _ => new ProviderScope { AppId = current });
+        var current = CurrentAppGroupAppId();
+        var scope = _inventoryScopeByProvider.GetValue(provider, _ => new ProviderScope
+        {
+            AppId = current,
+            VisibleApps = current is { } id ? VisibleAppClosure(id, _sourceAppDependencies) : null,
+        });
         CheckInventoryScope(scope.AppId, current, table);
-        return current is { } id ? VisibleAppClosure(id, _sourceAppDependencies) : null;
+        return scope.VisibleApps;
+    }
+
+    private static Guid? CurrentAppGroupAppId()
+    {
+        var asm = AlRunner.BcRuntime.CurrentTestAssembly;
+        if (asm == null) return null;
+        if (ReferenceEquals(asm, _scopeAssembly)) return _scopeAppId;
+        foreach (var (registered, appId) in AlRunner.BcRuntime.RegisteredModuleAssemblies())
+            if (ReferenceEquals(registered, asm))
+            {
+                (_scopeAssembly, _scopeAppId) = (asm, appId);
+                return appId;
+            }
+        return null;
     }
 
     internal static void CheckInventoryScope(Guid? pinned, Guid? current, string table)

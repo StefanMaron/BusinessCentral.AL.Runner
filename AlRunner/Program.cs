@@ -3934,6 +3934,12 @@ foreach (var bundle in bundles)
                 // is consistent whichever compile boundary --isolation chose.
                 using (AlRunner.Infrastructure.PhaseLog.AppStage("set-test-assembly"))
                 {
+                    // #2279: the suite is the app group here, so its assembly carries the suite's own
+                    // app identity, as the bundled loop's SetCurrentBundleInfo gives each app group.
+                    if (AlRunner.Infrastructure.InProcessAppPackager.ReadIdentity(Path.Combine(suite, "app.json"))
+                            is { } suiteIdentity && suiteIdentity.AppId != Guid.Empty)
+                        BcRuntime.SetCurrentBundleInfo(suiteIdentity.AppId, suiteIdentity.Name,
+                            suiteIdentity.Publisher, suiteIdentity.Version.ToString());
                     BcRuntime.SetTestAssembly(asm);
                     BcRuntime.RegisterTestAssemblyInfo(asm);
                 }
