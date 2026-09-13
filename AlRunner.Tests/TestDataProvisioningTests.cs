@@ -440,7 +440,7 @@ public sealed class TestDataProvisioningTests : IDisposable
             new(  7, "page", "My Company", "No_ Series", 308, "Business Foundation"),
         };
 
-        var plan = TestDataProvisioner.BuildPlan(entries, cronus);
+        var plan = TestDataProvisioner.BuildPlan(entries, cronus, Array.Empty<AppManifest>());
 
         Assert.Equal(
             new[] { "No_ Series", "Source Code Setup" },
@@ -477,7 +477,7 @@ public sealed class TestDataProvisioningTests : IDisposable
             new(0, "page", cronus, "Currency$ext", null, null),
         };
 
-        var plan = TestDataProvisioner.BuildPlan(entries, cronus);
+        var plan = TestDataProvisioner.BuildPlan(entries, cronus, Array.Empty<AppManifest>());
 
         Assert.Equal(new[] { "Currency" }, plan.Hydratable.Select(e => e.TableName).ToArray());
         Assert.Empty(plan.ExtendedTableNames);

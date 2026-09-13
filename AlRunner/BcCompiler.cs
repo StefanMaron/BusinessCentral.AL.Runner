@@ -829,6 +829,17 @@ public sealed partial class BcCompiler
                 : _resolvedDeps.Select(d => d.AppPath).ToList();
     }
 
+    /// <summary>The same closure as <see cref="ResolvedDepAppPaths"/>, with each package's
+    /// manifest. --test-data joins the backup catalog's app NAME to the app id the reader's
+    /// `--app` selects on (#2264).</summary>
+    public static IReadOnlyList<(AppManifest Manifest, string AppPath)> ResolvedDeps()
+    {
+        lock (_refSync)
+            return _resolvedDeps == null
+                ? Array.Empty<(AppManifest, string)>()
+                : _resolvedDeps.ToList();
+    }
+
     /// <summary>
     /// A stable content signature of the inputs the reference loader is built from, so the
     /// loader (and its ~40s warm) is rebuilt only when the dependency closure actually
