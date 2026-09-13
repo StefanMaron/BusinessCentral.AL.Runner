@@ -1,7 +1,8 @@
 // ServerSiblingSourceDependencyPageReloadTests — issue #4099.
 //
 // Same shape as ServerSiblingSourceDependencyReloadTests (#4025), but the edited dependency object
-// is a PAGE, a PAGEEXTENSION and a TABLE trigger, with a codeunit arm alongside. Every arm reads a
+// is a PAGE, a PAGEEXTENSION (in the test bundle), a TABLE trigger and a TABLEEXTENSION trigger,
+// with a codeunit arm alongside, which applied before the fix. Every arm reads a
 // value that only the dependency's own trigger/procedure code produces, and the test asserts the
 // 'A' variant, so a FAIL names which compile of the dependency executed.
 
@@ -17,7 +18,7 @@ public sealed class ServerSiblingSourceDependencyPageReloadTests
 
     private sealed record Fixture(string Root, string SubjectDir, string TestsDir, string CacheDir);
 
-    private static readonly string[] Arms = { "DepPage", "DepPageExtension", "DepTableTrigger", "DepLogic" };
+    private static readonly string[] Arms = { "DepPage", "DepPageExtension", "DepTableTrigger", "DepTableExtension", "DepLogic" };
 
     private static Fixture Create()
     {
@@ -84,6 +85,18 @@ public sealed class ServerSiblingSourceDependencyPageReloadTests
                 Rec.Insert(true);
                 if Rec.Tag <> 'table-A' then
                     Error('dep table trigger: expected table-A, actual %1', Rec.Tag);
+            end;
+
+            [Test]
+            procedure DepTableExtension()
+            var
+                Rec: Record "Repro4099 Rec";
+            begin
+                Rec.Init();
+                Rec."Code" := 'E';
+                Rec.Insert(true);
+                if Rec.ExtTag <> 'tabext-A' then
+                    Error('dep tableextension: expected tabext-A, actual %1', Rec.ExtTag);
             end;
 
             [Test]
@@ -175,6 +188,16 @@ public sealed class ServerSiblingSourceDependencyPageReloadTests
             end;
         }
 
+        tableextension 64093 "Repro4099 Rec Ext" extends "Repro4099 Rec"
+        {
+            fields { field(64093; ExtTag; Text[30]) { } }
+
+            trigger OnBeforeInsert()
+            begin
+                ExtTag := 'tabext-{{letter}}';
+            end;
+        }
+
         codeunit 64091 "Repro4099 Logic"
         {
             procedure Twice(Value: Integer): Integer
@@ -218,6 +241,7 @@ public sealed class ServerSiblingSourceDependencyPageReloadTests
                 "DepPage" => $"actual page-{letter}",
                 "DepPageExtension" => $"actual ext-{letter}",
                 "DepTableTrigger" => $"actual table-{letter}",
+                "DepTableExtension" => $"actual tabext-{letter}",
                 _ => $"actual {21 * multiplier}",
             };
             if (status != "fail" || !message.Contains(expected))

@@ -156,6 +156,8 @@ public static partial class BcRuntime
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             if (asm == _currentTestAssembly) continue;
+            // A previous server/watch generation of a dependency module (#1901, #4099).
+            if (IsStaleBundleAssembly(asm)) continue;
             try
             {
                 var t = AlRunner.Infrastructure.AssemblyTypeIndex.For(asm)
