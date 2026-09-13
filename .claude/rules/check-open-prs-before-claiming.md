@@ -50,6 +50,26 @@ gh pr list --repo StefanMaron/BusinessCentral.AL.Runner --state open --limit 100
 `closingIssuesReferences` is GitHub's own parse of the PR, so it reflects what will actually
 close on merge — not a grep of the body.
 
+**But the parse LAGS the PR's creation, so a fresh PR can read as claiming nothing.** Measured
+on PR #4119: created through the REST endpoint, `closingIssuesReferences` came back **empty**
+and resolved to `[4111]` about **twelve seconds** later, with a correct `Closes #4111` in the
+body throughout. Nothing reports the pending state — an empty array is what a PR closing no
+issue also returns.
+
+That matters here specifically, because this rule's whole purpose is deciding whether an issue
+is taken: an empty read on a PR opened seconds ago is **"not parsed yet"**, not "free", and
+treating it as free is how two agents claim one issue. On a zero result for an issue you are
+about to claim, confirm it a second way before believing it — the body carries the declaration
+immediately even when the parse has not caught up:
+
+```bash
+gh pr list --repo <owner>/<repo> --state open --limit 100 --json number,body \
+  --jq '.[] | select(.body | test("(?i)\\b(closes|fixes|resolves) +#<N>\\b")) | .number'
+```
+
+Same shape as every other trap in this repository: the call succeeds, the answer is
+well-formed, and it is about a moment rather than about the question you asked.
+
 **No `gh` in web/remote sessions** (`github-access.md`). There, list open PRs with
 `mcp__github__list_pull_requests` and read each one's linked issues; the rule is the same, the
 transport is not.
