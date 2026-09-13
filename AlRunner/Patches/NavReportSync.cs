@@ -645,7 +645,7 @@ public static partial class NavReportSync
         // guarded Codeunit.Run models, so the same two calls stand in for it.
         // Observably equivalent: corpus 60040 Test04-Test08 on a real service tier.
         if (!AlRunner.Patches.ALDatabasePatches.ReportRunEntersTransactionWorld(
-                ReadBoolProperty(navReport, "UseRequestForm", fallback: true),
+                ReadUseRequestForm(navReport),
                 ReadReportTransactionType(navReport)))
         {
             TryRunOrControlFlow(navReport, navReportBase);
@@ -665,6 +665,18 @@ public static partial class NavReportSync
             throw;
         }
         AlRunner.Patches.ALDatabasePatches.EndGuardedRunTransaction(commit: true);
+    }
+
+    /// <summary><c>NavReport.UseRequestForm</c>, read strictly: a missing property would
+    /// silently decide whether the run is refused or commits.</summary>
+    private static bool ReadUseRequestForm(object navReport)
+    {
+        var p = FindProperty(navReport.GetType(), "UseRequestForm");
+        if (p == null || p.PropertyType != typeof(bool))
+            throw new AlRunner.Infrastructure.BcShapeGapException(
+                "NavReport.Run", "NavReport.UseRequestForm",
+                "bool property not found, so whether the run enters a transaction world cannot be decided");
+        return (bool)p.GetValue(navReport)!;
     }
 
     /// <summary><c>Metadata.TransactionType</c> as its ordinal; 0 (UpdateNoLocks, the report
