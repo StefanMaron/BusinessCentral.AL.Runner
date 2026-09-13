@@ -560,38 +560,54 @@ public sealed class TestDataProvisioningTests : IDisposable
     // ───────────────────────────────────────── row projection ──
 
     [Fact]
-    public void ParseRows_KeepsAlColumnsAndDropsBcsOwnBookkeepingColumns()
+    public void ParseRows_KeysBcsSystemColumnsByTheAlFieldsThatHoldThem()
     {
+        // #2260. Every system value is DISTINCT, so a mapping that sent one column to a
+        // neighbouring field (CreatedAt into ModifiedAt, CreatedBy into SystemId) fails here.
         const string json =
             "[{\"timestamp\": \"0x01\", \"Code\": \"A-BLK\", \"Description\": \"Assembly Blanket Orders\", "
           + "\"Default Nos.\": 1, \"$systemId\": \"C749D1DB-D953-F111-8E26-7CED8D9E4094\", "
-          + "\"$systemCreatedAt\": \"2026-05-19 23:24:22.700\"}]";
+          + "\"$systemCreatedAt\": \"2026-05-19 23:24:22.700\", "
+          + "\"$systemCreatedBy\": \"00000000-0000-0000-0000-000000000001\", "
+          + "\"$systemModifiedAt\": \"2026-05-19 23:24:34.417\", "
+          + "\"$systemModifiedBy\": \"00000000-0000-0000-0000-000000000002\"}]";
 
         var rows = TestDataProvisioner.ParseRows(json);
 
         Assert.Single(rows);
-        Assert.Equal(3, rows[0].Count);
         Assert.Equal("A-BLK", rows[0]["Code"].GetString());
         Assert.Equal("Assembly Blanket Orders", rows[0]["Description"].GetString());
         Assert.Equal(1, rows[0]["Default Nos."].GetInt32());
 
-        // `timestamp` and the `$system*` columns are BC's own bookkeeping. Mapping them back
-        // onto AL fields 2000000000-2000000004 would rest on a convention no service tier has
-        // confirmed here, so they are dropped — declared, and stated in the hydration summary,
-        // never silently mixed into a row. See RecordPatches.TestDataHydration's header.
+        Assert.Equal("C749D1DB-D953-F111-8E26-7CED8D9E4094", rows[0]["SystemId"].GetString());
+        Assert.Equal("2026-05-19 23:24:22.700", rows[0]["SystemCreatedAt"].GetString());
+        Assert.Equal("00000000-0000-0000-0000-000000000001", rows[0]["SystemCreatedBy"].GetString());
+        Assert.Equal("2026-05-19 23:24:34.417", rows[0]["SystemModifiedAt"].GetString());
+        Assert.Equal("00000000-0000-0000-0000-000000000002", rows[0]["SystemModifiedBy"].GetString());
+
+        // No SQL spelling survives beside its AL one, and the rowversion is not hydrated.
+        Assert.DoesNotContain(rows[0].Keys, k => k.StartsWith("$system", StringComparison.Ordinal));
         Assert.DoesNotContain("timestamp", rows[0].Keys);
-        Assert.DoesNotContain("$systemId", rows[0].Keys);
-        Assert.DoesNotContain("$systemCreatedAt", rows[0].Keys);
+        Assert.Equal(8, rows[0].Count);
     }
 
     [Fact]
-    public void SystemColumnNameSet_CoversEveryColumnBcMaintainsItself()
+    public void SystemColumnMap_PairsEachSqlColumnWithItsPlatformField()
     {
-        // Pinned as a set rather than left implicit: a `$system*` column that fell out of it
-        // would be offered to the metatable as an AL field name, not match, and refuse the
-        // table — turning a BC bookkeeping column into a whole-table outage.
-        Assert.Equal(
-            new[] { "$systemCreatedAt", "$systemCreatedBy", "$systemId", "$systemModifiedAt", "$systemModifiedBy", "timestamp" },
-            AlRunner.Patches.RecordPatches.TestDataSystemColumnNames.OrderBy(n => n, StringComparer.Ordinal).ToArray());
+        // Pinned by field id as well as name: 2000000000 is `$systemId` (NavSqlSystemIdHelper
+        // adds that column for it), and 2000000001-2000000004 are BC's audit fields, whose
+        // NCLMetaField.SqlColumnName is "$s" + FieldName.Substring(1).
+        var map = AlRunner.Patches.RecordPatches.TestDataSystemColumns;
+        Assert.Equal(5, map.Count);
+        Assert.Equal((2000000000, "SystemId"), map["$systemId"]);
+        Assert.Equal((2000000001, "SystemCreatedAt"), map["$systemCreatedAt"]);
+        Assert.Equal((2000000002, "SystemCreatedBy"), map["$systemCreatedBy"]);
+        Assert.Equal((2000000003, "SystemModifiedAt"), map["$systemModifiedAt"]);
+        Assert.Equal((2000000004, "SystemModifiedBy"), map["$systemModifiedBy"]);
+
+        foreach (var (column, field) in map.Where(kv => kv.Value.FieldNo != 2000000000))
+            Assert.Equal("$s" + field.FieldName.Substring(1), column);
+
+        Assert.Equal("timestamp", AlRunner.Patches.RecordPatches.TestDataTimestampColumnName);
     }
 }

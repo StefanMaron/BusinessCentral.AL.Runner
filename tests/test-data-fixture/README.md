@@ -20,6 +20,10 @@ back through ordinary AL `Record` calls with the right values.
   and a DB NULL. The load-bearing assertion is the Blob's CONTENT: a BC Blob column stores
   BC's container (four magic bytes + raw Deflate), not the field's bytes, so a codec that
   stored it verbatim would still give a blob with `HasValue` = true and a plausible length.
+- `TestDataSystemFields.Codeunit.al` (#2260) — `SystemId` and the audit fields
+  (`SystemCreatedAt`, `SystemCreatedBy`, `SystemModifiedAt`, `SystemModifiedBy`). Customer 10000
+  is the subject because its created and modified instants differ, so a mapping that sends one
+  column to the wrong field fails; `GetBySystemId` is asserted both ways.
 
 - `TestDataSameAppExtensionColumns.Codeunit.al` (#2273, #2301) — a column the base table's own
   AL field list does not name, because BC stores a tableextension's fields in the base table
