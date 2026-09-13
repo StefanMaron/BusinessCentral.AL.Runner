@@ -71,6 +71,7 @@ public sealed class RunnerExtrasIdRangeGuardTests
     {
         "tests/runner-extras",
         "tests/runner-extras-isolation-disabled",
+        "tests/runner-extras-tableext-eviction",
     };
 
     // ---------------------------------------------------------------- model
