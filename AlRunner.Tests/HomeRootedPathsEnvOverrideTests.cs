@@ -115,7 +115,7 @@ public sealed class HomeRootedPathsEnvOverrideTests
 
     // ------------------------------------------------------------------ TestArtifacts gate
 
-    [Fact]
+    [SkippableFact]
     public void TestArtifactsGate_FollowsTheArtifactsRootVariable_NotOnlyHome()
     {
         var emptyHome = TestScratch.Dir("al-runner-2768-gate-home");

@@ -559,7 +559,8 @@ internal static partial class ProgramSupport
         w.WriteLine("                          (repeatable). Default scan: ~/.bcartifacts.cache,");
         w.WriteLine("                          ~/.local/share/al-runner/artifacts, and bundle .alpackages/.");
         w.WriteLine("  --cache DIR             Isolation root for every on-disk cache the runner uses:");
-        w.WriteLine("                          the AL-output cache (default ~/.cache/al-runner/al-out,");
+        w.WriteLine("                          the AL-output cache (default ~/.cache/al-runner/al-out, or");
+        w.WriteLine("                          under AL_RUNNER_CACHE_ROOT when set;");
         w.WriteLine("                          compiled test DLLs re-used on subsequent runs if inputs");
         w.WriteLine("                          are unchanged) AND every other named cache normally under");
         w.WriteLine("                          ~/.cache/al-runner/<name> (compiled-deps, workspace-deps,");
@@ -794,6 +795,17 @@ internal static partial class ProgramSupport
         w.WriteLine("                               value is resolved against the current directory.");
         w.WriteLine("                               Read by the build too, so a relocated cache stays");
         w.WriteLine("                               buildable from source.");
+        w.WriteLine("  AL_RUNNER_CACHE_ROOT=DIR     Put the runner's cache tree somewhere other than");
+        w.WriteLine("                               ~/.cache/al-runner (al-out, ncl-cecil, compiled-deps");
+        w.WriteLine("                               and every other named cache). --cache and --no-cache");
+        w.WriteLine("                               still win for the run they are passed to. A relative");
+        w.WriteLine("                               value is resolved against the current directory once,");
+        w.WriteLine("                               at startup; a DIR that cannot be created exits 2");
+        w.WriteLine("                               naming the variable and the path.");
+        w.WriteLine("  AL_RUNNER_SYMBOLS_ROOT=DIR   Scan a curated symbols tree other than");
+        w.WriteLine("                               ~/.local/share/al-runner/symbols. Same layout (one");
+        w.WriteLine("                               subdirectory per BC version) and the same resolution");
+        w.WriteLine("                               as AL_RUNNER_ARTIFACTS_ROOT. Read-only to the runner.");
         w.WriteLine("  AL_RUNNER_VERBOSE=1          Same as --verbose.");
         w.WriteLine("  AL_RUNNER_FAILURES_ONLY=1    Same as --failures-only.");
         w.WriteLine("  AL_RUNNER_TRACE_NRE=1        Log every first-chance NullReferenceException with");
