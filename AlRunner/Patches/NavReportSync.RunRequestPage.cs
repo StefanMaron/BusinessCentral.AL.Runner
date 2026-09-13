@@ -148,8 +148,8 @@ public static partial class NavReportSync
     /// <param name="parent">The form's <c>RequestPageBase.Parent</c> — the report it belongs to.</param>
     internal static AlRunner.Patches.RequestPageTestPage BindRequestPageOpenedByBc(object requestPageForm, object? parent)
     {
-        // Parent is null on a BC-emitted request page here (measured on Report5187+RequestPage);
-        // the AL compiler's nested RequestPage class carries its report as the CurrReport field.
+        // Parent is null because NclCecilRewrite.Reports.cs rewrites the RequestPageBase ctors
+        // past the assignment; the compiled Report<N>+RequestPage keeps its report in CurrReport.
         parent ??= requestPageForm.GetType()
             .GetField("CurrReport", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?
             .GetValue(requestPageForm);
@@ -159,8 +159,9 @@ public static partial class NavReportSync
         if (parent == null || navReportBase == null)
             throw AlRunner.Patches.RunnerShapeGap.RequestPageReport(
                 "TestRequestPage (" + requestPageForm.GetType().FullName + ")",
-                "neither the request page's Parent nor its CurrReport field is a NavReport (found "
-                + (parent?.GetType().FullName ?? "null") + "), so the runner cannot tell which report's data items and "
+                "the request page's owner is not a report: neither its Parent nor a CurrReport field "
+                + "is a NavReport (found " + (parent?.GetType().FullName ?? "null") + "; an XmlPort's "
+                + "request page reaches here too), so the runner cannot tell which data items and "
                 + "built-in actions the [RequestPageHandler] is driving");
 
         int reportId = TryGetObjectId(parent, navReportBase);

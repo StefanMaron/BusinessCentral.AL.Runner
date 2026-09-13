@@ -701,7 +701,8 @@ public static partial class NclCecilRewrite
         // bypass the Session.Company.SharedObjects deref by calling NavForm 2-arg ctor
         // directly, which assigns masterPage and runs the rest of NavForm init using
         // `parent` (the report instance) as the ITreeObject. RequestPageBase.Parent is
-        // left null — not observable by AL tests; if needed later, set it explicitly.
+        // left null, and NavReportSync.BindRequestPageOpenedByBc depends on that shape (#4067):
+        // it falls back to the compiled CurrReport field. Setting Parent here is safe for it.
         {
             var requestPageBaseT = asm.MainModule.Types
                 .FirstOrDefault(t => t.FullName == "Microsoft.Dynamics.Nav.Runtime.RequestPageBase");
