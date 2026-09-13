@@ -88,7 +88,8 @@ public static partial class EventSubscriberPatches
     // record construction (#2369). Derived, never written directly: GetSubscriberIndex rebuilds
     // it when _registryVersion has moved. Bump _registryVersion, under _lock, anywhere either
     // registry gains or loses an entry — a mutation that skips the bump leaves the injectors
-    // blind to that subscriber for the rest of the process.
+    // blind to that subscriber for the rest of the process. EnsureRegistryFresh bumps BEFORE it
+    // mutates; that is safe only because the rebuild takes _lock and so waits for the scan to end.
     private sealed record SubscriberIndex(
         int Version,
         Dictionary<int, Key[]> TriggerKeysByTable,
