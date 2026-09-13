@@ -403,13 +403,8 @@ public static partial class RecordPatches
         // says it is avoiding, and the same shape as #2478 and #2755 in this same reset path.
         _objectRefConstIds.Clear();
         _fieldTriggersWiredTables.Clear();
-        // #4100: PopulateNclMetadataCache skips an id BC's metadataCacheEntries[Page] already
-        // holds, so without this the next bundle's page N is served this bundle's NCLMetaForm
-        // while _metaFormCache (cleared below) builds a fresh one. Must run before the two
-        // clears under it: they are the id list. Source-parsed ids only — the populator fills
-        // the Page slot from exactly these, and nothing re-registers any other entry.
-        foreach (var pageId in _parsedPages.Keys.Concat(_parsedPageExtensions.Keys).Distinct().ToArray())
-            TryMutatePageMetadataCacheEntries(dict => dict.Remove(pageId));
+        // #4100: BC's page-definition cache keys on (owner package id, page id) and the runner
+        // supplies no owner, so every bundle's page N shares one key.
         RunnerMetaApplicationObjectLoader.Instance.ResetMetaObjectCache();
         _parsedPages.Clear();
         _parsedPageExtensions.Clear();

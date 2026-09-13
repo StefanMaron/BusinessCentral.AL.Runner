@@ -2931,17 +2931,6 @@ internal sealed partial class RunnerPageInstance
     private static Type? FindPageExtensionType(int extensionId)
     {
         var name = "PageExtension" + extensionId;
-        // #4100: the loading bundle's own modules first — a foreign workspace's same-id
-        // PageExtension{id} is not a stale generation, so the scan below would let it answer.
-        foreach (var own in BcRuntime.CurrentBundleAssemblies())
-        {
-            try
-            {
-                var t = AlRunner.Infrastructure.AssemblyTypeIndex.For(own).FindFirst(name, typeof(Microsoft.Dynamics.Nav.Runtime.Extensions.NavFormExtension).IsAssignableFrom);
-                if (t != null) return t;
-            }
-            catch { }
-        }
         foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
         {
             try
