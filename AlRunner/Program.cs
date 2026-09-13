@@ -1625,6 +1625,15 @@ void FlushDeferredStartupLines()
     deferredStartupLines.Clear();
 }
 
+// A loop inside a catch/finally in <Main>$ makes the JIT compile all of Main FullOpts, in every
+// process generation. Keep handler loops in helpers like this one; HandlerLoopJitTierGuardTests
+// pins it. See docs/startup-cost.md#main-jit-tier.
+static void WriteRemainingInnerExceptions(AggregateException flat)
+{
+    foreach (var inner in flat.InnerExceptions.Skip(1))
+        Console.Error.WriteLine($"  → {inner.GetType().Name}: {inner.Message}");
+}
+
 // --jobs: fan out across worker processes (#2280). Deliberately placed HERE, after the
 // deferred-startup flush, because that line marks the terminal generation — both re-exec
 // decision points (the shadow hop and the Cecil-fresh-rewrite hop) are behind us, so BC is
@@ -3489,8 +3498,7 @@ foreach (var bundle in bundles)
                 Console.Error.WriteLine($"<bundled>: EMIT-FAIL — {rootEx.GetType().Name}: {rootEx.Message}");
                 if (rootEx.StackTrace is { } st) Console.Error.WriteLine(st);
                 if (flat.InnerExceptions.Count > 1)
-                    foreach (var inner in flat.InnerExceptions.Skip(1))
-                        Console.Error.WriteLine($"  → {inner.GetType().Name}: {inner.Message}");
+                    WriteRemainingInnerExceptions(flat);
                 bundleErrors.Add($"<bundled>: EMIT-FAIL: {rootEx.Message.Split('\n')[0]}");
             }
             catch (Exception ex)
@@ -4107,8 +4115,7 @@ if (watchUi)
     }
     finally
     {
-        foreach (var w in watchers) { w.EnableRaisingEvents = false; w.Dispose(); }
-        signal.Dispose();
+        WatchSource.DisposeWatch(signal, watchers);
     }
     if (!changed) return 0;
     PaintWatchRunning(); // flip the header to "⟳ running…" while the next cycle compiles
