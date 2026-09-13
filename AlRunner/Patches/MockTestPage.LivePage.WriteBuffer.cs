@@ -585,9 +585,11 @@ internal partial class LiveNavTestPage
         if (this is LiveNavTestPart || _page == null || controlId == 0) return;
         if (!_focusInitialized) FocusInitialControl();
 
-        var repeater = _page.WritesRowsAsTheyAreCompleted;
-        var rowChanged = repeater && _activeRowEpoch != _rowEpoch;
-        if (controlId == _activeControlId && !rowChanged) return;
+        // TestPageProxy.ActivateControl skips a control that already has focus, even when the
+        // cursor has since moved to another row, so focus stays on the OLD row (corpus 60576,
+        // List_NewRow_*).
+        if (controlId == _activeControlId) return;
+        var rowChanged = _page.WritesRowsAsTheyAreCompleted && _activeRowEpoch != _rowEpoch;
 
         var previous = _activeControlId;
         _activeControlId = controlId;

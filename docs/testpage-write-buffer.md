@@ -183,6 +183,9 @@ the table is decided by focus, not by the key being complete (issue #4062).
 - `ActiveControlChanged` ignores a change that also changed the row, unless the page is bound
   to a single entity (a Card). So on a repeater, focus arriving on a new line from another line
   does not insert.
+- `TestPageProxy.ActivateControl` does nothing for the control that already has focus, even
+  after the cursor moved to another row, so focus stays on the old row until a different
+  control takes it.
 - `TestFieldProxy.Value`'s setter calls `Activate()` before it writes, so `SetValue` on a
   non-key control inserts first and writes second. Reading `Value` does not activate.
 - `TestPageProxy`'s constructor activates the form's initial control
@@ -192,8 +195,9 @@ the table is decided by focus, not by the key being complete (issue #4062).
 **What measured it.** Corpus codeunit 60576 "TPBK Tests" (StefanMaron/BusinessCentral.AL.Language.Tests#340):
 a blank-key Card row is numbered by `OnInsert` right after the first non-key `SetValue`, and
 `OnInsert` sees that control still blank; `Activate()` alone inserts on a non-key control and
-not on the key; `DelayedInsert = true` waits for `Close()`; a List behaves the same, and a
-second line's first write does not insert. It also agrees with the two older claims: typing
+not on the key; `DelayedInsert = true` waits for `Close()`; a List behaves the same, and after
+`New()` a List inserts the second line only once focus moves between two of that line's
+controls (the first revision of that test assumed one move was enough; three legs said no). It also agrees with the two older claims: typing
 only the key of a Card inserts nothing (60844), and a List insert sees the next control blank
 (60636).
 
@@ -213,8 +217,8 @@ test per rule, and removing any one rule reds only its test.
 - **Actions.** BC's `TestActionProxy.Invoke` activates the action control too, so a field
   control activated right after an action has no field control to come from and does not
   insert. The runner does not move focus on an action.
-- BC dedupes activation per TestPage session (`session.FocusedControl`); the runner tracks
-  focus per page.
+- BC skips activating the control that already has focus per TestPage *session*
+  (`session.FocusedControl`); the runner skips it per page.
 
 ## Sister documents
 

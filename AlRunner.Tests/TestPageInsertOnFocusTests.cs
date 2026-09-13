@@ -202,7 +202,9 @@ public sealed class TestPageInsertOnFocusTests : IDisposable
                     Error('rows after Close: %1, expected 1', Row.Count());
             end;
 
-            // Rule 4: on a repeater, focus arriving from another row does not insert.
+            // Rule 4: on a repeater, focus arriving from another row does not insert. After New(),
+            // Description already has focus (on the old row), so its write moves nothing; Note takes
+            // focus from the old row (no insert); Description then takes it from Note on the new row.
             [Test]
             procedure Repeater_FocusFromAnotherRow_DoesNotInsert()
             var
@@ -214,11 +216,12 @@ public sealed class TestPageInsertOnFocusTests : IDisposable
                 Rows.Description.SetValue('a');
                 Rows.New();
                 Rows.Description.SetValue('b');
-                if Row.Count() <> 1 then
-                    Error('rows after the first write on the second line: %1, expected 1', Row.Count());
                 Rows.Note.SetValue('c');
+                if Row.Count() <> 1 then
+                    Error('rows after focus came from the other row: %1, expected 1', Row.Count());
+                Rows.Description.SetValue('d');
                 if Row.Count() <> 2 then
-                    Error('rows after the second control on the second line: %1, expected 2', Row.Count());
+                    Error('rows after focus moved within the new row: %1, expected 2', Row.Count());
                 Rows.Close();
             end;
         }
