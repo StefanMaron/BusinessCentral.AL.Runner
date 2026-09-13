@@ -6,10 +6,10 @@
 //     unless the TestRunner declares TestIsolation = Disabled (corpus codeunit 60397); an install
 //     trigger is not a test. If the guard fired here, the install trigger would throw before it
 //     writes INSTALL-RESULT, so the row's existence is the proof.
-//   * The runner's install-pass flag refuses StartSession the way BC's AppInstallationContext
-//     check does: false, SessionId untouched, worker not run. The BC behaviour itself is pinned
-//     upstream by corpus codeunit 60449; this test pins that the runner's install pass sets the
-//     flag its StartSession reads.
+//   * StartSession refuses the way BC's AppInstallationContext check does: false, SessionId
+//     untouched, worker not run. The BC behaviour itself is pinned upstream by corpus codeunit
+//     60449; this test pins that the runner's install pass sets the context (#4049) that its
+//     StartSession reads.
 //
 // INSTALL-RESULT."Value" encodes the outcome so one field discriminates all three wrong answers:
 //   1    -> StartSession returned true (the install flag was not set, or not consulted);

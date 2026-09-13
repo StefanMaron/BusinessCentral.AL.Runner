@@ -1171,9 +1171,9 @@ public static partial class NclCecilRewrite
         // at the source (RecordPatches.Register wires the skeleton NavDatabase's tenant field,
         // MetadataPatches seeds NavSystemTenant.upgradeMetadata), so BC's own getter runs:
         // Install / Uninstall from session.AppInstallationContext, Upgrade from
-        // session.AppUpgradeContext, and Normal otherwise. The runner does NOT populate
-        // AppInstallationContext (measured null inside install triggers), so this still answers
-        // Normal there: #4049. See AlRunner#2353.
+        // session.AppUpgradeContext, and Normal otherwise. The runner sets AppInstallationContext
+        // around install triggers (InstallExecutionContext), so this answers Install there
+        // (#4049, corpus 60589). See AlRunner#2353.
 
         // ── ALNavApp.GetDataVersionForUpgrade(NavAppRuntimeMetadata) → return null ──
         // The method probes whether an app data-upgrade is in progress, via

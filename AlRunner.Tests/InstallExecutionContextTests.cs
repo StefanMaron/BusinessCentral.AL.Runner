@@ -72,6 +72,8 @@ public sealed class InstallExecutionContextTests
             Assert.Contains("PASS  Codeunit70902.IecInstallTriggerSawInstall", stdout);
             Assert.Contains("PASS  Codeunit70902.IecInstallTriggerModuleSawInstall", stdout);
             Assert.Contains("PASS  Codeunit70902.IecContextIsClearedAfterThePass", stdout);
+            // #3292 guard on BC's real field: StartSession inside the install trigger was refused.
+            Assert.Contains("PASS  Codeunit70902.IecStartSessionInsideInstallWasRefused", stdout);
             // BC's early return outside install is kept by the #4061 patch.
             Assert.Contains("PASS  Codeunit70902.IecLoadPackageDataOutsideInstallReturns", stdout);
             Assert.True(exit == 0, $"expected a clean run. exit={exit}\nstdout:\n{stdout}\nstderr:\n{stderr}");

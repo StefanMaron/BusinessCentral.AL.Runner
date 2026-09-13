@@ -812,8 +812,8 @@ public static partial class RecordPatches
         //
         // Populating the field rather than rewriting the property is what keeps the answer
         // faithful: BC's own GetModuleExecutionContext body still returns Install / Uninstall from
-        // session.AppInstallationContext and Upgrade from session.AppUpgradeContext — neither of
-        // which the runner populates yet, measured null inside install triggers (#4049) — and only falls through to
+        // session.AppInstallationContext (set around install triggers by InstallExecutionContext,
+        // #4049) and Upgrade from session.AppUpgradeContext (never set: no upgrade pass) — and only falls through to
         // Normal when no upgrade workflow is in progress, which on the skeleton is always
         // (GetUpgradeInformation answers NavWorkflowState.NotStarted when no workflow was started).
         // A blanket "return Normal" replacement would answer Normal inside an install trigger,
