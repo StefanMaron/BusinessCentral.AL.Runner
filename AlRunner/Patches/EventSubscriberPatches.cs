@@ -84,6 +84,78 @@ public static partial class EventSubscriberPatches
     private static readonly Dictionary<ObjectEventKey, List<MethodInfo>> _byObjectEventKey = new();
     private static readonly List<ValidateSub> _validateSubs = new();
 
+    // _byKey and _validateSubs grouped by publisher table, for the injectors that run on every
+    // record construction (#2369). Derived, never written directly: GetSubscriberIndex rebuilds
+    // it when _registryVersion has moved. Bump _registryVersion, under _lock, anywhere either
+    // registry gains or loses an entry — a mutation that skips the bump leaves the injectors
+    // blind to that subscriber for the rest of the process.
+    private sealed record SubscriberIndex(
+        int Version,
+        Dictionary<int, Key[]> TriggerKeysByTable,
+        Dictionary<int, ValidateSub[]> ValidateSubsByTable);
+
+    private static int _registryVersion;
+    private static SubscriberIndex _subscriberIndex = new(-1, new(), new());
+
+    private static SubscriberIndex GetSubscriberIndex()
+    {
+        var idx = _subscriberIndex;
+        if (idx.Version == Volatile.Read(ref _registryVersion)) return idx;
+        lock (_lock)
+        {
+            idx = _subscriberIndex;
+            int version = _registryVersion;
+            if (idx.Version == version) return idx;
+
+            var triggerKeys = new Dictionary<int, List<Key>>();
+            foreach (var key in _byKey.Keys)
+            {
+                if (!triggerKeys.TryGetValue(key.PublisherId, out var keys))
+                    triggerKeys[key.PublisherId] = keys = new List<Key>();
+                keys.Add(key);
+            }
+            var validateSubs = new Dictionary<int, List<ValidateSub>>();
+            foreach (var vs in _validateSubs)
+            {
+                if (!validateSubs.TryGetValue(vs.Handle.PublisherId, out var subs))
+                    validateSubs[vs.Handle.PublisherId] = subs = new List<ValidateSub>();
+                subs.Add(vs);
+            }
+            _subscriberIndex = idx = new SubscriberIndex(
+                version,
+                triggerKeys.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray()),
+                validateSubs.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray()));
+            return idx;
+        }
+    }
+
+    /// <summary>Test seam: the field-validate subscriber methods the per-construction injector
+    /// would consider for <paramref name="tableId"/>, in injection order.</summary>
+    internal static IReadOnlyList<MethodInfo> ValidateSubscriberMethodsForTable(int tableId)
+    {
+        EnsureRegistryFresh();
+        return GetSubscriberIndex().ValidateSubsByTable.TryGetValue(tableId, out var subs)
+            ? subs.Select(s => s.Handle.Method).ToArray()
+            : Array.Empty<MethodInfo>();
+    }
+
+    /// <summary>Test seam: the table-trigger subscriber methods (Insert/Modify/Delete/Rename
+    /// ordinals) the per-construction injector would consider for <paramref name="tableId"/>.</summary>
+    internal static IReadOnlyList<(int EventTypeOrdinal, MethodInfo Method)> TriggerSubscribersForTable(int tableId)
+    {
+        EnsureRegistryFresh();
+        lock (_lock)
+        {
+            if (!GetSubscriberIndex().TriggerKeysByTable.TryGetValue(tableId, out var keys))
+                return Array.Empty<(int, MethodInfo)>();
+            return keys
+                .SelectMany(k => _byKey.TryGetValue(k, out var l)
+                    ? l.Select(h => (k.EventTypeOrdinal, h.Method))
+                    : Enumerable.Empty<(int, MethodInfo)>())
+                .ToArray();
+        }
+    }
+
     /// <summary>
     /// Look up codeunit-event subscribers registered for a (publisherCodeunitId, eventMethodName).
     /// Called by CodeunitEventDispatcher at runtime from the Cecil-rewritten OnRunEventAsync.
@@ -418,6 +490,7 @@ public static partial class EventSubscriberPatches
             _seededScopeTypes.Clear();
             _scannedAssemblies.Clear();
             _lastScannedCount = 0;
+            _registryVersion++;
         }
         AlRunner.BcRuntime.ResetManualBindingCacheForReload();
     }
@@ -446,17 +519,15 @@ public static partial class EventSubscriberPatches
     {
         lock (_lock)
         {
-            foreach (var kv in _byKey)
-            {
-                if (kv.Key.PublisherId != tableId) continue;
-                foreach (var sub in kv.Value)
-                    _injectedSubscriberMethods.Remove(sub.Method);
-            }
-            foreach (var vs in _validateSubs)
-            {
-                if (vs.Handle.PublisherId != tableId) continue;
-                _injectedSubscriberMethods.Remove(vs.Handle.Method);
-            }
+            var idx = GetSubscriberIndex();
+            if (idx.TriggerKeysByTable.TryGetValue(tableId, out var keys))
+                foreach (var key in keys)
+                    if (_byKey.TryGetValue(key, out var subs))
+                        foreach (var sub in subs)
+                            _injectedSubscriberMethods.Remove(sub.Method);
+            if (idx.ValidateSubsByTable.TryGetValue(tableId, out var validateSubs))
+                foreach (var vs in validateSubs)
+                    _injectedSubscriberMethods.Remove(vs.Handle.Method);
         }
     }
 
@@ -644,15 +715,16 @@ public static partial class EventSubscriberPatches
         // built before the first bulk injection pass — e.g. a platform table built during runtime
         // bring-up, before EventSubscriberPatches.Register/EnsureRegistryFresh have ever run).
         try { EnsureRegistryFresh(); } catch { }
-        if (_byKey.Count == 0) return;
+        if (!GetSubscriberIndex().TriggerKeysByTable.ContainsKey(tableId)) return;
 
         lock (_lock)
         {
+            if (!GetSubscriberIndex().TriggerKeysByTable.TryGetValue(tableId, out var tableKeys)) return;
             int injected = 0, failed = 0;
-            foreach (var kv in _byKey)
+            foreach (var tableKey in tableKeys)
             {
-                if (kv.Key.PublisherId != tableId) continue;
-                int ord = kv.Key.EventTypeOrdinal;
+                if (!_byKey.TryGetValue(tableKey, out var tableSubs)) continue;
+                int ord = tableKey.EventTypeOrdinal;
 
                 var ordEnum = Enum.ToObject(_tNavTriggerEventType!, ord);
                 var createIfNotFound = Enum.ToObject(_tEventScopeGetOption!, 1); // CreateIfNotFound
@@ -663,14 +735,14 @@ public static partial class EventSubscriberPatches
                     var inner = ex is TargetInvocationException tie ? tie.InnerException ?? ex : ex;
                     Console.Error.WriteLine($"[Subscribers] GetEventScope({tableId},{ord}) failed (lazy): " +
                         $"{inner.GetType().Name}: {inner.Message}");
-                    failed += kv.Value.Count(s => !_injectedSubscriberMethods.Contains(s.Method));
+                    failed += tableSubs.Count(s => !_injectedSubscriberMethods.Contains(s.Method));
                     continue;
                 }
-                if (scope == null) { failed += kv.Value.Count(s => !_injectedSubscriberMethods.Contains(s.Method)); continue; }
+                if (scope == null) { failed += tableSubs.Count(s => !_injectedSubscriberMethods.Contains(s.Method)); continue; }
 
                 var existing = (Array?)_fRegisteredSubscriptions!.GetValue(scope);
                 var newOnes = new List<object>();
-                foreach (var sub in kv.Value)
+                foreach (var sub in tableSubs)
                 {
                     if (_injectedSubscriberMethods.Contains(sub.Method)) continue;
                     object? subscription;
@@ -754,14 +826,14 @@ public static partial class EventSubscriberPatches
         // Ensure discovery has run so _validateSubs is populated (it may not have been if this
         // table is built before the first bulk injection pass).
         try { EnsureRegistryFresh(); } catch { }
-        if (_validateSubs.Count == 0) return;
+        if (!GetSubscriberIndex().ValidateSubsByTable.ContainsKey(tableId)) return;
 
         lock (_lock)
         {
+            if (!GetSubscriberIndex().ValidateSubsByTable.TryGetValue(tableId, out var tableSubs)) return;
             int injected = 0, failed = 0;
-            foreach (var vs in _validateSubs)
+            foreach (var vs in tableSubs)
             {
-                if (vs.Handle.PublisherId != tableId) continue;
                 if (_injectedSubscriberMethods.Contains(vs.Handle.Method)) continue;
                 TryInjectOneValidateSub(vs, metaTable, ref injected, ref failed);
             }
@@ -1004,6 +1076,7 @@ public static partial class EventSubscriberPatches
         {
             asms = AppDomain.CurrentDomain.GetAssemblies();
             if (asms.Length == _lastScannedCount) return;
+            _registryVersion++; // this pass may add or prune entries in both registries
 
             // A discovery scan can run BEFORE every app in the current cycle has
             // (re)compiled — e.g. PopulateNclMetadataCache's own InjectAll call fires
