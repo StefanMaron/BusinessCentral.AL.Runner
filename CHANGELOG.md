@@ -247,6 +247,7 @@ All notable changes to this project are documented here. Format based on
 - **rules:** name the Windows nightly as the tier the corpus pins, and say what to do when Linux is in doubt
 
 ### Changed
+- **metadata:** conditional TableRelation arms on precompiled fields
 - **watch:** EmitSiblingSymbols reuses the dep-symbol compiler and takes the RAD fast path
 - **permissions:** make the vanished-app warning test prove what its comment claims
 - **guards:** make a local unbootstrapped engine run a visible skip, not a false mutation RED
