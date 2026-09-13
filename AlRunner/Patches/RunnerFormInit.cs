@@ -82,6 +82,23 @@ public static class RunnerFormInit
     public static bool ShouldInitializeForm(object form) => ShouldResolveMasterPage(form);
 
     /// <summary>
+    /// Construct a page by reflection the way AL's own <c>new</c> would surface a failure: an
+    /// exception out of the constructor — an Error() in OnInit, which BC raises there — reaches
+    /// the caller as itself, not wrapped in <c>TargetInvocationException</c>, whose text
+    /// ("Exception has been thrown by the target of an invocation.") <c>GetLastErrorText</c>
+    /// would otherwise report. Corpus 60488 <c>POI_ErrorInOnInit_*</c> pins the text (#4114).
+    /// </summary>
+    internal static object ConstructPage(System.Reflection.ConstructorInfo ctor, object?[] args)
+    {
+        try { return ctor.Invoke(args); }
+        catch (System.Reflection.TargetInvocationException tie) when (tie.InnerException != null)
+        {
+            System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(tie.InnerException).Throw();
+            throw;
+        }
+    }
+
+    /// <summary>
     /// Whether <paramref name="ex"/> was raised by a page's OnInit — thrown out of
     /// <c>NavForm.InitializeFormAsync</c>, which now runs inside the page constructor. The
     /// runner's page-construction sites catch construction failures and fall back; an Error()
