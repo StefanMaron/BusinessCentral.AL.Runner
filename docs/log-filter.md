@@ -42,7 +42,8 @@ elsewhere (`[provision-gap]`, `[test-exec]` warnings), and exception messages (`
   `hook-audit`, `instrumentation-counters`, `mem-census`, `object-metadata`,
   `option-captions`, `page-metadata`, `page-trigger-audit`, `parse-counts`, `perm-metadata`,
   `permission-table`, `query-metadata`, `report-metadata` (trace), `shared-refs`,
-  `table-metadata`, `table-trigger-audit`, `xmlport-metadata`.
+  `table-metadata`, `table-trigger-audit`, `xmlport-metadata`, `sibling-symbols` (switch:
+  `--watch` or `--verbose`, #2672).
 - **VerboseGated:** `type-index` (reflection fallback), `servicetier-dll` (the "indexed N
   objects" summary).
 
